@@ -660,7 +660,8 @@ class LoreMessage:
         msg_out = mkstemp()
         patch_out = mkstemp()
         cmdargs = ['mailinfo', '--encoding=UTF-8', msg_out[1], patch_out[1]]
-        ecode, info = git_run_command(None, cmdargs, self.msg.as_bytes())
+        emlout = self.msg.as_string(policy=emlpolicy)
+        ecode, info = git_run_command(None, cmdargs, emlout.encode('utf-8'))
         if ecode > 0:
             logger.debug('ERROR: Could not get mailinfo')
             return

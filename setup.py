@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import os
-from distutils.core import setup
+from setuptools import setup
 
 # Utility function to read the README file.
 # Used for the long_description.  It's nice, because now 1) we have a top level

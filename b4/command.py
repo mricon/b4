@@ -85,12 +85,11 @@ def cmd():
     # GDPR-proofing: by default, we add as little PII-sensitive info as possible
     sp_att.add_argument('-f', '--from', dest='sender', default='devnull@kernel.org',
                         help='Use a custom From field')
-    sp_att.add_argument('-o', '--output', default='xxxx-attestation-letter.patch',
-                        help='Save attestation message in this file')
-    sp_att.add_argument('-n', '--no-mail', dest='nomail', action='store_true', default=False,
+    sp_att.add_argument('-n', '--no-submit', dest='nosubmit', action='store_true', default=False,
                         help='Do not submit attestation, just save the message ready to send')
-    sp_att.add_argument('patchfile', nargs='+',
-                        help='Patches to attest')
+    sp_att.add_argument('-o', '--output', default='xxxx-attestation-letter.patch',
+                        help='Save attestation message in this file if not submitting it')
+    sp_att.add_argument('patchfile', nargs='+', help='Patches to attest')
     sp_att.set_defaults(func=cmd_attest)
 
     # b4 verify

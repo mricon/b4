@@ -9,3 +9,6 @@ dist/*
 MANIFEST
 .idea
 __pycache__
+*.egg-info
+*.patch
+*.mbx

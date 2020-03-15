@@ -12,7 +12,6 @@ import email.utils
 import email.message
 import smtplib
 import mailbox
-
 import b4
 
 logger = b4.logger
@@ -22,12 +21,12 @@ def create_attestation(cmdargs):
     attlines = list()
     subject = 'Patch attestation'
     for patchfile in cmdargs.patchfile:
-        with open(patchfile, 'rb') as fh:
+        with open(patchfile, 'r', encoding='utf-8') as fh:
             content = fh.read()
-            if content.find(b'From') != 0:
+            if content.find('From') != 0:
                 logger.info('SKIP | %s', os.path.basename(patchfile))
                 continue
-            msg = email.message_from_bytes(content)
+            msg = email.message_from_string(content)
             lmsg = b4.LoreMessage(msg)
             lmsg.load_hashes()
             att = lmsg.attestation
@@ -81,7 +80,7 @@ def create_attestation(cmdargs):
     att_msg['Subject'] = subject
 
     logger.info('---')
-    if not cmdargs.nomail:
+    if not cmdargs.nosubmit:
         # Try to deliver it via mail.kernel.org
         try:
             mailserver = smtplib.SMTP('mail.kernel.org', 587)
@@ -139,15 +138,19 @@ def verify_attestation(cmdargs):
         sys.exit(1)
 
     logger.info('---')
-    attpass = 'PASS'
-    attfail = 'FAIL'
     attrailers = set()
     ecode = 1
+    if config['attestation-checkmarks'] == 'fancy':
+        attpass = b4.PASS_FANCY
+        attfail = b4.FAIL_FANCY
+    else:
+        attpass = b4.PASS_SIMPLE
+        attfail = b4.FAIL_SIMPLE
 
     for lmsg in eligible:
         attdoc = lmsg.get_attestation(lore_lookup=True, exact_from_match=exact_from_match)
         if not attdoc:
-            logger.critical('%s | %s', attfail, lmsg.full_subject)
+            logger.critical('%s %s', attfail, lmsg.full_subject)
             if not cmdargs.nofast:
                 logger.critical('Aborting due to failure.')
                 ecode = 1
@@ -157,7 +160,7 @@ def verify_attestation(cmdargs):
                 continue
         if ecode != 128:
             ecode = 0
-        logger.critical('%s | %s', attpass, lmsg.full_subject)
+        logger.critical('%s %s', attpass, lmsg.full_subject)
         attrailers.add(attdoc.attestor.get_trailer(lmsg.fromemail))
 
     logger.critical('---')
@@ -170,10 +173,10 @@ def verify_attestation(cmdargs):
             logger.critical('---')
             logger.critical('The validation process reported the following errors:')
             for error in errors:
-                logger.critical('  %s', error)
+                logger.critical('  %s %s', attfail, error)
     else:
         logger.critical('All patches passed attestation:')
         for attrailer in attrailers:
-            logger.critical('  %s', attrailer)
+            logger.critical('  %s %s', attpass, attrailer)
 
     sys.exit(ecode)
