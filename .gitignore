@@ -1,0 +1,11 @@
+*.swp
+*.pyc
+*.pyo
+*.json
+*.pdf
+test.log
+build/*
+dist/*
+MANIFEST
+.idea
+__pycache__
