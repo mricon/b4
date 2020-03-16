@@ -8,6 +8,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import argparse
 import logging
 import b4
+import sys
 
 logger = b4.logger
 
@@ -49,8 +50,10 @@ def cmd_verify(cmdargs):
 
 def cmd():
     parser = argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description='A tool to work with public-inbox patches',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument('--version', action='version', version=b4.VERSION)
     parser.add_argument('-d', '--debug', action='store_true', default=False,
                         help='Add more debugging info to the output')
     parser.add_argument('-q', '--quiet', action='store_true', default=False,
@@ -121,6 +124,10 @@ def cmd():
         ch.setLevel(logging.INFO)
 
     logger.addHandler(ch)
+
+    if 'func' not in cmdargs:
+        parser.print_help()
+        sys.exit(1)
 
     cmdargs.func(cmdargs)
 
