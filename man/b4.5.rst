@@ -173,4 +173,4 @@ Default configuration, with explanations::
 
 SUPPORT
 -------
-Please email workflows@vger.kernel.org with support requests.
+Please email tools@linux.kernel.org with support requests.
