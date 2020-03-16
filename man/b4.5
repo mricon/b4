@@ -1,0 +1,257 @@
+.\" Man page generated from reStructuredText.
+.
+.TH B4 5 "2020-03-16" "0.3.0" ""
+.SH NAME
+B4 \- Work with patches in a public-inbox archive
+.
+.nr rst2man-indent-level 0
+.
+.de1 rstReportMargin
+\\$1 \\n[an-margin]
+level \\n[rst2man-indent-level]
+level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
+-
+\\n[rst2man-indent0]
+\\n[rst2man-indent1]
+\\n[rst2man-indent2]
+..
+.de1 INDENT
+.\" .rstReportMargin pre:
+. RS \\$1
+. nr rst2man-indent\\n[rst2man-indent-level] \\n[an-margin]
+. nr rst2man-indent-level +1
+.\" .rstReportMargin post:
+..
+.de UNINDENT
+. RE
+.\" indent \\n[an-margin]
+.\" old: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.nr rst2man-indent-level -1
+.\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.in \\n[rst2man-indent\\n[rst2man-indent-level]]u
+..
+.SH SYNOPSIS
+.INDENT 0.0
+.INDENT 3.5
+b4 {mbox,am,attest,attverify} [options]
+.UNINDENT
+.UNINDENT
+.SH DESCRIPTION
+.sp
+This is a helper utility to work with patches made available via a
+public\-inbox archive like lore.kernel.org. It is written to make it
+easier to participate in a patch\-based workflows, like those used in
+the Linux kernel development.
+.sp
+The name "b4" was chosen for ease of typing and because B\-4 was the
+precursor to Lore and Data in the Start Trek universe.
+.SH SUBCOMMANDS
+.INDENT 0.0
+.IP \(bu 2
+\fIb4 mbox\fP: Download a thread as an mbox file
+.IP \(bu 2
+\fIb4 am\fP: Create an mbox file that is ready to git\-am
+.IP \(bu 2
+\fIb4 attest\fP: Submit cryptographic attestation for patches
+.UNINDENT
+.SH OPTIONS
+.INDENT 0.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.B \-d\fP,\fB  \-\-debug
+Add more debugging info to the output (default: False)
+.TP
+.B \-q\fP,\fB  \-\-quiet
+Output critical information only (default: False)
+.UNINDENT
+.SH SUBCOMMAND OPTIONS
+.SS b4 mbox
+.INDENT 0.0
+.TP
+.B usage: b4 mbox [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME]
+[\-m LOCALMBOX]
+[msgid]
+.TP
+.B positional arguments:
+msgid                 Message ID to process, or pipe a raw message
+.TP
+.B optional arguments:
+.INDENT 7.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
+Output into this directory
+.TP
+.BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
+Use a specific project instead of guessing (linux\-mm,
+linux\-hardening, etc)
+.TP
+.B \-c\fP,\fB  \-\-check\-newer\-revisions
+Check if newer patch revisions exist
+.TP
+.BI \-n \ WANTNAME\fP,\fB \ \-\-mbox\-name \ WANTNAME
+Filename to name the mbox file
+.TP
+.BI \-m \ LOCALMBOX\fP,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+Instead of grabbing a thread from lore, process this
+mbox file
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 mbox \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
+.SS b4 am
+.INDENT 0.0
+.TP
+.B usage: b4 am [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME]
+[\-m LOCALMBOX] [\-v WANTVER] [\-t] [\-T] [\-s] [\-l] [\-Q]
+[msgid]
+.TP
+.B positional arguments:
+msgid                 Message ID to process, or pipe a raw message
+.TP
+.B optional arguments:
+.INDENT 7.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
+Output into this directory
+.TP
+.BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
+Use a specific project instead of guessing (linux\-mm,
+linux\-hardening, etc)
+.TP
+.B \-c\fP,\fB  \-\-check\-newer\-revisions
+Check if newer patch revisions exist
+.TP
+.BI \-n \ WANTNAME\fP,\fB \ \-\-mbox\-name \ WANTNAME
+Filename to name the mbox file
+.TP
+.BI \-m \ LOCALMBOX\fP,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+Instead of grabbing a thread from lore, process this
+mbox file
+.TP
+.BI \-v \ WANTVER\fP,\fB \ \-\-use\-version \ WANTVER
+Get a specific version of the patch/series
+.TP
+.B \-t\fP,\fB  \-\-apply\-cover\-trailers
+Apply trailers sent to the cover letter to all patches
+.TP
+.B \-T\fP,\fB  \-\-no\-add\-trailers
+Do not add or sort any trailers
+.TP
+.B \-s\fP,\fB  \-\-add\-my\-sob
+Add your own signed\-off\-by to every patch
+.TP
+.B \-l\fP,\fB  \-\-add\-link
+Add a lore.kernel.org/r/ link to every patch
+.TP
+.B \-Q\fP,\fB  \-\-quilt\-ready
+Save mbox patches in a quilt\-ready folder
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
+.SS b4 attest
+.sp
+usage: b4 attest [\-h] [\-f SENDER] [\-n] [\-o OUTPUT] patchfile [patchfile ...]
+.INDENT 0.0
+.TP
+.B positional arguments:
+patchfile             Patches to attest
+.TP
+.B optional arguments:
+.INDENT 7.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-f \ SENDER\fP,\fB \ \-\-from \ SENDER
+Use a custom From field
+.TP
+.B \-n\fP,\fB  \-\-no\-submit
+Do not submit attestation, just save the message ready
+to send
+.TP
+.BI \-o \ OUTPUT\fP,\fB \ \-\-output \ OUTPUT
+Save attestation message in this file if not
+submitting it
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 attest \-n \-o output/xxxx\-attestation.patch output/*.patch
+.SH CONFIGURATION
+.sp
+B4 configuration is handled via git\-config(1), so you can store it in
+either the toplevel $HOME/.gitconfig file, or in a per\-repository
+.git/config file if your workflow changes per project.
+.sp
+Default configuration, with explanations:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+[b4]
+   # Where to look up threads by message id
+   midmask = https://lore.kernel.org/r/%s\(aq
+   #
+   # When recording Link: trailers, use this mask
+   linkmask = https://lore.kernel.org/r/%s\(aq
+   #
+   # When processing thread trailers, use this order. Can use shell\-globbing
+   # and must end with ,*
+   # Common alternative order:
+   #trailer\-order=link*,fixes*,cc*,reported*,suggested*,original*,co\-*,tested*,reviewed*,acked*,signed\-off*,*
+   trailer\-order = fixes*,reported*,suggested*,original*,co\-*,signed\-off*,tested*,reviewed*,acked*,cc*,link*,*
+   #
+   # Attestation\-checking configuration parameters
+   # off: do not bother checking attestation
+   # check: print an attaboy when attestation is found
+   # softfail: print a warning when no attestation found
+   # hardfail: exit with an error when no attestation found
+   attestation\-policy = check
+   #
+   # "gpg" (whatever gpg is configured to do) or "tofu" to force TOFU mode
+   # If you don\(aqt already have a carefully maintained web of trust setup, it is
+   # strongly recommended to set this to "tofu"
+   attestation\-trust\-model = gpg
+   #
+   # How strict should we be when comparing the email address in From to the
+   # email addresses in the key\(aqs UIDs?
+   # strict: must match one of the uids on the key to pass
+   # loose: any valid and trusted key will be accepted
+   attestation\-uid\-match = loose
+   #
+   # When showing attestation check results, do you like "fancy" (color, unicode)
+   # or simple checkmarks?
+   attestation\-checkmarks = fancy
+   #
+   # You can point this at a non\-default home dir, if you like, or leave out to
+   # use the OS default.
+   attestation\-gnupghome = None
+   #
+   # If this is not set, we\(aqll use what we find in
+   # git\-config for gpg.program; and if that\(aqs not set,
+   # we\(aqll use "gpg" and hope for the best
+   gpgbin = None
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH SUPPORT
+.sp
+Please email \fI\%workflows@vger.kernel.org\fP with support requests.
+.SH AUTHOR
+mricon@kernel.org
+
+License: GPLv2+
+.SH COPYRIGHT
+The Linux Foundation and contributors
+.\" Generated by docutils manpage writer.
+.

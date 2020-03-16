@@ -1,0 +1,176 @@
+B4
+==
+-------------------------------------------
+Work with patches in a public-inbox archive
+-------------------------------------------
+
+:Author:    mricon@kernel.org
+:Date:      2020-03-16
+:Copyright: The Linux Foundation and contributors
+:License:   GPLv2+
+:Version:   0.3.0
+:Manual section: 5
+
+SYNOPSIS
+--------
+    b4 {mbox,am,attest,attverify} [options]
+
+DESCRIPTION
+-----------
+This is a helper utility to work with patches made available via a
+public-inbox archive like lore.kernel.org. It is written to make it
+easier to participate in a patch-based workflows, like those used in
+the Linux kernel development.
+
+The name "b4" was chosen for ease of typing and because B-4 was the
+precursor to Lore and Data in the Start Trek universe.
+
+SUBCOMMANDS
+-----------
+* *b4 mbox*: Download a thread as an mbox file
+* *b4 am*: Create an mbox file that is ready to git-am
+* *b4 attest*: Submit cryptographic attestation for patches
+
+OPTIONS
+-------
+-h, --help            show this help message and exit
+-d, --debug           Add more debugging info to the output (default: False)
+-q, --quiet           Output critical information only (default: False)
+
+SUBCOMMAND OPTIONS
+------------------
+b4 mbox
+~~~~~~~
+usage: b4 mbox [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME]
+               [-m LOCALMBOX]
+               [msgid]
+
+positional arguments:
+  msgid                 Message ID to process, or pipe a raw message
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -o OUTDIR, --outdir OUTDIR
+                        Output into this directory
+  -p USEPROJECT, --use-project USEPROJECT
+                        Use a specific project instead of guessing (linux-mm,
+                        linux-hardening, etc)
+  -c, --check-newer-revisions
+                        Check if newer patch revisions exist
+  -n WANTNAME, --mbox-name WANTNAME
+                        Filename to name the mbox file
+  -m LOCALMBOX, --use-local-mbox LOCALMBOX
+                        Instead of grabbing a thread from lore, process this
+                        mbox file
+
+*Example*: b4 mbox 20200313231252.64999-1-keescook@chromium.org
+
+b4 am
+~~~~~
+usage: b4 am [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME]
+             [-m LOCALMBOX] [-v WANTVER] [-t] [-T] [-s] [-l] [-Q]
+             [msgid]
+
+positional arguments:
+  msgid                 Message ID to process, or pipe a raw message
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -o OUTDIR, --outdir OUTDIR
+                        Output into this directory
+  -p USEPROJECT, --use-project USEPROJECT
+                        Use a specific project instead of guessing (linux-mm,
+                        linux-hardening, etc)
+  -c, --check-newer-revisions
+                        Check if newer patch revisions exist
+  -n WANTNAME, --mbox-name WANTNAME
+                        Filename to name the mbox file
+  -m LOCALMBOX, --use-local-mbox LOCALMBOX
+                        Instead of grabbing a thread from lore, process this
+                        mbox file
+  -v WANTVER, --use-version WANTVER
+                        Get a specific version of the patch/series
+  -t, --apply-cover-trailers
+                        Apply trailers sent to the cover letter to all patches
+  -T, --no-add-trailers
+                        Do not add or sort any trailers
+  -s, --add-my-sob      Add your own signed-off-by to every patch
+  -l, --add-link        Add a lore.kernel.org/r/ link to every patch
+  -Q, --quilt-ready     Save mbox patches in a quilt-ready folder
+
+*Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
+
+b4 attest
+~~~~~~~~~
+usage: b4 attest [-h] [-f SENDER] [-n] [-o OUTPUT] patchfile [patchfile ...]
+
+positional arguments:
+  patchfile             Patches to attest
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -f SENDER, --from SENDER
+                        Use a custom From field
+  -n, --no-submit       Do not submit attestation, just save the message ready
+                        to send
+  -o OUTPUT, --output OUTPUT
+                        Save attestation message in this file if not
+                        submitting it
+
+*Example*: b4 attest -n -o output/xxxx-attestation.patch output/\*.patch
+
+CONFIGURATION
+-------------
+B4 configuration is handled via git-config(1), so you can store it in
+either the toplevel $HOME/.gitconfig file, or in a per-repository
+.git/config file if your workflow changes per project.
+
+Default configuration, with explanations::
+
+   [b4]
+      # Where to look up threads by message id
+      midmask = https://lore.kernel.org/r/%s'
+      #
+      # When recording Link: trailers, use this mask
+      linkmask = https://lore.kernel.org/r/%s'
+      #
+      # When processing thread trailers, use this order. Can use shell-globbing
+      # and must end with ,*
+      # Common alternative order:
+      #trailer-order=link*,fixes*,cc*,reported*,suggested*,original*,co-*,tested*,reviewed*,acked*,signed-off*,*
+      trailer-order = fixes*,reported*,suggested*,original*,co-*,signed-off*,tested*,reviewed*,acked*,cc*,link*,*
+      #
+      # Attestation-checking configuration parameters
+      # off: do not bother checking attestation
+      # check: print an attaboy when attestation is found
+      # softfail: print a warning when no attestation found
+      # hardfail: exit with an error when no attestation found
+      attestation-policy = check
+      #
+      # "gpg" (whatever gpg is configured to do) or "tofu" to force TOFU mode
+      # If you don't already have a carefully maintained web of trust setup, it is
+      # strongly recommended to set this to "tofu"
+      attestation-trust-model = gpg
+      #
+      # How strict should we be when comparing the email address in From to the
+      # email addresses in the key's UIDs?
+      # strict: must match one of the uids on the key to pass
+      # loose: any valid and trusted key will be accepted
+      attestation-uid-match = loose
+      #
+      # When showing attestation check results, do you like "fancy" (color, unicode)
+      # or simple checkmarks?
+      attestation-checkmarks = fancy
+      #
+      # You can point this at a non-default home dir, if you like, or leave out to
+      # use the OS default.
+      attestation-gnupghome = None
+      #
+      # If this is not set, we'll use what we find in
+      # git-config for gpg.program; and if that's not set,
+      # we'll use "gpg" and hope for the best
+      gpgbin = None
+
+SUPPORT
+-------
+Please email workflows@vger.kernel.org with support requests.

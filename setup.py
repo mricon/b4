@@ -18,14 +18,19 @@ NAME = 'b4'
 
 setup(
     version=VERSION,
-    url='https://git.kernel.org/pub/scm/devel/b4/b4.git',
+    url='https://git.kernel.org/pub/scm/utils/b4/b4.git',
     name=NAME,
     description='A tool to work with public-inbox and patch archives',
     author='Konstantin Ryabitsev',
     author_email='mricon@kernel.org',
     packages=['b4'],
     license='GPLv2+',
-    #long_description=read('README.rst'),
+    long_description=read('man/b4.5.rst'),
+    long_description_content_type='text/x-rst',
+    keywords=['git', 'lore.kernel.org', 'patches'],
+    install_requires=[
+        'requests'
+    ],
     entry_points={
         'console_scripts': [
             'b4=b4.command:cmd'
