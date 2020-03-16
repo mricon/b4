@@ -19,7 +19,7 @@ from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 ATTESTATION_FORMAT_VER = '0.1'
 
 logger = logging.getLogger('b4')
@@ -517,6 +517,12 @@ class LoreMessage:
 
         # We only pay attention to trailers that are sent in reply
         if self.reply:
+            # Do we have a Fixes: trailer?
+            matches = re.findall(r'^\s*Fixes:[ \t]+([a-f0-9]+\s+\(.*\))\s*$', self.body, re.MULTILINE)
+            if matches:
+                for tvalue in matches:
+                    self.trailers.append(('Fixes', tvalue))
+
             # Do we have something that looks like a person-trailer?
             matches = re.findall(r'^\s*([\w-]+):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
             if matches:
