@@ -357,6 +357,7 @@ class LoreSeries:
             attfail = FAIL_SIMPLE
 
         at = 1
+        atterrors = list()
         for lmsg in self.patches[1:]:
             if lmsg is not None:
                 if self.has_cover and covertrailers and self.patches[0].followup_trailers:
@@ -375,11 +376,26 @@ class LoreSeries:
                     if attdoc is None:
                         if attpolicy in ('softfail', 'hardfail'):
                             logger.info('  %s %s', attfail, lmsg.full_subject)
+                            # Which part failed?
+                            failed = ['commit metadata', 'commit message', 'patch content']
+                            for attdoc in ATTESTATIONS:
+                                for i, m, p in attdoc.hashes:
+                                    if p == lmsg.attestation.p:
+                                        failed.remove('patch content')
+                                    if m == lmsg.attestation.m:
+                                        failed.remove('commit message')
+                                    if i == lmsg.attestation.i:
+                                        failed.remove('commit metadata')
+                            atterrors.append('Patch %s/%s failed attestation (%s)' % (at, lmsg.expected,
+                                                                                      ', '.join(failed)))
                         else:
                             logger.info('  %s', lmsg.full_subject)
                     else:
                         logger.info('  %s %s', attpass, lmsg.full_subject)
                         attdata[at-1] = attdoc.attestor.get_trailer(lmsg.fromemail)
+                        if attpolicy == 'check':
+                            # switch to softfail policy now that we have at least one hit
+                            attpolicy = 'softfail'
                 else:
                     logger.info('  %s', lmsg.full_subject)
 
@@ -402,7 +418,7 @@ class LoreSeries:
                 logger.info('  %s %s', attpass, trailer)
             return mbx
 
-        errors = set()
+        errors = set(atterrors)
         for attdoc in ATTESTATIONS:
             errors.update(attdoc.errors)
 
@@ -410,7 +426,7 @@ class LoreSeries:
             logger.critical('  ---')
             logger.critical('  Attestation is available, but did not succeed:')
             for error in errors:
-                logger.critical('  %s %s', attfail, error)
+                logger.critical('    %s %s', attfail, error)
 
         if attpolicy == 'hardfail':
             import sys
@@ -965,7 +981,8 @@ class LoreAttestationDocument:
                         logger.debug('  TRUST_%s', matches.groups()[0])
                         self.trusted = True
                     else:
-                        self.errors.add('Insufficient trust on key: %s (%s)' % (keyid, puid))
+                        self.errors.add('Insufficient trust (model=%s): %s (%s)'
+                                        % (config['attestation-trust-model'], keyid, puid))
                 else:
                     self.errors.add('Signature not valid from key: %s (%s)' % (keyid, puid))
         else:
@@ -1070,15 +1087,13 @@ class LoreAttestation:
                 self.passing = True
                 self.attdocs.append(attdoc)
 
-        if len(self.attdocs) or not lore_lookup:
-            return
-
-        attdocs = LoreAttestationDocument.get_from_lore(self.attid)
-        ATTESTATIONS += attdocs
-        for attdoc in attdocs:
-            if hg in attdoc.hashes and attdoc.passing:
-                self.passing = True
-                self.attdocs.append(attdoc)
+        if not len(self.attdocs) and lore_lookup:
+            attdocs = LoreAttestationDocument.get_from_lore(self.attid)
+            ATTESTATIONS += attdocs
+            for attdoc in attdocs:
+                if hg in attdoc.hashes and attdoc.passing:
+                    self.passing = True
+                    self.attdocs.append(attdoc)
 
     def __repr__(self):
         out = list()
