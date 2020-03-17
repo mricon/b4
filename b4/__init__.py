@@ -77,7 +77,7 @@ DEFAULT_CONFIG = {
     'attestation-uid-match': 'loose',
     # NB! This whole behaviour will change once public-inbox
     # gains support for cross-list searches
-    'attestation-query-url': LOREADDR + '/signatures',
+    'attestation-query-url': LOREADDR + '/signatures/',
     # We'll use the default gnupg homedir, unless you set it here
     'attestation-gnupghome': None,
     # Do you like simple or fancy checkmarks?
