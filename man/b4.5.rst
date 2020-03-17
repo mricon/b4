@@ -41,9 +41,8 @@ SUBCOMMAND OPTIONS
 ------------------
 b4 mbox
 ~~~~~~~
-usage: b4 mbox [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME]
-               [-m LOCALMBOX]
-               [msgid]
+usage:
+  b4 mbox [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME] [-m LOCALMBOX] [msgid]
 
 positional arguments:
   msgid                 Message ID to process, or pipe a raw message
@@ -67,9 +66,8 @@ optional arguments:
 
 b4 am
 ~~~~~
-usage: b4 am [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME]
-             [-m LOCALMBOX] [-v WANTVER] [-t] [-T] [-s] [-l] [-Q]
-             [msgid]
+usage:
+  b4 am [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME] [-m LOCALMBOX] [-v WANTVER] [-t] [-T] [-s] [-l] [-Q] [msgid]
 
 positional arguments:
   msgid                 Message ID to process, or pipe a raw message
@@ -102,7 +100,8 @@ optional arguments:
 
 b4 attest
 ~~~~~~~~~
-usage: b4 attest [-h] [-f SENDER] [-n] [-o OUTPUT] patchfile [patchfile ...]
+usage:
+  b4 attest [-h] [-f SENDER] [-n] [-o OUTPUT] patchfile [patchfile ...]
 
 positional arguments:
   patchfile             Patches to attest

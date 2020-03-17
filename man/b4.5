@@ -70,9 +70,8 @@ Output critical information only (default: False)
 .SS b4 mbox
 .INDENT 0.0
 .TP
-.B usage: b4 mbox [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME]
-[\-m LOCALMBOX]
-[msgid]
+.B usage:
+b4 mbox [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME] [\-m LOCALMBOX] [msgid]
 .TP
 .B positional arguments:
 msgid                 Message ID to process, or pipe a raw message
@@ -106,9 +105,8 @@ mbox file
 .SS b4 am
 .INDENT 0.0
 .TP
-.B usage: b4 am [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME]
-[\-m LOCALMBOX] [\-v WANTVER] [\-t] [\-T] [\-s] [\-l] [\-Q]
-[msgid]
+.B usage:
+b4 am [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME] [\-m LOCALMBOX] [\-v WANTVER] [\-t] [\-T] [\-s] [\-l] [\-Q] [msgid]
 .TP
 .B positional arguments:
 msgid                 Message ID to process, or pipe a raw message
@@ -158,9 +156,10 @@ Save mbox patches in a quilt\-ready folder
 .sp
 \fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 attest
-.sp
-usage: b4 attest [\-h] [\-f SENDER] [\-n] [\-o OUTPUT] patchfile [patchfile ...]
 .INDENT 0.0
+.TP
+.B usage:
+b4 attest [\-h] [\-f SENDER] [\-n] [\-o OUTPUT] patchfile [patchfile ...]
 .TP
 .B positional arguments:
 patchfile             Patches to attest
