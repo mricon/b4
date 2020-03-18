@@ -13,7 +13,7 @@ Work with patches in a public-inbox archive
 
 SYNOPSIS
 --------
-    b4 {mbox,am,attest,attverify} [options]
+b4 {mbox,am,attest,attverify} [options]
 
 DESCRIPTION
 -----------
@@ -160,6 +160,9 @@ Default configuration, with explanations::
       # When showing attestation check results, do you like "fancy" (color, unicode)
       # or simple checkmarks?
       attestation-checkmarks = fancy
+      #
+      # How long before we consider attestation to be too old?
+      attestation-staleness-days = 30
       #
       # You can point this at a non-default home dir, if you like, or leave out to
       # use the OS default.

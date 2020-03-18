@@ -31,11 +31,8 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
 .SH SYNOPSIS
-.INDENT 0.0
-.INDENT 3.5
+.sp
 b4 {mbox,am,attest,attverify} [options]
-.UNINDENT
-.UNINDENT
 .SH DESCRIPTION
 .sp
 This is a helper utility to work with patches made available via a
@@ -230,6 +227,9 @@ Default configuration, with explanations:
    # When showing attestation check results, do you like "fancy" (color, unicode)
    # or simple checkmarks?
    attestation\-checkmarks = fancy
+   #
+   # How long before we consider attestation to be too old?
+   attestation\-staleness\-days = 30
    #
    # You can point this at a non\-default home dir, if you like, or leave out to
    # use the OS default.

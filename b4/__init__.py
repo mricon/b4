@@ -7,11 +7,11 @@ import hashlib
 import re
 import os
 import fnmatch
-import time
 import email.utils
 import email.policy
 import requests
 import urllib.parse
+import datetime
 
 from tempfile import mkstemp
 
@@ -19,7 +19,7 @@ from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
-VERSION = '0.3.3-pre'
+VERSION = '0.3.3'
 ATTESTATION_FORMAT_VER = '0.1'
 
 logger = logging.getLogger('b4')
@@ -75,6 +75,8 @@ DEFAULT_CONFIG = {
     # strict: must match one of the uids on the key to pass
     # loose: any valid and trusted key will be accepted
     'attestation-uid-match': 'loose',
+    # How many days before we consider attestation too old?
+    'attestation-staleness-days': '30',
     # NB! This whole behaviour will change once public-inbox
     # gains support for cross-list searches
     'attestation-query-url': LOREADDR + '/signatures/',
@@ -323,7 +325,7 @@ class LoreSeries:
         if lmsg is None:
             return 'undefined'
 
-        prefix = time.strftime('%Y%m%d', lmsg.date[:9])
+        prefix = lmsg.date.strftime('%Y%m%d')
         authorline = email.utils.getaddresses(lmsg.msg.get_all('from', []))[0]
         author = re.sub(r'\W+', '_', authorline[1]).strip('_').lower()
         slug = '%s_%s' % (prefix, author)
@@ -345,6 +347,10 @@ class LoreSeries:
 
         attdata = [None] * self.expected
         attpolicy = config['attestation-policy']
+        try:
+            attstaled = int(config['attestation-staleness-days'])
+        except ValueError:
+            attstaled = 30
         exact_from_match = False
         if config['attestation-uid-match'] == 'strict':
             exact_from_match = True
@@ -391,11 +397,20 @@ class LoreSeries:
                         else:
                             logger.info('  %s', lmsg.full_subject)
                     else:
-                        logger.info('  %s %s', attpass, lmsg.full_subject)
-                        attdata[at-1] = attdoc.attestor.get_trailer(lmsg.fromemail)
                         if attpolicy == 'check':
                             # switch to softfail policy now that we have at least one hit
                             attpolicy = 'softfail'
+                        # Make sure it's not too old compared to the message date
+                        # Timezone doesn't matter as we calculate whole days
+                        tdelta = lmsg.date.replace(tzinfo=None) - attdoc.sigdate
+                        if tdelta.days > attstaled:
+                            # Uh-oh, attestation is too old!
+                            logger.info('  %s %s', attfail, lmsg.full_subject)
+                            atterrors.append('Attestation for %s/%s is over %sd old: %sd' % (at, lmsg.expected,
+                                                                                             attstaled, tdelta.days))
+                        else:
+                            logger.info('  %s %s', attpass, lmsg.full_subject)
+                            attdata[at-1] = attdoc.attestor.get_trailer(lmsg.fromemail)
                 else:
                     logger.info('  %s', lmsg.full_subject)
 
@@ -497,7 +512,7 @@ class LoreMessage:
         except IndexError:
             pass
 
-        self.date = email.utils.parsedate_tz(str(self.msg['Date']))
+        self.date = email.utils.parsedate_to_datetime(str(self.msg['Date']))
 
         diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch)', re.M | re.I)
         diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', re.M | re.I)
@@ -951,6 +966,7 @@ class LoreAttestationDocument:
         self.good = False
         self.valid = False
         self.trusted = False
+        self.sigdate = None
         self.passing = False
         self.attestor = None
         self.hashes = set()
@@ -972,13 +988,16 @@ class LoreAttestationDocument:
                 keyid = gs_matches.groups()[0]
                 self.attestor = LoreAttestor(keyid)
                 puid = '%s <%s>' % self.attestor.get_primary_uid()
-                if re.search(r'^\[GNUPG:\] VALIDSIG', output, re.M):
+                vs_matches = re.search(r'^\[GNUPG:\] VALIDSIG ([0-9A-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', output, re.M)
+                if vs_matches:
                     logger.debug('  VALIDSIG')
                     self.valid = True
+                    ymd = vs_matches.groups()[1]
+                    self.sigdate = datetime.datetime.strptime(ymd, '%Y-%m-%d')
                     # Do we have a TRUST_(FULLY|ULTIMATE)?
-                    matches = re.search(r'^\[GNUPG:\] TRUST_(FULLY|ULTIMATE)', output, re.M)
-                    if matches:
-                        logger.debug('  TRUST_%s', matches.groups()[0])
+                    ts_matches = re.search(r'^\[GNUPG:\] TRUST_(FULLY|ULTIMATE)', output, re.M)
+                    if ts_matches:
+                        logger.debug('  TRUST_%s', ts_matches.groups()[0])
                         self.trusted = True
                     else:
                         self.errors.add('Insufficient trust (model=%s): %s (%s)'
