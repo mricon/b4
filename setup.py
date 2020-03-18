@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import b4
 from setuptools import setup
 
 # Utility function to read the README file.
@@ -13,11 +14,10 @@ def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
 
-VERSION = '0.3.3'
 NAME = 'b4'
 
 setup(
-    version=VERSION,
+    version=b4.VERSION,
     url='https://git.kernel.org/pub/scm/utils/b4/b4.git',
     name=NAME,
     description='A tool to work with public-inbox and patch archives',
