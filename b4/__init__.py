@@ -19,7 +19,7 @@ from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
-VERSION = '0.3.3'
+VERSION = '0.3.4-pre'
 ATTESTATION_FORMAT_VER = '0.1'
 
 logger = logging.getLogger('b4')
@@ -107,6 +107,7 @@ class LoreMailbox:
     def __init__(self):
         self.msgid_map = dict()
         self.series = dict()
+        self.covers = dict()
         self.followups = list()
         self.unknowns = list()
 
@@ -149,8 +150,11 @@ class LoreMailbox:
             logger.critical('All patches in series v%s are missing.', lser.revision)
             return None
 
-        # Do we have a cover letter for it?
-        if not lser.has_cover:
+        # Grab our cover letter if we have one
+        if revision in self.covers.keys():
+            lser.add_patch(self.covers[revision])
+            lser.has_cover = True
+        else:
             # Let's find the first patch with an in-reply-to and see if that
             # is our cover letter
             for member in lser.patches:
@@ -223,42 +227,58 @@ class LoreMailbox:
         logger.debug('Looking at: %s', lmsg.full_subject)
         self.msgid_map[lmsg.msgid] = lmsg
 
-        if lmsg.has_diff or lmsg.has_diffstat:
+        if lmsg.counter == 0 and lmsg.has_diffstat:
+            # Cover letter
+            # Add it to covers -- we'll deal with them later
+            logger.debug('  adding as v%s cover letter', lmsg.revision)
+            self.covers[lmsg.revision] = lmsg
+            return
+
+        if lmsg.reply:
+            # We'll figure out where this belongs later
+            logger.debug('  adding to followups')
+            self.followups.append(lmsg)
+            return
+
+        if re.search(r'^Comment: att-fmt-ver:', lmsg.body, re.I | re.M):
+            logger.debug('Found attestation message')
+            LoreAttestationDocument.load_from_string(lmsg.msgid, lmsg.body)
+            # We don't keep it, because it's not useful for us beyond this point
+            return
+
+        if lmsg.has_diff:
+            if lmsg.revision not in self.series:
+                if lmsg.revision_inferred and lmsg.in_reply_to:
+                    # We have an inferred revision here.
+                    # Do we have an upthread cover letter that specifies a revision?
+                    irt = self.get_by_msgid(lmsg.in_reply_to)
+                    if irt is not None and irt.has_diffstat and not irt.has_diff:
+                        # Yes, this is very likely our cover letter
+                        logger.debug('  fixed revision to v%s', irt.revision)
+                        lmsg.revision = irt.revision
+
+            # Run our check again
             if lmsg.revision not in self.series:
                 self.series[lmsg.revision] = LoreSeries(lmsg.revision, lmsg.expected)
                 if len(self.series) > 1:
                     logger.info('Found new series v%s', lmsg.revision)
-            if lmsg.has_diff:
-                # Attempt to auto-number series from the same author who did not bother
-                # to set v2, v3, etc in the patch revision
-                if (lmsg.counter == 1 and lmsg.counters_inferred
-                        and not lmsg.reply and lmsg.lsubject.patch and not lmsg.lsubject.resend):
-                    omsg = self.series[lmsg.revision].patches[lmsg.counter]
-                    if (omsg is not None and omsg.counters_inferred and lmsg.fromemail == omsg.fromemail
-                            and omsg.date < lmsg.date):
-                        lmsg.revision = len(self.series) + 1
-                        self.series[lmsg.revision] = LoreSeries(lmsg.revision, lmsg.expected)
-                        logger.info('Assuming new revision: v%s (%s)', lmsg.revision, lmsg.full_subject)
-                logger.debug('  adding as patch')
-                self.series[lmsg.revision].add_patch(lmsg)
-            elif lmsg.counter == 0 and lmsg.has_diffstat:
-                # Bona-fide cover letter
-                logger.debug('  adding as cover letter')
-                self.series[lmsg.revision].add_cover(lmsg)
-            elif lmsg.reply:
-                # We'll figure out where this belongs later
-                logger.debug('  adding to followups')
-                self.followups.append(lmsg)
-        elif lmsg.reply:
-            logger.debug('  adding to followups')
-            self.followups.append(lmsg)
-        elif re.search(r'^Comment: att-fmt-ver:', lmsg.body, re.I | re.M):
-            logger.debug('Found attestation message')
-            LoreAttestationDocument.load_from_string(lmsg.msgid, lmsg.body)
-            # We don't keep it, because it's not useful for us beyond this point
-        else:
-            logger.debug('  adding to unknowns')
-            self.unknowns.append(lmsg)
+
+            # Attempt to auto-number series from the same author who did not bother
+            # to set v2, v3, etc in the patch revision
+            if (lmsg.counter == 1 and lmsg.counters_inferred
+                    and not lmsg.reply and lmsg.lsubject.patch and not lmsg.lsubject.resend):
+                omsg = self.series[lmsg.revision].patches[lmsg.counter]
+                if (omsg is not None and omsg.counters_inferred and lmsg.fromemail == omsg.fromemail
+                        and omsg.date < lmsg.date):
+                    lmsg.revision = len(self.series) + 1
+                    self.series[lmsg.revision] = LoreSeries(lmsg.revision, lmsg.expected)
+                    logger.info('Assuming new revision: v%s (%s)', lmsg.revision, lmsg.full_subject)
+            logger.debug('  adding as patch')
+            self.series[lmsg.revision].add_patch(lmsg)
+            return
+
+        logger.debug('  adding to unknowns')
+        self.unknowns.append(lmsg)
 
 
 class LoreSeries:
@@ -310,10 +330,6 @@ class LoreSeries:
         else:
             self.patches[lmsg.counter] = lmsg
         self.complete = not (None in self.patches[1:])
-
-    def add_cover(self, lmsg):
-        self.add_patch(lmsg)
-        self.has_cover = True
 
     def get_slug(self):
         # Find the first non-None entry
