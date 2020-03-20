@@ -23,11 +23,11 @@ python3 -m pip install --user --upgrade b4
 Running from the checkout dir
 -----------------------------
 If you want to run from the checkout dir without installing the python package,
-just create the following wrapper command and put it in your path::
+you can use the b4-wrapper.sh script.
 
-    #!/bin/bash
-    B4DIR=$HOME/your/path/to/b4-git-repo
-    PYTHONPATH=$B4DIR env python3 $B4DIR/b4/command.py $@
+```
+${git_dir}/b4-wrapper.sh --help
+```
 
 Support
 -------
