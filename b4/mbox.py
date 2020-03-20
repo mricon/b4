@@ -358,6 +358,10 @@ def get_newest_series(mboxfile):
 
 
 def main(cmdargs):
+    if cmdargs.checknewer:
+        # Force nocache mode
+        cmdargs.nocache = True
+
     config = b4.get_main_config()
 
     if not cmdargs.localmbox:
