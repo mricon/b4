@@ -670,7 +670,6 @@ class LoreMessage:
         # XXX: This currently doesn't work for git binary patches
         #
         diff = diff.replace('\r', '')
-        diff = diff.strip() + '\n'
 
         # For keeping a buffer of lines preceding @@ ... @@
         buflines = list()
@@ -701,8 +700,9 @@ class LoreMessage:
             if pp > 0:
                 # Inside the patch
                 phasher.update((line + '\n').encode('utf-8'))
-                if line[0] != '-':
-                    pp -= 1
+                if len(line) and line[0] == '-':
+                    continue
+                pp -= 1
                 continue
             # Not anything we recognize, so stick into buflines
             buflines.append(line)
