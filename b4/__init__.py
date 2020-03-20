@@ -867,8 +867,8 @@ class LoreSubject:
         # Remove any brackets inside brackets
         while True:
             oldsubj = subject
-            subject = re.sub(r'^\s*\[([^\]]*)\[([^\]]*)\]', '[\\1\\2]', subject)
-            subject = re.sub(r'^\s*\[([^\]]*)\]([^\]]*)\]', '[\\1\\2]', subject)
+            subject = re.sub(r'^\s*\[([^\]]*)\[([^\[\]]*)\]', '[\\1\\2]', subject)
+            subject = re.sub(r'^\s*\[([^\]]*)\]([^\[\]]*)\]', '[\\1\\2]', subject)
             if oldsubj == subject:
                 break
 
