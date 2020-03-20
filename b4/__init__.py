@@ -12,7 +12,9 @@ import email.policy
 import requests
 import urllib.parse
 import datetime
+import time
 
+from pathlib import Path
 from tempfile import mkstemp
 
 from email import charset
@@ -84,6 +86,8 @@ DEFAULT_CONFIG = {
     'attestation-gnupghome': None,
     # Do you like simple or fancy checkmarks?
     'attestation-checkmarks': 'fancy',
+    # How long to keep things in cache before expiring (minutes)?
+    'cache-expire': '10',
     # If this is not set, we'll use what we find in 
     # git-config for gpg.program, and if that's not set,
     # we'll use "gpg" and hope for the better
@@ -101,6 +105,8 @@ ATTESTATIONS = list()
 SUBKEY_DATA = dict()
 # Used for storing our requests session
 REQSESSION = None
+# Indicates that we've cleaned cache already
+_CACHE_CLEANED = False
 
 
 class LoreMailbox:
@@ -782,9 +788,9 @@ class LoreMessage:
                         if fnmatch.fnmatch(trailer[0].lower(), trailermatch.strip()):
                             fixlines.append('%s: %s' % trailer)
                             if trailer not in btrailers:
-                                logger.info('    Added: %s: %s' % trailer)
+                                logger.info('    + %s: %s' % trailer)
                             else:
-                                logger.debug('     Kept: %s: %s' % trailer)
+                                logger.debug('    . %s: %s' % trailer)
                             added.append(trailer)
                 trailersdone = True
             fixlines.append(line)
@@ -1032,6 +1038,15 @@ class LoreAttestationDocument:
         if self.good and self.valid and self.trusted:
             self.passing = True
 
+        if source.find('http') == 0:
+            # We only cache known-good attestations obtained from remote
+            cachedir = get_cache_dir()
+            cachename = '%s.attestation' % urllib.parse.quote_plus(source.strip('/').split('/')[-1])
+            fullpath = os.path.join(cachedir, cachename)
+            with open(fullpath, 'w') as fh:
+                logger.debug('Saved attestation in cache: %s', cachename)
+                fh.write(sigdata)
+
         hg = [None, None, None]
         for line in sigdata.split('\n'):
             # It's a yaml document, but we don't parse it as yaml for safety reasons
@@ -1069,25 +1084,59 @@ class LoreAttestationDocument:
         return '\n'.join(out)
 
     @staticmethod
+    def get_from_cache(attid):
+        cachedir = get_cache_dir()
+        attdocs = list()
+        for entry in os.listdir(cachedir):
+            if entry.find('.attestation') <= 0:
+                continue
+            fullpath = os.path.join(cachedir, entry)
+            with open(fullpath, 'r') as fh:
+                content = fh.read()
+                # Can't be 0, because it has to have pgp ascii wrapper
+                if content.find(attid) > 0:
+                    attdoc = LoreAttestationDocument(fullpath, content)
+                    attdocs.append(attdoc)
+        return attdocs
+
+    @staticmethod
     def get_from_lore(attid):
+        attdocs = list()
         # XXX: Querying this via the Atom feed is a temporary kludge until we have
         #      proper search API on lore.kernel.org
+        cachedir = get_cache_dir()
+        cachefile = os.path.join(cachedir, '%s.lookup' % urllib.parse.quote_plus(attid))
+        status = None
+        if os.path.exists(cachefile):
+            with open(cachefile, 'r') as fh:
+                try:
+                    status = int(fh.read())
+                except ValueError:
+                    pass
+        if status is not None and status != 200:
+            logger.debug('Cache says looking up %s = %s', attid, status)
+            return attdocs
+
         config = get_main_config()
         queryurl = '%s?%s' % (config['attestation-query-url'],
                               urllib.parse.urlencode({'q': attid, 'x': 'A', 'o': '-1'}))
         logger.debug('Query URL: %s', queryurl)
         session = get_requests_session()
         resp = session.get(queryurl)
-        content = resp.content.decode('utf-8')
+        if resp.status_code != 200:
+            # Record this as a bad hit
+            with open(cachefile, 'w') as fh:
+                fh.write(str(resp.status_code))
+
         matches = re.findall(
             r'link\s+href="([^"]+)".*?(-----BEGIN PGP SIGNED MESSAGE-----.*?-----END PGP SIGNATURE-----)',
-            content, flags=re.DOTALL
+            resp.content.decode('utf-8'), flags=re.DOTALL
         )
 
-        attdocs = list()
         if matches:
             for link, sigdata in matches:
-                attdocs.append(LoreAttestationDocument(link, sigdata))
+                attdoc = LoreAttestationDocument(link, sigdata)
+                attdocs.append(attdoc)
 
         return attdocs
 
@@ -1113,22 +1162,27 @@ class LoreAttestation:
         self.passing = False
         self.attdocs = list()
 
-    def validate(self, lore_lookup=True):
+    def _check_if_passing(self):
         global ATTESTATIONS
-
         hg = (self.i, self.m, self.p)
         for attdoc in ATTESTATIONS:
             if hg in attdoc.hashes and attdoc.passing:
                 self.passing = True
                 self.attdocs.append(attdoc)
 
+    def validate(self, lore_lookup=True):
+        global ATTESTATIONS
+        self._check_if_passing()
+
+        if not len(self.attdocs):
+            attdocs = LoreAttestationDocument.get_from_cache(self.attid)
+            ATTESTATIONS += attdocs
+            self._check_if_passing()
+
         if not len(self.attdocs) and lore_lookup:
             attdocs = LoreAttestationDocument.get_from_lore(self.attid)
             ATTESTATIONS += attdocs
-            for attdoc in attdocs:
-                if hg in attdoc.hashes and attdoc.passing:
-                    self.passing = True
-                    self.attdocs.append(attdoc)
+            self._check_if_passing()
 
     def __repr__(self):
         out = list()
@@ -1226,6 +1280,36 @@ def get_main_config():
             config['gpgbin'] = gpgcfg['program']
         MAIN_CONFIG = config
     return MAIN_CONFIG
+
+
+def get_cache_dir():
+    global _CACHE_CLEANED
+    if 'XDG_CACHE_HOME' in os.environ:
+        cachehome = os.environ['XDG_CACHE_HOME']
+    else:
+        cachehome = os.path.join(str(Path.home()), '.cache')
+    cachedir = os.path.join(cachehome, 'b4')
+    Path(cachedir).mkdir(parents=True, exist_ok=True)
+    if _CACHE_CLEANED:
+        return cachedir
+
+    # Delete all .mbx and .lookup files older than cache-expire
+    config = get_main_config()
+    try:
+        expmin = int(config['cache-expire']) * 60
+    except ValueError:
+        logger.critical('ERROR: cache-expire must be an integer (minutes): %s', config['cache-expire'])
+        expmin = 600
+    expage = time.time() - expmin
+    for entry in os.listdir(cachedir):
+        if entry.find('.mbx') <= 0 and entry.find('.lookup') <= 0:
+            continue
+        st = os.stat(os.path.join(cachedir, entry))
+        if st.st_mtime < expage:
+            logger.debug('Cleaning up cache: %s', entry)
+            os.unlink(os.path.join(cachedir, entry))
+    _CACHE_CLEANED = True
+    return cachedir
 
 
 def get_user_config():

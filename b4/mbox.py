@@ -13,6 +13,7 @@ import email.message
 import email.utils
 import re
 import time
+import shutil
 
 import urllib.parse
 import xml.etree.ElementTree
@@ -53,6 +54,20 @@ def get_pi_thread_by_url(t_mbx_url, savefile):
 def get_pi_thread_by_msgid(msgid, config, cmdargs):
     wantname = cmdargs.wantname
     outdir = cmdargs.outdir
+    if wantname:
+        savefile = os.path.join(outdir, wantname)
+    else:
+        # Save it into msgid.mbox
+        savefile = '%s.t.mbx' % msgid
+        savefile = os.path.join(outdir, savefile)
+
+    cachedir = b4.get_cache_dir()
+    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(msgid))
+    if os.path.exists(cachefile) and not cmdargs.nocache:
+        logger.debug('Using cached copy: %s', cachefile)
+        shutil.copyfile(cachefile, savefile)
+        return savefile
+
     # Grab the head from lore, to see where we are redirected
     midmask = config['midmask'] % msgid
     logger.info('Looking up %s', midmask)
@@ -64,12 +79,6 @@ def get_pi_thread_by_msgid(msgid, config, cmdargs):
     canonical = resp.headers['Location'].rstrip('/')
     resp.close()
     t_mbx_url = '%s/t.mbox.gz' % canonical
-    if wantname:
-        savefile = os.path.join(outdir, wantname)
-    else:
-        # Save it into msgid.mbox
-        savefile = '%s.t.mbx' % msgid
-        savefile = os.path.join(outdir, savefile)
 
     loc = urllib.parse.urlparse(t_mbx_url)
     if cmdargs.useproject:
@@ -87,6 +96,7 @@ def get_pi_thread_by_msgid(msgid, config, cmdargs):
     in_mbx.close()
     out_mbx.close()
     os.unlink(in_mbxf)
+    shutil.copyfile(savefile, cachefile)
     return savefile
 
 

@@ -71,6 +71,8 @@ def cmd():
     cmd_mbox_common_opts(sp_am)
     sp_am.add_argument('-v', '--use-version', dest='wantver', type=int, default=None,
                        help='Get a specific version of the patch/series')
+    sp_am.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
+                       help='Do not use local cache')
     sp_am.add_argument('-t', '--apply-cover-trailers', dest='covertrailers', action='store_true', default=False,
                        help='Apply trailers sent to the cover letter to all patches')
     sp_am.add_argument('-T', '--no-add-trailers', dest='noaddtrailers', action='store_true', default=False,

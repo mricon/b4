@@ -172,6 +172,10 @@ Default configuration, with explanations::
       # git-config for gpg.program; and if that's not set,
       # we'll use "gpg" and hope for the best
       gpgbin = None
+      #
+      # How long to keep downloaded threads in cache (minutes)?
+      cache-expire = 10
+
 
 SUPPORT
 -------
