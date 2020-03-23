@@ -201,12 +201,12 @@ class LoreMailbox:
             else:
                 pmsg = self.msgid_map[fmsg.in_reply_to]
 
-            trailers = fmsg.trailers
+            trailers = set(fmsg.trailers)
             lvl = 1
             while True:
                 logger.debug('%sParent: %s', ' ' * lvl, pmsg.full_subject)
                 logger.debug('%sTrailers:', ' ' * lvl)
-                for trailer in set(trailers):
+                for trailer in trailers:
                     logger.debug('%s%s: %s', ' ' * (lvl+1), trailer[0], trailer[1])
                 found = False
                 if lser.revision != pmsg.revision:
@@ -214,14 +214,14 @@ class LoreMailbox:
                 for lmsg in lser.patches:
                     if lmsg is not None and lmsg.msgid == pmsg.msgid:
                         # Confirmed, this is our parent patch
-                        lmsg.followup_trailers += trailers
+                        lmsg.followup_trailers.update(trailers)
                         found = True
                         break
                 if found:
                     break
                 elif pmsg.in_reply_to and pmsg.in_reply_to in self.msgid_map:
                     lvl += 1
-                    trailers += pmsg.trailers
+                    trailers.update(pmsg.trailers)
                     pmsg = self.msgid_map[pmsg.in_reply_to]
                 else:
                     break
@@ -395,11 +395,11 @@ class LoreSeries:
         for lmsg in self.patches[1:]:
             if lmsg is not None:
                 if self.has_cover and covertrailers and self.patches[0].followup_trailers:
-                    lmsg.followup_trailers += self.patches[0].followup_trailers
+                    lmsg.followup_trailers.update(self.patches[0].followup_trailers)
                 if addmysob:
-                    lmsg.followup_trailers.append(('Signed-off-by', '%s <%s>' % (usercfg['name'], usercfg['email'])))
+                    lmsg.followup_trailers.add(('Signed-off-by', '%s <%s>' % (usercfg['name'], usercfg['email'])))
                 if addlink:
-                    lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid))
+                    lmsg.followup_trailers.add(('Link', linkmask % lmsg.msgid))
 
                 if attpolicy != 'off':
                     lore_lookup = False
@@ -510,8 +510,8 @@ class LoreMessage:
         self.body = None
         self.has_diff = False
         self.has_diffstat = False
-        self.trailers = list()
-        self.followup_trailers = list()
+        self.trailers = set()
+        self.followup_trailers = set()
 
         self.attestation = None
 
@@ -580,7 +580,7 @@ class LoreMessage:
             matches = re.findall(r'^\s*Fixes:[ \t]+([a-f0-9]+\s+\(.*\))\s*$', self.body, re.MULTILINE)
             if matches:
                 for tvalue in matches:
-                    self.trailers.append(('Fixes', tvalue))
+                    self.trailers.add(('Fixes', tvalue))
 
             # Do we have something that looks like a person-trailer?
             matches = re.findall(r'^\s*([\w-]+):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
@@ -622,7 +622,7 @@ class LoreMessage:
                             logger.debug('  trailer fuzzy name match')
                             tmatch = True
                     if tmatch:
-                        self.trailers.append((tname, tvalue))
+                        self.trailers.add((tname, tvalue))
                     else:
                         logger.debug('  ignoring "%s: %s" due to from mismatch (from: %s %s)', tname, tvalue,
                                      self.fromname, self.fromemail)
@@ -783,7 +783,8 @@ class LoreMessage:
 
                 # Now we add mix-in trailers
                 btrailers.reverse()
-                trailers = btrailers + self.followup_trailers
+                trailers = set(self.followup_trailers)
+                trailers.update(set(btrailers))
                 added = list()
                 if trailer_order is None:
                     trailer_order = DEFAULT_TRAILER_ORDER
