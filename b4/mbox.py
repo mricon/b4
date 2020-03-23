@@ -128,8 +128,10 @@ def mbox_to_am(mboxfile, config, cmdargs):
         slug = wantname
         if wantname.find('.') > -1:
             slug = '.'.join(wantname.split('.')[:-1])
+        gitbranch = slug
     else:
-        slug = lser.get_slug()
+        slug = lser.get_slug(extended=True)
+        gitbranch = lser.get_slug(extended=False)
 
     am_filename = os.path.join(outdir, '%s.mbx' % slug)
     am_cover = os.path.join(outdir, '%s.cover' % slug)
@@ -193,11 +195,11 @@ def mbox_to_am(mboxfile, config, cmdargs):
 
     if base_commit:
         logger.critical(' Base: %s', base_commit)
-        logger.critical('       git checkout -b %s %s', slug, base_commit)
+        logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
         logger.critical('       git am %s', am_filename)
     else:
         logger.critical(' Base: not found, sorry')
-        logger.critical('       git checkout -b %s master', slug)
+        logger.critical('       git checkout -b %s master', gitbranch)
         logger.critical('       git am %s', am_filename)
 
     am_mbx.close()

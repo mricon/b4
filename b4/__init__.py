@@ -337,7 +337,7 @@ class LoreSeries:
             self.patches[lmsg.counter] = lmsg
         self.complete = not (None in self.patches[1:])
 
-    def get_slug(self):
+    def get_slug(self, extended=False):
         # Find the first non-None entry
         lmsg = None
         for lmsg in self.patches:
@@ -349,8 +349,14 @@ class LoreSeries:
 
         prefix = lmsg.date.strftime('%Y%m%d')
         authorline = email.utils.getaddresses(lmsg.msg.get_all('from', []))[0]
-        author = re.sub(r'\W+', '_', authorline[1]).strip('_').lower()
-        slug = '%s_%s' % (prefix, author)
+        if extended:
+            local = authorline[1].split('@')[0]
+            unsafe = '%s_%s_%s' % (prefix, local, lmsg.subject)
+            slug = re.sub(r'\W+', '_', unsafe).strip('_').lower()
+        else:
+            author = re.sub(r'\W+', '_', authorline[1]).strip('_').lower()
+            slug = '%s_%s' % (prefix, author)
+
         if self.revision != 1:
             slug = 'v%s_%s' % (self.revision, slug)
 
