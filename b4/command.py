@@ -55,7 +55,7 @@ def cmd():
         description='A tool to work with public-inbox patches',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument('--version', action='version', version=b4.VERSION)
+    parser.add_argument('--version', action='version', version=b4.__VERSION__)
     parser.add_argument('-d', '--debug', action='store_true', default=False,
                         help='Add more debugging info to the output')
     parser.add_argument('-q', '--quiet', action='store_true', default=False,

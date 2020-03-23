@@ -21,7 +21,7 @@ from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
-VERSION = '0.3.4-dev'
+__VERSION__ = '0.3.4-dev'
 ATTESTATION_FORMAT_VER = '0.1'
 
 logger = logging.getLogger('b4')
@@ -1323,7 +1323,7 @@ def get_requests_session():
     global REQSESSION
     if REQSESSION is None:
         REQSESSION = requests.session()
-        REQSESSION.headers.update({'User-Agent': 'b4/%s' % VERSION})
+        REQSESSION.headers.update({'User-Agent': 'b4/%s' % __VERSION__})
     return REQSESSION
 
 
