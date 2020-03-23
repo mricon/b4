@@ -31,6 +31,7 @@ setup(
     install_requires=[
         'requests'
     ],
+    python_requires='>=3.6',
     entry_points={
         'console_scripts': [
             'b4=b4.command:cmd'
