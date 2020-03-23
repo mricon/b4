@@ -5,10 +5,10 @@ Work with patches in a public-inbox archive
 -------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2020-03-16
+:Date:      2020-03-23
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.3.0
+:Version:   0.3.4
 :Manual section: 5
 
 SYNOPSIS

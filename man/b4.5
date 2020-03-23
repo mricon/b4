@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2020-03-16" "0.3.0" ""
+.TH B4 5 "2020-03-23" "0.3.4" ""
 .SH NAME
 B4 \- Work with patches in a public-inbox archive
 .
@@ -239,6 +239,9 @@ Default configuration, with explanations:
    # git\-config for gpg.program; and if that\(aqs not set,
    # we\(aqll use "gpg" and hope for the best
    gpgbin = None
+   #
+   # How long to keep downloaded threads in cache (minutes)?
+   cache\-expire = 10
 .ft P
 .fi
 .UNINDENT
