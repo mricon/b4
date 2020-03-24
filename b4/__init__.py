@@ -135,7 +135,7 @@ class LoreMailbox:
             return self.msgid_map[msgid]
         return None
 
-    def get_series(self, revision=None):
+    def get_series(self, revision=None, sloppytrailers=False):
         if revision is None:
             if not len(self.series):
                 return None
@@ -201,7 +201,9 @@ class LoreMailbox:
             else:
                 pmsg = self.msgid_map[fmsg.in_reply_to]
 
-            trailers = set(fmsg.trailers)
+            trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
+            for tname, tvalue in mismatches:
+                lser.trailer_mismatches.add((tvalue, fmsg.fromname, fmsg.fromemail))
             lvl = 1
             while True:
                 logger.debug('%sParent: %s', ' ' * lvl, pmsg.full_subject)
@@ -293,6 +295,7 @@ class LoreSeries:
         self.expected = expected
         self.patches = [None] * (expected+1)
         self.followups = list()
+        self.trailer_mismatches = set()
         self.complete = False
         self.has_cover = False
 
@@ -584,48 +587,59 @@ class LoreMessage:
 
             # Do we have something that looks like a person-trailer?
             matches = re.findall(r'^\s*([\w-]+):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
+            # These are commonly part of patch/commit metadata
+            badtrailers = ('from', 'author')
             if matches:
-                # Basic sanity checking -- the trailer must match the name or the email
-                # in the From header, to avoid false-positive trailer parsing errors
                 for tname, tvalue in matches:
-                    tmatch = False
-                    namedata = email.utils.getaddresses([tvalue])[0]
-                    tfrom = re.sub(r'\+[^@]+@', '@', namedata[1].lower())
-                    hfrom = re.sub(r'\+[^@]+@', '@', self.fromemail.lower())
-                    tlname = namedata[0].lower()
-                    hlname = self.fromname.lower()
-                    tchunks = tfrom.split('@')
-                    hchunks = hfrom.split('@')
-                    if tfrom == hfrom:
-                        logger.debug('  trailer exact email match')
-                        tmatch = True
-                    # See if domain part of one of the addresses is a subset of the other one,
-                    # which should match cases like @linux.intel.com and @intel.com
-                    elif (len(tchunks) == 2 and len(hchunks) == 2
-                          and tchunks[0] == hchunks[0]
-                          and (tchunks[1].find(hchunks[1]) >= 0 or hchunks[1].find(tchunks[1]) >= 0)):
-                        logger.debug('  trailer fuzzy email match')
-                        tmatch = True
-                    # Does the name match, at least?
-                    elif tlname == hlname:
-                        logger.debug('  trailer exact name match')
-                        tmatch = True
-                    # Finally, see if the header From has a comma in it and try to find all
-                    # parts in the trailer name
-                    elif hlname.find(',') > 0:
-                        nmatch = True
-                        for nchunk in hlname.split(','):
-                            if hlname.find(nchunk.strip()) < 0:
-                                nmatch = False
-                                break
-                        if nmatch:
-                            logger.debug('  trailer fuzzy name match')
-                            tmatch = True
-                    if tmatch:
+                    if tname.lower() not in badtrailers:
                         self.trailers.add((tname, tvalue))
-                    else:
-                        logger.debug('  ignoring "%s: %s" due to from mismatch (from: %s %s)', tname, tvalue,
-                                     self.fromname, self.fromemail)
+
+    def get_trailers(self, sloppy=False):
+        mismatches = set()
+        if sloppy:
+            return set(self.trailers), mismatches
+
+        trailers = set()
+        for tname, tvalue in self.trailers:
+            tmatch = False
+            namedata = email.utils.getaddresses([tvalue])[0]
+            tfrom = re.sub(r'\+[^@]+@', '@', namedata[1].lower())
+            hfrom = re.sub(r'\+[^@]+@', '@', self.fromemail.lower())
+            tlname = namedata[0].lower()
+            hlname = self.fromname.lower()
+            tchunks = tfrom.split('@')
+            hchunks = hfrom.split('@')
+            if tfrom == hfrom:
+                logger.debug('  trailer exact email match')
+                tmatch = True
+            # See if domain part of one of the addresses is a subset of the other one,
+            # which should match cases like @linux.intel.com and @intel.com
+            elif (len(tchunks) == 2 and len(hchunks) == 2
+                  and tchunks[0] == hchunks[0]
+                  and (tchunks[1].find(hchunks[1]) >= 0 or hchunks[1].find(tchunks[1]) >= 0)):
+                logger.debug('  trailer fuzzy email match')
+                tmatch = True
+            # Does the name match, at least?
+            elif tlname == hlname:
+                logger.debug('  trailer exact name match')
+                tmatch = True
+            # Finally, see if the header From has a comma in it and try to find all
+            # parts in the trailer name
+            elif hlname.find(',') > 0:
+                nmatch = True
+                for nchunk in hlname.split(','):
+                    if hlname.find(nchunk.strip()) < 0:
+                        nmatch = False
+                        break
+                if nmatch:
+                    logger.debug('  trailer fuzzy name match')
+                    tmatch = True
+            if tmatch:
+                trailers.add((tname, tvalue))
+            else:
+                mismatches.add((tname, tvalue))
+
+        return trailers, mismatches
 
     def __repr__(self):
         out = list()

@@ -113,7 +113,7 @@ def mbox_to_am(mboxfile, config, cmdargs):
     for key, msg in mbx.items():
         lmbx.add_message(msg)
 
-    lser = lmbx.get_series(revision=wantver)
+    lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers)
     if lser is None and wantver is None:
         logger.critical('No patches found.')
         return
@@ -156,6 +156,13 @@ def mbox_to_am(mboxfile, config, cmdargs):
         for trailer in lser.patches[0].followup_trailers:
             logger.critical('      %s: %s', trailer[0], trailer[1])
         logger.critical('NOTE: Rerun with -t to apply them to all patches')
+    if len(lser.trailer_mismatches):
+        logger.critical('---')
+        logger.critical('NOTE: some trailers ignored due to from/email mismatches:')
+        for tvalue, fname, femail in lser.trailer_mismatches:
+            logger.critical('    ! Trailer: %s', tvalue)
+            logger.critical('         From: %s <%s>', fname, femail)
+        logger.critical('NOTE: Rerun with -S to apply them anyway')
 
     logger.critical('---')
     if not lser.complete:
