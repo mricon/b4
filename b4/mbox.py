@@ -385,6 +385,9 @@ def main(cmdargs):
             # Infer the project name from the URL, if possible
             if chunks[0] != 'r':
                 cmdargs.useproject = chunks[0]
+        # Handle special case when msgid is prepended by id: or rfc822msgid:
+        if msgid.find('id:') >= 0:
+            msgid = re.sub(r'^\w*id:', '', msgid)
 
         mboxfile = get_pi_thread_by_msgid(msgid, config, cmdargs)
         if mboxfile is None:
