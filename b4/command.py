@@ -75,6 +75,8 @@ def cmd():
                        help='Get a specific version of the patch/series')
     sp_am.add_argument('-t', '--apply-cover-trailers', dest='covertrailers', action='store_true', default=False,
                        help='Apply trailers sent to the cover letter to all patches')
+    sp_am.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
+                       help='Apply trailers without email address match checking')
     sp_am.add_argument('-T', '--no-add-trailers', dest='noaddtrailers', action='store_true', default=False,
                        help='Do not add or sort any trailers')
     sp_am.add_argument('-s', '--add-my-sob', dest='addmysob', action='store_true', default=False,
