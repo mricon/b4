@@ -572,6 +572,12 @@ class LoreMessage:
             if diffre.search(payload):
                 self.body = payload
 
+        if self.body is None:
+            # Woah, we didn't find any usable parts
+            logger.debug('  No plain or patch parts found in message')
+            logger.info('  Not plaintext: %s', self.full_subject)
+            return
+
         if diffstatre.search(self.body):
             self.has_diffstat = True
         if diffre.search(self.body):
