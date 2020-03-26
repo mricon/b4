@@ -5,6 +5,8 @@ import subprocess
 import logging
 import hashlib
 import re
+import sys
+import gzip
 import os
 import fnmatch
 import email.utils
@@ -13,6 +15,8 @@ import requests
 import urllib.parse
 import datetime
 import time
+import shutil
+import mailbox
 
 from pathlib import Path
 from tempfile import mkstemp
@@ -516,6 +520,13 @@ class LoreMessage:
         self.trailers = set()
         self.followup_trailers = set()
 
+        # These are populated by pr
+        self.pr_base_commit = None
+        self.pr_repo = None
+        self.pr_ref = None
+        self.pr_tip_commit = None
+        self.pr_remote_tip_commit = None
+
         self.attestation = None
 
         self.msgid = LoreMessage.get_clean_msgid(self.msg)
@@ -607,6 +618,10 @@ class LoreMessage:
 
         trailers = set()
         for tname, tvalue in self.trailers:
+            if tname.lower() in ('fixes',):
+                trailers.add((tname, tvalue))
+                continue
+
             tmatch = False
             namedata = email.utils.getaddresses([tvalue])[0]
             tfrom = re.sub(r'\+[^@]+@', '@', namedata[1].lower())
@@ -678,8 +693,7 @@ class LoreMessage:
 
     @staticmethod
     def clean_header(hdrval):
-        uval = hdrval.replace('\n', ' ')
-        new_hdrval = re.sub(r'\s+', ' ', uval)
+        new_hdrval = re.sub(r'\n?\s+', ' ', str(hdrval))
         return new_hdrval.strip()
 
     @staticmethod
@@ -1354,6 +1368,40 @@ def get_requests_session():
     return REQSESSION
 
 
+def get_msgid_from_stdin():
+    if not sys.stdin.isatty():
+        message = email.message_from_string(sys.stdin.read())
+        return message.get('Message-ID', None)
+    logger.error('Error: pipe a message or pass msgid as parameter')
+    sys.exit(1)
+
+
+def get_msgid(cmdargs):
+    if not cmdargs.msgid:
+        logger.debug('Getting Message-ID from stdin')
+        msgid = get_msgid_from_stdin()
+        if msgid is None:
+            logger.error('Unable to find a valid message-id in stdin.')
+            sys.exit(1)
+    else:
+        msgid = cmdargs.msgid
+
+    msgid = msgid.strip('<>')
+    # Handle the case when someone pastes a full URL to the message
+    matches = re.search(r'^https?://[^/]+/([^/]+)/([^/]+@[^/]+)', msgid, re.IGNORECASE)
+    if matches:
+        chunks = matches.groups()
+        msgid = chunks[1]
+        # Infer the project name from the URL, if possible
+        if chunks[0] != 'r':
+            cmdargs.useproject = chunks[0]
+    # Handle special case when msgid is prepended by id: or rfc822msgid:
+    if msgid.find('id:') >= 0:
+        msgid = re.sub(r'^\w*id:', '', msgid)
+
+    return msgid
+
+
 def save_strict_thread(in_mbx, out_mbx, msgid):
     want = {msgid}
     got = set()
@@ -1392,3 +1440,70 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
 
     if len(in_mbx) > len(out_mbx):
         logger.info('Reduced thread to strict matches only (%s->%s)', len(in_mbx), len(out_mbx))
+
+
+def get_pi_thread_by_url(t_mbx_url, savefile):
+    session = get_requests_session()
+    resp = session.get(t_mbx_url)
+    if resp.status_code != 200:
+        logger.critical('Server returned an error: %s', resp.status_code)
+        return None
+    t_mbox = gzip.decompress(resp.content)
+    resp.close()
+    if not len(t_mbox):
+        logger.critical('No messages found for that query')
+        return None
+    with open(savefile, 'wb') as fh:
+        logger.debug('Saving %s', savefile)
+        fh.write(t_mbox)
+    return savefile
+
+
+def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
+    config = get_main_config()
+    cachedir = get_cache_dir()
+    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(msgid))
+    if os.path.exists(cachefile) and not nocache:
+        logger.debug('Using cached copy: %s', cachefile)
+        shutil.copyfile(cachefile, savefile)
+        return savefile
+
+    # Grab the head from lore, to see where we are redirected
+    midmask = config['midmask'] % msgid
+    logger.info('Looking up %s', midmask)
+    session = get_requests_session()
+    resp = session.head(midmask)
+    if resp.status_code < 300 or resp.status_code > 400:
+        logger.critical('That message-id is not known.')
+        return None
+    canonical = resp.headers['Location'].rstrip('/')
+    resp.close()
+    t_mbx_url = '%s/t.mbox.gz' % canonical
+
+    loc = urllib.parse.urlparse(t_mbx_url)
+    if useproject:
+        logger.debug('Modifying query to use %s', useproject)
+        t_mbx_url = '%s://%s/%s/%s/t.mbox.gz' % (
+            loc.scheme, loc.netloc, useproject, msgid)
+        logger.debug('Will query: %s', t_mbx_url)
+    logger.critical('Grabbing thread from %s', loc.netloc)
+    in_mbxf = get_pi_thread_by_url(t_mbx_url, '%s-loose' % savefile)
+    if not in_mbxf:
+        return None
+    in_mbx = mailbox.mbox(in_mbxf)
+    out_mbx = mailbox.mbox(savefile)
+    save_strict_thread(in_mbx, out_mbx, msgid)
+    in_mbx.close()
+    out_mbx.close()
+    os.unlink(in_mbxf)
+    shutil.copyfile(savefile, cachefile)
+    return savefile
+
+
+def git_format_patches(gitdir, start, end, reroll=None):
+    gitargs = ['format-patch', '--stdout']
+    if reroll is not None:
+        gitargs += ['-v', str(reroll)]
+    gitargs += ['%s..%s' % (start, end)]
+    ecode, out = git_run_command(gitdir, gitargs)
+    return ecode, out

@@ -13,11 +13,9 @@ import email.message
 import email.utils
 import re
 import time
-import shutil
 
 import urllib.parse
 import xml.etree.ElementTree
-import gzip
 
 import b4
 
@@ -26,81 +24,8 @@ from tempfile import mkstemp
 logger = b4.logger
 
 
-def get_msgid_from_stdin():
-    if not sys.stdin.isatty():
-        message = email.message_from_string(sys.stdin.read())
-        return message.get('Message-ID', None)
-    logger.error('Error: pipe a message or pass msgid as parameter')
-    sys.exit(1)
-
-
-def get_pi_thread_by_url(t_mbx_url, savefile):
-    session = b4.get_requests_session()
-    resp = session.get(t_mbx_url)
-    if resp.status_code != 200:
-        logger.critical('Server returned an error: %s', resp.status_code)
-        return None
-    t_mbox = gzip.decompress(resp.content)
-    resp.close()
-    if not len(t_mbox):
-        logger.critical('No messages found for that query')
-        return None
-    with open(savefile, 'wb') as fh:
-        logger.debug('Saving %s', savefile)
-        fh.write(t_mbox)
-    return savefile
-
-
-def get_pi_thread_by_msgid(msgid, config, cmdargs):
-    wantname = cmdargs.wantname
-    outdir = cmdargs.outdir
-    if wantname:
-        savefile = os.path.join(outdir, wantname)
-    else:
-        # Save it into msgid.mbox
-        savefile = '%s.t.mbx' % msgid
-        savefile = os.path.join(outdir, savefile)
-
-    cachedir = b4.get_cache_dir()
-    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(msgid))
-    if os.path.exists(cachefile) and not cmdargs.nocache:
-        logger.debug('Using cached copy: %s', cachefile)
-        shutil.copyfile(cachefile, savefile)
-        return savefile
-
-    # Grab the head from lore, to see where we are redirected
-    midmask = config['midmask'] % msgid
-    logger.info('Looking up %s', midmask)
-    session = b4.get_requests_session()
-    resp = session.head(midmask)
-    if resp.status_code < 300 or resp.status_code > 400:
-        logger.critical('That message-id is not known.')
-        return None
-    canonical = resp.headers['Location'].rstrip('/')
-    resp.close()
-    t_mbx_url = '%s/t.mbox.gz' % canonical
-
-    loc = urllib.parse.urlparse(t_mbx_url)
-    if cmdargs.useproject:
-        logger.debug('Modifying query to use %s', cmdargs.useproject)
-        t_mbx_url = '%s://%s/%s/%s/t.mbox.gz' % (
-            loc.scheme, loc.netloc, cmdargs.useproject, msgid)
-        logger.debug('Will query: %s', t_mbx_url)
-    logger.critical('Grabbing thread from %s', loc.netloc)
-    in_mbxf = get_pi_thread_by_url(t_mbx_url, '%s-loose' % savefile)
-    if not in_mbxf:
-        return None
-    in_mbx = mailbox.mbox(in_mbxf)
-    out_mbx = mailbox.mbox(savefile)
-    b4.save_strict_thread(in_mbx, out_mbx, msgid)
-    in_mbx.close()
-    out_mbx.close()
-    os.unlink(in_mbxf)
-    shutil.copyfile(savefile, cachefile)
-    return savefile
-
-
-def mbox_to_am(mboxfile, config, cmdargs):
+def mbox_to_am(mboxfile, cmdargs):
+    config = b4.get_main_config()
     outdir = cmdargs.outdir
     wantver = cmdargs.wantver
     wantname = cmdargs.wantname
@@ -342,7 +267,7 @@ def get_newest_series(mboxfile):
             continue
         t_mbx_url = '%st.mbox.gz' % link
         savefile = mkstemp('b4-get')[1]
-        nt_mboxfile = get_pi_thread_by_url(t_mbx_url, savefile)
+        nt_mboxfile = b4.get_pi_thread_by_url(t_mbx_url, savefile)
         nt_mbx = mailbox.mbox(nt_mboxfile)
         # Append all of these to the existing mailbox
         new_adds = 0
@@ -371,32 +296,18 @@ def main(cmdargs):
         # Force nocache mode
         cmdargs.nocache = True
 
-    config = b4.get_main_config()
-
     if not cmdargs.localmbox:
-        if not cmdargs.msgid:
-            logger.debug('Getting Message-ID from stdin')
-            msgid = get_msgid_from_stdin()
-            if msgid is None:
-                logger.error('Unable to find a valid message-id in stdin.')
-                sys.exit(1)
+        msgid = b4.get_msgid(cmdargs)
+        wantname = cmdargs.wantname
+        outdir = cmdargs.outdir
+        if wantname:
+            savefile = os.path.join(outdir, wantname)
         else:
-            msgid = cmdargs.msgid
+            # Save it into msgid.mbox
+            savefile = '%s.t.mbx' % msgid
+            savefile = os.path.join(outdir, savefile)
 
-        msgid = msgid.strip('<>')
-        # Handle the case when someone pastes a full URL to the message
-        matches = re.search(r'^https?://[^/]+/([^/]+)/([^/]+@[^/]+)', msgid, re.IGNORECASE)
-        if matches:
-            chunks = matches.groups()
-            msgid = chunks[1]
-            # Infer the project name from the URL, if possible
-            if chunks[0] != 'r':
-                cmdargs.useproject = chunks[0]
-        # Handle special case when msgid is prepended by id: or rfc822msgid:
-        if msgid.find('id:') >= 0:
-            msgid = re.sub(r'^\w*id:', '', msgid)
-
-        mboxfile = get_pi_thread_by_msgid(msgid, config, cmdargs)
+        mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
         if mboxfile is None:
             return
 
@@ -414,7 +325,7 @@ def main(cmdargs):
         get_newest_series(threadmbox)
 
     if cmdargs.subcmd == 'am':
-        mbox_to_am(threadmbox, config, cmdargs)
+        mbox_to_am(threadmbox, cmdargs)
         if not cmdargs.localmbox:
             os.unlink(threadmbox)
     else:

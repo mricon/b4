@@ -50,6 +50,11 @@ def cmd_verify(cmdargs):
     b4.attest.verify_attestation(cmdargs)
 
 
+def cmd_pr(cmdargs):
+    import b4.pr
+    b4.pr.main(cmdargs)
+
+
 def cmd():
     parser = argparse.ArgumentParser(
         description='A tool to work with public-inbox patches',
@@ -111,6 +116,22 @@ def cmd():
                         default=False, help='Ignore mismatches between From: and PGP uid data')
     sp_ver.add_argument('mbox', nargs=1, help='Mbox containing patches to attest')
     sp_ver.set_defaults(func=cmd_verify)
+
+    # b4 pr
+    sp_pr = subparsers.add_parser('pr', help='Fetch a pull request found in a message ID')
+    sp_pr.add_argument('-g', '--gitdir', default=None,
+                       help='Operate on this git tree instead of current dir')
+    sp_pr.add_argument('-b', '--branch', default=None,
+                       help='Check out FETCH_HEAD into this branch after fetching')
+    sp_pr.add_argument('-c', '--check', action='store_true', default=False,
+                       help='Check if pull request has already been applied')
+    sp_pr.add_argument('-e', '--explode', action='store_true', default=False,
+                       help='Convert a pull request into an mbox full of patches')
+    sp_pr.add_argument('-o', '--output-mbox', dest='outmbox', default=None,
+                       help='Save exploded messages into this mailbox (default: msgid.mbx)')
+    sp_pr.add_argument('msgid', nargs='?',
+                       help='Message ID to process, or pipe a raw message')
+    sp_pr.set_defaults(func=cmd_pr)
 
     cmdargs = parser.parse_args()
 
