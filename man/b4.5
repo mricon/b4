@@ -95,6 +95,9 @@ Filename to name the mbox file
 .BI \-m \ LOCALMBOX\fP,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
 Instead of grabbing a thread from lore, process this
 mbox file
+.TP
+.B \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
 .UNINDENT
 .UNINDENT
 .sp
@@ -131,11 +134,17 @@ Filename to name the mbox file
 Instead of grabbing a thread from lore, process this
 mbox file
 .TP
+.B \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
+.TP
 .BI \-v \ WANTVER\fP,\fB \ \-\-use\-version \ WANTVER
 Get a specific version of the patch/series
 .TP
 .B \-t\fP,\fB  \-\-apply\-cover\-trailers
 Apply trailers sent to the cover letter to all patches
+.TP
+.B \-S\fP,\fB  \-\-sloppy\-trailers
+Apply trailers without email address match checking
 .TP
 .B \-T\fP,\fB  \-\-no\-add\-trailers
 Do not add or sort any trailers
