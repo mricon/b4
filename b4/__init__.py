@@ -1462,7 +1462,10 @@ def get_pi_thread_by_url(t_mbx_url, savefile):
 def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     config = get_main_config()
     cachedir = get_cache_dir()
-    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(msgid))
+    base = msgid
+    if useproject:
+        base = '%s-%s' % (useproject, msgid)
+    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(base))
     if os.path.exists(cachefile) and not nocache:
         logger.debug('Using cached copy: %s', cachefile)
         shutil.copyfile(cachefile, savefile)
