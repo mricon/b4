@@ -607,6 +607,11 @@ class LoreMessage:
 
         trailers = set()
         for tname, tvalue in self.trailers:
+            # Don't do from-matching on certain trailers like Fixes:
+            if tname.lower() in ('fixes',):
+                trailers.add((tname, tvalue))
+                continue
+
             tmatch = False
             namedata = email.utils.getaddresses([tvalue])[0]
             tfrom = re.sub(r'\+[^@]+@', '@', namedata[1].lower())
