@@ -13,9 +13,8 @@ import mailbox
 
 from datetime import timedelta
 from tempfile import mkstemp
-from email import utils
+from email import utils, charset
 
-from email import charset
 charset.add_charset('utf-8', None)
 
 logger = b4.logger
@@ -121,7 +120,7 @@ def parse_pr_data(msg):
 
 def fetch_remote(gitdir, lmsg, branch=None):
     # Do we know anything about this base commit?
-    if not git_commit_exists(gitdir, lmsg.pr_base_commit):
+    if lmsg.pr_base_commit and not git_commit_exists(gitdir, lmsg.pr_base_commit):
         logger.critical('ERROR: git knows nothing about commit %s', lmsg.pr_base_commit)
         logger.critical('       Are you running inside a git checkout and is it up-to-date?')
         return 1
@@ -176,16 +175,17 @@ def explode(gitdir, lmsg, savefile):
     embx = mailbox.mbox(savefile)
     cover = lmsg.get_am_message()
     # Add base-commit to the cover
-    body = cover.get_payload()
-    body = '%s\nbase-commit: %s\n' % (body, lmsg.pr_base_commit)
+    body = cover.get_payload(decode=True)
+    body = '%s\nbase-commit: %s\n' % (body.decode('utf-8'), lmsg.pr_base_commit)
     cover.set_payload(body)
-    embx.add(cover.as_bytes(policy=b4.emlpolicy))
+    bout = cover.as_string(policy=b4.emlpolicy)
+    embx.add(bout.encode('utf-8'))
 
     # Set the pull request message as cover letter
     for msg in pmbx:
         # Move the original From and Date into the body
-        body = msg.get_payload()
-        body = 'From: %s\nDate: %s\n\n%s' % (msg['from'], msg['date'], body)
+        body = msg.get_payload(decode=True)
+        body = 'From: %s\nDate: %s\n\n%s' % (msg['from'], msg['date'], body.decode('utf-8'))
         msg.set_payload(body)
         msubj = b4.LoreSubject(msg['subject'])
         msg.replace_header('Subject', msubj.full_subject)
@@ -210,10 +210,12 @@ def explode(gitdir, lmsg, savefile):
         msg.add_header('X-Mailer', 'b4-explode/%s' % b4.__VERSION__)
         logger.info('  %s', msubj.full_subject)
         msg.set_charset('utf-8')
-        embx.add(msg.as_bytes(policy=b4.emlpolicy))
+        bout = msg.as_string(policy=b4.emlpolicy)
+        embx.add(bout.encode('utf-8'))
     logger.info('---')
     logger.info('Wrote %s patches into %s', len(pmbx), savefile)
     pmbx.close()
+    os.unlink(patchmbx)
     embx.close()
     sys.exit(0)
 
@@ -243,10 +245,12 @@ def main(cmdargs):
 
     gitdir = cmdargs.gitdir
     if not lmsg.pr_tip_commit:
-        logger.critical('ERROR: could not find tip commit id')
-        sys.exit(1)
+        lmsg.pr_tip_commit = lmsg.pr_remote_tip_commit
 
     if cmdargs.explode:
+        if not lmsg.pr_base_commit:
+            logger.critical('ERROR: No base-commit info provided in the message.')
+            sys.exit(1)
         savefile = cmdargs.outmbox
         if savefile is None:
             savefile = '%s.mbx' % lmsg.msgid
