@@ -594,7 +594,7 @@ class LoreMessage:
             # Do we have something that looks like a person-trailer?
             matches = re.findall(r'^\s*([\w-]+):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
             # These are commonly part of patch/commit metadata
-            badtrailers = ('from', 'author')
+            badtrailers = ('from', 'author', 'email')
             if matches:
                 for tname, tvalue in matches:
                     if tname.lower() not in badtrailers:
@@ -683,8 +683,7 @@ class LoreMessage:
 
     @staticmethod
     def clean_header(hdrval):
-        uval = hdrval.replace('\n', ' ')
-        new_hdrval = re.sub(r'\s+', ' ', uval)
+        new_hdrval = re.sub(r'\n?\s+', ' ', str(hdrval))
         return new_hdrval.strip()
 
     @staticmethod
