@@ -61,6 +61,7 @@ optional arguments:
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this
                         mbox file
+  -C, --no-cache        Do not use local cache
 
 *Example*: b4 mbox 20200313231252.64999-1-keescook@chromium.org
 
@@ -86,10 +87,13 @@ optional arguments:
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this
                         mbox file
+  -C, --no-cache        Do not use local cache
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
   -t, --apply-cover-trailers
                         Apply trailers sent to the cover letter to all patches
+  -S, --sloppy-trailers
+                        Apply trailers without email address match checking
   -T, --no-add-trailers
                         Do not add or sort any trailers
   -s, --add-my-sob      Add your own signed-off-by to every patch
