@@ -62,7 +62,10 @@ def get_pi_thread_by_msgid(msgid, config, cmdargs):
         savefile = os.path.join(outdir, savefile)
 
     cachedir = b4.get_cache_dir()
-    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(msgid))
+    base = msgid
+    if cmdargs.useproject:
+        base = '%s-%s' % (cmdargs.useproject, msgid)
+    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(base))
     if os.path.exists(cachefile) and not cmdargs.nocache:
         logger.debug('Using cached copy: %s', cachefile)
         shutil.copyfile(cachefile, savefile)
