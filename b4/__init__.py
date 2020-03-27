@@ -21,7 +21,7 @@ from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
-__VERSION__ = '0.3.5-dev'
+__VERSION__ = '0.3.5'
 ATTESTATION_FORMAT_VER = '0.1'
 
 logger = logging.getLogger('b4')
