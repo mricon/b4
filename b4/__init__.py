@@ -817,8 +817,7 @@ class LoreMessage:
 
                 # Now we add mix-in trailers
                 btrailers.reverse()
-                trailers = set(self.followup_trailers)
-                trailers.update(set(btrailers))
+                trailers = btrailers + list(self.followup_trailers)
                 added = list()
                 if trailer_order is None:
                     trailer_order = DEFAULT_TRAILER_ORDER
