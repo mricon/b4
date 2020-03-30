@@ -133,7 +133,7 @@ def fetch_remote(gitdir, lmsg, branch=None):
     # Fetch it now
     logger.info('  Fetching %s %s', lmsg.pr_repo, lmsg.pr_ref)
     gitargs = ['fetch', lmsg.pr_repo, lmsg.pr_ref]
-    ecode, out = b4.git_run_command(None, gitargs, logstderr=True)
+    ecode, out = b4.git_run_command(gitdir, gitargs, logstderr=True)
     if ecode > 0:
         logger.critical('ERROR: Could not fetch remote:')
         logger.critical(out)
@@ -143,7 +143,7 @@ def fetch_remote(gitdir, lmsg, branch=None):
     if branch:
         gitargs = ['checkout', '-b', branch, 'FETCH_HEAD']
         logger.info('Fetched into branch %s', branch)
-        ecode, out = b4.git_run_command(None, gitargs)
+        ecode, out = b4.git_run_command(gitdir, gitargs)
         if ecode > 0:
             logger.critical('ERROR: Failed to create branch')
             logger.critical(out)
@@ -156,7 +156,9 @@ def fetch_remote(gitdir, lmsg, branch=None):
 
 def explode(gitdir, lmsg, savefile):
     # We always fetch into FETCH_HEAD when exploding
-    fetch_remote(gitdir, lmsg)
+    ecode = fetch_remote(gitdir, lmsg)
+    if ecode > 0:
+        sys.exit(ecode)
     logger.info('Generating patches starting from the base-commit')
     reroll = None
     if lmsg.revision > 1:

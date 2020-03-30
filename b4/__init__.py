@@ -1267,6 +1267,8 @@ def gpg_run_command(args, stdin=None, logstderr=False):
 def git_run_command(gitdir, args, stdin=None, logstderr=False):
     cmdargs = ['git', '--no-pager']
     if gitdir:
+        if os.path.isdir(os.path.join(gitdir, '.git')):
+            gitdir = os.path.join(gitdir, '.git')
         cmdargs += ['--git-dir', gitdir]
     cmdargs += args
 
