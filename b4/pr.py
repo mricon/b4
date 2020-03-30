@@ -184,8 +184,11 @@ def explode(gitdir, lmsg, savefile):
     # Set the pull request message as cover letter
     for msg in pmbx:
         # Move the original From and Date into the body
-        body = msg.get_payload(decode=True)
-        body = 'From: %s\nDate: %s\n\n%s' % (msg['from'], msg['date'], body.decode('utf-8'))
+        prepend = list()
+        if msg['from'] != lmsg.msg['from']:
+            prepend.append('From: %s' % msg['from'])
+        prepend.append('Date: %s' % msg['date'])
+        body = '%s\n\n%s' % ('\n'.join(prepend), msg.get_payload(decode=True).decode('utf-8'))
         msg.set_payload(body)
         msubj = b4.LoreSubject(msg['subject'])
         msg.replace_header('Subject', msubj.full_subject)
