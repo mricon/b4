@@ -693,7 +693,18 @@ class LoreMessage:
 
     @staticmethod
     def clean_header(hdrval):
-        new_hdrval = re.sub(r'\n?\s+', ' ', str(hdrval))
+        decoded = ''
+        for hstr, hcs in email.header.decode_header(hdrval):
+            if hcs is None:
+                hcs = 'utf-8'
+            try:
+                decoded += hstr.decode(hcs)
+            except LookupError:
+                # Try as utf-u
+                decoded += hstr.decode('utf-8', errors='replace')
+            except (UnicodeDecodeError, AttributeError):
+                decoded += hstr
+        new_hdrval = re.sub(r'\n?\s+', ' ', decoded)
         return new_hdrval.strip()
 
     @staticmethod

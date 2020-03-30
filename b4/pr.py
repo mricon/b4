@@ -13,7 +13,7 @@ import mailbox
 
 from datetime import timedelta
 from tempfile import mkstemp
-from email import utils, charset
+from email import utils, charset, header
 
 charset.add_charset('utf-8', None)
 
@@ -241,7 +241,8 @@ def explode(gitdir, lmsg, savefile):
         # Move the original From and Date into the body
         prepend = list()
         if msg['from'] != lmsg.msg['from']:
-            prepend.append('From: %s' % msg['from'])
+            cleanfrom = b4.LoreMessage.clean_header(msg['from'])
+            prepend.append('From: %s' % ''.join(cleanfrom))
         prepend.append('Date: %s' % msg['date'])
         body = '%s\n\n%s' % ('\n'.join(prepend), msg.get_payload(decode=True).decode('utf-8'))
         msg.set_payload(body)
