@@ -11,6 +11,7 @@ import os
 import fnmatch
 import email.utils
 import email.policy
+import email.header
 import requests
 import urllib.parse
 import datetime

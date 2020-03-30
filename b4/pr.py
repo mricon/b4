@@ -13,7 +13,7 @@ import mailbox
 
 from datetime import timedelta
 from tempfile import mkstemp
-from email import utils, charset, header
+from email import utils, charset
 
 charset.add_charset('utf-8', None)
 
@@ -129,7 +129,6 @@ def attest_fetch_head(gitdir, lmsg):
         attfail = b4.FAIL_SIMPLE
     # Is FETCH_HEAD a tag or a commit?
     htype = b4.git_get_command_lines(gitdir, ['cat-file', '-t', 'FETCH_HEAD'])
-    lsig = None
     passing = False
     out = ''
     otype = 'unknown'
@@ -224,7 +223,6 @@ def explode(gitdir, lmsg, savefile):
 
     # Fix From lines to make sure this is a valid mboxo
     out = re.sub(r'^From (?![a-f0-9]+ \w+ \w+ \d+ \d+:\d+:\d+ \d+$)', '>From ', out, 0, re.M)
-    print(out)
 
     # Save patches into a temporary file
     patchmbx = mkstemp()[1]
