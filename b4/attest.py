@@ -161,7 +161,7 @@ def verify_attestation(cmdargs):
         if ecode != 128:
             ecode = 0
         logger.critical('%s %s', attpass, lmsg.full_subject)
-        attrailers.add(attdoc.attestor.get_trailer(lmsg.fromemail))
+        attrailers.add(attdoc.lsig.attestor.get_trailer(lmsg.fromemail))
 
     logger.critical('---')
     if ecode > 0:

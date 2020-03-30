@@ -118,6 +118,55 @@ def parse_pr_data(msg):
     return lmsg
 
 
+def attest_fetch_head(gitdir, lmsg):
+    config = b4.get_main_config()
+    attpolicy = config['attestation-policy']
+    if config['attestation-checkmarks'] == 'fancy':
+        attpass = b4.PASS_FANCY
+        attfail = b4.FAIL_FANCY
+    else:
+        attpass = b4.PASS_SIMPLE
+        attfail = b4.FAIL_SIMPLE
+    # Is FETCH_HEAD a tag or a commit?
+    htype = b4.git_get_command_lines(gitdir, ['cat-file', '-t', 'FETCH_HEAD'])
+    lsig = None
+    passing = False
+    out = ''
+    otype = 'unknown'
+    if len(htype):
+        otype = htype[0]
+    if otype == 'tag':
+        ecode, out = b4.git_run_command(gitdir, ['verify-tag', '--raw', 'FETCH_HEAD'], logstderr=True)
+    elif otype == 'commit':
+        ecode, out = b4.git_run_command(gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True)
+    lsig = b4.LoreAttestationSignature(out, 'git')
+    if lsig.good and lsig.valid and lsig.trusted:
+        passing = True
+
+    out = out.strip()
+    if not len(out) and attpolicy != 'check':
+        lsig.errors.add('Remote %s is not signed!' % otype)
+
+    if passing:
+        trailer = lsig.attestor.get_trailer(lmsg.fromemail)
+        logger.info('  ---')
+        logger.info('  %s %s', attpass, trailer)
+        return
+
+    if lsig.errors:
+        logger.critical('  ---')
+        if len(out):
+            logger.critical('  Pull request is signed, but verification did not succeed:')
+        else:
+            logger.critical('  Pull request verification did not succeed:')
+        for error in lsig.errors:
+            logger.critical('    %s %s', attfail, error)
+
+        if attpolicy == 'hardfail':
+            import sys
+            sys.exit(128)
+
+
 def fetch_remote(gitdir, lmsg, branch=None):
     # Do we know anything about this base commit?
     if lmsg.pr_base_commit and not git_commit_exists(gitdir, lmsg.pr_base_commit):
@@ -138,6 +187,10 @@ def fetch_remote(gitdir, lmsg, branch=None):
         logger.critical('ERROR: Could not fetch remote:')
         logger.critical(out)
         return ecode
+
+    config = b4.get_main_config()
+    if config['attestation-policy'] != 'off':
+        attest_fetch_head(gitdir, lmsg)
 
     logger.info('---')
     if branch:
@@ -244,7 +297,7 @@ def main(cmdargs):
     mbx.close()
     os.unlink(savefile)
 
-    if lmsg is None:
+    if lmsg is None or lmsg.pr_remote_tip_commit is None:
         logger.critical('ERROR: Could not find pull request info in %s', msgid)
         sys.exit(1)
 
@@ -282,6 +335,7 @@ def main(cmdargs):
         if len(loglines) and loglines[0].find(lmsg.pr_tip_commit) == 0:
             logger.info('Pull request is at the tip of FETCH_HEAD')
             if cmdargs.check:
+                attest_fetch_head(gitdir, lmsg)
                 sys.exit(0)
 
     elif cmdargs.check:
