@@ -158,4 +158,16 @@ def cmd():
 
 
 if __name__ == '__main__':
+    # We're running from a checkout, so reflect git commit in the version
+    import os
+    # noinspection PyBroadException
+    try:
+        base = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        dotgit = os.path.join(base, '.git')
+        ecode, short = b4.git_run_command(dotgit, ['rev-parse', '--short', 'HEAD'])
+        if ecode == 0:
+            b4.__VERSION__ = '%s-%s' % (b4.__VERSION__, short.strip())
+    except Exception as ex:
+        # Any failures above are non-fatal
+        pass
     cmd()
