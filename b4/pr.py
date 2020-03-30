@@ -222,6 +222,10 @@ def explode(gitdir, lmsg, savefile):
         logger.critical(out)
         sys.exit(ecode)
 
+    # Fix From lines to make sure this is a valid mboxo
+    out = re.sub(r'^From (?![a-f0-9]+ \w+ \w+ \d+ \d+:\d+:\d+ \d+$)', '>From ', out, 0, re.M)
+    print(out)
+
     # Save patches into a temporary file
     patchmbx = mkstemp()[1]
     with open(patchmbx, 'w') as fh:
