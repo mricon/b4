@@ -211,6 +211,17 @@ def explode(gitdir, lmsg, savefile):
     ecode = fetch_remote(gitdir, lmsg)
     if ecode > 0:
         sys.exit(ecode)
+    if not lmsg.pr_base_commit:
+        # Use git merge-base between HEAD and FETCH_HEAD to find
+        # where we should start
+        logger.info('Running git merge-base to find common ancestry')
+        gitargs = ['merge-base', 'HEAD', 'FETCH_HEAD']
+        ecode, out = b4.git_run_command(gitdir, gitargs, logstderr=True)
+        if ecode > 0:
+            logger.critical('Could not find common ancestry.')
+            logger.critical(out)
+            sys.exit(ecode)
+        lmsg.pr_base_commit = out.strip()
     logger.info('Generating patches starting from the base-commit')
     reroll = None
     if lmsg.revision > 1:
@@ -309,9 +320,6 @@ def main(cmdargs):
         lmsg.pr_tip_commit = lmsg.pr_remote_tip_commit
 
     if cmdargs.explode:
-        if not lmsg.pr_base_commit:
-            logger.critical('ERROR: No base-commit info provided in the message.')
-            sys.exit(1)
         savefile = cmdargs.outmbox
         if savefile is None:
             savefile = '%s.mbx' % lmsg.msgid
