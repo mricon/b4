@@ -264,6 +264,10 @@ class LoreMailbox:
                         # Yes, this is very likely our cover letter
                         logger.debug('  fixed revision to v%s', irt.revision)
                         lmsg.revision = irt.revision
+                    # alternatively, see if upthread is patch 1
+                    elif lmsg.counter > 0 and irt is not None and irt.has_diff and irt.counter == 1:
+                        logger.debug('  fixed revision to v%s', irt.revision)
+                        lmsg.revision = irt.revision
 
             # Run our check again
             if lmsg.revision not in self.series:
