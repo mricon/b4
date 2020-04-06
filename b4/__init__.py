@@ -140,7 +140,69 @@ class LoreMailbox:
             return self.msgid_map[msgid]
         return None
 
-    def get_series(self, revision=None, sloppytrailers=False):
+    def backfill(self, revision):
+        # Find first non-None member in patches
+        lser = self.series[revision]
+        patch = None
+        for patch in lser.patches:
+            if patch is not None:
+                break
+        logger.info('---')
+        logger.info('Thread incomplete, attempting to backfill')
+        cachedir = get_cache_dir()
+        listmap = os.path.join(cachedir, 'lists.map.lookup')
+        if not os.path.exists(listmap):
+            # lists.map is a custom service running on lore.kernel.org, so it is
+            # meaningless to make this a configurable URL
+            session = get_requests_session()
+            resp = session.get('https://lore.kernel.org/lists.map')
+            if resp.status_code != 200:
+                logger.debug('Unable to retrieve lore.kernel.org/lists.map')
+                return
+            content = resp.content.decode('utf-8')
+            with open(listmap, 'w') as fh:
+                fh.write(content)
+        else:
+            with open(listmap, 'r') as fh:
+                content = fh.read()
+
+        projmap = dict()
+        for line in content.split('\n'):
+            if line.find(':') <= 0:
+                continue
+            chunks = line.split(':')
+            projmap[chunks[0]] = chunks[1].strip()
+
+        allto = email.utils.getaddresses(patch.msg.get_all('to', []))
+        allto += email.utils.getaddresses(patch.msg.get_all('cc', []))
+        listarc = patch.msg.get_all('list-archive', [])
+        for entry in allto:
+            if entry[1] in projmap:
+                projurl = 'https://lore.kernel.org/%s/' % projmap[entry[1]]
+                # Make sure we don't re-query the same project we just used
+                reused = False
+                for arcurl in listarc:
+                    if projurl in arcurl:
+                        reused = True
+                        break
+                if reused:
+                    continue
+                # Try to backfill from that project
+                tmp_mbox = mkstemp()[1]
+                get_pi_thread_by_msgid(patch.msgid, tmp_mbox, useproject=projmap[entry[1]])
+                mbx = mailbox.mbox(tmp_mbox)
+                was = len(self.msgid_map)
+                for msg in mbx:
+                    self.add_message(msg)
+                mbx.close()
+                os.unlink(tmp_mbox)
+                if len(self.msgid_map) > was:
+                    logger.info('Loaded %s messages from %s', len(self.msgid_map)-was, projurl)
+                if self.series[revision].complete:
+                    logger.info('Successfully backfilled missing patches')
+                    break
+
+    def get_series(self, revision=None, sloppytrailers=False, backfill=True):
         if revision is None:
             if not len(self.series):
                 return None
@@ -160,6 +222,9 @@ class LoreMailbox:
         if empty:
             logger.critical('All patches in series v%s are missing.', lser.revision)
             return None
+
+        if not lser.complete and backfill:
+            self.backfill(revision)
 
         # Grab our cover letter if we have one
         if revision in self.covers.keys():
@@ -236,6 +301,11 @@ class LoreMailbox:
         return lser
 
     def add_message(self, msg):
+        msgid = LoreMessage.get_clean_msgid(msg)
+        if msgid in self.msgid_map:
+            logger.debug('Already have a message with this msgid, skipping %s', msgid)
+            return
+
         lmsg = LoreMessage(msg)
         logger.debug('Looking at: %s', lmsg.full_subject)
         self.msgid_map[lmsg.msgid] = lmsg
@@ -278,7 +348,7 @@ class LoreMailbox:
             if lmsg.revision not in self.series:
                 self.series[lmsg.revision] = LoreSeries(lmsg.revision, lmsg.expected)
                 if len(self.series) > 1:
-                    logger.info('Found new series v%s', lmsg.revision)
+                    logger.debug('Found new series v%s', lmsg.revision)
 
             # Attempt to auto-number series from the same author who did not bother
             # to set v2, v3, etc in the patch revision
@@ -1357,6 +1427,15 @@ def get_main_config():
     return MAIN_CONFIG
 
 
+def get_data_dir():
+    if 'XDG_DATA_HOME' in os.environ:
+        datahome = os.environ['XDG_DATA_HOME']
+    else:
+        datahome = os.path.join(str(Path.home()), '.local', 'share')
+    datadir = os.path.join(datahome, 'b4')
+    Path(datadir).mkdir(parents=True, exist_ok=True)
+
+
 def get_cache_dir():
     global _CACHE_CLEANED
     if 'XDG_CACHE_HOME' in os.environ:
@@ -1507,23 +1586,21 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
 
     # Grab the head from lore, to see where we are redirected
     midmask = config['midmask'] % msgid
-    logger.info('Looking up %s', midmask)
-    session = get_requests_session()
-    resp = session.head(midmask)
-    if resp.status_code < 300 or resp.status_code > 400:
-        logger.critical('That message-id is not known.')
-        return None
-    canonical = resp.headers['Location'].rstrip('/')
-    resp.close()
-    t_mbx_url = '%s/t.mbox.gz' % canonical
-
-    loc = urllib.parse.urlparse(t_mbx_url)
+    loc = urllib.parse.urlparse(midmask)
     if useproject:
-        logger.debug('Modifying query to use %s', useproject)
-        t_mbx_url = '%s://%s/%s/%s/t.mbox.gz' % (
-            loc.scheme, loc.netloc, useproject, msgid)
-        logger.debug('Will query: %s', t_mbx_url)
-    logger.critical('Grabbing thread from %s', loc.netloc)
+        projurl = '%s://%s/%s' % (loc.scheme, loc.netloc, useproject)
+    else:
+        logger.info('Looking up %s', midmask)
+        session = get_requests_session()
+        resp = session.head(midmask)
+        if resp.status_code < 300 or resp.status_code > 400:
+            logger.critical('That message-id is not known.')
+            return None
+        projurl = resp.headers['Location'].replace(msgid, '').rstrip('/')
+        resp.close()
+    t_mbx_url = '%s/%s/t.mbox.gz' % (projurl, msgid)
+
+    logger.critical('Grabbing thread from %s', projurl.split('://')[1])
     in_mbxf = get_pi_thread_by_url(t_mbx_url, '%s-loose' % savefile)
     if not in_mbxf:
         return None
