@@ -119,6 +119,7 @@ class LoreMailbox:
         self.msgid_map = dict()
         self.series = dict()
         self.covers = dict()
+        self.trailer_map = dict()
         self.followups = list()
         self.unknowns = list()
 
@@ -249,13 +250,9 @@ class LoreMailbox:
             if not len(fmsg.trailers):
                 logger.debug('  no trailers found, skipping')
                 continue
-            # if it's for the wrong revision, ignore it
-            if not fmsg.revision_inferred and lser.revision != fmsg.revision:
-                logger.debug('  follow-up for the wrong revision, skipping')
-                continue
             # Go up through the follow-ups and tally up trailers until
             # we either run out of in-reply-tos, or we find a patch in
-            # our series
+            # one of our series
             if fmsg.in_reply_to is None:
                 # Check if there's something matching in References
                 refs = fmsg.msg.get('References', '')
@@ -280,23 +277,38 @@ class LoreMailbox:
                 logger.debug('%sTrailers:', ' ' * lvl)
                 for trailer in trailers:
                     logger.debug('%s%s: %s', ' ' * (lvl+1), trailer[0], trailer[1])
-                found = False
-                if lser.revision != pmsg.revision:
+                if pmsg.has_diff and not pmsg.reply:
+                    # We found the patch for these trailers
+                    if pmsg.revision != revision:
+                        # add this into our trailer map to carry over trailers from
+                        # previous revisions to current revision if patch/metadata did
+                        # not change
+                        pmsg.load_hashes()
+                        attid = pmsg.attestation.attid
+                        if attid not in self.trailer_map:
+                            self.trailer_map[attid] = set()
+                        self.trailer_map[attid].update(trailers)
+                    pmsg.followup_trailers.update(trailers)
                     break
-                for lmsg in lser.patches:
-                    if lmsg is not None and lmsg.msgid == pmsg.msgid:
-                        # Confirmed, this is our parent patch
-                        lmsg.followup_trailers.update(trailers)
-                        found = True
-                        break
-                if found:
+                if pmsg.has_diffstat and not pmsg.reply:
+                    # Could be a cover letter
+                    pmsg.followup_trailers.update(trailers)
                     break
-                elif pmsg.in_reply_to and pmsg.in_reply_to in self.msgid_map:
+                if pmsg.in_reply_to and pmsg.in_reply_to in self.msgid_map:
                     lvl += 1
                     trailers.update(pmsg.trailers)
                     pmsg = self.msgid_map[pmsg.in_reply_to]
-                else:
-                    break
+                    continue
+                break
+
+        # Carry over trailers from previous series if patch/metadata did not change
+        for lmsg in lser.patches:
+            if lmsg is None or lmsg.attestation is None:
+                continue
+            lmsg.load_hashes()
+            if lmsg.attestation.attid in self.trailer_map:
+                logger.info('WOO: %s', str(self.trailer_map[lmsg.attestation.attid]))
+                lmsg.followup_trailers.update(self.trailer_map[lmsg.attestation.attid])
 
         return lser
 
@@ -842,6 +854,8 @@ class LoreMessage:
         return phasher.hexdigest()
 
     def load_hashes(self):
+        if self.attestation is not None:
+            return
         msg_out = mkstemp()
         patch_out = mkstemp()
         cmdargs = ['mailinfo', '--encoding=UTF-8', msg_out[1], patch_out[1]]
@@ -1519,20 +1533,27 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
     want = {msgid}
     got = set()
     seen = set()
+    maybe = dict()
     while True:
         for msg in in_mbx:
             c_msgid = LoreMessage.get_clean_msgid(msg)
             seen.add(c_msgid)
             if c_msgid in got:
                 continue
+            logger.debug('Looking at: %s', c_msgid)
 
-            refs = list()
+            refs = set()
             for ref in msg.get('References', msg.get('In-Reply-To', '')).split():
                 ref = ref.strip().strip('<>')
                 if ref in got or ref in want:
                     want.add(c_msgid)
                 elif len(ref):
-                    refs.append(ref)
+                    refs.add(ref)
+                    if c_msgid not in want:
+                        if ref not in maybe:
+                            maybe[ref] = set()
+                        logger.debug('Going into maybe: %s->%s', ref, c_msgid)
+                        maybe[ref].add(c_msgid)
 
             if c_msgid in want:
                 out_mbx.add(msg)
@@ -1540,10 +1561,14 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
                 want.update(refs)
                 want.discard(c_msgid)
                 logger.debug('Kept in thread: %s', c_msgid)
+                if c_msgid in maybe:
+                    # Add all these to want
+                    want.update(maybe[c_msgid])
+                    maybe.pop(c_msgid)
 
         # Remove any entries not in "seen" (missing messages)
         for c_msgid in set(want):
-            if c_msgid not in seen:
+            if c_msgid not in seen or c_msgid in got:
                 want.remove(c_msgid)
         if not len(want):
             break
