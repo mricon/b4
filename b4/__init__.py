@@ -1573,6 +1573,7 @@ def get_pi_thread_by_url(t_mbx_url, savefile):
 
 
 def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
+    qmsgid = urllib.parse.quote_plus(msgid)
     config = get_main_config()
     cachedir = get_cache_dir()
     base = msgid
@@ -1585,7 +1586,7 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
         return savefile
 
     # Grab the head from lore, to see where we are redirected
-    midmask = config['midmask'] % msgid
+    midmask = config['midmask'] % qmsgid
     loc = urllib.parse.urlparse(midmask)
     if useproject:
         projurl = '%s://%s/%s' % (loc.scheme, loc.netloc, useproject)
@@ -1596,9 +1597,12 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
         if resp.status_code < 300 or resp.status_code > 400:
             logger.critical('That message-id is not known.')
             return None
-        projurl = resp.headers['Location'].replace(msgid, '').rstrip('/')
+        # Pop msgid from the end of the redirect
+        chunks = resp.headers['Location'].rstrip('/').split('/')
+        projurl = '/'.join(chunks[:-1])
         resp.close()
-    t_mbx_url = '%s/%s/t.mbox.gz' % (projurl, msgid)
+    t_mbx_url = '%s/%s/t.mbox.gz' % (projurl, qmsgid)
+    logger.debug('t_mbx_url=%s', t_mbx_url)
 
     logger.critical('Grabbing thread from %s', projurl.split('://')[1])
     in_mbxf = get_pi_thread_by_url(t_mbx_url, '%s-loose' % savefile)
