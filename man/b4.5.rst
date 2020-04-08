@@ -1,14 +1,14 @@
 B4
 ==
--------------------------------------------
-Work with patches in a public-inbox archive
--------------------------------------------
+----------------------------------------------------
+Work with code submissions in a public-inbox archive
+----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2020-03-23
+:Date:      2020-04-08
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.3.4
+:Version:   0.4.0
 :Manual section: 5
 
 SYNOPSIS
@@ -17,10 +17,10 @@ b4 {mbox,am,attest,attverify} [options]
 
 DESCRIPTION
 -----------
-This is a helper utility to work with patches made available via a
-public-inbox archive like lore.kernel.org. It is written to make it
-easier to participate in a patch-based workflows, like those used in
-the Linux kernel development.
+This is a helper utility to work with patches and pull requests made
+available via a public-inbox archive like lore.kernel.org. It is
+written to make it easier to participate in a patch-based workflows,
+like those used in the Linux kernel development.
 
 The name "b4" was chosen for ease of typing and because B-4 was the
 precursor to Lore and Data in the Star Trek universe.
@@ -30,6 +30,7 @@ SUBCOMMANDS
 * *b4 mbox*: Download a thread as an mbox file
 * *b4 am*: Create an mbox file that is ready to git-am
 * *b4 attest*: Submit cryptographic attestation for patches
+* *b4 pr*: Work with pull requests
 
 OPTIONS
 -------
@@ -121,6 +122,28 @@ optional arguments:
                         submitting it
 
 *Example*: b4 attest -n -o output/xxxx-attestation.patch output/\*.patch
+
+b4 pr
+~~~~~
+usage:
+  command.py pr [-h] [-g GITDIR] [-b BRANCH] [-c] [-e] [-o OUTMBOX] [msgid]
+
+positional arguments:
+  msgid                 Message ID to process, or pipe a raw message
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -g GITDIR, --gitdir GITDIR
+                        Operate on this git tree instead of current dir
+  -b BRANCH, --branch BRANCH
+                        Check out FETCH_HEAD into this branch after fetching
+  -c, --check           Check if pull request has already been applied
+  -e, --explode         Convert a pull request into an mbox full of patches
+  -o OUTMBOX, --output-mbox OUTMBOX
+                        Save exploded messages into this mailbox (default:
+                        msgid.mbx)
+
+*Example*: b4 pr 202003292120.2BDCB41@keescook
 
 CONFIGURATION
 -------------
