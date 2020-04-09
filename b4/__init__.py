@@ -174,8 +174,8 @@ class LoreMailbox:
             chunks = line.split(':')
             projmap[chunks[0]] = chunks[1].strip()
 
-        allto = email.utils.getaddresses(patch.msg.get_all('to', []))
-        allto += email.utils.getaddresses(patch.msg.get_all('cc', []))
+        allto = email.utils.getaddresses([str(x) for x in patch.msg.get_all('to', [])])
+        allto += email.utils.getaddresses([str(x) for x in patch.msg.get_all('cc', [])])
         listarc = patch.msg.get_all('list-archive', [])
         for entry in allto:
             if entry[1] in projmap:
@@ -307,7 +307,6 @@ class LoreMailbox:
                 continue
             lmsg.load_hashes()
             if lmsg.attestation.attid in self.trailer_map:
-                logger.info('WOO: %s', str(self.trailer_map[lmsg.attestation.attid]))
                 lmsg.followup_trailers.update(self.trailer_map[lmsg.attestation.attid])
 
         return lser
@@ -442,7 +441,7 @@ class LoreSeries:
             return 'undefined'
 
         prefix = lmsg.date.strftime('%Y%m%d')
-        authorline = email.utils.getaddresses(lmsg.msg.get_all('from', []))[0]
+        authorline = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('from', [])])[0]
         if extended:
             local = authorline[1].split('@')[0]
             unsafe = '%s_%s_%s' % (prefix, local, lmsg.subject)
@@ -635,7 +634,7 @@ class LoreMessage:
         self.in_reply_to = LoreMessage.get_clean_msgid(self.msg, header='In-Reply-To')
 
         try:
-            fromdata = email.utils.getaddresses(self.msg.get_all('from', []))[0]
+            fromdata = email.utils.getaddresses([str(x) for x in self.msg.get_all('from', [])])[0]
             self.fromname = fromdata[0]
             self.fromemail = fromdata[1]
         except IndexError:
@@ -780,6 +779,9 @@ class LoreMessage:
 
     @staticmethod
     def clean_header(hdrval):
+        if hdrval is None:
+            return ''
+
         decoded = ''
         for hstr, hcs in email.header.decode_header(hdrval):
             if hcs is None:
@@ -1448,6 +1450,7 @@ def get_data_dir():
         datahome = os.path.join(str(Path.home()), '.local', 'share')
     datadir = os.path.join(datahome, 'b4')
     Path(datadir).mkdir(parents=True, exist_ok=True)
+    return datadir
 
 
 def get_cache_dir():
@@ -1650,3 +1653,23 @@ def git_format_patches(gitdir, start, end, reroll=None):
     gitargs += ['%s..%s' % (start, end)]
     ecode, out = git_run_command(gitdir, gitargs)
     return ecode, out
+
+
+def git_commit_exists(gitdir, commit_id):
+    gitargs = ['cat-file', '-e', commit_id]
+    ecode, out = git_run_command(gitdir, gitargs)
+    return ecode == 0
+
+
+def git_branch_contains(gitdir, commit_id):
+    gitargs = ['branch', '--format=%(refname:short)', '--contains', commit_id]
+    lines = git_get_command_lines(gitdir, gitargs)
+    return lines
+
+
+def format_addrs(pairs):
+    addrs = set()
+    for pair in pairs:
+        # Remove any quoted-printable header junk from the name
+        addrs.add(email.utils.formataddr((LoreMessage.clean_header(pair[0]), LoreMessage.clean_header(pair[1]))))
+    return ', '.join(addrs)

@@ -10,6 +10,7 @@ import sys
 import b4
 import re
 import mailbox
+import json
 
 from datetime import timedelta
 from tempfile import mkstemp
@@ -67,18 +68,6 @@ def git_get_commit_id_from_repo_ref(repo, ref):
     commit_id = lines[0].split()[0]
     logger.debug('success, commit-id: %s', commit_id)
     return commit_id
-
-
-def git_commit_exists(gitdir, commit_id):
-    gitargs = ['cat-file', '-e', commit_id]
-    ecode, out = b4.git_run_command(gitdir, gitargs)
-    return ecode == 0
-
-
-def git_branch_contains(gitdir, commit_id):
-    gitargs = ['branch', '--contains', commit_id]
-    lines = b4.git_get_command_lines(gitdir, gitargs)
-    return lines
 
 
 def parse_pr_data(msg):
@@ -168,7 +157,7 @@ def attest_fetch_head(gitdir, lmsg):
 
 def fetch_remote(gitdir, lmsg, branch=None):
     # Do we know anything about this base commit?
-    if lmsg.pr_base_commit and not git_commit_exists(gitdir, lmsg.pr_base_commit):
+    if lmsg.pr_base_commit and not b4.git_commit_exists(gitdir, lmsg.pr_base_commit):
         logger.critical('ERROR: git knows nothing about commit %s', lmsg.pr_base_commit)
         logger.critical('       Are you running inside a git checkout and is it up-to-date?')
         return 1
@@ -203,7 +192,43 @@ def fetch_remote(gitdir, lmsg, branch=None):
     else:
         logger.info('Successfully fetched into FETCH_HEAD')
 
+    thanks_record_pr(lmsg)
+
     return 0
+
+
+def thanks_record_pr(lmsg):
+    datadir = b4.get_data_dir()
+    # Check if we're tracking it already
+    filename = '%s.pr' % lmsg.pr_remote_tip_commit
+    for entry in os.listdir(datadir):
+        if entry == filename:
+            return
+    allto = utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
+    allcc = utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
+    quotelines = list()
+    for line in lmsg.body.split('\n'):
+        if line.find('---') == 0:
+            break
+        quotelines.append('> %s' % line.strip('\r\n'))
+
+    out = {
+        'msgid': lmsg.msgid,
+        'subject': lmsg.full_subject,
+        'fromname': lmsg.fromname,
+        'fromemail': lmsg.fromemail,
+        'to': b4.format_addrs(allto),
+        'cc': b4.format_addrs(allcc),
+        'references': b4.LoreMessage.clean_header(lmsg.msg['References']),
+        'remote': lmsg.pr_repo,
+        'ref': lmsg.pr_ref,
+        'sentdate': b4.LoreMessage.clean_header(lmsg.msg['Date']),
+        'quote': '\n'.join(quotelines),
+    }
+    fullpath = os.path.join(datadir, filename)
+    with open(fullpath, 'w', encoding='utf-8') as fh:
+        json.dump(out, fh, ensure_ascii=False, indent=4)
+        logger.debug('Wrote %s for thanks tracking', filename)
 
 
 def explode(gitdir, lmsg, savefile):
@@ -293,6 +318,8 @@ def explode(gitdir, lmsg, savefile):
 
 
 def main(cmdargs):
+    gitdir = cmdargs.gitdir
+
     msgid = b4.get_msgid(cmdargs)
     savefile = mkstemp()[1]
     mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile)
@@ -315,7 +342,6 @@ def main(cmdargs):
         logger.critical('ERROR: Could not find pull request info in %s', msgid)
         sys.exit(1)
 
-    gitdir = cmdargs.gitdir
     if not lmsg.pr_tip_commit:
         lmsg.pr_tip_commit = lmsg.pr_remote_tip_commit
 
@@ -328,11 +354,11 @@ def main(cmdargs):
             sys.exit(1)
         explode(gitdir, lmsg, savefile)
 
-    exists = git_commit_exists(gitdir, lmsg.pr_tip_commit)
+    exists = b4.git_commit_exists(gitdir, lmsg.pr_tip_commit)
 
     if exists:
         # Is it in any branch, or just flapping in the wind?
-        branches = git_branch_contains(gitdir, lmsg.pr_tip_commit)
+        branches = b4.git_branch_contains(gitdir, lmsg.pr_tip_commit)
         if len(branches):
             logger.info('Pull request tip commit exists in the following branches:')
             for branch in branches:

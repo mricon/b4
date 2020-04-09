@@ -55,6 +55,11 @@ def cmd_pr(cmdargs):
     b4.pr.main(cmdargs)
 
 
+def cmd_ty(cmdargs):
+    import b4.ty
+    b4.ty.main(cmdargs)
+
+
 def cmd():
     parser = argparse.ArgumentParser(
         description='A tool to work with public-inbox patches',
@@ -132,6 +137,26 @@ def cmd():
     sp_pr.add_argument('msgid', nargs='?',
                        help='Message ID to process, or pipe a raw message')
     sp_pr.set_defaults(func=cmd_pr)
+
+    # b4 ty
+    sp_ty = subparsers.add_parser('ty', help='Generate thanks email when something gets merged/applied')
+    sp_ty.add_argument('-g', '--gitdir', default=None,
+                       help='Operate on this git tree instead of current dir')
+    sp_ty.add_argument('-o', '--outdir', default='.',
+                       help='Write thanks files into this dir (default=.)')
+    sp_ty.add_argument('-l', '--list', action='store_true', default=False,
+                       help='List pull requests and patch series you have retrieved')
+    sp_ty.add_argument('-s', '--send', nargs='+',
+                       help='Generate thankyous for specified messages (use -l to get the list or "all")')
+    sp_ty.add_argument('-d', '--discard', nargs='+',
+                       help='Discard specified messages (use -l to get the list, or use "_all")')
+    sp_ty.add_argument('-a', '--auto', action='store_true', default=False,
+                       help='Use the Auto-Thankanator to figure out what got applied/merged')
+    sp_ty.add_argument('-b', '--branch', default=None,
+                       help='The branch to check against, instead of current (use with -a)')
+    sp_ty.add_argument('--since', default='1.week',
+                       help='The --since option to use when auto-matching patches (default=1.week)')
+    sp_ty.set_defaults(func=cmd_ty)
 
     cmdargs = parser.parse_args()
 

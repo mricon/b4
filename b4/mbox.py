@@ -13,6 +13,7 @@ import email.message
 import email.utils
 import re
 import time
+import json
 
 import urllib.parse
 import xml.etree.ElementTree
@@ -135,8 +136,69 @@ def mbox_to_am(mboxfile, cmdargs):
         logger.critical('       git am %s', am_filename)
 
     am_mbx.close()
+    thanks_record_am(lser)
 
     return am_filename
+
+
+def thanks_record_am(lser):
+    if not lser.complete:
+        logger.debug('Incomplete series, not tracking for thanks')
+        return
+
+    # Are we tracking this already?
+    datadir = b4.get_data_dir()
+    slug = lser.get_slug(extended=True)
+    filename = '%s.am' % slug
+    # Check if we're tracking it already
+    for entry in os.listdir(datadir):
+        if entry == filename:
+            return
+
+    # Get patch-id of each patch in the series
+    gitargs = ['patch-id', '--stable']
+    patches = list()
+    for pmsg in lser.patches[1:]:
+        ecode, out = b4.git_run_command(None, gitargs, stdin=pmsg.body.encode('utf-8'))
+        if ecode > 0 or not len(out.strip()):
+            logger.debug('Could not get patch-id of %s', pmsg.full_subject)
+            return
+        chunks = out.split()
+        patches.append((pmsg.subject, chunks[0]))
+
+    lmsg = lser.patches[0]
+    if lmsg is None:
+        lmsg = lser.patches[1]
+
+    allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
+    allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
+    quotelines = list()
+    qcount = 0
+    for line in lmsg.body.split('\n'):
+        # Quote the first paragraph only and then [snip] if we quoted more than 5 lines
+        if qcount > 5 and (not len(line.strip()) or line.strip().find('---') == 0):
+            quotelines.append('> ')
+            quotelines.append('> [...]')
+            break
+        quotelines.append('> %s' % line.strip('\r\n'))
+        qcount += 1
+
+    out = {
+        'msgid': lmsg.msgid,
+        'subject': lmsg.full_subject,
+        'fromname': lmsg.fromname,
+        'fromemail': lmsg.fromemail,
+        'to': b4.format_addrs(allto),
+        'cc': b4.format_addrs(allcc),
+        'references': b4.LoreMessage.clean_header(lmsg.msg['References']),
+        'sentdate': b4.LoreMessage.clean_header(lmsg.msg['Date']),
+        'quote': '\n'.join(quotelines),
+        'patches': patches,
+    }
+    fullpath = os.path.join(datadir, filename)
+    with open(fullpath, 'w', encoding='utf-8') as fh:
+        json.dump(out, fh, ensure_ascii=False, indent=4)
+        logger.debug('Wrote %s for thanks tracking', filename)
 
 
 def am_mbox_to_quilt(am_mbx, q_dirname):
