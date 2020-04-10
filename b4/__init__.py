@@ -1365,20 +1365,27 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
     want = {msgid}
     got = set()
     seen = set()
+    maybe = dict()
     while True:
         for msg in in_mbx:
             c_msgid = LoreMessage.get_clean_msgid(msg)
             seen.add(c_msgid)
             if c_msgid in got:
                 continue
+            logger.debug('Looking at: %s', c_msgid)
 
-            refs = list()
+            refs = set()
             for ref in msg.get('References', msg.get('In-Reply-To', '')).split():
                 ref = ref.strip().strip('<>')
                 if ref in got or ref in want:
                     want.add(c_msgid)
                 elif len(ref):
-                    refs.append(ref)
+                    refs.add(ref)
+                    if c_msgid not in want:
+                        if ref not in maybe:
+                            maybe[ref] = set()
+                        logger.debug('Going into maybe: %s->%s', ref, c_msgid)
+                        maybe[ref].add(c_msgid)
 
             if c_msgid in want:
                 out_mbx.add(msg)
@@ -1386,10 +1393,14 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
                 want.update(refs)
                 want.discard(c_msgid)
                 logger.debug('Kept in thread: %s', c_msgid)
+                if c_msgid in maybe:
+                    # Add all these to want
+                    want.update(maybe[c_msgid])
+                    maybe.pop(c_msgid)
 
         # Remove any entries not in "seen" (missing messages)
         for c_msgid in set(want):
-            if c_msgid not in seen:
+            if c_msgid not in seen or c_msgid in got:
                 want.remove(c_msgid)
         if not len(want):
             break
