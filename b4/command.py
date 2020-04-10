@@ -153,7 +153,7 @@ def cmd():
     sp_ty.add_argument('-a', '--auto', action='store_true', default=False,
                        help='Use the Auto-Thankanator to figure out what got applied/merged')
     sp_ty.add_argument('-b', '--branch', default=None,
-                       help='The branch to check against, instead of current (use with -a)')
+                       help='The branch to check against, instead of current')
     sp_ty.add_argument('--since', default='1.week',
                        help='The --since option to use when auto-matching patches (default=1.week)')
     sp_ty.set_defaults(func=cmd_ty)

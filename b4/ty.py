@@ -25,6 +25,8 @@ ${quote}
 
 Merged, thanks!
 
+${summary}
+
 Best regards,
 -- 
 ${myname} <${myemail}>
@@ -35,6 +37,8 @@ On ${sentdate} ${fromname} wrote:
 ${quote}
 
 Applied, thanks!
+
+${summary}
 
 Best regards,
 -- 
@@ -148,7 +152,7 @@ def get_all_commits(gitdir, branch, since='1.week', committer=None):
         logger.debug('No new commits from the current user --since=%s', since)
         return MY_COMMITS
 
-    logger.info('Found %s of your comits since %s', len(lines), since)
+    logger.info('Found %s of your commits since %s', len(lines), since)
     logger.info('Calculating patch hashes, may take a moment...')
     # Get patch hash of each commit
     for line in lines:
@@ -160,7 +164,7 @@ def get_all_commits(gitdir, branch, since='1.week', committer=None):
     return MY_COMMITS
 
 
-def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
+def auto_locate_series(gitdir, jsondata, branch, since='1.week', loose=False):
     commits = get_all_commits(gitdir, branch, since)
 
     patchids = set(commits.keys())
@@ -170,6 +174,12 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
         if patch[1] in patchids:
             logger.debug('Found: %s', patch[0])
             found.append(commits[patch[1]])
+        elif loose:
+            # try to locate by subject
+            for pwhash, commit in commits.items():
+                if commit[1] == patch[0]:
+                    found.append(commits[patch[1]])
+                    break
 
     if len(found) == len(jsondata['patches']):
         return found
@@ -177,35 +187,73 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
     return None
 
 
-def generate_pr_thanks(jsondata):
+def read_template(tptfile):
+    # bubbles up FileNotFound
+    tpt = ''
+    with open(tptfile, 'r', encoding='utf-8') as fh:
+        for line in fh:
+            if len(line) and line[0] == '#':
+                continue
+            tpt += line
+    return tpt
+
+
+def generate_pr_thanks(gitdir, jsondata):
     config = b4.get_main_config()
     thanks_template = DEFAULT_PR_TEMPLATE
-    if 'thanks-pr-template' in config:
+    if config['thanks-pr-template']:
         # Try to load this template instead
         try:
-            with open(config['thanks-pr-template'], 'r', encoding='utf-8') as fh:
-                thanks_template = fh.read()
+            thanks_template = read_template(config['thanks-pr-template'])
         except FileNotFoundError:
             logger.critical('ERROR: thanks-pr-template says to use %s, but it does not exist',
                             config['thanks-pr-template'])
             sys.exit(2)
 
+    if 'merge_commit_id' not in jsondata:
+        merge_commit_id = git_get_merge_id(gitdir, jsondata['pr_commit_id'])
+        if not merge_commit_id:
+            logger.critical('Could not get merge commit id for %s', jsondata['subject'])
+            logger.critical('Was it actually merged?')
+            sys.exit(1)
+        jsondata['merge_commit_id'] = merge_commit_id
+    # Make a summary
+    cidmask = config['thanks-commit-url-mask']
+    if not cidmask:
+        cidmask = 'merge commit: %s'
+    jsondata['summary'] = cidmask % jsondata['merge_commit_id']
     msg = make_reply(thanks_template, jsondata)
     return msg
 
 
-def generate_am_thanks(jsondata):
+def generate_am_thanks(gitdir, jsondata, branch, since):
     config = b4.get_main_config()
     thanks_template = DEFAULT_AM_TEMPLATE
-    if 'thanks-am-template' in config:
+    if config['thanks-am-template']:
         # Try to load this template instead
         try:
-            with open(config['thanks-am-template'], 'r', encoding='utf-8') as fh:
-                thanks_template = fh.read()
+            thanks_template = read_template(config['thanks-am-template'])
         except FileNotFoundError:
             logger.critical('ERROR: thanks-am-template says to use %s, but it does not exist',
                             config['thanks-am-template'])
             sys.exit(2)
+    if 'commits' not in jsondata:
+        commits = auto_locate_series(gitdir, jsondata, branch, since, loose=True)
+    else:
+        commits = jsondata['commits']
+
+    if commits is None:
+        logger.critical('Could not identify all commits for: %s', jsondata['subject'])
+        logger.critical('Cowardly refusing to run')
+        sys.exit(1)
+    cidmask = config['thanks-commit-url-mask']
+    if not cidmask:
+        cidmask = 'commit: %s'
+    slines = list()
+    for commit in commits:
+        slines.append('- %s' % commit[1])
+        slines.append('  %s' % (cidmask % commit[0]))
+    jsondata['summary'] = '\n'.join(slines)
 
     msg = make_reply(thanks_template, jsondata)
     return msg
@@ -213,27 +261,8 @@ def generate_am_thanks(jsondata):
 
 def auto_thankanator(cmdargs):
     gitdir = cmdargs.gitdir
-    if not cmdargs.branch:
-        # Find out our current branch
-        gitargs = ['branch', '--show-current']
-        ecode, out = b4.git_run_command(gitdir, gitargs)
-        if ecode > 0:
-            logger.critical('Not able to get current branch (git branch --show-current)')
-            sys.exit(1)
-        wantbranch = out.strip()
-    else:
-        # Make sure it's a real branch
-        gitargs = ['branch', '--format=%(refname:short)', '--list']
-        lines = b4.git_get_command_lines(gitdir, gitargs)
-        if not len(lines):
-            logger.critical('Not able to get a list of branches (git branch --list)')
-            sys.exit(1)
-        if cmdargs.branch not in lines:
-            logger.critical('Requested branch %s not found in git branch --list', cmdargs.branch)
-            sys.exit(1)
-        wantbranch = cmdargs.branch
-
-    logger.info('Auto-thankinating commits in %s', wantbranch)
+    wantbranch = get_wanted_branch(cmdargs)
+    logger.info('Auto-thankanating commits in %s', wantbranch)
     tracked = list_tracked()
     if not len(tracked):
         logger.info('Nothing to do')
@@ -249,9 +278,10 @@ def auto_thankanator(cmdargs):
             jsondata['merge_commit_id'] = merge_commit_id
         else:
             # This is a patch series
-            patches = auto_locate_series(gitdir, jsondata, wantbranch, since=cmdargs.since)
-            if patches is None:
+            commits = auto_locate_series(gitdir, jsondata, wantbranch, since=cmdargs.since)
+            if commits is None:
                 continue
+            jsondata['commits'] = commits
         applied.append(jsondata)
         logger.info('  Located: %s', jsondata['subject'])
 
@@ -260,11 +290,11 @@ def auto_thankanator(cmdargs):
         sys.exit(0)
 
     logger.info('---')
-    send_messages(applied, cmdargs.outdir)
+    send_messages(applied, cmdargs.gitdir, cmdargs.outdir, wantbranch, since=cmdargs.since)
     sys.exit(0)
 
 
-def send_messages(listing, outdir):
+def send_messages(listing, gitdir, outdir, branch, since='1.week'):
     # Not really sending, but writing them out to be sent on your own
     # We'll probably gain ability to send these once the feature is
     # more mature and we're less likely to mess things up
@@ -281,10 +311,10 @@ def send_messages(listing, outdir):
         slug = re.sub(r'_+', '_', slug)
         if 'pr_commit_id' in jsondata:
             # This is a pull request
-            msg = generate_pr_thanks(jsondata)
+            msg = generate_pr_thanks(gitdir, jsondata)
         else:
             # This is a patch series
-            msg = generate_am_thanks(jsondata)
+            msg = generate_am_thanks(gitdir, jsondata, branch, since)
 
         outfile = os.path.join(outdir, '%s.thanks' % slug)
         logger.info('  Writing: %s', outfile)
@@ -355,7 +385,9 @@ def send_selected(cmdargs):
         logger.info('Nothing to do')
         sys.exit(0)
 
-    send_messages(listing, cmdargs.outdir)
+    wantbranch = get_wanted_branch(cmdargs)
+    send_messages(listing, cmdargs.gitdir, cmdargs.outdir, wantbranch, cmdargs.since)
+    sys.exit(0)
 
 
 def discard_selected(cmdargs):
@@ -407,6 +439,31 @@ def check_stale_thanks(outdir):
                 sys.exit(1)
 
 
+def get_wanted_branch(cmdargs):
+    gitdir = cmdargs.gitdir
+    if not cmdargs.branch:
+        # Find out our current branch
+        gitargs = ['branch', '--show-current']
+        ecode, out = b4.git_run_command(gitdir, gitargs)
+        if ecode > 0:
+            logger.critical('Not able to get current branch (git branch --show-current)')
+            sys.exit(1)
+        wantbranch = out.strip()
+    else:
+        # Make sure it's a real branch
+        gitargs = ['branch', '--format=%(refname:short)', '--list']
+        lines = b4.git_get_command_lines(gitdir, gitargs)
+        if not len(lines):
+            logger.critical('Not able to get a list of branches (git branch --list)')
+            sys.exit(1)
+        if cmdargs.branch not in lines:
+            logger.critical('Requested branch %s not found in git branch --list', cmdargs.branch)
+            sys.exit(1)
+        wantbranch = cmdargs.branch
+
+    return wantbranch
+
+
 def main(cmdargs):
     usercfg = b4.get_user_config()
     if 'email' not in usercfg:
@@ -414,11 +471,11 @@ def main(cmdargs):
         sys.exit(1)
 
     if cmdargs.auto:
+        check_stale_thanks(cmdargs.outdir)
         auto_thankanator(cmdargs)
-        check_stale_thanks(cmdargs.outdir)
     elif cmdargs.send:
-        send_selected(cmdargs)
         check_stale_thanks(cmdargs.outdir)
+        send_selected(cmdargs)
     elif cmdargs.discard:
         discard_selected(cmdargs)
     else:

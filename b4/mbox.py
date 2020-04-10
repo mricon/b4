@@ -169,16 +169,6 @@ def thanks_record_am(lser):
 
     allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
     allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
-    quotelines = list()
-    qcount = 0
-    for line in lmsg.body.split('\n'):
-        # Quote the first paragraph only and then [snip] if we quoted more than 5 lines
-        if qcount > 5 and (not len(line.strip()) or line.strip().find('---') == 0):
-            quotelines.append('> ')
-            quotelines.append('> [...]')
-            break
-        quotelines.append('> %s' % line.strip('\r\n'))
-        qcount += 1
 
     out = {
         'msgid': lmsg.msgid,
@@ -189,7 +179,7 @@ def thanks_record_am(lser):
         'cc': b4.format_addrs(allcc),
         'references': b4.LoreMessage.clean_header(lmsg.msg['References']),
         'sentdate': b4.LoreMessage.clean_header(lmsg.msg['Date']),
-        'quote': '\n'.join(quotelines),
+        'quote': b4.make_quote(lmsg.body, maxlines=5),
         'patches': patches,
     }
     fullpath = os.path.join(datadir, filename)

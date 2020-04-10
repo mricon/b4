@@ -206,12 +206,6 @@ def thanks_record_pr(lmsg):
             return
     allto = utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
     allcc = utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
-    quotelines = list()
-    for line in lmsg.body.split('\n'):
-        if line.find('---') == 0:
-            break
-        quotelines.append('> %s' % line.strip('\r\n'))
-
     out = {
         'msgid': lmsg.msgid,
         'subject': lmsg.full_subject,
@@ -223,7 +217,7 @@ def thanks_record_pr(lmsg):
         'remote': lmsg.pr_repo,
         'ref': lmsg.pr_ref,
         'sentdate': b4.LoreMessage.clean_header(lmsg.msg['Date']),
-        'quote': '\n'.join(quotelines),
+        'quote': b4.make_quote(lmsg.body, maxlines=6)
     }
     fullpath = os.path.join(datadir, filename)
     with open(fullpath, 'w', encoding='utf-8') as fh:

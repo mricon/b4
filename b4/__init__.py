@@ -93,6 +93,12 @@ DEFAULT_CONFIG = {
     'attestation-checkmarks': 'fancy',
     # How long to keep things in cache before expiring (minutes)?
     'cache-expire': '10',
+    # Used when creating summaries for b4 ty
+    'thanks-commit-url-mask': None,
+    # See thanks-pr-template.example
+    'thanks-pr-template': None,
+    # See thanks-am-template.example
+    'thanks-am-template': None,
     # If this is not set, we'll use what we find in 
     # git-config for gpg.program, and if that's not set,
     # we'll use "gpg" and hope for the better
@@ -1673,3 +1679,17 @@ def format_addrs(pairs):
         # Remove any quoted-printable header junk from the name
         addrs.add(email.utils.formataddr((LoreMessage.clean_header(pair[0]), LoreMessage.clean_header(pair[1]))))
     return ', '.join(addrs)
+
+
+def make_quote(body, maxlines=5):
+    quotelines = list()
+    qcount = 0
+    for line in body.split('\n'):
+        # Quote the first paragraph only and then [snip] if we quoted more than maxlines
+        if qcount > maxlines and (not len(line.strip()) or line.strip().find('---') == 0):
+            quotelines.append('> ')
+            quotelines.append('> [...]')
+            break
+        quotelines.append('> %s' % line.strip('\r\n'))
+        qcount += 1
+    return '\n'.join(quotelines)
