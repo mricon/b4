@@ -1,8 +1,8 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2020-03-23" "0.3.4" ""
+.TH B4 5 "2020-04-10" "0.4.0" ""
 .SH NAME
-B4 \- Work with patches in a public-inbox archive
+B4 \- Work with code submissions in a public-inbox archive
 .
 .nr rst2man-indent-level 0
 .
@@ -32,13 +32,13 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 ..
 .SH SYNOPSIS
 .sp
-b4 {mbox,am,attest,attverify} [options]
+b4 {mbox,am,attest,pr,ty} [options]
 .SH DESCRIPTION
 .sp
-This is a helper utility to work with patches made available via a
-public\-inbox archive like lore.kernel.org. It is written to make it
-easier to participate in a patch\-based workflows, like those used in
-the Linux kernel development.
+This is a helper utility to work with patches and pull requests made
+available via a public\-inbox archive like lore.kernel.org. It is
+written to make it easier to participate in a patch\-based workflows,
+like those used in the Linux kernel development.
 .sp
 The name "b4" was chosen for ease of typing and because B\-4 was the
 precursor to Lore and Data in the Star Trek universe.
@@ -49,7 +49,11 @@ precursor to Lore and Data in the Star Trek universe.
 .IP \(bu 2
 \fIb4 am\fP: Create an mbox file that is ready to git\-am
 .IP \(bu 2
-\fIb4 attest\fP: Submit cryptographic attestation for patches
+\fIb4 attest\fP: (EXPERIMENTAL) Submit cryptographic attestation for patches
+.IP \(bu 2
+\fIb4 pr\fP: (EXPERIMENTAL) Work with pull requests
+.IP \(bu 2
+\fIb4 ty\fP: (EXPERIMENTAL) Create templated replies for processed patches and pull requests
 .UNINDENT
 .SH OPTIONS
 .INDENT 0.0
@@ -190,6 +194,83 @@ submitting it
 .UNINDENT
 .sp
 \fIExample\fP: b4 attest \-n \-o output/xxxx\-attestation.patch output/*.patch
+.SS b4 pr
+.INDENT 0.0
+.TP
+.B usage:
+command.py pr [\-h] [\-g GITDIR] [\-b BRANCH] [\-c] [\-e] [\-o OUTMBOX] [msgid]
+.TP
+.B positional arguments:
+msgid                 Message ID to process, or pipe a raw message
+.TP
+.B optional arguments:
+.INDENT 7.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-g \ GITDIR\fP,\fB \ \-\-gitdir \ GITDIR
+Operate on this git tree instead of current dir
+.TP
+.BI \-b \ BRANCH\fP,\fB \ \-\-branch \ BRANCH
+Check out FETCH_HEAD into this branch after fetching
+.TP
+.B \-c\fP,\fB  \-\-check
+Check if pull request has already been applied
+.TP
+.B \-e\fP,\fB  \-\-explode
+Convert a pull request into an mbox full of patches
+.TP
+.BI \-o \ OUTMBOX\fP,\fB \ \-\-output\-mbox \ OUTMBOX
+Save exploded messages into this mailbox (default:
+msgid.mbx)
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 pr \fI\%202003292120.2BDCB41@keescook\fP
+.SS b4 ty
+.INDENT 0.0
+.TP
+.B usage:
+b4 ty [\-h] [\-g GITDIR] [\-o OUTDIR] [\-l] [\-s SEND [SEND ...]] [\-d DISCARD [DISCARD ...]] [\-a] [\-b BRANCH] [\-\-since SINCE]
+.TP
+.B optional arguments:
+.INDENT 7.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-g \ GITDIR\fP,\fB \ \-\-gitdir \ GITDIR
+Operate on this git tree instead of current dir
+.TP
+.BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
+Write thanks files into this dir (default=.)
+.TP
+.B \-l\fP,\fB  \-\-list
+List pull requests and patch series you have retrieved
+.TP
+.BI \-s \ SEND\fP,\fB \ \-\-send \ SEND
+Generate thankyous for specified messages (use \-l to
+get the list or "all")
+.TP
+.BI \-d \ DISCARD\fP,\fB \ \-\-discard \ DISCARD
+Discard specified messages (use \-l to get the list, or
+use "all")
+.TP
+.B \-a\fP,\fB  \-\-auto
+Use the Auto\-Thankanator to figure out what got
+applied/merged
+.TP
+.BI \-b \ BRANCH\fP,\fB \ \-\-branch \ BRANCH
+The branch to check against, instead of current
+.TP
+.BI \-\-since \ SINCE
+The \-\-since option to use when auto\-matching patches
+(default=1.week)
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 ty \-\-auto
 .SH CONFIGURATION
 .sp
 B4 configuration is handled via git\-config(1), so you can store it in
@@ -251,6 +332,15 @@ Default configuration, with explanations:
    #
    # How long to keep downloaded threads in cache (minutes)?
    cache\-expire = 10
+   # Used when creating summaries for b4 ty, and can be set to a value like
+   # thanks\-commit\-url\-mask = https://git.kernel.org/username/c/%.10s
+   # See this page for more info on convenient git.kernel.org shorterners:
+   # https://korg.wiki.kernel.org/userdoc/git\-url\-shorterners
+   thanks\-commit\-url\-mask = None
+   # See thanks\-pr\-template.example. If not set, a default template will be used.
+   thanks\-pr\-template = None
+   # See thanks\-am\-template.example. If not set, a default template will be used.
+   thanks\-am\-template = None
 .ft P
 .fi
 .UNINDENT

@@ -1,0 +1,28 @@
+# Lines starting with '#' will be removed
+# You can have two different templates for responding to
+# pull requests and for responding to patch series, though
+# in reality the difference will probably be one word:
+# "merged/pulled" vs. "applied".
+# Keeping it short and sweet is preferred.
+#
+On ${sentdate}, ${fromname} wrote:
+# quote will be limited to 5-6 lines, respecting paragraphs
+${quote}
+
+Applied, thanks!
+
+# for patch series, the summary is a list of each patch with a link
+# to the commit id in your tree, so you probably want to set
+# b4.thanks-commit-url-mask in gitconfig to a value like:
+# [b4]
+#   thanks-commit-url-mask = https://git.kernel.org/username/c/%.10s
+#
+# Check this page for info on convenient URL shorteners:
+# https://korg.wiki.kernel.org/userdoc/git-url-shorterners
+${summary}
+
+Best regards,
+-- 
+# if ~/.signature exists, it will be put here, otherwise
+# the contents will be "user.name <user.email>" from gitconfig
+${signature}

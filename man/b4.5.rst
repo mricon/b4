@@ -5,7 +5,7 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2020-04-08
+:Date:      2020-04-10
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
 :Version:   0.4.0
@@ -13,7 +13,7 @@ Work with code submissions in a public-inbox archive
 
 SYNOPSIS
 --------
-b4 {mbox,am,attest,attverify} [options]
+b4 {mbox,am,attest,pr,ty} [options]
 
 DESCRIPTION
 -----------
@@ -29,8 +29,9 @@ SUBCOMMANDS
 -----------
 * *b4 mbox*: Download a thread as an mbox file
 * *b4 am*: Create an mbox file that is ready to git-am
-* *b4 attest*: Submit cryptographic attestation for patches
-* *b4 pr*: Work with pull requests
+* *b4 attest*: (EXPERIMENTAL) Submit cryptographic attestation for patches
+* *b4 pr*: (EXPERIMENTAL) Work with pull requests
+* *b4 ty*: (EXPERIMENTAL) Create templated replies for processed patches and pull requests
 
 OPTIONS
 -------
@@ -145,6 +146,33 @@ optional arguments:
 
 *Example*: b4 pr 202003292120.2BDCB41@keescook
 
+b4 ty
+~~~~~
+usage:
+  b4 ty [-h] [-g GITDIR] [-o OUTDIR] [-l] [-s SEND [SEND ...]] [-d DISCARD [DISCARD ...]] [-a] [-b BRANCH] [--since SINCE]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -g GITDIR, --gitdir GITDIR
+                        Operate on this git tree instead of current dir
+  -o OUTDIR, --outdir OUTDIR
+                        Write thanks files into this dir (default=.)
+  -l, --list            List pull requests and patch series you have retrieved
+  -s SEND, --send SEND
+                        Generate thankyous for specified messages (use -l to
+                        get the list or "all")
+  -d DISCARD, --discard DISCARD
+                        Discard specified messages (use -l to get the list, or
+                        use "all")
+  -a, --auto            Use the Auto-Thankanator to figure out what got
+                        applied/merged
+  -b BRANCH, --branch BRANCH
+                        The branch to check against, instead of current
+  --since SINCE         The --since option to use when auto-matching patches
+                        (default=1.week)
+
+*Example*: b4 ty --auto
+
 CONFIGURATION
 -------------
 B4 configuration is handled via git-config(1), so you can store it in
@@ -202,6 +230,15 @@ Default configuration, with explanations::
       #
       # How long to keep downloaded threads in cache (minutes)?
       cache-expire = 10
+      # Used when creating summaries for b4 ty, and can be set to a value like
+      # thanks-commit-url-mask = https://git.kernel.org/username/c/%.10s
+      # See this page for more info on convenient git.kernel.org shorterners:
+      # https://korg.wiki.kernel.org/userdoc/git-url-shorterners
+      thanks-commit-url-mask = None
+      # See thanks-pr-template.example. If not set, a default template will be used.
+      thanks-pr-template = None
+      # See thanks-am-template.example. If not set, a default template will be used.
+      thanks-am-template = None
 
 
 SUPPORT
