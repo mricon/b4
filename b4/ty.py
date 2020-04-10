@@ -20,7 +20,7 @@ from pathlib import Path
 logger = b4.logger
 
 DEFAULT_PR_TEMPLATE = """
-On ${sentdate} ${fromname} wrote:
+On ${sentdate}, ${fromname} wrote:
 ${quote}
 
 Merged, thanks!
@@ -29,11 +29,11 @@ ${summary}
 
 Best regards,
 -- 
-${myname} <${myemail}>
+${signature}
 """
 
 DEFAULT_AM_TEMPLATE = """
-On ${sentdate} ${fromname} wrote:
+On ${sentdate}, ${fromname} wrote:
 ${quote}
 
 Applied, thanks!
@@ -42,7 +42,7 @@ ${summary}
 
 Best regards,
 -- 
-${myname} <${myemail}>
+${signature}
 """
 
 # Used to track commits created by current user
@@ -304,11 +304,23 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
     if not os.path.exists(outdir):
         os.mkdir(outdir)
 
+    usercfg = b4.get_user_config()
+    # Do we have a .signature file?
+    sigfile = os.path.join(str(Path.home()), '.signature')
+    if os.path.exists(sigfile):
+        with open(sigfile, 'r', encoding='utf-8') as fh:
+            signature = fh.read()
+    else:
+        signature = '%s <%s>' % (usercfg['name'], usercfg['email'])
+
     for jsondata in listing:
         slug_from = re.sub(r'\W', '_', jsondata['fromemail'])
         slug_subj = re.sub(r'\W', '_', jsondata['subject'])
         slug = '%s_%s' % (slug_from.lower(), slug_subj.lower())
         slug = re.sub(r'_+', '_', slug)
+        jsondata['myname'] = usercfg['name']
+        jsondata['myemail'] = usercfg['email']
+        jsondata['signature'] = signature
         if 'pr_commit_id' in jsondata:
             # This is a pull request
             msg = generate_pr_thanks(gitdir, jsondata)
@@ -318,8 +330,9 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
 
         outfile = os.path.join(outdir, '%s.thanks' % slug)
         logger.info('  Writing: %s', outfile)
+        bout = msg.as_string(policy=b4.emlpolicy)
         with open(outfile, 'wb') as fh:
-            fh.write(msg.as_bytes(policy=b4.emlpolicy))
+            fh.write(bout.encode('utf-8'))
         logger.debug('Cleaning up: %s', jsondata['trackfile'])
         fullpath = os.path.join(datadir, jsondata['trackfile'])
         os.rename(fullpath, '%s.sent' % fullpath)
@@ -333,14 +346,11 @@ def list_tracked():
     tracked = list()
     datadir = b4.get_data_dir()
     paths = sorted(Path(datadir).iterdir(), key=os.path.getmtime)
-    usercfg = b4.get_user_config()
     for fullpath in paths:
         if fullpath.suffix not in ('.pr', '.am'):
             continue
         with fullpath.open('r', encoding='utf-8') as fh:
             jsondata = json.load(fh)
-            jsondata['myname'] = usercfg['name']
-            jsondata['myemail'] = usercfg['email']
             jsondata['trackfile'] = fullpath.name
             if fullpath.suffix == '.pr':
                 jsondata['pr_commit_id'] = fullpath.stem

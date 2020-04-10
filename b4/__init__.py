@@ -643,6 +643,8 @@ class LoreMessage:
             fromdata = email.utils.getaddresses([str(x) for x in self.msg.get_all('from', [])])[0]
             self.fromname = fromdata[0]
             self.fromemail = fromdata[1]
+            if not len(self.fromname.strip()):
+                self.fromname = self.fromemail
         except IndexError:
             pass
 
