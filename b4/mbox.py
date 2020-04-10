@@ -155,16 +155,13 @@ def thanks_record_am(lser):
         if entry == filename:
             return
 
-    # Get patch-id of each patch in the series
-    gitargs = ['patch-id', '--stable']
     patches = list()
     for pmsg in lser.patches[1:]:
-        ecode, out = b4.git_run_command(None, gitargs, stdin=pmsg.body.encode('utf-8'))
-        if ecode > 0 or not len(out.strip()):
-            logger.debug('Could not get patch-id of %s', pmsg.full_subject)
+        pmsg.load_hashes()
+        if pmsg.attestation is None:
+            logger.debug('Unable to get hashes for all patches, not tracking for thanks')
             return
-        chunks = out.split()
-        patches.append((pmsg.subject, chunks[0]))
+        patches.append((pmsg.subject, pmsg.attestation.p))
 
     lmsg = lser.patches[0]
     if lmsg is None:

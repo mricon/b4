@@ -149,15 +149,13 @@ def get_all_commits(gitdir, branch, since='1.week', committer=None):
         return MY_COMMITS
 
     logger.info('Found %s of your comits since %s', len(lines), since)
-    logger.info('Calculating patch-ids, may take a moment...')
-    # Get patch-id of each commit
+    logger.info('Calculating patch hashes, may take a moment...')
+    # Get patch hash of each commit
     for line in lines:
         commit_id, subject = line.split(maxsplit=1)
         ecode, out = git_get_rev_diff(gitdir, commit_id)
-        gitargs = ['patch-id', '--stable']
-        ecode, out = b4.git_run_command(None, gitargs, stdin=out.encode('utf-8'))
-        chunks = out.split()
-        MY_COMMITS[chunks[0]] = (commit_id, subject)
+        pwhash = b4.LoreMessage.get_patch_hash(out)
+        MY_COMMITS[pwhash] = (commit_id, subject)
 
     return MY_COMMITS
 
@@ -235,7 +233,7 @@ def auto_thankanator(cmdargs):
             sys.exit(1)
         wantbranch = cmdargs.branch
 
-    logger.info('Auto-thankinating using branch %s', wantbranch)
+    logger.info('Auto-thankinating commits in %s', wantbranch)
     tracked = list_tracked()
     if not len(tracked):
         logger.info('Nothing to do')
@@ -366,7 +364,7 @@ def discard_selected(cmdargs):
         logger.info('Nothing to do')
         sys.exit(0)
 
-    if '_all' in cmdargs.discard:
+    if 'all' in cmdargs.discard:
         listing = tracked
     else:
         listing = list()

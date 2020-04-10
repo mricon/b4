@@ -149,7 +149,7 @@ def cmd():
     sp_ty.add_argument('-s', '--send', nargs='+',
                        help='Generate thankyous for specified messages (use -l to get the list or "all")')
     sp_ty.add_argument('-d', '--discard', nargs='+',
-                       help='Discard specified messages (use -l to get the list, or use "_all")')
+                       help='Discard specified messages (use -l to get the list, or use "all")')
     sp_ty.add_argument('-a', '--auto', action='store_true', default=False,
                        help='Use the Auto-Thankanator to figure out what got applied/merged')
     sp_ty.add_argument('-b', '--branch', default=None,
