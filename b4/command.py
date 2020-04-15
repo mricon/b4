@@ -191,7 +191,7 @@ if __name__ == '__main__':
         dotgit = os.path.join(base, '.git')
         ecode, short = b4.git_run_command(dotgit, ['rev-parse', '--short', 'HEAD'])
         if ecode == 0:
-            b4.__VERSION__ = '%s-%s' % (b4.__VERSION__, short.strip())
+            b4.__VERSION__ = '%s-%.5s' % (b4.__VERSION__, short.strip())
     except Exception as ex:
         # Any failures above are non-fatal
         pass

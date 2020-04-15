@@ -165,30 +165,33 @@ def get_all_commits(gitdir, branch, since='1.week', committer=None):
     return MY_COMMITS
 
 
-def auto_locate_series(gitdir, jsondata, branch, since='1.week', loose=False):
+def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
     commits = get_all_commits(gitdir, branch, since)
 
     patchids = set(commits.keys())
     # We need to find all of them in the commits
     found = list()
+    matches = 0
     for patch in jsondata['patches']:
         logger.debug('Checking %s', patch)
         if patch[1] in patchids:
             logger.debug('Found: %s', patch[0])
             found.append(commits[patch[1]])
-        elif loose:
+            matches += 1
+        else:
             # try to locate by subject
             success = False
             for pwhash, commit in commits.items():
                 if commit[1] == patch[0]:
                     found.append(commit)
                     success = True
+                    matches += 1
                     break
             if not success:
                 logger.debug('  Failed to find a match for: %s', patch[0])
+                found.append((None, patch[0]))
 
-    if len(found) == len(jsondata['patches']):
-        logger.debug('Found all the patches')
+    if matches > 0:
         return found
 
     return None
@@ -197,6 +200,10 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week', loose=False):
 def read_template(tptfile):
     # bubbles up FileNotFound
     tpt = ''
+    if tptfile.find('~') >= 0:
+        tptfile = os.path.expanduser(tptfile)
+    if tptfile.find('$') >= 0:
+        tptfile = os.path.expandvars(tptfile)
     with open(tptfile, 'r', encoding='utf-8') as fh:
         for line in fh:
             if len(line) and line[0] == '#':
@@ -245,22 +252,34 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
                             config['thanks-am-template'])
             sys.exit(2)
     if 'commits' not in jsondata:
-        commits = auto_locate_series(gitdir, jsondata, branch, since, loose=True)
+        commits = auto_locate_series(gitdir, jsondata, branch, since)
     else:
         commits = jsondata['commits']
 
     if commits is None:
-        logger.critical('Could not match all commits for: %s', jsondata['subject'])
+        logger.critical('Could not match any commits for: %s', jsondata['subject'])
         logger.critical('Not thanking for this series')
         return None
     cidmask = config['thanks-commit-url-mask']
     if not cidmask:
         cidmask = 'commit: %s'
     slines = list()
+    counter = 1
+    partial = False
+    padlen = len(str(len(commits)))
     for commit in commits:
-        slines.append('- %s' % commit[1])
-        slines.append('  %s' % (cidmask % commit[0]))
+        prefix = '[%s/%s] ' % (str(counter).zfill(padlen), len(commits))
+        slines.append('%s%s' % (prefix, commit[1]))
+        if commit[0] is None:
+            slines.append('%s(not applied)' % (' ' * len(prefix)))
+            partial = True
+        else:
+            slines.append('%s%s' % (' ' * len(prefix), cidmask % commit[0]))
+        counter += 1
     jsondata['summary'] = '\n'.join(slines)
+    if partial:
+        logger.critical('  WARNING: Not all patches matched for: %s', jsondata['subject'])
+        logger.critical('           Please review the resulting message')
 
     msg = make_reply(thanks_template, jsondata)
     return msg
@@ -482,13 +501,13 @@ def get_wanted_branch(cmdargs):
         logger.debug('will check branch=%s', wantbranch)
     else:
         # Make sure it's a real branch
-        gitargs = ['branch', '--format=%(refname:short)', '--list']
+        gitargs = ['branch', '--format=%(refname:short)', '--list', '--all']
         lines = b4.git_get_command_lines(gitdir, gitargs)
         if not len(lines):
-            logger.critical('Not able to get a list of branches (git branch --list)')
+            logger.critical('Not able to get a list of branches (git branch --list --all)')
             sys.exit(1)
         if cmdargs.branch not in lines:
-            logger.critical('Requested branch %s not found in git branch --list', cmdargs.branch)
+            logger.critical('Requested branch %s not found in git branch --list --all', cmdargs.branch)
             sys.exit(1)
         wantbranch = cmdargs.branch
 
