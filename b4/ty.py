@@ -158,7 +158,8 @@ def get_all_commits(gitdir, branch, since='1.week', committer=None):
     for line in lines:
         commit_id, subject = line.split(maxsplit=1)
         ecode, out = git_get_rev_diff(gitdir, commit_id)
-        pwhash = b4.LoreMessage.get_patch_hash(out)
+        pwhash = b4.LoreMessage.get_patchwork_hash(out)
+        logger.debug('phash=%s', pwhash)
         MY_COMMITS[pwhash] = (commit_id, subject)
 
     return MY_COMMITS
@@ -171,6 +172,7 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week', loose=False):
     # We need to find all of them in the commits
     found = list()
     for patch in jsondata['patches']:
+        logger.debug('Checking %s', patch)
         if patch[1] in patchids:
             logger.debug('Found: %s', patch[0])
             found.append(commits[patch[1]])
@@ -182,6 +184,7 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week', loose=False):
                     break
 
     if len(found) == len(jsondata['patches']):
+        logger.debug('Found all the patches')
         return found
 
     return None
@@ -376,21 +379,24 @@ def send_selected(cmdargs):
         logger.info('Nothing to do')
         sys.exit(0)
 
-    listing = list()
-    for num in cmdargs.send:
-        try:
-            index = int(num) - 1
-            listing.append(tracked[index])
-        except ValueError:
-            logger.critical('Please provide the number of the message')
-            logger.info('---')
-            write_tracked(tracked)
-            sys.exit(1)
-        except IndexError:
-            logger.critical('Invalid index: %s', num)
-            logger.info('---')
-            write_tracked(tracked)
-            sys.exit(1)
+    if 'all' in cmdargs.discard:
+        listing = tracked
+    else:
+        listing = list()
+        for num in cmdargs.send:
+            try:
+                index = int(num) - 1
+                listing.append(tracked[index])
+            except ValueError:
+                logger.critical('Please provide the number of the message')
+                logger.info('---')
+                write_tracked(tracked)
+                sys.exit(1)
+            except IndexError:
+                logger.critical('Invalid index: %s', num)
+                logger.info('---')
+                write_tracked(tracked)
+                sys.exit(1)
     if not len(listing):
         logger.info('Nothing to do')
         sys.exit(0)
@@ -453,12 +459,13 @@ def get_wanted_branch(cmdargs):
     gitdir = cmdargs.gitdir
     if not cmdargs.branch:
         # Find out our current branch
-        gitargs = ['branch', '--show-current']
+        gitargs = ['rev-parse', '--abbrev-ref', 'HEAD']
         ecode, out = b4.git_run_command(gitdir, gitargs)
         if ecode > 0:
             logger.critical('Not able to get current branch (git branch --show-current)')
             sys.exit(1)
         wantbranch = out.strip()
+        logger.debug('will check branch=%s', wantbranch)
     else:
         # Make sure it's a real branch
         gitargs = ['branch', '--format=%(refname:short)', '--list']

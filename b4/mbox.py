@@ -161,7 +161,7 @@ def thanks_record_am(lser):
         if pmsg.attestation is None:
             logger.debug('Unable to get hashes for all patches, not tracking for thanks')
             return
-        patches.append((pmsg.subject, pmsg.attestation.p))
+        patches.append((pmsg.subject, pmsg.pwhash))
 
     lmsg = lser.patches[0]
     if lmsg is None:

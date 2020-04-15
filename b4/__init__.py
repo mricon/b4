@@ -620,6 +620,8 @@ class LoreMessage:
         self.pr_remote_tip_commit = None
 
         self.attestation = None
+        # Patchwork hash
+        self.pwhash = None
 
         self.msgid = LoreMessage.get_clean_msgid(self.msg)
         self.lsubject = LoreSubject(msg['Subject'])
@@ -815,20 +817,57 @@ class LoreMessage:
         return msgid
 
     @staticmethod
-    def get_patch_hash(diff):
-        # The aim is to represent the patch as if you did the following:
-        # git diff HEAD~.. | dos2unix | sha256sum
-        #
-        # This subroutine removes anything at the beginning of diff data, like
-        # diffstat or any other auxiliary data, and anything trailing at the end
-        # XXX: This currently doesn't work for git binary patches
-        #
+    def get_patchwork_hash(diff):
+        # Make sure we just have the diff without any extraneous content.
+        diff = LoreMessage.get_clean_diff(diff)
+        """Generate a hash from a diff. Lifted verbatim from patchwork."""
+
+        prefixes = ['-', '+', ' ']
+        hashed = hashlib.sha1()
+
+        for line in diff.split('\n'):
+            if len(line) <= 0:
+                continue
+
+            hunk_match = HUNK_RE.match(line)
+            filename_match = FILENAME_RE.match(line)
+
+            if filename_match:
+                # normalise -p1 top-directories
+                if filename_match.group(1) == '---':
+                    filename = 'a/'
+                else:
+                    filename = 'b/'
+                filename += '/'.join(filename_match.group(2).split('/')[1:])
+
+                line = filename_match.group(1) + ' ' + filename
+            elif hunk_match:
+                # remove line numbers, but leave line counts
+                def fn(x):
+                    if not x:
+                        return 1
+                    return int(x)
+
+                line_nos = list(map(fn, hunk_match.groups()))
+                line = '@@ -%d +%d @@' % tuple(line_nos)
+            elif line[0] in prefixes:
+                # if we have a +, - or context line, leave as-is
+                pass
+            else:
+                # other lines are ignored
+                continue
+
+            hashed.update((line + '\n').encode('utf-8'))
+
+        return hashed.hexdigest()
+
+    @staticmethod
+    def get_clean_diff(diff):
         diff = diff.replace('\r', '')
 
         # For keeping a buffer of lines preceding @@ ... @@
         buflines = list()
-
-        phasher = hashlib.sha256()
+        difflines = ''
 
         # Used for counting where we are in the patch
         pp = 0
@@ -846,21 +885,34 @@ class LoreMessage:
                         break
                     addlines.append(bline)
                 if addlines:
-                    phasher.update(('\n'.join(reversed(addlines)) + '\n').encode('utf-8'))
+                    difflines += '\n'.join(reversed(addlines)) + '\n'
                 buflines = list()
                 # Feed this line to the hasher
-                phasher.update((line + '\n').encode('utf-8'))
+                difflines += line + '\n'
                 continue
             if pp > 0:
                 # Inside the patch
-                phasher.update((line + '\n').encode('utf-8'))
+                difflines += line + '\n'
                 if len(line) and line[0] == '-':
                     continue
                 pp -= 1
                 continue
             # Not anything we recognize, so stick into buflines
             buflines.append(line)
+        return difflines
 
+    @staticmethod
+    def get_patch_hash(diff):
+        # The aim is to represent the patch as if you did the following:
+        # git diff HEAD~.. | dos2unix | sha256sum
+        #
+        # This subroutine removes anything at the beginning of diff data, like
+        # diffstat or any other auxiliary data, and anything trailing at the end
+        # XXX: This currently doesn't work for git binary patches
+        #
+        diff = LoreMessage.get_clean_diff(diff)
+        phasher = hashlib.sha256()
+        phasher.update(diff.encode('utf-8'))
         return phasher.hexdigest()
 
     def load_hashes(self):
@@ -896,6 +948,7 @@ class LoreMessage:
             patch = pfh.read()
             if len(patch.strip()):
                 p = LoreMessage.get_patch_hash(patch)
+                self.pwhash = LoreMessage.get_patchwork_hash(patch)
         os.unlink(patch_out[1])
 
         if i and m and p:
