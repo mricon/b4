@@ -18,6 +18,7 @@ import datetime
 import time
 import shutil
 import mailbox
+import pwd
 
 from pathlib import Path
 from tempfile import mkstemp
@@ -1548,6 +1549,9 @@ def get_user_config():
     global USER_CONFIG
     if USER_CONFIG is None:
         USER_CONFIG = get_config_from_git(r'user\..*')
+        if 'name' not in USER_CONFIG:
+            udata = pwd.getpwuid(os.getuid())
+            USER_CONFIG['name'] = udata.pw_gecos
     return USER_CONFIG
 
 
