@@ -877,7 +877,10 @@ class LoreMessage:
             if hunk_match:
                 # logger.debug('Crunching %s', line)
                 mlines, plines = hunk_match.groups()
-                pp = int(plines)
+                try:
+                    pp = int(plines)
+                except TypeError:
+                    pp = 1
                 addlines = list()
                 for bline in reversed(buflines):
                     # Go backward and add lines until we get to the start
