@@ -178,10 +178,14 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week', loose=False):
             found.append(commits[patch[1]])
         elif loose:
             # try to locate by subject
+            success = False
             for pwhash, commit in commits.items():
                 if commit[1] == patch[0]:
-                    found.append(commits[patch[1]])
+                    found.append(commit)
+                    success = True
                     break
+            if not success:
+                logger.debug('  Failed to find a match for: %s', patch[0])
 
     if len(found) == len(jsondata['patches']):
         logger.debug('Found all the patches')
@@ -246,9 +250,9 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
         commits = jsondata['commits']
 
     if commits is None:
-        logger.critical('Could not identify all commits for: %s', jsondata['subject'])
-        logger.critical('Cowardly refusing to run')
-        sys.exit(1)
+        logger.critical('Could not match all commits for: %s', jsondata['subject'])
+        logger.critical('Not thanking for this series')
+        return None
     cidmask = config['thanks-commit-url-mask']
     if not cidmask:
         cidmask = 'commit: %s'
@@ -331,6 +335,8 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
             # This is a patch series
             msg = generate_am_thanks(gitdir, jsondata, branch, since)
 
+        if msg is None:
+            continue
         outfile = os.path.join(outdir, '%s.thanks' % slug)
         logger.info('  Writing: %s', outfile)
         bout = msg.as_string(policy=b4.emlpolicy)
@@ -379,7 +385,7 @@ def send_selected(cmdargs):
         logger.info('Nothing to do')
         sys.exit(0)
 
-    if 'all' in cmdargs.discard:
+    if 'all' in cmdargs.send:
         listing = tracked
     else:
         listing = list()
