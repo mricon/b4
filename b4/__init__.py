@@ -871,8 +871,11 @@ class LoreMessage:
         difflines = ''
 
         # Used for counting where we are in the patch
-        pp = 0
+        pp = mm = 0
         for line in diff.split('\n'):
+            if not len(line):
+                buflines.append(line)
+                continue
             hunk_match = HUNK_RE.match(line)
             if hunk_match:
                 # logger.debug('Crunching %s', line)
@@ -881,6 +884,10 @@ class LoreMessage:
                     pp = int(plines)
                 except TypeError:
                     pp = 1
+                try:
+                    mm = int(mlines)
+                except TypeError:
+                    mm = 1
                 addlines = list()
                 for bline in reversed(buflines):
                     # Go backward and add lines until we get to the start
@@ -894,12 +901,13 @@ class LoreMessage:
                 # Feed this line to the hasher
                 difflines += line + '\n'
                 continue
-            if pp > 0:
+            if pp > 0 or mm > 0:
                 # Inside the patch
                 difflines += line + '\n'
-                if len(line) and line[0] == '-':
-                    continue
-                pp -= 1
+                if line[0] in (' ', '-'):
+                    mm -= 1
+                if line[0] in (' ', '+'):
+                    pp -= 1
                 continue
             # Not anything we recognize, so stick into buflines
             buflines.append(line)
