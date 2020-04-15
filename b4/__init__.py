@@ -21,7 +21,7 @@ from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
-__VERSION__ = '0.3.7'
+__VERSION__ = '0.3.8-dev'
 ATTESTATION_FORMAT_VER = '0.1'
 
 logger = logging.getLogger('b4')
@@ -717,13 +717,23 @@ class LoreMessage:
         phasher = hashlib.sha256()
 
         # Used for counting where we are in the patch
-        pp = 0
+        pp = mm = 0
         for line in diff.split('\n'):
+            if not len(line):
+                buflines.append(line)
+                continue
             hunk_match = HUNK_RE.match(line)
             if hunk_match:
                 # logger.debug('Crunching %s', line)
                 mlines, plines = hunk_match.groups()
-                pp = int(plines)
+                try:
+                    pp = int(plines)
+                except TypeError:
+                    pp = 1
+                try:
+                    mm = int(mlines)
+                except TypeError:
+                    mm = 1
                 addlines = list()
                 for bline in reversed(buflines):
                     # Go backward and add lines until we get to the start
@@ -737,12 +747,13 @@ class LoreMessage:
                 # Feed this line to the hasher
                 phasher.update((line + '\n').encode('utf-8'))
                 continue
-            if pp > 0:
+            if pp > 0 or mm > 0:
                 # Inside the patch
                 phasher.update((line + '\n').encode('utf-8'))
-                if len(line) and line[0] == '-':
-                    continue
-                pp -= 1
+                if line[0] in (' ', '-'):
+                    mm -= 1
+                if line[0] in (' ', '+'):
+                    pp -= 1
                 continue
             # Not anything we recognize, so stick into buflines
             buflines.append(line)
