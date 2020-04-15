@@ -320,6 +320,7 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
     else:
         signature = '%s <%s>' % (usercfg['name'], usercfg['email'])
 
+    outgoing = 0
     for jsondata in listing:
         slug_from = re.sub(r'\W', '_', jsondata['fromemail'])
         slug_subj = re.sub(r'\W', '_', jsondata['subject'])
@@ -337,6 +338,8 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
 
         if msg is None:
             continue
+
+        outgoing += 1
         outfile = os.path.join(outdir, '%s.thanks' % slug)
         logger.info('  Writing: %s', outfile)
         bout = msg.as_string(policy=b4.emlpolicy)
@@ -346,6 +349,11 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
         fullpath = os.path.join(datadir, jsondata['trackfile'])
         os.rename(fullpath, '%s.sent' % fullpath)
     logger.info('---')
+    if not outgoing:
+        logger.info('No thanks necessary.')
+        return
+
+    logger.debug('Wrote %s thank-you letters', outgoing)
     logger.info('You can now run:')
     logger.info('  git send-email %s/*.thanks', outdir)
 
