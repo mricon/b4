@@ -9,7 +9,19 @@ On ${sentdate}, ${fromname} wrote:
 # quote will be limited to 5-6 lines, respecting paragraphs
 ${quote}
 
-Applied, thanks!
+# You can also use ${branch} and ${treename} if you set
+# b4.thanks-treename in your config, e.g.:
+#Applied to ${treename} (${branch}), thanks!
+#
+# If you track multiple remotes in the same repo, then you can add
+# the following values to [remote], to be loaded when you run
+# b4 ty -b foo/branchname:
+# [remote "foo"]
+#   url = https://...
+#   fetch = ...
+#   b4-treename = uname/sound.git
+#   b4-commit-url-mask = https://git.kernel.org/uname/sound/c/%.8s
+Applied to ${branch}, thanks!
 
 # for patch series, the summary is a list of each patch with a link
 # to the commit id in your tree, so you probably want to set

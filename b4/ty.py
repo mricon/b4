@@ -47,6 +47,8 @@ ${signature}
 
 # Used to track commits created by current user
 MY_COMMITS = None
+# Used to track additional branch info
+BRANCH_INFO = None
 
 
 def git_get_merge_id(gitdir, commit_id):
@@ -212,8 +214,41 @@ def read_template(tptfile):
     return tpt
 
 
-def generate_pr_thanks(gitdir, jsondata):
+def set_branch_details(gitdir, branch, jsondata, config):
+    binfo = get_branch_info(gitdir, branch)
+    jsondata['branch'] = branch
+    for key, val in binfo.items():
+        if key == 'b4-treename':
+            config['thanks-treename'] = val
+        elif key == 'b4-commit-url-mask':
+            config['thanks-commit-url-mask'] = val
+        elif key == 'b4-pr-template':
+            config['thanks-pr-template'] = val
+        elif key == 'b4-am-template':
+            config['thanks-am-template'] = val
+        elif key == 'branch':
+            jsondata['branch'] = val
+
+    if 'thanks-treename' in config:
+        jsondata['treename'] = config['thanks-treename']
+    elif 'url' in binfo:
+        # noinspection PyBroadException
+        try:
+            # Try to grab the last two chunks of the path
+            purl = Path(binfo['url'])
+            jsondata['treename'] = os.path.join(purl.parts[-2], purl.parts[-1])
+        except:
+            # Something went wrong... just use the whole URL
+            jsondata['treename'] = binfo['url']
+    else:
+        jsondata['treename'] = 'undefined'
+
+    return jsondata, config
+
+
+def generate_pr_thanks(gitdir, jsondata, branch):
     config = b4.get_main_config()
+    jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_PR_TEMPLATE
     if config['thanks-pr-template']:
         # Try to load this template instead
@@ -242,6 +277,7 @@ def generate_pr_thanks(gitdir, jsondata):
 
 def generate_am_thanks(gitdir, jsondata, branch, since):
     config = b4.get_main_config()
+    jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_AM_TEMPLATE
     if config['thanks-am-template']:
         # Try to load this template instead
@@ -350,7 +386,7 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
         jsondata['signature'] = signature
         if 'pr_commit_id' in jsondata:
             # This is a pull request
-            msg = generate_pr_thanks(gitdir, jsondata)
+            msg = generate_pr_thanks(gitdir, jsondata, branch)
         else:
             # This is a patch series
             msg = generate_am_thanks(gitdir, jsondata, branch, since)
@@ -489,6 +525,7 @@ def check_stale_thanks(outdir):
 
 
 def get_wanted_branch(cmdargs):
+    global BRANCH_INFO
     gitdir = cmdargs.gitdir
     if not cmdargs.branch:
         # Find out our current branch
@@ -512,6 +549,44 @@ def get_wanted_branch(cmdargs):
         wantbranch = cmdargs.branch
 
     return wantbranch
+
+
+def get_branch_info(gitdir, branch):
+    global BRANCH_INFO
+    if BRANCH_INFO is not None:
+        return BRANCH_INFO
+
+    BRANCH_INFO = dict()
+
+    if branch.find('/') < 0:
+        # Not a remote branch
+        return BRANCH_INFO
+
+    # Get a list of all remotes
+    gitargs = ['remote', 'show']
+    lines = b4.git_get_command_lines(gitdir, gitargs)
+    if not len(lines):
+        # No remotes? Hmm...
+        return BRANCH_INFO
+
+    remote = None
+    for entry in lines:
+        if branch.find('%s/' % entry) == 0:
+            remote = entry
+            break
+
+    if remote is None:
+        # Not found any matching remotes
+        return BRANCH_INFO
+
+    BRANCH_INFO['remote'] = remote
+    BRANCH_INFO['branch'] = branch.replace('%s/' % remote, '')
+
+    # Grab template overrides
+    remotecfg = b4.get_config_from_git('remote\\.%s\\..*' % remote)
+    BRANCH_INFO.update(remotecfg)
+
+    return BRANCH_INFO
 
 
 def main(cmdargs):
