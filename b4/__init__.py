@@ -149,12 +149,15 @@ class LoreMailbox:
         return None
 
     def backfill(self, revision):
-        # Find first non-None member in patches
-        lser = self.series[revision]
-        patch = None
-        for patch in lser.patches:
-            if patch is not None:
-                break
+        if revision in self.covers and self.covers[revision] is not None:
+            patch = self.covers[revision]
+        else:
+            # Find first non-None member in patches
+            lser = self.series[revision]
+            patch = None
+            for patch in lser.patches:
+                if patch is not None:
+                    break
         logger.info('---')
         logger.info('Thread incomplete, attempting to backfill')
         cachedir = get_cache_dir()
