@@ -549,7 +549,7 @@ class LoreMessage:
 
         self.date = email.utils.parsedate_to_datetime(str(self.msg['Date']))
 
-        diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch)', re.M | re.I)
+        diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', re.M | re.I)
         diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', re.M | re.I)
 
         # walk until we find the first text/plain part
@@ -707,7 +707,6 @@ class LoreMessage:
         #
         # This subroutine removes anything at the beginning of diff data, like
         # diffstat or any other auxiliary data, and anything trailing at the end
-        # XXX: This currently doesn't work for git binary patches
         #
         diff = diff.replace('\r', '')
 
@@ -718,8 +717,31 @@ class LoreMessage:
 
         # Used for counting where we are in the patch
         pp = mm = 0
+        inside_binary_chunk = False
         for line in diff.split('\n'):
             if not len(line):
+                if inside_binary_chunk:
+                    inside_binary_chunk = False
+                    # add all buflines to difflines
+                    phasher.update(('\n'.join(buflines) + '\n\n').encode('utf-8'))
+                    buflines = list()
+                    continue
+                buflines.append(line)
+                continue
+            elif inside_binary_chunk:
+                buflines.append(line)
+                continue
+            # If line starts with 'index ' and previous line starts with 'deleted ', then
+            # it's a file delete and therefore doesn't have a regular hunk.
+            if line.find('index ') == 0 and len(buflines) > 1 and buflines[-1].find('deleted ') == 0:
+                # add this and 2 preceding lines to difflines and reset buflines
+                buflines.append(line)
+                phasher.update(('\n'.join(buflines[-3:]) + '\n').encode('utf-8'))
+                buflines = list()
+                continue
+            if line.find('delta ') == 0 or line.find('literal ') == 0:
+                # we are inside a binary patch
+                inside_binary_chunk = True
                 buflines.append(line)
                 continue
             hunk_match = HUNK_RE.match(line)
