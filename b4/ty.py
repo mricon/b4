@@ -51,9 +51,11 @@ MY_COMMITS = None
 BRANCH_INFO = None
 
 
-def git_get_merge_id(gitdir, commit_id):
+def git_get_merge_id(gitdir, commit_id, branch=None):
     # get merge commit id
     args = ['rev-list', '%s..' % commit_id, '--ancestry-path']
+    if branch is not None:
+        args += [branch]
     lines = b4.git_get_command_lines(gitdir, args)
     if not len(lines):
         return None
@@ -117,7 +119,7 @@ def auto_locate_pr(gitdir, jsondata, branch):
         return None
 
     # Get the merge commit
-    merge_commit_id = git_get_merge_id(gitdir, pr_commit_id)
+    merge_commit_id = git_get_merge_id(gitdir, pr_commit_id, branch)
     if not merge_commit_id:
         logger.debug('Could not get a merge commit-id for %s', pr_commit_id)
         return None
