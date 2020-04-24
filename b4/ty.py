@@ -243,7 +243,7 @@ def set_branch_details(gitdir, branch, jsondata, config):
             # Something went wrong... just use the whole URL
             jsondata['treename'] = binfo['url']
     else:
-        jsondata['treename'] = 'undefined'
+        jsondata['treename'] = 'local tree'
 
     return jsondata, config
 
