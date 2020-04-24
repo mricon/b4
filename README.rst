@@ -28,6 +28,8 @@ alias in your .bash_profile::
 
     alias b4="$HOME/path/to/b4/b4.sh"
 
+Setting up a symlink should also be possible.
+
 Support
 -------
 For support or with any other questions, please email
