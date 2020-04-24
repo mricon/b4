@@ -1,2 +1,3 @@
 include COPYING
 include man/*.rst
+include *.example
