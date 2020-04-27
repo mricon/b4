@@ -991,50 +991,114 @@ class LoreMessage:
         if i and m and p:
             self.attestation = LoreAttestation(i, m, p)
 
-    def fix_trailers(self, trailer_order=None):
-        bodylines = self.body.split('\n')
-        # Get existing trailers
-        # 1. Find the first ---
-        # 2. Go backwards and grab everything matching ^[\w-]+:\s.*$ until a blank line
-        fixlines = list()
-        trailersdone = False
-        for line in bodylines:
-            if trailersdone:
-                fixlines.append(line)
+    @staticmethod
+    def get_body_parts(body):
+        # remove any starting/trailing blank lines
+        body = body.replace('\r', '')
+        body = body.strip('\n')
+        # Extra git-relevant headers, like From:, Subject:, Date:, etc
+        githeaders = list()
+        # commit message
+        message = ''
+        # all trailers we find preceding the ---
+        trailers = list()
+        # everything below the ---
+        basement = ''
+        # conformant signature --\s\n
+        signature = ''
+        sparts = body.rsplit('\n-- \n', 1)
+        if len(sparts) > 1:
+            signature = sparts[1]
+            body = sparts[0].rstrip('\n')
+
+        parts = body.split('\n---\n', 1)
+        if len(parts) == 2:
+            basement = parts[1].rstrip('\n')
+
+        mbody = parts[0].strip('\n')
+
+        # Split into paragraphs
+        bpara = mbody.split('\n\n')
+
+        # Is every line of the first part in a header format?
+        mparts = list()
+        for line in bpara[0].split('\n'):
+            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, re.I | re.M)
+            if not matches:
+                githeaders = list()
+                mparts.append(bpara[0])
+                break
+            githeaders.append(matches.groups())
+
+        # Any lines of the last part match the header format?
+        nlines = list()
+        for line in bpara[-1].split('\n'):
+            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, re.I | re.M)
+            if matches:
+                trailers.append(matches.groups())
                 continue
+            nlines.append(line)
 
-            if line.strip() == '---':
-                # Start going backwards in fixlines
-                btrailers = list()
-                for rline in reversed(fixlines):
-                    if not len(rline.strip()):
-                        break
-                    matches = re.search(r'^([\w-]+):\s+(.*)', rline)
-                    if not matches:
-                        break
-                    fixlines.pop()
-                    btrailers.append(matches.groups())
+        if len(bpara) == 1:
+            if githeaders == trailers:
+                # This is a message that consists of just trailers?
+                githeaders = list()
+            return githeaders, message, trailers, basement, signature
 
-                # Now we add mix-in trailers
-                btrailers.reverse()
-                trailers = btrailers + list(self.followup_trailers)
-                added = list()
-                if trailer_order is None:
-                    trailer_order = DEFAULT_TRAILER_ORDER
-                for trailermatch in trailer_order:
-                    for trailer in trailers:
-                        if trailer in added:
-                            continue
-                        if fnmatch.fnmatch(trailer[0].lower(), trailermatch.strip()):
-                            fixlines.append('%s: %s' % trailer)
-                            if trailer not in btrailers:
-                                logger.info('    + %s: %s' % trailer)
-                            else:
-                                logger.debug('    . %s: %s' % trailer)
-                            added.append(trailer)
-                trailersdone = True
-            fixlines.append(line)
-        self.body = '\n'.join(fixlines)
+        # Add all parts between first and last to mparts
+        if len(bpara) > 2:
+            mparts += bpara[1:-1]
+
+        if len(nlines):
+            # Add them as the last part
+            mparts.append('\n'.join(nlines))
+
+        message = '\n\n'.join(mparts)
+
+        return githeaders, message, trailers, basement, signature
+
+    def fix_trailers(self, trailer_order=None):
+        bheaders, message, btrailers, basement, signature = LoreMessage.get_body_parts(self.body)
+        # Now we add mix-in trailers
+        trailers = btrailers + list(self.followup_trailers)
+        fixtrailers = list()
+        if trailer_order is None:
+            trailer_order = DEFAULT_TRAILER_ORDER
+        for trailermatch in trailer_order:
+            for trailer in trailers:
+                if trailer in fixtrailers:
+                    # Dupe
+                    continue
+                if fnmatch.fnmatch(trailer[0].lower(), trailermatch.strip()):
+                    fixtrailers.append(trailer)
+                    if trailer not in btrailers:
+                        logger.info('    + %s: %s' % trailer)
+                    else:
+                        logger.debug('    . %s: %s' % trailer)
+
+        # Reconstitute the message
+        if bheaders:
+            self.body = '\n'.join('%s: %s' % h for h in bheaders)
+            self.body += '\n\n'
+        else:
+            self.body = ''
+
+        if len(message):
+            self.body += message + '\n'
+            if len(fixtrailers):
+                self.body += '\n'
+
+        if len(fixtrailers):
+            self.body += '\n'.join('%s: %s' % t for t in fixtrailers)
+            self.body += '\n'
+        if len(basement):
+            self.body += '---\n'
+            self.body += basement
+            self.body += '\n'
+        if len(signature):
+            self.body += '-- \n'
+            self.body += signature
+            self.body += '\n'
 
     def get_am_message(self, add_trailers=True, trailer_order=None):
         if add_trailers:
@@ -1777,14 +1841,20 @@ def format_addrs(pairs):
 
 
 def make_quote(body, maxlines=5):
+    headers, message, trailers, basement, signature = LoreMessage.get_body_parts(body)
+    if not len(message):
+        # Sometimes there is no message, just trailers
+        return '> \n'
+    # Remove common greetings
+    message = re.sub(r'^(hi|hello|greetings|dear)\W.*\n+', '', message, flags=re.I)
     quotelines = list()
     qcount = 0
-    for line in body.split('\n'):
+    for line in message.split('\n'):
         # Quote the first paragraph only and then [snip] if we quoted more than maxlines
-        if qcount > maxlines and (not len(line.strip()) or line.strip().find('---') == 0):
+        if qcount > maxlines and not len(line.strip()):
             quotelines.append('> ')
             quotelines.append('> [...]')
             break
-        quotelines.append('> %s' % line.strip('\r\n'))
+        quotelines.append('> %s' % line.rstrip())
         qcount += 1
     return '\n'.join(quotelines)
