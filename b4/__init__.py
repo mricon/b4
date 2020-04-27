@@ -27,7 +27,7 @@ from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
-__VERSION__ = '0.4.0'
+__VERSION__ = '0.4.1-dev'
 ATTESTATION_FORMAT_VER = '0.1'
 
 logger = logging.getLogger('b4')
@@ -991,6 +991,72 @@ class LoreMessage:
         if i and m and p:
             self.attestation = LoreAttestation(i, m, p)
 
+    @staticmethod
+    def get_body_parts(body):
+        # remove any starting/trailing blank lines
+        body = body.replace('\r', '')
+        body = body.strip('\n')
+        # Extra git-relevant headers, like From:, Subject:, Date:, etc
+        githeaders = list()
+        # commit message
+        message = ''
+        # all trailers we find preceding the ---
+        trailers = list()
+        # everything below the ---
+        basement = ''
+        # conformant signature --\s\n
+        signature = ''
+        sparts = body.rsplit('\n-- \n', 1)
+        if len(sparts) > 1:
+            signature = sparts[1]
+            body = sparts[0].rstrip('\n')
+
+        parts = body.split('\n---\n', 1)
+        if len(parts) == 2:
+            basement = parts[1].rstrip('\n')
+
+        mbody = parts[0].strip('\n')
+
+        # Split into paragraphs
+        bpara = mbody.split('\n\n')
+
+        # Is every line of the first part in a header format?
+        mparts = list()
+        for line in bpara[0].split('\n'):
+            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, re.I | re.M)
+            if not matches:
+                githeaders = list()
+                mparts.append(bpara[0])
+                break
+            githeaders.append(matches.groups())
+
+        # Any lines of the last part match the header format?
+        nlines = list()
+        for line in bpara[-1].split('\n'):
+            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, re.I | re.M)
+            if matches:
+                trailers.append(matches.groups())
+                continue
+            nlines.append(line)
+
+        if len(bpara) == 1:
+            if githeaders == trailers:
+                # This is a message that consists of just trailers?
+                githeaders = list()
+            return githeaders, message, trailers, basement, signature
+
+        # Add all parts between first and last to mparts
+        if len(bpara) > 2:
+            mparts += bpara[1:-1]
+
+        if len(nlines):
+            # Add them as the last part
+            mparts.append('\n'.join(nlines))
+
+        message = '\n\n'.join(mparts)
+
+        return githeaders, message, trailers, basement, signature
+
     def fix_trailers(self, trailer_order=None):
         bodylines = self.body.split('\n')
         # Get existing trailers
@@ -1777,14 +1843,20 @@ def format_addrs(pairs):
 
 
 def make_quote(body, maxlines=5):
+    headers, message, trailers, basement, signature = LoreMessage.get_body_parts(body)
+    if not len(message):
+        # Sometimes there is no message, just trailers
+        return '> \n'
+    # Remove common greetings
+    message = re.sub(r'^(hi|hello|greetings|dear)\W.*\n+', '', message, flags=re.I)
     quotelines = list()
     qcount = 0
-    for line in body.split('\n'):
+    for line in message.split('\n'):
         # Quote the first paragraph only and then [snip] if we quoted more than maxlines
-        if qcount > maxlines and (not len(line.strip()) or line.strip().find('---') == 0):
+        if qcount > maxlines and not len(line.strip()):
             quotelines.append('> ')
             quotelines.append('> [...]')
             break
-        quotelines.append('> %s' % line.strip('\r\n'))
+        quotelines.append('> %s' % line.rstrip())
         qcount += 1
     return '\n'.join(quotelines)
