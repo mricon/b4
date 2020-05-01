@@ -580,6 +580,48 @@ class LoreSeries:
 
         return mbx
 
+    def check_applies_clean(self, topdir, when=None):
+        # Go through indexes and see if this series should apply cleanly
+        mismatches = 0
+        seenfiles = set()
+        for lmsg in self.patches[1:]:
+            if lmsg.blob_indexes is None:
+                continue
+            for fn, bh in lmsg.blob_indexes:
+                if fn in seenfiles:
+                    # if we have seen this file once already, then it's a repeat patch
+                    # and it's no longer going to match current hash
+                    continue
+                seenfiles.add(fn)
+                fullpath = os.path.join(topdir, fn)
+                if when is None:
+                    if not os.path.exists(fullpath):
+                        mismatches += 1
+                        continue
+                    cmdargs = ['hash-object', fullpath]
+                    ecode, out = git_run_command(None, cmdargs)
+                else:
+                    gitdir = os.path.join(topdir, '.git')
+                    logger.debug('Checking hash on %s:%s', when, fn)
+                    # XXX: We should probably pipe the two commands instead of reading into memory,
+                    #      so something to consider for the future
+                    ecode, out = git_run_command(gitdir, ['show', f'{when}:{fn}'])
+                    if ecode > 0:
+                        # Couldn't get this file, continue
+                        logger.debug('Could not look up %s:%s', when, fn)
+                        mismatches += 1
+                        continue
+                    cmdargs = ['hash-object', '--stdin']
+                    ecode, out = git_run_command(None, cmdargs, stdin=out.encode())
+                if ecode == 0:
+                    if out.find(bh) != 0:
+                        logger.debug('%s hash: %s (expected: %s)', fn, out.strip(), bh)
+                        mismatches += 1
+                    else:
+                        logger.debug('%s hash: matched', fn)
+
+        return len(seenfiles), mismatches
+
     def save_cover(self, outfile):
         cover_msg = self.patches[0].get_am_message(add_trailers=False, trailer_order=None)
         with open(outfile, 'w') as fh:
@@ -626,6 +668,8 @@ class LoreMessage:
         self.attestation = None
         # Patchwork hash
         self.pwhash = None
+        # Blob indexes
+        self.blob_indexes = None
 
         self.msgid = LoreMessage.get_clean_msgid(self.msg)
         self.lsubject = LoreSubject(msg['Subject'])
@@ -866,6 +910,15 @@ class LoreMessage:
         return hashed.hexdigest()
 
     @staticmethod
+    def get_indexes(diff):
+        indexes = set()
+        for match in re.finditer(r'^diff\s+--git\s+\w/(.*)\s+\w/.*\nindex\s+([0-9a-f]+)\.\.[0-9a-f]+\s+[0-9]+$',
+                                 diff, flags=re.I | re.M):
+            fname, bindex = match.groups()
+            indexes.add((fname, bindex))
+        return indexes
+
+    @staticmethod
     def get_clean_diff(diff):
         diff = diff.replace('\r', '')
 
@@ -939,19 +992,6 @@ class LoreMessage:
             buflines.append(line)
         return difflines
 
-    @staticmethod
-    def get_patch_hash(diff):
-        # The aim is to represent the patch as if you did the following:
-        # git diff HEAD~.. | dos2unix | sha256sum
-        #
-        # This subroutine removes anything at the beginning of diff data, like
-        # diffstat or any other auxiliary data, and anything trailing at the end
-        #
-        diff = LoreMessage.get_clean_diff(diff)
-        phasher = hashlib.sha256()
-        phasher.update(diff.encode('utf-8'))
-        return phasher.hexdigest()
-
     def load_hashes(self):
         if self.attestation is not None:
             return
@@ -984,8 +1024,13 @@ class LoreMessage:
         with open(patch_out[1], 'r') as pfh:
             patch = pfh.read()
             if len(patch.strip()):
-                p = LoreMessage.get_patch_hash(patch)
+                diff = LoreMessage.get_clean_diff(patch)
+                phasher = hashlib.sha256()
+                phasher.update(diff.encode('utf-8'))
+                p = phasher.hexdigest()
                 self.pwhash = LoreMessage.get_patchwork_hash(patch)
+                # Load the indexes, if we have them
+                self.blob_indexes = LoreMessage.get_indexes(diff)
         os.unlink(patch_out[1])
 
         if i and m and p:

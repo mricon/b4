@@ -131,8 +131,44 @@ def mbox_to_am(mboxfile, cmdargs):
         logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
         logger.critical('       git am %s', am_filename)
     else:
-        logger.critical(' Base: not found, sorry')
-        logger.critical('       git checkout -b %s master', gitbranch)
+        cleanmsg = ''
+        # Are we in a git tree and if so, what is our toplevel?
+        gitargs = ['rev-parse', '--show-toplevel']
+        lines = b4.git_get_command_lines(None, gitargs)
+        if len(lines) == 1:
+            topdir = lines[0]
+            checked, mismatches = lser.check_applies_clean(topdir)
+            if mismatches == 0 and checked != mismatches:
+                cleanmsg = ' (applies clean to current tree)'
+            else:
+                # Look at the last 10 tags and see if it applies cleanly to
+                # any of them. I'm not sure how useful this is, but I'm going
+                # to put it in for now and maybe remove later if it causes
+                # problems or slowness
+                if checked != mismatches:
+                    best_matches = mismatches
+                    cleanmsg = ' (best guess: current tree)'
+                else:
+                    best_matches = None
+                # sort the tags by authordate
+                gitargs = ['tag', '-l', '--sort=-creatordate']
+                lines = b4.git_get_command_lines(None, gitargs)
+                if lines:
+                    # Check last 10 tags
+                    for tag in lines[:10]:
+                        logger.debug('Checking base-commit possibility for %s', tag)
+                        checked, mismatches = lser.check_applies_clean(topdir, tag)
+                        if mismatches == 0 and checked != mismatches:
+                            base_commit = tag
+                            break
+                        # did they all mismatch?
+                        if checked == mismatches:
+                            continue
+                        if best_matches is None or mismatches < best_matches:
+                            best_matches = mismatches
+                            cleanmsg = ' (best guess: %s)' % tag
+
+        logger.critical(' Base: not found%s', cleanmsg)
         logger.critical('       git am %s', am_filename)
 
     am_mbx.close()
