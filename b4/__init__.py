@@ -465,8 +465,8 @@ class LoreSeries:
 
         return slug
 
-    def save_am_mbox(self, mbx, noaddtrailers, covertrailers,
-                     trailer_order=None, addmysob=False, addlink=False, linkmask=None):
+    def save_am_mbox(self, mbx, noaddtrailers, covertrailers, trailer_order=None, addmysob=False,
+                     addlink=False, linkmask=None, cherrypick=None):
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -496,6 +496,10 @@ class LoreSeries:
         at = 1
         atterrors = list()
         for lmsg in self.patches[1:]:
+            if cherrypick is not None and at not in cherrypick:
+                at += 1
+                logger.debug('  skipped: [%s/%s] (not in cherrypick)', at, self.expected)
+                continue
             if lmsg is not None:
                 if self.has_cover and covertrailers and self.patches[0].followup_trailers:
                     lmsg.followup_trailers.update(self.patches[0].followup_trailers)
@@ -1870,7 +1874,7 @@ def parse_int_range(intrange, upper=None):
         if n.isdigit():
             yield int(n)
         elif n.find('<') == 0 and len(n) > 1 and n[1:].isdigit():
-            yield from range(0, int(n[1:]))
+            yield from range(1, int(n[1:]))
         elif n.find('-') > 0:
             nr = n.split('-')
             if nr[0].isdigit() and nr[1].isdigit():
