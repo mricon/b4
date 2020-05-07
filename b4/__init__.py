@@ -1904,3 +1904,21 @@ def make_quote(body, maxlines=5):
         quotelines.append('> %s' % line.rstrip())
         qcount += 1
     return '\n'.join(quotelines)
+
+
+def parse_int_range(intrange, upper=None):
+    # Remove all whitespace
+    intrange = re.sub(r'\s', '', intrange)
+    for n in intrange.split(','):
+        if n.isdigit():
+            yield int(n)
+        elif n.find('<') == 0 and len(n) > 1 and n[1:].isdigit():
+            yield from range(0, int(n[1:]))
+        elif n.find('-') > 0:
+            nr = n.split('-')
+            if nr[0].isdigit() and nr[1].isdigit():
+                yield from range(int(nr[0]), int(nr[1])+1)
+            elif not len(nr[1]) and nr[0].isdigit() and upper:
+                yield from range(int(nr[0]), upper+1)
+        else:
+            logger.critical('Unknown range value specified: %s', n)

@@ -148,10 +148,10 @@ def cmd():
                        help='Write thanks files into this dir (default=.)')
     sp_ty.add_argument('-l', '--list', action='store_true', default=False,
                        help='List pull requests and patch series you have retrieved')
-    sp_ty.add_argument('-s', '--send', nargs='+',
-                       help='Generate thankyous for specified messages (use -l to get the list or "all")')
-    sp_ty.add_argument('-d', '--discard', nargs='+',
-                       help='Discard specified messages (use -l to get the list, or use "all")')
+    sp_ty.add_argument('-s', '--send', default=None,
+                       help='Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")')
+    sp_ty.add_argument('-d', '--discard', default=None,
+                       help='Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")')
     sp_ty.add_argument('-a', '--auto', action='store_true', default=False,
                        help='Use the Auto-Thankanator to figure out what got applied/merged')
     sp_ty.add_argument('-b', '--branch', default=None,
