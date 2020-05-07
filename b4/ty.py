@@ -67,6 +67,11 @@ def git_get_rev_diff(gitdir, rev):
     return b4.git_run_command(gitdir, args)
 
 
+def git_get_commit_message(gitdir, rev):
+    args = ['log', '--format=%B', '-1', rev]
+    return b4.git_run_command(gitdir, args)
+
+
 def make_reply(reply_template, jsondata):
     body = Template(reply_template).safe_substitute(jsondata)
     # Conform to email standards
@@ -164,7 +169,15 @@ def get_all_commits(gitdir, branch, since='1.week', committer=None):
         ecode, out = git_get_rev_diff(gitdir, commit_id)
         pwhash = b4.LoreMessage.get_patchwork_hash(out)
         logger.debug('phash=%s', pwhash)
-        MY_COMMITS[pwhash] = (commit_id, subject)
+        # get all message-id or link trailers
+        ecode, out = git_get_commit_message(gitdir, commit_id)
+        matches = re.findall(r'^\s*(?:message-id|link):[ \t]+(\S+)\s*$', out, flags=re.I | re.M)
+        trackers = list()
+        if matches:
+            for tvalue in matches:
+                trackers.append(tvalue)
+
+        MY_COMMITS[pwhash] = (commit_id, subject, trackers)
 
     return MY_COMMITS
 
@@ -187,18 +200,27 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
             success = False
             for pwhash, commit in commits.items():
                 if commit[1] == patch[0]:
+                    logger.debug('Matched using subject')
                     found.append(commit)
                     success = True
                     matches += 1
                     break
+                elif len(patch) > 2 and len(patch[2]) and len(commit[2]):
+                    for tracker in commit[2]:
+                        if tracker.find(patch[2]) >= 0:
+                            logger.debug('Matched using recorded message-id')
+                            found.append(commit)
+                            success = True
+                            matches += 1
+                            break
+                if success:
+                    break
+
             if not success:
                 logger.debug('  Failed to find a match for: %s', patch[0])
                 found.append((None, patch[0]))
 
-    if matches > 0:
-        return found
-
-    return None
+    return found
 
 
 def read_template(tptfile):
@@ -294,29 +316,28 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
     else:
         commits = jsondata['commits']
 
-    if commits is None:
-        logger.critical('Could not match any commits for: %s', jsondata['subject'])
-        logger.critical('Not thanking for this series')
-        return None
     cidmask = config['thanks-commit-url-mask']
     if not cidmask:
         cidmask = 'commit: %s'
     slines = list()
-    counter = 1
-    partial = False
+    counter = 0
+    nomatch = 0
     padlen = len(str(len(commits)))
     for commit in commits:
+        counter += 1
         prefix = '[%s/%s] ' % (str(counter).zfill(padlen), len(commits))
         slines.append('%s%s' % (prefix, commit[1]))
         if commit[0] is None:
-            slines.append('%s(not applied)' % (' ' * len(prefix)))
-            partial = True
+            slines.append('%s(no commit info)' % (' ' * len(prefix)))
+            nomatch += 1
         else:
             slines.append('%s%s' % (' ' * len(prefix), cidmask % commit[0]))
-        counter += 1
     jsondata['summary'] = '\n'.join(slines)
-    if partial:
-        logger.critical('  WARNING: Not all patches matched for: %s', jsondata['subject'])
+    if nomatch == counter:
+        logger.critical('  WARNING: None of the patches matched for: %s', jsondata['subject'])
+        logger.critical('           Please review the resulting message')
+    elif nomatch > 0:
+        logger.critical('  WARNING: Could not match %s of %s patches in: %s', nomatch, counter, jsondata['subject'])
         logger.critical('           Please review the resulting message')
 
     msg = make_reply(thanks_template, jsondata)
