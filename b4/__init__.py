@@ -690,7 +690,8 @@ class LoreMessage:
         self.in_reply_to = LoreMessage.get_clean_msgid(self.msg, header='In-Reply-To')
 
         try:
-            fromdata = email.utils.getaddresses([str(x) for x in self.msg.get_all('from', [])])[0]
+            fromdata = email.utils.getaddresses([LoreMessage.clean_header(str(x))
+                                                 for x in self.msg.get_all('from', [])])[0]
             self.fromname = fromdata[0]
             self.fromemail = fromdata[1]
             if not len(self.fromname.strip()):
