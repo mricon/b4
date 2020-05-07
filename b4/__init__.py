@@ -585,7 +585,7 @@ class LoreSeries:
         mismatches = 0
         seenfiles = set()
         for lmsg in self.patches[1:]:
-            if lmsg.blob_indexes is None:
+            if lmsg is None or lmsg.blob_indexes is None:
                 continue
             for fn, bh in lmsg.blob_indexes:
                 if fn in seenfiles:

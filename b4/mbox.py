@@ -151,7 +151,7 @@ def mbox_to_am(mboxfile, cmdargs):
                 else:
                     best_matches = None
                 # sort the tags by authordate
-                gitargs = ['tag', '-l', '--sort=-creatordate']
+                gitargs = ['tag', '-l', '--sort=-taggerdate']
                 lines = b4.git_get_command_lines(None, gitargs)
                 if lines:
                     # Check last 10 tags
@@ -159,7 +159,7 @@ def mbox_to_am(mboxfile, cmdargs):
                         logger.debug('Checking base-commit possibility for %s', tag)
                         checked, mismatches = lser.check_applies_clean(topdir, tag)
                         if mismatches == 0 and checked != mismatches:
-                            base_commit = tag
+                            cleanmsg = ' (applies clean to: %s)' % tag
                             break
                         # did they all mismatch?
                         if checked == mismatches:

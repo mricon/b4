@@ -61,7 +61,9 @@ def cmd_ty(cmdargs):
 
 
 def cmd():
+    # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
+        prog='b4',
         description='A tool to work with public-inbox patches',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
