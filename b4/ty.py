@@ -471,11 +471,11 @@ def send_selected(cmdargs):
         logger.info('Nothing to do')
         sys.exit(0)
 
-    if 'all' in cmdargs.send:
+    if cmdargs.send == 'all':
         listing = tracked
     else:
         listing = list()
-        for num in cmdargs.send:
+        for num in b4.parse_int_range(cmdargs.send, upper=len(tracked)):
             try:
                 index = int(num) - 1
                 listing.append(tracked[index])
@@ -504,11 +504,11 @@ def discard_selected(cmdargs):
         logger.info('Nothing to do')
         sys.exit(0)
 
-    if 'all' in cmdargs.discard:
+    if cmdargs.discard == 'all':
         listing = tracked
     else:
         listing = list()
-        for num in cmdargs.discard:
+        for num in b4.parse_int_range(cmdargs.discard, upper=len(tracked)):
             try:
                 index = int(num) - 1
                 listing.append(tracked[index])
@@ -618,5 +618,5 @@ def main(cmdargs):
             sys.exit(0)
         write_tracked(tracked)
         logger.info('---')
-        logger.info('You can send them using:')
-        logger.info('  b4 ty -s 1 [2 3 ...]')
+        logger.info('You can send them using number ranges, e.g:')
+        logger.info('  b4 ty -s 1-3,5,7-')
