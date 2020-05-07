@@ -66,15 +66,22 @@ def mbox_to_am(mboxfile, cmdargs):
         os.unlink(am_filename)
 
     logger.info('---')
+    if cmdargs.cherrypick:
+        cherrypick = list(b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches)-1))
+    else:
+        cherrypick = None
     logger.critical('Writing %s', am_filename)
     mbx = mailbox.mbox(am_filename)
     am_mbx = lser.save_am_mbox(mbx, cmdargs.noaddtrailers, covertrailers,
                                trailer_order=config['trailer-order'],
                                addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
-                               linkmask=config['linkmask'])
+                               linkmask=config['linkmask'], cherrypick=cherrypick)
     logger.info('---')
 
-    logger.critical('Total patches: %s', len(am_mbx))
+    if cherrypick is None:
+        logger.critical('Total patches: %s', len(am_mbx))
+    else:
+        logger.info('Total patches: %s (cherrypicked: %s)', len(am_mbx), cmdargs.cherrypick)
     if lser.has_cover and lser.patches[0].followup_trailers and not covertrailers:
         # Warn that some trailers were sent to the cover letter
         logger.critical('---')
@@ -172,12 +179,12 @@ def mbox_to_am(mboxfile, cmdargs):
         logger.critical('       git am %s', am_filename)
 
     am_mbx.close()
-    thanks_record_am(lser)
+    thanks_record_am(lser, cherrypick=cherrypick)
 
     return am_filename
 
 
-def thanks_record_am(lser):
+def thanks_record_am(lser, cherrypick=None):
     if not lser.complete:
         logger.debug('Incomplete series, not tracking for thanks')
         return
@@ -186,13 +193,18 @@ def thanks_record_am(lser):
     datadir = b4.get_data_dir()
     slug = lser.get_slug(extended=True)
     filename = '%s.am' % slug
-    # Check if we're tracking it already
-    for entry in os.listdir(datadir):
-        if entry == filename:
-            return
 
     patches = list()
+    at = 0
     for pmsg in lser.patches[1:]:
+        at += 1
+        if pmsg is None:
+            continue
+
+        if cherrypick is not None and at not in cherrypick:
+            logger.debug('Skipped non-cherrypicked: %s', at)
+            continue
+
         pmsg.load_hashes()
         if pmsg.attestation is None:
             logger.debug('Unable to get hashes for all patches, not tracking for thanks')
@@ -203,8 +215,8 @@ def thanks_record_am(lser):
     if lmsg is None:
         lmsg = lser.patches[1]
 
-    allto = email.utils.getaddresses([b4.LoreMessage.clean_header(x) for x in lmsg.msg.get_all('to', [])])
-    allcc = email.utils.getaddresses([b4.LoreMessage.clean_header(x) for x in lmsg.msg.get_all('cc', [])])
+    allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
+    allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
 
     out = {
         'msgid': lmsg.msgid,
