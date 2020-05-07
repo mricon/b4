@@ -531,12 +531,12 @@ def get_wanted_branch(cmdargs):
     gitdir = cmdargs.gitdir
     if not cmdargs.branch:
         # Find out our current branch
-        gitargs = ['rev-parse', '--abbrev-ref', 'HEAD']
+        gitargs = ['symbolic-ref', '-q', 'HEAD']
         ecode, out = b4.git_run_command(gitdir, gitargs)
         if ecode > 0:
-            logger.critical('Not able to get current branch (git branch --show-current)')
+            logger.critical('Not able to get current branch (git symbolic-ref HEAD)')
             sys.exit(1)
-        wantbranch = out.strip()
+        wantbranch = re.sub(r'^refs/heads/', '', out.strip())
         logger.debug('will check branch=%s', wantbranch)
     else:
         # Make sure it's a real branch
@@ -560,32 +560,17 @@ def get_branch_info(gitdir, branch):
 
     BRANCH_INFO = dict()
 
-    if branch.find('/') < 0:
-        # Not a remote branch
-        return BRANCH_INFO
-
-    # Get a list of all remotes
-    gitargs = ['remote', 'show']
-    lines = b4.git_get_command_lines(gitdir, gitargs)
-    if not len(lines):
-        # No remotes? Hmm...
-        return BRANCH_INFO
-
-    remote = None
-    for entry in lines:
-        if branch.find('%s/' % entry) == 0:
-            remote = entry
-            break
-
-    if remote is None:
+    remotecfg = b4.get_config_from_git('branch\\.%s\\.*' % branch)
+    if remotecfg is None or 'remote' not in remotecfg:
         # Not found any matching remotes
         return BRANCH_INFO
 
-    BRANCH_INFO['remote'] = remote
-    BRANCH_INFO['branch'] = branch.replace('%s/' % remote, '')
+    BRANCH_INFO['remote'] = remotecfg['remote']
+    if 'merge' in remotecfg:
+        BRANCH_INFO['branch'] = re.sub(r'^refs/heads/', '', remotecfg['merge'])
 
     # Grab template overrides
-    remotecfg = b4.get_config_from_git('remote\\.%s\\..*' % remote)
+    remotecfg = b4.get_config_from_git('remote\\.%s\\..*' % remotecfg['remote'])
     BRANCH_INFO.update(remotecfg)
 
     return BRANCH_INFO
