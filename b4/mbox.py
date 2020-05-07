@@ -161,14 +161,14 @@ def thanks_record_am(lser):
         if pmsg.attestation is None:
             logger.debug('Unable to get hashes for all patches, not tracking for thanks')
             return
-        patches.append((pmsg.subject, pmsg.pwhash))
+        patches.append((pmsg.subject, pmsg.pwhash, pmsg.msgid))
 
     lmsg = lser.patches[0]
     if lmsg is None:
         lmsg = lser.patches[1]
 
-    allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
-    allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
+    allto = email.utils.getaddresses([b4.LoreMessage.clean_header(x) for x in lmsg.msg.get_all('to', [])])
+    allcc = email.utils.getaddresses([b4.LoreMessage.clean_header(x) for x in lmsg.msg.get_all('cc', [])])
 
     out = {
         'msgid': lmsg.msgid,
