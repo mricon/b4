@@ -8,7 +8,7 @@ Work with code submissions in a public-inbox archive
 :Date:      2020-04-10
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.4.0
+:Version:   0.4.1
 :Manual section: 5
 
 SYNOPSIS
@@ -101,6 +101,8 @@ optional arguments:
   -s, --add-my-sob      Add your own signed-off-by to every patch
   -l, --add-link        Add a lore.kernel.org/r/ link to every patch
   -Q, --quilt-ready     Save mbox patches in a quilt-ready folder
+  -P CHERRYPICK, --cherry-pick CHERRYPICK
+                          Cherry-pick a subset of patches (e.g. -P 1-2,4,6-)
 
 *Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
 
@@ -158,18 +160,13 @@ optional arguments:
   -o OUTDIR, --outdir OUTDIR
                         Write thanks files into this dir (default=.)
   -l, --list            List pull requests and patch series you have retrieved
-  -s SEND, --send SEND
-                        Generate thankyous for specified messages (use -l to
-                        get the list or "all")
+  -s SEND, --send SEND  Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")
   -d DISCARD, --discard DISCARD
-                        Discard specified messages (use -l to get the list, or
-                        use "all")
-  -a, --auto            Use the Auto-Thankanator to figure out what got
-                        applied/merged
+                        Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")
+  -a, --auto            Use the Auto-Thankanator to figure out what got applied/merged
   -b BRANCH, --branch BRANCH
                         The branch to check against, instead of current
-  --since SINCE         The --since option to use when auto-matching patches
-                        (default=1.week)
+  --since SINCE         The --since option to use when auto-matching patches (default=1.week)
 
 *Example*: b4 ty --auto
 
