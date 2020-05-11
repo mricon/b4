@@ -364,7 +364,13 @@ def auto_thankanator(cmdargs):
         else:
             # This is a patch series
             commits = auto_locate_series(gitdir, jsondata, wantbranch, since=cmdargs.since)
-            if commits is None:
+            # Weed out series that have no matches at all
+            found = False
+            for commit in commits:
+                if commit[0] is not None:
+                    found = True
+                    break
+            if not found:
                 continue
             jsondata['commits'] = commits
         applied.append(jsondata)
