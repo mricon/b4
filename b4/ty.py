@@ -567,12 +567,12 @@ def get_wanted_branch(cmdargs):
         logger.debug('will check branch=%s', wantbranch)
     else:
         # Make sure it's a real branch
-        gitargs = ['branch', '--format=%(refname:short)', '--list', '--all']
+        gitargs = ['branch', '--format=%(refname)', '--list', '--all']
         lines = b4.git_get_command_lines(gitdir, gitargs)
         if not len(lines):
             logger.critical('Not able to get a list of branches (git branch --list --all)')
             sys.exit(1)
-        if cmdargs.branch not in lines:
+        if f'refs/heads/{cmdargs.branch}' not in lines:
             logger.critical('Requested branch %s not found in git branch --list --all', cmdargs.branch)
             sys.exit(1)
         wantbranch = cmdargs.branch
