@@ -589,15 +589,33 @@ def get_branch_info(gitdir, branch):
 
     remotecfg = b4.get_config_from_git('branch\\.%s\\.*' % branch)
     if remotecfg is None or 'remote' not in remotecfg:
-        # Not found any matching remotes
-        return BRANCH_INFO
+        # Did not find a matching branch entry, so look at remotes
+        gitargs = ['remote', 'show']
+        lines = b4.git_get_command_lines(gitdir, gitargs)
+        if not len(lines):
+            # No remotes? Hmm...
+            return BRANCH_INFO
 
-    BRANCH_INFO['remote'] = remotecfg['remote']
-    if 'merge' in remotecfg:
-        BRANCH_INFO['branch'] = re.sub(r'^refs/heads/', '', remotecfg['merge'])
+        remote = None
+        for entry in lines:
+            if branch.find(f'{entry}/') == 0:
+                remote = entry
+                break
+
+        if remote is None:
+            # Not found any matching remotes
+            return BRANCH_INFO
+
+        BRANCH_INFO['remote'] = remote
+        BRANCH_INFO['branch'] = branch.replace(f'{remote}/', '')
+
+    else:
+        BRANCH_INFO['remote'] = remotecfg['remote']
+        if 'merge' in remotecfg:
+            BRANCH_INFO['branch'] = re.sub(r'^refs/heads/', '', remotecfg['merge'])
 
     # Grab template overrides
-    remotecfg = b4.get_config_from_git('remote\\.%s\\..*' % remotecfg['remote'])
+    remotecfg = b4.get_config_from_git('remote\\.%s\\..*' % BRANCH_INFO['remote'])
     BRANCH_INFO.update(remotecfg)
 
     return BRANCH_INFO
