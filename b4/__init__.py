@@ -726,7 +726,13 @@ class LoreMessage:
             pcharset = part.get_content_charset()
             if not pcharset:
                 pcharset = mcharset
-            payload = payload.decode(pcharset, errors='replace')
+            try:
+                payload = payload.decode(pcharset, errors='replace')
+            except LookupError:
+                # what kind of encoding is that?
+                # Whatever, we'll use utf-8 and hope for the best
+                payload = payload.decode('utf-8', errors='replace')
+                part.set_param('charset', 'utf-8')
             if self.body is None:
                 self.body = payload
                 continue
