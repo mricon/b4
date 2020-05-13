@@ -275,8 +275,11 @@ class LoreMailbox:
                 if pmsg is None:
                     # Can't find the message we're replying to here
                     continue
-            else:
+            elif fmsg.in_reply_to in self.msgid_map:
                 pmsg = self.msgid_map[fmsg.in_reply_to]
+            else:
+                logger.debug('  missing message, skipping: %s', fmsg.in_reply_to)
+                continue
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
             for tname, tvalue in mismatches:
