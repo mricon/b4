@@ -102,7 +102,10 @@ optional arguments:
   -l, --add-link        Add a lore.kernel.org/r/ link to every patch
   -Q, --quilt-ready     Save mbox patches in a quilt-ready folder
   -P CHERRYPICK, --cherry-pick CHERRYPICK
-                          Cherry-pick a subset of patches (e.g. -P 1-2,4,6-)
+                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-",
+                        "-P _" to use just the msgid specified,
+                        or "-P \*globbing\*" to match on commit subject)
+ 
 
 *Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
 

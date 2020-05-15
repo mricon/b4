@@ -163,7 +163,9 @@ Add a lore.kernel.org/r/ link to every patch
 Save mbox patches in a quilt\-ready folder
 .TP
 .BI \-P \ CHERRYPICK\fP,\fB \ \-\-cherry\-pick \ CHERRYPICK
-Cherry\-pick a subset of patches (e.g. \-P 1\-2,4,6\-)
+Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-",
+"\-P _" to use just the msgid specified,
+or "\-P *globbing*" to match on commit subject)
 .UNINDENT
 .UNINDENT
 .sp
