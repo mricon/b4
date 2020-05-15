@@ -14,6 +14,7 @@ import email.utils
 import re
 import time
 import json
+import fnmatch
 
 import urllib.parse
 import xml.etree.ElementTree
@@ -67,7 +68,32 @@ def mbox_to_am(mboxfile, cmdargs):
 
     logger.info('---')
     if cmdargs.cherrypick:
-        cherrypick = list(b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches)-1))
+        cherrypick = list()
+        if cmdargs.cherrypick == '_':
+            msgid = b4.get_msgid(cmdargs)
+            # Only grab the exact msgid provided
+            at = 0
+            for lmsg in lser.patches[1:]:
+                at += 1
+                if lmsg.msgid == msgid:
+                    cherrypick = [at]
+                    cmdargs.cherrypick = '5'
+                    break
+            if not len(cherrypick):
+                logger.critical('Specified msgid is not present in the series, cannot cherry-pick')
+                sys.exit(1)
+        elif cmdargs.cherrypick.find('*') >= 0:
+            # Globbing on subject
+            at = 0
+            for lmsg in lser.patches[1:]:
+                at += 1
+                if fnmatch.fnmatch(lmsg.subject, cmdargs.cherrypick):
+                    cherrypick.append(at)
+            if not len(cherrypick):
+                logger.critical('Could not match "%s" to any subjects in the series', cmdargs.cherrypick)
+                sys.exit(1)
+        else:
+            cherrypick = list(b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches)-1))
     else:
         cherrypick = None
     logger.critical('Writing %s', am_filename)
