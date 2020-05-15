@@ -98,8 +98,8 @@ def mbox_to_am(mboxfile, cmdargs):
         cherrypick = None
     logger.critical('Writing %s', am_filename)
     mbx = mailbox.mbox(am_filename)
-    am_mbx = lser.save_am_mbox(mbx, cmdargs.noaddtrailers, covertrailers,
-                               trailer_order=config['trailer-order'],
+    am_mbx = lser.save_am_mbox(mbx, noaddtrailers=cmdargs.noaddtrailers,
+                               covertrailers=covertrailers, trailer_order=config['trailer-order'],
                                addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
                                linkmask=config['linkmask'], cherrypick=cherrypick)
     logger.info('---')
@@ -310,7 +310,7 @@ def am_mbox_to_quilt(am_mbx, q_dirname):
             sfh.write('%s\n' % patch_filename)
 
 
-def get_newest_series(mboxfile):
+def get_extra_series(mboxfile, direction=1, wantvers=None):
     # Open the mbox and find the latest series mentioned in it
     mbx = mailbox.mbox(mboxfile)
     base_msg = None
@@ -343,14 +343,27 @@ def get_newest_series(mboxfile):
         logger.debug('Not checking for new revisions: no prefixes on the cover letter.')
         mbx.close()
         return
+    if direction < 0 and latest_revision <= 1:
+        logger.debug('This is the latest version of the series')
+        mbx.close()
+        return
+    if direction < 0 and wantvers is None:
+        wantvers = [latest_revision - 1]
+
     base_msgid = b4.LoreMessage.get_clean_msgid(base_msg)
     fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
     msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
     startdate = time.strftime('%Y%m%d', msgdate[:9])
     listarc = base_msg.get_all('List-Archive')[-1].strip('<>')
-    q = 's:"%s" AND f:"%s" AND d:%s..' % (lsub.subject.replace('"', ''), fromeml, startdate)
-    queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '-1'}))
-    logger.critical('Checking for newer revisions on %s', listarc)
+    if direction > 0:
+        q = 's:"%s" AND f:"%s" AND d:%s..' % (lsub.subject.replace('"', ''), fromeml, startdate)
+        queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '-1'}))
+        logger.critical('Checking for newer revisions on %s', listarc)
+    else:
+        q = 's:"%s" AND f:"%s" AND d:..%s' % (lsub.subject.replace('"', ''), fromeml, startdate)
+        queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '1'}))
+        logger.critical('Checking for older revisions on %s', listarc)
+
     logger.debug('Query URL: %s', queryurl)
     session = b4.get_requests_session()
     resp = session.get(queryurl)
@@ -373,18 +386,30 @@ def get_newest_series(mboxfile):
             logger.debug('Ignoring result (not interesting): %s', title)
             continue
         link = entry.find('atom:link', ns).get('href')
-        if lsub.revision < latest_revision:
+        if direction > 0 and lsub.revision <= latest_revision:
             logger.debug('Ignoring result (not new revision): %s', title)
+            continue
+        elif direction < 0 and lsub.revision >= latest_revision:
+            logger.debug('Ignoring result (not old revision): %s', title)
+            continue
+        elif direction < 0 and lsub.revision not in wantvers:
+            logger.debug('Ignoring result (not revision we want): %s', title)
             continue
         if link.find('/%s/' % base_msgid) > 0:
             logger.debug('Ignoring result (same thread as ours):%s', title)
             continue
         if lsub.revision == 1 and lsub.revision == latest_revision:
             # Someone sent a separate message with an identical title but no new vX in the subject line
-            # It's *probably* a new revision.
-            logger.debug('Likely a new revision: %s', title)
-        elif lsub.revision > latest_revision:
+            if direction > 0:
+                # It's *probably* a new revision.
+                logger.debug('Likely a new revision: %s', title)
+            else:
+                # It's *probably* an older revision.
+                logger.debug('Likely an older revision: %s', title)
+        elif direction > 0 and lsub.revision > latest_revision:
             logger.debug('Definitely a new revision [v%s]: %s', lsub.revision, title)
+        elif direction < 0 and lsub.revision < latest_revision:
+            logger.debug('Definitely an older revision [v%s]: %s', lsub.revision, title)
         else:
             logger.debug('No idea what this is: %s', title)
             continue
@@ -445,7 +470,7 @@ def main(cmdargs):
             sys.exit(1)
 
     if threadmbox and cmdargs.checknewer:
-        get_newest_series(threadmbox)
+        get_extra_series(threadmbox, direction=1)
 
     if cmdargs.subcmd == 'am':
         mbox_to_am(threadmbox, cmdargs)

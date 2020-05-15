@@ -60,6 +60,11 @@ def cmd_ty(cmdargs):
     b4.ty.main(cmdargs)
 
 
+def cmd_diff(cmdargs):
+    import b4.diff
+    b4.diff.main(cmdargs)
+
+
 def cmd():
     # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
@@ -163,6 +168,20 @@ def cmd():
     sp_ty.add_argument('--since', default='1.week',
                        help='The --since option to use when auto-matching patches (default=1.week)')
     sp_ty.set_defaults(func=cmd_ty)
+
+    # b4 diff
+    sp_diff = subparsers.add_parser('diff', help='Show a range-diff to previous series revision')
+    sp_diff.add_argument('msgid', nargs='?',
+                         help='Message ID to process, or pipe a raw message')
+    sp_diff.add_argument('-g', '--gitdir', default=None,
+                         help='Operate on this git tree instead of current dir')
+    sp_diff.add_argument('-p', '--use-project', dest='useproject', default=None,
+                         help='Use a specific project instead of guessing (linux-mm, linux-hardening, etc)')
+    sp_diff.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
+                         help='Do not use local cache')
+    sp_diff.add_argument('-v', '--compare-versions', dest='wantvers', type=int, default=None, nargs='+',
+                         help='Compare specific versions instead of latest and one before that, e.g. -v 3 5')
+    sp_diff.set_defaults(func=cmd_diff)
 
     cmdargs = parser.parse_args()
 

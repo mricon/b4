@@ -21,7 +21,8 @@ import mailbox
 import pwd
 
 from pathlib import Path
-from tempfile import mkstemp
+from tempfile import mkstemp, TemporaryDirectory
+from contextlib import contextmanager
 
 from email import charset
 charset.add_charset('utf-8', None)
@@ -401,16 +402,11 @@ class LoreSeries:
         self.trailer_mismatches = set()
         self.complete = False
         self.has_cover = False
+        self.subject = '(untitled)'
 
     def __repr__(self):
         out = list()
-        if self.has_cover:
-            out.append('- Series: [v%s] %s' % (self.revision, self.patches[0].subject))
-        elif self.patches[1] is not None:
-            out.append('- Series: [v%s] %s' % (self.revision, self.patches[1].subject))
-        else:
-            out.append('- Series: [v%s] (untitled)' % self.revision)
-
+        out.append('- Series: [v%s] %s' % (self.revision, self.subject))
         out.append('  revision: %s' % self.revision)
         out.append('  expected: %s' % self.expected)
         out.append('  complete: %s' % self.complete)
@@ -442,6 +438,10 @@ class LoreSeries:
         else:
             self.patches[lmsg.counter] = lmsg
         self.complete = not (None in self.patches[1:])
+        if self.patches[0] is not None:
+            self.subject = self.patches[0].subject
+        elif self.patches[1] is not None:
+            self.subject = self.patches[1].subject
 
     def get_slug(self, extended=False):
         # Find the first non-None entry
@@ -468,7 +468,7 @@ class LoreSeries:
 
         return slug
 
-    def save_am_mbox(self, mbx, noaddtrailers, covertrailers, trailer_order=None, addmysob=False,
+    def save_am_mbox(self, mbx, noaddtrailers=False, covertrailers=False, trailer_order=None, addmysob=False,
                      addlink=False, linkmask=None, cherrypick=None):
 
         usercfg = get_user_config()
@@ -600,6 +600,9 @@ class LoreSeries:
                     # and it's no longer going to match current hash
                     continue
                 seenfiles.add(fn)
+                if set(bh) == {'0'}:
+                    # New file, will for sure apply clean
+                    continue
                 fullpath = os.path.join(topdir, fn)
                 if when is None:
                     if not os.path.exists(fullpath):
@@ -926,10 +929,17 @@ class LoreMessage:
     @staticmethod
     def get_indexes(diff):
         indexes = set()
-        for match in re.finditer(r'^diff\s+--git\s+\w/(.*)\s+\w/.*\nindex\s+([0-9a-f]+)\.\.[0-9a-f]+\s+[0-9]+$',
-                                 diff, flags=re.I | re.M):
-            fname, bindex = match.groups()
-            indexes.add((fname, bindex))
+        curfile = None
+        for line in diff.split('\n'):
+            if line.find('diff ') != 0 and line.find('index ') != 0:
+                continue
+            matches = re.search(r'^diff\s+--git\s+\w/(.*)\s+\w/(.*)$', line)
+            if matches and matches.groups()[0] == matches.groups()[1]:
+                curfile = matches.groups()[0]
+                continue
+            matches = re.search(r'^index\s+([0-9a-f]+)\.\.[0-9a-f]+.*$', line)
+            if matches and curfile is not None:
+                indexes.add((curfile, matches.groups()[0]))
         return indexes
 
     @staticmethod
@@ -1625,6 +1635,33 @@ def git_get_command_lines(gitdir, args):
             lines.append(line)
 
     return lines
+
+
+@contextmanager
+def git_temp_worktree(gitdir=None):
+    """Context manager that creates a temporary work tree and chdirs into it. The
+    worktree is deleted when the contex manager is closed. Taken from gj_tools."""
+    dfn = None
+    try:
+        with TemporaryDirectory() as dfn:
+            git_run_command(gitdir, ['worktree', 'add', '--detach', '--no-checkout', dfn])
+            with in_directory(dfn):
+                yield
+    finally:
+        if dfn is not None:
+            git_run_command(gitdir, ['worktree', 'remove', dfn])
+
+
+@contextmanager
+def in_directory(dirname):
+    """Context manager that chdirs into a directory and restores the original
+    directory when closed. Taken from gj_tools."""
+    cdir = os.getcwd()
+    try:
+        os.chdir(dirname)
+        yield True
+    finally:
+        os.chdir(cdir)
 
 
 def get_config_from_git(regexp, defaults=None):
