@@ -107,11 +107,18 @@ def main(cmdargs):
         upper = max(lmbx.series.keys())
         lower = min(lmbx.series.keys())
 
+    if upper == lower:
+        logger.critical('Could not find previous revision')
+        os.unlink(mboxfile)
+        sys.exit(1)
+
     if upper not in lmbx.series:
         logger.critical('Could not find revision %s', upper)
+        os.unlink(mboxfile)
         sys.exit(1)
     if lower not in lmbx.series:
         logger.critical('Could not find revision %s', lower)
+        os.unlink(mboxfile)
         sys.exit(1)
 
     # Prepare the lower fake-am range
