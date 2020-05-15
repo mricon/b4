@@ -98,7 +98,9 @@ def cmd():
     sp_am.add_argument('-Q', '--quilt-ready', dest='quiltready', action='store_true', default=False,
                        help='Save mbox patches in a quilt-ready folder')
     sp_am.add_argument('-P', '--cherry-pick', dest='cherrypick', default=None,
-                       help='Cherry-pick a subset of patches (e.g. -P 1-2,4,6-)')
+                       help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
+                            '"-P _" to use just the msgid specified, or '
+                            '"-P *globbing*" to match on commit subject)')
     sp_am.set_defaults(func=cmd_am)
 
     # b4 attest
