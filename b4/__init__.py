@@ -1844,7 +1844,13 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
         logger.info('Reduced thread to strict matches only (%s->%s)', len(in_mbx), len(out_mbx))
 
 
-def get_pi_thread_by_url(t_mbx_url, savefile):
+def get_pi_thread_by_url(t_mbx_url, savefile, nocache=False):
+    cachedir = get_cache_dir()
+    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(t_mbx_url))
+    if os.path.exists(cachefile) and not nocache:
+        logger.debug('Using cached copy: %s', cachefile)
+        shutil.copyfile(cachefile, savefile)
+        return savefile
     session = get_requests_session()
     resp = session.get(t_mbx_url)
     if resp.status_code != 200:
@@ -1858,22 +1864,13 @@ def get_pi_thread_by_url(t_mbx_url, savefile):
     with open(savefile, 'wb') as fh:
         logger.debug('Saving %s', savefile)
         fh.write(t_mbox)
+    shutil.copyfile(savefile, cachefile)
     return savefile
 
 
 def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     qmsgid = urllib.parse.quote_plus(msgid)
     config = get_main_config()
-    cachedir = get_cache_dir()
-    base = msgid
-    if useproject:
-        base = '%s-%s' % (useproject, msgid)
-    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(base))
-    if os.path.exists(cachefile) and not nocache:
-        logger.debug('Using cached copy: %s', cachefile)
-        shutil.copyfile(cachefile, savefile)
-        return savefile
-
     # Grab the head from lore, to see where we are redirected
     midmask = config['midmask'] % qmsgid
     loc = urllib.parse.urlparse(midmask)
@@ -1894,7 +1891,7 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     logger.debug('t_mbx_url=%s', t_mbx_url)
 
     logger.critical('Grabbing thread from %s', projurl.split('://')[1])
-    in_mbxf = get_pi_thread_by_url(t_mbx_url, '%s-loose' % savefile)
+    in_mbxf = get_pi_thread_by_url(t_mbx_url, '%s-loose' % savefile, nocache=nocache)
     if not in_mbxf:
         return None
     in_mbx = mailbox.mbox(in_mbxf)
@@ -1903,7 +1900,6 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     in_mbx.close()
     out_mbx.close()
     os.unlink(in_mbxf)
-    shutil.copyfile(savefile, cachefile)
     return savefile
 
 

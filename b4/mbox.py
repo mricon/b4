@@ -310,7 +310,7 @@ def am_mbox_to_quilt(am_mbx, q_dirname):
             sfh.write('%s\n' % patch_filename)
 
 
-def get_extra_series(mboxfile, direction=1, wantvers=None):
+def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
     # Open the mbox and find the latest series mentioned in it
     mbx = mailbox.mbox(mboxfile)
     base_msg = None
@@ -415,7 +415,7 @@ def get_extra_series(mboxfile, direction=1, wantvers=None):
             continue
         t_mbx_url = '%st.mbox.gz' % link
         savefile = mkstemp('b4-get')[1]
-        nt_mboxfile = b4.get_pi_thread_by_url(t_mbx_url, savefile)
+        nt_mboxfile = b4.get_pi_thread_by_url(t_mbx_url, savefile, nocache=nocache)
         nt_mbx = mailbox.mbox(nt_mboxfile)
         # Append all of these to the existing mailbox
         new_adds = 0

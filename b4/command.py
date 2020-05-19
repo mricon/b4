@@ -181,6 +181,12 @@ def cmd():
                          help='Do not use local cache')
     sp_diff.add_argument('-v', '--compare-versions', dest='wantvers', type=int, default=None, nargs='+',
                          help='Compare specific versions instead of latest and one before that, e.g. -v 3 5')
+    sp_diff.add_argument('-n', '--no-diff', dest='nodiff', action='store_true', default=False,
+                         help='Do not generate a diff, just show the command to do it')
+    sp_diff.add_argument('-o', '--output-diff', dest='outdiff', default=None,
+                         help='Save diff into this file instead of outputting to stdout')
+    sp_diff.add_argument('-c', '--color', dest='color', action='store_true', default=False,
+                         help='Force color output even when writing to file')
     sp_diff.set_defaults(func=cmd_diff)
 
     cmdargs = parser.parse_args()

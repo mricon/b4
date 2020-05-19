@@ -10,6 +10,9 @@ import sys
 import b4
 import b4.mbox
 import mailbox
+import shutil
+import urllib.parse
+
 from tempfile import mkstemp
 
 
@@ -17,6 +20,45 @@ logger = b4.logger
 
 
 def make_fake_commit_range(gitdir, lser):
+    start_commit = end_commit = None
+    # Do we have it in cache already?
+    cachedir = b4.get_cache_dir()
+    # Use the msgid of the first non-None patch in the series
+    msgid = None
+    for lmsg in lser.patches:
+        if lmsg is not None:
+            msgid = lmsg.msgid
+            break
+    if msgid is None:
+        logger.critical('Cannot operate on an empty series')
+        return None, None
+    cachefile = os.path.join(cachedir, '%s.fakeam' % urllib.parse.quote_plus(msgid))
+    if os.path.exists(cachefile):
+        stalecache = False
+        with open(cachefile, 'r') as fh:
+            cachedata = fh.read()
+            chunks = cachedata.strip().split()
+            if len(chunks) == 2:
+                start_commit, end_commit = chunks
+            else:
+                stalecache = True
+        if start_commit is not None and end_commit is not None:
+            # Make sure they are still there
+            ecode, out = b4.git_run_command(gitdir, ['cat-file', '-e', start_commit])
+            if ecode > 0:
+                stalecache = True
+            else:
+                ecode, out = b4.git_run_command(gitdir, ['cat-file', '-e', end_commit])
+                if ecode > 0:
+                    stalecache = True
+                else:
+                    logger.debug('Using previously generated range')
+                    return start_commit, end_commit
+
+        if stalecache:
+            logger.debug('Stale cache for [v%s] %s', lser.revision, lser.subject)
+            os.unlink(cachefile)
+
     logger.info('Preparing fake-am for v%s: %s', lser.revision, lser.subject)
     with b4.git_temp_worktree(gitdir):
         # We are in a temporary chdir at this time, so writing to a known file should be safe
@@ -73,6 +115,11 @@ def make_fake_commit_range(gitdir, lser):
         end_commit = out.strip()
         logger.info('  range: %.12s..%.12s', start_commit, end_commit)
 
+    with open(cachefile, 'w') as fh:
+        logger.debug('Saving into cache: %s', cachefile)
+        logger.debug('    %s..%s', start_commit, end_commit)
+        fh.write(f'{start_commit} {end_commit}\n')
+
     return start_commit, end_commit
 
 
@@ -84,12 +131,26 @@ def main(cmdargs):
 
     # start by grabbing the mbox provided
     savefile = mkstemp('b4-diff-to')[1]
-    mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
-    if mboxfile is None:
-        logger.critical('Unable to retrieve thread: %s', msgid)
-        return
-    logger.info('Retrieved %s messages in the thread', len(mboxfile))
-    b4.mbox.get_extra_series(mboxfile, direction=-1, wantvers=cmdargs.wantvers)
+    # Do we have a cache of this lookup?
+    cachedir = b4.get_cache_dir()
+    if cmdargs.wantvers:
+        cachefile = os.path.join(cachedir,
+                                 '%s-%s.diff.mbx' % (urllib.parse.quote_plus(msgid), '-'.join(cmdargs.wantvers)))
+    else:
+        cachefile = os.path.join(cachedir, '%s-latest.diff.mbx' % urllib.parse.quote_plus(msgid))
+    if os.path.exists(cachefile) and not cmdargs.nocache:
+        logger.info('Using cached copy of the lookup')
+        shutil.copyfile(cachefile, savefile)
+        mboxfile = savefile
+    else:
+        mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
+        if mboxfile is None:
+            logger.critical('Unable to retrieve thread: %s', msgid)
+            return
+        logger.info('Retrieved %s messages in the thread', len(mboxfile))
+        b4.mbox.get_extra_series(mboxfile, direction=-1, wantvers=cmdargs.wantvers)
+
+    shutil.copyfile(mboxfile, cachefile)
     mbx = mailbox.mbox(mboxfile)
     count = len(mbx)
     logger.info('---')
@@ -136,6 +197,24 @@ def main(cmdargs):
         os.unlink(mboxfile)
         sys.exit(1)
     logger.info('---')
-    logger.info('Success, you may now run:')
-    logger.info('    git range-diff %.12s..%.12s %.12s..%.12s', lsc, lec, usc, uec)
-
+    grdcmd = 'git range-diff %.12s..%.12s %.12s..%.12s' % (lsc, lec, usc, uec)
+    if cmdargs.nodiff:
+        logger.info('Success, to compare v%s and v%s:', lower, upper)
+        logger.info(f'    {grdcmd}')
+        sys.exit(0)
+    logger.info('Running: %s', grdcmd)
+    gitargs = ['range-diff', f'{lsc}..{lec}', f'{usc}..{uec}']
+    if cmdargs.outdiff is None or cmdargs.color:
+        gitargs.append('--color')
+    ecode, rdiff = b4.git_run_command(cmdargs.gitdir, gitargs)
+    if ecode > 0:
+        logger.critical('Unable to generate diff')
+        logger.critical('Try running it yourself:')
+        logger.critical(f'    {grdcmd}')
+        sys.exit(1)
+    if cmdargs.outdiff is not None:
+        logger.info('Writing %s', cmdargs.outdiff)
+        fh = open(cmdargs.outdiff, 'w')
+    else:
+        fh = sys.stdout
+    fh.write(rdiff)
