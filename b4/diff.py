@@ -134,8 +134,8 @@ def main(cmdargs):
     # Do we have a cache of this lookup?
     cachedir = b4.get_cache_dir()
     if cmdargs.wantvers:
-        cachefile = os.path.join(cachedir,
-                                 '%s-%s.diff.mbx' % (urllib.parse.quote_plus(msgid), '-'.join(cmdargs.wantvers)))
+        cachefile = os.path.join(cachedir, '%s-%s.diff.mbx' % (urllib.parse.quote_plus(msgid),
+                                                               '-'.join([str(x) for x in cmdargs.wantvers])))
     else:
         cachefile = os.path.join(cachedir, '%s-latest.diff.mbx' % urllib.parse.quote_plus(msgid))
     if os.path.exists(cachefile) and not cmdargs.nocache:
@@ -202,7 +202,8 @@ def main(cmdargs):
         logger.info('Success, to compare v%s and v%s:', lower, upper)
         logger.info(f'    {grdcmd}')
         sys.exit(0)
-    logger.info('Running: %s', grdcmd)
+    logger.info('Diffing v%s and v%s', lower, upper)
+    logger.info('    Running: %s', grdcmd)
     gitargs = ['range-diff', f'{lsc}..{lec}', f'{usc}..{uec}']
     if cmdargs.outdiff is None or cmdargs.color:
         gitargs.append('--color')
@@ -216,5 +217,6 @@ def main(cmdargs):
         logger.info('Writing %s', cmdargs.outdiff)
         fh = open(cmdargs.outdiff, 'w')
     else:
+        logger.info('---')
         fh = sys.stdout
     fh.write(rdiff)
