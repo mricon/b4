@@ -335,17 +335,17 @@ class LoreMailbox:
         logger.debug('Looking at: %s', lmsg.full_subject)
         self.msgid_map[lmsg.msgid] = lmsg
 
-        if lmsg.counter == 0 and lmsg.has_diffstat:
-            # Cover letter
-            # Add it to covers -- we'll deal with them later
-            logger.debug('  adding as v%s cover letter', lmsg.revision)
-            self.covers[lmsg.revision] = lmsg
-            return
-
         if lmsg.reply:
             # We'll figure out where this belongs later
             logger.debug('  adding to followups')
             self.followups.append(lmsg)
+            return
+
+        if lmsg.counter == 0 and (not lmsg.counters_inferred or lmsg.has_diffstat):
+            # Cover letter
+            # Add it to covers -- we'll deal with them later
+            logger.debug('  adding as v%s cover letter', lmsg.revision)
+            self.covers[lmsg.revision] = lmsg
             return
 
         if re.search(r'^Comment: att-fmt-ver:', lmsg.body, re.I | re.M):

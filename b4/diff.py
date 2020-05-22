@@ -69,6 +69,10 @@ def make_fake_commit_range(gitdir, lser):
         for lmsg in lser.patches[1:]:
             logger.debug('Looking at %s', lmsg.full_subject)
             lmsg.load_hashes()
+            if not len(lmsg.blob_indexes):
+                logger.critical('ERROR: some patches do not have indexes')
+                logger.critical('       automatic range-diff would be misleading')
+                return None, None
             for fn, fi in lmsg.blob_indexes:
                 if fn in seenfiles:
                     # We already processed this file, so this blob won't match
@@ -123,9 +127,10 @@ def make_fake_commit_range(gitdir, lser):
     return start_commit, end_commit
 
 
-def main(cmdargs):
+def diff_same_thread_series(cmdargs):
     msgid = b4.get_msgid(cmdargs)
-    if cmdargs.wantvers and len(cmdargs.wantvers) > 2:
+    wantvers = cmdargs.wantvers
+    if wantvers and len(wantvers) > 2:
         logger.critical('Can only compare two versions at a time')
         sys.exit(1)
 
@@ -133,9 +138,9 @@ def main(cmdargs):
     savefile = mkstemp('b4-diff-to')[1]
     # Do we have a cache of this lookup?
     cachedir = b4.get_cache_dir()
-    if cmdargs.wantvers:
+    if wantvers:
         cachefile = os.path.join(cachedir, '%s-%s.diff.mbx' % (urllib.parse.quote_plus(msgid),
-                                                               '-'.join([str(x) for x in cmdargs.wantvers])))
+                                                               '-'.join([str(x) for x in wantvers])))
     else:
         cachefile = os.path.join(cachedir, '%s-latest.diff.mbx' % urllib.parse.quote_plus(msgid))
     if os.path.exists(cachefile) and not cmdargs.nocache:
@@ -147,10 +152,9 @@ def main(cmdargs):
         if mboxfile is None:
             logger.critical('Unable to retrieve thread: %s', msgid)
             return
-        logger.info('Retrieved %s messages in the thread', len(mboxfile))
-        b4.mbox.get_extra_series(mboxfile, direction=-1, wantvers=cmdargs.wantvers)
+        b4.mbox.get_extra_series(mboxfile, direction=-1, wantvers=wantvers)
+        shutil.copyfile(mboxfile, cachefile)
 
-    shutil.copyfile(mboxfile, cachefile)
     mbx = mailbox.mbox(mboxfile)
     count = len(mbx)
     logger.info('---')
@@ -158,51 +162,81 @@ def main(cmdargs):
     lmbx = b4.LoreMailbox()
     for key, msg in mbx.items():
         lmbx.add_message(msg)
-    if cmdargs.wantvers and len(cmdargs.wantvers) == 1:
+
+    mbx.close()
+    os.unlink(mboxfile)
+
+    if wantvers and len(wantvers) == 1:
         upper = max(lmbx.series.keys())
-        lower = cmdargs.wantvers[0]
-    elif cmdargs.wantvers and len(cmdargs.wantvers) == 2:
-        upper = max(cmdargs.wantvers)
-        lower = min(cmdargs.wantvers)
+        lower = wantvers[0]
+    elif wantvers and len(wantvers) == 2:
+        upper = max(wantvers)
+        lower = min(wantvers)
     else:
         upper = max(lmbx.series.keys())
         lower = min(lmbx.series.keys())
 
     if upper == lower:
         logger.critical('Could not find previous revision')
-        os.unlink(mboxfile)
-        sys.exit(1)
+        return None, None
 
     if upper not in lmbx.series:
-        logger.critical('Could not find revision %s', upper)
-        os.unlink(mboxfile)
-        sys.exit(1)
+        return None, None
+
     if lower not in lmbx.series:
-        logger.critical('Could not find revision %s', lower)
-        os.unlink(mboxfile)
+        return None, None
+
+    return lmbx.series[lower], lmbx.series[upper]
+
+
+def diff_mboxes(cmdargs):
+    chunks = list()
+    for mboxfile in cmdargs.ambox:
+        if not os.path.exists(mboxfile):
+            logger.critical('Cannot open %s', mboxfile)
+            return None, None
+
+        mbx = mailbox.mbox(mboxfile)
+        count = len(mbx)
+        logger.info('Loading %s messages from %s', count, mboxfile)
+        lmbx = b4.LoreMailbox()
+        for key, msg in mbx.items():
+            lmbx.add_message(msg)
+        if len(lmbx.series) > 1:
+            logger.critical('More than one series version in %s, will use latest', mboxfile)
+
+        chunks.append(lmbx.series[max(lmbx.series.keys())])
+
+    return chunks
+
+
+def main(cmdargs):
+    if cmdargs.ambox is not None:
+        lser, user = diff_mboxes(cmdargs)
+    else:
+        lser, user = diff_same_thread_series(cmdargs)
+
+    if lser is None or user is None:
         sys.exit(1)
 
     # Prepare the lower fake-am range
-    lsc, lec = make_fake_commit_range(cmdargs.gitdir, lmbx.series[lower])
+    lsc, lec = make_fake_commit_range(cmdargs.gitdir, lser)
     if lsc is None or lec is None:
         logger.critical('---')
-        logger.critical('Could not create fake-am range for lower series v%s', lower)
-        os.unlink(mboxfile)
+        logger.critical('Could not create fake-am range for lower series v%s', lser.revision)
         sys.exit(1)
     # Prepare the upper fake-am range
-    usc, uec = make_fake_commit_range(cmdargs.gitdir, lmbx.series[upper])
+    usc, uec = make_fake_commit_range(cmdargs.gitdir, user)
     if usc is None or uec is None:
         logger.critical('---')
-        logger.critical('Could not create fake-am range for upper series v%s', upper)
-        os.unlink(mboxfile)
+        logger.critical('Could not create fake-am range for upper series v%s', user.revision)
         sys.exit(1)
-    logger.info('---')
     grdcmd = 'git range-diff %.12s..%.12s %.12s..%.12s' % (lsc, lec, usc, uec)
     if cmdargs.nodiff:
-        logger.info('Success, to compare v%s and v%s:', lower, upper)
+        logger.info('Success, to compare v%s and v%s:', lser.revision, user.revision)
         logger.info(f'    {grdcmd}')
         sys.exit(0)
-    logger.info('Diffing v%s and v%s', lower, upper)
+    logger.info('Diffing v%s and v%s', lser.revision, user.revision)
     logger.info('    Running: %s', grdcmd)
     gitargs = ['range-diff', f'{lsc}..{lec}', f'{usc}..{uec}']
     if cmdargs.outdiff is None or cmdargs.color:

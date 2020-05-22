@@ -173,7 +173,7 @@ def mbox_to_am(mboxfile, cmdargs):
             checked, mismatches = lser.check_applies_clean(topdir)
             if mismatches == 0 and checked != mismatches:
                 cleanmsg = ' (applies clean to current tree)'
-            else:
+            elif cmdargs.guessbase:
                 # Look at the last 10 tags and see if it applies cleanly to
                 # any of them. I'm not sure how useful this is, but I'm going
                 # to put it in for now and maybe remove later if it causes
@@ -324,18 +324,18 @@ def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
         # Ignore replies or counters above 1
         if lsub.reply or lsub.counter > 1:
             continue
-        if latest_revision is None or lsub.revision > latest_revision:
-            # New revision
+        if base_msg is not None:
+            logger.debug('Current base_msg: %s', base_msg['Subject'])
+        logger.debug('Checking the subject on %s', lsub.full_subject)
+        if latest_revision is None or lsub.revision >= latest_revision:
             latest_revision = lsub.revision
-            if lsub.counter == 0:
+            if lsub.counter == 0 and not lsub.counters_inferred:
                 # And a cover letter, nice. This is the easy case
                 base_msg = msg
                 seen_covers.append(latest_revision)
-                continue
-            if lsub.counter == 1:
-                if latest_revision not in seen_covers:
-                    # A patch/series without a cover letter
-                    base_msg = msg
+            elif lsub.counter == 1 and latest_revision not in seen_covers:
+                # A patch/series without a cover letter
+                base_msg = msg
 
     # Get subject info from base_msg again
     lsub = b4.LoreSubject(base_msg['Subject'])
@@ -371,7 +371,7 @@ def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
     try:
         tree = xml.etree.ElementTree.fromstring(resp.content)
     except xml.etree.ElementTree.ParseError as ex:
-        logger.debug('Unable to parse results, ignoring', ex)
+        logger.debug('Unable to parse results, ignoring: %s', ex)
         resp.close()
         mbx.close()
         return

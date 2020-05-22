@@ -106,6 +106,8 @@ def cmd():
                        help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
                             '"-P _" to use just the msgid specified, or '
                             '"-P *globbing*" to match on commit subject)')
+    sp_am.add_argument('-g', '--guess-base', dest='guessbase', action='store_true', default=False,
+                       help='Try to guess the base of the series (if not specified)')
     sp_am.set_defaults(func=cmd_am)
 
     # b4 attest
@@ -187,6 +189,8 @@ def cmd():
                          help='Save diff into this file instead of outputting to stdout')
     sp_diff.add_argument('-c', '--color', dest='color', action='store_true', default=False,
                          help='Force color output even when writing to file')
+    sp_diff.add_argument('-m', '--compare-am-mboxes', dest='ambox', nargs=2, default=None,
+                         help='Compare two mbx files prepared with "b4 am"')
     sp_diff.set_defaults(func=cmd_diff)
 
     cmdargs = parser.parse_args()
