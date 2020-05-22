@@ -177,7 +177,8 @@ def diff_same_thread_series(cmdargs):
         lower = min(lmbx.series.keys())
 
     if upper == lower:
-        logger.critical('Could not find previous revision')
+        logger.critical('ERROR: Could not auto-find previous revision')
+        logger.critical('       Run "b4 am -T" manually, then "b4 diff -m mbx1 mbx2"')
         return None, None
 
     if upper not in lmbx.series:
