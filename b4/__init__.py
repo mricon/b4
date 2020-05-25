@@ -680,6 +680,9 @@ class LoreSeries:
             # Logic largely borrowed from gj_tools
             seenfiles = set()
             for lmsg in self.patches[1:]:
+                if lmsg is None:
+                    logger.critical('ERROR: v%s series incomplete; unable to create a fake-am range', self.revision)
+                    return None, None
                 logger.debug('Looking at %s', lmsg.full_subject)
                 lmsg.load_hashes()
                 if not len(lmsg.blob_indexes):

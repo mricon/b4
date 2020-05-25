@@ -30,11 +30,12 @@ def diff_same_thread_series(cmdargs):
     savefile = mkstemp('b4-diff-to')[1]
     # Do we have a cache of this lookup?
     cachedir = b4.get_cache_dir()
+    cachebase = urllib.parse.quote_plus(msgid)
     if wantvers:
-        cachefile = os.path.join(cachedir, '%s-%s.diff.mbx' % (urllib.parse.quote_plus(msgid),
-                                                               '-'.join([str(x) for x in wantvers])))
-    else:
-        cachefile = os.path.join(cachedir, '%s-latest.diff.mbx' % urllib.parse.quote_plus(msgid))
+        cachebase += '-' + '-'.join([str(x) for x in wantvers])
+    if cmdargs.useproject:
+        cachebase += '-' + cmdargs.useproject
+    cachefile = os.path.join(cachedir, '%s.diff.mbx' % cachebase)
     if os.path.exists(cachefile) and not cmdargs.nocache:
         logger.info('Using cached copy of the lookup')
         shutil.copyfile(cachefile, savefile)
@@ -78,6 +79,12 @@ def diff_same_thread_series(cmdargs):
 
     if lower not in lmbx.series:
         return None, None
+
+    if not lmbx.series[lower].complete:
+        lmbx.backfill(lower)
+
+    if not lmbx.series[upper].complete:
+        lmbx.backfill(upper)
 
     return lmbx.series[lower], lmbx.series[upper]
 
