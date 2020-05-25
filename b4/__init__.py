@@ -587,7 +587,7 @@ class LoreSeries:
 
         return mbx
 
-    def check_applies_clean(self, topdir, when=None):
+    def check_applies_clean(self, gitdir, when=None):
         # Go through indexes and see if this series should apply cleanly
         mismatches = 0
         seenfiles = set()
@@ -603,7 +603,7 @@ class LoreSeries:
                 if set(bh) == {'0'}:
                     # New file, will for sure apply clean
                     continue
-                fullpath = os.path.join(topdir, fn)
+                fullpath = os.path.join(gitdir, fn)
                 if when is None:
                     if not os.path.exists(fullpath):
                         mismatches += 1
@@ -611,7 +611,7 @@ class LoreSeries:
                     cmdargs = ['hash-object', fullpath]
                     ecode, out = git_run_command(None, cmdargs)
                 else:
-                    gitdir = os.path.join(topdir, '.git')
+                    gitdir = os.path.join(gitdir, '.git')
                     logger.debug('Checking hash on %s:%s', when, fn)
                     # XXX: We should probably pipe the two commands instead of reading into memory,
                     #      so something to consider for the future
@@ -631,6 +631,115 @@ class LoreSeries:
                         logger.debug('%s hash: matched', fn)
 
         return len(seenfiles), mismatches
+
+    def make_fake_am_range(self, gitdir):
+        start_commit = end_commit = None
+        # Do we have it in cache already?
+        cachedir = get_cache_dir()
+        # Use the msgid of the first non-None patch in the series
+        msgid = None
+        for lmsg in self.patches:
+            if lmsg is not None:
+                msgid = lmsg.msgid
+                break
+        if msgid is None:
+            logger.critical('Cannot operate on an empty series')
+            return None, None
+        cachefile = os.path.join(cachedir, '%s.fakeam' % urllib.parse.quote_plus(msgid))
+        if os.path.exists(cachefile):
+            stalecache = False
+            with open(cachefile, 'r') as fh:
+                cachedata = fh.read()
+                chunks = cachedata.strip().split()
+                if len(chunks) == 2:
+                    start_commit, end_commit = chunks
+                else:
+                    stalecache = True
+            if start_commit is not None and end_commit is not None:
+                # Make sure they are still there
+                ecode, out = git_run_command(gitdir, ['cat-file', '-e', start_commit])
+                if ecode > 0:
+                    stalecache = True
+                else:
+                    ecode, out = git_run_command(gitdir, ['cat-file', '-e', end_commit])
+                    if ecode > 0:
+                        stalecache = True
+                    else:
+                        logger.debug('Using previously generated range')
+                        return start_commit, end_commit
+
+            if stalecache:
+                logger.debug('Stale cache for [v%s] %s', self.revision, self.subject)
+                os.unlink(cachefile)
+
+        logger.info('Preparing fake-am for v%s: %s', self.revision, self.subject)
+        with git_temp_worktree(gitdir):
+            # We are in a temporary chdir at this time, so writing to a known file should be safe
+            mbxf = '.__git-am__'
+            mbx = mailbox.mbox(mbxf)
+            # Logic largely borrowed from gj_tools
+            seenfiles = set()
+            for lmsg in self.patches[1:]:
+                logger.debug('Looking at %s', lmsg.full_subject)
+                lmsg.load_hashes()
+                if not len(lmsg.blob_indexes):
+                    logger.critical('ERROR: some patches do not have indexes')
+                    logger.critical('       unable to create a fake-am range')
+                    return None, None
+                for fn, fi in lmsg.blob_indexes:
+                    if fn in seenfiles:
+                        # We already processed this file, so this blob won't match
+                        continue
+                    seenfiles.add(fn)
+                    if set(fi) == {'0'}:
+                        # New file creation, nothing to do here
+                        logger.debug('  New file: %s', fn)
+                        continue
+                    # Try to grab full ref_id of this hash
+                    ecode, out = git_run_command(gitdir, ['rev-parse', fi])
+                    if ecode > 0:
+                        logger.critical('  ERROR: Could not find matching blob for %s (%s)', fn, fi)
+                        logger.critical('         If you know on which tree this patchset is based,')
+                        logger.critical('         add it as a remote and perform "git remote update"')
+                        logger.critical('         in order to fetch the missing objects.')
+                        return None, None
+                    logger.debug('  Found matching blob for: %s', fn)
+                    fullref = out.strip()
+                    gitargs = ['update-index', '--add', '--cacheinfo', f'0644,{fullref},{fn}']
+                    ecode, out = git_run_command(None, gitargs)
+                    if ecode > 0:
+                        logger.critical('  ERROR: Could not run update-index for %s (%s)', fn, fullref)
+                        return None, None
+                mbx.add(lmsg.msg.as_string(policy=emlpolicy).encode('utf-8'))
+
+            mbx.close()
+            ecode, out = git_run_command(None, ['write-tree'])
+            if ecode > 0:
+                logger.critical('ERROR: Could not write fake-am tree')
+                return None, None
+            treeid = out.strip()
+            # At this point we have a worktree with files that should cleanly receive a git am
+            gitargs = ['commit-tree', treeid + '^{tree}', '-F', '-']
+            ecode, out = git_run_command(None, gitargs, stdin='Initial fake commit'.encode('utf-8'))
+            if ecode > 0:
+                logger.critical('ERROR: Could not commit-tree')
+                return None, None
+            start_commit = out.strip()
+            git_run_command(None, ['reset', '--hard', start_commit])
+            ecode, out = git_run_command(None, ['am', mbxf])
+            if ecode > 0:
+                logger.critical('ERROR: Could not fake-am version %s', self.revision)
+                return None, None
+            ecode, out = git_run_command(None, ['rev-parse', 'HEAD'])
+            end_commit = out.strip()
+            logger.info('  range: %.12s..%.12s', start_commit, end_commit)
+
+        with open(cachefile, 'w') as fh:
+            logger.debug('Saving into cache: %s', cachefile)
+            logger.debug('    %s..%s', start_commit, end_commit)
+            fh.write(f'{start_commit} {end_commit}\n')
+
+        return start_commit, end_commit
 
     def save_cover(self, outfile):
         cover_msg = self.patches[0].get_am_message(add_trailers=False, trailer_order=None)

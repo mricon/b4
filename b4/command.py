@@ -108,6 +108,9 @@ def cmd():
                             '"-P *globbing*" to match on commit subject)')
     sp_am.add_argument('-g', '--guess-base', dest='guessbase', action='store_true', default=False,
                        help='Try to guess the base of the series (if not specified)')
+    sp_am.add_argument('-3', '--prep-3way', dest='threeway', action='store_true', default=False,
+                       help='Prepare for a 3-way merge '
+                            '(tries to ensure that all index blobs exist by making a fake commit range)')
     sp_am.set_defaults(func=cmd_am)
 
     # b4 attest

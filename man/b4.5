@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2020-04-10" "0.4.1" ""
+.TH B4 5 "2020-05-25" "0.5.0" ""
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .
@@ -32,7 +32,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 ..
 .SH SYNOPSIS
 .sp
-b4 {mbox,am,attest,pr,ty} [options]
+b4 {mbox,am,attest,pr,ty,diff} [options]
 .SH DESCRIPTION
 .sp
 This is a helper utility to work with patches and pull requests made
@@ -54,6 +54,8 @@ precursor to Lore and Data in the Star Trek universe.
 \fIb4 pr\fP: (EXPERIMENTAL) Work with pull requests
 .IP \(bu 2
 \fIb4 ty\fP: (EXPERIMENTAL) Create templated replies for processed patches and pull requests
+.IP \(bu 2
+\fIb4 diff\fP: (EXPERIMENTAL) Show range\-diff style diffs between patch versions
 .UNINDENT
 .SH OPTIONS
 .INDENT 0.0
@@ -166,6 +168,13 @@ Save mbox patches in a quilt\-ready folder
 Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-",
 "\-P _" to use just the msgid specified,
 or "\-P *globbing*" to match on commit subject)
+.TP
+.B \-g\fP,\fB  \-\-guess\-base
+Try to guess the base of the series (if not specified)
+.TP
+.B \-3\fP,\fB  \-\-prep\-3way
+Prepare for a 3\-way merge (tries to ensure that all
+index blobs exist by making a fake commit range)
 .UNINDENT
 .UNINDENT
 .sp
@@ -272,6 +281,57 @@ The \-\-since option to use when auto\-matching patches (default=1.week)
 .UNINDENT
 .sp
 \fIExample\fP: b4 ty \-\-auto
+.SS b4 diff
+.sp
+usage: b4 diff [\-h] [\-g GITDIR] [\-p USEPROJECT] [\-C] [\-v WANTVERS [WANTVERS ...]] [\-n] [\-o OUTDIFF] [\-c] [\-m AMBOX AMBOX] [msgid]
+.INDENT 0.0
+.TP
+.B positional arguments:
+msgid                 Message ID to process, pipe a raw message, or use \-m
+.UNINDENT
+.sp
+optional arguments:
+.INDENT 0.0
+.INDENT 3.5
+.INDENT 0.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-g \ GITDIR\fP,\fB \ \-\-gitdir \ GITDIR
+Operate on this git tree instead of current dir
+.TP
+.BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
+Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
+.TP
+.B \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-v WANTVERS [WANTVERS ...], \-\-compare\-versions WANTVERS [WANTVERS ...]
+Compare specific versions instead of latest and one before that, e.g. \-v 3 5
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-n\fP,\fB  \-\-no\-diff
+Do not generate a diff, just show the command to do it
+.TP
+.BI \-o \ OUTDIFF\fP,\fB \ \-\-output\-diff \ OUTDIFF
+Save diff into this file instead of outputting to stdout
+.TP
+.B \-c\fP,\fB  \-\-color
+Force color output even when writing to file
+.UNINDENT
+.INDENT 0.0
+.TP
+.B \-m AMBOX AMBOX, \-\-compare\-am\-mboxes AMBOX AMBOX
+Compare two mbx files prepared with "b4 am"
+.UNINDENT
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 diff
 .SH CONFIGURATION
 .sp
 B4 configuration is handled via git\-config(1), so you can store it in

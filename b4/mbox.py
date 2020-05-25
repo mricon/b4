@@ -123,6 +123,23 @@ def mbox_to_am(mboxfile, cmdargs):
             logger.critical('         From: %s <%s>', fname, femail)
         logger.critical('NOTE: Rerun with -S to apply them anyway')
 
+    topdir = None
+    # Are we in a git tree and if so, what is our toplevel?
+    gitargs = ['rev-parse', '--show-toplevel']
+    lines = b4.git_get_command_lines(None, gitargs)
+    if len(lines) == 1:
+        topdir = lines[0]
+
+    if cmdargs.threeway:
+        if not topdir:
+            logger.critical('WARNING: cannot prepare 3-way (not in a git dir)')
+        elif not lser.complete:
+            logger.critical('WARNING: cannot prepare 3-way (series incomplete)')
+        else:
+            rstart, rend = lser.make_fake_am_range(gitdir=None)
+            if rstart and rend:
+                logger.info('Prepared a fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+
     logger.critical('---')
     if not lser.complete:
         logger.critical('WARNING: Thread incomplete!')
@@ -165,11 +182,7 @@ def mbox_to_am(mboxfile, cmdargs):
         logger.critical('       git am %s', am_filename)
     else:
         cleanmsg = ''
-        # Are we in a git tree and if so, what is our toplevel?
-        gitargs = ['rev-parse', '--show-toplevel']
-        lines = b4.git_get_command_lines(None, gitargs)
-        if len(lines) == 1:
-            topdir = lines[0]
+        if topdir is not None:
             checked, mismatches = lser.check_applies_clean(topdir)
             if mismatches == 0 and checked != mismatches:
                 cleanmsg = ' (applies clean to current tree)'
