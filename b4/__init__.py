@@ -38,8 +38,8 @@ FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
 
 PASS_SIMPLE = '[P]'
 FAIL_SIMPLE = '[F]'
-PASS_FANCY = '[\033[32m✓\033[0m]'
-FAIL_FANCY = '[\033[31m✗\033[0m]'
+PASS_FANCY = '[\033[32m\u2713\033[0m]'
+FAIL_FANCY = '[\033[31m\u2717\034[0m]'
 
 # You can use bash-style globbing here
 WANTHDRS = [
