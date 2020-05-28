@@ -188,7 +188,8 @@ def mbox_to_am(mboxfile, cmdargs):
     if base_commit:
         logger.critical(' Base: %s', base_commit)
         logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
-        logger.critical('       git am %s', am_filename)
+        if cmdargs.outdir != '-':
+            logger.critical('       git am %s', am_filename)
     else:
         cleanmsg = ''
         if topdir is not None:
@@ -224,7 +225,8 @@ def mbox_to_am(mboxfile, cmdargs):
                             cleanmsg = ' (best guess: %s)' % tag
 
         logger.critical(' Base: not found%s', cleanmsg)
-        logger.critical('       git am %s', am_filename)
+        if cmdargs.outdir != '-':
+            logger.critical('       git am %s', am_filename)
 
     am_mbx.close()
     if cmdargs.outdir == '-':
