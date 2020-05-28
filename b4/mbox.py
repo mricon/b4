@@ -15,6 +15,7 @@ import re
 import time
 import json
 import fnmatch
+import shutil
 
 import urllib.parse
 import xml.etree.ElementTree
@@ -29,6 +30,8 @@ logger = b4.logger
 def mbox_to_am(mboxfile, cmdargs):
     config = b4.get_main_config()
     outdir = cmdargs.outdir
+    if outdir == '-':
+        cmdargs.nocover = True
     wantver = cmdargs.wantver
     wantname = cmdargs.wantname
     covertrailers = cmdargs.covertrailers
@@ -60,11 +63,16 @@ def mbox_to_am(mboxfile, cmdargs):
         slug = lser.get_slug(extended=True)
         gitbranch = lser.get_slug(extended=False)
 
-    am_filename = os.path.join(outdir, '%s.mbx' % slug)
-    am_cover = os.path.join(outdir, '%s.cover' % slug)
+    if outdir != '-':
+        am_filename = os.path.join(outdir, '%s.mbx' % slug)
+        am_cover = os.path.join(outdir, '%s.cover' % slug)
 
-    if os.path.exists(am_filename):
-        os.unlink(am_filename)
+        if os.path.exists(am_filename):
+            os.unlink(am_filename)
+    else:
+        # Create a temporary file that we will remove later
+        am_filename = mkstemp('b4-am-stdout')[1]
+        am_cover = None
 
     logger.info('---')
     if cmdargs.cherrypick:
@@ -96,6 +104,7 @@ def mbox_to_am(mboxfile, cmdargs):
             cherrypick = list(b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches)-1))
     else:
         cherrypick = None
+
     logger.critical('Writing %s', am_filename)
     mbx = mailbox.mbox(am_filename)
     am_mbx = lser.save_am_mbox(mbx, noaddtrailers=cmdargs.noaddtrailers,
@@ -144,7 +153,7 @@ def mbox_to_am(mboxfile, cmdargs):
     if not lser.complete:
         logger.critical('WARNING: Thread incomplete!')
 
-    if lser.has_cover:
+    if lser.has_cover and not cmdargs.nocover:
         lser.save_cover(am_cover)
 
     top_msgid = None
@@ -218,9 +227,13 @@ def mbox_to_am(mboxfile, cmdargs):
         logger.critical('       git am %s', am_filename)
 
     am_mbx.close()
-    thanks_record_am(lser, cherrypick=cherrypick)
+    if cmdargs.outdir == '-':
+        logger.info('---')
+        with open(am_filename, 'r') as fh:
+            shutil.copyfileobj(fh, sys.stdout)
+        os.unlink(am_filename)
 
-    return am_filename
+    thanks_record_am(lser, cherrypick=cherrypick)
 
 
 def thanks_record_am(lser, cherrypick=None):
@@ -461,7 +474,9 @@ def main(cmdargs):
         msgid = b4.get_msgid(cmdargs)
         wantname = cmdargs.wantname
         outdir = cmdargs.outdir
-        if wantname:
+        if outdir == '-':
+            savefile = mkstemp('b4-mbox')[1]
+        elif wantname:
             savefile = os.path.join(outdir, wantname)
         else:
             # Save it into msgid.mbox
@@ -493,3 +508,9 @@ def main(cmdargs):
         mbx = mailbox.mbox(threadmbox)
         logger.critical('Saved %s', threadmbox)
         logger.critical('%s messages in the thread', len(mbx))
+        mbx.close()
+        if cmdargs.outdir == '-':
+            logger.info('---')
+            with open(threadmbox, 'r') as fh:
+                shutil.copyfileobj(fh, sys.stdout)
+            os.unlink(threadmbox)

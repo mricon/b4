@@ -86,11 +86,10 @@ msgid                 Message ID to process, or pipe a raw message
 show this help message and exit
 .TP
 .BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
-Output into this directory
+Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
 .BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of guessing (linux\-mm,
-linux\-hardening, etc)
+Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .TP
 .B \-c\fP,\fB  \-\-check\-newer\-revisions
 Check if newer patch revisions exist
@@ -99,8 +98,7 @@ Check if newer patch revisions exist
 Filename to name the mbox file
 .TP
 .BI \-m \ LOCALMBOX\fP,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this
-mbox file
+Instead of grabbing a thread from lore, process this mbox file
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
@@ -124,11 +122,10 @@ msgid                 Message ID to process, or pipe a raw message
 show this help message and exit
 .TP
 .BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
-Output into this directory
+Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
 .BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of guessing (linux\-mm,
-linux\-hardening, etc)
+Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .TP
 .B \-c\fP,\fB  \-\-check\-newer\-revisions
 Check if newer patch revisions exist
@@ -137,8 +134,7 @@ Check if newer patch revisions exist
 Filename to name the mbox file
 .TP
 .BI \-m \ LOCALMBOX\fP,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this
-mbox file
+Instead of grabbing a thread from lore, process this mbox file
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
@@ -165,16 +161,16 @@ Add a lore.kernel.org/r/ link to every patch
 Save mbox patches in a quilt\-ready folder
 .TP
 .BI \-P \ CHERRYPICK\fP,\fB \ \-\-cherry\-pick \ CHERRYPICK
-Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-",
-"\-P _" to use just the msgid specified,
-or "\-P *globbing*" to match on commit subject)
+Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P *globbing*" to match on commit subject)
 .TP
 .B \-g\fP,\fB  \-\-guess\-base
 Try to guess the base of the series (if not specified)
 .TP
 .B \-3\fP,\fB  \-\-prep\-3way
-Prepare for a 3\-way merge (tries to ensure that all
-index blobs exist by making a fake commit range)
+Prepare for a 3\-way merge (tries to ensure that all index blobs exist by making a fake commit range)
+.TP
+.B \-\-no\-cover
+Do not save the cover letter (on by default when using \-o \-)
 .UNINDENT
 .UNINDENT
 .sp
@@ -198,12 +194,10 @@ show this help message and exit
 Use a custom From field
 .TP
 .B \-n\fP,\fB  \-\-no\-submit
-Do not submit attestation, just save the message ready
-to send
+Do not submit attestation, just save the message ready to send
 .TP
 .BI \-o \ OUTPUT\fP,\fB \ \-\-output \ OUTPUT
-Save attestation message in this file if not
-submitting it
+Save attestation message in this file if not submitting it
 .UNINDENT
 .UNINDENT
 .sp
@@ -236,8 +230,7 @@ Check if pull request has already been applied
 Convert a pull request into an mbox full of patches
 .TP
 .BI \-o \ OUTMBOX\fP,\fB \ \-\-output\-mbox \ OUTMBOX
-Save exploded messages into this mailbox (default:
-msgid.mbx)
+Save exploded messages into this mailbox (default: msgid.mbx)
 .UNINDENT
 .UNINDENT
 .sp
@@ -323,6 +316,8 @@ Save diff into this file instead of outputting to stdout
 .B \-c\fP,\fB  \-\-color
 Force color output even when writing to file
 .UNINDENT
+.IP "System Message: WARNING/2 (b4.5.rst:, line 201)"
+Option list ends without a blank line; unexpected unindent.
 .INDENT 0.0
 .TP
 .B \-m AMBOX AMBOX, \-\-compare\-am\-mboxes AMBOX AMBOX

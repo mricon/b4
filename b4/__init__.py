@@ -200,7 +200,7 @@ class LoreMailbox:
                 if reused:
                     continue
                 # Try to backfill from that project
-                tmp_mbox = mkstemp()[1]
+                tmp_mbox = mkstemp('b4-backfill-mbox')[1]
                 get_pi_thread_by_msgid(patch.msgid, tmp_mbox, useproject=projmap[entry[1]])
                 mbx = mailbox.mbox(tmp_mbox)
                 was = len(self.msgid_map)
@@ -2003,7 +2003,9 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     logger.debug('t_mbx_url=%s', t_mbx_url)
 
     logger.critical('Grabbing thread from %s', projurl.split('://')[1])
-    in_mbxf = get_pi_thread_by_url(t_mbx_url, '%s-loose' % savefile, nocache=nocache)
+
+    tmp_mbox = mkstemp('b4-lookup-mbox')[1]
+    in_mbxf = get_pi_thread_by_url(t_mbx_url, tmp_mbox, nocache=nocache)
     if not in_mbxf:
         return None
     in_mbx = mailbox.mbox(in_mbxf)

@@ -57,7 +57,7 @@ def diff_same_thread_series(cmdargs):
         lmbx.add_message(msg)
 
     mbx.close()
-    os.unlink(mboxfile)
+    os.unlink(savefile)
 
     if wantvers and len(wantvers) == 1:
         upper = max(lmbx.series.keys())
