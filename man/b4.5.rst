@@ -53,17 +53,15 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   -o OUTDIR, --outdir OUTDIR
-                        Output into this directory
+                        Output into this directory (or use - to output mailbox contents to stdout)
   -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of guessing (linux-mm,
-                        linux-hardening, etc)
+                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
   -c, --check-newer-revisions
                         Check if newer patch revisions exist
   -n WANTNAME, --mbox-name WANTNAME
                         Filename to name the mbox file
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this
-                        mbox file
+                        Instead of grabbing a thread from lore, process this mbox file
   -C, --no-cache        Do not use local cache
 
 *Example*: b4 mbox 20200313231252.64999-1-keescook@chromium.org
@@ -79,17 +77,15 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   -o OUTDIR, --outdir OUTDIR
-                        Output into this directory
+                        Output into this directory (or use - to output mailbox contents to stdout)
   -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of guessing (linux-mm,
-                        linux-hardening, etc)
+                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
   -c, --check-newer-revisions
                         Check if newer patch revisions exist
   -n WANTNAME, --mbox-name WANTNAME
                         Filename to name the mbox file
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this
-                        mbox file
+                        Instead of grabbing a thread from lore, process this mbox file
   -C, --no-cache        Do not use local cache
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
@@ -103,14 +99,14 @@ optional arguments:
   -l, --add-link        Add a lore.kernel.org/r/ link to every patch
   -Q, --quilt-ready     Save mbox patches in a quilt-ready folder
   -P CHERRYPICK, --cherry-pick CHERRYPICK
-                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-",
-                        "-P _" to use just the msgid specified,
-                        or "-P \*globbing\*" to match on commit subject)
+                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", "-P _" to use just the msgid specified, or "-P \*globbing\*" to match on commit subject)
   -g, --guess-base
                         Try to guess the base of the series (if not specified)
   -3, --prep-3way
-                        Prepare for a 3-way merge (tries to ensure that all
-                        index blobs exist by making a fake commit range)
+                        Prepare for a 3-way merge (tries to ensure that all index blobs exist by making a fake commit range)
+  --no-cover
+                        Do not save the cover letter (on by default when using -o -)
+
 
 *Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
 
@@ -126,11 +122,10 @@ optional arguments:
   -h, --help            show this help message and exit
   -f SENDER, --from SENDER
                         Use a custom From field
-  -n, --no-submit       Do not submit attestation, just save the message ready
-                        to send
+  -n, --no-submit
+                        Do not submit attestation, just save the message ready to send
   -o OUTPUT, --output OUTPUT
-                        Save attestation message in this file if not
-                        submitting it
+                        Save attestation message in this file if not submitting it
 
 *Example*: b4 attest -n -o output/xxxx-attestation.patch output/\*.patch
 
@@ -151,8 +146,7 @@ optional arguments:
   -c, --check           Check if pull request has already been applied
   -e, --explode         Convert a pull request into an mbox full of patches
   -o OUTMBOX, --output-mbox OUTMBOX
-                        Save exploded messages into this mailbox (default:
-                        msgid.mbx)
+                        Save exploded messages into this mailbox (default: msgid.mbx)
 
 *Example*: b4 pr 202003292120.2BDCB41@keescook
 
@@ -208,7 +202,7 @@ optional arguments:
   -m AMBOX AMBOX, --compare-am-mboxes AMBOX AMBOX
                         Compare two mbx files prepared with "b4 am"
 
-*Example*: b4 diff
+*Example*: b4 diff 20200526205322.23465-1-mic@digikod.net
 
 CONFIGURATION
 -------------

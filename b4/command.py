@@ -17,7 +17,7 @@ def cmd_mbox_common_opts(sp):
     sp.add_argument('msgid', nargs='?',
                     help='Message ID to process, or pipe a raw message')
     sp.add_argument('-o', '--outdir', default='.',
-                    help='Output into this directory')
+                    help='Output into this directory (or use - to output mailbox contents to stdout)')
     sp.add_argument('-p', '--use-project', dest='useproject', default=None,
                     help='Use a specific project instead of guessing (linux-mm, linux-hardening, etc)')
     sp.add_argument('-c', '--check-newer-revisions', dest='checknewer', action='store_true', default=False,
@@ -111,6 +111,8 @@ def cmd():
     sp_am.add_argument('-3', '--prep-3way', dest='threeway', action='store_true', default=False,
                        help='Prepare for a 3-way merge '
                             '(tries to ensure that all index blobs exist by making a fake commit range)')
+    sp_am.add_argument('--no-cover', dest='nocover', action='store_true', default=False,
+                       help='Do not save the cover letter (on by default when using -o -)')
     sp_am.set_defaults(func=cmd_am)
 
     # b4 attest
