@@ -1199,6 +1199,11 @@ class LoreMessage:
         parts = body.split('\n---\n', 1)
         if len(parts) == 2:
             basement = parts[1].rstrip('\n')
+        elif body.find('\ndiff ') >= 0:
+            parts = body.split('\ndiff ', 1)
+            if len(parts) == 2:
+                parts[1] = 'diff ' + parts[1]
+            basement = parts[1].rstrip('\n')
 
         mbody = parts[0].strip('\n')
 
