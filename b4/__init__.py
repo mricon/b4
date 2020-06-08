@@ -1928,8 +1928,12 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
             logger.debug('Looking at: %s', c_msgid)
 
             refs = set()
-            for ref in msg.get('References', msg.get('In-Reply-To', '')).split():
-                ref = ref.strip().strip('<>')
+            msgrefs = list()
+            if msg.get('In-Reply-To', None):
+                msgrefs += email.utils.getaddresses([str(x) for x in msg.get_all('in-reply-to', [])])
+            if msg.get('References', None):
+                msgrefs += email.utils.getaddresses([str(x) for x in msg.get_all('references', [])])
+            for ref in set([x[1] for x in msgrefs]):
                 if ref in got or ref in want:
                     want.add(c_msgid)
                 elif len(ref):
@@ -1950,6 +1954,11 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
                     # Add all these to want
                     want.update(maybe[c_msgid])
                     maybe.pop(c_msgid)
+                # Add all maybes that have the same ref into want
+                for ref in refs:
+                    if ref in maybe:
+                        want.update(maybe[ref])
+                        maybe.pop(ref)
 
         # Remove any entries not in "seen" (missing messages)
         for c_msgid in set(want):
