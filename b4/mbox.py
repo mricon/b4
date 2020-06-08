@@ -127,9 +127,9 @@ def mbox_to_am(mboxfile, cmdargs):
     if len(lser.trailer_mismatches):
         logger.critical('---')
         logger.critical('NOTE: some trailers ignored due to from/email mismatches:')
-        for tvalue, fname, femail in lser.trailer_mismatches:
-            logger.critical('    ! Trailer: %s', tvalue)
-            logger.critical('         From: %s <%s>', fname, femail)
+        for tname, tvalue, fname, femail in lser.trailer_mismatches:
+            logger.critical('    ! Trailer: %s: %s', tname, tvalue)
+            logger.critical('     Msg From: %s <%s>', fname, femail)
         logger.critical('NOTE: Rerun with -S to apply them anyway')
 
     topdir = None

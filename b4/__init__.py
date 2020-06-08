@@ -284,7 +284,7 @@ class LoreMailbox:
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
             for tname, tvalue in mismatches:
-                lser.trailer_mismatches.add((tvalue, fmsg.fromname, fmsg.fromemail))
+                lser.trailer_mismatches.add((tname, tvalue, fmsg.fromname, fmsg.fromemail))
             lvl = 1
             while True:
                 logger.debug('%sParent: %s', ' ' * lvl, pmsg.full_subject)
@@ -881,7 +881,7 @@ class LoreMessage:
             # Do we have something that looks like a person-trailer?
             matches = re.findall(r'^\s*([\w-]+):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
             # These are commonly part of patch/commit metadata
-            badtrailers = ('from', 'author')
+            badtrailers = ('from', 'author', 'cc')
             if matches:
                 for tname, tvalue in matches:
                     if tname.lower() not in badtrailers:
