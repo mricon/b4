@@ -775,6 +775,7 @@ class LoreMessage:
 
         # Body and body-based info
         self.body = None
+        self.charset = 'utf-8'
         self.has_diff = False
         self.has_diffstat = False
         self.trailers = set()
@@ -830,6 +831,7 @@ class LoreMessage:
         mcharset = self.msg.get_content_charset()
         if not mcharset:
             mcharset = 'utf-8'
+        self.charset = mcharset
 
         for part in msg.walk():
             cte = part.get_content_type()
@@ -843,6 +845,7 @@ class LoreMessage:
                 pcharset = mcharset
             try:
                 payload = payload.decode(pcharset, errors='replace')
+                self.charset = pcharset
             except LookupError:
                 # what kind of encoding is that?
                 # Whatever, we'll use utf-8 and hope for the best
@@ -1131,6 +1134,7 @@ class LoreMessage:
     def load_hashes(self):
         if self.attestation is not None:
             return
+        logger.debug('Calculating hashes for: %s', self.full_subject)
         msg_out = mkstemp()
         patch_out = mkstemp()
         cmdargs = ['mailinfo', '--encoding=UTF-8', msg_out[1], patch_out[1]]
@@ -1157,8 +1161,8 @@ class LoreMessage:
         os.unlink(msg_out[1])
 
         p = None
-        with open(patch_out[1], 'r') as pfh:
-            patch = pfh.read()
+        with open(patch_out[1], 'rb') as pfh:
+            patch = pfh.read().decode(self.charset, errors='replace')
             if len(patch.strip()):
                 diff = LoreMessage.get_clean_diff(patch)
                 phasher = hashlib.sha256()
