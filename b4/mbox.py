@@ -472,26 +472,14 @@ def main(cmdargs):
         # Force nocache mode
         cmdargs.nocache = True
 
+    savefile = mkstemp('b4-mbox')[1]
+
     if not cmdargs.localmbox:
         msgid = b4.get_msgid(cmdargs)
-        wantname = cmdargs.wantname
-        outdir = cmdargs.outdir
-        if outdir == '-':
-            savefile = mkstemp('b4-mbox')[1]
-        elif wantname:
-            savefile = os.path.join(outdir, wantname)
-        else:
-            # Save it into msgid.mbox
-            savefile = '%s.t.mbx' % msgid
-            savefile = os.path.join(outdir, savefile)
 
-        mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
-        if mboxfile is None:
+        threadmbox = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
+        if threadmbox is None:
             return
-
-        # Move it into -thread
-        threadmbox = '%s-thread' % mboxfile
-        os.rename(mboxfile, threadmbox)
     else:
         if os.path.exists(cmdargs.localmbox):
             threadmbox = cmdargs.localmbox
@@ -508,11 +496,21 @@ def main(cmdargs):
             os.unlink(threadmbox)
     else:
         mbx = mailbox.mbox(threadmbox)
-        logger.critical('Saved %s', threadmbox)
         logger.critical('%s messages in the thread', len(mbx))
         mbx.close()
         if cmdargs.outdir == '-':
             logger.info('---')
             with open(threadmbox, 'r') as fh:
                 shutil.copyfileobj(fh, sys.stdout)
+            os.unlink(threadmbox)
+            return
+
+        if cmdargs.wantname:
+            savefile = os.path.join(cmdargs.outdir, cmdargs.wantname)
+        else:
+            savefile = os.path.join(cmdargs.outdir, '%s.mbx' % msgid)
+
+        shutil.copy(threadmbox, savefile)
+        logger.info('Saved %s', savefile)
+        if not cmdargs.localmbox:
             os.unlink(threadmbox)
