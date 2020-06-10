@@ -851,6 +851,7 @@ class LoreMessage:
                 # Whatever, we'll use utf-8 and hope for the best
                 payload = payload.decode('utf-8', errors='replace')
                 part.set_param('charset', 'utf-8')
+                self.charset = 'utf-8'
             if self.body is None:
                 self.body = payload
                 continue
