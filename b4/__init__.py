@@ -1382,6 +1382,8 @@ class LoreSubject:
         # Find all [foo] in the title
         while subject.find('[') == 0:
             matches = re.search(r'^\[([^\]]*)\]', subject)
+            if not matches:
+                break
             for chunk in matches.groups()[0].split():
                 # Remove any trailing commas or semicolons
                 chunk = chunk.strip(',;')
