@@ -217,7 +217,7 @@ Default configuration, with explanations::
       midmask = https://lore.kernel.org/r/%s'
       #
       # When recording Link: trailers, use this mask
-      linkmask = https://lore.kernel.org/r/%s'
+      linkmask = https://lore.kernel.org/r/%s
       #
       # When processing thread trailers, use this order. Can use shell-globbing
       # and must end with ,*
