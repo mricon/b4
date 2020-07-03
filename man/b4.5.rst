@@ -262,7 +262,7 @@ Default configuration, with explanations::
       # How long to keep downloaded threads in cache (minutes)?
       cache-expire = 10
       # Used when creating summaries for b4 ty, and can be set to a value like
-      # thanks-commit-url-mask = https://git.kernel.org/username/c/%.10s
+      # thanks-commit-url-mask = https://git.kernel.org/username/c/%.12s
       # See this page for more info on convenient git.kernel.org shorterners:
       # https://korg.wiki.kernel.org/userdoc/git-url-shorterners
       thanks-commit-url-mask = None
