@@ -365,6 +365,10 @@ def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
                 # A patch/series without a cover letter
                 base_msg = msg
 
+    if base_msg is None:
+        logger.debug('Could not find cover of 1st patch in mbox')
+        mbx.close()
+        return
     # Get subject info from base_msg again
     lsub = b4.LoreSubject(base_msg['Subject'])
     if not len(lsub.prefixes):
