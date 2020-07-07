@@ -39,7 +39,7 @@ FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
 PASS_SIMPLE = '[P]'
 FAIL_SIMPLE = '[F]'
 PASS_FANCY = '[\033[32m\u2713\033[0m]'
-FAIL_FANCY = '[\033[31m\u2717\034[0m]'
+FAIL_FANCY = '[\033[31m\u2717\033[0m]'
 
 # You can use bash-style globbing here
 WANTHDRS = [
@@ -521,15 +521,22 @@ class LoreSeries:
                         if attpolicy in ('softfail', 'hardfail'):
                             logger.info('  %s %s', attfail, lmsg.full_subject)
                             # Which part failed?
-                            failed = ['commit metadata', 'commit message', 'patch content']
+                            fi = fm = fp = True
                             for attdoc in ATTESTATIONS:
                                 for i, m, p in attdoc.hashes:
                                     if p == lmsg.attestation.p:
-                                        failed.remove('patch content')
+                                        fp = False
                                     if m == lmsg.attestation.m:
-                                        failed.remove('commit message')
+                                        fm = False
                                     if i == lmsg.attestation.i:
-                                        failed.remove('commit metadata')
+                                        fi = False
+                            failed = list()
+                            if fp:
+                                failed.append('patch content')
+                            if fm:
+                                failed.append('commit message')
+                            if fi:
+                                failed.append('patch metadata')
                             atterrors.append('Patch %s/%s failed attestation (%s)' % (at, lmsg.expected,
                                                                                       ', '.join(failed)))
                         else:
