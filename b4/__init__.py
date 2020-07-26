@@ -1204,7 +1204,7 @@ class LoreMessage:
             signature = sparts[1]
             body = sparts[0].rstrip('\n')
 
-        parts = body.split('\n---\n', 1)
+        parts = re.split('^---\n', body, maxsplit=1, flags=re.M)
         if len(parts) == 2:
             basement = parts[1].rstrip('\n')
         elif body.find('\ndiff ') >= 0:
