@@ -1241,6 +1241,8 @@ class LoreMessage:
             if githeaders == trailers:
                 # This is a message that consists of just trailers?
                 githeaders = list()
+            if nlines:
+                message = '\n'.join(nlines)
             return githeaders, message, trailers, basement, signature
 
         # Add all parts between first and last to mparts
