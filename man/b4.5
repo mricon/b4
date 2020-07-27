@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2020-06-08" "0.5.1" ""
+.TH B4 5 "2020-07-27" "0.5.2" ""
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .
@@ -342,7 +342,7 @@ Default configuration, with explanations:
    midmask = https://lore.kernel.org/r/%s\(aq
    #
    # When recording Link: trailers, use this mask
-   linkmask = https://lore.kernel.org/r/%s\(aq
+   linkmask = https://lore.kernel.org/r/%s
    #
    # When processing thread trailers, use this order. Can use shell\-globbing
    # and must end with ,*
@@ -387,7 +387,7 @@ Default configuration, with explanations:
    # How long to keep downloaded threads in cache (minutes)?
    cache\-expire = 10
    # Used when creating summaries for b4 ty, and can be set to a value like
-   # thanks\-commit\-url\-mask = https://git.kernel.org/username/c/%.10s
+   # thanks\-commit\-url\-mask = https://git.kernel.org/username/c/%.12s
    # See this page for more info on convenient git.kernel.org shorterners:
    # https://korg.wiki.kernel.org/userdoc/git\-url\-shorterners
    thanks\-commit\-url\-mask = None
