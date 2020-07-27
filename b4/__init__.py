@@ -1215,6 +1215,14 @@ class LoreMessage:
 
         mbody = parts[0].strip('\n')
 
+        # Fix some more common copypasta trailer wrapping
+        # Fixes: abcd0123 (foo bar
+        # baz quux)
+        mbody = re.sub(r'^(\S+:\s+[0-9a-f]+\s+\([^\)]+)\n([^\n]+\))', r'\1 \2', mbody, flags=re.M)
+        # Signed-off-by: Long Name
+        # <email.here@example.com>
+        mbody = re.sub(r'^(\S+:\s+[^<]+)\n(<[^>]+>)', r'\1 \2', mbody, flags=re.M)
+
         # Split into paragraphs
         bpara = mbody.split('\n\n')
 
