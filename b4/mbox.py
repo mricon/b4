@@ -35,7 +35,10 @@ def mbox_to_am(mboxfile, cmdargs):
     wantver = cmdargs.wantver
     wantname = cmdargs.wantname
     covertrailers = cmdargs.covertrailers
-    mbx = mailbox.mbox(mboxfile)
+    if os.path.isdir(mboxfile):
+        mbx = mailbox.Maildir(mboxfile)
+    else:
+        mbx = mailbox.mbox(mboxfile)
     count = len(mbx)
     logger.info('Analyzing %s messages in the thread', count)
     lmbx = b4.LoreMailbox()
@@ -340,7 +343,11 @@ def am_mbox_to_quilt(am_mbx, q_dirname):
 
 def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
     # Open the mbox and find the latest series mentioned in it
-    mbx = mailbox.mbox(mboxfile)
+    if os.path.isdir(mboxfile):
+        mbx = mailbox.Maildir(mboxfile)
+    else:
+        mbx = mailbox.mbox(mboxfile)
+
     base_msg = None
     latest_revision = None
     seen_msgids = list()
@@ -512,6 +519,7 @@ def main(cmdargs):
         if cmdargs.wantname:
             savefile = os.path.join(cmdargs.outdir, cmdargs.wantname)
         else:
+            msgid = b4.get_msgid(cmdargs)
             savefile = os.path.join(cmdargs.outdir, '%s.mbx' % msgid)
 
         shutil.copy(threadmbox, savefile)
