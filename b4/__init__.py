@@ -887,7 +887,7 @@ class LoreMessage:
                     self.trailers.add(('Fixes', tvalue))
 
             # Do we have something that looks like a person-trailer?
-            matches = re.findall(r'^\s*([\w-]+):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
+            matches = re.findall(r'^\s*([\w-]{2,}):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
             # These are commonly part of patch/commit metadata
             badtrailers = ('from', 'author', 'cc')
             if matches:
