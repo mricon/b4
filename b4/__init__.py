@@ -304,7 +304,7 @@ class LoreMailbox:
                         self.trailer_map[attid].update(trailers)
                     pmsg.followup_trailers.update(trailers)
                     break
-                if pmsg.has_diffstat and not pmsg.reply:
+                if not pmsg.reply:
                     # Could be a cover letter
                     pmsg.followup_trailers.update(trailers)
                     break
