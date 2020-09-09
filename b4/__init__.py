@@ -641,8 +641,6 @@ class LoreSeries:
 
     def make_fake_am_range(self, gitdir):
         start_commit = end_commit = None
-        # Do we have it in cache already?
-        cachedir = get_cache_dir()
         # Use the msgid of the first non-None patch in the series
         msgid = None
         for lmsg in self.patches:
@@ -652,16 +650,14 @@ class LoreSeries:
         if msgid is None:
             logger.critical('Cannot operate on an empty series')
             return None, None
-        cachefile = os.path.join(cachedir, '%s.fakeam' % urllib.parse.quote_plus(msgid))
-        if os.path.exists(cachefile):
+        cachedata = get_cache(msgid, suffix='fakeam')
+        if cachedata:
             stalecache = False
-            with open(cachefile, 'r') as fh:
-                cachedata = fh.read()
-                chunks = cachedata.strip().split()
-                if len(chunks) == 2:
-                    start_commit, end_commit = chunks
-                else:
-                    stalecache = True
+            chunks = cachedata.strip().split()
+            if len(chunks) == 2:
+                start_commit, end_commit = chunks
+            else:
+                stalecache = True
             if start_commit is not None and end_commit is not None:
                 # Make sure they are still there
                 ecode, out = git_run_command(gitdir, ['cat-file', '-e', start_commit])
@@ -677,7 +673,7 @@ class LoreSeries:
 
             if stalecache:
                 logger.debug('Stale cache for [v%s] %s', self.revision, self.subject)
-                os.unlink(cachefile)
+                save_cache(None, msgid, suffix='fakeam')
 
         logger.info('Preparing fake-am for v%s: %s', self.revision, self.subject)
         with git_temp_worktree(gitdir):
@@ -744,10 +740,9 @@ class LoreSeries:
             end_commit = out.strip()
             logger.info('  range: %.12s..%.12s', start_commit, end_commit)
 
-        with open(cachefile, 'w') as fh:
-            logger.debug('Saving into cache: %s', cachefile)
-            logger.debug('    %s..%s', start_commit, end_commit)
-            fh.write(f'{start_commit} {end_commit}\n')
+        logger.debug('Saving into cache:')
+        logger.debug('    %s..%s', start_commit, end_commit)
+        save_cache(f'{start_commit} {end_commit}\n', msgid, suffix='fakeam')
 
         return start_commit, end_commit
 
@@ -1577,12 +1572,7 @@ class LoreAttestationDocument:
 
         if source.find('http') == 0:
             # We only cache known-good attestations obtained from remote
-            cachedir = get_cache_dir()
-            cachename = '%s.attestation' % urllib.parse.quote_plus(source.strip('/').split('/')[-1])
-            fullpath = os.path.join(cachedir, cachename)
-            with open(fullpath, 'w') as fh:
-                logger.debug('Saved attestation in cache: %s', cachename)
-                fh.write(sigdata)
+            save_cache(sigdata, source, suffix='attestation')
 
         hg = [None, None, None]
         for line in sigdata.split('\n'):
@@ -1636,15 +1626,13 @@ class LoreAttestationDocument:
         attdocs = list()
         # XXX: Querying this via the Atom feed is a temporary kludge until we have
         #      proper search API on lore.kernel.org
-        cachedir = get_cache_dir()
-        cachefile = os.path.join(cachedir, '%s.lookup' % urllib.parse.quote_plus(attid))
         status = None
-        if os.path.exists(cachefile):
-            with open(cachefile, 'r') as fh:
-                try:
-                    status = int(fh.read())
-                except ValueError:
-                    pass
+        cachedata = get_cache(attid, suffix='lookup')
+        if cachedata:
+            try:
+                status = int(cachedata)
+            except ValueError:
+                pass
         if status is not None and status != 200:
             logger.debug('Cache says looking up %s = %s', attid, status)
             return attdocs
@@ -1657,8 +1645,7 @@ class LoreAttestationDocument:
         resp = session.get(queryurl)
         if resp.status_code != 200:
             # Record this as a bad hit
-            with open(cachefile, 'w') as fh:
-                fh.write(str(resp.status_code))
+            save_cache(str(resp.status_code), attid, suffix='lookup')
 
         matches = re.findall(
             r'link\s+href="([^"]+)".*?(-----BEGIN PGP SIGNED MESSAGE-----.*?-----END PGP SIGNATURE-----)',
@@ -1885,6 +1872,42 @@ def get_cache_dir():
     return cachedir
 
 
+def get_cache_file(identifier, suffix=None):
+    cachedir = get_cache_dir()
+    cachefile = hashlib.sha1(identifier.encode()).hexdigest()
+    if suffix:
+        cachefile = f'{cachefile}.{suffix}'
+    return os.path.join(cachedir, cachefile)
+
+
+def get_cache(identifier, suffix=None):
+    fullpath = get_cache_file(identifier, suffix=suffix)
+    try:
+        with open(fullpath) as fh:
+            logger.debug('Using cache %s for %s', fullpath, identifier)
+            return fh.read()
+    except FileNotFoundError:
+        logger.debug('Cache miss for %s', identifier)
+    return None
+
+
+def save_cache(contents, identifier, suffix=None, mode='w'):
+    fullpath = get_cache_file(identifier, suffix=suffix)
+    if not contents:
+        # noinspection PyBroadException
+        try:
+            os.unlink(fullpath)
+            logger.debug('Removed cache %s for %s', fullpath, identifier)
+        except:
+            pass
+    try:
+        with open(fullpath, mode) as fh:
+            fh.write(contents)
+            logger.debug('Saved cache %s for %s', fullpath, identifier)
+    except FileNotFoundError:
+        logger.debug('Could not write cache %s for %s', fullpath, identifier)
+
+
 def get_user_config():
     global USER_CONFIG
     if USER_CONFIG is None:
@@ -1998,8 +2021,7 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
 
 
 def get_pi_thread_by_url(t_mbx_url, savefile, nocache=False):
-    cachedir = get_cache_dir()
-    cachefile = os.path.join(cachedir, '%s.pi.mbx' % urllib.parse.quote_plus(t_mbx_url))
+    cachefile = get_cache_file(t_mbx_url, 'pi.mbx')
     if os.path.exists(cachefile) and not nocache:
         logger.debug('Using cached copy: %s', cachefile)
         shutil.copyfile(cachefile, savefile)

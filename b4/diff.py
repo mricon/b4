@@ -11,7 +11,6 @@ import b4
 import b4.mbox
 import mailbox
 import shutil
-import urllib.parse
 
 from tempfile import mkstemp
 
@@ -29,13 +28,13 @@ def diff_same_thread_series(cmdargs):
     # start by grabbing the mbox provided
     savefile = mkstemp('b4-diff-to')[1]
     # Do we have a cache of this lookup?
-    cachedir = b4.get_cache_dir()
-    cachebase = urllib.parse.quote_plus(msgid)
+    identifier = msgid
     if wantvers:
-        cachebase += '-' + '-'.join([str(x) for x in wantvers])
+        identifier += '-' + '-'.join([str(x) for x in wantvers])
     if cmdargs.useproject:
-        cachebase += '-' + cmdargs.useproject
-    cachefile = os.path.join(cachedir, '%s.diff.mbx' % cachebase)
+        identifier += '-' + cmdargs.useproject
+
+    cachefile = b4.get_cache_file(identifier, suffix='diff.mbx')
     if os.path.exists(cachefile) and not cmdargs.nocache:
         logger.info('Using cached copy of the lookup')
         shutil.copyfile(cachefile, savefile)
