@@ -1218,7 +1218,7 @@ class LoreMessage:
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
         # baz quux)
-        mbody = re.sub(r'^(\S+:\s+[0-9a-f]+\s+\([^\)]+)\n([^\n]+\))', r'\1 \2', mbody, flags=re.M)
+        mbody = re.sub(r'^(\S+:\s+[0-9a-f]+\s+\([^)]+)\n([^\n]+\))', r'\1 \2', mbody, flags=re.M)
         # Signed-off-by: Long Name
         # <email.here@example.com>
         mbody = re.sub(r'^(\S+:\s+[^<]+)\n(<[^>]+>)', r'\1 \2', mbody, flags=re.M)
@@ -1378,15 +1378,15 @@ class LoreSubject:
         # Remove any leading [] that don't have "patch", "resend" or "rfc" in them
         while True:
             oldsubj = subject
-            subject = re.sub(r'^\s*\[[^\]]*\]\s*(\[[^\]]*(:?patch|resend|rfc).*)', '\\1', subject, flags=re.IGNORECASE)
+            subject = re.sub(r'^\s*\[[^]]*]\s*(\[[^]]*(:?patch|resend|rfc).*)', '\\1', subject, flags=re.IGNORECASE)
             if oldsubj == subject:
                 break
 
         # Remove any brackets inside brackets
         while True:
             oldsubj = subject
-            subject = re.sub(r'^\s*\[([^\]]*)\[([^\[\]]*)\]', '[\\1\\2]', subject)
-            subject = re.sub(r'^\s*\[([^\]]*)\]([^\[\]]*)\]', '[\\1\\2]', subject)
+            subject = re.sub(r'^\s*\[([^]]*)\[([^\[\]]*)]', '[\\1\\2]', subject)
+            subject = re.sub(r'^\s*\[([^]]*)]([^\[\]]*)]', '[\\1\\2]', subject)
             if oldsubj == subject:
                 break
 
@@ -1401,7 +1401,7 @@ class LoreSubject:
 
         # Find all [foo] in the title
         while subject.find('[') == 0:
-            matches = re.search(r'^\[([^\]]*)\]', subject)
+            matches = re.search(r'^\[([^]]*)]', subject)
             if not matches:
                 break
             for chunk in matches.groups()[0].split():
@@ -1422,7 +1422,7 @@ class LoreSubject:
                 elif chunk.lower().find('patch') == 0:
                     self.patch = True
                 self.prefixes.append(chunk)
-            subject = re.sub(r'^\s*\[[^\]]*\]\s*', '', subject)
+            subject = re.sub(r'^\s*\[[^]]*]\s*', '', subject)
         self.subject = subject
 
     def __repr__(self):
@@ -1508,21 +1508,21 @@ class LoreAttestationSignature:
         self.attestor = None
         self.errors = set()
 
-        gs_matches = re.search(r'^\[GNUPG:\] GOODSIG ([0-9A-F]+)\s+.*$', output, re.M)
+        gs_matches = re.search(r'^\[GNUPG:] GOODSIG ([0-9A-F]+)\s+.*$', output, re.M)
         if gs_matches:
             logger.debug('  GOODSIG')
             self.good = True
             keyid = gs_matches.groups()[0]
             self.attestor = LoreAttestor(keyid)
             puid = '%s <%s>' % self.attestor.get_primary_uid()
-            vs_matches = re.search(r'^\[GNUPG:\] VALIDSIG ([0-9A-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', output, re.M)
+            vs_matches = re.search(r'^\[GNUPG:] VALIDSIG ([0-9A-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', output, re.M)
             if vs_matches:
                 logger.debug('  VALIDSIG')
                 self.valid = True
                 ymd = vs_matches.groups()[1]
                 self.sigdate = datetime.datetime.strptime(ymd, '%Y-%m-%d')
                 # Do we have a TRUST_(FULLY|ULTIMATE)?
-                ts_matches = re.search(r'^\[GNUPG:\] TRUST_(FULLY|ULTIMATE)', output, re.M)
+                ts_matches = re.search(r'^\[GNUPG:] TRUST_(FULLY|ULTIMATE)', output, re.M)
                 if ts_matches:
                     logger.debug('  TRUST_%s', ts_matches.groups()[0])
                     self.trusted = True
@@ -1533,7 +1533,7 @@ class LoreAttestationSignature:
                 self.errors.add('Signature not valid from key: %s (%s)' % (keyid, puid))
         else:
             # Are we missing a key?
-            matches = re.search(r'^\[GNUPG:\] NO_PUBKEY ([0-9A-F]+)$', output, re.M)
+            matches = re.search(r'^\[GNUPG:] NO_PUBKEY ([0-9A-F]+)$', output, re.M)
             if matches:
                 self.errors.add('Missing public key: %s' % matches.groups()[0])
 
