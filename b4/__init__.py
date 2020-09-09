@@ -898,7 +898,7 @@ class LoreMessage:
     def get_trailers(self, sloppy=False):
         mismatches = set()
         if sloppy:
-            return set(self.trailers), mismatches
+            return self.trailers, mismatches
 
         trailers = list()
         for tname, tvalue in self.trailers:
