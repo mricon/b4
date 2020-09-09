@@ -288,7 +288,7 @@ class LoreMailbox:
                 continue
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
-            for tname, tvalue in mismatches:
+            for tname, tvalue, extdata in mismatches:
                 lser.trailer_mismatches.add((tname, tvalue, fmsg.fromname, fmsg.fromemail))
             lvl = 1
             while True:
@@ -512,9 +512,10 @@ class LoreSeries:
                 if self.has_cover and covertrailers and self.patches[0].followup_trailers:
                     lmsg.followup_trailers += self.patches[0].followup_trailers
                 if addmysob:
-                    lmsg.followup_trailers.append(('Signed-off-by', '%s <%s>' % (usercfg['name'], usercfg['email'])))
+                    lmsg.followup_trailers.append(('Signed-off-by',
+                                                   '%s <%s>' % (usercfg['name'], usercfg['email']), None))
                 if addlink:
-                    lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid))
+                    lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid, None))
 
                 if attpolicy != 'off':
                     lore_lookup = False
@@ -880,20 +881,12 @@ class LoreMessage:
 
         # We only pay attention to trailers that are sent in reply
         if self.reply:
-            # Do we have a Fixes: trailer?
-            matches = re.findall(r'^\s*Fixes:[ \t]+([a-f0-9]+\s+\(.*\))\s*$', self.body, re.MULTILINE)
-            if matches:
-                for tvalue in matches:
-                    self.trailers.append(('Fixes', tvalue))
-
-            # Do we have something that looks like a person-trailer?
-            matches = re.findall(r'^\s*([\w-]{2,}):[ \t]+(.*<\S+>)\s*$', self.body, re.MULTILINE)
-            # These are commonly part of patch/commit metadata
-            badtrailers = ('from', 'author', 'cc')
-            if matches:
-                for tname, tvalue in matches:
-                    if tname.lower() not in badtrailers:
-                        self.trailers.append((tname, tvalue))
+            trailers, others = LoreMessage.find_trailers(self.body)
+            for trailer in trailers:
+                # These are commonly part of patch/commit metadata
+                badtrailers = ('from', 'author', 'cc')
+                if trailer[0].lower() not in badtrailers:
+                    self.trailers.append(trailer)
 
     def get_trailers(self, sloppy=False):
         mismatches = set()
@@ -901,9 +894,9 @@ class LoreMessage:
             return self.trailers, mismatches
 
         trailers = list()
-        for tname, tvalue in self.trailers:
+        for tname, tvalue, extdata in self.trailers:
             if tname.lower() in ('fixes',):
-                trailers.append((tname, tvalue))
+                trailers.append((tname, tvalue, extdata))
                 continue
 
             tmatch = False
@@ -940,9 +933,9 @@ class LoreMessage:
                     logger.debug('  trailer fuzzy name match')
                     tmatch = True
             if tmatch:
-                trailers.append((tname, tvalue))
+                trailers.append((tname, tvalue, extdata))
             else:
-                mismatches.add((tname, tvalue))
+                mismatches.add((tname, tvalue, extdata))
 
         return trailers, mismatches
 
@@ -1185,6 +1178,43 @@ class LoreMessage:
             self.attestation = LoreAttestation(i, m, p)
 
     @staticmethod
+    def find_trailers(body):
+        # Fix some more common copypasta trailer wrapping
+        # Fixes: abcd0123 (foo bar
+        # baz quux)
+        body = re.sub(r'^(\S+:\s+[0-9a-f]+\s+\([^)]+)\n([^\n]+\))', r'\1 \2', body, flags=re.M)
+        # Signed-off-by: Long Name
+        # <email.here@example.com>
+        body = re.sub(r'^(\S+:\s+[^<]+)\n(<[^>]+>)$', r'\1 \2', body, flags=re.M)
+        # Signed-off-by: Foo foo <foo@foo.com>
+        # [for the thing that the thing is too long the thing that is
+        # thing but thing]
+        body = re.sub(r'^(\[[^]]+)\n([^]]+]$)', r'\1 \2', body, flags=re.M)
+        trailers = list()
+        others = list()
+        was_trailer = False
+        for line in body.split('\n'):
+            line = line.strip('\r')
+            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, flags=re.I)
+            if matches:
+                was_trailer = True
+                groups = list(matches.groups())
+                groups.append(None)
+                trailers.append(groups)
+                continue
+            # Is it an extended info line, e.g.:
+            # Signed-off-by: Foo Foo <foo@foo.com>
+            # [for the foo bits]
+            if len(line) > 2 and line[0] == '[' and line[-1] == ']' and was_trailer:
+                trailers[-1][2] = line
+                was_trailer = False
+                continue
+            was_trailer = False
+            others.append(line)
+
+        return trailers, others
+
+    @staticmethod
     def get_body_parts(body):
         # remove any starting/trailing blank lines
         body = body.replace('\r', '')
@@ -1193,8 +1223,6 @@ class LoreMessage:
         githeaders = list()
         # commit message
         message = ''
-        # all trailers we find preceding the ---
-        trailers = list()
         # everything below the ---
         basement = ''
         # conformant signature --\s\n
@@ -1215,35 +1243,20 @@ class LoreMessage:
 
         mbody = parts[0].strip('\n')
 
-        # Fix some more common copypasta trailer wrapping
-        # Fixes: abcd0123 (foo bar
-        # baz quux)
-        mbody = re.sub(r'^(\S+:\s+[0-9a-f]+\s+\([^)]+)\n([^\n]+\))', r'\1 \2', mbody, flags=re.M)
-        # Signed-off-by: Long Name
-        # <email.here@example.com>
-        mbody = re.sub(r'^(\S+:\s+[^<]+)\n(<[^>]+>)', r'\1 \2', mbody, flags=re.M)
-
         # Split into paragraphs
         bpara = mbody.split('\n\n')
 
         # Is every line of the first part in a header format?
         mparts = list()
-        for line in bpara[0].split('\n'):
-            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, re.I | re.M)
-            if not matches:
-                githeaders = list()
-                mparts.append(bpara[0])
-                break
-            githeaders.append(matches.groups())
+        h, o = LoreMessage.find_trailers(bpara[0])
+        if len(o):
+            # Not everything was a header, so we don't treat it as headers
+            mparts.append(bpara[0])
+        else:
+            githeaders = h
 
         # Any lines of the last part match the header format?
-        nlines = list()
-        for line in bpara[-1].split('\n'):
-            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, re.I | re.M)
-            if matches:
-                trailers.append(matches.groups())
-                continue
-            nlines.append(line)
+        trailers, nlines = LoreMessage.find_trailers(bpara[-1])
 
         if len(bpara) == 1:
             if githeaders == trailers:
@@ -1282,16 +1295,17 @@ class LoreMessage:
                 if fnmatch.fnmatch(trailer[0].lower(), trailermatch.strip()):
                     fixtrailers.append(trailer)
                     if trailer not in btrailers:
-                        logger.info('    + %s: %s' % trailer)
+                        logger.info('    + %s: %s' % (trailer[0], trailer[1]))
                     else:
-                        logger.debug('    . %s: %s' % trailer)
+                        logger.debug('    . %s: %s' % (trailer[0], trailer[1]))
 
         # Reconstitute the message
+        self.body = ''
         if bheaders:
-            self.body = '\n'.join('%s: %s' % h for h in bheaders)
-            self.body += '\n\n'
-        else:
-            self.body = ''
+            for bheader in bheaders:
+                # There is no [extdata] in git headers, so we ignore bheader[2]
+                self.body += '%s: %s\n' % (bheader[0], bheader[1])
+            self.body += '\n'
 
         if len(message):
             self.body += message + '\n'
@@ -1299,8 +1313,10 @@ class LoreMessage:
                 self.body += '\n'
 
         if len(fixtrailers):
-            self.body += '\n'.join('%s: %s' % t for t in fixtrailers)
-            self.body += '\n'
+            for trailer in fixtrailers:
+                self.body += '%s: %s\n' % (trailer[0], trailer[1])
+                if trailer[2]:
+                    self.body += '%s\n' % trailer[2]
         if len(basement):
             self.body += '---\n'
             self.body += basement
