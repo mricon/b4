@@ -316,8 +316,6 @@ Save diff into this file instead of outputting to stdout
 .B \-c\fP,\fB  \-\-color
 Force color output even when writing to file
 .UNINDENT
-.IP "System Message: WARNING/2 (b4.5.rst:, line 201)"
-Option list ends without a blank line; unexpected unindent.
 .INDENT 0.0
 .TP
 .B \-m AMBOX AMBOX, \-\-compare\-am\-mboxes AMBOX AMBOX
@@ -326,7 +324,7 @@ Compare two mbx files prepared with "b4 am"
 .UNINDENT
 .UNINDENT
 .sp
-\fIExample\fP: b4 diff
+\fIExample\fP: b4 diff \fI\%20200526205322.23465\-1\-mic@digikod.net\fP
 .SH CONFIGURATION
 .sp
 B4 configuration is handled via git\-config(1), so you can store it in
@@ -344,13 +342,14 @@ Default configuration, with explanations:
    midmask = https://lore.kernel.org/r/%s\(aq
    #
    # When recording Link: trailers, use this mask
-   linkmask = https://lore.kernel.org/r/%s\(aq
+   linkmask = https://lore.kernel.org/r/%s
    #
-   # When processing thread trailers, use this order. Can use shell\-globbing
-   # and must end with ,*
-   # Common alternative order:
+   # When processing thread trailers, sort them in this order.
+   # Can use shell\-globbing and must end with ,*
+   # Some sorting orders:
    #trailer\-order=link*,fixes*,cc*,reported*,suggested*,original*,co\-*,tested*,reviewed*,acked*,signed\-off*,*
-   trailer\-order = fixes*,reported*,suggested*,original*,co\-*,signed\-off*,tested*,reviewed*,acked*,cc*,link*,*
+   #trailer\-order = fixes*,reported*,suggested*,original*,co\-*,signed\-off*,tested*,reviewed*,acked*,cc*,link*,*
+   trailer\-order = _preserve_
    #
    # Attestation\-checking configuration parameters
    # off: do not bother checking attestation
@@ -389,7 +388,7 @@ Default configuration, with explanations:
    # How long to keep downloaded threads in cache (minutes)?
    cache\-expire = 10
    # Used when creating summaries for b4 ty, and can be set to a value like
-   # thanks\-commit\-url\-mask = https://git.kernel.org/username/c/%.10s
+   # thanks\-commit\-url\-mask = https://git.kernel.org/username/c/%.12s
    # See this page for more info on convenient git.kernel.org shorterners:
    # https://korg.wiki.kernel.org/userdoc/git\-url\-shorterners
    thanks\-commit\-url\-mask = None
