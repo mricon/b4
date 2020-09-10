@@ -1179,6 +1179,8 @@ class LoreMessage:
 
     @staticmethod
     def find_trailers(body):
+        headers = ('subject', 'date', 'from')
+        nonperson = ('fixes', 'subject', 'date')
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
         # baz quux)
@@ -1189,7 +1191,8 @@ class LoreMessage:
         # Signed-off-by: Foo foo <foo@foo.com>
         # [for the thing that the thing is too long the thing that is
         # thing but thing]
-        body = re.sub(r'^(\[[^]]+)\n([^]]+]$)', r'\1 \2', body, flags=re.M)
+        # (too false-positivey, commented out)
+        # body = re.sub(r'^(\[[^]]+)\n([^]]+]$)', r'\1 \2', body, flags=re.M)
         trailers = list()
         others = list()
         was_trailer = False
@@ -1197,8 +1200,17 @@ class LoreMessage:
             line = line.strip('\r')
             matches = re.search(r'^(\w\S+):\s+(\S.*)', line, flags=re.I)
             if matches:
-                was_trailer = True
                 groups = list(matches.groups())
+                # We only accept headers if we haven't seen any non-trailer lines
+                tname = groups[0].lower()
+                if len(others) and tname in headers:
+                    logger.debug('Ignoring %s (header after other content)', line)
+                    continue
+                mperson = re.search(r'<[^>]+>', groups[1])
+                if not mperson and tname not in nonperson:
+                    logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
+                    continue
+                was_trailer = True
                 groups.append(None)
                 trailers.append(groups)
                 continue
