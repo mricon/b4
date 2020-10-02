@@ -102,6 +102,9 @@ def diff_mboxes(cmdargs):
         lmbx = b4.LoreMailbox()
         for key, msg in mbx.items():
             lmbx.add_message(msg)
+        if len(lmbx.series) < 1:
+            logger.critical('No valid patches found in %s', mboxfile)
+            sys.exit(1)
         if len(lmbx.series) > 1:
             logger.critical('More than one series version in %s, will use latest', mboxfile)
 
