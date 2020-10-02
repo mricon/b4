@@ -499,10 +499,14 @@ class LoreSeries:
         at = 1
         atterrors = list()
         for lmsg in self.patches[1:]:
-            if cherrypick is not None and at not in cherrypick:
-                at += 1
-                logger.debug('  skipped: [%s/%s] (not in cherrypick)', at, self.expected)
-                continue
+            if cherrypick is not None:
+                if at not in cherrypick:
+                    at += 1
+                    logger.debug('  skipped: [%s/%s] (not in cherrypick)', at, self.expected)
+                    continue
+                if lmsg is None:
+                    logger.critical('CRITICAL: [%s/%s] is missing, cannot cherrypick', at, self.expected)
+                    raise KeyError('Cherrypick not in series')
             if lmsg is not None:
                 if self.has_cover and covertrailers and self.patches[0].followup_trailers:
                     lmsg.followup_trailers.update(self.patches[0].followup_trailers)

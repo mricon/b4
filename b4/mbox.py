@@ -86,12 +86,12 @@ def mbox_to_am(mboxfile, cmdargs):
             at = 0
             for lmsg in lser.patches[1:]:
                 at += 1
-                if lmsg.msgid == msgid:
+                if lmsg and lmsg.msgid == msgid:
                     cherrypick = [at]
-                    cmdargs.cherrypick = '5'
+                    cmdargs.cherrypick = f'<{msgid}>'
                     break
             if not len(cherrypick):
-                logger.critical('Specified msgid is not present in the series, cannot cherry-pick')
+                logger.critical('Specified msgid is not present in the series, cannot cherrypick')
                 sys.exit(1)
         elif cmdargs.cherrypick.find('*') >= 0:
             # Globbing on subject
@@ -110,10 +110,14 @@ def mbox_to_am(mboxfile, cmdargs):
 
     logger.critical('Writing %s', am_filename)
     mbx = mailbox.mbox(am_filename)
-    am_mbx = lser.save_am_mbox(mbx, noaddtrailers=cmdargs.noaddtrailers,
-                               covertrailers=covertrailers, trailer_order=config['trailer-order'],
-                               addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
-                               linkmask=config['linkmask'], cherrypick=cherrypick)
+    try:
+        am_mbx = lser.save_am_mbox(mbx, noaddtrailers=cmdargs.noaddtrailers,
+                                   covertrailers=covertrailers, trailer_order=config['trailer-order'],
+                                   addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
+                                   linkmask=config['linkmask'], cherrypick=cherrypick)
+    except KeyError:
+        sys.exit(1)
+
     logger.info('---')
 
     if cherrypick is None:
@@ -153,7 +157,7 @@ def mbox_to_am(mboxfile, cmdargs):
                 logger.info('Prepared a fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
 
     logger.critical('---')
-    if not lser.complete:
+    if not lser.complete and not cmdargs.cherrypick:
         logger.critical('WARNING: Thread incomplete!')
 
     if lser.has_cover and not cmdargs.nocover:
