@@ -234,8 +234,8 @@ def mbox_to_am(mboxfile, cmdargs):
     am_mbx.close()
     if cmdargs.outdir == '-':
         logger.info('---')
-        with open(am_filename, 'r') as fh:
-            shutil.copyfileobj(fh, sys.stdout)
+        with open(am_filename, 'rb') as fh:
+            shutil.copyfileobj(fh, sys.stdout.buffer)
         os.unlink(am_filename)
 
     thanks_record_am(lser, cherrypick=cherrypick)
@@ -511,8 +511,8 @@ def main(cmdargs):
         mbx.close()
         if cmdargs.outdir == '-':
             logger.info('---')
-            with open(threadmbox, 'r') as fh:
-                shutil.copyfileobj(fh, sys.stdout)
+            with open(threadmbox, 'rb') as fh:
+                shutil.copyfileobj(fh, sys.stdout.buffer)
             os.unlink(threadmbox)
             return
 
