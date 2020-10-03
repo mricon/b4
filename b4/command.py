@@ -42,7 +42,7 @@ def cmd_am(cmdargs):
 
 def cmd_attest(cmdargs):
     import b4.attest
-    b4.attest.create_attestation(cmdargs)
+    b4.attest.attest_patches(cmdargs)
 
 
 def cmd_verify(cmdargs):
@@ -116,14 +116,13 @@ def cmd():
     sp_am.set_defaults(func=cmd_am)
 
     # b4 attest
-    sp_att = subparsers.add_parser('attest', help='Submit cryptographic attestation for patches')
-    # GDPR-proofing: by default, we add as little PII-sensitive info as possible
-    sp_att.add_argument('-f', '--from', dest='sender', default='devnull@kernel.org',
-                        help='Use a custom From field')
+    sp_att = subparsers.add_parser('attest', help='Create cryptographic attestation for a set of patches')
+    sp_att.add_argument('-f', '--from', dest='sender', default=None,
+                        help='OBSOLETE: this option does nothing and will be removed')
     sp_att.add_argument('-n', '--no-submit', dest='nosubmit', action='store_true', default=False,
-                        help='Do not submit attestation, just save the message ready to send')
-    sp_att.add_argument('-o', '--output', default='xxxx-attestation-letter.patch',
-                        help='Save attestation message in this file if not submitting it')
+                        help='OBSOLETE: this option does nothing and will be removed')
+    sp_att.add_argument('-o', '--output', default=None,
+                        help='OBSOLETE: this option does nothing and will be removed')
     sp_att.add_argument('patchfile', nargs='+', help='Patches to attest')
     sp_att.set_defaults(func=cmd_attest)
 
