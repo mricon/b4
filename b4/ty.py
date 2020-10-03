@@ -427,8 +427,9 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
         outfile = os.path.join(outdir, '%s.thanks' % slug)
         logger.info('  Writing: %s', outfile)
         msg.set_charset('utf-8')
-        with open(outfile, 'wb') as fh:
-            fh.write(msg.as_bytes())
+        msg.replace_header('Content-Transfer-Encoding', '8bit')
+        with open(outfile, 'w') as fh:
+            fh.write(msg.as_string(policy=b4.emlpolicy))
         logger.debug('Cleaning up: %s', jsondata['trackfile'])
         fullpath = os.path.join(datadir, jsondata['trackfile'])
         os.rename(fullpath, '%s.sent' % fullpath)
