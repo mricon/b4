@@ -1177,7 +1177,7 @@ class LoreMessage:
     @staticmethod
     def find_trailers(body):
         headers = ('subject', 'date', 'from')
-        nonperson = ('fixes', 'subject', 'date')
+        nonperson = ('fixes', 'subject', 'date', 'link')
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
         # baz quux)
@@ -1203,7 +1203,7 @@ class LoreMessage:
                 if len(others) and tname in headers:
                     logger.debug('Ignoring %s (header after other content)', line)
                     continue
-                mperson = re.search(r'<\S+@\S+\.\S+>', groups[1])
+                mperson = re.search(r'\S+@\S+\.\S+', groups[1])
                 if not mperson and tname not in nonperson:
                     logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
                     continue
