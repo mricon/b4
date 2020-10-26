@@ -1576,6 +1576,10 @@ class LoreAttestation:
         self.mv = False
         self.pv = False
 
+    @property
+    def attid(self):
+        return '%s-%s-%s' % (self.i[:8], self.m[:8], self.p[:8])
+
     def __repr__(self):
         out = list()
         out.append('    i: %s' % self.i)
