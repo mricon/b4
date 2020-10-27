@@ -519,8 +519,7 @@ class LoreSeries:
                 if attpolicy != 'off':
                     lmsg.load_hashes()
                     latt = lmsg.attestation
-                    latt.validate(lmsg.msg)
-                    if latt.passing:
+                    if latt and latt.validate(lmsg.msg):
                         # Make sure it's not too old compared to the message date
                         # Timezone doesn't matter as we calculate whole days
                         tdelta = lmsg.date.replace(tzinfo=None) - latt.lsig.sigdate
@@ -1124,7 +1123,8 @@ class LoreMessage:
         logger.debug('Calculating hashes for: %s', self.full_subject)
         # Calculate git-patch-id first
         cmdargs = ['patch-id', '--stable']
-        stdin = self.msg.as_string(policy=emlpolicy).encode()
+        msg = self.get_am_message(add_trailers=False)
+        stdin = msg.as_string(policy=emlpolicy).encode()
         ecode, out = git_run_command(None, cmdargs, stdin)
         if ecode > 0:
             # Git doesn't think there's a patch there
@@ -1674,6 +1674,8 @@ class LoreAttestation:
 
             if self.iv and self.mv and self.pv:
                 self.passing = True
+
+        return self.passing
 
 
 def _run_command(cmdargs, stdin=None):
