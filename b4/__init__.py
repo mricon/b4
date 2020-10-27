@@ -304,10 +304,11 @@ class LoreMailbox:
                         # previous revisions to current revision if patch/metadata did
                         # not change
                         pmsg.load_hashes()
-                        attid = pmsg.attestation.attid
-                        if attid not in self.trailer_map:
-                            self.trailer_map[attid] = list()
-                        self.trailer_map[attid] += trailers
+                        if pmsg.attestation:
+                            attid = pmsg.attestation.attid
+                            if attid not in self.trailer_map:
+                                self.trailer_map[attid] = list()
+                            self.trailer_map[attid] += trailers
                     pmsg.followup_trailers += trailers
                     break
                 if not pmsg.reply:
@@ -2035,6 +2036,7 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     tmp_mbox = mkstemp('b4-lookup-mbox')[1]
     in_mbxf = get_pi_thread_by_url(t_mbx_url, tmp_mbox, nocache=nocache)
     if not in_mbxf:
+        os.unlink(tmp_mbox)
         return None
     in_mbx = mailbox.mbox(in_mbxf)
     out_mbx = mailbox.mbox(savefile)

@@ -494,12 +494,14 @@ def main(cmdargs):
 
         threadmbox = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
         if threadmbox is None:
+            os.unlink(savefile)
             return
     else:
         if os.path.exists(cmdargs.localmbox):
             threadmbox = cmdargs.localmbox
         else:
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
+            os.unlink(savefile)
             sys.exit(1)
 
     if threadmbox and cmdargs.checknewer:
