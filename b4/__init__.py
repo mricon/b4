@@ -1401,7 +1401,7 @@ class LoreSubject:
             subject = re.sub(r'^\w+:\s*\[', '[', subject)
 
         # Fix [PATCHv3] to be properly [PATCH v3]
-        subject = re.sub(r'^\[\s*(patch)(v\d+).*', '[$1 $2$3', subject, flags=re.I)
+        subject = re.sub(r'^\[\s*(patch)(v\d+)(.*)', '[\\1 \\2\\3', subject, flags=re.I)
 
         # Find all [foo] in the title
         while subject.find('[') == 0:
