@@ -1382,15 +1382,15 @@ class LoreSubject:
         # Remove any leading [] that don't have "patch", "resend" or "rfc" in them
         while True:
             oldsubj = subject
-            subject = re.sub(r'^\s*\[[^]]*]\s*(\[[^]]*(:?patch|resend|rfc).*)', '\\1', subject, flags=re.IGNORECASE)
+            subject = re.sub(r'^\s*\[[^]]*]\s*(\[[^]]*(:?patch|resend|rfc).*)', r'\1', subject, flags=re.IGNORECASE)
             if oldsubj == subject:
                 break
 
         # Remove any brackets inside brackets
         while True:
             oldsubj = subject
-            subject = re.sub(r'^\s*\[([^]]*)\[([^\[\]]*)]', '[\\1\\2]', subject)
-            subject = re.sub(r'^\s*\[([^]]*)]([^\[\]]*)]', '[\\1\\2]', subject)
+            subject = re.sub(r'^\s*\[([^]]*)\[([^\[\]]*)]', r'[\1\2]', subject)
+            subject = re.sub(r'^\s*\[([^]]*)]([^\[\]]*)]', r'[\1\2]', subject)
             if oldsubj == subject:
                 break
 
@@ -1401,7 +1401,7 @@ class LoreSubject:
             subject = re.sub(r'^\w+:\s*\[', '[', subject)
 
         # Fix [PATCHv3] to be properly [PATCH v3]
-        subject = re.sub(r'^\[\s*(patch)(v\d+)(.*)', '[\\1 \\2\\3', subject, flags=re.I)
+        subject = re.sub(r'^\[\s*(patch)(v\d+)(.*)', r'[\1 \2\3', subject, flags=re.I)
 
         # Find all [foo] in the title
         while subject.find('[') == 0:
