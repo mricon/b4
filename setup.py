@@ -38,6 +38,7 @@ setup(
     license='GPLv2+',
     long_description=read('man/b4.5.rst'),
     long_description_content_type='text/x-rst',
+    data_files = [('share/man/man5', ['man/b4.5'])],
     keywords=['git', 'lore.kernel.org', 'patches'],
     install_requires=[
         'requests'
