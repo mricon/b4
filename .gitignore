@@ -13,3 +13,4 @@ __pycache__
 *.patch
 *.mbx
 *.cover
+.venv
