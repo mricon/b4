@@ -33,4 +33,5 @@ Setting up a symlink should also be possible.
 Support
 -------
 For support or with any other questions, please email
-tools@linux.kernel.org.
+tools@linux.kernel.org, or browse the list archive at
+https://linux.kernel.org/g/tools.

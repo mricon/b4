@@ -26,7 +26,10 @@ NAME = 'b4'
 
 setup(
     version=find_version('b4/__init__.py'),
-    url='https://git.kernel.org/pub/scm/utils/b4/b4.git',
+    url='https://git.kernel.org/pub/scm/utils/b4/b4.git/tree/README.rst',
+    project_urls={
+        'Community': 'https://linux.kernel.org/g/tools'
+    },
     name=NAME,
     description='A tool to work with public-inbox and patch archives',
     author='Konstantin Ryabitsev',
@@ -35,6 +38,7 @@ setup(
     license='GPLv2+',
     long_description=read('man/b4.5.rst'),
     long_description_content_type='text/x-rst',
+    data_files = [('share/man/man5', ['man/b4.5'])],
     keywords=['git', 'lore.kernel.org', 'patches'],
     install_requires=[
         'requests'

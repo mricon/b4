@@ -275,4 +275,5 @@ Default configuration, with explanations::
 
 SUPPORT
 -------
-Please email tools@linux.kernel.org with support requests.
+Please email tools@linux.kernel.org with support requests,
+or browse the list archive at https://linux.kernel.org/g/tools.
