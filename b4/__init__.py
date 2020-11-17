@@ -696,7 +696,7 @@ class LoreSeries:
                     return None, None
                 logger.debug('Looking at %s', lmsg.full_subject)
                 lmsg.load_hashes()
-                if not len(lmsg.blob_indexes):
+                if not lmsg.blob_indexes:
                     logger.critical('ERROR: some patches do not have indexes')
                     logger.critical('       unable to create a fake-am range')
                     return None, None
