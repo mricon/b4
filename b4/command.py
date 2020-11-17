@@ -45,11 +45,6 @@ def cmd_attest(cmdargs):
     b4.attest.attest_patches(cmdargs)
 
 
-def cmd_verify(cmdargs):
-    import b4.attest
-    b4.attest.verify_attestation(cmdargs)
-
-
 def cmd_pr(cmdargs):
     import b4.pr
     b4.pr.main(cmdargs)
@@ -125,19 +120,6 @@ def cmd():
                         help='OBSOLETE: this option does nothing and will be removed')
     sp_att.add_argument('patchfile', nargs='+', help='Patches to attest')
     sp_att.set_defaults(func=cmd_attest)
-
-    # b4 verify
-    sp_ver = subparsers.add_parser('attverify', help='Verify cryptographic attestation of patches in an mbox')
-    sp_ver.add_argument('-i', '--attestation-file', dest='attfile',
-                        help='Use this file for attestation data instead of querying lore.kernel.org')
-    sp_ver.add_argument('-t', '--tofu', action='store_true', default=False,
-                        help='Force TOFU trust model (otherwise uses your global GnuPG setting)')
-    sp_ver.add_argument('-X', '--no-fast-exit', dest='nofast', action='store_true', default=False,
-                        help='Do not exit after first failure')
-    sp_ver.add_argument('-F', '--ignore-from-mismatch', dest='ignorefrom', action='store_true',
-                        default=False, help='Ignore mismatches between From: and PGP uid data')
-    sp_ver.add_argument('mbox', nargs=1, help='Mbox containing patches to attest')
-    sp_ver.set_defaults(func=cmd_verify)
 
     # b4 pr
     sp_pr = subparsers.add_parser('pr', help='Fetch a pull request found in a message ID')
