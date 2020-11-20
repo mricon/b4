@@ -19,12 +19,12 @@ logger = b4.logger
 
 
 def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = False) -> None:
-    if lmsg.msg.get(lmsg.attestation.hashes_header_name):
+    if lmsg.msg.get(b4.HDR_PATCH_HASHES):
         if not replace:
             logger.info(' attest: message already attested')
             return
-        del lmsg.msg[lmsg.attestation.hashes_header_name]
-        del lmsg.msg[lmsg.attestation.sig_header_name]
+        del lmsg.msg[b4.HDR_PATCH_HASHES]
+        del lmsg.msg[b4.HDR_PATCH_SIG]
 
     logger.info(' attest: generating attestation hashes')
     if not lmsg.attestation:
@@ -39,7 +39,7 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
         f'm={lmsg.attestation.mb}',
         f'p={lmsg.attestation.pb}',
     ]
-    hhname, hhval = b4.dkim_canonicalize_header(lmsg.attestation.hashes_header_name, '; '.join(hparts))
+    hhname, hhval = b4.dkim_canonicalize_header(b4.HDR_PATCH_HASHES, '; '.join(hparts))
     headers.append(f'{hhname}:{hhval}')
 
     logger.debug('Signing with mode=%s', mode)
@@ -59,7 +59,7 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
             'b=',
         ]
 
-        shname, shval = b4.dkim_canonicalize_header(lmsg.attestation.sig_header_name, '; '.join(hparts))
+        shname, shval = b4.dkim_canonicalize_header(b4.HDR_PATCH_SIG, '; '.join(hparts))
         headers.append(f'{shname}:{shval}')
         payload = '\r\n'.join(headers).encode()
         ecode, out, err = b4.gpg_run_command(gpgargs, payload)
@@ -74,8 +74,8 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
 
     hhdr = email.header.make_header([(hhval.encode(), 'us-ascii')], maxlinelen=78)
     shdr = email.header.make_header([(shval.encode(), 'us-ascii')], maxlinelen=78)
-    lmsg.msg[lmsg.attestation.hashes_header_name] = hhdr
-    lmsg.msg[lmsg.attestation.sig_header_name] = shdr
+    lmsg.msg[b4.HDR_PATCH_HASHES] = hhdr
+    lmsg.msg[b4.HDR_PATCH_SIG] = shdr
 
 
 def header_splitter(longstr: str, limit: int = 77) -> str:
