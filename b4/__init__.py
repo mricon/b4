@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
 import subprocess
@@ -139,6 +138,8 @@ SUBKEY_DATA = dict()
 REQSESSION = None
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
+# Used for dkim key lookups
+_DKIM_DNS_CACHE = dict()
 
 
 class LoreMailbox:
@@ -2319,18 +2320,22 @@ def get_parts_from_header(hstr: str) -> dict:
 
 
 def dkim_get_txt(name: bytes, timeout: int = 5):
-    lookup = name.decode()
-    logger.debug('DNS-lookup: %s', lookup)
-    try:
-        a = _resolver.resolve(lookup, dns.rdatatype.TXT, raise_on_no_answer=False, lifetime=timeout, search=True)
-        # Find v=DKIM1
-        for r in a.response.answer:
-            if r.rdtype == dns.rdatatype.TXT:
-                for item in r.items:
-                    # Concatenate all strings
-                    txtdata = b''.join(item.strings)
-                    if txtdata.find(b'v=DKIM1') >= 0:
-                        return txtdata
-    except dns.resolver.NXDOMAIN:
-        pass
-    return None
+    global _DKIM_DNS_CACHE
+    if name not in _DKIM_DNS_CACHE:
+        lookup = name.decode()
+        logger.debug('DNS-lookup: %s', lookup)
+        try:
+            a = _resolver.resolve(lookup, dns.rdatatype.TXT, raise_on_no_answer=False, lifetime=timeout, search=True)
+            # Find v=DKIM1
+            for r in a.response.answer:
+                if r.rdtype == dns.rdatatype.TXT:
+                    for item in r.items:
+                        # Concatenate all strings
+                        txtdata = b''.join(item.strings)
+                        if txtdata.find(b'v=DKIM1') >= 0:
+                            _DKIM_DNS_CACHE[name] = txtdata
+                            return txtdata
+        except dns.resolver.NXDOMAIN:
+            pass
+        _DKIM_DNS_CACHE[name] = None
+    return _DKIM_DNS_CACHE[name]
