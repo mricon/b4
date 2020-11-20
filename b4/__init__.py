@@ -1637,6 +1637,7 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         # return
 
         if not dkim.verify(self.msg.as_bytes(), dnsfunc=dkim_get_txt):
+            logger.debug('DKIM signature did NOT verify')
             return
         self.good = True
 
@@ -2344,13 +2345,12 @@ def dkim_get_txt(name: bytes, timeout: int = 5):
         logger.debug('DNS-lookup: %s', lookup)
         try:
             a = _resolver.resolve(lookup, dns.rdatatype.TXT, raise_on_no_answer=False, lifetime=timeout, search=True)
-            # Find v=DKIM1
             for r in a.response.answer:
                 if r.rdtype == dns.rdatatype.TXT:
                     for item in r.items:
                         # Concatenate all strings
                         txtdata = b''.join(item.strings)
-                        if txtdata.find(b'v=DKIM1') >= 0:
+                        if txtdata.find(b'p=') >= 0:
                             _DKIM_DNS_CACHE[name] = txtdata
                             return txtdata
         except dns.resolver.NXDOMAIN:
