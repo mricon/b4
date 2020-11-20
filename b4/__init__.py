@@ -104,9 +104,8 @@ DEFAULT_CONFIG = {
     'attestation-uid-match': 'loose',
     # How many days before we consider attestation too old?
     'attestation-staleness-days': '30',
-    # NB! This whole behaviour will change once public-inbox
-    # gains support for cross-list searches
-    'attestation-query-url': LOREADDR + '/signatures/',
+    # Should we check DKIM signatures if we don't find any other attestation?
+    'attestation-check-dkim': 'yes',
     # We'll use the default gnupg homedir, unless you set it here
     'attestation-gnupghome': None,
     # Do you like simple or fancy checkmarks?
@@ -573,9 +572,9 @@ class LoreSeries:
             for trailer, attmode in set(attdata):
                 logger.info('  %s %s', attmode, trailer)
             return mbx
-        elif not can_dkim_verify:
+        elif not can_dkim_verify and config.get('attestation-check-dkim') == 'yes':
             logger.info('  ---')
-            logger.info('  NOTE: install dkimpy for DKIM signature attestation.')
+            logger.info('  NOTE: install dkimpy for DKIM signature verification')
 
         errors = set(atterrors)
         for attdoc in ATTESTATIONS:
@@ -1806,8 +1805,9 @@ class LoreAttestation:
         hhdr = msg.get(HDR_PATCH_HASHES)
         if hhdr is None:
             # Do we have a dkim signature header?
-            if msg.get('DKIM-Signature'):
-                if can_dkim_verify:
+            if can_dkim_verify and msg.get('DKIM-Signature'):
+                config = get_main_config()
+                if config.get('attestation-check-dkim') == 'yes':
                     self.lsig = LoreAttestationSignatureDKIM(msg)
                     if self.lsig.passing:
                         self.passing = True

@@ -5,10 +5,10 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2020-05-25
+:Date:      2020-11-20
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.5.0
+:Version:   0.6.0
 :Manual section: 5
 
 SYNOPSIS
@@ -29,10 +29,10 @@ SUBCOMMANDS
 -----------
 * *b4 mbox*: Download a thread as an mbox file
 * *b4 am*: Create an mbox file that is ready to git-am
-* *b4 attest*: (EXPERIMENTAL) Submit cryptographic attestation for patches
-* *b4 pr*: (EXPERIMENTAL) Work with pull requests
+* *b4 pr*: Work with pull requests
+* *b4 diff*: Show range-diff style diffs between patch versions
 * *b4 ty*: (EXPERIMENTAL) Create templated replies for processed patches and pull requests
-* *b4 diff*: (EXPERIMENTAL) Show range-diff style diffs between patch versions
+* *b4 attest*: (EXPERIMENTAL) Add cryptographic attestation to patches
 
 OPTIONS
 -------
@@ -112,8 +112,7 @@ optional arguments:
 
 b4 attest
 ~~~~~~~~~
-usage:
-  b4 attest [-h] [-f SENDER] [-n] [-o OUTPUT] patchfile [patchfile ...]
+usage: b4 attest [-h] [-f SENDER] [-n] [-o OUTPUT] patchfile [patchfile ...]
 
 positional arguments:
   patchfile             Patches to attest
@@ -121,13 +120,12 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   -f SENDER, --from SENDER
-                        Use a custom From field
-  -n, --no-submit
-                        Do not submit attestation, just save the message ready to send
+                        OBSOLETE: this option does nothing and will be removed
+  -n, --no-submit       OBSOLETE: this option does nothing and will be removed
   -o OUTPUT, --output OUTPUT
-                        Save attestation message in this file if not submitting it
-
-*Example*: b4 attest -n -o output/xxxx-attestation.patch output/\*.patch
+                        OBSOLETE: this option does nothing and will be removed
+ 
+*Example*: b4 attest output/\*.patch
 
 b4 pr
 ~~~~~
@@ -232,6 +230,10 @@ Default configuration, with explanations::
       # softfail: print a warning when no attestation found
       # hardfail: exit with an error when no attestation found
       attestation-policy = check
+      #
+      # Fall back to checking DKIM header if we don't find any other
+      # attestations present?
+      attestation-check-dkim = yes
       #
       # "gpg" (whatever gpg is configured to do) or "tofu" to force TOFU mode
       # If you don't already have a carefully maintained web of trust setup, it is

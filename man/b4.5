@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2020-05-25" "0.5.0" ""
+.TH B4 5 "2020-11-20" "0.6.0" ""
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .
@@ -49,13 +49,13 @@ precursor to Lore and Data in the Star Trek universe.
 .IP \(bu 2
 \fIb4 am\fP: Create an mbox file that is ready to git\-am
 .IP \(bu 2
-\fIb4 attest\fP: (EXPERIMENTAL) Submit cryptographic attestation for patches
+\fIb4 pr\fP: Work with pull requests
 .IP \(bu 2
-\fIb4 pr\fP: (EXPERIMENTAL) Work with pull requests
+\fIb4 diff\fP: Show range\-diff style diffs between patch versions
 .IP \(bu 2
 \fIb4 ty\fP: (EXPERIMENTAL) Create templated replies for processed patches and pull requests
 .IP \(bu 2
-\fIb4 diff\fP: (EXPERIMENTAL) Show range\-diff style diffs between patch versions
+\fIb4 attest\fP: (EXPERIMENTAL) Add cryptographic attestation to patches
 .UNINDENT
 .SH OPTIONS
 .INDENT 0.0
@@ -176,10 +176,9 @@ Do not save the cover letter (on by default when using \-o \-)
 .sp
 \fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 attest
+.sp
+usage: b4 attest [\-h] [\-f SENDER] [\-n] [\-o OUTPUT] patchfile [patchfile ...]
 .INDENT 0.0
-.TP
-.B usage:
-b4 attest [\-h] [\-f SENDER] [\-n] [\-o OUTPUT] patchfile [patchfile ...]
 .TP
 .B positional arguments:
 patchfile             Patches to attest
@@ -191,17 +190,17 @@ patchfile             Patches to attest
 show this help message and exit
 .TP
 .BI \-f \ SENDER\fP,\fB \ \-\-from \ SENDER
-Use a custom From field
+OBSOLETE: this option does nothing and will be removed
 .TP
 .B \-n\fP,\fB  \-\-no\-submit
-Do not submit attestation, just save the message ready to send
+OBSOLETE: this option does nothing and will be removed
 .TP
 .BI \-o \ OUTPUT\fP,\fB \ \-\-output \ OUTPUT
-Save attestation message in this file if not submitting it
+OBSOLETE: this option does nothing and will be removed
 .UNINDENT
 .UNINDENT
 .sp
-\fIExample\fP: b4 attest \-n \-o output/xxxx\-attestation.patch output/*.patch
+\fIExample\fP: b4 attest output/*.patch
 .SS b4 pr
 .INDENT 0.0
 .TP
@@ -357,6 +356,10 @@ Default configuration, with explanations:
    # softfail: print a warning when no attestation found
    # hardfail: exit with an error when no attestation found
    attestation\-policy = check
+   #
+   # Fall back to checking DKIM header if we don\(aqt find any other
+   # attestations present?
+   attestation\-check\-dkim = yes
    #
    # "gpg" (whatever gpg is configured to do) or "tofu" to force TOFU mode
    # If you don\(aqt already have a carefully maintained web of trust setup, it is
