@@ -127,27 +127,29 @@ def attest_fetch_head(gitdir, lmsg):
         ecode, out = b4.git_run_command(gitdir, ['verify-tag', '--raw', 'FETCH_HEAD'], logstderr=True)
     elif otype == 'commit':
         ecode, out = b4.git_run_command(gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True)
-    lsig = b4.LoreAttestationSignature(out, 'git')
-    if lsig.good and lsig.valid and lsig.trusted:
+
+    good, valid, trusted, attestor, sigdate, errors = b4.validate_gpg_signature(out, 'pgp')
+
+    if good and valid and trusted:
         passing = True
 
     out = out.strip()
     if not len(out) and attpolicy != 'check':
-        lsig.errors.add('Remote %s is not signed!' % otype)
+        errors.add('Remote %s is not signed!' % otype)
 
     if passing:
-        trailer = lsig.attestor.get_trailer(lmsg.fromemail)
+        trailer = attestor.get_trailer(lmsg.fromemail)
         logger.info('  ---')
         logger.info('  %s %s', attpass, trailer)
         return
 
-    if lsig.errors:
+    if errors:
         logger.critical('  ---')
         if len(out):
             logger.critical('  Pull request is signed, but verification did not succeed:')
         else:
             logger.critical('  Pull request verification did not succeed:')
-        for error in lsig.errors:
+        for error in errors:
             logger.critical('    %s %s', attfail, error)
 
         if attpolicy == 'hardfail':

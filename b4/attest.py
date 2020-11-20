@@ -39,7 +39,7 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
         f'm={lmsg.attestation.mb}',
         f'p={lmsg.attestation.pb}',
     ]
-    hhname, hhval = b4.LoreAttestation.dkim_canonicalize_header(lmsg.attestation.hashes_header_name, '; '.join(hparts))
+    hhname, hhval = b4.dkim_canonicalize_header(lmsg.attestation.hashes_header_name, '; '.join(hparts))
     headers.append(f'{hhname}:{hhval}')
 
     logger.debug('Signing with mode=%s', mode)
@@ -59,7 +59,7 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
             'b=',
         ]
 
-        shname, shval = b4.LoreAttestation.dkim_canonicalize_header(lmsg.attestation.sig_header_name, '; '.join(hparts))
+        shname, shval = b4.dkim_canonicalize_header(lmsg.attestation.sig_header_name, '; '.join(hparts))
         headers.append(f'{shname}:{shval}')
         payload = '\r\n'.join(headers).encode()
         ecode, out, err = b4.gpg_run_command(gpgargs, payload)

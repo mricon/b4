@@ -1753,35 +1753,11 @@ class LoreAttestationSignaturePGP(LoreAttestationSignature):
         os.unlink(savefile)
         output = out.decode()
 
-        gs_matches = re.search(r'^\[GNUPG:] GOODSIG ([0-9A-F]+)\s+.*$', output, re.M)
-        if gs_matches:
-            logger.debug('  GOODSIG')
-            self.good = True
-            keyid = gs_matches.groups()[0]
-            self.attestor = LoreAttestorPGP(keyid)
-            puid = '%s <%s>' % self.attestor.get_primary_uid()
-            vs_matches = re.search(r'^\[GNUPG:] VALIDSIG ([0-9A-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', output, re.M)
-            if vs_matches:
-                logger.debug('  VALIDSIG')
-                self.valid = True
-                ymd = vs_matches.groups()[1]
-                self.sigdate = datetime.datetime.strptime(ymd, '%Y-%m-%d').replace(tzinfo=datetime.timezone.utc)
-                # Do we have a TRUST_(FULLY|ULTIMATE)?
-                ts_matches = re.search(r'^\[GNUPG:] TRUST_(FULLY|ULTIMATE)', output, re.M)
-                if ts_matches:
-                    logger.debug('  TRUST_%s', ts_matches.groups()[0])
-                    self.trusted = True
-                    self.passing = True
-                else:
-                    self.errors.add('Insufficient trust (model=%s): %s (%s)'
-                                    % (trustmodel, keyid, puid))
-            else:
-                self.errors.add('Signature not valid from key: %s (%s)' % (keyid, puid))
-        else:
-            # Are we missing a key?
-            matches = re.search(r'^\[GNUPG:] NO_PUBKEY ([0-9A-F]+)$', output, re.M)
-            if matches:
-                self.errors.add('Missing public key: %s' % matches.groups()[0])
+        self.good, self.valid, self.trusted, self.attestor, self.sigdate, self.errors = \
+            validate_gpg_signature(output, trustmodel)
+
+        if self.good and self.valid and self.trusted:
+            self.passing = True
 
         # A couple of final verifications
         self.verify_time_drift()
@@ -2317,6 +2293,48 @@ def get_parts_from_header(hstr: str) -> dict:
             continue
         hdata[parts[0]] = parts[1]
     return hdata
+
+
+def validate_gpg_signature(output, trustmodel):
+    good = False
+    valid = False
+    trusted = False
+    attestor = None
+    sigdate = None
+    errors = set()
+    gs_matches = re.search(r'^\[GNUPG:] GOODSIG ([0-9A-F]+)\s+.*$', output, re.M)
+    if gs_matches:
+        logger.debug('  GOODSIG')
+        good = True
+        keyid = gs_matches.groups()[0]
+        attestor = LoreAttestorPGP(keyid)
+        puid = '%s <%s>' % attestor.get_primary_uid()
+        vs_matches = re.search(r'^\[GNUPG:] VALIDSIG ([0-9A-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', output, re.M)
+        if vs_matches:
+            logger.debug('  VALIDSIG')
+            valid = True
+            ymd = vs_matches.groups()[1]
+            sigdate = datetime.datetime.strptime(ymd, '%Y-%m-%d').replace(tzinfo=datetime.timezone.utc)
+            # Do we have a TRUST_(FULLY|ULTIMATE)?
+            ts_matches = re.search(r'^\[GNUPG:] TRUST_(FULLY|ULTIMATE)', output, re.M)
+            if ts_matches:
+                logger.debug('  TRUST_%s', ts_matches.groups()[0])
+                trusted = True
+            else:
+                errors.add('Insufficient trust (model=%s): %s (%s)' % (trustmodel, keyid, puid))
+        else:
+            errors.add('Signature not valid from key: %s (%s)' % (attestor.keyid, puid))
+    else:
+        # Are we missing a key?
+        matches = re.search(r'^\[GNUPG:] NO_PUBKEY ([0-9A-F]+)$', output, re.M)
+        if matches:
+            errors.add('Missing public key: %s' % matches.groups()[0])
+        # Is the key expired?
+        matches = re.search(r'^\[GNUPG:] EXPKEYSIG (.*)$', output, re.M)
+        if matches:
+            errors.add('Expired key: %s' % matches.groups()[0])
+
+    return good, valid, trusted, attestor, sigdate, errors
 
 
 def dkim_get_txt(name: bytes, timeout: int = 5):
