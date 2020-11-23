@@ -110,6 +110,10 @@ def mutt_filter() -> None:
         logger.error('Error: Mutt mode expects a message on stdin')
         sys.exit(1)
     inb = sys.stdin.buffer.read()
+    # Quick exit if we don't find x-patch-sig
+    if inb.find(b'X-Patch-Sig:') < 0:
+        sys.stdout.buffer.write(inb)
+        return
     try:
         msg = email.message_from_bytes(inb)
         if msg.get('x-patch-sig'):
