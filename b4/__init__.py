@@ -540,12 +540,15 @@ class LoreSeries:
                         if attpolicy in ('softfail', 'hardfail'):
                             logger.info('  %s %s', attfail, lmsg.full_subject)
                             failed = list()
-                            if not latt.pv:
-                                failed.append('patch content')
-                            if not latt.pm:
-                                failed.append('commit message')
-                            if not latt.pi:
-                                failed.append('patch metadata')
+                            if latt and latt.lsig and latt.lsig.attestor and latt.lsig.attestor.mode == 'domain':
+                                failed.append(latt.lsig.attestor.get_trailer())
+                            else:
+                                if not latt.pv:
+                                    failed.append('patch content')
+                                if not latt.mv:
+                                    failed.append('commit message')
+                                if not latt.iv:
+                                    failed.append('patch metadata')
                             atterrors.append('Patch %s/%s failed attestation (%s)' % (at, lmsg.expected,
                                                                                       ', '.join(failed)))
                         else:
@@ -1473,8 +1476,10 @@ class LoreAttestorDKIM(LoreAttestor):
         self.mode = 'domain'
         super().__init__(keyid)
 
-    def get_trailer(self, fromaddr): # noqa
-        return 'DKIM/%s (From: %s)' % (self.keyid, fromaddr)
+    def get_trailer(self, fromaddr=None): # noqa
+        if fromaddr:
+            return 'DKIM/%s (From: %s)' % (self.keyid, fromaddr)
+        return 'DKIM/%s' % self.keyid
 
 
 class LoreAttestorPGP(LoreAttestor):
@@ -1636,6 +1641,9 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         # self.native_verify()
         # return
 
+        dks = self.msg.get('dkim-signature')
+        ddata = get_parts_from_header(dks)
+        self.attestor = LoreAttestorDKIM(ddata['d'])
         # Do we have a resolve method?
         if hasattr(_resolver, 'resolve'):
             res = dkim.verify(self.msg.as_bytes(), dnsfunc=dkim_get_txt)
@@ -1647,9 +1655,6 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         self.good = True
 
         # Grab toplevel signature that we just verified
-        dks = self.msg.get('dkim-signature')
-        ddata = get_parts_from_header(dks)
-        self.attestor = LoreAttestorDKIM(ddata['d'])
         self.valid = True
         self.trusted = True
         self.passing = True
@@ -1763,10 +1768,8 @@ class LoreAttestationSignaturePGP(LoreAttestationSignature):
 
         if self.good and self.valid and self.trusted:
             self.passing = True
-
-        # A couple of final verifications
-        self.verify_time_drift()
-        # XXX: Need to verify identity domain
+            self.verify_time_drift()
+            # XXX: Need to verify identity domain
 
 
 class LoreAttestation:

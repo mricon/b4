@@ -114,23 +114,36 @@ def mutt_filter() -> None:
     if inb.find(b'X-Patch-Sig:') < 0:
         sys.stdout.buffer.write(inb)
         return
+    msg = email.message_from_bytes(inb)
     try:
-        msg = email.message_from_bytes(inb)
         if msg.get('x-patch-sig'):
             lmsg = b4.LoreMessage(msg)
             lmsg.load_hashes()
             latt = lmsg.attestation
-            if latt and latt.validate(msg):
-                trailer = latt.lsig.attestor.get_trailer(lmsg.fromemail)
-                msg.add_header('Attested-By', trailer)
-                # Delete the x-patch-hashes and x-patch-sig headers so
-                # they don't boggle up the view
-                for i in reversed(range(len(msg._headers))):  # noqa
-                    hdrName = msg._headers[i][0].lower()  # noqa
-                    if hdrName in ('x-patch-hashes', 'x-patch-sig'):
-                        del msg._headers[i]  # noqa
+            if latt:
+                if latt.validate(msg):
+                    trailer = latt.lsig.attestor.get_trailer(lmsg.fromemail)
+                    msg.add_header('Attested-By', trailer)
+                elif latt.lsig:
+                    if not latt.lsig.errors:
+                        failed = list()
+                        if not latt.pv:
+                            failed.append('patch content')
+                        if not latt.mv:
+                            failed.append('commit message')
+                        if not latt.iv:
+                            failed.append('patch metadata')
+                        latt.lsig.errors.add('signature failed (%s)'  % ', '.join(failed))
+                    msg.add_header('Attestation-Failed', ', '.join(latt.lsig.errors))
+            # Delete the x-patch-hashes and x-patch-sig headers so
+            # they don't boggle up the view
+            for i in reversed(range(len(msg._headers))):  # noqa
+                hdrName = msg._headers[i][0].lower()  # noqa
+                if hdrName in ('x-patch-hashes', 'x-patch-sig'):
+                    del msg._headers[i]  # noqa
     except:  # noqa
         # Don't prevent email from being displayed even if we died horribly
         sys.stdout.buffer.write(inb)
         return
+
     sys.stdout.buffer.write(msg.as_bytes(policy=b4.emlpolicy))
