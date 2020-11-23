@@ -2353,6 +2353,10 @@ def dkim_get_txt(name: bytes, timeout: int = 5):
                         if txtdata.find(b'p=') >= 0:
                             _DKIM_DNS_CACHE[name] = txtdata
                             return txtdata
+        except AttributeError:
+            # Try the native call
+            _DKIM_DNS_CACHE[name] = dkim.dnsplug.get_txt(name, timeout)
+            return _DKIM_DNS_CACHE[name]
         except dns.resolver.NXDOMAIN:
             pass
         _DKIM_DNS_CACHE[name] = None
