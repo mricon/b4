@@ -44,15 +44,18 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
     if mode == 'pgp':
         usercfg = b4.get_user_config()
         keyid = usercfg.get('signingkey')
+        identity = usercfg.get('email')
+        if not identity:
+            raise RuntimeError('Please set user.email to use this feature')
         if not keyid:
             raise RuntimeError('Please set user.signingKey to use this feature')
 
-        logger.debug('Using i=%s, s=0x%s', lmsg.fromemail, keyid.rstrip('!'))
+        logger.debug('Using i=%s, s=0x%s', identity, keyid.rstrip('!'))
         gpgargs = ['-b', '-u', f'{keyid}']
 
         hparts = [
             'm=pgp',
-            f'i={lmsg.fromemail}',
+            f'i={identity}',
             's=0x%s' % keyid.rstrip('!'),
             'b=',
         ]
