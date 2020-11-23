@@ -1636,7 +1636,12 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         # self.native_verify()
         # return
 
-        if not dkim.verify(self.msg.as_bytes(), dnsfunc=dkim_get_txt):
+        # Do we have a resolve method?
+        if hasattr(_resolver, 'resolve'):
+            res = dkim.verify(self.msg.as_bytes(), dnsfunc=dkim_get_txt)
+        else:
+            res = dkim.verify(self.msg.as_bytes())
+        if not res:
             logger.debug('DKIM signature did NOT verify')
             return
         self.good = True
@@ -2353,10 +2358,6 @@ def dkim_get_txt(name: bytes, timeout: int = 5):
                         if txtdata.find(b'p=') >= 0:
                             _DKIM_DNS_CACHE[name] = txtdata
                             return txtdata
-        except AttributeError:
-            # Try the native call
-            _DKIM_DNS_CACHE[name] = dkim.dnsplug.get_txt(name, timeout)
-            return _DKIM_DNS_CACHE[name]
         except dns.resolver.NXDOMAIN:
             pass
         _DKIM_DNS_CACHE[name] = None
