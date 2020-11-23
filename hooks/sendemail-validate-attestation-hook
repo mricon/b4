@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+if which b4>/dev/null 2>&1; then
+    # We have it in path, so just execute it
+    b4 attest "${1}"
+else
+    # Assume we're symlinked into a b4 checkout
+    REAL_SCRIPT=$(realpath -e ${BASH_SOURCE[0]})
+    SCRIPT_TOP="${SCRIPT_TOP:-$(dirname ${REAL_SCRIPT})}"
+    B4_TOP=$(realpath -e ${SCRIPT_TOP}/..)
+    exec env PYTHONPATH="${B4_TOP}" python3 "${B4_TOP}/b4/command.py" attest "${1}"
+fi
