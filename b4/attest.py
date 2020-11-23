@@ -136,7 +136,7 @@ def mutt_filter() -> None:
                             failed.append('commit message')
                         if not latt.iv:
                             failed.append('patch metadata')
-                        latt.lsig.errors.add('signature failed (%s)'  % ', '.join(failed))
+                        latt.lsig.errors.add('signature failed (%s)' % ', '.join(failed))
                     msg.add_header('Attestation-Failed', ', '.join(latt.lsig.errors))
             # Delete the x-patch-hashes and x-patch-sig headers so
             # they don't boggle up the view

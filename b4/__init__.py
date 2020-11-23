@@ -537,20 +537,20 @@ class LoreSeries:
                             logger.info('  %s %s', attpass, lmsg.full_subject)
                             attdata[at-1] = (latt.lsig.attestor.get_trailer(lmsg.fromemail), attpass) # noqa
                     else:
-                        if attpolicy in ('softfail', 'hardfail'):
+                        if latt and latt.lsig and attpolicy in ('softfail', 'hardfail'):
                             logger.info('  %s %s', attfail, lmsg.full_subject)
-                            failed = list()
                             if latt and latt.lsig and latt.lsig.attestor and latt.lsig.attestor.mode == 'domain':
-                                failed.append(latt.lsig.attestor.get_trailer())
-                            else:
+                                atterrors.append('Failed %s attestation' % latt.lsig.attestor.get_trailer())
+                            elif latt and latt.lsig and latt.lsig.attestor:
+                                failed = list()
                                 if not latt.pv:
                                     failed.append('patch content')
                                 if not latt.mv:
                                     failed.append('commit message')
                                 if not latt.iv:
                                     failed.append('patch metadata')
-                            atterrors.append('Patch %s/%s failed attestation (%s)' % (at, lmsg.expected,
-                                                                                      ', '.join(failed)))
+                                atterrors.append('Patch %s/%s failed attestation (%s)' % (at, lmsg.expected,
+                                                                                          ', '.join(failed)))
                         else:
                             logger.info('  %s', lmsg.full_subject)
                 else:
