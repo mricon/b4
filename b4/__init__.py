@@ -570,7 +570,7 @@ class LoreSeries:
         if not failed:
             logger.info('  ---')
             for trailer, attmode in set(attdata):
-                logger.info('  %s %s', attmode, trailer)
+                logger.info('  %s Attestation-by: %s', attmode, trailer)
             return mbx
         elif not can_dkim_verify and config.get('attestation-check-dkim') == 'yes':
             logger.info('  ---')
@@ -1474,7 +1474,7 @@ class LoreAttestorDKIM(LoreAttestor):
         super().__init__(keyid)
 
     def get_trailer(self, fromaddr): # noqa
-        return 'Attestation-by: DKIM/%s (From: %s)' % (self.keyid, fromaddr)
+        return 'DKIM/%s (From: %s)' % (self.keyid, fromaddr)
 
 
 class LoreAttestorPGP(LoreAttestor):
@@ -1524,7 +1524,7 @@ class LoreAttestorPGP(LoreAttestor):
         else:
             uid = self.uids[0]
 
-        return 'Attestation-by: %s <%s> (pgp: %s)' % (uid[0], uid[1], self.keyid)
+        return '%s <%s> (pgp: %s)' % (uid[0], uid[1], self.keyid)
 
 
 class LoreAttestationSignature:
