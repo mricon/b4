@@ -493,7 +493,7 @@ class LoreSeries:
                 logger.critical('WARNING: Unable to add your Signed-off-by: git returned no user.name or user.email')
                 addmysob = False
 
-        attdata = [(None, None)] * self.expected
+        attdata = [(None, None)] * len(self.patches[1:])
         attpolicy = config['attestation-policy']
 
         if config['attestation-checkmarks'] == 'fancy':
