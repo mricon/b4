@@ -246,10 +246,6 @@ def mbox_to_am(mboxfile, cmdargs):
 
 
 def thanks_record_am(lser, cherrypick=None):
-    if not lser.complete:
-        logger.debug('Incomplete series, not tracking for thanks')
-        return
-
     # Are we tracking this already?
     datadir = b4.get_data_dir()
     slug = lser.get_slug(extended=True)
@@ -257,6 +253,7 @@ def thanks_record_am(lser, cherrypick=None):
 
     patches = list()
     at = 0
+    padlen = len(str(lser.expected))
     for pmsg in lser.patches[1:]:
         at += 1
         if pmsg is None:
@@ -270,7 +267,8 @@ def thanks_record_am(lser, cherrypick=None):
         if pmsg.attestation is None:
             logger.debug('Unable to get hashes for all patches, not tracking for thanks')
             return
-        patches.append((pmsg.subject, pmsg.pwhash, pmsg.msgid))
+        prefix = '%s/%s' % (str(pmsg.counter).zfill(padlen), pmsg.expected)
+        patches.append((pmsg.subject, pmsg.pwhash, pmsg.msgid, prefix))
 
     lmsg = lser.patches[0]
     if lmsg is None:
@@ -289,6 +287,7 @@ def thanks_record_am(lser, cherrypick=None):
         'references': b4.LoreMessage.clean_header(lmsg.msg['References']),
         'sentdate': b4.LoreMessage.clean_header(lmsg.msg['Date']),
         'quote': b4.make_quote(lmsg.body, maxlines=5),
+        'cherrypick': cherrypick is not None,
         'patches': patches,
     }
     fullpath = os.path.join(datadir, filename)

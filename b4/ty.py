@@ -99,10 +99,11 @@ def make_reply(reply_template, jsondata):
     else:
         msg['References'] = '<%s>' % jsondata['msgid']
 
-    if jsondata['subject'].find('Re: ') < 0:
-        msg['Subject'] = 'Re: %s' % jsondata['subject']
+    subject = re.sub(r'^Re:\s+', '', jsondata['subject'], flags=re.I)
+    if jsondata.get('cherrypick'):
+        msg['Subject'] = 'Re: (subset) ' + subject
     else:
-        msg['Subject'] = jsondata['subject']
+        msg['Subject'] = 'Re: ' + subject
 
     mydomain = jsondata['myemail'].split('@')[1]
     msg['Message-Id'] = email.utils.make_msgid(idstring='b4-ty', domain=mydomain)
@@ -189,11 +190,13 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
     # We need to find all of them in the commits
     found = list()
     matches = 0
+    at = 0
     for patch in jsondata['patches']:
+        at += 1
         logger.debug('Checking %s', patch)
         if patch[1] in patchids:
             logger.debug('Found: %s', patch[0])
-            found.append(commits[patch[1]])
+            found.append((at, commits[patch[1]][0]))
             matches += 1
         else:
             # try to locate by subject
@@ -201,7 +204,7 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
             for pwhash, commit in commits.items():
                 if commit[1] == patch[0]:
                     logger.debug('Matched using subject')
-                    found.append(commit)
+                    found.append((at, commit[0]))
                     success = True
                     matches += 1
                     break
@@ -209,7 +212,7 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
                     for tracker in commit[2]:
                         if tracker.find(patch[2]) >= 0:
                             logger.debug('Matched using recorded message-id')
-                            found.append(commit)
+                            found.append((at, commit[0]))
                             success = True
                             matches += 1
                             break
@@ -218,7 +221,7 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
 
             if not success:
                 logger.debug('  Failed to find a match for: %s', patch[0])
-                found.append((None, patch[0]))
+                found.append((at, None))
 
     return found
 
@@ -320,24 +323,27 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
     if not cidmask:
         cidmask = 'commit: %s'
     slines = list()
-    counter = 0
     nomatch = 0
     padlen = len(str(len(commits)))
-    for commit in commits:
-        counter += 1
-        prefix = '[%s/%s] ' % (str(counter).zfill(padlen), len(commits))
-        slines.append('%s%s' % (prefix, commit[1]))
-        if commit[0] is None:
+    patches = jsondata['patches']
+    for at, cid in commits:
+        try:
+            prefix = '[%s] ' % patches[at-1][3]
+        except IndexError:
+            prefix = '[%s/%s] ' % (str(at).zfill(padlen), len(commits))
+        slines.append('%s%s' % (prefix, patches[at-1][0]))
+        if cid is None:
             slines.append('%s(no commit info)' % (' ' * len(prefix)))
             nomatch += 1
         else:
-            slines.append('%s%s' % (' ' * len(prefix), cidmask % commit[0]))
+            slines.append('%s%s' % (' ' * len(prefix), cidmask % cid))
     jsondata['summary'] = '\n'.join(slines)
-    if nomatch == counter:
+    if nomatch == len(commits):
         logger.critical('  WARNING: None of the patches matched for: %s', jsondata['subject'])
         logger.critical('           Please review the resulting message')
     elif nomatch > 0:
-        logger.critical('  WARNING: Could not match %s of %s patches in: %s', nomatch, counter, jsondata['subject'])
+        logger.critical('  WARNING: Could not match %s of %s patches in: %s',
+                        nomatch, len(commits), jsondata['subject'])
         logger.critical('           Please review the resulting message')
 
     msg = make_reply(thanks_template, jsondata)
