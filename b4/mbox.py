@@ -254,9 +254,17 @@ def thanks_record_am(lser, cherrypick=None):
     patches = list()
     at = 0
     padlen = len(str(lser.expected))
-    for pmsg in lser.patches[1:]:
-        at += 1
+    lmsg = None
+
+    for pmsg in lser.patches:
         if pmsg is None:
+            continue
+
+        if lmsg is None:
+            lmsg = pmsg
+
+        if not pmsg.has_diff:
+            # Don't care about the cover letter
             continue
 
         if cherrypick is not None and at not in cherrypick:
@@ -269,10 +277,11 @@ def thanks_record_am(lser, cherrypick=None):
             return
         prefix = '%s/%s' % (str(pmsg.counter).zfill(padlen), pmsg.expected)
         patches.append((pmsg.subject, pmsg.pwhash, pmsg.msgid, prefix))
+        at += 1
 
-    lmsg = lser.patches[0]
     if lmsg is None:
-        lmsg = lser.patches[1]
+        logger.debug('All patches missing, not tracking for thanks')
+        return
 
     allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
     allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
