@@ -112,6 +112,8 @@ def cmd():
     sp_am.add_argument('-3', '--prep-3way', dest='threeway', action='store_true', default=False,
                        help='Prepare for a 3-way merge '
                             '(tries to ensure that all index blobs exist by making a fake commit range)')
+    sp_am.add_argument('--cc-trailers', dest='copyccs', action='store_true', default=False,
+                       help='Copy all Cc\'d addresses into Cc: trailers')
     sp_am.add_argument('--no-cover', dest='nocover', action='store_true', default=False,
                        help='Do not save the cover letter (on by default when using -o -)')
     sp_am.set_defaults(func=cmd_am)

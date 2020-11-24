@@ -114,7 +114,8 @@ def mbox_to_am(mboxfile, cmdargs):
         am_mbx = lser.save_am_mbox(mbx, noaddtrailers=cmdargs.noaddtrailers,
                                    covertrailers=covertrailers, trailer_order=config['trailer-order'],
                                    addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
-                                   linkmask=config['linkmask'], cherrypick=cherrypick)
+                                   linkmask=config['linkmask'], cherrypick=cherrypick,
+                                   copyccs=cmdargs.copyccs)
     except KeyError:
         sys.exit(1)
 

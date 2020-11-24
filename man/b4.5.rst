@@ -104,6 +104,8 @@ optional arguments:
                         Try to guess the base of the series (if not specified)
   -3, --prep-3way
                         Prepare for a 3-way merge (tries to ensure that all index blobs exist by making a fake commit range)
+  --cc-trailers
+                        Copy all Cc'd addresses into Cc: trailers, if not already present
   --no-cover
                         Do not save the cover letter (on by default when using -o -)
 

@@ -483,7 +483,7 @@ class LoreSeries:
         return slug
 
     def save_am_mbox(self, mbx, noaddtrailers=False, covertrailers=False, trailer_order=None, addmysob=False,
-                     addlink=False, linkmask=None, cherrypick=None):
+                     addlink=False, linkmask=None, cherrypick=None, copyccs=False):
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -559,7 +559,7 @@ class LoreSeries:
                 add_trailers = True
                 if noaddtrailers:
                     add_trailers = False
-                msg = lmsg.get_am_message(add_trailers=add_trailers, trailer_order=trailer_order)
+                msg = lmsg.get_am_message(add_trailers=add_trailers, trailer_order=trailer_order, copyccs=copyccs)
                 # Pass a policy that avoids most legacy encoding horrors
                 mbx.add(msg.as_bytes(policy=emlpolicy))
             else:
@@ -1299,10 +1299,29 @@ class LoreMessage:
 
         return githeaders, message, trailers, basement, signature
 
-    def fix_trailers(self, trailer_order=None):
+    def fix_trailers(self, trailer_order=None, copyccs=False):
         bheaders, message, btrailers, basement, signature = LoreMessage.get_body_parts(self.body)
         # Now we add mix-in trailers
         trailers = btrailers + self.followup_trailers
+
+        if copyccs:
+            allccs = email.utils.getaddresses([str(x) for x in self.msg.get_all('cc', [])])
+            # Sort by domain name, then local
+            allccs.sort(key=lambda x: x[1].find('@') > 0 and x[1].split('@')[1] + x[1].split('@')[0] or x[1])
+            for pair in allccs:
+                found = False
+                for ftr in trailers:
+                    if ftr[1].lower().find(pair[1].lower()) >= 0:
+                        # already present
+                        found = True
+                        break
+
+                if not found:
+                    if len(pair[0]):
+                        trailers.append(('Cc', f'{pair[0]} <{pair[1]}>', None))  # noqa
+                    else:
+                        trailers.append(('Cc', pair[1], None))  # noqa
+
         fixtrailers = list()
         if trailer_order is None:
             trailer_order = DEFAULT_TRAILER_ORDER
@@ -1347,9 +1366,9 @@ class LoreMessage:
             self.body += signature
             self.body += '\n'
 
-    def get_am_message(self, add_trailers=True, trailer_order=None):
+    def get_am_message(self, add_trailers=True, trailer_order=None, copyccs=False):
         if add_trailers:
-            self.fix_trailers(trailer_order=trailer_order)
+            self.fix_trailers(trailer_order=trailer_order, copyccs=copyccs)
         am_body = self.body
         am_msg = email.message.EmailMessage()
         am_msg.set_payload(am_body.encode('utf-8'))
