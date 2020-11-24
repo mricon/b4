@@ -2086,7 +2086,7 @@ def get_msgid(cmdargs):
     matches = re.search(r'^https?://[^/]+/([^/]+)/([^/]+@[^/]+)', msgid, re.IGNORECASE)
     if matches:
         chunks = matches.groups()
-        msgid = chunks[1]
+        msgid = urllib.parse.unquote(chunks[1])
         # Infer the project name from the URL, if possible
         if chunks[0] != 'r':
             cmdargs.useproject = chunks[0]
