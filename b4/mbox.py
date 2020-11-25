@@ -259,6 +259,7 @@ def thanks_record_am(lser, cherrypick=None):
 
     for pmsg in lser.patches:
         if pmsg is None:
+            at += 1
             continue
 
         if lmsg is None:
@@ -266,16 +267,19 @@ def thanks_record_am(lser, cherrypick=None):
 
         if not pmsg.has_diff:
             # Don't care about the cover letter
+            at += 1
             continue
 
         if cherrypick is not None and at not in cherrypick:
             logger.debug('Skipped non-cherrypicked: %s', at)
+            at += 1
             continue
 
         pmsg.load_hashes()
         if pmsg.attestation is None:
             logger.debug('Unable to get hashes for all patches, not tracking for thanks')
             return
+
         prefix = '%s/%s' % (str(pmsg.counter).zfill(padlen), pmsg.expected)
         patches.append((pmsg.subject, pmsg.pwhash, pmsg.msgid, prefix))
         at += 1
