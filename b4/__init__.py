@@ -1305,10 +1305,11 @@ class LoreMessage:
         trailers = btrailers + self.followup_trailers
 
         if copyccs:
-            allccs = email.utils.getaddresses([str(x) for x in self.msg.get_all('cc', [])])
+            alldests = email.utils.getaddresses([str(x) for x in self.msg.get_all('to', [])])
+            alldests += email.utils.getaddresses([str(x) for x in self.msg.get_all('cc', [])])
             # Sort by domain name, then local
-            allccs.sort(key=lambda x: x[1].find('@') > 0 and x[1].split('@')[1] + x[1].split('@')[0] or x[1])
-            for pair in allccs:
+            alldests.sort(key=lambda x: x[1].find('@') > 0 and x[1].split('@')[1] + x[1].split('@')[0] or x[1])
+            for pair in alldests:
                 found = False
                 for ftr in trailers:
                     if ftr[1].lower().find(pair[1].lower()) >= 0:
