@@ -214,7 +214,7 @@ Default configuration, with explanations::
 
    [b4]
       # Where to look up threads by message id
-      midmask = https://lore.kernel.org/r/%s'
+      midmask = https://lore.kernel.org/r/%s
       #
       # When recording Link: trailers, use this mask
       linkmask = https://lore.kernel.org/r/%s
