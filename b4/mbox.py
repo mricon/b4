@@ -511,7 +511,14 @@ def main(cmdargs):
             return
     else:
         if os.path.exists(cmdargs.localmbox):
-            threadmbox = cmdargs.localmbox
+            msgid = b4.get_msgid(cmdargs)
+            if os.path.isdir(cmdargs.localmbox):
+                in_mbx = mailbox.Maildir(cmdargs.localmbox)
+            else:
+                in_mbx = mailbox.mbox(cmdargs.localmbox)
+            out_mbx = mailbox.mbox(savefile)
+            b4.save_strict_thread(in_mbx, out_mbx, msgid)
+            threadmbox = savefile
         else:
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
             os.unlink(savefile)

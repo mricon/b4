@@ -2206,7 +2206,7 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
         return None
 
     if len(in_mbx) > len(out_mbx):
-        logger.info('Reduced thread to strict matches only (%s->%s)', len(in_mbx), len(out_mbx))
+        logger.debug('Reduced mbox to strict matches only (%s->%s)', len(in_mbx), len(out_mbx))
 
 
 def get_pi_thread_by_url(t_mbx_url, savefile, nocache=False):
