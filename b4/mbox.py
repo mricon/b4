@@ -505,8 +505,8 @@ def main(cmdargs):
     if not cmdargs.localmbox:
         msgid = b4.get_msgid(cmdargs)
 
-        threadmbox = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
-        if threadmbox is None:
+        threadfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
+        if threadfile is None:
             os.unlink(savefile)
             return
     else:
@@ -518,28 +518,31 @@ def main(cmdargs):
                 in_mbx = mailbox.mbox(cmdargs.localmbox)
             out_mbx = mailbox.mbox(savefile)
             b4.save_strict_thread(in_mbx, out_mbx, msgid)
-            threadmbox = savefile
+            if not len(out_mbx):
+                logger.critical('Could not find %s in %s', msgid, cmdargs.localmbox)
+                os.unlink(savefile)
+                sys.exit(1)
+            threadfile = savefile
         else:
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
             os.unlink(savefile)
             sys.exit(1)
 
-    if threadmbox and cmdargs.checknewer:
-        get_extra_series(threadmbox, direction=1)
+    if threadfile and cmdargs.checknewer:
+        get_extra_series(threadfile, direction=1)
 
     if cmdargs.subcmd == 'am':
-        mbox_to_am(threadmbox, cmdargs)
-        if not cmdargs.localmbox:
-            os.unlink(threadmbox)
+        mbox_to_am(threadfile, cmdargs)
+        os.unlink(threadfile)
     else:
-        mbx = mailbox.mbox(threadmbox)
+        mbx = mailbox.mbox(threadfile)
         logger.critical('%s messages in the thread', len(mbx))
         mbx.close()
         if cmdargs.outdir == '-':
             logger.info('---')
-            with open(threadmbox, 'rb') as fh:
+            with open(threadfile, 'rb') as fh:
                 shutil.copyfileobj(fh, sys.stdout.buffer)
-            os.unlink(threadmbox)
+            os.unlink(threadfile)
             return
 
         if cmdargs.wantname:
@@ -548,7 +551,6 @@ def main(cmdargs):
             msgid = b4.get_msgid(cmdargs)
             savefile = os.path.join(cmdargs.outdir, '%s.mbx' % msgid)
 
-        shutil.copy(threadmbox, savefile)
+        shutil.copy(threadfile, savefile)
         logger.info('Saved %s', savefile)
-        if not cmdargs.localmbox:
-            os.unlink(threadmbox)
+        os.unlink(threadfile)
