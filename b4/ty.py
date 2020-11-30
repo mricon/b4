@@ -92,7 +92,8 @@ def make_reply(reply_template, jsondata):
     allto.append((jsondata['fromname'], jsondata['fromemail']))
 
     msg['To'] = b4.format_addrs(allto)
-    msg['Cc'] = b4.format_addrs(allcc)
+    if allcc:
+        msg['Cc'] = b4.format_addrs(allcc)
     msg['In-Reply-To'] = '<%s>' % jsondata['msgid']
     if len(jsondata['references']):
         msg['References'] = '%s <%s>' % (jsondata['references'], jsondata['msgid'])
@@ -107,6 +108,7 @@ def make_reply(reply_template, jsondata):
 
     mydomain = jsondata['myemail'].split('@')[1]
     msg['Message-Id'] = email.utils.make_msgid(idstring='b4-ty', domain=mydomain)
+    msg['Date'] = email.utils.formatdate(localtime=True)
     return msg
 
 
