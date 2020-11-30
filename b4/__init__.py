@@ -302,8 +302,8 @@ class LoreMailbox:
                 continue
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
-            for tname, tvalue, extdata in mismatches:
-                lser.trailer_mismatches.add((tname, tvalue, fmsg.fromname, fmsg.fromemail))
+            for trailer in mismatches:
+                lser.trailer_mismatches.add((trailer[0], trailer[1], fmsg.fromname, fmsg.fromemail))
             lvl = 1
             while True:
                 logger.debug('%sParent: %s', ' ' * lvl, pmsg.full_subject)
