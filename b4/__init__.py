@@ -48,7 +48,7 @@ PASS_SIMPLE = '[P]'
 WEAK_SIMPLE = '[D]'
 FAIL_SIMPLE = '[F]'
 PASS_FANCY = '\033[32m\u2714\033[0m'
-WEAK_FANCY = '\033[33m\u2713\033[0m'
+WEAK_FANCY = '\033[32m\u2713\033[0m'
 FAIL_FANCY = '\033[31m\u2717\033[0m'
 
 HDR_PATCH_HASHES = 'X-Patch-Hashes'
@@ -522,9 +522,9 @@ class LoreSeries:
                     lmsg.followup_trailers += self.patches[0].followup_trailers
                 if addmysob:
                     lmsg.followup_trailers.append(('Signed-off-by',
-                                                   '%s <%s>' % (usercfg['name'], usercfg['email']), None))
+                                                   '%s <%s>' % (usercfg['name'], usercfg['email']), None, None))
                 if addlink:
-                    lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid, None))
+                    lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid, None, None))
 
                 if attpolicy != 'off':
                     lmsg.load_hashes()
@@ -893,7 +893,7 @@ class LoreMessage:
         trailers = list()
         for tname, tvalue, extdata in self.trailers:
             if tname.lower() in ('fixes',):
-                trailers.append((tname, tvalue, extdata))
+                trailers.append((tname, tvalue, extdata, self))
                 continue
 
             tmatch = False
@@ -930,9 +930,9 @@ class LoreMessage:
                     logger.debug('  trailer fuzzy name match')
                     tmatch = True
             if tmatch:
-                trailers.append((tname, tvalue, extdata))
+                trailers.append((tname, tvalue, extdata, self))
             else:
-                mismatches.add((tname, tvalue, extdata))
+                mismatches.add((tname, tvalue, extdata, self))
 
         return trailers, mismatches
 
@@ -1300,6 +1300,16 @@ class LoreMessage:
         return githeaders, message, trailers, basement, signature
 
     def fix_trailers(self, trailer_order=None, copyccs=False):
+        config = get_main_config()
+        attpolicy = config['attestation-policy']
+
+        if config['attestation-checkmarks'] == 'fancy':
+            attfail = FAIL_FANCY
+            attweak = WEAK_FANCY
+        else:
+            attfail = FAIL_SIMPLE
+            attweak = WEAK_SIMPLE
+
         bheaders, message, btrailers, basement, signature = LoreMessage.get_body_parts(self.body)
         # Now we add mix-in trailers
         trailers = btrailers + self.followup_trailers
@@ -1319,9 +1329,9 @@ class LoreMessage:
 
                 if not found:
                     if len(pair[0]):
-                        trailers.append(('Cc', f'{pair[0]} <{pair[1]}>', None))  # noqa
+                        trailers.append(('Cc', f'{pair[0]} <{pair[1]}>', None, None))  # noqa
                     else:
-                        trailers.append(('Cc', pair[1], None))  # noqa
+                        trailers.append(('Cc', pair[1], None, None))  # noqa
 
         fixtrailers = list()
         if trailer_order is None:
@@ -1330,15 +1340,26 @@ class LoreMessage:
             trailer_order = '*'
         for trailermatch in trailer_order:
             for trailer in trailers:
-                if trailer in fixtrailers:
+                if trailer[:3] in fixtrailers:
                     # Dupe
                     continue
                 if fnmatch.fnmatch(trailer[0].lower(), trailermatch.strip()):
-                    fixtrailers.append(trailer)
-                    if trailer not in btrailers:
-                        logger.info('    + %s: %s' % (trailer[0], trailer[1]))
+                    fixtrailers.append(trailer[:3])
+                    if trailer[:3] not in btrailers:
+                        extra = ''
+                        if config.get('attestation-check-dkim') == 'yes' and attpolicy != 'off':
+                            if len(trailer) > 3 and trailer[3] is not None:
+                                fmsg = trailer[3]
+                                attsig = LoreAttestationSignatureDKIM(fmsg.msg)  # noqa
+                                if not attsig.present:
+                                    continue
+                                if attsig.passing:
+                                    extra = ' (%s %s)' % (attweak, attsig.attestor.get_trailer())
+                                elif attpolicy in ('softfail', 'hardfail'):
+                                    extra = ' (%s %s)' % (attfail, attsig.attestor.get_trailer())
+                        logger.info('    + %s: %s%s', trailer[0], trailer[1], extra)
                     else:
-                        logger.debug('    . %s: %s' % (trailer[0], trailer[1]))
+                        logger.debug('    . %s: %s', trailer[0], trailer[1])
 
         # Reconstitute the message
         self.body = ''
@@ -1556,6 +1577,7 @@ class LoreAttestationSignature:
     def __init__(self, msg):
         self.msg = msg
         self.mode = None
+        self.present = False
         self.good = False
         self.valid = False
         self.trusted = False
@@ -1640,10 +1662,11 @@ class LoreAttestationSignature:
 
     def __repr__(self):
         out = list()
-        out.append('  mode: %s' % self.mode)
-        out.append('  good: %s' % self.good)
+        out.append('   mode: %s' % self.mode)
+        out.append('present: %s' % self.present)
+        out.append('   good: %s' % self.good)
         out.append('  valid: %s' % self.valid)
-        out.append('  trusted: %s' % self.trusted)
+        out.append('trusted: %s' % self.trusted)
         if self.attestor is not None:
             out.append('  attestor: %s' % self.attestor.keyid)
 
@@ -1662,6 +1685,11 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         # return
 
         dks = self.msg.get('dkim-signature')
+        if not dks:
+            return
+
+        self.present = True
+
         ddata = get_parts_from_header(dks)
         self.attestor = LoreAttestorDKIM(ddata['d'])
         # Do we have a resolve method?
@@ -1758,6 +1786,10 @@ class LoreAttestationSignaturePGP(LoreAttestationSignature):
         self.mode = 'pgp'
 
         shdr = msg.get(HDR_PATCH_SIG)
+        if not shdr:
+            return
+
+        self.present = True
         sdata = get_parts_from_header(shdr)
         hhdr = msg.get(HDR_PATCH_HASHES)
         sig = base64.b64decode(sdata['b'])
