@@ -827,7 +827,12 @@ class LoreMessage:
         except IndexError:
             pass
 
-        self.date = email.utils.parsedate_to_datetime(str(self.msg['Date']))
+        msgdate = self.msg.get('Date')
+        if msgdate:
+            self.date = email.utils.parsedate_to_datetime(str(msgdate))
+        else:
+            # An email without a Date: field?
+            self.date = datetime.datetime.now()
 
         diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', re.M | re.I)
         diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', re.M | re.I)
