@@ -129,8 +129,11 @@ def mbox_to_am(mboxfile, cmdargs):
         # Warn that some trailers were sent to the cover letter
         logger.critical('---')
         logger.critical('NOTE: Some trailers were sent to the cover letter:')
+        tseen = set()
         for trailer in lser.patches[0].followup_trailers:
-            logger.critical('      %s: %s', trailer[0], trailer[1])
+            if tuple(trailer[:2]) not in tseen:
+                logger.critical('      %s: %s', trailer[0], trailer[1])
+                tseen.add(tuple(trailer[:2]))
         logger.critical('NOTE: Rerun with -t to apply them to all patches')
     if len(lser.trailer_mismatches):
         logger.critical('---')

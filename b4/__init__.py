@@ -1346,11 +1346,11 @@ class LoreMessage:
             trailer_order = '*'
         for trailermatch in trailer_order:
             for trailer in trailers:
-                if trailer[:3] in fixtrailers:
+                if list(trailer[:3]) in fixtrailers:
                     # Dupe
                     continue
                 if fnmatch.fnmatch(trailer[0].lower(), trailermatch.strip()):
-                    fixtrailers.append(trailer[:3])
+                    fixtrailers.append(list(trailer[:3]))
                     if trailer[:3] not in btrailers:
                         extra = ''
                         if config.get('attestation-check-dkim') == 'yes' and attpolicy != 'off':
