@@ -375,7 +375,7 @@ def auto_thankanator(cmdargs):
             # Weed out series that have no matches at all
             found = False
             for commit in commits:
-                if commit[0] is not None:
+                if commit[1] is not None:
                     found = True
                     break
             if not found:
