@@ -36,6 +36,7 @@ try:
     _resolver = dns.resolver.get_default_resolver()
 except ModuleNotFoundError:
     can_dkim_verify = False
+    _resolver = None
 
 __VERSION__ = '0.6.0-dev'
 
@@ -1698,7 +1699,7 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         ddata = get_parts_from_header(dks)
         self.attestor = LoreAttestorDKIM(ddata['d'])
         # Do we have a resolve method?
-        if hasattr(_resolver, 'resolve'):
+        if _resolver and hasattr(_resolver, 'resolve'):
             res = dkim.verify(self.msg.as_bytes(), dnsfunc=dkim_get_txt)
         else:
             res = dkim.verify(self.msg.as_bytes())
