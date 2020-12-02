@@ -36,6 +36,9 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
         f'm={lmsg.attestation.mb}',
         f'p={lmsg.attestation.pb}',
     ]
+    if lmsg.git_patch_id:
+        hparts.append(f'g={lmsg.git_patch_id}')
+
     hhname, hhval = b4.dkim_canonicalize_header(b4.HDR_PATCH_HASHES, '; '.join(hparts))
     headers.append(f'{hhname}:{hhval}')
 
@@ -76,8 +79,6 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
     shdr = email.header.make_header([(shval.encode(), 'us-ascii')], maxlinelen=78)
     lmsg.msg[b4.HDR_PATCH_HASHES] = hhdr
     lmsg.msg[b4.HDR_PATCH_SIG] = shdr
-    if lmsg.git_patch_id:
-        lmsg.msg['X-Git-Patch-Id'] = lmsg.git_patch_id
 
 
 def header_splitter(longstr: str, limit: int = 77) -> str:
