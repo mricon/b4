@@ -519,8 +519,8 @@ class LoreSeries:
                     raise KeyError('Cherrypick not in series')
 
             if lmsg is not None:
-                if self.has_cover and covertrailers and self.patches[0].followup_trailers:
-                    lmsg.followup_trailers += self.patches[0].followup_trailers
+                if self.has_cover and covertrailers and self.patches[0].followup_trailers:  # noqa
+                    lmsg.followup_trailers += self.patches[0].followup_trailers  # noqa
                 if addmysob:
                     lmsg.followup_trailers.append(('Signed-off-by',
                                                    '%s <%s>' % (usercfg['name'], usercfg['email']), None, None))
@@ -1149,9 +1149,7 @@ class LoreMessage:
             return
         fline = out.split('\n')[0]
         if len(fline) < 40:
-            # Not sure what that is
-            return
-        self.git_patch_id = fline[:40]
+            self.git_patch_id = fline[:40]
 
         msg_out = mkstemp()
         patch_out = mkstemp()

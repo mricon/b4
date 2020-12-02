@@ -32,7 +32,6 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
     hparts = [
         'v=1',
         'h=sha256',
-        f'g={lmsg.git_patch_id}',
         f'i={lmsg.attestation.ib}',
         f'm={lmsg.attestation.mb}',
         f'p={lmsg.attestation.pb}',
@@ -77,6 +76,8 @@ def in_header_attest(lmsg: b4.LoreMessage, mode: str = 'pgp', replace: bool = Fa
     shdr = email.header.make_header([(shval.encode(), 'us-ascii')], maxlinelen=78)
     lmsg.msg[b4.HDR_PATCH_HASHES] = hhdr
     lmsg.msg[b4.HDR_PATCH_SIG] = shdr
+    if lmsg.git_patch_id:
+        lmsg.msg['X-Git-Patch-Id'] = lmsg.git_patch_id
 
 
 def header_splitter(longstr: str, limit: int = 77) -> str:
