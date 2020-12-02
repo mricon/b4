@@ -1148,7 +1148,7 @@ class LoreMessage:
             # Git doesn't think there's a patch there
             return
         fline = out.split('\n')[0]
-        if len(fline) < 40:
+        if len(fline) >= 40:
             self.git_patch_id = fline[:40]
 
         msg_out = mkstemp()
