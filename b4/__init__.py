@@ -481,7 +481,7 @@ class LoreSeries:
         if self.revision != 1:
             slug = 'v%s_%s' % (self.revision, slug)
 
-        return slug
+        return slug[:100]
 
     def save_am_mbox(self, mbx, noaddtrailers=False, covertrailers=False, trailer_order=None, addmysob=False,
                      addlink=False, linkmask=None, cherrypick=None, copyccs=False):
