@@ -1354,7 +1354,7 @@ class LoreMessage:
                     fixtrailers.append(list(trailer[:3]))
                     if trailer[:3] not in btrailers:
                         extra = ''
-                        if config.get('attestation-check-dkim') == 'yes' and attpolicy != 'off':
+                        if can_dkim_verify and config.get('attestation-check-dkim') == 'yes' and attpolicy != 'off':
                             if len(trailer) > 3 and trailer[3] is not None:
                                 fmsg = trailer[3]
                                 attsig = LoreAttestationSignatureDKIM(fmsg.msg)  # noqa
