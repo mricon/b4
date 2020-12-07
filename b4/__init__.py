@@ -454,8 +454,10 @@ class LoreSeries:
             self.patches[lmsg.counter] = lmsg
         self.complete = not (None in self.patches[1:])
         if self.patches[0] is not None:
+            # noinspection PyUnresolvedReferences
             self.subject = self.patches[0].subject
         elif self.patches[1] is not None:
+            # noinspection PyUnresolvedReferences
             self.subject = self.patches[1].subject
 
     def get_slug(self, extended=False):
@@ -749,6 +751,7 @@ class LoreSeries:
         return start_commit, end_commit
 
     def save_cover(self, outfile):
+        # noinspection PyUnresolvedReferences
         cover_msg = self.patches[0].get_am_message(add_trailers=False, trailer_order=None)
         with open(outfile, 'w') as fh:
             fh.write(cover_msg.as_string(policy=emlpolicy))
