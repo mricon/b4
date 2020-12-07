@@ -1690,33 +1690,44 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         # self.native_verify()
         # return
 
-        dks = self.msg.get('dkim-signature')
-        if not dks:
+        while True:
+            dks = self.msg.get('dkim-signature')
+            if not dks:
+                logger.debug('No DKIM-Signature headers in the message')
+                return
+
+            self.present = True
+
+            ddata = get_parts_from_header(dks)
+            self.attestor = LoreAttestorDKIM(ddata['d'])
+            # Do we have a resolve method?
+            if _resolver and hasattr(_resolver, 'resolve'):
+                res = dkim.verify(self.msg.as_bytes(), dnsfunc=dkim_get_txt)
+            else:
+                res = dkim.verify(self.msg.as_bytes())
+            if not res:
+                logger.debug('DKIM signature did NOT verify')
+                logger.debug('Retrying with the next DKIM-Signature header, if any')
+                at = 0
+                for header in self.msg._headers:  # noqa
+                    if header[0].lower() == 'dkim-signature':
+                        del(self.msg._headers[at])  # noqa
+                        break
+                    at += 1
+                continue
+
+            self.good = True
+
+            # Grab toplevel signature that we just verified
+            self.valid = True
+            self.trusted = True
+            self.passing = True
+
+            if ddata.get('t'):
+                self.sigdate = datetime.datetime.utcfromtimestamp(int(ddata['t'])).replace(tzinfo=datetime.timezone.utc)
+            else:
+                self.sigdate = email.utils.parsedate_to_datetime(str(self.msg['Date']))
             return
-
-        self.present = True
-
-        ddata = get_parts_from_header(dks)
-        self.attestor = LoreAttestorDKIM(ddata['d'])
-        # Do we have a resolve method?
-        if _resolver and hasattr(_resolver, 'resolve'):
-            res = dkim.verify(self.msg.as_bytes(), dnsfunc=dkim_get_txt)
-        else:
-            res = dkim.verify(self.msg.as_bytes())
-        if not res:
-            logger.debug('DKIM signature did NOT verify')
-            return
-        self.good = True
-
-        # Grab toplevel signature that we just verified
-        self.valid = True
-        self.trusted = True
-        self.passing = True
-
-        if ddata.get('t'):
-            self.sigdate = datetime.datetime.utcfromtimestamp(int(ddata['t'])).replace(tzinfo=datetime.timezone.utc)
-        else:
-            self.sigdate = email.utils.parsedate_to_datetime(str(self.msg['Date']))
 
     # def native_verify(self):
     #     dks = self.msg.get('dkim-signature')
