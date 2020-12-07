@@ -41,7 +41,9 @@ setup(
     data_files = [('share/man/man5', ['man/b4.5'])],
     keywords=['git', 'lore.kernel.org', 'patches'],
     install_requires=[
-        'requests'
+        'requests~=2.24.0',
+        'dkimpy~=1.0.5',
+        'dnspython~=2.0.0',
     ],
     python_requires='>=3.6',
     entry_points={
