@@ -1355,12 +1355,11 @@ class LoreMessage:
                             if len(trailer) > 3 and trailer[3] is not None:
                                 fmsg = trailer[3]
                                 attsig = LoreAttestationSignatureDKIM(fmsg.msg)  # noqa
-                                if not attsig.present:
-                                    continue
-                                if attsig.passing:
-                                    extra = ' (%s %s)' % (attweak, attsig.attestor.get_trailer())
-                                elif attpolicy in ('softfail', 'hardfail'):
-                                    extra = ' (%s %s)' % (attfail, attsig.attestor.get_trailer())
+                                if attsig.present:
+                                    if attsig.passing:
+                                        extra = ' (%s %s)' % (attweak, attsig.attestor.get_trailer())
+                                    elif attpolicy in ('softfail', 'hardfail'):
+                                        extra = ' (%s %s)' % (attfail, attsig.attestor.get_trailer())
                         logger.info('    + %s: %s%s', trailer[0], trailer[1], extra)
                     else:
                         logger.debug('    . %s: %s', trailer[0], trailer[1])
