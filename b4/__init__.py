@@ -1195,8 +1195,8 @@ class LoreMessage:
 
     @staticmethod
     def find_trailers(body):
-        headers = ('subject', 'date', 'from')
-        nonperson = ('fixes', 'subject', 'date', 'link')
+        headers = ('subject', 'date', 'from', 'to')
+        nonperson = ('fixes', 'subject', 'date', 'link', 'buglink')
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
         # baz quux)
