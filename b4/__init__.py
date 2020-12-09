@@ -887,10 +887,10 @@ class LoreMessage:
 
         # We only pay attention to trailers that are sent in reply
         if self.reply:
-            trailers, others = LoreMessage.find_trailers(self.body)
+            trailers, others = LoreMessage.find_trailers(self.body, followup=True)
             for trailer in trailers:
                 # These are commonly part of patch/commit metadata
-                badtrailers = ('from', 'author', 'cc')
+                badtrailers = ('from', 'author', 'cc', 'to')
                 if trailer[0].lower() not in badtrailers:
                     self.trailers.append(trailer)
 
@@ -1194,8 +1194,8 @@ class LoreMessage:
             self.attestation = LoreAttestation(i, m, p)
 
     @staticmethod
-    def find_trailers(body):
-        headers = ('subject', 'date', 'from', 'to')
+    def find_trailers(body, followup=False):
+        headers = ('subject', 'date', 'from')
         nonperson = ('fixes', 'subject', 'date', 'link', 'buglink')
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
@@ -1222,10 +1222,11 @@ class LoreMessage:
                 if len(others) and tname in headers:
                     logger.debug('Ignoring %s (header after other content)', line)
                     continue
-                mperson = re.search(r'\S+@\S+\.\S+', groups[1])
-                if not mperson and tname not in nonperson:
-                    logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
-                    continue
+                if followup:
+                    mperson = re.search(r'\S+@\S+\.\S+', groups[1])
+                    if not mperson and tname not in nonperson:
+                        logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
+                        continue
                 was_trailer = True
                 groups.append(None)
                 trailers.append(groups)
