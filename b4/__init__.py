@@ -1691,6 +1691,7 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
         # self.native_verify()
         # return
 
+        ejected = set()
         while True:
             dks = self.msg.get('dkim-signature')
             if not dks:
@@ -1707,6 +1708,30 @@ class LoreAttestationSignatureDKIM(LoreAttestationSignature):
             else:
                 res = dkim.verify(self.msg.as_bytes())
             if not res:
+                # is list-archive or archived-at part of h=?
+                hline = ddata.get('h')
+                if hline:
+                    hsigned = set(hline.lower().split(':'))
+                    if 'list-archive' in hsigned or 'archived-at' in hsigned:
+                        # Public-inbox inserts additional List-Archive and Archived-At headers,
+                        # which breaks DKIM signatures if these headers are included in the hash.
+                        # Eject the ones created by public-inbox and try again.
+                        # XXX: This may no longer be necessary at some point if public-inbox takes care
+                        #      of this scenario automatically:
+                        #      https://public-inbox.org/meta/20201210202145.7agtcmrtl5jec42d@chatter.i7.local
+                        logger.debug('Ejecting extra List-Archive headers and retrying')
+                        changed = False
+                        for header in reversed(self.msg._headers):  # noqa
+                            hl = header[0].lower()
+                            if hl in ('list-archive', 'archived-at') and hl not in ejected:
+                                self.msg._headers.remove(header)  # noqa
+                                ejected.add(hl)
+                                changed = True
+                                break
+                        if changed:
+                            # go for another round
+                            continue
+
                 logger.debug('DKIM signature did NOT verify')
                 logger.debug('Retrying with the next DKIM-Signature header, if any')
                 at = 0
