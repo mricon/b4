@@ -11,10 +11,18 @@ import b4
 import re
 import mailbox
 import json
+import email
+import gzip
 
 from datetime import timedelta
 from tempfile import mkstemp
+
 from email import utils, charset
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+# from email.mime.message import MIMEMessage
+
 
 charset.add_charset('utf-8', None)
 
@@ -34,6 +42,10 @@ PULL_BODY_REMOTE_REF_RE = [
     re.compile(r'^\s*([\w+-]+(?:://|@)[\w/.@:~-]+)[\s\\]+([\w/._-]+)\s*$', re.M | re.I),
     re.compile(r'^\s*([\w+-]+(?:://|@)[\w/.@~-]+)\s*$', re.M | re.I),
 ]
+
+
+def format_addrs(pairs):
+    return ', '.join([utils.formataddr(pair) for pair in pairs])
 
 
 def git_get_commit_id_from_repo_ref(repo, ref):
@@ -157,7 +169,7 @@ def attest_fetch_head(gitdir, lmsg):
             sys.exit(128)
 
 
-def fetch_remote(gitdir, lmsg, branch=None):
+def fetch_remote(gitdir, lmsg, branch=None, check_sig=True, ty_track=True):
     # Do we know anything about this base commit?
     if lmsg.pr_base_commit and not b4.git_commit_exists(gitdir, lmsg.pr_base_commit):
         logger.critical('ERROR: git knows nothing about commit %s', lmsg.pr_base_commit)
@@ -179,7 +191,7 @@ def fetch_remote(gitdir, lmsg, branch=None):
         return ecode
 
     config = b4.get_main_config()
-    if config['attestation-policy'] != 'off':
+    if check_sig and config['attestation-policy'] != 'off':
         attest_fetch_head(gitdir, lmsg)
 
     logger.info('---')
@@ -194,7 +206,8 @@ def fetch_remote(gitdir, lmsg, branch=None):
     else:
         logger.info('Successfully fetched into FETCH_HEAD')
 
-    thanks_record_pr(lmsg)
+    if ty_track:
+        thanks_record_pr(lmsg)
 
     return 0
 
@@ -227,11 +240,11 @@ def thanks_record_pr(lmsg):
         logger.debug('Wrote %s for thanks tracking', filename)
 
 
-def explode(gitdir, lmsg, savefile):
-    # We always fetch into FETCH_HEAD when exploding
-    ecode = fetch_remote(gitdir, lmsg)
+def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True):
+    ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
         sys.exit(ecode)
+
     if not lmsg.pr_base_commit:
         # Use git merge-base between HEAD and FETCH_HEAD to find
         # where we should start
@@ -243,96 +256,183 @@ def explode(gitdir, lmsg, savefile):
             logger.critical(out)
             sys.exit(ecode)
         lmsg.pr_base_commit = out.strip()
+
     logger.info('Generating patches starting from the base-commit')
-    reroll = None
-    if lmsg.revision > 1:
-        reroll = lmsg.revision
-    ecode, out = b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', reroll=reroll)
-    if ecode > 0:
-        logger.critical('ERROR: Could not convert pull request into patches')
-        logger.critical(out)
-        sys.exit(ecode)
 
-    # Fix From lines to make sure this is a valid mboxo
-    out = re.sub(r'^From (?![a-f0-9]+ \w+ \w+ \d+ \d+:\d+:\d+ \d+$)', '>From ', out, 0, re.M)
+    msgs = list()
 
-    # Save patches into a temporary file
-    patchmbx = mkstemp()[1]
-    with open(patchmbx, 'w') as fh:
-        fh.write(out)
-    pmbx = mailbox.mbox(patchmbx)
-    embx = mailbox.mbox(savefile)
-    cover = lmsg.get_am_message()
-    # Add base-commit to the cover
-    body = cover.get_payload(decode=True)
-    body = '%s\nbase-commit: %s\n' % (body.decode('utf-8'), lmsg.pr_base_commit)
-    cover.set_payload(body)
-    bout = cover.as_string(policy=b4.emlpolicy)
-    embx.add(bout.encode('utf-8'))
+    prefixes = ['PATCH']
+    for prefix in lmsg.lsubject.prefixes:
+        if prefix.lower() not in ('git', 'pull'):
+            prefixes.append(prefix)
 
-    # Set the pull request message as cover letter
-    for msg in pmbx:
-        # Move the original From and Date into the body
-        prepend = list()
-        if msg['from'] != lmsg.msg['from']:
-            cleanfrom = b4.LoreMessage.clean_header(msg['from'])
-            prepend.append('From: %s' % ''.join(cleanfrom))
-        prepend.append('Date: %s' % msg['date'])
-        body = '%s\n\n%s' % ('\n'.join(prepend), msg.get_payload(decode=True).decode('utf-8'))
-        msg.set_payload(body)
-        msubj = b4.LoreSubject(msg['subject'])
-        msg.replace_header('Subject', msubj.full_subject)
-        # Set from, to, cc, date headers to match the original pull request
-        msg.replace_header('From', b4.LoreMessage.clean_header(lmsg.msg['From']))
-        # Add a number of seconds equalling the counter, in hopes it gets properly threaded
-        newdate = lmsg.date + timedelta(seconds=msubj.counter)
-        msg.replace_header('Date', utils.format_datetime(newdate))
-        msg.add_header('To', b4.LoreMessage.clean_header(lmsg.msg['To']))
-        if lmsg.msg['Cc']:
-            msg.add_header('Cc', b4.LoreMessage.clean_header(lmsg.msg['Cc']))
-        # Set the message-id based on the original pull request msgid
-        msg.add_header('Message-Id', '<b4-exploded-%s-%s>' % (msubj.counter, lmsg.msgid))
-        msg.add_header('In-Reply-To', '<%s>' % lmsg.msgid)
-        if lmsg.msg['References']:
-            msg.add_header('References', '%s <%s>' % (
-                b4.LoreMessage.clean_header(lmsg.msg['References']), lmsg.msgid))
+    # get our to's and cc's
+    allto = utils.getaddresses(lmsg.msg.get_all('to', []))
+    allcc = utils.getaddresses(lmsg.msg.get_all('cc', []))
+
+    if mailfrom is None:
+        mailfrom = b4.LoreMessage.clean_header(lmsg.msg.get('From'))
+    else:
+        realname = None
+        for fromaddr in utils.getaddresses(lmsg.msg.get_all('from', [])):
+            realname = fromaddr[0]
+            if not realname:
+                realname = fromaddr[1]
+            if fromaddr not in allcc:
+                allcc.append(fromaddr)
+        if realname:
+            # Use "Name via Foo" notation
+            mailfrom = f'{realname} via {mailfrom}'
+
+    config = b4.get_main_config()
+    linked_ids = set()
+    with b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', prefixes=prefixes) as pdir:
+        if pdir is None:
+            sys.exit(1)
+
+        for msgfile in sorted(os.listdir(pdir)):
+            with open(os.path.join(pdir, msgfile), 'rb') as fh:
+                msg = email.message_from_binary_file(fh)
+
+            msubj = b4.LoreSubject(msg.get('subject', ''))
+
+            # Is this the cover letter?
+            if msubj.counter == 0:
+                # We rebuild the message from scratch
+                cmsg = MIMEMultipart()
+                cmsg.add_header('From', mailfrom)
+                cmsg.add_header('Subject', '[' + ' '.join(msubj.prefixes) + '] ' + lmsg.subject)
+                cmsg.add_header('Date', lmsg.msg.get('Date'))
+
+                # The cover letter body is the pull request body, plus a few trailers
+                body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
+                    lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
+                cmsg.attach(MIMEText(body, 'plain'))
+
+                # now we attach the original request
+                # XXX: seems redundant, so turned off for now
+                # cmsg.attach(MIMEMessage(lmsg.msg))
+                msg = cmsg
+
+            else:
+                # Move the original From and Date into the body
+                prepend = list()
+                if msg.get('From') != mailfrom:
+                    cleanfrom = b4.LoreMessage.clean_header(msg['from'])
+                    prepend.append('From: %s' % ''.join(cleanfrom))
+                    msg.replace_header('From', mailfrom)
+
+                prepend.append('Date: %s' % msg['date'])
+                body = '%s\n\n%s' % ('\n'.join(prepend), msg.get_payload(decode=True).decode('utf-8'))
+                msg.set_payload(body)
+                msg.replace_header('Subject', msubj.full_subject)
+
+                if retrieve_links:
+                    matches = re.findall(r'^Link:\s+https?://.*/(\S+@\S+)[^/]', body, flags=re.M | re.I)
+                    if matches:
+                        linked_ids.update(matches)
+                    matches = re.findall(r'^Message-ID:\s+(\S+@\S+)', body, flags=re.M | re.I)
+                    if matches:
+                        linked_ids.update(matches)
+
+                # Add a number of seconds equalling the counter, in hopes it gets properly threaded
+                newdate = lmsg.date + timedelta(seconds=msubj.counter)
+                msg.replace_header('Date', utils.format_datetime(newdate))
+
+                # Thread it to the cover letter
+                msg.add_header('In-Reply-To', '<b4-exploded-0-%s>' % lmsg.msgid)
+                msg.add_header('References', '<b4-exploded-0-%s>' % lmsg.msgid)
+
+            msg.add_header('To', format_addrs(allto))
+            if allcc:
+                msg.add_header('Cc', format_addrs(allcc))
+
+            # Set the message-id based on the original pull request msgid
+            msg.add_header('Message-Id', '<b4-exploded-%s-%s>' % (msubj.counter, lmsg.msgid))
+
+            if mailfrom != lmsg.msg.get('From'):
+                msg.add_header('Reply-To', lmsg.msg.get('From'))
+                msg.add_header('X-Original-From', lmsg.msg.get('From'))
+
+            if lmsg.msg['List-Id']:
+                msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
+            logger.info('  %s', msg.get('Subject'))
+            msg.set_charset('utf-8')
+            msgs.append(msg)
+
+    logger.info('Exploded %s messages', len(msgs))
+    if retrieve_links and linked_ids:
+        # Create a single mbox file with all linked conversations
+        threadfile = mkstemp()[1]
+        tmbx = mailbox.mbox(threadfile)
+        logger.info('---')
+        logger.info('Retrieving %s linked conversations', len(linked_ids))
+
+        seen_msgids = set()
+        for msgid in linked_ids:
+            savefile = mkstemp()[1]
+            mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile)
+            if mboxfile is not None:
+                # Open it and append any messages we don't yet have
+                ambx = mailbox.mbox(mboxfile)
+                for amsg in ambx:
+                    amsgid = b4.LoreMessage.get_clean_msgid(amsg)
+                    if amsgid not in seen_msgids:
+                        seen_msgids.add(amsgid)
+                        logger.debug('Added linked: %s', amsg.get('Subject'))
+                        tmbx.add(amsg.as_bytes(policy=b4.emlpolicy))
+                ambx.close()
+            os.unlink(savefile)
+
+        if len(tmbx):
+            tmbx.close()
+            # gzip the mailbox and attach it to the cover letter
+            with open(threadfile, 'rb') as fh:
+                mbz = gzip.compress(fh.read())
+                fname = 'linked-threads.mbox.gz'
+                att = MIMEApplication(mbz, 'x-gzip')
+                att.add_header('Content-Disposition', f'attachment; filename={fname}')
+                msgs[0].attach(att)
+
+        os.unlink(threadfile)
+
+        logger.info('---')
+        if len(seen_msgids):
+            logger.info('Attached %s messages as linked-threads.mbox.gz', len(seen_msgids))
         else:
-            msg.add_header('References', '<%s>' % lmsg.msgid)
-        if lmsg.msg['List-Id']:
-            msg.add_header('List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
-        msg.add_header('X-Mailer', 'b4-explode/%s' % b4.__VERSION__)
-        logger.info('  %s', msubj.full_subject)
-        msg.set_charset('utf-8')
-        bout = msg.as_string(policy=b4.emlpolicy)
-        embx.add(bout.encode('utf-8'))
-    logger.info('---')
-    logger.info('Wrote %s patches into %s', len(pmbx), savefile)
-    pmbx.close()
-    os.unlink(patchmbx)
-    embx.close()
-    sys.exit(0)
+            logger.info('Could not retrieve any linked threads')
+
+    return msgs
 
 
 def main(cmdargs):
     gitdir = cmdargs.gitdir
-
-    msgid = b4.get_msgid(cmdargs)
-    savefile = mkstemp()[1]
-    mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile)
-    if mboxfile is None:
-        os.unlink(savefile)
-        return
-    # Find the message with the msgid we were asked about
-    mbx = mailbox.mbox(mboxfile)
     lmsg = None
-    for msg in mbx:
-        mmsgid = b4.LoreMessage.get_clean_msgid(msg)
-        if mmsgid == msgid:
-            lmsg = parse_pr_data(msg)
 
-    # Got all we need from it
-    mbx.close()
-    os.unlink(savefile)
+    if not sys.stdin.isatty():
+        logger.debug('Getting PR message from stdin')
+        msg = email.message_from_string(sys.stdin.read())
+        msgid = b4.LoreMessage.get_clean_msgid(msg)
+        lmsg = parse_pr_data(msg)
+    else:
+        logger.debug('Getting PR message from public-inbox')
+
+        msgid = b4.get_msgid(cmdargs)
+        savefile = mkstemp()[1]
+        mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile)
+        if mboxfile is None:
+            os.unlink(savefile)
+            return
+        # Find the message with the msgid we were asked about
+        mbx = mailbox.mbox(mboxfile)
+        for msg in mbx:
+            mmsgid = b4.LoreMessage.get_clean_msgid(msg)
+            if mmsgid == msgid:
+                lmsg = parse_pr_data(msg)
+
+        # Got all we need from it
+        mbx.close()
+        os.unlink(savefile)
 
     if lmsg is None or lmsg.pr_remote_tip_commit is None:
         logger.critical('ERROR: Could not find pull request info in %s', msgid)
@@ -342,16 +442,33 @@ def main(cmdargs):
         lmsg.pr_tip_commit = lmsg.pr_remote_tip_commit
 
     if cmdargs.explode:
+        if cmdargs.pi:
+            logger.critical('Saving to public-inbox not supported yet.')
+            sys.exit(1)
+
         savefile = cmdargs.outmbox
         if savefile is None:
             savefile = '%s.mbx' % lmsg.msgid
         if os.path.exists(savefile):
             logger.info('File exists: %s', savefile)
             sys.exit(1)
-        explode(gitdir, lmsg, savefile)
+
+        # Set up a temporary clone
+        with b4.git_temp_clone(gitdir) as tc:
+            msgs = explode(tc, lmsg, mailfrom=cmdargs.mailfrom, retrieve_links=cmdargs.getlinks)
+            if msgs:
+                smbx = mailbox.mbox(savefile)
+                for msg in msgs:
+                    smbx.add(msg.as_bytes(policy=b4.emlpolicy))
+                smbx.close()
+                logger.info('---')
+                logger.info('Saved %s', savefile)
+                sys.exit(0)
+            else:
+                logger.critical('Nothing exploded.')
+                sys.exit(1)
 
     exists = b4.git_commit_exists(gitdir, lmsg.pr_tip_commit)
-
     if exists:
         # Is it in any branch, or just flapping in the wind?
         branches = b4.git_branch_contains(gitdir, lmsg.pr_tip_commit)

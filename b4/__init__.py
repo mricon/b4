@@ -2001,18 +2001,30 @@ def git_get_command_lines(gitdir, args):
 
 
 @contextmanager
-def git_temp_worktree(gitdir=None):
+def git_temp_worktree(gitdir=None, commitish=None):
     """Context manager that creates a temporary work tree and chdirs into it. The
     worktree is deleted when the contex manager is closed. Taken from gj_tools."""
     dfn = None
     try:
         with TemporaryDirectory() as dfn:
-            git_run_command(gitdir, ['worktree', 'add', '--detach', '--no-checkout', dfn])
+            gitargs = ['worktree', 'add', '--detach', '--no-checkout', dfn]
+            if commitish:
+                gitargs.append(commitish)
+            git_run_command(gitdir, gitargs)
             with in_directory(dfn):
-                yield
+                yield dfn
     finally:
         if dfn is not None:
             git_run_command(gitdir, ['worktree', 'remove', dfn])
+
+
+@contextmanager
+def git_temp_clone(gitdir=None):
+    """Context manager that creates a temporary shared clone."""
+    with TemporaryDirectory() as dfn:
+        gitargs = ['clone', '--mirror', '--shared', gitdir, dfn]
+        git_run_command(None, gitargs)
+        yield dfn
 
 
 @contextmanager
@@ -2313,13 +2325,19 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     return savefile
 
 
-def git_format_patches(gitdir, start, end, reroll=None):
-    gitargs = ['format-patch', '--stdout']
-    if reroll is not None:
-        gitargs += ['-v', str(reroll)]
-    gitargs += ['%s..%s' % (start, end)]
-    ecode, out = git_run_command(gitdir, gitargs)
-    return ecode, out
+@contextmanager
+def git_format_patches(gitdir, start, end, prefixes=None):
+    with TemporaryDirectory() as tmpd:
+        gitargs = ['format-patch', '--cover-letter', '-o', tmpd, '--signature', f'b4 {__VERSION__}']
+        if prefixes is not None and len(prefixes):
+            gitargs += ['--subject-prefix', ' '.join(prefixes)]
+        gitargs += ['%s..%s' % (start, end)]
+        ecode, out = git_run_command(gitdir, gitargs)
+        if ecode > 0:
+            logger.critical('ERROR: Could not convert pull request into patches')
+            logger.critical(out)
+            yield None
+        yield tmpd
 
 
 def git_commit_exists(gitdir, commit_id):
