@@ -2021,6 +2021,15 @@ def git_temp_worktree(gitdir=None, commitish=None):
 @contextmanager
 def git_temp_clone(gitdir=None):
     """Context manager that creates a temporary shared clone."""
+    if gitdir is None:
+        topdir = git_get_toplevel()
+        if topdir and os.path.isdir(os.path.join(topdir, '.git')):
+            gitdir = os.path.join(topdir, '.git')
+
+    if not gitdir:
+        logger.critical('Current directory is not a git checkout. Try using -g.')
+        return None
+
     with TemporaryDirectory() as dfn:
         gitargs = ['clone', '--mirror', '--shared', gitdir, dfn]
         git_run_command(None, gitargs)
@@ -2350,6 +2359,16 @@ def git_branch_contains(gitdir, commit_id):
     gitargs = ['branch', '--format=%(refname:short)', '--contains', commit_id]
     lines = git_get_command_lines(gitdir, gitargs)
     return lines
+
+
+def git_get_toplevel(path=None):
+    topdir = None
+    # Are we in a git tree and if so, what is our toplevel?
+    gitargs = ['rev-parse', '--show-toplevel']
+    lines = git_get_command_lines(path, gitargs)
+    if len(lines) == 1:
+        topdir = lines[0]
+    return topdir
 
 
 def format_addrs(pairs):

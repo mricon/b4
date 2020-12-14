@@ -21,7 +21,6 @@ from email import utils, charset
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
-# from email.mime.message import MIMEMessage
 
 
 charset.add_charset('utf-8', None)
@@ -51,7 +50,7 @@ def format_addrs(pairs):
 def git_get_commit_id_from_repo_ref(repo, ref):
     # We only handle git and http/s URLs
     if not (repo.find('git://') == 0 or repo.find('http://') == 0 or repo.find('https://') == 0):
-        logger.debug('%s uses unsupported protocol', repo)
+        logger.info('%s uses unsupported protocol', repo)
         return None
 
     logger.debug('getting commit-id from: %s %s', repo, ref)
@@ -286,6 +285,11 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True):
 
     config = b4.get_main_config()
     linked_ids = set()
+    if retrieve_links:
+        # Insert the pull request itself into linked_ids, so we preserve it as part
+        # of the archived threads.
+        linked_ids.add(lmsg.msgid)
+
     with b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', prefixes=prefixes) as pdir:
         if pdir is None:
             sys.exit(1)
@@ -380,7 +384,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True):
                     if amsgid not in seen_msgids:
                         seen_msgids.add(amsgid)
                         logger.debug('Added linked: %s', amsg.get('Subject'))
-                        tmbx.add(amsg.as_bytes(policy=b4.emlpolicy))
+                        tmbx.add(amsg.as_string(policy=b4.emlpolicy).encode())
                 ambx.close()
             os.unlink(savefile)
 
@@ -442,10 +446,6 @@ def main(cmdargs):
         lmsg.pr_tip_commit = lmsg.pr_remote_tip_commit
 
     if cmdargs.explode:
-        if cmdargs.pi:
-            logger.critical('Saving to public-inbox not supported yet.')
-            sys.exit(1)
-
         savefile = cmdargs.outmbox
         if savefile is None:
             savefile = '%s.mbx' % lmsg.msgid
@@ -459,7 +459,7 @@ def main(cmdargs):
             if msgs:
                 smbx = mailbox.mbox(savefile)
                 for msg in msgs:
-                    smbx.add(msg.as_bytes(policy=b4.emlpolicy))
+                    smbx.add(msg.as_string(policy=b4.emlpolicy).encode())
                 smbx.close()
                 logger.info('---')
                 logger.info('Saved %s', savefile)

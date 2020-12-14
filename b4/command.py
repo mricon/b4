@@ -143,8 +143,6 @@ def cmd():
                        help='Convert a pull request into an mbox full of patches')
     sp_pr.add_argument('-o', '--output-mbox', dest='outmbox', default=None,
                        help='Save exploded messages into this mailbox (default: msgid.mbx)')
-    sp_pr.add_argument('-p', '--public-inbox', dest='pi', default=None,
-                       help='Append exploded messages into this public-inbox repository')
     sp_pr.add_argument('-l', '--retrieve-links', action='store_true', dest='getlinks', default=False,
                        help='Attempt to retrieve any Link: URLs (use with -e)')
     sp_pr.add_argument('-f', '--from-addr', dest='mailfrom', default=None,

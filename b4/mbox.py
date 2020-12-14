@@ -143,12 +143,7 @@ def mbox_to_am(mboxfile, cmdargs):
             logger.critical('     Msg From: %s <%s>', fname, femail)
         logger.critical('NOTE: Rerun with -S to apply them anyway')
 
-    topdir = None
-    # Are we in a git tree and if so, what is our toplevel?
-    gitargs = ['rev-parse', '--show-toplevel']
-    lines = b4.git_get_command_lines(None, gitargs)
-    if len(lines) == 1:
-        topdir = lines[0]
+    topdir = b4.git_get_toplevel()
 
     if cmdargs.threeway:
         if not topdir:
