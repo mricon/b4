@@ -2335,11 +2335,13 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
 
 
 @contextmanager
-def git_format_patches(gitdir, start, end, prefixes=None):
+def git_format_patches(gitdir, start, end, prefixes=None, extraopts=None):
     with TemporaryDirectory() as tmpd:
         gitargs = ['format-patch', '--cover-letter', '-o', tmpd, '--signature', f'b4 {__VERSION__}']
         if prefixes is not None and len(prefixes):
             gitargs += ['--subject-prefix', ' '.join(prefixes)]
+        if extraopts:
+            gitargs += extraopts
         gitargs += ['%s..%s' % (start, end)]
         ecode, out = git_run_command(gitdir, gitargs)
         if ecode > 0:

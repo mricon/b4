@@ -239,7 +239,7 @@ def thanks_record_pr(lmsg):
         logger.debug('Wrote %s for thanks tracking', filename)
 
 
-def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True):
+def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
         sys.exit(ecode)
@@ -290,7 +290,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True):
         # of the archived threads.
         linked_ids.add(lmsg.msgid)
 
-    with b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', prefixes=prefixes) as pdir:
+    with b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', prefixes=prefixes, extraopts=fpopts) as pdir:
         if pdir is None:
             sys.exit(1)
 
@@ -374,6 +374,9 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True):
 
         seen_msgids = set()
         for msgid in linked_ids:
+            # Did we already retrieve it as part of a previous tread?
+            if msgid in seen_msgids:
+                continue
             savefile = mkstemp()[1]
             mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile)
             if mboxfile is not None:
