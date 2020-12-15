@@ -2268,6 +2268,8 @@ def get_pi_thread_by_url(t_mbx_url, savefile, nocache=False):
     if not len(t_mbox):
         logger.critical('No messages found for that query')
         return None
+    # Convert mboxrd to mboxo that python understands
+    t_mbox = t_mbox.replace(b'\n>>From ', b'\n>From ')
     with open(savefile, 'wb') as fh:
         logger.debug('Saving %s', savefile)
         fh.write(t_mbox)
