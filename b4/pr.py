@@ -242,7 +242,7 @@ def thanks_record_pr(lmsg):
 def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
-        sys.exit(ecode)
+        raise RuntimeError('Fetching unsuccessful')
 
     if not lmsg.pr_base_commit:
         # Use git merge-base between HEAD and FETCH_HEAD to find
@@ -253,7 +253,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
         if ecode > 0:
             logger.critical('Could not find common ancestry.')
             logger.critical(out)
-            sys.exit(ecode)
+            raise RuntimeError('Could not find common ancestry')
         lmsg.pr_base_commit = out.strip()
 
     logger.info('Generating patches starting from the base-commit')
@@ -292,7 +292,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
 
     with b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', prefixes=prefixes, extraopts=fpopts) as pdir:
         if pdir is None:
-            sys.exit(1)
+            raise RuntimeError('Could not run format-patches')
 
         for msgfile in sorted(os.listdir(pdir)):
             with open(os.path.join(pdir, msgfile), 'rb') as fh:
@@ -458,7 +458,11 @@ def main(cmdargs):
 
         # Set up a temporary clone
         with b4.git_temp_clone(gitdir) as tc:
-            msgs = explode(tc, lmsg, mailfrom=cmdargs.mailfrom, retrieve_links=cmdargs.getlinks)
+            try:
+                msgs = explode(tc, lmsg, mailfrom=cmdargs.mailfrom, retrieve_links=cmdargs.getlinks)
+            except RuntimeError:
+                sys.exit(1)
+
             if msgs:
                 smbx = mailbox.mbox(savefile)
                 for msg in msgs:
