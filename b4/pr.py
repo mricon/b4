@@ -255,6 +255,9 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
             logger.critical(out)
             raise RuntimeError('Could not find common ancestry')
         lmsg.pr_base_commit = out.strip()
+        if lmsg.pr_base_commit == lmsg.pr_tip_commit:
+            logger.critical('Cannot auto-discover merge-base on a merged pull request.')
+            raise RuntimeError('Cannot find merge-base on a merged pull request')
 
     logger.info('Generating patches starting from the base-commit')
 
@@ -461,6 +464,7 @@ def main(cmdargs):
             try:
                 msgs = explode(tc, lmsg, mailfrom=cmdargs.mailfrom, retrieve_links=cmdargs.getlinks)
             except RuntimeError:
+                logger.critical('Nothing exploded.')
                 sys.exit(1)
 
             if msgs:
