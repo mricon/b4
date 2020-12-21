@@ -537,23 +537,37 @@ def main(cmdargs):
     if cmdargs.subcmd == 'am':
         mbox_to_am(threadfile, cmdargs)
         os.unlink(threadfile)
-    else:
-        mbx = mailbox.mbox(threadfile)
-        logger.critical('%s messages in the thread', len(mbx))
+        return
+
+    mbx = mailbox.mbox(threadfile)
+    logger.info('%s messages in the thread', len(mbx))
+    if cmdargs.outdir == '-':
         mbx.close()
-        if cmdargs.outdir == '-':
-            logger.info('---')
-            with open(threadfile, 'rb') as fh:
-                shutil.copyfileobj(fh, sys.stdout.buffer)
-            os.unlink(threadfile)
-            return
-
-        if cmdargs.wantname:
-            savefile = os.path.join(cmdargs.outdir, cmdargs.wantname)
-        else:
-            msgid = b4.get_msgid(cmdargs)
-            savefile = os.path.join(cmdargs.outdir, '%s.mbx' % msgid)
-
-        shutil.copy(threadfile, savefile)
-        logger.info('Saved %s', savefile)
+        logger.info('---')
+        with open(threadfile, 'rb') as fh:
+            shutil.copyfileobj(fh, sys.stdout.buffer)
         os.unlink(threadfile)
+        return
+
+    # Check if outdir is a maildir
+    if (os.path.isdir(os.path.join(cmdargs.outdir, 'new'))
+            and os.path.isdir(os.path.join(cmdargs.outdir, 'cur'))
+            and os.path.isdir(os.path.join(cmdargs.outdir, 'tmp'))):
+        mdr = mailbox.Maildir(cmdargs.outdir)
+        for msg in mbx:
+            mdr.add(msg)
+        logger.info('Added to maildir %s', cmdargs.outdir)
+        mbx.close()
+        os.unlink(threadfile)
+        return
+
+    if cmdargs.wantname:
+        savefile = os.path.join(cmdargs.outdir, cmdargs.wantname)
+    else:
+        msgid = b4.get_msgid(cmdargs)
+        savefile = os.path.join(cmdargs.outdir, '%s.mbx' % msgid)
+
+    mbx.close()
+    shutil.copy(threadfile, savefile)
+    logger.info('Saved %s', savefile)
+    os.unlink(threadfile)
