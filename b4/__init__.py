@@ -38,7 +38,7 @@ except ModuleNotFoundError:
     can_dkim_verify = False
     _resolver = None
 
-__VERSION__ = '0.6.2'
+__VERSION__ = '0.6.3-dev'
 
 logger = logging.getLogger('b4')
 
