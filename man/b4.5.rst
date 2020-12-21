@@ -63,6 +63,7 @@ optional arguments:
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this mbox file
   -C, --no-cache        Do not use local cache
+  -f, --filter-dupes    When adding messages to existing maildir, filter out duplicates
 
 *Example*: b4 mbox 20200313231252.64999-1-keescook@chromium.org
 

@@ -102,6 +102,9 @@ Instead of grabbing a thread from lore, process this mbox file
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
+.TP
+.B \-f\fP,\fB  \-\-filter\-dupes
+When adding messages to existing maildir, filter out duplicates
 .UNINDENT
 .UNINDENT
 .sp
@@ -341,7 +344,7 @@ Default configuration, with explanations:
 .ft C
 [b4]
    # Where to look up threads by message id
-   midmask = https://lore.kernel.org/r/%s\(aq
+   midmask = https://lore.kernel.org/r/%s
    #
    # When recording Link: trailers, use this mask
    linkmask = https://lore.kernel.org/r/%s

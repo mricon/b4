@@ -554,9 +554,16 @@ def main(cmdargs):
             and os.path.isdir(os.path.join(cmdargs.outdir, 'cur'))
             and os.path.isdir(os.path.join(cmdargs.outdir, 'tmp'))):
         mdr = mailbox.Maildir(cmdargs.outdir)
+        have_msgids = set()
+        added = 0
+        if cmdargs.filterdupes:
+            for emsg in mdr:
+                have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))
         for msg in mbx:
-            mdr.add(msg)
-        logger.info('Added to maildir %s', cmdargs.outdir)
+            if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:
+                added += 1
+                mdr.add(msg)
+        logger.info('Added to %s messages to maildir %s', added, cmdargs.outdir)
         mbx.close()
         os.unlink(threadfile)
         return
