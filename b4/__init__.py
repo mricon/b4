@@ -2336,11 +2336,16 @@ def git_branch_contains(gitdir, commit_id):
     return lines
 
 
-def format_addrs(pairs):
+def format_addrs(pairs, clean=True):
     addrs = set()
     for pair in pairs:
-        # Remove any quoted-printable header junk from the name
-        addrs.add(email.utils.formataddr((LoreMessage.clean_header(pair[0]), LoreMessage.clean_header(pair[1]))))
+        pair = list(pair)
+        if pair[0] == pair[1]:
+            pair[0] = ''
+        if clean:
+            # Remove any quoted-printable header junk from the name
+            pair[0] = LoreMessage.clean_header(pair[0])
+        addrs.add(email.utils.formataddr(pair))  # noqa
     return ', '.join(addrs)
 
 
