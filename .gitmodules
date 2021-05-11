@@ -1,0 +1,3 @@
+[submodule "patatt"]
+	path = patatt
+	url = https://git.kernel.org/pub/scm/utils/patatt/patatt.git

@@ -42,9 +42,7 @@ def cmd_am(cmdargs):
 
 def cmd_attest(cmdargs):
     import b4.attest
-    if cmdargs.mutt_filter:
-        b4.attest.mutt_filter()
-    elif len(cmdargs.patchfile):
+    if len(cmdargs.patchfile):
         b4.attest.attest_patches(cmdargs)
     else:
         logger.critical('ERROR: missing patches to attest')
@@ -128,8 +126,8 @@ def cmd():
                         help='OBSOLETE: this option does nothing and will be removed')
     sp_att.add_argument('-o', '--output', default=None,
                         help='OBSOLETE: this option does nothing and will be removed')
-    sp_att.add_argument('-m', '--mutt-filter', action='store_true', default=False,
-                        help='Run in mutt filter mode')
+    sp_att.add_argument('-m', '--mutt-filter', default=None,
+                        help='OBSOLETE: this option does nothign and will be removed')
     sp_att.add_argument('patchfile', nargs='*', help='Patches to attest')
     sp_att.set_defaults(func=cmd_attest)
 

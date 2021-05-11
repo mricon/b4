@@ -273,8 +273,7 @@ def thanks_record_am(lser, cherrypick=None):
             at += 1
             continue
 
-        pmsg.load_hashes()
-        if pmsg.attestation is None:
+        if pmsg.pwhash is None:
             logger.debug('Unable to get hashes for all patches, not tracking for thanks')
             return
 

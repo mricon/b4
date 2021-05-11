@@ -122,11 +122,11 @@ def attest_fetch_head(gitdir, lmsg):
     config = b4.get_main_config()
     attpolicy = config['attestation-policy']
     if config['attestation-checkmarks'] == 'fancy':
-        attpass = b4.PASS_FANCY
-        attfail = b4.FAIL_FANCY
+        attpass = b4.ATT_PASS_FANCY
+        attfail = b4.ATT_FAIL_FANCY
     else:
-        attpass = b4.PASS_SIMPLE
-        attfail = b4.FAIL_SIMPLE
+        attpass = b4.ATT_PASS_SIMPLE
+        attfail = b4.ATT_FAIL_SIMPLE
     # Is FETCH_HEAD a tag or a commit?
     htype = b4.git_get_command_lines(gitdir, ['cat-file', '-t', 'FETCH_HEAD'])
     passing = False
@@ -139,17 +139,30 @@ def attest_fetch_head(gitdir, lmsg):
     elif otype == 'commit':
         ecode, out = b4.git_run_command(gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True)
 
-    good, valid, trusted, attestor, sigdate, errors = b4.validate_gpg_signature(out, 'pgp')
+    good, valid, trusted, keyid, sigtime = b4.check_gpg_status(out)
+    try:
+        uids = b4.get_gpg_uids(keyid)
+        signer = None
+        for uid in uids:
+            if uid.find(f'<{lmsg.fromemail}') >= 0:
+                signer = uid
+                break
+        if not signer:
+            signer = uids[0]
 
-    if good and valid and trusted:
+    except KeyError:
+        signer = f'{lmsg.fromname} <{lmsg.fromemail}'
+
+    if good and valid:
         passing = True
 
     out = out.strip()
+    errors = set()
     if not len(out) and attpolicy != 'check':
         errors.add('Remote %s is not signed!' % otype)
 
     if passing:
-        trailer = attestor.get_trailer(lmsg.fromemail)
+        trailer = 'Signed: %s' % signer
         logger.info('  ---')
         logger.info('  %s %s', attpass, trailer)
         return
