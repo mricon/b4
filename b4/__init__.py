@@ -17,12 +17,13 @@ import datetime
 import time
 import shutil
 import mailbox
+# noinspection PyCompatibility
 import pwd
 
 from pathlib import Path
 from tempfile import mkstemp, TemporaryDirectory
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set
+from typing import Optional, Tuple, Set, List
 
 from email import charset
 charset.add_charset('utf-8', None)
@@ -136,7 +137,7 @@ _CACHE_CLEANED = False
 
 
 class LoreMailbox:
-    msgid_map: dict[str]
+    msgid_map: dict
     series: dict
     covers: dict
     followups: list
@@ -1625,7 +1626,7 @@ def _run_command(cmdargs: list, stdin: Optional[bytes] = None) -> Tuple[int, byt
     return sp.returncode, output, error
 
 
-def gpg_run_command(args: list[str], stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
+def gpg_run_command(args: List[str], stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
     config = get_main_config()
     cmdargs = [config['gpgbin'], '--batch', '--no-auto-key-retrieve', '--no-auto-check-trustdb']
     if config['attestation-gnupghome'] is not None:
@@ -1635,7 +1636,7 @@ def gpg_run_command(args: list[str], stdin: Optional[bytes] = None) -> Tuple[int
     return _run_command(cmdargs, stdin=stdin)
 
 
-def git_run_command(gitdir: Optional[str], args: list[str], stdin: Optional[bytes] = None,
+def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[bytes] = None,
                     logstderr: bool = False) -> Tuple[int, str]:
     cmdargs = ['git', '--no-pager']
     if gitdir:
@@ -1656,7 +1657,7 @@ def git_run_command(gitdir: Optional[str], args: list[str], stdin: Optional[byte
     return ecode, out
 
 
-def git_get_command_lines(gitdir: Optional[str], args: list) -> list[str]:
+def git_get_command_lines(gitdir: Optional[str], args: list) -> List[str]:
     ecode, out = git_run_command(gitdir, args)
     lines = list()
     if out:
