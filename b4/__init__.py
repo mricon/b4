@@ -975,10 +975,18 @@ class LoreMessage:
             hdata = LoreMessage.get_parts_from_header(hval)
             logger.debug('Loading DKIM attestation for d=%s, s=%s', hdata['d'], hdata['s'])
 
-            signtime = hdata.get('t')
             identity = hdata.get('i')
             if not identity:
                 identity = hdata.get('d')
+            ts = hdata.get('t')
+            signtime = None
+            if ts:
+                signtime = LoreAttestor.parse_ts(ts)
+            else:
+                # See if date is included in the h: field
+                sh = hdata.get('h')
+                if 'date' in sh.split(':'):
+                    signtime = self.date
 
             self.msg._headers.append((hn, hval))  # noqa
             res = dkim.verify(self.msg.as_bytes())
@@ -1505,7 +1513,7 @@ class LoreAttestor:
     mode: Optional[str]
     level: Optional[str]
     identity: Optional[str]
-    signtime: Optional[str]
+    signtime: Optional[any]
     keysrc: Optional[str]
     keyalgo: Optional[str]
     passing: bool
@@ -1547,15 +1555,9 @@ class LoreAttestor:
         if not self.passing or self.signtime is None:
             return False
 
-        try:
-            sigdate = datetime.datetime.utcfromtimestamp(int(self.signtime)).replace(tzinfo=datetime.timezone.utc)
-        except:  # noqa
-            self.errors.append('failed parsing signature date: %s' % self.signtime)
-            return False
-
         maxdrift = datetime.timedelta(days=maxdays)
 
-        sdrift = sigdate - emldate
+        sdrift = self.signtime - emldate
         if sdrift > maxdrift:
             self.errors.append('Time drift between Date and t too great (%s)' % sdrift)
             return False
@@ -1580,6 +1582,14 @@ class LoreAttestor:
         self.errors.append('signing identity %s does not match From: %s' % (self.identity, emlfrom))
         return False
 
+    @staticmethod
+    def parse_ts(ts: Optional[str]):
+        try:
+            return datetime.datetime.utcfromtimestamp(int(ts)).replace(tzinfo=datetime.timezone.utc)
+        except:  # noqa
+            logger.debug('Failed parsing t=%s', ts)
+        return None
+
     def __repr__(self):
         out = list()
         out.append('    mode: %s' % self.mode)
@@ -1595,7 +1605,7 @@ class LoreAttestor:
 
 
 class LoreAttestorDKIM(LoreAttestor):
-    def __init__(self, passing: bool, identity: str, signtime: str, errors: list) -> None:
+    def __init__(self, passing: bool, identity: str, signtime: Optional[any], errors: list) -> None:
         super().__init__()
         self.mode = 'DKIM'
         self.level = 'domain'
