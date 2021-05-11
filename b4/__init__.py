@@ -1027,7 +1027,8 @@ class LoreMessage:
 
         attestations = patatt.validate_message(self.msg.as_bytes(), sources)
         for passing, identity, signtime, keysrc, keyalgo, errors in attestations:
-            attestor = LoreAttestorPatatt(passing, identity, signtime, keysrc, keyalgo, errors)
+            signdt = LoreAttestor.parse_ts(signtime)
+            attestor = LoreAttestorPatatt(passing, identity, signdt, keysrc, keyalgo, errors)
             self._attestors.append(attestor)
 
     def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[str, list, bool]:
