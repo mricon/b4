@@ -541,7 +541,8 @@ def main(cmdargs):
         try:
             import patatt
         except ModuleNotFoundError:
-            logger.info('--show-keys requires patatt library')
+            logger.info('--show-keys requires the patatt library')
+            os.unlink(threadfile)
             sys.exit(1)
 
         keydata = set()
@@ -564,8 +565,11 @@ def main(cmdargs):
                 logger.debug('Unknown key type: %s', algo)
                 continue
             keydata.add((identity, algo, selector, keyinfo))
+        mbx.close()
+
         if not keydata:
             logger.info('No keys found in the thread.')
+            os.unlink(threadfile)
             sys.exit(0)
         krpath = os.path.join(b4.get_data_dir(), 'keyring')
         pgp = False
@@ -605,6 +609,8 @@ def main(cmdargs):
         if ecc:
             logger.info('For ed25519 keys:')
             logger.info('    echo [pubkey] > [fullpath]')
+
+        os.unlink(threadfile)
         sys.exit(0)
 
     logger.info('%s messages in the thread', len(mbx))
