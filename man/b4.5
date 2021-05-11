@@ -85,19 +85,19 @@ msgid                 Message ID to process, or pipe a raw message
 .B \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
-.BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
+.BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
-.BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
+.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
 Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .TP
 .B \-c\fP,\fB  \-\-check\-newer\-revisions
 Check if newer patch revisions exist
 .TP
-.BI \-n \ WANTNAME\fP,\fB \ \-\-mbox\-name \ WANTNAME
+.BI \-n \ WANTNAME\fR,\fB \ \-\-mbox\-name \ WANTNAME
 Filename to name the mbox file
 .TP
-.BI \-m \ LOCALMBOX\fP,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
 Instead of grabbing a thread from lore, process this mbox file
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
@@ -124,25 +124,25 @@ msgid                 Message ID to process, or pipe a raw message
 .B \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
-.BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
+.BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
-.BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
+.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
 Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .TP
 .B \-c\fP,\fB  \-\-check\-newer\-revisions
 Check if newer patch revisions exist
 .TP
-.BI \-n \ WANTNAME\fP,\fB \ \-\-mbox\-name \ WANTNAME
+.BI \-n \ WANTNAME\fR,\fB \ \-\-mbox\-name \ WANTNAME
 Filename to name the mbox file
 .TP
-.BI \-m \ LOCALMBOX\fP,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
 Instead of grabbing a thread from lore, process this mbox file
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
 .TP
-.BI \-v \ WANTVER\fP,\fB \ \-\-use\-version \ WANTVER
+.BI \-v \ WANTVER\fR,\fB \ \-\-use\-version \ WANTVER
 Get a specific version of the patch/series
 .TP
 .B \-t\fP,\fB  \-\-apply\-cover\-trailers
@@ -163,7 +163,7 @@ Add a lore.kernel.org/r/ link to every patch
 .B \-Q\fP,\fB  \-\-quilt\-ready
 Save mbox patches in a quilt\-ready folder
 .TP
-.BI \-P \ CHERRYPICK\fP,\fB \ \-\-cherry\-pick \ CHERRYPICK
+.BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
 Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P *globbing*" to match on commit subject)
 .TP
 .B \-g\fP,\fB  \-\-guess\-base
@@ -195,13 +195,13 @@ patchfile             Patches to attest
 .B \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
-.BI \-f \ SENDER\fP,\fB \ \-\-from \ SENDER
+.BI \-f \ SENDER\fR,\fB \ \-\-from \ SENDER
 OBSOLETE: this option does nothing and will be removed
 .TP
 .B \-n\fP,\fB  \-\-no\-submit
 OBSOLETE: this option does nothing and will be removed
 .TP
-.BI \-o \ OUTPUT\fP,\fB \ \-\-output \ OUTPUT
+.BI \-o \ OUTPUT\fR,\fB \ \-\-output \ OUTPUT
 OBSOLETE: this option does nothing and will be removed
 .UNINDENT
 .UNINDENT
@@ -222,10 +222,10 @@ msgid                 Message ID to process, or pipe a raw message
 .B \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
-.BI \-g \ GITDIR\fP,\fB \ \-\-gitdir \ GITDIR
+.BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
 Operate on this git tree instead of current dir
 .TP
-.BI \-b \ BRANCH\fP,\fB \ \-\-branch \ BRANCH
+.BI \-b \ BRANCH\fR,\fB \ \-\-branch \ BRANCH
 Check out FETCH_HEAD into this branch after fetching
 .TP
 .B \-c\fP,\fB  \-\-check
@@ -234,7 +234,7 @@ Check if pull request has already been applied
 .B \-e\fP,\fB  \-\-explode
 Convert a pull request into an mbox full of patches
 .TP
-.BI \-o \ OUTMBOX\fP,\fB \ \-\-output\-mbox \ OUTMBOX
+.BI \-o \ OUTMBOX\fR,\fB \ \-\-output\-mbox \ OUTMBOX
 Save exploded messages into this mailbox (default: msgid.mbx)
 .UNINDENT
 .UNINDENT
@@ -252,25 +252,25 @@ b4 ty [\-h] [\-g GITDIR] [\-o OUTDIR] [\-l] [\-s SEND [SEND ...]] [\-d DISCARD [
 .B \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
-.BI \-g \ GITDIR\fP,\fB \ \-\-gitdir \ GITDIR
+.BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
 Operate on this git tree instead of current dir
 .TP
-.BI \-o \ OUTDIR\fP,\fB \ \-\-outdir \ OUTDIR
+.BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Write thanks files into this dir (default=.)
 .TP
 .B \-l\fP,\fB  \-\-list
 List pull requests and patch series you have retrieved
 .TP
-.BI \-s \ SEND\fP,\fB \ \-\-send \ SEND
+.BI \-s \ SEND\fR,\fB \ \-\-send \ SEND
 Generate thankyous for specific entries from \-l (e.g.: 1,3\-5,7\-; or "all")
 .TP
-.BI \-d \ DISCARD\fP,\fB \ \-\-discard \ DISCARD
+.BI \-d \ DISCARD\fR,\fB \ \-\-discard \ DISCARD
 Discard specific messages from \-l (e.g.: 1,3\-5,7\-; or "all")
 .TP
 .B \-a\fP,\fB  \-\-auto
 Use the Auto\-Thankanator to figure out what got applied/merged
 .TP
-.BI \-b \ BRANCH\fP,\fB \ \-\-branch \ BRANCH
+.BI \-b \ BRANCH\fR,\fB \ \-\-branch \ BRANCH
 The branch to check against, instead of current
 .TP
 .BI \-\-since \ SINCE
@@ -296,10 +296,10 @@ optional arguments:
 .B \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
-.BI \-g \ GITDIR\fP,\fB \ \-\-gitdir \ GITDIR
+.BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
 Operate on this git tree instead of current dir
 .TP
-.BI \-p \ USEPROJECT\fP,\fB \ \-\-use\-project \ USEPROJECT
+.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
 Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
@@ -315,7 +315,7 @@ Compare specific versions instead of latest and one before that, e.g. \-v 3 5
 .B \-n\fP,\fB  \-\-no\-diff
 Do not generate a diff, just show the command to do it
 .TP
-.BI \-o \ OUTDIFF\fP,\fB \ \-\-output\-diff \ OUTDIFF
+.BI \-o \ OUTDIFF\fR,\fB \ \-\-output\-diff \ OUTDIFF
 Save diff into this file instead of outputting to stdout
 .TP
 .B \-c\fP,\fB  \-\-color
@@ -334,7 +334,7 @@ Compare two mbx files prepared with "b4 am"
 .sp
 B4 configuration is handled via git\-config(1), so you can store it in
 either the toplevel $HOME/.gitconfig file, or in a per\-repository
-.git/config file if your workflow changes per project.
+\&.git/config file if your workflow changes per project.
 .sp
 Default configuration, with explanations:
 .INDENT 0.0
@@ -361,25 +361,13 @@ Default configuration, with explanations:
    # check: print an attaboy when attestation is found
    # softfail: print a warning when no attestation found
    # hardfail: exit with an error when no attestation found
-   attestation\-policy = check
+   attestation\-policy = softfail
    #
-   # Fall back to checking DKIM header if we don\(aqt find any other
-   # attestations present?
+   # Perform DKIM attestation?
    attestation\-check\-dkim = yes
    #
-   # "gpg" (whatever gpg is configured to do) or "tofu" to force TOFU mode
-   # If you don\(aqt already have a carefully maintained web of trust setup, it is
-   # strongly recommended to set this to "tofu"
-   attestation\-trust\-model = gpg
-   #
-   # How strict should we be when comparing the email address in From to the
-   # email addresses in the key\(aqs UIDs?
-   # strict: must match one of the uids on the key to pass
-   # loose: any valid and trusted key will be accepted
-   attestation\-uid\-match = loose
-   #
    # When showing attestation check results, do you like "fancy" (color, unicode)
-   # or simple checkmarks?
+   # or simple markers?
    attestation\-checkmarks = fancy
    #
    # How long before we consider attestation to be too old?
@@ -412,7 +400,7 @@ Default configuration, with explanations:
 .SH SUPPORT
 .sp
 Please email \fI\%tools@linux.kernel.org\fP with support requests,
-or browse the list archive at \fI\%https://linux.kernel.org/g/tools\fP\&.
+or browse the list archive at \fI\%https://lore.kernel.org/tools\fP\&.
 .SH AUTHOR
 mricon@kernel.org
 

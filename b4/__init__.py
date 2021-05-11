@@ -97,12 +97,7 @@ DEFAULT_CONFIG = {
     # check: print an attaboy when attestation is found
     # softfail: print a warning when no attestation found
     # hardfail: exit with an error when no attestation found
-    'attestation-policy': 'check',
-    # "gpg" (whatever gpg is configured to do) or "tofu" to force tofu mode
-    'attestation-trust-model': 'gpg',
-    # strict: must match one of the uids on the key to pass
-    # loose: any valid and trusted key will be accepted
-    'attestation-uid-match': 'loose',
+    'attestation-policy': 'softfail',
     # How many days before we consider attestation too old?
     'attestation-staleness-days': '30',
     # Should we check DKIM signatures if we don't find any other attestation?
@@ -499,6 +494,11 @@ class LoreSeries:
                 addmysob = False
 
         attpolicy = config['attestation-policy']
+        try:
+            maxdays = int(config['attestation-staleness-days'])
+        except ValueError:
+            logger.info('WARNING: attestation-staleness-days must be an int')
+            maxdays = 0
 
         # Loop through all patches and see if attestation is the same for all of them,
         # since it usually is
@@ -513,7 +513,7 @@ class LoreSeries:
                     attsame = False
                     break
 
-                checkmark, trailers, attcrit = lmsg.get_attestation_trailers(attpolicy)
+                checkmark, trailers, attcrit = lmsg.get_attestation_trailers(attpolicy, maxdays)
                 if attref is None:
                     attref = trailers
                     attmark = checkmark
@@ -551,7 +551,7 @@ class LoreSeries:
                         logger.info('  %s', lmsg.full_subject)
 
                 else:
-                    checkmark, trailers, critical = lmsg.get_attestation_trailers(attpolicy)
+                    checkmark, trailers, critical = lmsg.get_attestation_trailers(attpolicy, maxdays)
                     logger.info('  %s %s', checkmark, lmsg.full_subject)
                     for trailer in trailers:
                         logger.info('    %s', trailer)
@@ -1022,11 +1022,14 @@ class LoreMessage:
             attestor = LoreAttestorPatatt(passing, identity, signtime, keysrc, keyalgo, errors)
             self._attestors.append(attestor)
 
-    def get_attestation_trailers(self, attpolicy: str) -> Tuple[str, list, bool]:
+    def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[str, list, bool]:
         trailers = list()
         checkmark = None
         critical = False
         for attestor in self.attestors:
+            if maxdays and not attestor.check_time_drift(self.date, maxdays):
+                logger.debug('The time drift is too much, marking as non-passing')
+                attestor.passing = False
             if not attestor.passing:
                 # Is it a person-trailer for which we have a key?
                 if attestor.level == 'person':
@@ -1540,12 +1543,12 @@ class LoreAttestor:
 
         return '%s/%s' % (mode, self.identity)
 
-    def check_time_drift(self, emldate, maxdays: int = 7) -> bool:
+    def check_time_drift(self, emldate, maxdays: int = 30) -> bool:
         if not self.passing or self.signtime is None:
             return False
 
         try:
-            sigdate = datetime.datetime.utcfromtimestamp(int(self.signtime))
+            sigdate = datetime.datetime.utcfromtimestamp(int(self.signtime)).replace(tzinfo=datetime.timezone.utc)
         except:  # noqa
             self.errors.append('failed parsing signature date: %s' % self.signtime)
             return False
