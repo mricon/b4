@@ -580,14 +580,14 @@ def main(cmdargs):
             if os.path.exists(fullpath):
                 status = 'known'
             else:
+                status = 'unknown'
                 if algo == 'openpgp':
-                    uids = b4.get_gpg_uids(keyinfo)
-                    if len(uids):
-                        status = 'in default keyring'
-                    else:
-                        status = 'unknown'
-                else:
-                    status = 'unknown'
+                    try:
+                        uids = b4.get_gpg_uids(keyinfo)
+                        if len(uids):
+                            status = 'in default keyring'
+                    except KeyError:
+                        pass
             pathlib.Path(os.path.dirname(fullpath)).mkdir(parents=True, exist_ok=True)
 
             logger.info('%s: (%s)', identity, status)
