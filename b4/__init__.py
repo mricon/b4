@@ -827,6 +827,9 @@ class LoreMessage:
         else:
             # An email without a Date: field?
             self.date = datetime.datetime.now()
+        # Force it to UTC if it's naive
+        if self.date.tzinfo is None:
+            self.date = self.date.replace(tzinfo=datetime.timezone.utc)
 
         diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', re.M | re.I)
         diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', re.M | re.I)
