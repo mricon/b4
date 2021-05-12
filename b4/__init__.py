@@ -988,7 +988,7 @@ class LoreMessage:
             else:
                 # See if date is included in the h: field
                 sh = hdata.get('h')
-                if 'date' in sh.split(':'):
+                if 'date' in sh.lower().split(':'):
                     signtime = self.date
 
             self.msg._headers.append((hn, hval))  # noqa
