@@ -1633,6 +1633,8 @@ class LoreAttestorPatatt(LoreAttestor):
         if result == patatt.RES_VALID:
             self.passing = True
             self.have_key = True
+        elif result >= patatt.RES_BADSIG:
+            self.have_key = True
 
 
 def _run_command(cmdargs: list, stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
