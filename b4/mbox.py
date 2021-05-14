@@ -28,7 +28,7 @@ from tempfile import mkstemp
 logger = b4.logger
 
 
-def mbox_to_am(mboxfile, cmdargs):
+def mbox_to_am(mboxfile, cmdargs, msgid):
     config = b4.get_main_config()
     outdir = cmdargs.outdir
     if outdir == '-':
@@ -82,7 +82,6 @@ def mbox_to_am(mboxfile, cmdargs):
     if cmdargs.cherrypick:
         cherrypick = list()
         if cmdargs.cherrypick == '_':
-            msgid = b4.get_msgid(cmdargs)
             # Only grab the exact msgid provided
             at = 0
             for lmsg in lser.patches[1:]:
@@ -499,17 +498,15 @@ def main(cmdargs):
         cmdargs.nocache = True
 
     savefile = mkstemp('b4-mbox')[1]
+    msgid = b4.get_msgid(cmdargs)
 
     if not cmdargs.localmbox:
-        msgid = b4.get_msgid(cmdargs)
-
         threadfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
         if threadfile is None:
             os.unlink(savefile)
             return
     else:
         if os.path.exists(cmdargs.localmbox):
-            msgid = b4.get_msgid(cmdargs)
             if os.path.isdir(cmdargs.localmbox):
                 in_mbx = mailbox.Maildir(cmdargs.localmbox)
             else:
@@ -530,7 +527,7 @@ def main(cmdargs):
         get_extra_series(threadfile, direction=1)
 
     if cmdargs.subcmd == 'am':
-        mbox_to_am(threadfile, cmdargs)
+        mbox_to_am(threadfile, cmdargs, msgid)
         os.unlink(threadfile)
         return
 
@@ -644,7 +641,6 @@ def main(cmdargs):
     if cmdargs.wantname:
         savefile = os.path.join(cmdargs.outdir, cmdargs.wantname)
     else:
-        msgid = b4.get_msgid(cmdargs)
         savefile = os.path.join(cmdargs.outdir, '%s.mbx' % msgid)
 
     mbx.close()
