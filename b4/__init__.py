@@ -327,7 +327,8 @@ class LoreMailbox:
                     break
                 if pmsg.in_reply_to and pmsg.in_reply_to in self.msgid_map:
                     lvl += 1
-                    trailers += pmsg.trailers
+                    for ptrailer in pmsg.trailers:
+                        trailers.append(tuple(ptrailer + [pmsg]))
                     pmsg = self.msgid_map[pmsg.in_reply_to]
                     continue
                 break
@@ -1358,7 +1359,7 @@ class LoreMessage:
                     fixtrailers.append(list(trailer[:3]))
                     if trailer[:3] not in btrailers:
                         extra = ''
-                        if len(trailer) > 3 and trailer[3] is not None:
+                        if trailer[3] is not None:
                             fmsg = trailer[3]
                             for attestor in fmsg.attestors:  # noqa
                                 if attestor.passing:
