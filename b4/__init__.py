@@ -1446,36 +1446,34 @@ class LoreSubject:
         self.prefixes = list()
 
         subject = re.sub(r'\s+', ' ', LoreMessage.clean_header(subject)).strip()
-        # Remove any leading [] that don't have "patch", "resend" or "rfc" in them
-        while True:
-            oldsubj = subject
-            subject = re.sub(r'^\s*\[[^]]*]\s*(\[[^]]*(:?patch|resend|rfc).*)', r'\1', subject, flags=re.IGNORECASE)
-            if oldsubj == subject:
-                break
+        self.full_subject = subject
+
+        # Is it a reply?
+        if re.search(r'^(Re|Aw|Fwd):', subject, re.I) or re.search(r'^\w{2,3}:\s*\[', subject):
+            self.reply = True
+            self.subject = subject
+            # We don't care to parse the rest
+            return
 
         # Remove any brackets inside brackets
         while True:
             oldsubj = subject
-            subject = re.sub(r'^\s*\[([^]]*)\[([^\[\]]*)]', r'[\1\2]', subject)
-            subject = re.sub(r'^\s*\[([^]]*)]([^\[\]]*)]', r'[\1\2]', subject)
+            subject = re.sub(r'\[([^]]*)\[([^\[\]]*)]', r'[\1\2]', subject)
+            subject = re.sub(r'\[([^]]*)]([^\[\]]*)]', r'[\1\2]', subject)
             if oldsubj == subject:
                 break
-
-        self.full_subject = subject
-        # Is it a reply?
-        if re.search(r'^(Re|Aw|Fwd):', subject, re.I) or re.search(r'^\w{2,3}:\s*\[', subject):
-            self.reply = True
-            subject = re.sub(r'^\w+:\s*\[', '[', subject)
-
-        # Fix [PATCHv3] to be properly [PATCH v3]
-        subject = re.sub(r'^\[\s*(patch)(v\d+)(.*)', r'[\1 \2\3', subject, flags=re.I)
 
         # Find all [foo] in the title
         while subject.find('[') == 0:
             matches = re.search(r'^\[([^]]*)]', subject)
             if not matches:
                 break
-            for chunk in matches.groups()[0].split():
+
+            bracketed = matches.groups()[0].strip()
+            # Fix [PATCHv3] to be properly [PATCH v3]
+            bracketed = re.sub(r'(patch)(v\d+)', r'\1 \2', bracketed, flags=re.I)
+
+            for chunk in bracketed.split():
                 # Remove any trailing commas or semicolons
                 chunk = chunk.strip(',;')
                 if re.search(r'^\d{1,3}/\d{1,3}$', chunk):
@@ -1495,6 +1493,17 @@ class LoreSubject:
                 self.prefixes.append(chunk)
             subject = re.sub(r'^\s*\[[^]]*]\s*', '', subject)
         self.subject = subject
+        # reconstitute full subject
+        parts = ['PATCH']
+        if self.rfc:
+            parts.append('RFC')
+        if self.resend:
+            parts.append('RESEND')
+        if not self.revision_inferred:
+            parts.append('v%d' % self.revision)
+        if not self.counters_inferred:
+            parts.append('%d/%d' % (self.counter, self.expected))
+        self.full_subject = '[%s] %s' % (' '.join(parts), subject)
 
     def __repr__(self):
         out = list()
