@@ -954,7 +954,7 @@ class LoreMessage:
 
         if self.msg.get(DEVSIG_HDR):
             self._load_patatt_attestors()
-        if self.msg.get('dkim-signature'):
+        if self.msg.get('dkim-signature') and config['attestation-check-dkim'] == 'yes':
             self._load_dkim_attestors()
 
         return self._attestors
