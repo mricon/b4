@@ -25,7 +25,7 @@ def cmd_mbox_common_opts(sp):
     sp.add_argument('-n', '--mbox-name', dest='wantname', default=None,
                     help='Filename to name the mbox file')
     sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
-                    help='Instead of grabbing a thread from lore, process this mbox file')
+                    help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
     sp.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                     help='Do not use local cache')
 

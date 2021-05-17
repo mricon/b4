@@ -506,30 +506,49 @@ def main(cmdargs):
         cmdargs.nocache = True
 
     savefile = mkstemp('b4-mbox')[1]
-    msgid = b4.get_msgid(cmdargs)
+    msgid = None
 
     if not cmdargs.localmbox:
+        msgid = b4.get_msgid(cmdargs)
+        if not msgid:
+            logger.error('Error: pipe a message or pass msgid as parameter')
+            os.unlink(savefile)
+            sys.exit(1)
+
         threadfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
         if threadfile is None:
             os.unlink(savefile)
             return
     else:
-        if os.path.exists(cmdargs.localmbox):
+        if cmdargs.localmbox == '-':
+            # The entire mbox is passed via stdin, so save it into a temporary file
+            # and use the first message for our msgid
+            with open(savefile, 'wb') as fh:
+                fh.write(sys.stdin.buffer.read())
+            in_mbx = mailbox.mbox(savefile)
+            msg = in_mbx.get(0)
+            if msg:
+                msgid = msg.get('Message-ID', None).strip('<>')
+
+        elif os.path.exists(cmdargs.localmbox):
+            msgid = b4.get_msgid(cmdargs)
             if os.path.isdir(cmdargs.localmbox):
                 in_mbx = mailbox.Maildir(cmdargs.localmbox)
             else:
                 in_mbx = mailbox.mbox(cmdargs.localmbox)
-            out_mbx = mailbox.mbox(savefile)
-            b4.save_strict_thread(in_mbx, out_mbx, msgid)
-            if not len(out_mbx):
-                logger.critical('Could not find %s in %s', msgid, cmdargs.localmbox)
-                os.unlink(savefile)
-                sys.exit(1)
-            threadfile = savefile
+            if msgid:
+                out_mbx = mailbox.mbox(savefile)
+                b4.save_strict_thread(in_mbx, out_mbx, msgid)
+                if not len(out_mbx):
+                    logger.critical('Could not find %s in %s', msgid, cmdargs.localmbox)
+                    os.unlink(savefile)
+                    sys.exit(1)
         else:
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
             os.unlink(savefile)
             sys.exit(1)
+
+        threadfile = savefile
 
     if threadfile and cmdargs.checknewer:
         get_extra_series(threadfile, direction=1)

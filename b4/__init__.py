@@ -1956,19 +1956,18 @@ def get_msgid_from_stdin():
     if not sys.stdin.isatty():
         message = email.message_from_string(sys.stdin.read())
         return message.get('Message-ID', None)
-    logger.error('Error: pipe a message or pass msgid as parameter')
-    sys.exit(1)
+    return None
 
 
-def get_msgid(cmdargs):
+def get_msgid(cmdargs) -> Optional[str]:
     if not cmdargs.msgid:
         logger.debug('Getting Message-ID from stdin')
         msgid = get_msgid_from_stdin()
-        if msgid is None:
-            logger.error('Unable to find a valid message-id in stdin.')
-            sys.exit(1)
     else:
         msgid = cmdargs.msgid
+
+    if msgid is None:
+        return None
 
     msgid = msgid.strip('<>')
     # Handle the case when someone pastes a full URL to the message
