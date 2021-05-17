@@ -47,7 +47,10 @@ def mbox_to_am(mboxfile, cmdargs, msgid):
     for key, msg in mbx.items():
         lmbx.add_message(msg)
 
-    lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers)
+    reroll = True
+    if cmdargs.nopartialreroll:
+        reroll = False
+    lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers, reroll=reroll)
     if lser is None and wantver is None:
         logger.critical('No patches found.')
         return
@@ -156,6 +159,11 @@ def mbox_to_am(mboxfile, cmdargs, msgid):
                 logger.info('Prepared a fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
 
     logger.critical('---')
+    if lser.partial_reroll:
+        logger.critical('WARNING: v%s is a partial reroll from previous revisions', lser.revision)
+        logger.critical('         Please carefully review the resulting series to ensure correctness')
+        logger.critical('         Pass --no-partial-reroll to disable')
+        logger.critical('---')
     if not lser.complete and not cmdargs.cherrypick:
         logger.critical('WARNING: Thread incomplete!')
 

@@ -15,6 +15,7 @@ import requests
 import urllib.parse
 import datetime
 import time
+import copy
 import shutil
 import mailbox
 # noinspection PyCompatibility
@@ -229,7 +230,66 @@ class LoreMailbox:
                     logger.info('Successfully backfilled missing patches')
                     break
 
-    def get_series(self, revision=None, sloppytrailers=False, backfill=True):
+    def partial_reroll(self, revision, sloppytrailers, backfill):
+        # Is it a partial reroll?
+        # To qualify for a partial reroll:
+        # 1. Needs to be version > 1
+        # 2. Replies need to be to the exact X/N of the previous revision
+        if revision <= 1 or revision - 1 not in self.series:
+            return
+        # Are existing patches replies to previous revisions with the same counter?
+        pser = self.get_series(revision-1, sloppytrailers=sloppytrailers, backfill=backfill)
+        lser = self.series[revision]
+        sane = True
+        for patch in lser.patches:
+            if patch is None:
+                continue
+            if patch.in_reply_to is None or patch.in_reply_to not in self.msgid_map:
+                logger.debug('Patch not sent as a reply-to')
+                sane = False
+                break
+            ppatch = self.msgid_map[patch.in_reply_to]
+            found = False
+            while True:
+                if patch.counter == ppatch.counter and patch.expected == ppatch.expected:
+                    logger.debug('Found a previous matching patch in v%s', ppatch.revision)
+                    found = True
+                    break
+                # Do we have another level up?
+                if ppatch.in_reply_to is None or ppatch.in_reply_to not in self.msgid_map:
+                    break
+                ppatch = self.msgid_map[ppatch.in_reply_to]
+
+            if not found:
+                sane = False
+                logger.debug('Patch not a reply to a patch with the same counter/expected (%s/%s != %s/%s)',
+                             patch.counter, patch.expected, ppatch.counter, ppatch.expected)
+                break
+
+        if not sane:
+            logger.debug('Not a sane partial reroll')
+            return
+        logger.info('Partial reroll detected, reconstituting from v%s', pser.revision)
+        logger.debug('Reconstituting a partial reroll')
+        at = 0
+        for patch in lser.patches:
+            if patch is None:
+                ppatch = copy.deepcopy(pser.patches[at])
+                ppatch.revision = lser.revision
+                ppatch.reroll_from_revision = pser.revision
+                lser.patches[at] = ppatch
+            else:
+                patch.reroll_from_revision = lser.revision
+            at += 1
+        if None not in lser.patches[1:]:
+            lser.complete = True
+            lser.partial_reroll = True
+            if lser.patches[0] is not None:
+                lser.has_cover = True
+            lser.subject = pser.subject
+            logger.debug('Reconstituted successfully')
+
+    def get_series(self, revision=None, sloppytrailers=False, backfill=True, reroll=True):
         if revision is None:
             if not len(self.series):
                 return None
@@ -250,11 +310,14 @@ class LoreMailbox:
             logger.critical('All patches in series v%s are missing.', lser.revision)
             return None
 
+        if not lser.complete and reroll:
+            self.partial_reroll(revision, sloppytrailers, backfill)
+
         if not lser.complete and backfill:
             self.backfill(revision)
 
         # Grab our cover letter if we have one
-        if revision in self.covers.keys():
+        if revision in self.covers:
             lser.add_patch(self.covers[revision])
             lser.has_cover = True
         else:
@@ -307,18 +370,15 @@ class LoreMailbox:
                 for trailer in trailers:
                     logger.debug('%s%s: %s', ' ' * (lvl+1), trailer[0], trailer[1])
                 if pmsg.has_diff and not pmsg.reply:
-                    # TODO: See below
                     # We found the patch for these trailers
-                    # if pmsg.revision != revision:
-                    #     # add this into our trailer map to carry over trailers from
-                    #     # previous revisions to current revision if patch/metadata did
-                    #     # not change
-                    #     pmsg.load_hashes()
-                    #     if pmsg.attestation:
-                    #         attid = pmsg.attestation.attid
-                    #         if attid not in self.trailer_map:
-                    #             self.trailer_map[attid] = list()
-                    #         self.trailer_map[attid] += trailers
+                    if pmsg.revision != revision:
+                        # add this into our trailer map to carry over trailers from
+                        # previous revisions to current revision if patch id did
+                        # not change
+                        if pmsg.pwhash:
+                            if pmsg.pwhash not in self.trailer_map:
+                                self.trailer_map[pmsg.pwhash] = list()
+                            self.trailer_map[pmsg.pwhash] += trailers
                     pmsg.followup_trailers += trailers
                     break
                 if not pmsg.reply:
@@ -334,13 +394,11 @@ class LoreMailbox:
                 break
 
         # Carry over trailers from previous series if patch/metadata did not change
-        # TODO: This needs fixing, because we no longer generate the three hashes
-        # TODO: and patchwork_hash only gives us the hash of the actual patch
-        # for lmsg in lser.patches:
-        #     if lmsg is None or lmsg.patchwork_hash is None:
-        #         continue
-        #     if lmsg.patchwork_hash in self.trailer_map:
-        #         lmsg.followup_trailers += self.trailer_map[lmsg.patchwork_hash]
+        for lmsg in lser.patches:
+            if lmsg is None or lmsg.pwhash is None:
+                continue
+            if lmsg.pwhash in self.trailer_map:
+                lmsg.followup_trailers += self.trailer_map[lmsg.pwhash]
 
         return lser
 
@@ -415,6 +473,7 @@ class LoreSeries:
         self.trailer_mismatches = set()
         self.complete = False
         self.has_cover = False
+        self.partial_reroll = False
         self.subject = '(untitled)'
 
     def __repr__(self):
@@ -424,13 +483,12 @@ class LoreSeries:
         out.append('  expected: %s' % self.expected)
         out.append('  complete: %s' % self.complete)
         out.append('  has_cover: %s' % self.has_cover)
+        out.append('  partial_reroll: %s' % self.partial_reroll)
         out.append('  patches:')
         at = 0
         for member in self.patches:
             if member is not None:
                 out.append('    [%s/%s] %s' % (at, self.expected, member.subject))
-                if member.followup_trailers:
-                    out.append('       Add: %s' % ', '.join(member.followup_trailers))
             else:
                 out.append('    [%s/%s] MISSING' % (at, self.expected))
             at += 1
@@ -547,13 +605,13 @@ class LoreSeries:
 
                 if attsame and not attcrit:
                     if attmark:
-                        logger.info('  %s %s', attmark, lmsg.full_subject)
+                        logger.info('  %s %s', attmark, lmsg.get_am_subject())
                     else:
-                        logger.info('  %s', lmsg.full_subject)
+                        logger.info('  %s', lmsg.get_am_subject())
 
                 else:
                     checkmark, trailers, critical = lmsg.get_attestation_trailers(attpolicy, maxdays)
-                    logger.info('  %s %s', checkmark, lmsg.full_subject)
+                    logger.info('  %s %s', checkmark, lmsg.get_am_subject())
                     for trailer in trailers:
                         logger.info('    %s', trailer)
 
@@ -647,7 +705,7 @@ class LoreSeries:
             logger.critical('Cannot operate on an empty series')
             return None, None
         cachedata = get_cache(msgid, suffix='fakeam')
-        if cachedata:
+        if cachedata and not self.partial_reroll:
             stalecache = False
             chunks = cachedata.strip().split()
             if len(chunks) == 2:
@@ -760,6 +818,7 @@ class LoreMessage:
         self.subject = None
         self.reply = False
         self.revision = 1
+        self.reroll_from_revision = None
         self.counter = 1
         self.expected = 1
         self.revision_inferred = True
@@ -1403,6 +1462,24 @@ class LoreMessage:
             self.body += signature
             self.body += '\n'
 
+    def get_am_subject(self):
+        # Return a clean patch subject
+        parts = ['PATCH']
+        if self.lsubject.rfc:
+            parts.append('RFC')
+        if not self.revision_inferred:
+            if self.reroll_from_revision:
+                if self.reroll_from_revision != self.revision:
+                    parts.append('v%d->v%d' % (self.reroll_from_revision, self.revision))
+                else:
+                    parts.append(' %s  v%d' % (' ' * len(str(self.reroll_from_revision)), self.revision))
+            else:
+                parts.append('v%d' % self.revision)
+        if not self.lsubject.counters_inferred:
+            parts.append('%d/%d' % (self.lsubject.counter, self.lsubject.expected))
+
+        return '[%s] %s' % (' '.join(parts), self.lsubject.subject)
+
     def get_am_message(self, add_trailers=True, trailer_order=None, copyccs=False):
         if add_trailers:
             self.fix_trailers(trailer_order=trailer_order, copyccs=copyccs)
@@ -1493,17 +1570,6 @@ class LoreSubject:
                 self.prefixes.append(chunk)
             subject = re.sub(r'^\s*\[[^]]*]\s*', '', subject)
         self.subject = subject
-        # reconstitute full subject
-        parts = ['PATCH']
-        if self.rfc:
-            parts.append('RFC')
-        if self.resend:
-            parts.append('RESEND')
-        if not self.revision_inferred:
-            parts.append('v%d' % self.revision)
-        if not self.counters_inferred:
-            parts.append('%d/%d' % (self.counter, self.expected))
-        self.full_subject = '[%s] %s' % (' '.join(parts), subject)
 
     def __repr__(self):
         out = list()
@@ -1631,7 +1697,8 @@ class LoreAttestorDKIM(LoreAttestor):
 
 
 class LoreAttestorPatatt(LoreAttestor):
-    def __init__(self, result: bool, identity: str, signtime: str, keysrc: str, keyalgo: str, errors: list) -> None:
+    def __init__(self, result: bool, identity: str, signtime: Optional[any], keysrc: str, keyalgo: str,
+                 errors: list) -> None:
         super().__init__()
         self.mode = 'patatt'
         self.level = 'person'

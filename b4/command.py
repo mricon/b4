@@ -118,6 +118,8 @@ def cmd():
                        help='Copy all Cc\'d addresses into Cc: trailers')
     sp_am.add_argument('--no-cover', dest='nocover', action='store_true', default=False,
                        help='Do not save the cover letter (on by default when using -o -)')
+    sp_am.add_argument('--no-partial-reroll', dest='nopartialreroll', action='store_true', default=False,
+                       help='Do not reroll partial series when detected')
     sp_am.set_defaults(func=cmd_am)
 
     # b4 attest
@@ -129,7 +131,7 @@ def cmd():
     sp_att.add_argument('-o', '--output', default=None,
                         help='OBSOLETE: this option does nothing and will be removed')
     sp_att.add_argument('-m', '--mutt-filter', default=None,
-                        help='OBSOLETE: this option does nothign and will be removed')
+                        help='OBSOLETE: this option does nothing and will be removed')
     sp_att.add_argument('patchfile', nargs='*', help='Patches to attest')
     sp_att.set_defaults(func=cmd_attest)
 

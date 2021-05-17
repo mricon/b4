@@ -66,7 +66,7 @@ def diff_same_thread_series(cmdargs):
         lower = min(wantvers)
     else:
         upper = max(lmbx.series.keys())
-        lower = min(lmbx.series.keys())
+        lower = upper - 1
 
     if upper == lower:
         logger.critical('ERROR: Could not auto-find previous revision')
@@ -80,7 +80,13 @@ def diff_same_thread_series(cmdargs):
         return None, None
 
     if not lmbx.series[lower].complete:
+        lmbx.partial_reroll(lower, sloppytrailers=False, backfill=True)
+
+    if not lmbx.series[lower].complete:
         lmbx.backfill(lower)
+
+    if not lmbx.series[upper].complete:
+        lmbx.partial_reroll(upper, sloppytrailers=False, backfill=True)
 
     if not lmbx.series[upper].complete:
         lmbx.backfill(upper)
