@@ -1011,6 +1011,7 @@ class LoreMessage:
         if config['attestation-policy'] == 'off':
             return self._attestors
 
+        logger.debug('Loading attestation: %s', self.full_subject)
         if self.msg.get(DEVSIG_HDR):
             self._load_patatt_attestors()
         if self.msg.get('dkim-signature') and config['attestation-check-dkim'] == 'yes':
@@ -1052,7 +1053,7 @@ class LoreMessage:
                     signtime = self.date
 
             self.msg._headers.append((hn, hval))  # noqa
-            res = dkim.verify(self.msg.as_bytes())
+            res = dkim.verify(self.msg.as_bytes().replace(b'\n>From ', b'\nFrom '))
 
             attestor = LoreAttestorDKIM(res, identity, signtime, errors)
             logger.debug('DKIM verify results: %s=%s', identity, res)
@@ -1099,7 +1100,7 @@ class LoreMessage:
         checkmark = None
         critical = False
         for attestor in self.attestors:
-            if maxdays and not attestor.check_time_drift(self.date, maxdays):
+            if attestor.passing and maxdays and not attestor.check_time_drift(self.date, maxdays):
                 logger.debug('The time drift is too much, marking as non-passing')
                 attestor.passing = False
             if not attestor.passing:
