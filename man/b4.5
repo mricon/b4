@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2020-11-20" "0.6.0" ""
+.TH B4 5 "2020-11-20" "0.7.0" ""
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .
@@ -99,12 +99,16 @@ Filename to name the mbox file
 .TP
 .BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
 Instead of grabbing a thread from lore, process this mbox file
+(or use \- for stdin)
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
 .TP
 .B \-f\fP,\fB  \-\-filter\-dupes
 When adding messages to existing maildir, filter out duplicates
+.TP
+.B \-M\fP,\fB  \-\-save\-as\-maildir
+Save as maildir (avoids mbox format ambiguities)
 .UNINDENT
 .UNINDENT
 .sp
@@ -138,6 +142,10 @@ Filename to name the mbox file
 .TP
 .BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
 Instead of grabbing a thread from lore, process this mbox file
+(or use \- for stdin)
+.TP
+.B \-M\fP,\fB  \-\-save\-as\-maildir
+Save as maildir (avoids mbox format ambiguities)
 .TP
 .B \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
@@ -161,7 +169,7 @@ Add your own signed\-off\-by to every patch
 Add a lore.kernel.org/r/ link to every patch
 .TP
 .B \-Q\fP,\fB  \-\-quilt\-ready
-Save mbox patches in a quilt\-ready folder
+Save patches in a quilt\-ready folder
 .TP
 .BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
 Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P *globbing*" to match on commit subject)
@@ -177,36 +185,23 @@ Copy all Cc\(aqd addresses into Cc: trailers, if not already present
 .TP
 .B \-\-no\-cover
 Do not save the cover letter (on by default when using \-o \-)
+.TP
+.B \-\-no\-partial\-reroll
+Do not reroll partial series when detected
 .UNINDENT
 .UNINDENT
 .sp
 \fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 attest
 .sp
-usage: b4 attest [\-h] [\-f SENDER] [\-n] [\-o OUTPUT] patchfile [patchfile ...]
+usage: b4 attest [\-h] patchfile [patchfile ...]
 .INDENT 0.0
 .TP
 .B positional arguments:
 patchfile             Patches to attest
-.TP
-.B optional arguments:
-.INDENT 7.0
-.TP
-.B \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-f \ SENDER\fR,\fB \ \-\-from \ SENDER
-OBSOLETE: this option does nothing and will be removed
-.TP
-.B \-n\fP,\fB  \-\-no\-submit
-OBSOLETE: this option does nothing and will be removed
-.TP
-.BI \-o \ OUTPUT\fR,\fB \ \-\-output \ OUTPUT
-OBSOLETE: this option does nothing and will be removed
-.UNINDENT
 .UNINDENT
 .sp
-\fIExample\fP: b4 attest output/*.patch
+\fIExample\fP: b4 attest outgoing/*.patch
 .SS b4 pr
 .INDENT 0.0
 .TP
@@ -348,6 +343,11 @@ Default configuration, with explanations:
    #
    # When recording Link: trailers, use this mask
    linkmask = https://lore.kernel.org/r/%s
+   #
+   # Set to "yes" to save maildirs instead of mailboxes
+   # This will help avoid mboxo/mboxrd format inconsistencies between
+   # public\-inbox, python, and git
+   save\-maildirs = no
    #
    # When processing thread trailers, sort them in this order.
    # Can use shell\-globbing and must end with ,*

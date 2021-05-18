@@ -8,7 +8,7 @@ Work with code submissions in a public-inbox archive
 :Date:      2020-11-20
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.6.0
+:Version:   0.7.0
 :Manual section: 5
 
 SYNOPSIS
@@ -62,8 +62,11 @@ optional arguments:
                         Filename to name the mbox file
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this mbox file
+                        (or use - for stdin)
   -C, --no-cache        Do not use local cache
   -f, --filter-dupes    When adding messages to existing maildir, filter out duplicates
+  -M, --save-as-maildir
+                        Save as maildir (avoids mbox format ambiguities)
 
 *Example*: b4 mbox 20200313231252.64999-1-keescook@chromium.org
 
@@ -87,6 +90,9 @@ optional arguments:
                         Filename to name the mbox file
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this mbox file
+                        (or use - for stdin)
+  -M, --save-as-maildir
+                        Save as maildir (avoids mbox format ambiguities)
   -C, --no-cache        Do not use local cache
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
@@ -98,7 +104,7 @@ optional arguments:
                         Do not add or sort any trailers
   -s, --add-my-sob      Add your own signed-off-by to every patch
   -l, --add-link        Add a lore.kernel.org/r/ link to every patch
-  -Q, --quilt-ready     Save mbox patches in a quilt-ready folder
+  -Q, --quilt-ready     Save patches in a quilt-ready folder
   -P CHERRYPICK, --cherry-pick CHERRYPICK
                         Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", "-P _" to use just the msgid specified, or "-P \*globbing\*" to match on commit subject)
   -g, --guess-base
@@ -109,26 +115,20 @@ optional arguments:
                         Copy all Cc'd addresses into Cc: trailers, if not already present
   --no-cover
                         Do not save the cover letter (on by default when using -o -)
+  --no-partial-reroll
+                        Do not reroll partial series when detected
 
 
 *Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
 
 b4 attest
 ~~~~~~~~~
-usage: b4 attest [-h] [-f SENDER] [-n] [-o OUTPUT] patchfile [patchfile ...]
+usage: b4 attest [-h] patchfile [patchfile ...]
 
 positional arguments:
   patchfile             Patches to attest
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -f SENDER, --from SENDER
-                        OBSOLETE: this option does nothing and will be removed
-  -n, --no-submit       OBSOLETE: this option does nothing and will be removed
-  -o OUTPUT, --output OUTPUT
-                        OBSOLETE: this option does nothing and will be removed
- 
-*Example*: b4 attest output/\*.patch
+*Example*: b4 attest outgoing/\*.patch
 
 b4 pr
 ~~~~~
@@ -219,6 +219,11 @@ Default configuration, with explanations::
       #
       # When recording Link: trailers, use this mask
       linkmask = https://lore.kernel.org/r/%s
+      #
+      # Set to "yes" to save maildirs instead of mailboxes
+      # This will help avoid mboxo/mboxrd format inconsistencies between
+      # public-inbox, python, and git
+      save-maildirs = no
       #
       # When processing thread trailers, sort them in this order.
       # Can use shell-globbing and must end with ,*
