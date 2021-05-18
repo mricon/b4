@@ -128,7 +128,7 @@ def make_am(msgs, cmdargs, msgid):
             d_cur = os.path.join(am_filename, 'cur')
             pathlib.Path(d_cur).mkdir(parents=True)
             for m_slug, msg in am_msgs:
-                with open(os.path.join(d_new, m_slug), 'wb') as mfh:
+                with open(os.path.join(d_new, f'{m_slug}.eml'), 'wb') as mfh:
                     mfh.write(msg.as_bytes(policy=b4.emlpolicy))
         else:
             with open(am_filename, 'wb') as fh:
@@ -629,13 +629,13 @@ def main(cmdargs):
             if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:
                 added += 1
                 mdr.add(msg)
-        logger.info('Added to %s messages to maildir %s', added, cmdargs.outdir)
+        logger.info('Added %s messages to maildir %s', added, cmdargs.outdir)
         return
 
     config = b4.get_main_config()
     if cmdargs.maildir or config.get('save-maildirs', 'no') == 'yes':
         save_maildir = True
-        dftext = 'thread'
+        dftext = 'maildir'
     else:
         save_maildir = False
         dftext = 'mbx'
