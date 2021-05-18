@@ -23,9 +23,11 @@ def cmd_mbox_common_opts(sp):
     sp.add_argument('-c', '--check-newer-revisions', dest='checknewer', action='store_true', default=False,
                     help='Check if newer patch revisions exist')
     sp.add_argument('-n', '--mbox-name', dest='wantname', default=None,
-                    help='Filename to name the mbox file')
+                    help='Filename to name the mbox destination')
     sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
                     help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
+    sp.add_argument('-M', '--save-as-maildir', dest='maildir', action='store_true', default=False,
+                    help='Save as maildir (avoids mbox format ambiguities)')
     sp.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                     help='Do not use local cache')
 
@@ -104,7 +106,7 @@ def cmd():
     sp_am.add_argument('-l', '--add-link', dest='addlink', action='store_true', default=False,
                        help='Add a lore.kernel.org/r/ link to every patch')
     sp_am.add_argument('-Q', '--quilt-ready', dest='quiltready', action='store_true', default=False,
-                       help='Save mbox patches in a quilt-ready folder')
+                       help='Save patches in a quilt-ready folder')
     sp_am.add_argument('-P', '--cherry-pick', dest='cherrypick', default=None,
                        help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
                             '"-P _" to use just the msgid specified, or '

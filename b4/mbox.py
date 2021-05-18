@@ -17,18 +17,19 @@ import json
 import fnmatch
 import shutil
 import pathlib
+import tempfile
 
 import urllib.parse
 import xml.etree.ElementTree
 
 import b4
 
-from tempfile import mkstemp
+from typing import Optional
 
 logger = b4.logger
 
 
-def mbox_to_am(mboxfile, cmdargs, msgid):
+def make_am(msgs, cmdargs, msgid):
     config = b4.get_main_config()
     outdir = cmdargs.outdir
     if outdir == '-':
@@ -36,15 +37,11 @@ def mbox_to_am(mboxfile, cmdargs, msgid):
     wantver = cmdargs.wantver
     wantname = cmdargs.wantname
     covertrailers = cmdargs.covertrailers
-    if os.path.isdir(mboxfile):
-        mbx = mailbox.Maildir(mboxfile)
-    else:
-        mbx = mailbox.mbox(mboxfile)
-    count = len(mbx)
+    count = len(msgs)
     logger.info('Analyzing %s messages in the thread', count)
     lmbx = b4.LoreMailbox()
     # Go through the mbox once to populate base series
-    for key, msg in mbx.items():
+    for msg in msgs:
         lmbx.add_message(msg)
 
     reroll = True
@@ -60,26 +57,6 @@ def mbox_to_am(mboxfile, cmdargs, msgid):
     if len(lmbx.series) > 1 and not wantver:
         logger.info('Will use the latest revision: v%s', lser.revision)
         logger.info('You can pick other revisions using the -vN flag')
-
-    if wantname:
-        slug = wantname
-        if wantname.find('.') > -1:
-            slug = '.'.join(wantname.split('.')[:-1])
-        gitbranch = slug
-    else:
-        slug = lser.get_slug(extended=True)
-        gitbranch = lser.get_slug(extended=False)
-
-    if outdir != '-':
-        am_filename = os.path.join(outdir, '%s.mbx' % slug)
-        am_cover = os.path.join(outdir, '%s.cover' % slug)
-
-        if os.path.exists(am_filename):
-            os.unlink(am_filename)
-    else:
-        # Create a temporary file that we will remove later
-        am_filename = mkstemp('b4-am-stdout')[1]
-        am_cover = None
 
     logger.info('---')
     if cmdargs.cherrypick:
@@ -111,23 +88,62 @@ def mbox_to_am(mboxfile, cmdargs, msgid):
     else:
         cherrypick = None
 
-    logger.critical('Writing %s', am_filename)
-    mbx = mailbox.mbox(am_filename)
     try:
-        am_mbx = lser.save_am_mbox(mbx, noaddtrailers=cmdargs.noaddtrailers,
-                                   covertrailers=covertrailers, trailer_order=config['trailer-order'],
-                                   addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
-                                   linkmask=config['linkmask'], cherrypick=cherrypick,
-                                   copyccs=cmdargs.copyccs)
+        am_msgs = lser.get_am_ready(noaddtrailers=cmdargs.noaddtrailers,
+                                    covertrailers=covertrailers, trailer_order=config['trailer-order'],
+                                    addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
+                                    linkmask=config['linkmask'], cherrypick=cherrypick,
+                                    copyccs=cmdargs.copyccs)
     except KeyError:
         sys.exit(1)
+
+    if cmdargs.maildir or config.get('save-maildirs', 'no') == 'yes':
+        save_maildir = True
+        dftext = 'maildir'
+    else:
+        save_maildir = False
+        dftext = 'mbx'
+
+    if wantname:
+        slug = wantname
+        if wantname.find('.') > -1:
+            slug = '.'.join(wantname.split('.')[:-1])
+        gitbranch = slug
+    else:
+        slug = lser.get_slug(extended=True)
+        gitbranch = lser.get_slug(extended=False)
+
+    if outdir != '-':
+        am_filename = os.path.join(outdir, f'{slug}.{dftext}')
+        am_cover = os.path.join(outdir, f'{slug}.cover')
+
+        if os.path.exists(am_filename):
+            if os.path.isdir(am_filename):
+                shutil.rmtree(am_filename)
+            else:
+                os.unlink(am_filename)
+        if save_maildir:
+            d_new = os.path.join(am_filename, 'new')
+            pathlib.Path(d_new).mkdir(parents=True)
+            d_cur = os.path.join(am_filename, 'cur')
+            pathlib.Path(d_cur).mkdir(parents=True)
+            for m_slug, msg in am_msgs:
+                with open(os.path.join(d_new, m_slug), 'wb') as mfh:
+                    mfh.write(msg.as_bytes(policy=b4.emlpolicy))
+        else:
+            with open(am_filename, 'wb') as fh:
+                b4.save_git_am_mbox([x[1] for x in am_msgs], fh)
+    else:
+        am_filename = None
+        am_cover = None
+        b4.save_git_am_mbox([x[1] for x in am_msgs], sys.stdout.buffer)
 
     logger.info('---')
 
     if cherrypick is None:
-        logger.critical('Total patches: %s', len(am_mbx))
+        logger.critical('Total patches: %s', len(am_msgs))
     else:
-        logger.info('Total patches: %s (cherrypicked: %s)', len(am_mbx), cmdargs.cherrypick)
+        logger.info('Total patches: %s (cherrypicked: %s)', len(am_msgs), cmdargs.cherrypick)
     if lser.has_cover and lser.patches[0].followup_trailers and not covertrailers:
         # Warn that some trailers were sent to the cover letter
         logger.critical('---')
@@ -183,8 +199,8 @@ def mbox_to_am(mboxfile, cmdargs, msgid):
 
     linkurl = config['linkmask'] % top_msgid
     if cmdargs.quiltready:
-        q_dirname = os.path.join(outdir, '%s.patches' % slug)
-        am_mbox_to_quilt(am_mbx, q_dirname)
+        q_dirname = os.path.join(outdir, f'{slug}.patches')
+        save_as_quilt(am_msgs, q_dirname)
         logger.critical('Quilt: %s', q_dirname)
 
     logger.critical(' Link: %s', linkurl)
@@ -241,13 +257,6 @@ def mbox_to_am(mboxfile, cmdargs, msgid):
         logger.critical(' Base: not found%s', cleanmsg)
         if cmdargs.outdir != '-':
             logger.critical('       git am %s', am_filename)
-
-    am_mbx.close()
-    if cmdargs.outdir == '-':
-        logger.info('---')
-        with open(am_filename, 'rb') as fh:
-            shutil.copyfileobj(fh, sys.stdout.buffer)
-        os.unlink(am_filename)
 
     thanks_record_am(lser, cherrypick=cherrypick)
 
@@ -315,68 +324,57 @@ def thanks_record_am(lser, cherrypick=None):
         logger.debug('Wrote %s for thanks tracking', filename)
 
 
-def am_mbox_to_quilt(am_mbx, q_dirname):
+def save_as_quilt(am_msgs, q_dirname):
     if os.path.exists(q_dirname):
         logger.critical('ERROR: Directory %s exists, not saving quilt patches', q_dirname)
         return
-    os.mkdir(q_dirname, 0o755)
+    pathlib.Path(q_dirname).mkdir(parents=True)
     patch_filenames = list()
-    for key, msg in am_mbx.items():
-        # Run each message through git mailinfo
-        msg_out = mkstemp(suffix=None, prefix=None, dir=q_dirname)
-        patch_out = mkstemp(suffix=None, prefix=None, dir=q_dirname)
-        cmdargs = ['mailinfo', '--encoding=UTF-8', msg_out[1], patch_out[1]]
-        ecode, info = b4.git_run_command(None, cmdargs, msg.as_bytes(policy=b4.emlpolicy))
-        if not len(info.strip()):
-            logger.critical('ERROR: Could not get mailinfo from patch %s', msg['Subject'])
-            continue
-        patchinfo = dict()
-        for line in info.split('\n'):
-            line = line.strip()
-            if not line:
+    with tempfile.TemporaryDirectory() as tfd:
+        m_out = os.path.join(tfd, 'm')
+        p_out = os.path.join(tfd, 'p')
+        for slug, msg in am_msgs:
+            # Run each message through git mailinfo
+            cmdargs = ['mailinfo', '--encoding=UTF-8', '--scissors', m_out, p_out]
+            ecode, info = b4.git_run_command(None, cmdargs, msg.as_bytes(policy=b4.emlpolicy))
+            if not len(info.strip()):
+                logger.critical('ERROR: Could not get mailinfo from patch %s', msg.get('Subject', '(no subject)'))
                 continue
-            chunks = line.split(':',  1)
-            patchinfo[chunks[0]] = chunks[1]
+            patchinfo = dict()
+            for line in info.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                chunks = line.split(':',  1)
+                patchinfo[chunks[0]] = chunks[1].strip().encode()
 
-        slug = re.sub(r'\W+', '_', patchinfo['Subject']).strip('_').lower()
-        patch_filename = '%04d_%s.patch' % (key+1, slug)
-        patch_filenames.append(patch_filename)
-        quilt_out = os.path.join(q_dirname, patch_filename)
-        with open(quilt_out, 'wb') as fh:
-            line = 'From: %s <%s>\n' % (patchinfo['Author'].strip(), patchinfo['Email'].strip())
-            fh.write(line.encode('utf-8'))
-            line = 'Subject: %s\n' % patchinfo['Subject'].strip()
-            fh.write(line.encode('utf-8'))
-            line = 'Date: %s\n' % patchinfo['Date'].strip()
-            fh.write(line.encode('utf-8'))
-            fh.write('\n'.encode('utf-8'))
-            with open(msg_out[1], 'r') as mfh:
-                fh.write(mfh.read().encode('utf-8'))
-            with open(patch_out[1], 'r') as pfh:
-                fh.write(pfh.read().encode('utf-8'))
-        logger.debug('  Wrote: %s', patch_filename)
-        os.unlink(msg_out[1])
-        os.unlink(patch_out[1])
+            patch_filename = f'{slug}.patch'
+            patch_filenames.append(patch_filename)
+            quilt_out = os.path.join(q_dirname, patch_filename)
+            with open(quilt_out, 'wb') as fh:
+                fh.write(b'From: %s <%s>\n' % (patchinfo['Author'], patchinfo['Email']))
+                fh.write(b'Subject: %s\n' % patchinfo['Subject'])
+                fh.write(b'Date: %s\n' % patchinfo['Date'])
+                fh.write(b'\n')
+                with open(m_out, 'rb') as mfh:
+                    shutil.copyfileobj(mfh, fh)
+                with open(p_out, 'rb') as pfh:
+                    shutil.copyfileobj(pfh, fh)
+            logger.debug('  Wrote: %s', patch_filename)
     # Write the series file
     with open(os.path.join(q_dirname, 'series'), 'w') as sfh:
         for patch_filename in patch_filenames:
             sfh.write('%s\n' % patch_filename)
 
 
-def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
-    # Open the mbox and find the latest series mentioned in it
-    if os.path.isdir(mboxfile):
-        mbx = mailbox.Maildir(mboxfile)
-    else:
-        mbx = mailbox.mbox(mboxfile)
-
+def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None, nocache: bool = False) -> list:
     base_msg = None
     latest_revision = None
-    seen_msgids = list()
-    seen_covers = list()
-    for key, msg in mbx.items():
+    seen_msgids = set()
+    seen_covers = set()
+    for msg in msgs:
         msgid = b4.LoreMessage.get_clean_msgid(msg)
-        seen_msgids.append(msgid)
+        seen_msgids.add(msgid)
         lsub = b4.LoreSubject(msg['Subject'])
         # Ignore replies or counters above 1
         if lsub.reply or lsub.counter > 1:
@@ -389,25 +387,22 @@ def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
             if lsub.counter == 0 and not lsub.counters_inferred:
                 # And a cover letter, nice. This is the easy case
                 base_msg = msg
-                seen_covers.append(latest_revision)
+                seen_covers.add(latest_revision)
             elif lsub.counter == 1 and latest_revision not in seen_covers:
                 # A patch/series without a cover letter
                 base_msg = msg
 
     if base_msg is None:
         logger.debug('Could not find cover of 1st patch in mbox')
-        mbx.close()
-        return
+        return msgs
     # Get subject info from base_msg again
     lsub = b4.LoreSubject(base_msg['Subject'])
     if not len(lsub.prefixes):
         logger.debug('Not checking for new revisions: no prefixes on the cover letter.')
-        mbx.close()
-        return
+        return msgs
     if direction < 0 and latest_revision <= 1:
         logger.debug('This is the latest version of the series')
-        mbx.close()
-        return
+        return msgs
     if direction < 0 and wantvers is None:
         wantvers = [latest_revision - 1]
 
@@ -434,8 +429,7 @@ def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
     except xml.etree.ElementTree.ParseError as ex:
         logger.debug('Unable to parse results, ignoring: %s', ex)
         resp.close()
-        mbx.close()
-        return
+        return msgs
     resp.close()
     ns = {'atom': 'http://www.w3.org/2005/Atom'}
     entries = tree.findall('atom:entry', ns)
@@ -475,12 +469,10 @@ def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
             logger.debug('No idea what this is: %s', title)
             continue
         t_mbx_url = '%st.mbox.gz' % link
-        savefile = mkstemp('b4-get')[1]
-        nt_mboxfile = b4.get_pi_thread_by_url(t_mbx_url, savefile, nocache=nocache)
-        nt_mbx = mailbox.mbox(nt_mboxfile)
+        nt_msgs = b4.get_pi_thread_by_url(t_mbx_url, nocache=nocache)
         # Append all of these to the existing mailbox
         new_adds = 0
-        for nt_msg in nt_mbx:
+        for nt_msg in nt_msgs:
             nt_msgid = b4.LoreMessage.get_clean_msgid(nt_msg)
             if nt_msgid in seen_msgids:
                 logger.debug('Duplicate message, skipping')
@@ -488,16 +480,12 @@ def get_extra_series(mboxfile, direction=1, wantvers=None, nocache=False):
             nt_subject = re.sub(r'\s+', ' ', nt_msg['Subject'])
             logger.debug('Adding: %s', nt_subject)
             new_adds += 1
-            mbx.add(nt_msg)
-            seen_msgids.append(nt_msgid)
-        nt_mbx.close()
+            msgs.append(nt_msg)
+            seen_msgids.add(nt_msgid)
         if new_adds:
             logger.info('Added %s messages from thread: %s', new_adds, title)
-        logger.debug('Removing temporary %s', nt_mboxfile)
-        os.unlink(nt_mboxfile)
 
-    # We close the mbox, since we'll be reopening it later
-    mbx.close()
+    return msgs
 
 
 def main(cmdargs):
@@ -505,30 +493,25 @@ def main(cmdargs):
         # Force nocache mode
         cmdargs.nocache = True
 
-    savefile = mkstemp('b4-mbox')[1]
-    msgid = None
-
+    msgs = list()
     if not cmdargs.localmbox:
         msgid = b4.get_msgid(cmdargs)
         if not msgid:
             logger.error('Error: pipe a message or pass msgid as parameter')
-            os.unlink(savefile)
             sys.exit(1)
 
-        threadfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
-        if threadfile is None:
-            os.unlink(savefile)
+        msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
+        if not len(msgs):
             return
     else:
         if cmdargs.localmbox == '-':
-            # The entire mbox is passed via stdin, so save it into a temporary file
-            # and use the first message for our msgid
-            with open(savefile, 'wb') as fh:
-                fh.write(sys.stdin.buffer.read())
-            in_mbx = mailbox.mbox(savefile)
-            msg = in_mbx.get(0)
-            if msg:
-                msgid = msg.get('Message-ID', None).strip('<>')
+            # The entire mbox is passed via stdin, so mailsplit it and use the first message for our msgid
+            with tempfile.TemporaryDirectory() as tfd:
+                msgs = b4.mailsplit_bytes(sys.stdin.buffer.read(), tfd)
+            if not len(msgs):
+                logger.critical('Stdin did not contain any messages')
+                sys.exit(1)
+            msgid = msgs[0].get('Message-ID', None).strip('<>')
 
         elif os.path.exists(cmdargs.localmbox):
             msgid = b4.get_msgid(cmdargs)
@@ -536,29 +519,22 @@ def main(cmdargs):
                 in_mbx = mailbox.Maildir(cmdargs.localmbox)
             else:
                 in_mbx = mailbox.mbox(cmdargs.localmbox)
+
             if msgid:
-                out_mbx = mailbox.mbox(savefile)
-                b4.save_strict_thread(in_mbx, out_mbx, msgid)
-                if not len(out_mbx):
+                msgs = b4.get_strict_thread(in_mbx, msgid)
+                if not len(msgs):
                     logger.critical('Could not find %s in %s', msgid, cmdargs.localmbox)
-                    os.unlink(savefile)
                     sys.exit(1)
         else:
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
-            os.unlink(savefile)
             sys.exit(1)
 
-        threadfile = savefile
-
-    if threadfile and cmdargs.checknewer:
-        get_extra_series(threadfile, direction=1)
+    if len(msgs) and cmdargs.checknewer:
+        msgs = get_extra_series(msgs, direction=1)
 
     if cmdargs.subcmd == 'am':
-        mbox_to_am(threadfile, cmdargs, msgid)
-        os.unlink(threadfile)
+        make_am(msgs, cmdargs, msgid)
         return
-
-    mbx = mailbox.mbox(threadfile)
 
     if cmdargs.showkeys:
         logger.info('---')
@@ -566,11 +542,10 @@ def main(cmdargs):
             import patatt
         except ModuleNotFoundError:
             logger.info('--show-keys requires the patatt library')
-            os.unlink(threadfile)
             sys.exit(1)
 
         keydata = set()
-        for msg in mbx:
+        for msg in msgs:
             xdk = msg.get('x-developer-key')
             xds = msg.get('x-developer-signature')
             if not xdk or not xds:
@@ -589,11 +564,9 @@ def main(cmdargs):
                 logger.debug('Unknown key type: %s', algo)
                 continue
             keydata.add((identity, algo, selector, keyinfo))
-        mbx.close()
 
         if not keydata:
             logger.info('No keys found in the thread.')
-            os.unlink(threadfile)
             sys.exit(0)
         krpath = os.path.join(b4.get_data_dir(), 'keyring')
         pgp = False
@@ -634,16 +607,12 @@ def main(cmdargs):
             logger.info('For ed25519 keys:')
             logger.info('    echo [pubkey] > [fullpath]')
 
-        os.unlink(threadfile)
         sys.exit(0)
 
-    logger.info('%s messages in the thread', len(mbx))
+    logger.info('%s messages in the thread', len(msgs))
     if cmdargs.outdir == '-':
-        mbx.close()
         logger.info('---')
-        with open(threadfile, 'rb') as fh:
-            shutil.copyfileobj(fh, sys.stdout.buffer)
-        os.unlink(threadfile)
+        b4.save_git_am_mbox(msgs, sys.stdout.buffer)
         return
 
     # Check if outdir is a maildir
@@ -656,21 +625,37 @@ def main(cmdargs):
         if cmdargs.filterdupes:
             for emsg in mdr:
                 have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))
-        for msg in mbx:
+        for msg in msgs:
             if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:
                 added += 1
                 mdr.add(msg)
         logger.info('Added to %s messages to maildir %s', added, cmdargs.outdir)
-        mbx.close()
-        os.unlink(threadfile)
         return
 
-    if cmdargs.wantname:
-        savefile = os.path.join(cmdargs.outdir, cmdargs.wantname)
+    config = b4.get_main_config()
+    if cmdargs.maildir or config.get('save-maildirs', 'no') == 'yes':
+        save_maildir = True
+        dftext = 'thread'
     else:
-        savefile = os.path.join(cmdargs.outdir, '%s.mbx' % msgid)
+        save_maildir = False
+        dftext = 'mbx'
 
-    mbx.close()
-    shutil.copy(threadfile, savefile)
-    logger.info('Saved %s', savefile)
-    os.unlink(threadfile)
+    if cmdargs.wantname:
+        savename = os.path.join(cmdargs.outdir, cmdargs.wantname)
+    else:
+        savename = os.path.join(cmdargs.outdir, f'{msgid}.{dftext}')
+
+    if save_maildir:
+        if os.path.isdir(savename):
+            shutil.rmtree(savename)
+        md = mailbox.Maildir(savename, create=True)
+        for msg in msgs:
+            md.add(msg)
+        md.close()
+        logger.info('Saved maildir %s', savename)
+        return
+
+    with open(savename, 'wb') as fh:
+        b4.save_git_am_mbox(msgs, fh)
+
+    logger.info('Saved %s', savename)

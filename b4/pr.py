@@ -393,19 +393,15 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
             # Did we already retrieve it as part of a previous tread?
             if msgid in seen_msgids:
                 continue
-            savefile = mkstemp()[1]
-            mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile)
-            if mboxfile is not None:
-                # Open it and append any messages we don't yet have
-                ambx = mailbox.mbox(mboxfile)
-                for amsg in ambx:
+            msgs = b4.get_pi_thread_by_msgid(msgid)
+            if msgs:
+                # Append any messages we don't yet have
+                for amsg in msgs:
                     amsgid = b4.LoreMessage.get_clean_msgid(amsg)
                     if amsgid not in seen_msgids:
                         seen_msgids.add(amsgid)
                         logger.debug('Added linked: %s', amsg.get('Subject'))
                         tmbx.add(amsg.as_string(policy=b4.emlpolicy).encode())
-                ambx.close()
-            os.unlink(savefile)
 
         if len(tmbx):
             tmbx.close()
@@ -441,21 +437,14 @@ def main(cmdargs):
         logger.debug('Getting PR message from public-inbox')
 
         msgid = b4.get_msgid(cmdargs)
-        savefile = mkstemp()[1]
-        mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile)
-        if mboxfile is None:
-            os.unlink(savefile)
+        msgs = b4.get_pi_thread_by_msgid(msgid)
+        if not msgs:
             return
-        # Find the message with the msgid we were asked about
-        mbx = mailbox.mbox(mboxfile)
-        for msg in mbx:
+        for msg in msgs:
             mmsgid = b4.LoreMessage.get_clean_msgid(msg)
             if mmsgid == msgid:
                 lmsg = parse_pr_data(msg)
-
-        # Got all we need from it
-        mbx.close()
-        os.unlink(savefile)
+                break
 
     if lmsg is None or lmsg.pr_remote_tip_commit is None:
         logger.critical('ERROR: Could not find pull request info in %s', msgid)

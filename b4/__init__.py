@@ -11,6 +11,9 @@ import fnmatch
 import email.utils
 import email.policy
 import email.header
+import tempfile
+import pathlib
+
 import requests
 import urllib.parse
 import datetime
@@ -21,8 +24,6 @@ import mailbox
 # noinspection PyCompatibility
 import pwd
 
-from pathlib import Path
-from tempfile import mkstemp, TemporaryDirectory
 from contextlib import contextmanager
 from typing import Optional, Tuple, Set, List
 
@@ -94,6 +95,7 @@ DEFAULT_CONFIG = {
     'midmask': LOREADDR + '/r/%s',
     'linkmask': LOREADDR + '/r/%s',
     'trailer-order': DEFAULT_TRAILER_ORDER,
+    'save-maildirs': 'no',
     # off: do not bother checking attestation
     # check: print an attaboy when attestation is found
     # softfail: print a warning when no attestation found
@@ -216,14 +218,10 @@ class LoreMailbox:
                 if reused:
                     continue
                 # Try to backfill from that project
-                tmp_mbox = mkstemp('b4-backfill-mbox')[1]
-                get_pi_thread_by_msgid(patch.msgid, tmp_mbox, useproject=projmap[entry[1]])
-                mbx = mailbox.mbox(tmp_mbox)
+                backfills = get_pi_thread_by_msgid(patch.msgid, useproject=projmap[entry[1]])
                 was = len(self.msgid_map)
-                for msg in mbx:
+                for msg in backfills:
                     self.add_message(msg)
-                mbx.close()
-                os.unlink(tmp_mbox)
                 if len(self.msgid_map) > was:
                     logger.info('Loaded %s messages from %s', len(self.msgid_map)-was, projurl)
                 if self.series[revision].complete:
@@ -541,8 +539,8 @@ class LoreSeries:
 
         return slug[:100]
 
-    def save_am_mbox(self, mbx, noaddtrailers=False, covertrailers=False, trailer_order=None, addmysob=False,
-                     addlink=False, linkmask=None, cherrypick=None, copyccs=False):
+    def get_am_ready(self, noaddtrailers=False, covertrailers=False, trailer_order=None, addmysob=False,
+                     addlink=False, linkmask=None, cherrypick=None, copyccs=False) -> list:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -584,6 +582,7 @@ class LoreSeries:
                 break
 
         at = 1
+        msgs = list()
         for lmsg in self.patches[1:]:
             if cherrypick is not None:
                 if at not in cherrypick:
@@ -625,14 +624,14 @@ class LoreSeries:
                 if noaddtrailers:
                     add_trailers = False
                 msg = lmsg.get_am_message(add_trailers=add_trailers, trailer_order=trailer_order, copyccs=copyccs)
-                # Pass a policy that avoids most legacy encoding horrors
-                mbx.add(msg.as_bytes(policy=emlpolicy))
+                slug = '%04d_%s' % (lmsg.counter, re.sub(r'\W+', '_', lmsg.subject).strip('_').lower())
+                msgs.append((slug, msg))
             else:
                 logger.error('  ERROR: missing [%s/%s]!', at, self.expected)
             at += 1
 
         if attpolicy == 'off':
-            return mbx
+            return msgs
 
         if attsame and attref:
             logger.info('  ---')
@@ -646,7 +645,7 @@ class LoreSeries:
             if not can_patatt:
                 logger.info('  NOTE: install patatt for end-to-end signature verification')
 
-        return mbx
+        return msgs
 
     def check_applies_clean(self, gitdir, when=None):
         # Go through indexes and see if this series should apply cleanly
@@ -1053,7 +1052,7 @@ class LoreMessage:
                     signtime = self.date
 
             self.msg._headers.append((hn, hval))  # noqa
-            res = dkim.verify(self.msg.as_bytes().replace(b'\n>From ', b'\nFrom '))
+            res = dkim.verify(self.msg.as_bytes())
 
             attestor = LoreAttestorDKIM(res, identity, signtime, errors)
             logger.debug('DKIM verify results: %s=%s', identity, res)
@@ -1484,9 +1483,9 @@ class LoreMessage:
     def get_am_message(self, add_trailers=True, trailer_order=None, copyccs=False):
         if add_trailers:
             self.fix_trailers(trailer_order=trailer_order, copyccs=copyccs)
-        am_body = self.body
+        am_body = self.body.rstrip('\r\n')
         am_msg = email.message.EmailMessage()
-        am_msg.set_payload(am_body.encode('utf-8'))
+        am_msg.set_payload(am_body.encode() + b'\n')
         # Clean up headers
         for hdrname, hdrval in self.msg.items():
             lhdrname = hdrname.lower()
@@ -1571,6 +1570,10 @@ class LoreSubject:
                 self.prefixes.append(chunk)
             subject = re.sub(r'^\s*\[[^]]*]\s*', '', subject)
         self.subject = subject
+
+    def get_slug(self):
+        unsafe = '%04d_%s' % (self.counter, self.subject)
+        return re.sub(r'\W+', '_', unsafe).strip('_').lower()
 
     def __repr__(self):
         out = list()
@@ -1772,7 +1775,7 @@ def git_temp_worktree(gitdir=None, commitish=None):
     worktree is deleted when the contex manager is closed. Taken from gj_tools."""
     dfn = None
     try:
-        with TemporaryDirectory() as dfn:
+        with tempfile.TemporaryDirectory() as dfn:
             gitargs = ['worktree', 'add', '--detach', '--no-checkout', dfn]
             if commitish:
                 gitargs.append(commitish)
@@ -1796,7 +1799,7 @@ def git_temp_clone(gitdir=None):
         logger.critical('Current directory is not a git checkout. Try using -g.')
         return None
 
-    with TemporaryDirectory() as dfn:
+    with tempfile.TemporaryDirectory() as dfn:
         gitargs = ['clone', '--mirror', '--shared', gitdir, dfn]
         git_run_command(None, gitargs)
         yield dfn
@@ -1862,9 +1865,9 @@ def get_data_dir(appname: str = 'b4') -> str:
     if 'XDG_DATA_HOME' in os.environ:
         datahome = os.environ['XDG_DATA_HOME']
     else:
-        datahome = os.path.join(str(Path.home()), '.local', 'share')
+        datahome = os.path.join(str(pathlib.Path.home()), '.local', 'share')
     datadir = os.path.join(datahome, appname)
-    Path(datadir).mkdir(parents=True, exist_ok=True)
+    pathlib.Path(datadir).mkdir(parents=True, exist_ok=True)
     return datadir
 
 
@@ -1873,9 +1876,9 @@ def get_cache_dir(appname: str = 'b4') -> str:
     if 'XDG_CACHE_HOME' in os.environ:
         cachehome = os.environ['XDG_CACHE_HOME']
     else:
-        cachehome = os.path.join(str(Path.home()), '.cache')
+        cachehome = os.path.join(str(pathlib.Path.home()), '.cache')
     cachedir = os.path.join(cachehome, appname)
-    Path(cachedir).mkdir(parents=True, exist_ok=True)
+    pathlib.Path(cachedir).mkdir(parents=True, exist_ok=True)
     if _CACHE_CLEANED:
         return cachedir
 
@@ -1888,12 +1891,16 @@ def get_cache_dir(appname: str = 'b4') -> str:
         expmin = 600
     expage = time.time() - expmin
     for entry in os.listdir(cachedir):
-        if entry.find('.mbx') <= 0 and entry.find('.lookup') <= 0:
+        if entry.find('.mbx') <= 0 and entry.find('.lookup') <= 0 and entry.find('.msgs'):
             continue
-        st = os.stat(os.path.join(cachedir, entry))
+        fullpath = os.path.join(cachedir, entry)
+        st = os.stat(fullpath)
         if st.st_mtime < expage:
             logger.debug('Cleaning up cache: %s', entry)
-            os.unlink(os.path.join(cachedir, entry))
+            if os.path.isdir(fullpath):
+                shutil.rmtree(fullpath)
+            else:
+                os.unlink(os.path.join(cachedir, entry))
     _CACHE_CLEANED = True
     return cachedir
 
@@ -1985,13 +1992,14 @@ def get_msgid(cmdargs) -> Optional[str]:
     return msgid
 
 
-def save_strict_thread(in_mbx, out_mbx, msgid):
+def get_strict_thread(msgs, msgid):
     want = {msgid}
     got = set()
     seen = set()
     maybe = dict()
+    strict = list()
     while True:
-        for msg in in_mbx:
+        for msg in msgs:
             c_msgid = LoreMessage.get_clean_msgid(msg)
             seen.add(c_msgid)
             if c_msgid in got:
@@ -2016,7 +2024,7 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
                         maybe[ref].add(c_msgid)
 
             if c_msgid in want:
-                out_mbx.add(msg)
+                strict.append(msg)
                 got.add(c_msgid)
                 want.update(refs)
                 want.discard(c_msgid)
@@ -2038,19 +2046,41 @@ def save_strict_thread(in_mbx, out_mbx, msgid):
         if not len(want):
             break
 
-    if not len(out_mbx):
+    if not len(strict):
         return None
 
-    if len(in_mbx) > len(out_mbx):
-        logger.debug('Reduced mbox to strict matches only (%s->%s)', len(in_mbx), len(out_mbx))
+    if len(msgs) > len(strict):
+        logger.debug('Reduced mbox to strict matches only (%s->%s)', len(msgs), len(strict))
+
+    return strict
 
 
-def get_pi_thread_by_url(t_mbx_url, savefile, nocache=False):
-    cachefile = get_cache_file(t_mbx_url, 'pi.mbx')
-    if os.path.exists(cachefile) and not nocache:
-        logger.debug('Using cached copy: %s', cachefile)
-        shutil.copyfile(cachefile, savefile)
-        return savefile
+def mailsplit_bytes(bmbox: bytes, outdir: str) -> list:
+    logger.debug('Mailsplitting the mbox into %s', outdir)
+    args = ['mailsplit', '--mboxrd', '-o%s' % outdir]
+    ecode, out = git_run_command(None, args, stdin=bmbox)
+    msgs = list()
+    if ecode > 0:
+        logger.critical('Unable to parse mbox received from the server')
+        return msgs
+    # Read in the files
+    for msg in os.listdir(outdir):
+        with open(os.path.join(outdir, msg), 'rb') as fh:
+            msgs.append(email.message_from_binary_file(fh))
+    return msgs
+
+
+def get_pi_thread_by_url(t_mbx_url, nocache=False):
+    msgs = list()
+    cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
+    if os.path.exists(cachedir) and not nocache:
+        logger.info('Using cached copy: %s', cachedir)
+        for msg in os.listdir(cachedir):
+            with open(os.path.join(cachedir, msg), 'rb') as fh:
+                msgs.append(email.message_from_binary_file(fh))
+        return msgs
+
+    logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
     session = get_requests_session()
     resp = session.get(t_mbx_url)
     if resp.status_code != 200:
@@ -2061,16 +2091,16 @@ def get_pi_thread_by_url(t_mbx_url, savefile, nocache=False):
     if not len(t_mbox):
         logger.critical('No messages found for that query')
         return None
-    # Convert mboxrd to mboxo that python understands
-    t_mbox = t_mbox.replace(b'\n>>From ', b'\n>From ')
-    with open(savefile, 'wb') as fh:
-        logger.debug('Saving %s', savefile)
-        fh.write(t_mbox)
-    shutil.copyfile(savefile, cachefile)
-    return savefile
+    # Convert into individual files using git-mailsplit
+    with tempfile.TemporaryDirectory(suffix='-mailsplit') as tfd:
+        msgs = mailsplit_bytes(t_mbox, tfd)
+        if os.path.exists(cachedir):
+            shutil.rmtree(cachedir)
+        shutil.copytree(tfd, cachedir)
+    return msgs
 
 
-def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
+def get_pi_thread_by_msgid(msgid, useproject=None, nocache=False):
     qmsgid = urllib.parse.quote_plus(msgid)
     config = get_main_config()
     # Grab the head from lore, to see where we are redirected
@@ -2092,25 +2122,17 @@ def get_pi_thread_by_msgid(msgid, savefile, useproject=None, nocache=False):
     t_mbx_url = '%s/%s/t.mbox.gz' % (projurl, qmsgid)
     logger.debug('t_mbx_url=%s', t_mbx_url)
 
-    logger.critical('Grabbing thread from %s', projurl.split('://')[1])
-
-    tmp_mbox = mkstemp('b4-lookup-mbox')[1]
-    in_mbxf = get_pi_thread_by_url(t_mbx_url, tmp_mbox, nocache=nocache)
-    if not in_mbxf:
-        os.unlink(tmp_mbox)
+    msgs = get_pi_thread_by_url(t_mbx_url, nocache=nocache)
+    if not len(msgs):
         return None
-    in_mbx = mailbox.mbox(in_mbxf)
-    out_mbx = mailbox.mbox(savefile)
-    save_strict_thread(in_mbx, out_mbx, msgid)
-    in_mbx.close()
-    out_mbx.close()
-    os.unlink(in_mbxf)
-    return savefile
+
+    strict = get_strict_thread(msgs, msgid)
+    return strict
 
 
 @contextmanager
 def git_format_patches(gitdir, start, end, prefixes=None, extraopts=None):
-    with TemporaryDirectory() as tmpd:
+    with tempfile.TemporaryDirectory() as tmpd:
         gitargs = ['format-patch', '--cover-letter', '-o', tmpd, '--signature', f'b4 {__VERSION__}']
         if prefixes is not None and len(prefixes):
             gitargs += ['--subject-prefix', ' '.join(prefixes)]
@@ -2238,3 +2260,19 @@ def get_gpg_uids(keyid: str) -> list:
         uids.append(chunks[9])
 
     return uids
+
+
+def save_git_am_mbox(msgs: list, dest):
+    # Git-am has its own understanding of what "mbox" format is that differs from Python's
+    # mboxo implementation. Specifically, it never escapes the ">From " lines found in bodies
+    # unless invoked with --patch-format=mboxrd (this is wrong, because ">From " escapes are also
+    # required in the original mbox "mboxo" format).
+    # So, save in the format that git-am expects
+    # "dest" should be a file handler in writable+binary mode
+    for msg in msgs:
+        bmsg = msg.as_bytes(unixfrom=True, policy=emlpolicy)
+        # public-inbox unixfrom says "mboxrd", so replace it with something else
+        # so there is no confusion as it's NOT mboxrd
+        bmsg = bmsg.replace(b'From mboxrd@z ', b'From git@z ')
+        bmsg = bmsg.rstrip(b'\r\n') + b'\n\n'
+        dest.write(bmsg)

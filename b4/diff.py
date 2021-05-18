@@ -10,10 +10,9 @@ import sys
 import b4
 import b4.mbox
 import mailbox
+import email
 import shutil
-
-from tempfile import mkstemp
-
+import pathlib
 
 logger = b4.logger
 
@@ -26,7 +25,6 @@ def diff_same_thread_series(cmdargs):
         sys.exit(1)
 
     # start by grabbing the mbox provided
-    savefile = mkstemp('b4-diff-to')[1]
     # Do we have a cache of this lookup?
     identifier = msgid
     if wantvers:
@@ -34,29 +32,34 @@ def diff_same_thread_series(cmdargs):
     if cmdargs.useproject:
         identifier += '-' + cmdargs.useproject
 
-    cachefile = b4.get_cache_file(identifier, suffix='diff.mbx')
-    if os.path.exists(cachefile) and not cmdargs.nocache:
+    cachedir = b4.get_cache_file(identifier, suffix='diff.msgs')
+    if os.path.exists(cachedir) and not cmdargs.nocache:
         logger.info('Using cached copy of the lookup')
-        shutil.copyfile(cachefile, savefile)
-        mboxfile = savefile
+        msgs = list()
+        for msg in os.listdir(cachedir):
+            with open(os.path.join(cachedir, msg), 'rb') as fh:
+                msgs.append(email.message_from_binary_file(fh))
     else:
-        mboxfile = b4.get_pi_thread_by_msgid(msgid, savefile, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
-        if mboxfile is None:
+        msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
+        if not msgs:
             logger.critical('Unable to retrieve thread: %s', msgid)
             return
-        b4.mbox.get_extra_series(mboxfile, direction=-1, wantvers=wantvers)
-        shutil.copyfile(mboxfile, cachefile)
+        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=wantvers)
+        if os.path.exists(cachedir):
+            shutil.rmtree(cachedir)
+        pathlib.Path(cachedir).mkdir(parents=True)
+        at = 0
+        for msg in msgs:
+            with open(os.path.join(cachedir, '%04d' % at), 'wb') as fh:
+                fh.write(msg.as_bytes(policy=b4.emlpolicy))
+            at += 1
 
-    mbx = mailbox.mbox(mboxfile)
-    count = len(mbx)
+    count = len(msgs)
     logger.info('---')
     logger.info('Analyzing %s messages in the thread', count)
     lmbx = b4.LoreMailbox()
-    for key, msg in mbx.items():
+    for msg in msgs:
         lmbx.add_message(msg)
-
-    mbx.close()
-    os.unlink(savefile)
 
     if wantvers and len(wantvers) == 1:
         upper = max(lmbx.series.keys())
@@ -66,7 +69,7 @@ def diff_same_thread_series(cmdargs):
         lower = min(wantvers)
     else:
         upper = max(lmbx.series.keys())
-        lower = upper - 1
+        lower = min(lmbx.series.keys())
 
     if upper == lower:
         logger.critical('ERROR: Could not auto-find previous revision')
@@ -101,7 +104,10 @@ def diff_mboxes(cmdargs):
             logger.critical('Cannot open %s', mboxfile)
             return None, None
 
-        mbx = mailbox.mbox(mboxfile)
+        if os.path.isdir(mboxfile):
+            mbx = mailbox.Maildir(mboxfile)
+        else:
+            mbx = mailbox.mbox(mboxfile)
         count = len(mbx)
         logger.info('Loading %s messages from %s', count, mboxfile)
         lmbx = b4.LoreMailbox()
