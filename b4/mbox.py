@@ -501,7 +501,7 @@ def main(cmdargs):
             sys.exit(1)
 
         msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
-        if not len(msgs):
+        if not msgs:
             return
     else:
         if cmdargs.localmbox == '-':

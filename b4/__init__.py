@@ -219,6 +219,8 @@ class LoreMailbox:
                     continue
                 # Try to backfill from that project
                 backfills = get_pi_thread_by_msgid(patch.msgid, useproject=projmap[entry[1]])
+                if not backfills:
+                    return
                 was = len(self.msgid_map)
                 for msg in backfills:
                     self.add_message(msg)
@@ -610,7 +612,11 @@ class LoreSeries:
 
                 else:
                     checkmark, trailers, critical = lmsg.get_attestation_trailers(attpolicy, maxdays)
-                    logger.info('  %s %s', checkmark, lmsg.get_am_subject())
+                    if checkmark:
+                        logger.info('  %s %s', checkmark, lmsg.get_am_subject())
+                    else:
+                        logger.info('  %s', lmsg.get_am_subject())
+
                     for trailer in trailers:
                         logger.info('    %s', trailer)
 
@@ -1016,6 +1022,7 @@ class LoreMessage:
         if self.msg.get('dkim-signature') and config['attestation-check-dkim'] == 'yes':
             self._load_dkim_attestors()
 
+        logger.debug('Attestors: %s', len(self._attestors))
         return self._attestors
 
     def _load_dkim_attestors(self) -> None:
@@ -2074,7 +2081,7 @@ def get_pi_thread_by_url(t_mbx_url, nocache=False):
     msgs = list()
     cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
     if os.path.exists(cachedir) and not nocache:
-        logger.info('Using cached copy: %s', cachedir)
+        logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
                 msgs.append(email.message_from_binary_file(fh))
@@ -2123,7 +2130,7 @@ def get_pi_thread_by_msgid(msgid, useproject=None, nocache=False):
     logger.debug('t_mbx_url=%s', t_mbx_url)
 
     msgs = get_pi_thread_by_url(t_mbx_url, nocache=nocache)
-    if not len(msgs):
+    if not msgs:
         return None
 
     strict = get_strict_thread(msgs, msgid)
