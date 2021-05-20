@@ -47,6 +47,17 @@ def make_am(msgs, cmdargs, msgid):
     reroll = True
     if cmdargs.nopartialreroll:
         reroll = False
+    if cmdargs.cherrypick == '_' and not wantver and len(lmbx.series) > 1:
+        # Make sure we pick the revision containing the msgid
+        wantver = None
+        for cnum, clser in lmbx.series.items():
+            for lmsg in clser.patches:
+                if lmsg and lmsg.msgid == msgid:
+                    wantver = cnum
+                    break
+            if wantver:
+                break
+
     lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers, reroll=reroll)
     if lser is None and wantver is None:
         logger.critical('No patches found.')
