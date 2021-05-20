@@ -962,7 +962,7 @@ class LoreMessage:
 
         trailers = list()
         for tname, tvalue, extdata in self.trailers:
-            if tname.lower() in ('fixes',):
+            if tname.lower() in ('fixes', 'obsoleted-by'):
                 trailers.append((tname, tvalue, extdata, self))
                 continue
 
@@ -1273,7 +1273,7 @@ class LoreMessage:
     @staticmethod
     def find_trailers(body, followup=False):
         headers = ('subject', 'date', 'from')
-        nonperson = ('fixes', 'subject', 'date', 'link', 'buglink')
+        nonperson = ('fixes', 'subject', 'date', 'link', 'buglink', 'obsoleted-by')
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
         # baz quux)
