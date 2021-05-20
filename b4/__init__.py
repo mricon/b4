@@ -585,6 +585,7 @@ class LoreSeries:
 
         at = 1
         msgs = list()
+        logger.info('---')
         for lmsg in self.patches[1:]:
             if cherrypick is not None:
                 if at not in cherrypick:

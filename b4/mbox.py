@@ -58,7 +58,6 @@ def make_am(msgs, cmdargs, msgid):
         logger.info('Will use the latest revision: v%s', lser.revision)
         logger.info('You can pick other revisions using the -vN flag')
 
-    logger.info('---')
     if cmdargs.cherrypick:
         cherrypick = list()
         if cmdargs.cherrypick == '_':
