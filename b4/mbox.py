@@ -47,16 +47,6 @@ def make_am(msgs, cmdargs, msgid):
     reroll = True
     if cmdargs.nopartialreroll:
         reroll = False
-    if cmdargs.cherrypick == '_' and not wantver and len(lmbx.series) > 1:
-        # Make sure we pick the revision containing the msgid
-        wantver = None
-        for cnum, clser in lmbx.series.items():
-            for lmsg in clser.patches:
-                if lmsg and lmsg.msgid == msgid:
-                    wantver = cnum
-                    break
-            if wantver:
-                break
 
     lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers, reroll=reroll)
     if lser is None and wantver is None:
@@ -540,7 +530,12 @@ def main(cmdargs):
             logger.error('Error: pipe a message or pass msgid as parameter')
             sys.exit(1)
 
-        msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
+        pickings = set()
+        if cmdargs.cherrypick == '_':
+            # Just that msgid, please
+            pickings = {msgid}
+        msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache,
+                                         onlymsgids=pickings)
         if not msgs:
             return
     else:

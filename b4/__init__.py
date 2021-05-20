@@ -2108,7 +2108,7 @@ def get_pi_thread_by_url(t_mbx_url, nocache=False):
     return msgs
 
 
-def get_pi_thread_by_msgid(msgid, useproject=None, nocache=False):
+def get_pi_thread_by_msgid(msgid, useproject=None, nocache=False, onlymsgids: Optional[set] = None):
     qmsgid = urllib.parse.quote_plus(msgid)
     config = get_main_config()
     # Grab the head from lore, to see where we are redirected
@@ -2134,7 +2134,18 @@ def get_pi_thread_by_msgid(msgid, useproject=None, nocache=False):
     if not msgs:
         return None
 
-    strict = get_strict_thread(msgs, msgid)
+    if onlymsgids:
+        strict = list()
+        for msg in msgs:
+            if LoreMessage.get_clean_msgid(msg) in onlymsgids:
+                strict.append(msg)
+            # also grab any messages where this msgid is in the references header
+            for onlymsgid in onlymsgids:
+                if msg.get('references', '').find(onlymsgid) >= 0:
+                    strict.append(msg)
+    else:
+        strict = get_strict_thread(msgs, msgid)
+
     return strict
 
 
