@@ -126,9 +126,12 @@ def make_am(msgs, cmdargs, msgid):
             pathlib.Path(d_new).mkdir(parents=True)
             d_cur = os.path.join(am_filename, 'cur')
             pathlib.Path(d_cur).mkdir(parents=True)
+            d_tmp = os.path.join(am_filename, 'tmp')
+            pathlib.Path(d_tmp).mkdir(parents=True)
             for m_slug, msg in am_msgs:
-                with open(os.path.join(d_new, f'{m_slug}.eml'), 'wb') as mfh:
+                with open(os.path.join(d_tmp, f'{m_slug}.eml'), 'wb') as mfh:
                     mfh.write(msg.as_bytes(policy=b4.emlpolicy))
+                os.rename(os.path.join(d_tmp, f'{m_slug}.eml'), os.path.join(d_new, f'{m_slug}.eml'))
         else:
             with open(am_filename, 'wb') as fh:
                 b4.save_git_am_mbox([x[1] for x in am_msgs], fh)
