@@ -597,6 +597,8 @@ def main(cmdargs):
         cmdargs.nocache = True
 
     msgid, msgs = get_msgs(cmdargs)
+    if not msgs:
+        return
 
     if len(msgs) and cmdargs.checknewer:
         msgs = get_extra_series(msgs, direction=1)
