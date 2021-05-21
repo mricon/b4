@@ -1038,7 +1038,10 @@ class LoreMessage:
         # until we come to a passing one
         dkhdrs = list()
         for header in list(self.msg._headers):  # noqa
-            if header[0].lower() == 'dkim-signature':
+            # Also remove any List- headers set by lore.kernel.org
+            if header[0].lower().startswith('list-') and header[1].find('lore.kernel.org') > 0:
+                self.msg._headers.remove(header) # noqa
+            elif header[0].lower() == 'dkim-signature':
                 dkhdrs.append(header)
                 self.msg._headers.remove(header) # noqa
         dkhdrs.reverse()
