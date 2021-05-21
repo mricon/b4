@@ -147,6 +147,23 @@ def make_am(msgs, cmdargs, msgid):
         logger.critical('Total patches: %s', len(am_msgs))
     else:
         logger.info('Total patches: %s (cherrypicked: %s)', len(am_msgs), cmdargs.cherrypick)
+    # Check if any of the followup-trailers is an Obsoleted-by
+    if not cmdargs.checknewer:
+        warned = False
+        for lmsg in lser.patches:
+            # Only check cover letter or first patch
+            if lmsg.counter > 1:
+                continue
+            for trailer in list(lmsg.followup_trailers):
+                if trailer[0].lower() == 'obsoleted-by':
+                    lmsg.followup_trailers.remove(trailer)
+                    if warned:
+                        continue
+                    logger.critical('---')
+                    logger.critical('WARNING: Found an Obsoleted-by follow-up trailer!')
+                    logger.critical('         Rerun with -c to automatically retrieve the new series.')
+                    warned = True
+
     if lser.has_cover and lser.patches[0].followup_trailers and not covertrailers:
         # Warn that some trailers were sent to the cover letter
         logger.critical('---')
