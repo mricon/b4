@@ -152,7 +152,7 @@ def make_am(msgs, cmdargs, msgid):
         warned = False
         for lmsg in lser.patches:
             # Only check cover letter or first patch
-            if lmsg.counter > 1:
+            if not lmsg or lmsg.counter > 1:
                 continue
             for trailer in list(lmsg.followup_trailers):
                 if trailer[0].lower() == 'obsoleted-by':
