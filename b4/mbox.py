@@ -24,7 +24,7 @@ import xml.etree.ElementTree
 
 import b4
 
-from typing import Optional
+from typing import Optional, Tuple
 
 logger = b4.logger
 
@@ -535,12 +535,8 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     return msgs
 
 
-def main(cmdargs):
-    if cmdargs.checknewer:
-        # Force nocache mode
-        cmdargs.nocache = True
-
-    msgs = list()
+def get_msgs(cmdargs) -> Tuple[Optional[str], Optional[list]]:
+    msgid = None
     if not cmdargs.localmbox:
         msgid = b4.get_msgid(cmdargs)
         if not msgid:
@@ -548,13 +544,16 @@ def main(cmdargs):
             sys.exit(1)
 
         pickings = set()
-        if cmdargs.cherrypick == '_':
-            # Just that msgid, please
-            pickings = {msgid}
+        try:
+            if cmdargs.cherrypick == '_':
+                # Just that msgid, please
+                pickings = {msgid}
+        except AttributeError:
+            pass
         msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache,
                                          onlymsgids=pickings)
         if not msgs:
-            return
+            return None, msgs
     else:
         if cmdargs.localmbox == '-':
             # The entire mbox is passed via stdin, so mailsplit it and use the first message for our msgid
@@ -563,7 +562,6 @@ def main(cmdargs):
             if not len(msgs):
                 logger.critical('Stdin did not contain any messages')
                 sys.exit(1)
-            msgid = msgs[0].get('Message-ID', None).strip('<>')
 
         elif os.path.exists(cmdargs.localmbox):
             msgid = b4.get_msgid(cmdargs)
@@ -583,85 +581,29 @@ def main(cmdargs):
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
             sys.exit(1)
 
+    if not msgid and msgs:
+        for msg in msgs:
+            msgid = msg.get('Message-ID', None)
+            if msgid:
+                msgid = msgid.strip('<>')
+                break
+
+    return msgid, msgs
+
+
+def main(cmdargs):
+    if cmdargs.checknewer:
+        # Force nocache mode
+        cmdargs.nocache = True
+
+    msgid, msgs = get_msgs(cmdargs)
+
     if len(msgs) and cmdargs.checknewer:
         msgs = get_extra_series(msgs, direction=1)
 
     if cmdargs.subcmd == 'am':
         make_am(msgs, cmdargs, msgid)
         return
-
-    if cmdargs.showkeys:
-        logger.info('---')
-        try:
-            import patatt
-        except ModuleNotFoundError:
-            logger.info('--show-keys requires the patatt library')
-            sys.exit(1)
-
-        keydata = set()
-        for msg in msgs:
-            xdk = msg.get('x-developer-key')
-            xds = msg.get('x-developer-signature')
-            if not xdk or not xds:
-                continue
-            # grab the selector they used
-            kdata = b4.LoreMessage.get_parts_from_header(xdk)
-            sdata = b4.LoreMessage.get_parts_from_header(xds)
-            algo = kdata.get('a')
-            identity = kdata.get('i')
-            selector = sdata.get('s', 'default')
-            if algo == 'openpgp':
-                keyinfo = kdata.get('fpr')
-            elif algo == 'ed25519':
-                keyinfo = kdata.get('pk')
-            else:
-                logger.debug('Unknown key type: %s', algo)
-                continue
-            keydata.add((identity, algo, selector, keyinfo))
-
-        if not keydata:
-            logger.info('No keys found in the thread.')
-            sys.exit(0)
-        krpath = os.path.join(b4.get_data_dir(), 'keyring')
-        pgp = False
-        ecc = False
-        for identity, algo, selector, keyinfo in keydata:
-            keypath = patatt.make_pkey_path(algo, identity, selector)
-            fullpath = os.path.join(krpath, keypath)
-            if os.path.exists(fullpath):
-                status = 'known'
-            else:
-                status = 'unknown'
-                if algo == 'openpgp':
-                    try:
-                        uids = b4.get_gpg_uids(keyinfo)
-                        if len(uids):
-                            status = 'in default keyring'
-                    except KeyError:
-                        pass
-            pathlib.Path(os.path.dirname(fullpath)).mkdir(parents=True, exist_ok=True)
-
-            logger.info('%s: (%s)', identity, status)
-            logger.info('    keytype: %s', algo)
-            if algo == 'openpgp':
-                pgp = True
-                logger.info('      keyid: %s', keyinfo[-16:])
-                logger.info('        fpr: %s', ':'.join(re.findall(r'.{4}', keyinfo)))
-            else:
-                ecc = True
-                logger.info('     pubkey: %s', keyinfo)
-            logger.info('     krpath: %s', keypath)
-            logger.info('   fullpath: %s', fullpath)
-        logger.info('---')
-        if pgp:
-            logger.info('For openpgp keys:')
-            logger.info('    gpg --recv-key [keyid]')
-            logger.info('    gpg -a --export [keyid] > [fullpath]')
-        if ecc:
-            logger.info('For ed25519 keys:')
-            logger.info('    echo [pubkey] > [fullpath]')
-
-        sys.exit(0)
 
     logger.info('%s messages in the thread', len(msgs))
     if cmdargs.outdir == '-':

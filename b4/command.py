@@ -13,28 +13,37 @@ import sys
 logger = b4.logger
 
 
-def cmd_mbox_common_opts(sp):
+def cmd_retrieval_common_opts(sp):
     sp.add_argument('msgid', nargs='?',
                     help='Message ID to process, or pipe a raw message')
-    sp.add_argument('-o', '--outdir', default='.',
-                    help='Output into this directory (or use - to output mailbox contents to stdout)')
     sp.add_argument('-p', '--use-project', dest='useproject', default=None,
                     help='Use a specific project instead of guessing (linux-mm, linux-hardening, etc)')
+    sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
+                    help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
+    sp.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
+                    help='Do not use local cache')
+
+
+def cmd_mbox_common_opts(sp):
+    cmd_retrieval_common_opts(sp)
+    sp.add_argument('-o', '--outdir', default='.',
+                    help='Output into this directory (or use - to output mailbox contents to stdout)')
     sp.add_argument('-c', '--check-newer-revisions', dest='checknewer', action='store_true', default=False,
                     help='Check if newer patch revisions exist')
     sp.add_argument('-n', '--mbox-name', dest='wantname', default=None,
                     help='Filename to name the mbox destination')
-    sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
-                    help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
     sp.add_argument('-M', '--save-as-maildir', dest='maildir', action='store_true', default=False,
                     help='Save as maildir (avoids mbox format ambiguities)')
-    sp.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
-                    help='Do not use local cache')
 
 
 def cmd_mbox(cmdargs):
     import b4.mbox
     b4.mbox.main(cmdargs)
+
+
+def cmd_kr(cmdargs):
+    import b4.kr
+    b4.kr.main(cmdargs)
 
 
 def cmd_am(cmdargs):
@@ -86,8 +95,6 @@ def cmd():
     cmd_mbox_common_opts(sp_mbox)
     sp_mbox.add_argument('-f', '--filter-dupes', dest='filterdupes', action='store_true', default=False,
                          help='When adding messages to existing maildir, filter out duplicates')
-    sp_mbox.add_argument('--show-keys', dest='showkeys', action='store_true', default=False,
-                         help='Show all developer keys from the thread')
     sp_mbox.set_defaults(func=cmd_mbox)
 
     # b4 am
@@ -198,6 +205,13 @@ def cmd():
     sp_diff.add_argument('-m', '--compare-am-mboxes', dest='ambox', nargs=2, default=None,
                          help='Compare two mbx files prepared with "b4 am"')
     sp_diff.set_defaults(func=cmd_diff)
+
+    # b4 kr
+    sp_kr = subparsers.add_parser('kr', help='Keyring operations')
+    cmd_retrieval_common_opts(sp_kr)
+    sp_kr.add_argument('--show-keys', dest='showkeys', action='store_true', default=False,
+                       help='Show all developer keys found in a thread')
+    sp_kr.set_defaults(func=cmd_kr)
 
     cmdargs = parser.parse_args()
 

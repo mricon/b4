@@ -53,9 +53,11 @@ precursor to Lore and Data in the Star Trek universe.
 .IP \(bu 2
 \fIb4 diff\fP: Show range\-diff style diffs between patch versions
 .IP \(bu 2
-\fIb4 ty\fP: (EXPERIMENTAL) Create templated replies for processed patches and pull requests
+\fIb4 ty\fP: Create templated replies for processed patches and pull requests
 .IP \(bu 2
 \fIb4 attest\fP: (EXPERIMENTAL) Add cryptographic attestation to patches
+.IP \(bu 2
+\fIb4 kr\fP (EXPERIMENTAL) Operate on patatt\-compatible keyrings
 .UNINDENT
 .SH OPTIONS
 .INDENT 0.0
@@ -325,6 +327,35 @@ Compare two mbx files prepared with "b4 am"
 .UNINDENT
 .sp
 \fIExample\fP: b4 diff \fI\%20200526205322.23465\-1\-mic@digikod.net\fP
+.SS b4 kr
+.sp
+usage: b4 kr [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-\-show\-keys] [msgid]
+.INDENT 0.0
+.TP
+.B positional arguments:
+msgid                 Message ID to process, or pipe a raw message
+.TP
+.B optional arguments:
+.INDENT 7.0
+.TP
+.B \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
+Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
+.TP
+.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
+.TP
+.B \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
+.TP
+.B \-\-show\-keys
+Show all developer keys from the thread
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 kr \-\-show\-keys \fI\%20210521184811.617875\-1\-konstantin@linuxfoundation.org\fP
 .SH CONFIGURATION
 .sp
 B4 configuration is handled via git\-config(1), so you can store it in

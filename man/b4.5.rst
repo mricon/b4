@@ -31,8 +31,9 @@ SUBCOMMANDS
 * *b4 am*: Create an mbox file that is ready to git-am
 * *b4 pr*: Work with pull requests
 * *b4 diff*: Show range-diff style diffs between patch versions
-* *b4 ty*: (EXPERIMENTAL) Create templated replies for processed patches and pull requests
+* *b4 ty*: Create templated replies for processed patches and pull requests
 * *b4 attest*: (EXPERIMENTAL) Add cryptographic attestation to patches
+* *b4 kr* (EXPERIMENTAL) Operate on patatt-compatible keyrings
 
 OPTIONS
 -------
@@ -204,6 +205,24 @@ optional arguments:
                         Compare two mbx files prepared with "b4 am"
 
 *Example*: b4 diff 20200526205322.23465-1-mic@digikod.net
+
+b4 kr
+~~~~~
+usage: b4 kr [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [--show-keys] [msgid]
+
+positional arguments:
+  msgid                 Message ID to process, or pipe a raw message
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -p USEPROJECT, --use-project USEPROJECT
+                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
+  -m LOCALMBOX, --use-local-mbox LOCALMBOX
+                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  -C, --no-cache        Do not use local cache
+  --show-keys           Show all developer keys from the thread
+
+*Example*: b4 kr --show-keys 20210521184811.617875-1-konstantin@linuxfoundation.org
 
 CONFIGURATION
 -------------
