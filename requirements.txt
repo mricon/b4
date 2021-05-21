@@ -2,4 +2,4 @@ requests~=2.25.0
 # These are optional, needed for attestation features
 dnspython~=2.1.0
 dkimpy~=1.0.5
-patatt>=0.2.0,<2.0
+patatt>=0.4,<2.0

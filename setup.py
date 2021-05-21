@@ -28,7 +28,7 @@ setup(
     version=find_version('b4/__init__.py'),
     url='https://git.kernel.org/pub/scm/utils/b4/b4.git/tree/README.rst',
     project_urls={
-        'Community': 'https://linux.kernel.org/g/tools'
+        'Community': 'https://lore.kernel.org/tools'
     },
     name=NAME,
     description='A tool to work with public-inbox and patch archives',
@@ -44,6 +44,7 @@ setup(
         'requests~=2.24',
         'dkimpy~=1.0',
         'dnspython~=2.0',
+        'patatt>=0.4,<2.0',
     ],
     python_requires='>=3.6',
     entry_points={
