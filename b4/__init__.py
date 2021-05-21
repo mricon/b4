@@ -273,6 +273,9 @@ class LoreMailbox:
         logger.debug('Reconstituting a partial reroll')
         at = 0
         for patch in lser.patches:
+            if pser.patches[at] is None:
+                at += 1
+                continue
             if patch is None:
                 ppatch = copy.deepcopy(pser.patches[at])
                 ppatch.revision = lser.revision

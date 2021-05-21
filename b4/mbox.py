@@ -577,6 +577,8 @@ def main(cmdargs):
                 if not len(msgs):
                     logger.critical('Could not find %s in %s', msgid, cmdargs.localmbox)
                     sys.exit(1)
+            else:
+                msgs = in_mbx
         else:
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
             sys.exit(1)
