@@ -572,7 +572,7 @@ def get_msgs(cmdargs) -> Tuple[Optional[str], Optional[list]]:
 
             if msgid:
                 msgs = b4.get_strict_thread(in_mbx, msgid)
-                if not len(msgs):
+                if not msgs:
                     logger.critical('Could not find %s in %s', msgid, cmdargs.localmbox)
                     sys.exit(1)
             else:
