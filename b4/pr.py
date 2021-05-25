@@ -298,6 +298,8 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
                 allcc.append(fromaddr)
         if realname:
             # Use "Name via Foo" notation
+            if mailfrom.find('@') > 0 > mailfrom.find('<'):
+                mailfrom = f'<{mailfrom}>'
             mailfrom = f'{realname} via {mailfrom}'
 
     config = b4.get_main_config()
