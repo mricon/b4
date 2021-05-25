@@ -7,6 +7,8 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import os
 import sys
+import tempfile
+
 import b4
 import re
 import mailbox
@@ -15,7 +17,6 @@ import email
 import gzip
 
 from datetime import timedelta
-from tempfile import mkstemp
 
 from email import utils, charset
 from email.mime.text import MIMEText
@@ -382,38 +383,37 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
 
     logger.info('Exploded %s messages', len(msgs))
     if retrieve_links and linked_ids:
-        # Create a single mbox file with all linked conversations
-        threadfile = mkstemp()[1]
-        tmbx = mailbox.mbox(threadfile)
-        logger.info('---')
-        logger.info('Retrieving %s linked conversations', len(linked_ids))
+        with tempfile.TemporaryDirectory() as tfd:
+            # Create a single mbox file with all linked conversations
+            mbf = os.path.join(tfd, 'linked.mbox')
+            tmbx = mailbox.mbox(mbf)
+            logger.info('---')
+            logger.info('Retrieving %s linked conversations', len(linked_ids))
 
-        seen_msgids = set()
-        for msgid in linked_ids:
-            # Did we already retrieve it as part of a previous tread?
-            if msgid in seen_msgids:
-                continue
-            msgs = b4.get_pi_thread_by_msgid(msgid)
-            if msgs:
-                # Append any messages we don't yet have
-                for amsg in msgs:
-                    amsgid = b4.LoreMessage.get_clean_msgid(amsg)
-                    if amsgid not in seen_msgids:
-                        seen_msgids.add(amsgid)
-                        logger.debug('Added linked: %s', amsg.get('Subject'))
-                        tmbx.add(amsg.as_string(policy=b4.emlpolicy).encode())
+            seen_msgids = set()
+            for msgid in linked_ids:
+                # Did we already retrieve it as part of a previous tread?
+                if msgid in seen_msgids:
+                    continue
+                lmsgs = b4.get_pi_thread_by_msgid(msgid)
+                if lmsgs:
+                    # Append any messages we don't yet have
+                    for lmsg in lmsgs:
+                        amsgid = b4.LoreMessage.get_clean_msgid(lmsg)
+                        if amsgid not in seen_msgids:
+                            seen_msgids.add(amsgid)
+                            logger.debug('Added linked: %s', lmsg.get('Subject'))
+                            tmbx.add(lmsg.as_string(policy=b4.emlpolicy).encode())
 
-        if len(tmbx):
-            tmbx.close()
-            # gzip the mailbox and attach it to the cover letter
-            with open(threadfile, 'rb') as fh:
-                mbz = gzip.compress(fh.read())
-                fname = 'linked-threads.mbox.gz'
-                att = MIMEApplication(mbz, 'x-gzip')
-                att.add_header('Content-Disposition', f'attachment; filename={fname}')
-                msgs[0].attach(att)
-
-        os.unlink(threadfile)
+            if len(tmbx):
+                tmbx.close()
+                # gzip the mailbox and attach it to the cover letter
+                with open(mbf, 'rb') as fh:
+                    mbz = gzip.compress(fh.read())
+                    fname = 'linked-threads.mbox.gz'
+                    att = MIMEApplication(mbz, 'x-gzip')
+                    att.add_header('Content-Disposition', f'attachment; filename={fname}')
+                    msgs[0].attach(att)
 
         logger.info('---')
         if len(seen_msgids):
