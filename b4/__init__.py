@@ -179,56 +179,20 @@ class LoreMailbox:
                     break
         logger.info('---')
         logger.info('Thread incomplete, attempting to backfill')
-        cachedir = get_cache_dir()
-        listmap = os.path.join(cachedir, 'lists.map.lookup')
-        if not os.path.exists(listmap):
-            # lists.map is a custom service running on lore.kernel.org, so it is
-            # meaningless to make this a configurable URL
-            session = get_requests_session()
-            resp = session.get('https://lore.kernel.org/lists.map')
-            if resp.status_code != 200:
-                logger.debug('Unable to retrieve lore.kernel.org/lists.map')
-                return
-            content = resp.content.decode('utf-8')
-            with open(listmap, 'w') as fh:
-                fh.write(content)
-        else:
-            with open(listmap, 'r') as fh:
-                content = fh.read()
-
-        projmap = dict()
-        for line in content.split('\n'):
-            if line.find(':') <= 0:
+        for project in get_lore_projects_from_msg(patch.msg):
+            projurl = 'https://lore.kernel.org/%s/' % project
+            # Try to backfill from that project
+            backfills = get_pi_thread_by_msgid(patch.msgid, useproject=project)
+            if not backfills:
                 continue
-            chunks = line.split(':')
-            projmap[chunks[0]] = chunks[1].strip()
-
-        allto = email.utils.getaddresses([str(x) for x in patch.msg.get_all('to', [])])
-        allto += email.utils.getaddresses([str(x) for x in patch.msg.get_all('cc', [])])
-        listarc = patch.msg.get_all('list-archive', [])
-        for entry in allto:
-            if entry[1] in projmap:
-                projurl = 'https://lore.kernel.org/%s/' % projmap[entry[1]]
-                # Make sure we don't re-query the same project we just used
-                reused = False
-                for arcurl in listarc:
-                    if projurl in arcurl:
-                        reused = True
-                        break
-                if reused:
-                    continue
-                # Try to backfill from that project
-                backfills = get_pi_thread_by_msgid(patch.msgid, useproject=projmap[entry[1]])
-                if not backfills:
-                    return
-                was = len(self.msgid_map)
-                for msg in backfills:
-                    self.add_message(msg)
-                if len(self.msgid_map) > was:
-                    logger.info('Loaded %s messages from %s', len(self.msgid_map)-was, projurl)
-                if self.series[revision].complete:
-                    logger.info('Successfully backfilled missing patches')
-                    break
+            was = len(self.msgid_map)
+            for msg in backfills:
+                self.add_message(msg)
+            if len(self.msgid_map) > was:
+                logger.info('Loaded %s messages from %s', len(self.msgid_map)-was, projurl)
+            if self.series[revision].complete:
+                logger.info('Successfully backfilled missing patches')
+                break
 
     def partial_reroll(self, revision, sloppytrailers, backfill):
         # Is it a partial reroll?
@@ -2301,3 +2265,38 @@ def save_git_am_mbox(msgs: list, dest):
         bmsg = bmsg.replace(b'From mboxrd@z ', b'From git@z ')
         bmsg = bmsg.rstrip(b'\r\n') + b'\n\n'
         dest.write(bmsg)
+
+
+def get_lore_projects_from_msg(msg) -> list:
+    cachedir = get_cache_dir()
+    listmap = os.path.join(cachedir, 'lists.map.lookup')
+    if not os.path.exists(listmap):
+        # lists.map is a custom service running on lore.kernel.org, so it is
+        # meaningless to make this a configurable URL
+        session = get_requests_session()
+        resp = session.get('https://lore.kernel.org/lists.map')
+        if resp.status_code != 200:
+            logger.debug('Unable to retrieve lore.kernel.org/lists.map')
+            return list()
+        content = resp.content.decode()
+        with open(listmap, 'w') as fh:
+            fh.write(content)
+    else:
+        with open(listmap, 'r') as fh:
+            content = fh.read()
+
+    projmap = dict()
+    for line in content.split('\n'):
+        if line.find(':') <= 0:
+            continue
+        chunks = line.split(':')
+        projmap[chunks[0]] = chunks[1].strip()
+
+    allto = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
+    allto += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+    projects = list()
+    for entry in allto:
+        if entry[1] in projmap:
+            projects.append(projmap[entry[1]])
+
+    return projects

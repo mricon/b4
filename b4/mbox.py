@@ -387,7 +387,8 @@ def save_as_quilt(am_msgs, q_dirname):
             sfh.write('%s\n' % patch_filename)
 
 
-def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None, nocache: bool = False) -> list:
+def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None, nocache: bool = False,
+                     useproject: Optional[str] = None) -> list:
     base_msg = None
     latest_revision = None
     seen_msgids = set()
@@ -427,7 +428,21 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         logger.debug('Could not find cover of 1st patch in mbox')
         return msgs
 
-    listarc = base_msg.get_all('List-Archive')[-1].strip('<>')
+    config = b4.get_main_config()
+    loc = urllib.parse.urlparse(config['midmask'])
+    if not useproject:
+        projects = b4.get_lore_projects_from_msg(base_msg)
+        if not projects:
+            logger.info('Unable to figure out list archive location')
+            return msgs
+        useproject = projects[0]
+
+    listarc = '%s://%s/%s/' % (loc.scheme, loc.netloc, useproject)
+
+    if not listarc:
+        logger.info('Unable to figure out list archive location')
+        return msgs
+
     nt_msgs = list()
     if len(obsoleted):
         for nt_msgid in obsoleted:
@@ -601,7 +616,7 @@ def main(cmdargs):
         return
 
     if len(msgs) and cmdargs.checknewer:
-        msgs = get_extra_series(msgs, direction=1)
+        msgs = get_extra_series(msgs, direction=1, useproject=cmdargs.useproject)
 
     if cmdargs.subcmd == 'am':
         make_am(msgs, cmdargs, msgid)
