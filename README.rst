@@ -30,7 +30,11 @@ an alias in your .bash_profile::
 
     alias b4="$HOME/path/to/b4/b4.sh"
 
-Setting up a symlink should also be possible.
+Setting up a symlink should also be possible. Remember to run the
+following command after the initial clone in order to pull in the
+dependencies that are tracked via submodules::
+
+    git submodule update --init
 
 Patch attestation (EXPERIMENTAL)
 --------------------------------
@@ -47,28 +51,29 @@ clone patatt as a submodule of b4.
 For attesting your outgoing patches, see patatt documentation.
 https://git.kernel.org/pub/scm/utils/patatt/patatt.git/about/
 
-Showing attestation on received patches
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-There are three attestation verification policies in b4:
+Display attestation results on received patches
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+There are four attestation verification modes in b4:
 
-- check (default)
-- softfail
+- off
+- check
+- softfail (default)
 - hardfail
 
-The default "check" policy is look for any available attestation and try
-to verify it. If verification fails, b4 will not output any errors, but
+The "check" policy is look for any available attestation and try to
+verify it. If verification fails, b4 will not output any errors, but
 will not show verification checkmarks either.
 
-In "softfail" mode, any verification errors will be prominently
-displayed, but b4 will still generate the .mbx file with patches.
+In the "softfail" mode, any verification errors will be prominently
+displayed, but b4 will still produce the resulting file with patches.
 
 The "hardfail" mode will show verification errors and exit without
-generating the .mbox file with patches.
+generating the .mbx file with patches.
 
 You can set the preferred policy via the git configuration file::
 
     [b4]
-      attestation-policy = softfail
+      attestation-policy = hardfail
 
 Support
 -------
