@@ -1067,9 +1067,22 @@ class LoreMessage:
         logger.debug('Loading patatt attestations with sources=%s', str(sources))
 
         attestations = patatt.validate_message(self.msg.as_bytes(), sources)
-        for passing, identity, signtime, keysrc, keyalgo, errors in attestations:
+        for result, identity, signtime, keysrc, keyalgo, errors in attestations:
+            if keysrc and keysrc.startswith('(default keyring)/'):
+                fpr = keysrc.split('/', 1)[1]
+                uids = get_gpg_uids(fpr)
+                idmatch = False
+                for uid in uids:
+                    if uid.find(identity) >= 0:
+                        idmatch = True
+                        break
+                if not idmatch:
+                    # Take the first identity in the list and use that instead
+                    parts = email.utils.parseaddr(uids[0])
+                    identity = parts[1]
+
             signdt = LoreAttestor.parse_ts(signtime)
-            attestor = LoreAttestorPatatt(passing, identity, signdt, keysrc, keyalgo, errors)
+            attestor = LoreAttestorPatatt(result, identity, signdt, keysrc, keyalgo, errors)
             self._attestors.append(attestor)
 
     def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[str, list, bool]:
