@@ -2275,7 +2275,7 @@ def save_git_am_mbox(msgs: list, dest):
         bmsg = msg.as_bytes(unixfrom=True, policy=emlpolicy)
         # public-inbox unixfrom says "mboxrd", so replace it with something else
         # so there is no confusion as it's NOT mboxrd
-        bmsg = bmsg.replace(b'From mboxrd@z ', b'From git@z ')
+        bmsg = re.sub(b'^From mboxrd@z ', b'From git@z ', bmsg)
         bmsg = bmsg.rstrip(b'\r\n') + b'\n\n'
         dest.write(bmsg)
 
