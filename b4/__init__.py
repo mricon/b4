@@ -1882,7 +1882,7 @@ def get_cache_dir(appname: str = 'b4') -> str:
         expmin = 600
     expage = time.time() - expmin
     for entry in os.listdir(cachedir):
-        if entry.find('.mbx') <= 0 and entry.find('.lookup') <= 0 and entry.find('.msgs'):
+        if entry.find('.mbx') <= 0 and entry.find('.lookup') <= 0 and entry.find('.msgs') <= 0:
             continue
         fullpath = os.path.join(cachedir, entry)
         st = os.stat(fullpath)
