@@ -12,6 +12,7 @@ __pycache__
 *.egg-info
 *.patch
 *.mbx
+*.maildir
 *.cover
 *.thanks
 .venv
