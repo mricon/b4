@@ -43,7 +43,7 @@ try:
 except ModuleNotFoundError:
     can_patatt = False
 
-__VERSION__ = '0.7.0'
+__VERSION__ = '0.7.1'
 
 logger = logging.getLogger('b4')
 
