@@ -1505,14 +1505,13 @@ class LoreMessage:
         parts = ['PATCH']
         if self.lsubject.rfc:
             parts.append('RFC')
-        if not self.revision_inferred:
-            if self.reroll_from_revision:
-                if self.reroll_from_revision != self.revision:
-                    parts.append('v%d->v%d' % (self.reroll_from_revision, self.revision))
-                else:
-                    parts.append(' %s  v%d' % (' ' * len(str(self.reroll_from_revision)), self.revision))
+        if self.reroll_from_revision:
+            if self.reroll_from_revision != self.revision:
+                parts.append('v%d->v%d' % (self.reroll_from_revision, self.revision))
             else:
-                parts.append('v%d' % self.revision)
+                parts.append(' %s  v%d' % (' ' * len(str(self.reroll_from_revision)), self.revision))
+        elif not self.revision_inferred:
+            parts.append('v%d' % self.revision)
         if not self.lsubject.counters_inferred:
             parts.append('%d/%d' % (self.lsubject.counter, self.lsubject.expected))
 
