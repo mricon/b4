@@ -43,7 +43,7 @@ try:
 except ModuleNotFoundError:
     can_patatt = False
 
-__VERSION__ = '0.7.0'
+__VERSION__ = '0.8-dev'
 
 logger = logging.getLogger('b4')
 
@@ -57,23 +57,17 @@ ATT_FAIL_FANCY = '\033[31m\u2717\033[0m'
 
 DEVSIG_HDR = 'X-Developer-Signature'
 
-# You can use bash-style globbing here
-WANTHDRS = [
-    'sender',
-    'from',
-    'to',
-    'cc',
-    'subject',
-    'date',
-    'message-id',
-    'resent-message-id',
-    'reply-to',
-    'in-reply-to',
-    'references',
-    'list-id',
-    'errors-to',
-    'x-mailing-list',
-    'resent-to',
+# Headers to include into am-ready messages
+# From: and Subject: are always included
+AMHDRS = [
+    'Date',
+    'Message-Id',
+    'To',
+    'Cc',
+    'Reply-To',
+    'In-Reply-To',
+    'References',
+    'List-Id',
 ]
 
 # You can use bash-style globbing here
@@ -1054,22 +1048,17 @@ class LoreMessage:
         if not matches:
             return
         bl = int(matches.groups()[0])
-        with tempfile.TemporaryDirectory() as tfd:
-            m_out = os.path.join(tfd, 'm')
-            p_out = os.path.join(tfd, 'p')
-            cmdargs = ['mailinfo', '--encoding=UTF-8', '--no-scissors', m_out, p_out]
-            ecode, info = git_run_command(None, cmdargs, self.msg.as_bytes())
-            if not len(info.strip()):
-                return
-            with open(m_out, 'rb') as mfh:
-                bm = mfh.read()
-            with open(p_out, 'rb') as pfh:
-                bp = pfh.read()
-            bb = b''
-            for line in re.sub(rb'[\r\n]*$', b'', bm + bp).split(b'\n'):
-                bb += re.sub(rb'[\r\n]*$', b'', line) + b'\r\n'
-            if len(bb) > bl:
-                self.body = bb[:bl].decode()
+        i, m, p = get_mailinfo(self.msg.as_bytes(), scissors=False)
+        bb = b''
+        for line in re.sub(rb'[\r\n]*$', b'', m + p).split(b'\n'):
+            bb += re.sub(rb'[\r\n]*$', b'', line) + b'\r\n'
+        if len(bb) > bl:
+            self.body = bb[:bl].decode()
+            # This may have potentially resulted in in-body From/Subject being removed,
+            # so make sure we account for this in the message headers
+            self.lsubject.subject = self.subject = i.get('Subject')
+            self.fromname = i.get('Author')
+            self.fromemail = i.get('Email')
 
     def _load_patatt_attestors(self) -> None:
         if not can_patatt:
@@ -1103,7 +1092,9 @@ class LoreMessage:
                     break
             if success:
                 if trim_body:
-                    # set the body to the trimmed version
+                    # If we only succeeded after trimming the body, then we MUST set the body
+                    # to that value, otherwise someone can append arbitrary content after the l= value
+                    # limit message.
                     self._trim_body()
                 break
             if not success and trim_body:
@@ -1500,16 +1491,19 @@ class LoreMessage:
             self.body += signature
             self.body += '\n'
 
-    def get_am_subject(self):
+    def get_am_subject(self, indicate_reroll=True):
         # Return a clean patch subject
         parts = ['PATCH']
         if self.lsubject.rfc:
             parts.append('RFC')
         if self.reroll_from_revision:
-            if self.reroll_from_revision != self.revision:
-                parts.append('v%d->v%d' % (self.reroll_from_revision, self.revision))
+            if indicate_reroll:
+                if self.reroll_from_revision != self.revision:
+                    parts.append('v%d->v%d' % (self.reroll_from_revision, self.revision))
+                else:
+                    parts.append(' %s  v%d' % (' ' * len(str(self.reroll_from_revision)), self.revision))
             else:
-                parts.append(' %s  v%d' % (' ' * len(str(self.reroll_from_revision)), self.revision))
+                parts.append('v%d' % self.revision)
         elif not self.revision_inferred:
             parts.append('v%d' % self.revision)
         if not self.lsubject.counters_inferred:
@@ -1520,25 +1514,26 @@ class LoreMessage:
     def get_am_message(self, add_trailers=True, trailer_order=None, copyccs=False):
         if add_trailers:
             self.fix_trailers(trailer_order=trailer_order, copyccs=copyccs)
-        am_body = self.body.rstrip('\r\n')
         am_msg = email.message.EmailMessage()
-        am_msg.set_payload(am_body.encode() + b'\n')
-        # Clean up headers
-        for hdrname, hdrval in self.msg.items():
-            lhdrname = hdrname.lower()
-            wanthdr = False
-            for hdrmatch in WANTHDRS:
-                if fnmatch.fnmatch(lhdrname, hdrmatch):
-                    wanthdr = True
-                    break
-            if wanthdr:
-                new_hdrval = LoreMessage.clean_header(hdrval)
-                # noinspection PyBroadException
-                try:
-                    am_msg.add_header(hdrname, new_hdrval)
-                except:
-                    # A broad except to handle any potential weird header conditions
-                    pass
+        am_msg.set_payload(self.body.encode())
+        am_msg.add_header('Subject', self.get_am_subject(indicate_reroll=False))
+        if self.fromname:
+            am_msg.add_header('From', f'{self.fromname} <{self.fromemail}>')
+        else:
+            am_msg.add_header('From', self.fromemail)
+
+        # Add select headers from the original message
+        for hname in AMHDRS:
+            hval = self.msg.get(hname)
+            if not hval:
+                continue
+            hval = LoreMessage.clean_header(hval)
+            # noinspection PyBroadException
+            try:
+                am_msg.add_header(hname, hval)
+            except:
+                # A broad except to handle any potential weird header conditions
+                pass
         am_msg.set_charset('utf-8')
         return am_msg
 
@@ -2359,3 +2354,33 @@ def get_lore_projects_from_msg(msg) -> list:
             projects.append(projmap[entry[1]])
 
     return projects
+
+
+def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[dict, bytes, bytes]:
+    with tempfile.TemporaryDirectory() as tfd:
+        m_out = os.path.join(tfd, 'm')
+        p_out = os.path.join(tfd, 'p')
+        if scissors:
+            cmdargs = ['mailinfo', '--encoding=UTF-8', '--scissors', m_out, p_out]
+        else:
+            cmdargs = ['mailinfo', '--encoding=UTF-8', '--no-scissors', m_out, p_out]
+
+        ecode, info = git_run_command(None, cmdargs, bmsg)
+        if not len(info.strip()):
+            raise ValueError('Could not get mailinfo')
+
+        i = dict()
+        m = b''
+        p = b''
+        for line in info.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            chunks = line.split(':',  1)
+            i[chunks[0]] = chunks[1].strip()
+
+            with open(m_out, 'rb') as mfh:
+                m = mfh.read()
+            with open(p_out, 'rb') as pfh:
+                p = pfh.read()
+    return i, m, p

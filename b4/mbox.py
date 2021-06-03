@@ -350,37 +350,22 @@ def save_as_quilt(am_msgs, q_dirname):
         return
     pathlib.Path(q_dirname).mkdir(parents=True)
     patch_filenames = list()
-    with tempfile.TemporaryDirectory() as tfd:
-        m_out = os.path.join(tfd, 'm')
-        p_out = os.path.join(tfd, 'p')
-        for slug, msg in am_msgs:
-            # Run each message through git mailinfo
-            cmdargs = ['mailinfo', '--encoding=UTF-8', '--scissors', m_out, p_out]
-            ecode, info = b4.git_run_command(None, cmdargs, msg.as_bytes(policy=b4.emlpolicy))
-            if not len(info.strip()):
-                logger.critical('ERROR: Could not get mailinfo from patch %s', msg.get('Subject', '(no subject)'))
-                continue
-            patchinfo = dict()
-            for line in info.split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                chunks = line.split(':',  1)
-                patchinfo[chunks[0]] = chunks[1].strip().encode()
-
-            patch_filename = f'{slug}.patch'
-            patch_filenames.append(patch_filename)
-            quilt_out = os.path.join(q_dirname, patch_filename)
-            with open(quilt_out, 'wb') as fh:
-                fh.write(b'From: %s <%s>\n' % (patchinfo['Author'], patchinfo['Email']))
-                fh.write(b'Subject: %s\n' % patchinfo['Subject'])
-                fh.write(b'Date: %s\n' % patchinfo['Date'])
-                fh.write(b'\n')
-                with open(m_out, 'rb') as mfh:
-                    shutil.copyfileobj(mfh, fh)
-                with open(p_out, 'rb') as pfh:
-                    shutil.copyfileobj(pfh, fh)
-            logger.debug('  Wrote: %s', patch_filename)
+    for slug, msg in am_msgs:
+        patch_filename = f'{slug}.patch'
+        patch_filenames.append(patch_filename)
+        quilt_out = os.path.join(q_dirname, patch_filename)
+        i, m, p = b4.get_mailinfo(msg.as_bytes(policy=b4.emlpolicy), scissors=True)
+        with open(quilt_out, 'wb') as fh:
+            if i.get('Author'):
+                fh.write(b'From: %s <%s>\n' % (i.get('Author').encode(), i.get('Email').encode()))
+            else:
+                fh.write(b'From: %s\n' % i.get('Email').encode())
+            fh.write(b'Subject: %s\n' % i.get('Subject').encode())
+            fh.write(b'Date: %s\n' % i.get('Date').encode())
+            fh.write(b'\n')
+            fh.write(m)
+            fh.write(p)
+        logger.debug('  Wrote: %s', patch_filename)
     # Write the series file
     with open(os.path.join(q_dirname, 'series'), 'w') as sfh:
         for patch_filename in patch_filenames:
