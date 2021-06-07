@@ -45,7 +45,6 @@ except ModuleNotFoundError:
 
 __VERSION__ = '0.8-dev'
 
-logger = logging.getLogger('b4')
 
 def _dkim_log_filter(record):
     # Hide all dkim logging output in normal operation by setting the level to
@@ -55,6 +54,9 @@ def _dkim_log_filter(record):
     record.levelname = 'DEBUG'
     record.msg = 'DKIM: ' + record.msg
     return True
+
+
+logger = logging.getLogger('b4')
 dkimlogger = logger.getChild('dkim')
 dkimlogger.addFilter(_dkim_log_filter)
 
