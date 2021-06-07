@@ -47,6 +47,17 @@ __VERSION__ = '0.8-dev'
 
 logger = logging.getLogger('b4')
 
+def _dkim_log_filter(record):
+    # Hide all dkim logging output in normal operation by setting the level to
+    # DEBUG. If debugging output has been enabled then prefix dkim logging
+    # output to make its origin clear.
+    record.levelno = logging.DEBUG
+    record.levelname = 'DEBUG'
+    record.msg = 'DKIM: ' + record.msg
+    return True
+dkimlogger = logger.getChild('dkim')
+dkimlogger.addFilter(_dkim_log_filter)
+
 HUNK_RE = re.compile(r'^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@')
 FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
 
@@ -1028,7 +1039,7 @@ class LoreMessage:
                     signtime = self.date
 
             self.msg._headers.append((hn, hval))  # noqa
-            res = dkim.verify(self.msg.as_bytes())
+            res = dkim.verify(self.msg.as_bytes(), logger=dkimlogger)
 
             attestor = LoreAttestorDKIM(res, identity, signtime, errors)
             logger.debug('DKIM verify results: %s=%s', identity, res)
