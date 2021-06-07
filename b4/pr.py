@@ -456,9 +456,16 @@ def main(cmdargs):
         lmsg.pr_tip_commit = lmsg.pr_remote_tip_commit
 
     if cmdargs.explode:
+        config = b4.get_main_config()
+        if config.get('save-maildirs', 'no') == 'yes':
+            save_maildir = True
+            dftext = 'maildir'
+        else:
+            save_maildir = False
+            dftext = 'mbx'
         savefile = cmdargs.outmbox
         if savefile is None:
-            savefile = '%s.mbx' % lmsg.msgid
+            savefile = f'{lmsg.msgid}.{dftext}'
         if os.path.exists(savefile):
             logger.info('File exists: %s', savefile)
             sys.exit(1)
@@ -472,10 +479,11 @@ def main(cmdargs):
                 sys.exit(1)
 
             if msgs:
-                smbx = mailbox.mbox(savefile)
-                for msg in msgs:
-                    smbx.add(msg.as_string(policy=b4.emlpolicy).encode())
-                smbx.close()
+                if save_maildir:
+                    b4.save_maildir(msgs, savefile)
+                else:
+                    with open(savefile, 'wb') as fh:
+                        b4.save_git_am_mbox(msgs, fh)
                 logger.info('---')
                 logger.info('Saved %s', savefile)
                 sys.exit(0)

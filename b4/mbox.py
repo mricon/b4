@@ -123,19 +123,10 @@ def make_am(msgs, cmdargs, msgid):
             else:
                 os.unlink(am_filename)
         if save_maildir:
-            d_new = os.path.join(am_filename, 'new')
-            pathlib.Path(d_new).mkdir(parents=True)
-            d_cur = os.path.join(am_filename, 'cur')
-            pathlib.Path(d_cur).mkdir(parents=True)
-            d_tmp = os.path.join(am_filename, 'tmp')
-            pathlib.Path(d_tmp).mkdir(parents=True)
-            for m_slug, msg in am_msgs:
-                with open(os.path.join(d_tmp, f'{m_slug}.eml'), 'wb') as mfh:
-                    mfh.write(msg.as_bytes(policy=b4.emlpolicy))
-                os.rename(os.path.join(d_tmp, f'{m_slug}.eml'), os.path.join(d_new, f'{m_slug}.eml'))
+            b4.save_maildir(am_msgs, am_filename)
         else:
             with open(am_filename, 'wb') as fh:
-                b4.save_git_am_mbox([x[1] for x in am_msgs], fh)
+                b4.save_git_am_mbox(am_msgs, fh)
     else:
         am_filename = None
         am_cover = None

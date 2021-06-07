@@ -605,8 +605,7 @@ class LoreSeries:
                 if noaddtrailers:
                     add_trailers = False
                 msg = lmsg.get_am_message(add_trailers=add_trailers, trailer_order=trailer_order, copyccs=copyccs)
-                slug = '%04d_%s' % (lmsg.counter, re.sub(r'\W+', '_', lmsg.subject).strip('_').lower())
-                msgs.append((slug, msg))
+                msgs.append(msg)
             else:
                 logger.error('  ERROR: missing [%s/%s]!', at, self.expected)
             at += 1
@@ -2330,12 +2329,28 @@ def save_git_am_mbox(msgs: list, dest):
     # So, save in the format that git-am expects
     # "dest" should be a file handler in writable+binary mode
     for msg in msgs:
-        bmsg = msg.as_bytes(unixfrom=True, policy=emlpolicy)
+        bmsg = msg.as_string(unixfrom=True, policy=emlpolicy)
         # public-inbox unixfrom says "mboxrd", so replace it with something else
         # so there is no confusion as it's NOT mboxrd
-        bmsg = re.sub(b'^From mboxrd@z ', b'From git@z ', bmsg)
-        bmsg = bmsg.rstrip(b'\r\n') + b'\n\n'
-        dest.write(bmsg)
+        bmsg = re.sub('^From mboxrd@z ', 'From git@z ', bmsg)
+        bmsg = bmsg.rstrip('\r\n') + '\n\n'
+        dest.write(bmsg.encode())
+
+
+def save_maildir(msgs: list, dest):
+    d_new = os.path.join(dest, 'new')
+    pathlib.Path(d_new).mkdir(parents=True)
+    d_cur = os.path.join(dest, 'cur')
+    pathlib.Path(d_cur).mkdir(parents=True)
+    d_tmp = os.path.join(dest, 'tmp')
+    pathlib.Path(d_tmp).mkdir(parents=True)
+    for msg in msgs:
+        # make a slug out of it
+        lsubj = LoreSubject(msg.get('subject', ''))
+        slug = '%04d_%s' % (lsubj.counter, re.sub(r'\W+', '_', lsubj.subject).strip('_').lower())
+        with open(os.path.join(d_tmp, f'{slug}.eml'), 'wb') as mfh:
+            mfh.write(msg.as_string(policy=emlpolicy).encode())
+        os.rename(os.path.join(d_tmp, f'{slug}.eml'), os.path.join(d_new, f'{slug}.eml'))
 
 
 def get_lore_projects_from_msg(msg) -> list:
