@@ -16,7 +16,10 @@ import json
 import email
 import gzip
 
-from datetime import timedelta
+import urllib.parse
+import requests
+
+from datetime import datetime, timedelta
 
 from email import utils, charset
 from email.mime.text import MIMEText
@@ -430,6 +433,63 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
     return msgs
 
 
+def get_pr_from_github(ghurl: str):
+    loc = urllib.parse.urlparse(ghurl)
+    chunks = loc.path.strip('/').split('/')
+    rproj = chunks[0]
+    rrepo = chunks[1]
+    rpull = chunks[-1]
+    apiurl = f'https://api.github.com/repos/{rproj}/{rrepo}/pulls/{rpull}'
+    req = requests.session()
+    # Do we have a github API key?
+    config = b4.get_main_config()
+    ghkey = config.get('gh-api-key')
+    if ghkey:
+        req.headers.update({'Authorization': f'token {ghkey}'})
+    req.headers.update({'Accept': 'application/vnd.github.v3+json'})
+    resp = req.get(apiurl)
+    if resp.status_code != 200:
+        logger.critical('Server returned an error: %s', resp.status_code)
+        return None
+    prdata = resp.json()
+
+    msg = email.message.EmailMessage()
+    msg.set_payload(prdata.get('body', '(no body)'))
+    head = prdata.get('head', {})
+    repo = head.get('repo', {})
+    base = prdata.get('base', {})
+    user = prdata.get('user', {})
+
+    ulogin = user.get('login')
+    fake_email = f'{ulogin}@github.com'
+    apiurl = f'https://api.github.com/users/{ulogin}'
+    resp = req.get(apiurl)
+    if resp.status_code == 200:
+        udata = resp.json()
+        uname = udata.get('name', ulogin)
+        uemail = udata.get('email')
+        if not uemail:
+            uemail = fake_email
+    else:
+        uname = ulogin
+        uemail = fake_email
+
+    msg['From'] = f'{uname} <{uemail}>'
+    title = prdata.get('title', '')
+    msg['Subject'] = f'[GIT PULL] {title}'
+    msg['To'] = fake_email
+    msg['Message-Id'] = utils.make_msgid(idstring=f'{rproj}-{rrepo}-pr-{rpull}', domain='github.com')
+    created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ'))
+    msg['Date'] = created_at
+    lmsg = b4.LoreMessage(msg)
+    lmsg.pr_base_commit = base.get('sha')
+    lmsg.pr_repo = repo.get('clone_url')
+    lmsg.pr_ref = head.get('ref')
+    lmsg.pr_tip_commit = head.get('sha')
+    lmsg.pr_remote_tip_commit = head.get('sha')
+    return lmsg
+
+
 def main(cmdargs):
     gitdir = cmdargs.gitdir
     lmsg = None
@@ -437,23 +497,27 @@ def main(cmdargs):
     if not sys.stdin.isatty():
         logger.debug('Getting PR message from stdin')
         msg = email.message_from_string(sys.stdin.read())
-        msgid = b4.LoreMessage.get_clean_msgid(msg)
+        cmdargs.msgid = b4.LoreMessage.get_clean_msgid(msg)
         lmsg = parse_pr_data(msg)
     else:
-        logger.debug('Getting PR message from public-inbox')
+        if cmdargs.msgid and 'github.com' in cmdargs.msgid and '/pull/' in cmdargs.msgid:
+            logger.debug('Getting PR info from Github')
+            lmsg = get_pr_from_github(cmdargs.msgid)
+        else:
+            logger.debug('Getting PR message from public-inbox')
 
-        msgid = b4.get_msgid(cmdargs)
-        msgs = b4.get_pi_thread_by_msgid(msgid)
-        if not msgs:
-            return
-        for msg in msgs:
-            mmsgid = b4.LoreMessage.get_clean_msgid(msg)
-            if mmsgid == msgid:
-                lmsg = parse_pr_data(msg)
-                break
+            msgid = b4.get_msgid(cmdargs)
+            msgs = b4.get_pi_thread_by_msgid(msgid)
+            if not msgs:
+                return
+            for msg in msgs:
+                mmsgid = b4.LoreMessage.get_clean_msgid(msg)
+                if mmsgid == msgid:
+                    lmsg = parse_pr_data(msg)
+                    break
 
     if lmsg is None or lmsg.pr_remote_tip_commit is None:
-        logger.critical('ERROR: Could not find pull request info in %s', msgid)
+        logger.critical('ERROR: Could not find pull request info in %s', cmdargs.msgid)
         sys.exit(1)
 
     if not lmsg.pr_tip_commit:
