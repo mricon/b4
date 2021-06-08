@@ -341,6 +341,8 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
                 cmsg.add_header('From', mailfrom)
                 cmsg.add_header('Subject', '[' + ' '.join(msubj.prefixes) + '] ' + lmsg.subject)
                 cmsg.add_header('Date', lmsg.msg.get('Date'))
+                cmsg.set_charset('utf-8')
+                cmsg.replace_header('Content-Transfer-Encoding', '8bit')
 
                 msg = cmsg
 
@@ -483,7 +485,14 @@ def get_pr_from_github(ghurl: str):
     msg['Message-Id'] = utils.make_msgid(idstring=f'{rproj}-{rrepo}-pr-{rpull}', domain='github.com')
     created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ'))
     msg['Date'] = created_at
-    lmsg = b4.LoreMessage(msg)
+    # We are going to turn it into bytes and then parse again
+    # in order to avoid bugs with python's message parsing routines that
+    # end up not doing the right thing when decoding 8bit message bodies
+    msg.set_charset('utf-8')
+    msg.replace_header('Content-Transfer-Encoding', '8bit')
+    bug_avoidance = msg.as_string(policy=b4.emlpolicy).encode()
+    cmsg = email.message_from_bytes(bug_avoidance)
+    lmsg = b4.LoreMessage(cmsg)
     lmsg.pr_base_commit = base.get('sha')
     lmsg.pr_repo = repo.get('clone_url')
     lmsg.pr_ref = head.get('ref')
