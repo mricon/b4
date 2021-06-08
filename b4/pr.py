@@ -141,18 +141,19 @@ def attest_fetch_head(gitdir, lmsg):
         ecode, out = b4.git_run_command(gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True)
 
     good, valid, trusted, keyid, sigtime = b4.check_gpg_status(out)
-    try:
-        uids = b4.get_gpg_uids(keyid)
-        signer = None
-        for uid in uids:
-            if uid.find(f'<{lmsg.fromemail}') >= 0:
-                signer = uid
-                break
-        if not signer:
-            signer = uids[0]
+    signer = None
+    if keyid:
+        try:
+            uids = b4.get_gpg_uids(keyid)
+            for uid in uids:
+                if uid.find(f'<{lmsg.fromemail}') >= 0:
+                    signer = uid
+                    break
+            if not signer:
+                signer = uids[0]
 
-    except KeyError:
-        signer = f'{lmsg.fromname} <{lmsg.fromemail}'
+        except KeyError:
+            signer = f'{lmsg.fromname} <{lmsg.fromemail}>'
 
     if good and valid:
         passing = True
