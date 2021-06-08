@@ -322,19 +322,22 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
             # Is this the cover letter?
             if msubj.counter == 0:
                 # We rebuild the message from scratch
-                cmsg = MIMEMultipart()
+                # The cover letter body is the pull request body, plus a few trailers
+                body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
+                    lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
+
+                # Make it a multipart if we're doing retrieve_links
+                if retrieve_links:
+                    cmsg = MIMEMultipart()
+                    cmsg.attach(MIMEText(body, 'plain'))
+                else:
+                    cmsg = email.message.EmailMessage()
+                    cmsg.set_payload(body)
+
                 cmsg.add_header('From', mailfrom)
                 cmsg.add_header('Subject', '[' + ' '.join(msubj.prefixes) + '] ' + lmsg.subject)
                 cmsg.add_header('Date', lmsg.msg.get('Date'))
 
-                # The cover letter body is the pull request body, plus a few trailers
-                body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
-                    lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
-                cmsg.attach(MIMEText(body, 'plain'))
-
-                # now we attach the original request
-                # XXX: seems redundant, so turned off for now
-                # cmsg.attach(MIMEMessage(lmsg.msg))
                 msg = cmsg
 
             else:
@@ -456,20 +459,6 @@ def main(cmdargs):
         lmsg.pr_tip_commit = lmsg.pr_remote_tip_commit
 
     if cmdargs.explode:
-        config = b4.get_main_config()
-        if config.get('save-maildirs', 'no') == 'yes':
-            save_maildir = True
-            dftext = 'maildir'
-        else:
-            save_maildir = False
-            dftext = 'mbx'
-        savefile = cmdargs.outmbox
-        if savefile is None:
-            savefile = f'{lmsg.msgid}.{dftext}'
-        if os.path.exists(savefile):
-            logger.info('File exists: %s', savefile)
-            sys.exit(1)
-
         # Set up a temporary clone
         with b4.git_temp_clone(gitdir) as tc:
             try:
@@ -478,18 +467,57 @@ def main(cmdargs):
                 logger.critical('Nothing exploded.')
                 sys.exit(1)
 
-            if msgs:
-                if save_maildir:
-                    b4.save_maildir(msgs, savefile)
-                else:
-                    with open(savefile, 'wb') as fh:
-                        b4.save_git_am_mbox(msgs, fh)
-                logger.info('---')
-                logger.info('Saved %s', savefile)
-                sys.exit(0)
+        if msgs:
+            if cmdargs.sendidentity:
+                # Pass exploded series via git-send-email
+                config = b4.get_config_from_git(rf'sendemail\.{cmdargs.sendidentity}\..*')
+                if not len(config):
+                    logger.critical('Not able to find sendemail.%s configuration', cmdargs.sendidentity)
+                    sys.exit(1)
+                # Make sure from is not overridden by current user
+                mailfrom = msgs[0].get('from')
+                gitargs = ['send-email', '--identity', cmdargs.sendidentity, '--from', mailfrom]
+                if cmdargs.dryrun:
+                    gitargs.append('--dry-run')
+                # Write out everything into a temporary dir
+                counter = 0
+                with tempfile.TemporaryDirectory() as tfd:
+                    for msg in msgs:
+                        outfile = os.path.join(tfd, '%04d' % counter)
+                        with open(outfile, 'wb') as tfh:
+                            tfh.write(msg.as_string(policy=b4.emlpolicy).encode())
+                        gitargs.append(outfile)
+                        counter += 1
+                    ecode, out = b4.git_run_command(cmdargs.gitdir, gitargs, logstderr=True)
+                    if cmdargs.dryrun:
+                        logger.info(out)
+                    sys.exit(ecode)
+
+            config = b4.get_main_config()
+            if config.get('save-maildirs', 'no') == 'yes':
+                save_maildir = True
+                dftext = 'maildir'
             else:
-                logger.critical('Nothing exploded.')
+                save_maildir = False
+                dftext = 'mbx'
+            savefile = cmdargs.outmbox
+            if savefile is None:
+                savefile = f'{lmsg.msgid}.{dftext}'
+            if os.path.exists(savefile):
+                logger.info('File exists: %s', savefile)
                 sys.exit(1)
+
+            if save_maildir:
+                b4.save_maildir(msgs, savefile)
+            else:
+                with open(savefile, 'wb') as fh:
+                    b4.save_git_am_mbox(msgs, fh)
+            logger.info('---')
+            logger.info('Saved %s', savefile)
+            sys.exit(0)
+        else:
+            logger.critical('Nothing exploded.')
+            sys.exit(1)
 
     exists = b4.git_commit_exists(gitdir, lmsg.pr_tip_commit)
     if exists:

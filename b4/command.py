@@ -160,6 +160,11 @@ def cmd():
                        help='Attempt to retrieve any Link: URLs (use with -e)')
     sp_pr.add_argument('-f', '--from-addr', dest='mailfrom', default=None,
                        help='Use this From: in exploded messages (use with -e)')
+    sp_pr.add_argument('-s', '--send-as-identity', dest='sendidentity', default=None,
+                       help=('Use git-send-email to send exploded series (use with -e);'
+                             'the identity must match a [sendemail "identity"] config section'))
+    sp_pr.add_argument('--dry-run', dest='dryrun', action='store_true', default=False,
+                       help='Force a --dry-run on git-send-email invocation (use with -s)')
     sp_pr.add_argument('msgid', nargs='?',
                        help='Message ID to process, or pipe a raw message')
     sp_pr.set_defaults(func=cmd_pr)
