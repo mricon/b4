@@ -466,7 +466,9 @@ def get_pr_from_github(ghurl: str):
     resp = req.get(apiurl)
     if resp.status_code == 200:
         udata = resp.json()
-        uname = udata.get('name', ulogin)
+        uname = udata.get('name')
+        if not uname:
+            uname = ulogin
         uemail = udata.get('email')
         if not uemail:
             uemail = fake_email
