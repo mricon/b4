@@ -130,7 +130,7 @@ def make_am(msgs, cmdargs, msgid):
     else:
         am_filename = None
         am_cover = None
-        b4.save_git_am_mbox([x[1] for x in am_msgs], sys.stdout.buffer)
+        b4.save_git_am_mbox(am_msgs, sys.stdout.buffer)
 
     logger.info('---')
 
@@ -341,7 +341,9 @@ def save_as_quilt(am_msgs, q_dirname):
         return
     pathlib.Path(q_dirname).mkdir(parents=True)
     patch_filenames = list()
-    for slug, msg in am_msgs:
+    for msg in am_msgs:
+        lsubj = b4.LoreSubject(msg.get('subject', ''))
+        slug = '%04d_%s' % (lsubj.counter, re.sub(r'\W+', '_', lsubj.subject).strip('_').lower())
         patch_filename = f'{slug}.patch'
         patch_filenames.append(patch_filename)
         quilt_out = os.path.join(q_dirname, patch_filename)
