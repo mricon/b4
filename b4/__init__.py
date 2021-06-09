@@ -923,13 +923,11 @@ class LoreMessage:
                     self.trailers.append(trailer)
 
     def get_trailers(self, sloppy=False):
-        mismatches = set()
-        if sloppy:
-            return self.trailers, mismatches
-
         trailers = list()
+        mismatches = set()
+
         for tname, tvalue, extdata in self.trailers:
-            if tname.lower() in ('fixes', 'obsoleted-by'):
+            if sloppy or tname.lower() in ('fixes', 'obsoleted-by'):
                 trailers.append((tname, tvalue, extdata, self))
                 continue
 
