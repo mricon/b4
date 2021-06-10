@@ -2277,20 +2277,26 @@ def parse_int_range(intrange, upper=None):
             logger.critical('Unknown range value specified: %s', n)
 
 
-def check_gpg_status(status: str) -> Tuple[bool, bool, bool, str, str]:
+def check_gpg_status(status: str) -> Tuple[bool, bool, bool, Optional[str], Optional[str]]:
     good = False
     valid = False
     trusted = False
     keyid = None
-    signtime = ''
+    signtime = None
+
+    # Do we have a BADSIG?
+    bs_matches = re.search(r'^\[GNUPG:] BADSIG ([0-9A-F]+)\s+(.*)$', status, flags=re.M)
+    if bs_matches:
+        keyid = bs_matches.groups()[0]
+        return good, valid, trusted, keyid, signtime
 
     gs_matches = re.search(r'^\[GNUPG:] GOODSIG ([0-9A-F]+)\s+(.*)$', status, flags=re.M)
     if gs_matches:
         good = True
+        keyid = gs_matches.groups()[0]
     vs_matches = re.search(r'^\[GNUPG:] VALIDSIG ([0-9A-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', status, flags=re.M)
     if vs_matches:
         valid = True
-        keyid = vs_matches.groups()[0]
         signtime = vs_matches.groups()[2]
     ts_matches = re.search(r'^\[GNUPG:] TRUST_(FULLY|ULTIMATE)', status, flags=re.M)
     if ts_matches:
