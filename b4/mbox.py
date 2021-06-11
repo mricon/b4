@@ -125,12 +125,12 @@ def make_am(msgs, cmdargs, msgid):
         if save_maildir:
             b4.save_maildir(am_msgs, am_filename)
         else:
-            with open(am_filename, 'wb') as fh:
+            with open(am_filename, 'w') as fh:
                 b4.save_git_am_mbox(am_msgs, fh)
     else:
         am_filename = None
         am_cover = None
-        b4.save_git_am_mbox(am_msgs, sys.stdout.buffer)
+        b4.save_git_am_mbox(am_msgs, sys.stdout)
 
     logger.info('---')
 
@@ -603,7 +603,7 @@ def main(cmdargs):
     logger.info('%s messages in the thread', len(msgs))
     if cmdargs.outdir == '-':
         logger.info('---')
-        b4.save_git_am_mbox(msgs, sys.stdout.buffer)
+        b4.save_git_am_mbox(msgs, sys.stdout)
         return
 
     # Check if outdir is a maildir
@@ -646,7 +646,7 @@ def main(cmdargs):
         logger.info('Saved maildir %s', savename)
         return
 
-    with open(savename, 'wb') as fh:
+    with open(savename, 'w') as fh:
         b4.save_git_am_mbox(msgs, fh)
 
     logger.info('Saved %s', savename)

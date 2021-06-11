@@ -11,6 +11,7 @@ import fnmatch
 import email.utils
 import email.policy
 import email.header
+import email.generator
 import tempfile
 import pathlib
 
@@ -25,7 +26,7 @@ import mailbox
 import pwd
 
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List
+from typing import Optional, Tuple, Set, List, TextIO
 
 from email import charset
 charset.add_charset('utf-8', None)
@@ -2325,20 +2326,17 @@ def get_gpg_uids(keyid: str) -> list:
     return uids
 
 
-def save_git_am_mbox(msgs: list, dest):
+def save_git_am_mbox(msgs: list, dest: TextIO):
     # Git-am has its own understanding of what "mbox" format is that differs from Python's
     # mboxo implementation. Specifically, it never escapes the ">From " lines found in bodies
     # unless invoked with --patch-format=mboxrd (this is wrong, because ">From " escapes are also
     # required in the original mbox "mboxo" format).
     # So, save in the format that git-am expects
-    # "dest" should be a file handler in writable+binary mode
+    gen = email.generator.Generator(dest, policy=emlpolicy)
     for msg in msgs:
-        bmsg = msg.as_string(unixfrom=True, policy=emlpolicy)
-        # public-inbox unixfrom says "mboxrd", so replace it with something else
-        # so there is no confusion as it's NOT mboxrd
-        bmsg = re.sub('^From mboxrd@z ', 'From git@z ', bmsg)
-        bmsg = bmsg.rstrip('\r\n') + '\n\n'
-        dest.write(bmsg.encode())
+        msg.set_unixfrom('From git@z Thu Jan  1 00:00:00 1970')
+        gen.flatten(msg, unixfrom=True)
+        gen.write('\n')
 
 
 def save_maildir(msgs: list, dest):
