@@ -652,7 +652,6 @@ class LoreSeries:
                     cmdargs = ['hash-object', fullpath]
                     ecode, out = git_run_command(None, cmdargs)
                 else:
-                    gitdir = os.path.join(gitdir, '.git')
                     logger.debug('Checking hash on %s:%s', when, fn)
                     # XXX: We should probably pipe the two commands instead of reading into memory,
                     #      so something to consider for the future
