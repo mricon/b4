@@ -450,6 +450,8 @@ class LoreSeries:
         self.has_cover = False
         self.partial_reroll = False
         self.subject = '(untitled)'
+        # Used for base matching
+        self._indexes = None
 
     def __repr__(self):
         out = list()
@@ -628,49 +630,95 @@ class LoreSeries:
 
         return msgs
 
-    def check_applies_clean(self, gitdir, when=None):
-        # Go through indexes and see if this series should apply cleanly
-        mismatches = 0
-        seenfiles = set()
-        for lmsg in self.patches[1:]:
-            if lmsg is None or lmsg.blob_indexes is None:
-                continue
-            for fn, bh in lmsg.blob_indexes:
-                if fn in seenfiles:
-                    # if we have seen this file once already, then it's a repeat patch
-                    # and it's no longer going to match current hash
+    def check_applies_clean(self, gitdir, at='HEAD'):
+        if self._indexes is None:
+            self._indexes = list()
+            seenfiles = set()
+            for lmsg in self.patches[1:]:
+                if lmsg is None or lmsg.blob_indexes is None:
                     continue
-                seenfiles.add(fn)
-                if set(bh) == {'0'}:
-                    # New file, will for sure apply clean
-                    continue
-                fullpath = os.path.join(gitdir, fn)
-                if when is None:
-                    if not os.path.exists(fullpath):
-                        mismatches += 1
+                for fn, bh in lmsg.blob_indexes:
+                    if fn in seenfiles:
+                        # if we have seen this file once already, then it's a repeat patch
+                        # and it's no longer going to match current hash
                         continue
-                    cmdargs = ['hash-object', fullpath]
-                    ecode, out = git_run_command(None, cmdargs)
-                else:
-                    logger.debug('Checking hash on %s:%s', when, fn)
-                    # XXX: We should probably pipe the two commands instead of reading into memory,
-                    #      so something to consider for the future
-                    ecode, out = git_run_command(gitdir, ['show', f'{when}:{fn}'])
-                    if ecode > 0:
-                        # Couldn't get this file, continue
-                        logger.debug('Could not look up %s:%s', when, fn)
-                        mismatches += 1
+                    seenfiles.add(fn)
+                    if set(bh) == {'0'}:
+                        # New file, will for sure apply clean
                         continue
-                    cmdargs = ['hash-object', '--stdin']
-                    ecode, out = git_run_command(None, cmdargs, stdin=out.encode())
-                if ecode == 0:
-                    if out.find(bh) != 0:
-                        logger.debug('%s hash: %s (expected: %s)', fn, out.strip(), bh)
-                        mismatches += 1
-                    else:
-                        logger.debug('%s hash: matched', fn)
+                    self._indexes.append((fn, bh))
 
-        return len(seenfiles), mismatches
+        mismatches = list()
+        for fn, bh in self._indexes:
+            ecode, out = git_run_command(gitdir, ['ls-tree', at, fn])
+            if ecode == 0 and len(out):
+                chunks = out.split()
+                if chunks[2].startswith(bh):
+                    logger.debug('%s hash: matched', fn)
+                    continue
+                else:
+                    logger.debug('%s hash: %s (expected: %s)', fn, chunks[2], bh)
+            else:
+                # Couldn't get this file, continue
+                logger.debug('Could not look up %s:%s', at, fn)
+            mismatches.append((fn, bh))
+
+        return len(self._indexes), mismatches
+
+    def find_base(self, gitdir: str, branches: str = 'HEAD', maxdays: int = 30) -> Tuple[str, len]:
+        # Find the date of the first patch we have
+        pdate = datetime.datetime.now()
+        for lmsg in self.patches:
+            if lmsg is None:
+                continue
+            pdate = lmsg.date
+            break
+
+        # Find latest commit on that date
+        guntil = pdate.strftime('%Y-%m-%d')
+        gitargs = ['log', '--pretty=oneline', '--until', guntil, '--max-count=1', '--branches', branches]
+        lines = git_get_command_lines(gitdir, gitargs)
+        if not lines:
+            raise IndexError
+        commit = lines[0].split()[0]
+        checked, mismatches = self.check_applies_clean(gitdir, commit)
+        fewest = len(mismatches)
+        if fewest > 0:
+            since = pdate - datetime.timedelta(days=maxdays)
+            gsince = since.strftime('%Y-%m-%d')
+            logger.debug('Starting --find-object from %s to %s', gsince, guntil)
+            best = commit
+            for fn, bi in mismatches:
+                logger.debug('Finding tree matching %s=%s in %s', fn, bi, branches)
+                gitargs = ['log', '-m', '--pretty=oneline', '--since', gsince, '--until', guntil,
+                           '--max-count=1', '--find-object', bi, '--branches', branches]
+                lines = git_get_command_lines(gitdir, gitargs)
+                if not lines:
+                    logger.debug('Could not find object %s in the tree', bi)
+                    continue
+                commit = lines[0].split()[0]
+                logger.debug('commit=%s', commit)
+                # We try both that commit and the one preceding it, in case it was a delete
+                # Keep track of the fewest mismatches
+                for tc in [commit, f'{commit}~1']:
+                    sc, sm = self.check_applies_clean(gitdir, tc)
+                    if len(sm) < fewest and len(sm) != sc:
+                        fewest = len(sm)
+                        best = tc
+                        logger.debug('fewest=%s, best=%s', fewest, best)
+                        if fewest == 0:
+                            break
+
+                if fewest == 0:
+                    break
+        else:
+            best = commit
+
+        lines = git_get_command_lines(gitdir, ['describe', best])
+        if len(lines):
+            return lines[0], fewest
+
+        raise IndexError
 
     def make_fake_am_range(self, gitdir):
         start_commit = end_commit = None

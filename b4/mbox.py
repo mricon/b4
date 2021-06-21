@@ -228,46 +228,33 @@ def make_am(msgs, cmdargs, msgid):
 
     if base_commit:
         logger.critical(' Base: %s', base_commit)
-        logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
-        if cmdargs.outdir != '-':
-            logger.critical('       git am %s', am_filename)
     else:
-        cleanmsg = ''
         if topdir is not None:
-            checked, mismatches = lser.check_applies_clean(topdir)
-            if mismatches == 0 and checked != mismatches:
-                cleanmsg = ' (applies clean to current tree)'
-            elif cmdargs.guessbase:
-                # Look at the last 10 tags and see if it applies cleanly to
-                # any of them. I'm not sure how useful this is, but I'm going
-                # to put it in for now and maybe remove later if it causes
-                # problems or slowness
-                if checked != mismatches:
-                    best_matches = mismatches
-                    cleanmsg = ' (best guess: current tree)'
-                else:
-                    best_matches = None
-                # sort the tags by authordate
-                gitargs = ['tag', '-l', '--sort=-taggerdate']
-                lines = b4.git_get_command_lines(None, gitargs)
-                if lines:
-                    # Check last 10 tags
-                    for tag in lines[:10]:
-                        logger.debug('Checking base-commit possibility for %s', tag)
-                        checked, mismatches = lser.check_applies_clean(topdir, tag)
-                        if mismatches == 0 and checked != mismatches:
-                            cleanmsg = ' (applies clean to: %s)' % tag
-                            break
-                        # did they all mismatch?
-                        if checked == mismatches:
-                            continue
-                        if best_matches is None or mismatches < best_matches:
-                            best_matches = mismatches
-                            cleanmsg = ' (best guess: %s)' % tag
+            checked, mismatches = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
+            if len(mismatches) == 0 and checked != mismatches:
+                logger.critical(' Base: current tree')
+            elif len(mismatches) and cmdargs.guessbase:
+                logger.critical('       attempting to guess base-commit...')
+                try:
+                    base_commit, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
+                                                             maxdays=cmdargs.guessdays)
+                    if mismatches == 0:
+                        logger.critical(' Base: %s (exact match)', base_commit)
+                    else:
+                        logger.critical(' Base: %s (best guess, %s blobs not matched)', base_commit,
+                                        mismatches)
+                except IndexError:
+                    logger.critical(' Base: not specified')
+                    pass
+            else:
+                logger.critical(' Base: not specified')
+        else:
+            logger.critical(' Base: not specified')
 
-        logger.critical(' Base: not found%s', cleanmsg)
-        if cmdargs.outdir != '-':
-            logger.critical('       git am %s', am_filename)
+    if base_commit is not None:
+        logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
+    if cmdargs.outdir != '-':
+        logger.critical('       git am %s', am_filename)
 
     thanks_record_am(lser, cherrypick=cherrypick)
 
