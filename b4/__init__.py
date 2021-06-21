@@ -1848,7 +1848,7 @@ def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[byte
                     logstderr: bool = False) -> Tuple[int, str]:
     cmdargs = ['git', '--no-pager']
     if gitdir:
-        if os.path.isdir(os.path.join(gitdir, '.git')):
+        if os.path.exists(os.path.join(gitdir, '.git')):
             gitdir = os.path.join(gitdir, '.git')
         cmdargs += ['--git-dir', gitdir]
     cmdargs += args
