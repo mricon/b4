@@ -120,8 +120,8 @@ def cmd():
                             '"-P *globbing*" to match on commit subject)')
     sp_am.add_argument('-g', '--guess-base', dest='guessbase', action='store_true', default=False,
                        help='Try to guess the base of the series (if not specified)')
-    sp_am.add_argument('-b', '--guess-branch', dest='guessbranch', default='HEAD',
-                       help='When guessing base, use this branch instead of HEAD (use with -g)')
+    sp_am.add_argument('-b', '--guess-branch', dest='guessbranch', default=None,
+                       help='When guessing base, restrict to this branch (use with -g)')
     sp_am.add_argument('--guess-lookback', dest='guessdays', type=int, default=14,
                        help='When guessing base, go back this many days from the date of the patch')
     sp_am.add_argument('-3', '--prep-3way', dest='threeway', action='store_true', default=False,

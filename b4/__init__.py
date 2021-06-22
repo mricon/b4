@@ -630,7 +630,7 @@ class LoreSeries:
 
         return msgs
 
-    def check_applies_clean(self, gitdir, at='HEAD'):
+    def check_applies_clean(self, gitdir: str, at: Optional[str] = None) -> Tuple[int, list]:
         if self._indexes is None:
             self._indexes = list()
             seenfiles = set()
@@ -649,6 +649,8 @@ class LoreSeries:
                     self._indexes.append((fn, bh))
 
         mismatches = list()
+        if at is None:
+            at = 'HEAD'
         for fn, bh in self._indexes:
             ecode, out = git_run_command(gitdir, ['ls-tree', at, fn])
             if ecode == 0 and len(out):
@@ -665,7 +667,7 @@ class LoreSeries:
 
         return len(self._indexes), mismatches
 
-    def find_base(self, gitdir: str, branches: str = 'HEAD', maxdays: int = 30) -> Tuple[str, len]:
+    def find_base(self, gitdir: str, branches: Optional[str] = None, maxdays: int = 30) -> Tuple[str, len, len]:
         # Find the date of the first patch we have
         pdate = datetime.datetime.now()
         for lmsg in self.patches:
@@ -676,7 +678,12 @@ class LoreSeries:
 
         # Find latest commit on that date
         guntil = pdate.strftime('%Y-%m-%d')
-        gitargs = ['log', '--pretty=oneline', '--until', guntil, '--max-count=1', '--branches', branches]
+        if branches:
+            where = ['--branches', branches]
+        else:
+            where = ['--all']
+
+        gitargs = ['log', '--pretty=oneline', '--until', guntil, '--max-count=1'] + where
         lines = git_get_command_lines(gitdir, gitargs)
         if not lines:
             raise IndexError
@@ -689,34 +696,41 @@ class LoreSeries:
             logger.debug('Starting --find-object from %s to %s', gsince, guntil)
             best = commit
             for fn, bi in mismatches:
-                logger.debug('Finding tree matching %s=%s in %s', fn, bi, branches)
-                gitargs = ['log', '-m', '--pretty=oneline', '--since', gsince, '--until', guntil,
-                           '--max-count=1', '--find-object', bi, '--branches', branches]
+                logger.debug('Finding tree matching %s=%s in %s', fn, bi, where)
+                gitargs = ['log', '--pretty=oneline', '--since', gsince, '--until', guntil,
+                           '--find-object', bi] + where
                 lines = git_get_command_lines(gitdir, gitargs)
                 if not lines:
                     logger.debug('Could not find object %s in the tree', bi)
                     continue
-                commit = lines[0].split()[0]
-                logger.debug('commit=%s', commit)
-                # We try both that commit and the one preceding it, in case it was a delete
-                # Keep track of the fewest mismatches
-                for tc in [commit, f'{commit}~1']:
-                    sc, sm = self.check_applies_clean(gitdir, tc)
-                    if len(sm) < fewest and len(sm) != sc:
-                        fewest = len(sm)
-                        best = tc
-                        logger.debug('fewest=%s, best=%s', fewest, best)
+                for line in lines:
+                    commit = line.split()[0]
+                    logger.debug('commit=%s', commit)
+                    # We try both that commit and the one preceding it, in case it was a delete
+                    # Keep track of the fewest mismatches
+                    for tc in [commit, f'{commit}~1']:
+                        sc, sm = self.check_applies_clean(gitdir, tc)
+                        if len(sm) < fewest and len(sm) != sc:
+                            fewest = len(sm)
+                            best = tc
+                            logger.debug('fewest=%s, best=%s', fewest, best)
+                            if fewest == 0:
+                                break
                         if fewest == 0:
                             break
-
+                    if fewest == 0:
+                        break
                 if fewest == 0:
                     break
         else:
             best = commit
+        if fewest == len(self._indexes):
+            # None of the blobs matched
+            raise IndexError
 
-        lines = git_get_command_lines(gitdir, ['describe', best])
+        lines = git_get_command_lines(gitdir, ['describe', '--all', best])
         if len(lines):
-            return lines[0], fewest
+            return lines[0], len(self._indexes), fewest
 
         raise IndexError
 

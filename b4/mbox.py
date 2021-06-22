@@ -230,23 +230,26 @@ def make_am(msgs, cmdargs, msgid):
         logger.critical(' Base: %s', base_commit)
     else:
         if topdir is not None:
+            guessed = False
             checked, mismatches = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
             if len(mismatches) == 0 and checked != mismatches:
+                guessed = True
                 logger.critical(' Base: current tree')
-            elif len(mismatches) and cmdargs.guessbase:
+            if not guessed and cmdargs.guessbase:
                 logger.critical('       attempting to guess base-commit...')
                 try:
-                    base_commit, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
-                                                             maxdays=cmdargs.guessdays)
+                    base_commit, nblobs, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
+                                                                     maxdays=cmdargs.guessdays)
                     if mismatches == 0:
                         logger.critical(' Base: %s (exact match)', base_commit)
+                    elif nblobs == mismatches:
+                        logger.critical(' Base: failed to guess base')
                     else:
-                        logger.critical(' Base: %s (best guess, %s blobs not matched)', base_commit,
-                                        mismatches)
+                        logger.critical(' Base: %s (best guess, %s/%s blobs matched)', base_commit,
+                                        nblobs-mismatches, nblobs)
                 except IndexError:
-                    logger.critical(' Base: not specified')
-                    pass
-            else:
+                    logger.critical(' Base: failed to guess base')
+            elif not cmdargs.guessbase:
                 logger.critical(' Base: not specified')
         else:
             logger.critical(' Base: not specified')
