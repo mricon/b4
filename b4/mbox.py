@@ -246,7 +246,7 @@ def make_am(msgs, cmdargs, msgid):
                     logger.critical(' Base: failed to guess base')
             else:
                 checked, mismatches = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
-                if len(mismatches) == 0 and checked != mismatches:
+                if checked and len(mismatches) == 0 and checked != mismatches:
                     logger.critical(' Base: applies clean to current tree')
                 else:
                     logger.critical(' Base: not specified')
