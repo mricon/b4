@@ -1954,7 +1954,7 @@ def get_requests_session():
 
 def get_msgid_from_stdin():
     if not sys.stdin.isatty():
-        message = email.message_from_string(sys.stdin.read())
+        message = email.message_from_bytes(sys.stdin.buffer.read())
         return message.get('Message-ID', None)
     return None
 
