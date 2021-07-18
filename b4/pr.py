@@ -507,7 +507,7 @@ def main(cmdargs):
 
     if not sys.stdin.isatty():
         logger.debug('Getting PR message from stdin')
-        msg = email.message_from_string(sys.stdin.read())
+        msg = email.message_from_bytes(sys.stdin.buffer.read())
         cmdargs.msgid = b4.LoreMessage.get_clean_msgid(msg)
         lmsg = parse_pr_data(msg)
     else:
