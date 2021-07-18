@@ -2075,7 +2075,9 @@ def get_requests_session():
 
 def get_msgid_from_stdin():
     if not sys.stdin.isatty():
-        message = email.message_from_bytes(sys.stdin.buffer.read())
+        from email.parser import BytesParser
+        message = BytesParser().parsebytes(
+            sys.stdin.buffer.read(), headersonly=True)
         return message.get('Message-ID', None)
     return None
 
