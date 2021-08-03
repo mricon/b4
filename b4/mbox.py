@@ -623,7 +623,8 @@ def main(cmdargs):
     if cmdargs.wantname:
         savename = os.path.join(cmdargs.outdir, cmdargs.wantname)
     else:
-        savename = os.path.join(cmdargs.outdir, f'{msgid}.{dftext}')
+        safe_msgid = re.sub(r'[^\w@.+%-]+', '_', msgid).strip('_')
+        savename = os.path.join(cmdargs.outdir, f'{safe_msgid}.{dftext}')
 
     if save_maildir:
         if os.path.isdir(savename):
