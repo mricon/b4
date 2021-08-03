@@ -1252,8 +1252,11 @@ class LoreMessage:
 
     @staticmethod
     def find_trailers(body, followup=False):
-        headers = ('subject', 'date', 'from')
-        nonperson = ('fixes', 'subject', 'date', 'link', 'buglink', 'obsoleted-by')
+        ignores = {'phone', 'email'}
+        headers = {'subject', 'date', 'from'}
+        nonperson = {'fixes', 'subject', 'date', 'link', 'buglink', 'obsoleted-by'}
+        # Ignore everything below standard email signature marker
+        body = body.split('\n-- \n', 1)[0].strip() + '\n'
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
         # baz quux)
@@ -1276,6 +1279,9 @@ class LoreMessage:
                 groups = list(matches.groups())
                 # We only accept headers if we haven't seen any non-trailer lines
                 tname = groups[0].lower()
+                if tname in ignores:
+                    logger.debug('Ignoring known non-trailer: %s', line)
+                    continue
                 if len(others) and tname in headers:
                     logger.debug('Ignoring %s (header after other content)', line)
                     continue
