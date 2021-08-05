@@ -1278,7 +1278,7 @@ class LoreMessage:
             if hcs is None:
                 hcs = 'utf-8'
             try:
-                decoded += hstr.decode(hcs)
+                decoded += hstr.decode(hcs, errors='replace')
             except LookupError:
                 # Try as utf-u
                 decoded += hstr.decode('utf-8', errors='replace')
