@@ -103,6 +103,7 @@ DEFAULT_CONFIG = {
     'midmask': LOREADDR + '/r/%s',
     'linkmask': LOREADDR + '/r/%s',
     'trailer-order': DEFAULT_TRAILER_ORDER,
+    'listid-preference': '*.feeds.kernel.org,*.linux.dev,*.kernel.org,*',
     'save-maildirs': 'no',
     # off: do not bother checking attestation
     # check: print an attaboy when attestation is found
@@ -1309,6 +1310,35 @@ class LoreMessage:
         return msgid
 
     @staticmethod
+    def get_preferred_duplicate(msg1, msg2):
+        config = get_main_config()
+        listid1 = LoreMessage.get_clean_msgid(msg1, 'list-id')
+        if listid1:
+            prefidx1 = 0
+            for listglob in config['listid-preference']:
+                if fnmatch.fnmatch(listid1, listglob):
+                    break
+                prefidx1 += 1
+        else:
+            prefidx1 = config['listid-preference'].index('*')
+
+        listid2 = LoreMessage.get_clean_msgid(msg2, 'list-id')
+        if listid2:
+            prefidx2 = 0
+            for listglob in config['listid-preference']:
+                if fnmatch.fnmatch(listid2, listglob):
+                    break
+                prefidx2 += 1
+        else:
+            prefidx2 = config['listid-preference'].index('*')
+
+        if prefidx1 <= prefidx2:
+            logger.debug('Picked duplicate from preferred source: %s', listid1)
+            return msg1
+        logger.debug('Picked duplicate from preferred source: %s', listid2)
+        return msg2
+
+    @staticmethod
     def get_patchwork_hash(diff: str) -> str:
         """Generate a hash from a diff. Lifted verbatim from patchwork."""
 
@@ -1968,6 +1998,11 @@ def get_main_config() -> dict:
         # Legacy name was get-lore-mbox, so load those as well
         config = get_config_from_git(r'get-lore-mbox\..*', defaults=config)
         config['trailer-order'] = config['trailer-order'].split(',')
+        config['trailer-order'].remove('*')
+        config['trailer-order'].append('*')
+        config['listid-preference'] = config['listid-preference'].split(',')
+        config['listid-preference'].remove('*')
+        config['listid-preference'].append('*')
         if config['gpgbin'] is None:
             gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
             config['gpgbin'] = gpgcfg['program']
@@ -2118,10 +2153,8 @@ def get_strict_thread(msgs, msgid):
             c_msgid = LoreMessage.get_clean_msgid(msg)
             seen.add(c_msgid)
             if c_msgid in strict.keys():
-                # Check if the duplicate message passes DKIM validation
-                if not strict[c_msgid][0] and can_dkim and dkim.verify(msg.as_bytes(), logger=dkimlogger):
-                    logger.debug('DKIM-validating message used for %s', msgid)
-                    strict[c_msgid] = (True, msg)
+                logger.debug('Picked a more preferred source for %s', msgid)
+                strict[c_msgid] = LoreMessage.get_preferred_duplicate(strict[c_msgid], msg)
                 continue
             logger.debug('Looking at: %s', c_msgid)
             refs = set()
@@ -2142,10 +2175,7 @@ def get_strict_thread(msgs, msgid):
                         maybe[ref].add(c_msgid)
 
             if c_msgid in want:
-                dkimres = None
-                if can_dkim:
-                    dkimres = dkim.verify(msg.as_bytes(), logger=dkimlogger)
-                strict[c_msgid] = (dkimres, msg)
+                strict[c_msgid] = msg
                 want.update(refs)
                 want.discard(c_msgid)
                 logger.debug('Kept in thread: %s', c_msgid)
@@ -2172,7 +2202,7 @@ def get_strict_thread(msgs, msgid):
     if len(msgs) > len(strict):
         logger.debug('Reduced mbox to strict matches only (%s->%s)', len(msgs), len(strict))
 
-    return [x[1] for x in strict.values()]
+    return strict.values()
 
 
 def mailsplit_bytes(bmbox: bytes, outdir: str) -> list:
