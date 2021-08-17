@@ -418,6 +418,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
             t_mbx_url = '%s/%s/t.mbox.gz' % (listarc.rstrip('/'), nt_msgid)
             potentials = b4.get_pi_thread_by_url(t_mbx_url, nocache=nocache)
             if potentials:
+                potentials = b4.get_strict_thread(potentials, nt_msgid)
                 nt_msgs += potentials
                 logger.info('   Added %s messages from that thread', len(potentials))
             else:
@@ -461,6 +462,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         resp.close()
         ns = {'atom': 'http://www.w3.org/2005/Atom'}
         entries = tree.findall('atom:entry', ns)
+        seen_urls = set()
 
         for entry in entries:
             title = entry.find('atom:title', ns).text
@@ -497,6 +499,9 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
                 logger.debug('No idea what this is: %s', title)
                 continue
             t_mbx_url = '%st.mbox.gz' % link
+            if t_mbx_url in seen_urls:
+                continue
+            seen_urls.add(t_mbx_url)
             logger.info('New revision: %s', title)
             potentials = b4.get_pi_thread_by_url(t_mbx_url, nocache=nocache)
             if potentials:
