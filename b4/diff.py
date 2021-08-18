@@ -83,16 +83,10 @@ def diff_same_thread_series(cmdargs):
         return None, None
 
     if not lmbx.series[lower].complete:
-        lmbx.partial_reroll(lower, sloppytrailers=False, backfill=True)
-
-    if not lmbx.series[lower].complete:
-        lmbx.backfill(lower)
+        lmbx.partial_reroll(lower, sloppytrailers=False)
 
     if not lmbx.series[upper].complete:
-        lmbx.partial_reroll(upper, sloppytrailers=False, backfill=True)
-
-    if not lmbx.series[upper].complete:
-        lmbx.backfill(upper)
+        lmbx.partial_reroll(upper, sloppytrailers=False)
 
     return lmbx.series[lower], lmbx.series[upper]
 
