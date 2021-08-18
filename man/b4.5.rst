@@ -242,6 +242,13 @@ Default configuration, with explanations::
       # When recording Link: trailers, use this mask
       linkmask = https://lore.kernel.org/r/%s
       #
+      # When duplicate messages exist, use the following order to decide
+      # which list-id is likely to have the least mangled version. Default
+      # preference is listed below, in the order of lists most likely to
+      # preserve proper DKIM validation. Use shell-style globbing and
+      # separate multiple entries with commas. Must end with ,*
+      listid-preference = *.feeds.kernel.org,*.linux.dev,*.kernel.org,*
+      #
       # Set to "yes" to save maildirs instead of mailboxes
       # This will help avoid mboxo/mboxrd format inconsistencies between
       # public-inbox, python, and git
