@@ -398,15 +398,14 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     config = b4.get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])
     if not useproject:
-        projects = b4.get_lore_projects_from_msg(base_msg)
-        if not projects:
-            logger.info('Unable to figure out list archive location')
-            return msgs
-        useproject = projects[0]
+        useproject = 'all'
 
-    listarc = '%s://%s/%s/' % (loc.scheme, loc.netloc, useproject)
-
-    if not listarc:
+    listarc = f'{loc.scheme}://{loc.netloc}/{useproject}/'
+    # Make sure it exists
+    queryurl = f'{listarc}_/text/config/raw'
+    session = b4.get_requests_session()
+    resp = session.get(queryurl)
+    if not resp.status_code == 200:
         logger.info('Unable to figure out list archive location')
         return msgs
 

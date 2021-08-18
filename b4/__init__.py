@@ -176,34 +176,7 @@ class LoreMailbox:
             return self.msgid_map[msgid]
         return None
 
-    def backfill(self, revision):
-        if revision in self.covers and self.covers[revision] is not None:
-            patch = self.covers[revision]
-        else:
-            # Find first non-None member in patches
-            lser = self.series[revision]
-            patch = None
-            for patch in lser.patches:
-                if patch is not None:
-                    break
-        logger.info('---')
-        logger.info('Thread incomplete, attempting to backfill')
-        for project in get_lore_projects_from_msg(patch.msg):
-            projurl = 'https://lore.kernel.org/%s/' % project
-            # Try to backfill from that project
-            backfills = get_pi_thread_by_msgid(patch.msgid, useproject=project)
-            if not backfills:
-                continue
-            was = len(self.msgid_map)
-            for msg in backfills:
-                self.add_message(msg)
-            if len(self.msgid_map) > was:
-                logger.info('Loaded %s messages from %s', len(self.msgid_map)-was, projurl)
-            if self.series[revision].complete:
-                logger.info('Successfully backfilled missing patches')
-                break
-
-    def partial_reroll(self, revision, sloppytrailers, backfill):
+    def partial_reroll(self, revision, sloppytrailers):
         # Is it a partial reroll?
         # To qualify for a partial reroll:
         # 1. Needs to be version > 1
@@ -211,7 +184,7 @@ class LoreMailbox:
         if revision <= 1 or revision - 1 not in self.series:
             return
         # Are existing patches replies to previous revisions with the same counter?
-        pser = self.get_series(revision-1, sloppytrailers=sloppytrailers, backfill=backfill)
+        pser = self.get_series(revision-1, sloppytrailers=sloppytrailers)
         lser = self.series[revision]
         sane = True
         for patch in lser.patches:
@@ -265,7 +238,7 @@ class LoreMailbox:
             lser.subject = pser.subject
             logger.debug('Reconstituted successfully')
 
-    def get_series(self, revision=None, sloppytrailers=False, backfill=True, reroll=True):
+    def get_series(self, revision=None, sloppytrailers=False, reroll=True):
         if revision is None:
             if not len(self.series):
                 return None
@@ -287,10 +260,7 @@ class LoreMailbox:
             return None
 
         if not lser.complete and reroll:
-            self.partial_reroll(revision, sloppytrailers, backfill)
-
-        if not lser.complete and backfill:
-            self.backfill(revision)
+            self.partial_reroll(revision, sloppytrailers)
 
         # Grab our cover letter if we have one
         if revision in self.covers:
@@ -1069,10 +1039,7 @@ class LoreMessage:
         # until we come to a passing one
         dkhdrs = list()
         for header in list(self.msg._headers):  # noqa
-            # Also remove any List- headers set by lore.kernel.org
-            if header[0].lower().startswith('list-') and header[1].find('//lore.kernel.org/') > 0:
-                self.msg._headers.remove(header) # noqa
-            elif header[0].lower() == 'dkim-signature':
+            if header[0].lower() == 'dkim-signature':
                 dkhdrs.append(header)
                 self.msg._headers.remove(header) # noqa
         dkhdrs.reverse()
@@ -2464,41 +2431,6 @@ def save_maildir(msgs: list, dest):
         with open(os.path.join(d_tmp, f'{slug}.eml'), 'wb') as mfh:
             mfh.write(msg.as_string(policy=emlpolicy).encode())
         os.rename(os.path.join(d_tmp, f'{slug}.eml'), os.path.join(d_new, f'{slug}.eml'))
-
-
-def get_lore_projects_from_msg(msg) -> list:
-    cachedir = get_cache_dir()
-    listmap = os.path.join(cachedir, 'lists.map.lookup')
-    if not os.path.exists(listmap):
-        # lists.map is a custom service running on lore.kernel.org, so it is
-        # meaningless to make this a configurable URL
-        session = get_requests_session()
-        resp = session.get('https://lore.kernel.org/lists.map')
-        if resp.status_code != 200:
-            logger.debug('Unable to retrieve lore.kernel.org/lists.map')
-            return list()
-        content = resp.content.decode()
-        with open(listmap, 'w') as fh:
-            fh.write(content)
-    else:
-        with open(listmap, 'r') as fh:
-            content = fh.read()
-
-    projmap = dict()
-    for line in content.split('\n'):
-        if line.find(':') <= 0:
-            continue
-        chunks = line.split(':')
-        projmap[chunks[0]] = chunks[1].strip()
-
-    allto = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
-    allto += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
-    projects = list()
-    for entry in allto:
-        if entry[1] in projmap:
-            projects.append(projmap[entry[1]])
-
-    return projects
 
 
 def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[dict, bytes, bytes]:
