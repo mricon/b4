@@ -1552,7 +1552,7 @@ class LoreMessage:
             self.body += '\n'
 
         if len(message):
-            self.body += message + '\n'
+            self.body += message.rstrip('\r\n') + '\n'
             if len(fixtrailers):
                 self.body += '\n'
 
@@ -1563,12 +1563,10 @@ class LoreMessage:
                     self.body += '%s\n' % trailer[2]
         if len(basement):
             self.body += '---\n'
-            self.body += basement
-            self.body += '\n'
+            self.body += basement.rstrip('\r\n') + '\n\n'
         if len(signature):
             self.body += '-- \n'
-            self.body += signature
-            self.body += '\n'
+            self.body += signature.rstrip('\r\n') + '\n\n'
 
     def get_am_subject(self, indicate_reroll=True):
         # Return a clean patch subject
