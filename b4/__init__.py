@@ -44,7 +44,7 @@ try:
 except ModuleNotFoundError:
     can_patatt = False
 
-__VERSION__ = '0.8-dev'
+__VERSION__ = '0.8.0'
 
 
 def _dkim_log_filter(record):
