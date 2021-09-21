@@ -262,13 +262,8 @@ def make_am(msgs, cmdargs, msgid):
             base_commit = 'HEAD'
 
         with b4.git_temp_worktree(topdir, base_commit) as gwt:
-            if lser.indexes is None:
-                lser.populate_indexes()
-            # TODO: Handle patches containing nothing but new file additions
-            wantfiles = [i[0] for i in lser.indexes]
-            logger.info('Magic: Preparing a sparse worktree with %s files', len(wantfiles))
-            # TODO: Handle these potential errors
-            ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'init'] + wantfiles, logstderr=True)
+            logger.info('Magic: Preparing a sparse worktree')
+            ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'init'], logstderr=True)
             if ecode > 0:
                 logger.critical('Error running sparse-checkout init')
                 logger.critical(out)
@@ -312,7 +307,6 @@ def make_am(msgs, cmdargs, msgid):
         logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
     if cmdargs.outdir != '-':
         logger.critical('       git am %s', am_filename)
-
 
 
 def thanks_record_am(lser, cherrypick=None):
