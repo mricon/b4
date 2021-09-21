@@ -18,6 +18,7 @@ import fnmatch
 import shutil
 import pathlib
 import tempfile
+import io
 
 import urllib.parse
 import xml.etree.ElementTree
@@ -35,7 +36,6 @@ def make_am(msgs, cmdargs, msgid):
     if outdir == '-':
         cmdargs.nocover = True
     wantver = cmdargs.wantver
-    wantname = cmdargs.wantname
     covertrailers = cmdargs.covertrailers
     count = len(msgs)
     logger.info('Analyzing %s messages in the thread', count)
@@ -97,41 +97,6 @@ def make_am(msgs, cmdargs, msgid):
     except KeyError:
         sys.exit(1)
 
-    if cmdargs.maildir or config.get('save-maildirs', 'no') == 'yes':
-        save_maildir = True
-        dftext = 'maildir'
-    else:
-        save_maildir = False
-        dftext = 'mbx'
-
-    if wantname:
-        slug = wantname
-        if wantname.find('.') > -1:
-            slug = '.'.join(wantname.split('.')[:-1])
-        gitbranch = slug
-    else:
-        slug = lser.get_slug(extended=True)
-        gitbranch = lser.get_slug(extended=False)
-
-    if outdir != '-':
-        am_filename = os.path.join(outdir, f'{slug}.{dftext}')
-        am_cover = os.path.join(outdir, f'{slug}.cover')
-
-        if os.path.exists(am_filename):
-            if os.path.isdir(am_filename):
-                shutil.rmtree(am_filename)
-            else:
-                os.unlink(am_filename)
-        if save_maildir:
-            b4.save_maildir(am_msgs, am_filename)
-        else:
-            with open(am_filename, 'w') as fh:
-                b4.save_git_am_mbox(am_msgs, fh)
-    else:
-        am_filename = None
-        am_cover = None
-        b4.save_git_am_mbox(am_msgs, sys.stdout)
-
     logger.info('---')
 
     if cherrypick is None:
@@ -173,6 +138,17 @@ def make_am(msgs, cmdargs, msgid):
             logger.critical('     Msg From: %s <%s>', fname, femail)
         logger.critical('NOTE: Rerun with -S to apply them anyway')
 
+    top_msgid = None
+    first_body = None
+    for lmsg in lser.patches:
+        if lmsg is not None:
+            first_body = lmsg.body
+            top_msgid = lmsg.msgid
+            break
+    if top_msgid is None:
+        logger.critical('Could not find any patches in the series.')
+        return
+
     topdir = b4.git_get_toplevel()
 
     if cmdargs.threeway:
@@ -194,27 +170,54 @@ def make_am(msgs, cmdargs, msgid):
     if not lser.complete and not cmdargs.cherrypick:
         logger.critical('WARNING: Thread incomplete!')
 
-    if lser.has_cover and not cmdargs.nocover:
-        lser.save_cover(am_cover)
+    gitbranch = lser.get_slug(extended=False)
+    am_filename = None
 
-    top_msgid = None
-    first_body = None
-    for lmsg in lser.patches:
-        if lmsg is not None:
-            first_body = lmsg.body
-            top_msgid = lmsg.msgid
-            break
-    if top_msgid is None:
-        logger.critical('Could not find any patches in the series.')
-        return
+    if cmdargs.subcmd == 'am':
+        wantname = cmdargs.wantname
+        if cmdargs.maildir or config.get('save-maildirs', 'no') == 'yes':
+            save_maildir = True
+            dftext = 'maildir'
+        else:
+            save_maildir = False
+            dftext = 'mbx'
 
-    linkurl = config['linkmask'] % top_msgid
-    if cmdargs.quiltready:
-        q_dirname = os.path.join(outdir, f'{slug}.patches')
-        save_as_quilt(am_msgs, q_dirname)
-        logger.critical('Quilt: %s', q_dirname)
+        if wantname:
+            slug = wantname
+            if wantname.find('.') > -1:
+                slug = '.'.join(wantname.split('.')[:-1])
+            gitbranch = slug
+        else:
+            slug = lser.get_slug(extended=True)
 
-    logger.critical(' Link: %s', linkurl)
+        if outdir != '-':
+            am_filename = os.path.join(outdir, f'{slug}.{dftext}')
+            am_cover = os.path.join(outdir, f'{slug}.cover')
+
+            if os.path.exists(am_filename):
+                if os.path.isdir(am_filename):
+                    shutil.rmtree(am_filename)
+                else:
+                    os.unlink(am_filename)
+            if save_maildir:
+                b4.save_maildir(am_msgs, am_filename)
+            else:
+                with open(am_filename, 'w') as fh:
+                    b4.save_git_am_mbox(am_msgs, fh)
+        else:
+            am_cover = None
+            b4.save_git_am_mbox(am_msgs, sys.stdout)
+
+        if lser.has_cover and not cmdargs.nocover:
+            lser.save_cover(am_cover)
+
+        linkurl = config['linkmask'] % top_msgid
+        if cmdargs.quiltready:
+            q_dirname = os.path.join(outdir, f'{slug}.patches')
+            save_as_quilt(am_msgs, q_dirname)
+            logger.critical('Quilt: %s', q_dirname)
+
+        logger.critical(' Link: %s', linkurl)
 
     base_commit = None
     matches = re.search(r'base-commit: .*?([0-9a-f]+)', first_body, re.MULTILINE)
@@ -226,30 +229,82 @@ def make_am(msgs, cmdargs, msgid):
         if matches:
             base_commit = matches.groups()[0]
 
-    if base_commit:
-        logger.critical(' Base: %s', base_commit)
-    else:
-        if topdir is not None:
-            if cmdargs.guessbase:
-                logger.critical('       attempting to guess base-commit...')
-                try:
-                    base_commit, nblobs, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
-                                                                     maxdays=cmdargs.guessdays)
-                    if mismatches == 0:
-                        logger.critical(' Base: %s (exact match)', base_commit)
-                    elif nblobs == mismatches:
-                        logger.critical(' Base: failed to guess base')
-                    else:
-                        logger.critical(' Base: %s (best guess, %s/%s blobs matched)', base_commit,
-                                        nblobs - mismatches, nblobs)
-                except IndexError:
-                    logger.critical(' Base: failed to guess base')
+    if not base_commit and topdir and cmdargs.guessbase:
+        logger.critical(' Base: attempting to guess base-commit...')
+        try:
+            base_commit, nblobs, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
+                                                             maxdays=cmdargs.guessdays)
+            if mismatches == 0:
+                logger.critical(' Base: %s (exact match)', base_commit)
+            elif nblobs == mismatches:
+                logger.critical(' Base: failed to guess base')
             else:
-                checked, mismatches = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
-                if checked and len(mismatches) == 0 and checked != mismatches:
-                    logger.critical(' Base: applies clean to current tree')
-                else:
-                    logger.critical(' Base: not specified')
+                logger.critical(' Base: %s (best guess, %s/%s blobs matched)', base_commit,
+                                nblobs - mismatches, nblobs)
+        except IndexError:
+            logger.critical(' Base: failed to guess base')
+
+    if cmdargs.subcmd == 'shazam':
+        if not topdir:
+            logger.critical('Could not figure out where your git dir is, cannot shazam.')
+            sys.exit(1)
+        ifh = io.StringIO()
+        b4.save_git_am_mbox(am_msgs, ifh)
+        ambytes = ifh.getvalue().encode()
+        if cmdargs.applyhere:
+            # Blindly attempt to apply to the current tree
+            ecode, out = b4.git_run_command(topdir, ['am'], stdin=ambytes, logstderr=True)
+            logger.info(out.strip())
+            sys.exit(ecode)
+
+        if not base_commit:
+            # Try our best with HEAD, I guess
+            base_commit = 'HEAD'
+
+        with b4.git_temp_worktree(topdir, base_commit) as gwt:
+            if lser.indexes is None:
+                lser.populate_indexes()
+            # TODO: Handle patches containing nothing but new file additions
+            wantfiles = [i[0] for i in lser.indexes]
+            logger.info('Magic: Preparing a sparse worktree with %s files', len(wantfiles))
+            # TODO: Handle these potential errors
+            ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'init'] + wantfiles, logstderr=True)
+            if ecode > 0:
+                logger.critical('Error running sparse-checkout init')
+                logger.critical(out)
+                sys.exit(ecode)
+            ecode, out = b4.git_run_command(gwt, ['checkout'], logstderr=True)
+            if ecode > 0:
+                logger.critical('Error running checkout into sparse workdir')
+                logger.critical(out)
+                sys.exit(ecode)
+            ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes, logstderr=True)
+            if ecode > 0:
+                logger.critical('Unable to cleanly apply series, see failure log below')
+                logger.critical('---')
+                logger.critical(out.strip())
+                logger.critical('---')
+                logger.critical('Not fetching into FETCH_HEAD')
+                sys.exit(ecode)
+            logger.info('---')
+            logger.info(out.strip())
+            logger.info('---')
+            logger.info('Fetching into FETCH_HEAD')
+            gitargs = ['fetch', gwt]
+            ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
+            if ecode > 0:
+                logger.critical('Unable to fetch from the worktree')
+                logger.critical(out.strip())
+                sys.exit(ecode)
+        logger.info('You can now merge or checkout FETCH_HEAD')
+        thanks_record_am(lser, cherrypick=cherrypick)
+        return
+
+    if not base_commit:
+        checked, mismatches = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
+        if checked and len(mismatches) == 0 and checked != mismatches:
+            logger.critical(' Base: applies clean to current tree')
+            base_commit = 'HEAD'
         else:
             logger.critical(' Base: not specified')
 
@@ -258,7 +313,6 @@ def make_am(msgs, cmdargs, msgid):
     if cmdargs.outdir != '-':
         logger.critical('       git am %s', am_filename)
 
-    thanks_record_am(lser, cherrypick=cherrypick)
 
 
 def thanks_record_am(lser, cherrypick=None):
@@ -578,6 +632,18 @@ def get_msgs(cmdargs) -> Tuple[Optional[str], Optional[list]]:
 
 
 def main(cmdargs):
+    if cmdargs.subcmd == 'shazam':
+        # We force some settings
+        cmdargs.checknewer = True
+        cmdargs.threeway = False
+        cmdargs.nopartialreroll = False
+        cmdargs.outdir = '-'
+        cmdargs.guessbranch = None
+        if cmdargs.applyhere:
+            cmdargs.guessbase = False
+        else:
+            cmdargs.guessbase = True
+
     if cmdargs.checknewer:
         # Force nocache mode
         cmdargs.nocache = True
@@ -589,7 +655,7 @@ def main(cmdargs):
     if len(msgs) and cmdargs.checknewer:
         msgs = get_extra_series(msgs, direction=1, useproject=cmdargs.useproject)
 
-    if cmdargs.subcmd == 'am':
+    if cmdargs.subcmd in ('am', 'shazam'):
         make_am(msgs, cmdargs, msgid)
         return
 

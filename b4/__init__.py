@@ -44,7 +44,7 @@ try:
 except ModuleNotFoundError:
     can_patatt = False
 
-__VERSION__ = '0.8.0'
+__VERSION__ = '0.9-dev'
 
 
 def _dkim_log_filter(record):
@@ -421,8 +421,7 @@ class LoreSeries:
         self.has_cover = False
         self.partial_reroll = False
         self.subject = '(untitled)'
-        # Used for base matching
-        self._indexes = None
+        self.indexes = None
 
     def __repr__(self):
         out = list()
@@ -601,28 +600,31 @@ class LoreSeries:
 
         return msgs
 
-    def check_applies_clean(self, gitdir: str, at: Optional[str] = None) -> Tuple[int, list]:
-        if self._indexes is None:
-            self._indexes = list()
-            seenfiles = set()
-            for lmsg in self.patches[1:]:
-                if lmsg is None or lmsg.blob_indexes is None:
+    def populate_indexes(self):
+        self.indexes = list()
+        seenfiles = set()
+        for lmsg in self.patches[1:]:
+            if lmsg is None or lmsg.blob_indexes is None:
+                continue
+            for fn, bh in lmsg.blob_indexes:
+                if fn in seenfiles:
+                    # if we have seen this file once already, then it's a repeat patch
+                    # and it's no longer going to match current hash
                     continue
-                for fn, bh in lmsg.blob_indexes:
-                    if fn in seenfiles:
-                        # if we have seen this file once already, then it's a repeat patch
-                        # and it's no longer going to match current hash
-                        continue
-                    seenfiles.add(fn)
-                    if set(bh) == {'0'}:
-                        # New file, will for sure apply clean
-                        continue
-                    self._indexes.append((fn, bh))
+                seenfiles.add(fn)
+                if set(bh) == {'0'}:
+                    # New file, will for sure apply clean
+                    continue
+                self.indexes.append((fn, bh))
+
+    def check_applies_clean(self, gitdir: str, at: Optional[str] = None) -> Tuple[int, list]:
+        if self.indexes is None:
+            self.populate_indexes()
 
         mismatches = list()
         if at is None:
             at = 'HEAD'
-        for fn, bh in self._indexes:
+        for fn, bh in self.indexes:
             ecode, out = git_run_command(gitdir, ['ls-tree', at, fn])
             if ecode == 0 and len(out):
                 chunks = out.split()
@@ -636,7 +638,7 @@ class LoreSeries:
                 logger.debug('Could not look up %s:%s', at, fn)
             mismatches.append((fn, bh))
 
-        return len(self._indexes), mismatches
+        return len(self.indexes), mismatches
 
     def find_base(self, gitdir: str, branches: Optional[str] = None, maxdays: int = 30) -> Tuple[str, len, len]:
         # Find the date of the first patch we have
@@ -695,13 +697,13 @@ class LoreSeries:
                     break
         else:
             best = commit
-        if fewest == len(self._indexes):
+        if fewest == len(self.indexes):
             # None of the blobs matched
             raise IndexError
 
         lines = git_get_command_lines(gitdir, ['describe', '--all', best])
         if len(lines):
-            return lines[0], len(self._indexes), fewest
+            return lines[0], len(self.indexes), fewest
 
         raise IndexError
 

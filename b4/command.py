@@ -17,7 +17,7 @@ def cmd_retrieval_common_opts(sp):
     sp.add_argument('msgid', nargs='?',
                     help='Message ID to process, or pipe a raw message')
     sp.add_argument('-p', '--use-project', dest='useproject', default=None,
-                    help='Use a specific project instead of guessing (linux-mm, linux-hardening, etc)')
+                    help='Use a specific project instead of default (linux-mm, linux-hardening, etc)')
     sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
                     help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
     sp.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
@@ -35,6 +35,26 @@ def cmd_mbox_common_opts(sp):
     sp.add_argument('-M', '--save-as-maildir', dest='maildir', action='store_true', default=False,
                     help='Save as maildir (avoids mbox format ambiguities)')
 
+def cmd_am_common_opts(sp):
+    sp.add_argument('-v', '--use-version', dest='wantver', type=int, default=None,
+                    help='Get a specific version of the patch/series')
+    sp.add_argument('-t', '--apply-cover-trailers', dest='covertrailers', action='store_true', default=False,
+                    help='Apply trailers sent to the cover letter to all patches')
+    sp.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
+                    help='Apply trailers without email address match checking')
+    sp.add_argument('-T', '--no-add-trailers', dest='noaddtrailers', action='store_true', default=False,
+                    help='Do not add or sort any trailers')
+    sp.add_argument('-s', '--add-my-sob', dest='addmysob', action='store_true', default=False,
+                    help='Add your own signed-off-by to every patch')
+    sp.add_argument('-l', '--add-link', dest='addlink', action='store_true', default=False,
+                    help='Add a Link: with message-id lookup URL to every patch')
+    sp.add_argument('-P', '--cherry-pick', dest='cherrypick', default=None,
+                    help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
+                         '"-P _" to use just the msgid specified, or '
+                         '"-P *globbing*" to match on commit subject)')
+    sp.add_argument('--cc-trailers', dest='copyccs', action='store_true', default=False,
+                    help='Copy all Cc\'d addresses into Cc: trailers')
+
 
 def cmd_mbox(cmdargs):
     import b4.mbox
@@ -47,6 +67,11 @@ def cmd_kr(cmdargs):
 
 
 def cmd_am(cmdargs):
+    import b4.mbox
+    b4.mbox.main(cmdargs)
+
+
+def cmd_shazam(cmdargs):
     import b4.mbox
     b4.mbox.main(cmdargs)
 
@@ -100,40 +125,33 @@ def cmd():
     # b4 am
     sp_am = subparsers.add_parser('am', help='Create an mbox file that is ready to git-am')
     cmd_mbox_common_opts(sp_am)
-    sp_am.add_argument('-v', '--use-version', dest='wantver', type=int, default=None,
-                       help='Get a specific version of the patch/series')
-    sp_am.add_argument('-t', '--apply-cover-trailers', dest='covertrailers', action='store_true', default=False,
-                       help='Apply trailers sent to the cover letter to all patches')
-    sp_am.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
-                       help='Apply trailers without email address match checking')
-    sp_am.add_argument('-T', '--no-add-trailers', dest='noaddtrailers', action='store_true', default=False,
-                       help='Do not add or sort any trailers')
-    sp_am.add_argument('-s', '--add-my-sob', dest='addmysob', action='store_true', default=False,
-                       help='Add your own signed-off-by to every patch')
-    sp_am.add_argument('-l', '--add-link', dest='addlink', action='store_true', default=False,
-                       help='Add a lore.kernel.org/r/ link to every patch')
+    cmd_am_common_opts(sp_am)
     sp_am.add_argument('-Q', '--quilt-ready', dest='quiltready', action='store_true', default=False,
                        help='Save patches in a quilt-ready folder')
-    sp_am.add_argument('-P', '--cherry-pick', dest='cherrypick', default=None,
-                       help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
-                            '"-P _" to use just the msgid specified, or '
-                            '"-P *globbing*" to match on commit subject)')
     sp_am.add_argument('-g', '--guess-base', dest='guessbase', action='store_true', default=False,
                        help='Try to guess the base of the series (if not specified)')
     sp_am.add_argument('-b', '--guess-branch', dest='guessbranch', default=None,
                        help='When guessing base, restrict to this branch (use with -g)')
-    sp_am.add_argument('--guess-lookback', dest='guessdays', type=int, default=14,
-                       help='When guessing base, go back this many days from the date of the patch')
+    sp_am.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
+                       help='When guessing base, go back this many days from the patch date (default: 2 weeks)')
     sp_am.add_argument('-3', '--prep-3way', dest='threeway', action='store_true', default=False,
                        help='Prepare for a 3-way merge '
                             '(tries to ensure that all index blobs exist by making a fake commit range)')
-    sp_am.add_argument('--cc-trailers', dest='copyccs', action='store_true', default=False,
-                       help='Copy all Cc\'d addresses into Cc: trailers')
     sp_am.add_argument('--no-cover', dest='nocover', action='store_true', default=False,
                        help='Do not save the cover letter (on by default when using -o -)')
     sp_am.add_argument('--no-partial-reroll', dest='nopartialreroll', action='store_true', default=False,
                        help='Do not reroll partial series when detected')
     sp_am.set_defaults(func=cmd_am)
+
+    # b4 shazam
+    sp_sh = subparsers.add_parser('shazam', help='Like b4 am, but applies the series to your tree')
+    cmd_retrieval_common_opts(sp_sh)
+    cmd_am_common_opts(sp_sh)
+    sp_sh.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
+                       help = 'When guessing base, go back this many days from the patch date (default: 3 weeks)')
+    sp_sh.add_argument('-A', '--apply-here', dest='applyhere', action='store_true', default=False,
+                       help = 'Apply to the current tree')
+    sp_sh.set_defaults(func=cmd_shazam)
 
     # b4 attest
     sp_att = subparsers.add_parser('attest', help='Create cryptographic attestation for a set of patches')
@@ -200,7 +218,7 @@ def cmd():
     sp_diff.add_argument('-g', '--gitdir', default=None,
                          help='Operate on this git tree instead of current dir')
     sp_diff.add_argument('-p', '--use-project', dest='useproject', default=None,
-                         help='Use a specific project instead of guessing (linux-mm, linux-hardening, etc)')
+                         help='Use a specific project instead of default (linux-mm, linux-hardening, etc)')
     sp_diff.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                          help='Do not use local cache')
     sp_diff.add_argument('-v', '--compare-versions', dest='wantvers', type=int, default=None, nargs='+',
