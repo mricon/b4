@@ -255,6 +255,8 @@ def make_am(msgs, cmdargs, msgid):
             # Blindly attempt to apply to the current tree
             ecode, out = b4.git_run_command(topdir, ['am'], stdin=ambytes, logstderr=True)
             logger.info(out.strip())
+            if ecode == 0:
+                thanks_record_am(lser, cherrypick=cherrypick)
             sys.exit(ecode)
 
         if not base_commit:
@@ -307,6 +309,7 @@ def make_am(msgs, cmdargs, msgid):
         logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
     if cmdargs.outdir != '-':
         logger.critical('       git am %s', am_filename)
+    thanks_record_am(lser, cherrypick=cherrypick)
 
 
 def thanks_record_am(lser, cherrypick=None):
