@@ -19,6 +19,7 @@ import shutil
 import pathlib
 import tempfile
 import io
+import shlex
 
 import urllib.parse
 import xml.etree.ElementTree
@@ -252,8 +253,11 @@ def make_am(msgs, cmdargs, msgid):
         b4.save_git_am_mbox(am_msgs, ifh)
         ambytes = ifh.getvalue().encode()
         if cmdargs.applyhere:
-            # Blindly attempt to apply to the current tree
-            ecode, out = b4.git_run_command(topdir, ['am'], stdin=ambytes, logstderr=True)
+            amflags = config.get('git-am-flags', '')
+            sp = shlex.shlex(amflags, posix=True)
+            sp.whitespace_split = True
+            amargs = list(sp)
+            ecode, out = b4.git_run_command(topdir, ['am'] + amargs, stdin=ambytes, logstderr=True)
             logger.info(out.strip())
             if ecode == 0:
                 thanks_record_am(lser, cherrypick=cherrypick)
