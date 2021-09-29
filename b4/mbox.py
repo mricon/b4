@@ -297,7 +297,39 @@ def make_am(msgs, cmdargs, msgid):
                 logger.critical('Unable to fetch from the worktree')
                 logger.critical(out.strip())
                 sys.exit(ecode)
+            # Edit the FETCH_HEAD to give a better default merge message
+            fhf = os.path.join(topdir, '.git', 'FETCH_HEAD')
+            with open(fhf, 'r') as fhh:
+                contents = fhh.read()
+            linkurl = config['linkmask'] % top_msgid
+            if len(am_msgs) > 1:
+                mmsg = 'patches from %s' % linkurl
+            else:
+                mmsg = 'patch from %s' % linkurl
+            new_contents = contents.replace(gwt, mmsg)
+            if new_contents != contents:
+                with open(fhf, 'w') as fhh:
+                    fhh.write(contents)
+            if lser.has_cover:
+                # Write out a sample merge message using the cover letter
+                mmf = os.path.join(topdir, '.git', 'b4-cover')
+                cmsg = lser.patches[0]
+                parts = b4.LoreMessage.get_body_parts(cmsg.body)
+                with open(mmf, 'w') as mmh:
+                    mmh.write('Merge %s\n\n' % mmsg)
+                    if len(am_msgs) > 1:
+                        mmh.write('Accept %d patches from %s <%s>\n\n' % (len(am_msgs), cmsg.fromname, cmsg.fromemail))
+                    else:
+                        mmh.write('Accept patch from %s <%s>\n\n' % (cmsg.fromname, cmsg.fromemail))
+                    mmh.write('%s\n' % cmsg.subject)
+                    mmh.write('=' * len(cmsg.subject) + '\n')
+                    mmh.write(parts[1])
+                    mmh.write('=' * len(cmsg.subject) + '\n')
+                    mmh.write('Link: %s\n' % linkurl)
+
         logger.info('You can now merge or checkout FETCH_HEAD')
+        if lser.has_cover:
+            logger.info('  e.g.: git merge -F .git/b4-cover --edit FETCH_HEAD')
         thanks_record_am(lser, cherrypick=cherrypick)
         return
 
