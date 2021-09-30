@@ -27,8 +27,18 @@ import xml.etree.ElementTree
 import b4
 
 from typing import Optional, Tuple
+from string import Template
 
 logger = b4.logger
+
+DEFAULT_MERGE_TEMPLATE = """Merge ${patch_or_series} "${seriestitle}"
+
+${authorname} <${authoremail}> says:
+====================
+${coverletter}
+====================
+Link: ${midurl}
+"""
 
 
 def make_am(msgs, cmdargs, msgid):
@@ -309,27 +319,46 @@ def make_am(msgs, cmdargs, msgid):
             new_contents = contents.replace(gwt, mmsg)
             if new_contents != contents:
                 with open(fhf, 'w') as fhh:
-                    fhh.write(contents)
+                    fhh.write(new_contents)
+
+            mmf = os.path.join(topdir, '.git', 'b4-cover')
             if lser.has_cover:
+                merge_template = DEFAULT_MERGE_TEMPLATE
+                if config.get('shazam-merge-template'):
+                    # Try to load this template instead
+                    try:
+                        merge_template = b4.read_template(config['shazam-merge-template'])
+                    except FileNotFoundError:
+                        logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
+                                        config['shazam-merge-template'])
+                        sys.exit(2)
+
                 # Write out a sample merge message using the cover letter
-                mmf = os.path.join(topdir, '.git', 'b4-cover')
                 cmsg = lser.patches[0]
                 parts = b4.LoreMessage.get_body_parts(cmsg.body)
+                tptvals = {
+                        'seriestitle': cmsg.subject,
+                        'authorname': cmsg.fromname,
+                        'authoremail': cmsg.fromemail,
+                        'coverletter': parts[1],
+                        'midurl': linkurl,
+                        }
+                if len(am_msgs) > 1:
+                    tptvals['patch_or_series'] = 'patch series'
+                else:
+                    tptvals['patch_or_series'] = 'patch'
+
+                body = Template(merge_template).safe_substitute(tptvals)
                 with open(mmf, 'w') as mmh:
-                    mmh.write('Merge %s\n\n' % mmsg)
-                    if len(am_msgs) > 1:
-                        mmh.write('Accept %d patches from %s <%s>\n\n' % (len(am_msgs), cmsg.fromname, cmsg.fromemail))
-                    else:
-                        mmh.write('Accept patch from %s <%s>\n\n' % (cmsg.fromname, cmsg.fromemail))
-                    mmh.write('%s\n' % cmsg.subject)
-                    mmh.write('=' * len(cmsg.subject) + '\n')
-                    mmh.write(parts[1])
-                    mmh.write('=' * len(cmsg.subject) + '\n')
-                    mmh.write('Link: %s\n' % linkurl)
+                    mmh.write(body)
+
+            elif os.path.exists(mmf):
+                # Make sure any old cover letters don't confuse anyone
+                os.unlink(mmf)
 
         logger.info('You can now merge or checkout FETCH_HEAD')
         if lser.has_cover:
-            logger.info('  e.g.: git merge -F .git/b4-cover --edit FETCH_HEAD')
+            logger.info('  e.g.: git merge -F .git/b4-cover --signoff --edit FETCH_HEAD')
         thanks_record_am(lser, cherrypick=cherrypick)
         return
 

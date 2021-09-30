@@ -1,0 +1,19 @@
+# Lines starting with '#' will be removed before invoking git-merge
+# This is the first line (title) of the merge
+# ${seriestitle}: will be a cleaned up subject of the cover
+#                 letter or the first patch in the series.
+# ${patch_or_series}: will say "patch" if a single patch or
+#                     "patch series" if more than one
+Merge ${patch_or_series} "${seriestitle}"
+
+${authorname} <${authoremail}> says:
+====================
+# This will be the entirety of the cover letter minus anything
+# below the "-- \n" signature line. You will almost certainly
+# want to edit it down to only include the relevant info.
+${coverletter}
+====================
+# This will contain a lore link to the patches in question
+Link: ${midurl}
+# git-merge will append any additional information here, depending
+# on the flags you used to invoke it (e.g. --log, --signoff, etc)

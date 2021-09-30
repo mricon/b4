@@ -228,21 +228,6 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
     return found
 
 
-def read_template(tptfile):
-    # bubbles up FileNotFound
-    tpt = ''
-    if tptfile.find('~') >= 0:
-        tptfile = os.path.expanduser(tptfile)
-    if tptfile.find('$') >= 0:
-        tptfile = os.path.expandvars(tptfile)
-    with open(tptfile, 'r', encoding='utf-8') as fh:
-        for line in fh:
-            if len(line) and line[0] == '#':
-                continue
-            tpt += line
-    return tpt
-
-
 def set_branch_details(gitdir, branch, jsondata, config):
     binfo = get_branch_info(gitdir, branch)
     jsondata['branch'] = branch
@@ -282,7 +267,7 @@ def generate_pr_thanks(gitdir, jsondata, branch):
     if config['thanks-pr-template']:
         # Try to load this template instead
         try:
-            thanks_template = read_template(config['thanks-pr-template'])
+            thanks_template = b4.read_template(config['thanks-pr-template'])
         except FileNotFoundError:
             logger.critical('ERROR: thanks-pr-template says to use %s, but it does not exist',
                             config['thanks-pr-template'])
@@ -311,7 +296,7 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
     if config['thanks-am-template']:
         # Try to load this template instead
         try:
-            thanks_template = read_template(config['thanks-am-template'])
+            thanks_template = b4.read_template(config['thanks-am-template'])
         except FileNotFoundError:
             logger.critical('ERROR: thanks-am-template says to use %s, but it does not exist',
                             config['thanks-am-template'])

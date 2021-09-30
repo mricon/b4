@@ -1895,7 +1895,7 @@ def git_temp_worktree(gitdir=None, commitish=None):
                 yield dfn
     finally:
         if dfn is not None:
-            git_run_command(gitdir, ['worktree', 'remove', dfn])
+            git_run_command(gitdir, ['worktree', 'remove', '--force', dfn])
 
 
 @contextmanager
@@ -2461,3 +2461,18 @@ def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[dict, bytes, byte
             with open(p_out, 'rb') as pfh:
                 p = pfh.read()
     return i, m, p
+
+
+def read_template(tptfile):
+    # bubbles up FileNotFound
+    tpt = ''
+    if tptfile.find('~') >= 0:
+        tptfile = os.path.expanduser(tptfile)
+    if tptfile.find('$') >= 0:
+        tptfile = os.path.expandvars(tptfile)
+    with open(tptfile, 'r', encoding='utf-8') as fh:
+        for line in fh:
+            if len(line) and line[0] == '#':
+                continue
+            tpt += line
+    return tpt
