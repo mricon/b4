@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2021-09-01" "0.8.0" ""
+.TH B4 5 "2021-09-01" "0.9.0" ""
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .
@@ -32,7 +32,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 ..
 .SH SYNOPSIS
 .sp
-b4 {mbox,am,attest,pr,ty,diff} [options]
+b4 {mbox,am,shazam,attest,pr,ty,diff} [options]
 .SH DESCRIPTION
 .sp
 This is a helper utility to work with patches and pull requests made
@@ -48,6 +48,8 @@ precursor to Lore and Data in the Star Trek universe.
 \fIb4 mbox\fP: Download a thread as an mbox file
 .IP \(bu 2
 \fIb4 am\fP: Create an mbox file that is ready to git\-am
+.IP \(bu 2
+\fIb4 shazam\fP: Similar to \fIam\fP, but lets you apply patches
 .IP \(bu 2
 \fIb4 pr\fP: Work with pull requests
 .IP \(bu 2
@@ -194,6 +196,9 @@ Do not reroll partial series when detected
 .UNINDENT
 .sp
 \fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
+.SH B4 SHAZAM
+.sp
+TBD.
 .SS b4 attest
 .sp
 usage: b4 attest [\-h] patchfile [patchfile ...]
@@ -437,6 +442,8 @@ Default configuration, with explanations:
    thanks\-pr\-template = None
    # See thanks\-am\-template.example. If not set, a default template will be used.
    thanks\-am\-template = None
+   # Used when preparing merge messages from cover letters. See shazam\-merge\-template.example
+   shazam\-merge\-template = None
 .ft P
 .fi
 .UNINDENT

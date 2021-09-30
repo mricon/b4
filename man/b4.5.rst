@@ -8,12 +8,12 @@ Work with code submissions in a public-inbox archive
 :Date:      2021-09-01
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.8.0
+:Version:   0.9.0
 :Manual section: 5
 
 SYNOPSIS
 --------
-b4 {mbox,am,attest,pr,ty,diff} [options]
+b4 {mbox,am,shazam,attest,pr,ty,diff} [options]
 
 DESCRIPTION
 -----------
@@ -29,6 +29,7 @@ SUBCOMMANDS
 -----------
 * *b4 mbox*: Download a thread as an mbox file
 * *b4 am*: Create an mbox file that is ready to git-am
+* *b4 shazam*: Similar to *am*, but lets you apply patches
 * *b4 pr*: Work with pull requests
 * *b4 diff*: Show range-diff style diffs between patch versions
 * *b4 ty*: Create templated replies for processed patches and pull requests
@@ -121,6 +122,10 @@ optional arguments:
 
 
 *Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
+
+b4 shazam
+---------
+TBD.
 
 b4 attest
 ~~~~~~~~~
@@ -298,7 +303,8 @@ Default configuration, with explanations::
       thanks-pr-template = None
       # See thanks-am-template.example. If not set, a default template will be used.
       thanks-am-template = None
-
+      # Used when preparing merge messages from cover letters. See shazam-merge-template.example
+      shazam-merge-template = None
 
 SUPPORT
 -------
