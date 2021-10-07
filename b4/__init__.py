@@ -1117,7 +1117,11 @@ class LoreMessage:
         config = get_main_config()
         sources = config.get('keyringsrc')
         if not sources:
-            sources = ['ref:::.keys', 'ref:::.local-keys', 'ref::refs/meta/keyring:']
+            # fallback to patatt's keyring if none is specified for b4
+            patatt_config = patatt.get_config_from_git(r'patatt\..*', multivals=['keyringsrc'])
+            sources = patatt_config.get('keyringsrc')
+            if not sources:
+                sources = ['ref:::.keys', 'ref:::.local-keys', 'ref::refs/meta/keyring:']
         if pdir not in sources:
             sources.append(pdir)
 
