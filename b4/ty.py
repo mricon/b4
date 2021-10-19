@@ -374,19 +374,30 @@ def auto_thankanator(cmdargs):
         sys.exit(0)
 
     logger.info('---')
-    send_messages(applied, cmdargs.gitdir, cmdargs.outdir, wantbranch, since=cmdargs.since)
+    send_messages(applied, wantbranch, cmdargs)
     sys.exit(0)
 
 
-def send_messages(listing, gitdir, outdir, branch, since='1.week'):
-    # Not really sending, but writing them out to be sent on your own
-    # We'll probably gain ability to send these once the feature is
-    # more mature and we're less likely to mess things up
-    datadir = b4.get_data_dir()
+def send_messages(listing, branch, cmdargs):
     logger.info('Generating %s thank-you letters', len(listing))
-    # Check if the outdir exists and if it has any .thanks files in it
-    if not os.path.exists(outdir):
-        os.mkdir(outdir)
+    gitdir = cmdargs.gitdir
+    datadir = b4.get_data_dir()
+    fromaddr = None
+    if cmdargs.sendemail:
+        # See if we have sendemail-identity set
+        config = b4.get_main_config()
+        identity = config.get('sendemail-identity')
+        try:
+            smtp, fromaddr = b4.get_smtp(identity)
+        except Exception as ex:  # noqa
+            logger.critical('Failed to configure the smtp connection:')
+            logger.critical(ex)
+            sys.exit(1)
+    else:
+        # We write .thanks notes
+        # Check if the outdir exists and if it has any .thanks files in it
+        if not os.path.exists(cmdargs.outdir):
+            os.mkdir(cmdargs.outdir)
 
     usercfg = b4.get_user_config()
     # Do we have a .signature file?
@@ -399,10 +410,6 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
 
     outgoing = 0
     for jsondata in listing:
-        slug_from = re.sub(r'\W', '_', jsondata['fromemail'])
-        slug_subj = re.sub(r'\W', '_', jsondata['subject'])
-        slug = '%s_%s' % (slug_from.lower(), slug_subj.lower())
-        slug = re.sub(r'_+', '_', slug)
         jsondata['myname'] = usercfg['name']
         jsondata['myemail'] = usercfg['email']
         jsondata['signature'] = signature
@@ -411,29 +418,60 @@ def send_messages(listing, gitdir, outdir, branch, since='1.week'):
             msg = generate_pr_thanks(gitdir, jsondata, branch)
         else:
             # This is a patch series
-            msg = generate_am_thanks(gitdir, jsondata, branch, since)
+            msg = generate_am_thanks(gitdir, jsondata, branch, cmdargs.since)
 
         if msg is None:
             continue
 
         outgoing += 1
-        outfile = os.path.join(outdir, '%s.thanks' % slug)
-        logger.info('  Writing: %s', outfile)
         msg.set_charset('utf-8')
         msg.replace_header('Content-Transfer-Encoding', '8bit')
-        with open(outfile, 'w') as fh:
-            fh.write(msg.as_string(policy=b4.emlpolicy))
-        logger.debug('Cleaning up: %s', jsondata['trackfile'])
-        fullpath = os.path.join(datadir, jsondata['trackfile'])
-        os.rename(fullpath, '%s.sent' % fullpath)
+        if cmdargs.sendemail:
+            if not fromaddr:
+                fromaddr = jsondata['myemail']
+            if cmdargs.dryrun:
+                logger.info('--- DRYRUN: message follows ---')
+                emldata = msg.as_string(policy=b4.emlpolicy)
+                logger.info('\t' + emldata.replace('\n', '\n\t'))
+                logger.info('--- DRYRUN: message ends ---')
+            else:
+                alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
+                alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+                sendto = {x[1] for x in alldests}
+                logger.info('Sending: %s', msg.get('subject'))
+                mypolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
+                smtp.sendmail(fromaddr, sendto, msg.as_string(policy=mypolicy))  # noqa
+        else:
+            slug_from = re.sub(r'\W', '_', jsondata['fromemail'])
+            slug_subj = re.sub(r'\W', '_', jsondata['subject'])
+            slug = '%s_%s' % (slug_from.lower(), slug_subj.lower())
+            slug = re.sub(r'_+', '_', slug)
+            outfile = os.path.join(cmdargs.outdir, '%s.thanks' % slug)
+            logger.info('  Writing: %s', outfile)
+            with open(outfile, 'w') as fh:
+                fh.write(msg.as_string(policy=b4.emlpolicy))
+        if cmdargs.dryrun:
+            logger.info('Dry run, preserving tracked series.')
+        else:
+            logger.debug('Cleaning up: %s', jsondata['trackfile'])
+            fullpath = os.path.join(datadir, jsondata['trackfile'])
+            os.rename(fullpath, '%s.sent' % fullpath)
+
     logger.info('---')
     if not outgoing:
         logger.info('No thanks necessary.')
         return
 
-    logger.debug('Wrote %s thank-you letters', outgoing)
-    logger.info('You can now run:')
-    logger.info('  git send-email %s/*.thanks', outdir)
+    if cmdargs.sendemail:
+        if cmdargs.dryrun:
+            logger.info('DRYRUN: generated %s thank-you letters', outgoing)
+        else:
+            logger.info('Sent %s thank-you letters', outgoing)
+        smtp.quit()
+    else:
+        logger.debug('Wrote %s thank-you letters', outgoing)
+        logger.info('You can now run:')
+        logger.info('  git send-email %s/*.thanks', cmdargs.outdir)
 
 
 def list_tracked():
@@ -465,7 +503,7 @@ def write_tracked(tracked):
         counter += 1
 
 
-def send_selected(cmdargs):
+def thank_selected(cmdargs):
     tracked = list_tracked()
     if not len(tracked):
         logger.info('Nothing to do')
@@ -494,7 +532,7 @@ def send_selected(cmdargs):
         sys.exit(0)
 
     wantbranch = get_wanted_branch(cmdargs)
-    send_messages(listing, cmdargs.gitdir, cmdargs.outdir, wantbranch, cmdargs.since)
+    send_messages(listing, wantbranch, cmdargs)
     sys.exit(0)
 
 
@@ -621,9 +659,9 @@ def main(cmdargs):
     if cmdargs.auto:
         check_stale_thanks(cmdargs.outdir)
         auto_thankanator(cmdargs)
-    elif cmdargs.send:
+    elif cmdargs.thank:
         check_stale_thanks(cmdargs.outdir)
-        send_selected(cmdargs)
+        thank_selected(cmdargs)
     elif cmdargs.discard:
         discard_selected(cmdargs)
     else:
@@ -634,4 +672,4 @@ def main(cmdargs):
         write_tracked(tracked)
         logger.info('---')
         logger.info('You can send them using number ranges, e.g:')
-        logger.info('  b4 ty -s 1-3,5,7-')
+        logger.info('  b4 ty -t 1-3,5,7-')

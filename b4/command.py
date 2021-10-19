@@ -199,7 +199,7 @@ def cmd():
                        help='Write thanks files into this dir (default=.)')
     sp_ty.add_argument('-l', '--list', action='store_true', default=False,
                        help='List pull requests and patch series you have retrieved')
-    sp_ty.add_argument('-s', '--send', default=None,
+    sp_ty.add_argument('-t', '--thank-for', default=None,
                        help='Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")')
     sp_ty.add_argument('-d', '--discard', default=None,
                        help='Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")')
@@ -209,6 +209,10 @@ def cmd():
                        help='The branch to check against, instead of current')
     sp_ty.add_argument('--since', default='1.week',
                        help='The --since option to use when auto-matching patches (default=1.week)')
+    sp_ty.add_argument('-S', '--send-email', action='store_true', dest='sendemail', default=False,
+                       help='Send email instead of writing out .thanks files')
+    sp_ty.add_argument('--dry-run', action='store_true', dest='dryrun', default=False,
+                       help='Print out emails instead of sending them')
     sp_ty.set_defaults(func=cmd_ty)
 
     # b4 diff

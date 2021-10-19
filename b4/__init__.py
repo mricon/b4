@@ -130,6 +130,8 @@ DEFAULT_CONFIG = {
     # git-config for gpg.program, and if that's not set,
     # we'll use "gpg" and hope for the better
     'gpgbin': None,
+    # When sending mail, use this sendemail identity configuration
+    'sendemail-identity': None,
 }
 
 # This is where we store actual config
@@ -2480,3 +2482,54 @@ def read_template(tptfile):
                 continue
             tpt += line
     return tpt
+
+
+def get_smtp(identity: Optional[str] = None):
+    import smtplib
+    if identity:
+        sconfig = get_config_from_git(rf'sendemail\.{identity}\..*')
+        sectname = f'sendemail.{identity}'
+    else:
+        sconfig = get_config_from_git(rf'sendemail\..*')
+        sectname = 'sendemail'
+    if not len(sconfig):
+        raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
+
+    # Limited support for smtp settings to begin with, but should cover the vast majority of cases
+    fromaddr = sconfig.get('from')
+    server = sconfig.get('smtpserver', 'localhost')
+    port = sconfig.get('smtpserverport', 0)
+    try:
+        port = int(port)
+    except ValueError:
+        raise smtplib.SMTPException('Invalid smtpport entry in %s' % sectname)
+
+    encryption = sconfig.get('smtpencryption')
+    # We only authenticate if we have encryption
+    if encryption:
+        if encryption in ('tls', 'starttls'):
+            # We do startssl
+            smtp = smtplib.SMTP(server, port)
+            # Introduce ourselves
+            smtp.ehlo()
+            # Start encryption
+            smtp.starttls()
+            # Introduce ourselves again to get new criteria
+            smtp.ehlo()
+        elif encryption in ('ssl', 'smtps'):
+            # We do TLS from the get-go
+            smtp = smtplib.SMTP_SSL(server, port)
+        else:
+            raise smtplib.SMTPException('Unclear what to do with smtpencryption=%s' % encryption)
+
+        # If we got to this point, we should do authentication.
+        auser = sconfig.get('smtpuser')
+        apass = sconfig.get('smtppass')
+        if auser and apass:
+            # Let any exceptions bubble up
+            smtp.login(auser, apass)
+    else:
+        # We assume you know what you're doing if you don't need encryption
+        smtp = smtplib.SMTP(server, port)
+
+    return smtp, fromaddr
