@@ -307,9 +307,13 @@ def make_am(msgs, cmdargs, msgid):
                 logger.critical('Unable to fetch from the worktree')
                 logger.critical(out.strip())
                 sys.exit(ecode)
-            # Edit the FETCH_HEAD to give a better default merge message
-            fhf = os.path.join(topdir, '.git', 'FETCH_HEAD')
-            with open(fhf, 'r') as fhh:
+            gitargs = ['rev-parse', '--git-path', 'FETCH_HEAD']
+            ecode, fhf = b4.git_run_command(topdir, gitargs, logstderr=True)
+            if ecode > 0:
+                logger.critical('Unable to find FETCH_HEAD')
+                logger.critical(out.strip())
+                sys.exit(ecode)
+            with open(fhf.rstrip(), 'r') as fhh:
                 contents = fhh.read()
             linkurl = config['linkmask'] % top_msgid
             if len(am_msgs) > 1:
@@ -321,7 +325,13 @@ def make_am(msgs, cmdargs, msgid):
                 with open(fhf, 'w') as fhh:
                     fhh.write(new_contents)
 
-            mmf = os.path.join(topdir, '.git', 'b4-cover')
+            gitargs = ['rev-parse', '--git-dir']
+            ecode, fhf = b4.git_run_command(topdir, gitargs, logstderr=True)
+            if ecode > 0:
+                logger.critical('Unable to find git directory')
+                logger.critical(out.strip())
+                sys.exit(ecode)
+            mmf = os.path.join(fhf.rstrip(), 'b4-cover')
             if lser.has_cover:
                 merge_template = DEFAULT_MERGE_TEMPLATE
                 if config.get('shazam-merge-template'):
@@ -358,7 +368,7 @@ def make_am(msgs, cmdargs, msgid):
 
         logger.info('You can now merge or checkout FETCH_HEAD')
         if lser.has_cover:
-            logger.info('  e.g.: git merge -F .git/b4-cover --signoff --edit FETCH_HEAD')
+            logger.info('  e.g.: git merge -F $(git rev-parse --git-dir)/b4-cover --signoff --edit FETCH_HEAD')
         thanks_record_am(lser, cherrypick=cherrypick)
         return
 
