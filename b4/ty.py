@@ -509,11 +509,11 @@ def thank_selected(cmdargs):
         logger.info('Nothing to do')
         sys.exit(0)
 
-    if cmdargs.send == 'all':
+    if cmdargs.thankfor == 'all':
         listing = tracked
     else:
         listing = list()
-        for num in b4.parse_int_range(cmdargs.send, upper=len(tracked)):
+        for num in b4.parse_int_range(cmdargs.thankfor, upper=len(tracked)):
             try:
                 index = int(num) - 1
                 listing.append(tracked[index])
@@ -659,7 +659,7 @@ def main(cmdargs):
     if cmdargs.auto:
         check_stale_thanks(cmdargs.outdir)
         auto_thankanator(cmdargs)
-    elif cmdargs.thank:
+    elif cmdargs.thankfor:
         check_stale_thanks(cmdargs.outdir)
         thank_selected(cmdargs)
     elif cmdargs.discard:

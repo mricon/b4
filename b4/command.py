@@ -201,7 +201,7 @@ def cmd():
                        help='Write thanks files into this dir (default=.)')
     sp_ty.add_argument('-l', '--list', action='store_true', default=False,
                        help='List pull requests and patch series you have retrieved')
-    sp_ty.add_argument('-t', '--thank-for', default=None,
+    sp_ty.add_argument('-t', '--thank-for', dest='thankfor', default=None,
                        help='Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")')
     sp_ty.add_argument('-d', '--discard', default=None,
                        help='Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")')
