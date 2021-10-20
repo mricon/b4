@@ -262,7 +262,7 @@ def make_am(msgs, cmdargs, msgid):
         ifh = io.StringIO()
         b4.save_git_am_mbox(am_msgs, ifh)
         ambytes = ifh.getvalue().encode()
-        if cmdargs.applyhere:
+        if not cmdargs.makefetchhead:
             amflags = config.get('git-am-flags', '')
             sp = shlex.shlex(amflags, posix=True)
             sp.whitespace_split = True
@@ -711,10 +711,10 @@ def main(cmdargs):
         cmdargs.nopartialreroll = False
         cmdargs.outdir = '-'
         cmdargs.guessbranch = None
-        if cmdargs.applyhere:
-            cmdargs.guessbase = False
-        else:
+        if cmdargs.makefetchhead:
             cmdargs.guessbase = True
+        else:
+            cmdargs.guessbase = False
 
     if cmdargs.checknewer:
         # Force nocache mode

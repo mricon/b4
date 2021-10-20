@@ -35,6 +35,7 @@ def cmd_mbox_common_opts(sp):
     sp.add_argument('-M', '--save-as-maildir', dest='maildir', action='store_true', default=False,
                     help='Save as maildir (avoids mbox format ambiguities)')
 
+
 def cmd_am_common_opts(sp):
     sp.add_argument('-v', '--use-version', dest='wantver', type=int, default=None,
                     help='Get a specific version of the patch/series')
@@ -147,10 +148,11 @@ def cmd():
     sp_sh = subparsers.add_parser('shazam', help='Like b4 am, but applies the series to your tree')
     cmd_retrieval_common_opts(sp_sh)
     cmd_am_common_opts(sp_sh)
+    sp_sh.add_argument('-H', '--make-fetch-head', dest='makefetchhead', action='store_true', default=False,
+                       help='Attempt to treat series as a pull request and fetch it into FETCH_HEAD')
     sp_sh.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
-                       help = 'When guessing base, go back this many days from the patch date (default: 3 weeks)')
-    sp_sh.add_argument('-A', '--apply-here', dest='applyhere', action='store_true', default=False,
-                       help = 'Apply to the current tree')
+                       help=('(use with -H) When guessing base, go back this many days from the patch date '
+                             '(default: 3 weeks)'))
     sp_sh.set_defaults(func=cmd_shazam)
 
     # b4 attest
