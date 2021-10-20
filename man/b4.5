@@ -49,7 +49,7 @@ precursor to Lore and Data in the Star Trek universe.
 .IP \(bu 2
 \fIb4 am\fP: Create an mbox file that is ready to git\-am
 .IP \(bu 2
-\fIb4 shazam\fP: Similar to \fIam\fP, but lets you apply patches
+\fIb4 shazam\fP: Similar to \fIam\fP, but lets you apply patches directly
 .IP \(bu 2
 \fIb4 pr\fP: Work with pull requests
 .IP \(bu 2
@@ -202,6 +202,15 @@ TBD.
 .SS b4 attest
 .sp
 usage: b4 attest [\-h] patchfile [patchfile ...]
+.sp
+\fBNOTE:\fP
+.INDENT 0.0
+.INDENT 3.5
+This functionality is now implemented via an auxiliary library called
+"patatt". You may instead install and use patatt directly with the
+same results.
+.UNINDENT
+.UNINDENT
 .INDENT 0.0
 .TP
 .B positional arguments:
@@ -252,7 +261,7 @@ Use this From: in exploded messages (use with \-e)
 .INDENT 0.0
 .TP
 .B usage:
-b4 ty [\-h] [\-g GITDIR] [\-o OUTDIR] [\-l] [\-s SEND [SEND ...]] [\-d DISCARD [DISCARD ...]] [\-a] [\-b BRANCH] [\-\-since SINCE]
+b4 ty [\-h] [\-g GITDIR] [\-o OUTDIR] [\-l] [\-t THANK_FOR [THANK_FOR ...]] [\-d DISCARD [DISCARD ...]] [\-a] [\-b BRANCH] [\-\-since SINCE] [\-S] [\-\-dry\-run]
 .TP
 .B optional arguments:
 .INDENT 7.0
@@ -269,24 +278,39 @@ Write thanks files into this dir (default=.)
 .B \-l\fP,\fB  \-\-list
 List pull requests and patch series you have retrieved
 .TP
-.BI \-s \ SEND\fR,\fB \ \-\-send \ SEND
+.BI \-t \ THANK_FOR\fR,\fB \ \-\-thank\-for \ THANK_FOR
 Generate thankyous for specific entries from \-l (e.g.: 1,3\-5,7\-; or "all")
 .TP
 .BI \-d \ DISCARD\fR,\fB \ \-\-discard \ DISCARD
 Discard specific messages from \-l (e.g.: 1,3\-5,7\-; or "all")
 .TP
 .B \-a\fP,\fB  \-\-auto
-Use the Auto\-Thankanator to figure out what got applied/merged
+Use the Auto\-Thankanator gun to figure out what got applied/merged
 .TP
 .BI \-b \ BRANCH\fR,\fB \ \-\-branch \ BRANCH
 The branch to check against, instead of current
 .TP
 .BI \-\-since \ SINCE
 The \-\-since option to use when auto\-matching patches (default=1.week)
+.TP
+.B \-S\fP,\fB  \-\-send\-email
+Send email instead of writing out .thanks files
+.TP
+.B \-\-dry\-run
+Print out emails instead of sending them
 .UNINDENT
 .UNINDENT
 .sp
-\fIExample\fP: b4 ty \-\-auto
+\fBNOTE:\fP
+.INDENT 0.0
+.INDENT 3.5
+To send mails directly using \-S, you should have a configured
+[sendemail] section somewhere in your applicable git configuration
+files (global or in\-tree).
+.UNINDENT
+.UNINDENT
+.sp
+\fIExample\fP: b4 ty \-aS \-\-dry\-run
 .SS b4 diff
 .sp
 usage: b4 diff [\-h] [\-g GITDIR] [\-p USEPROJECT] [\-C] [\-v WANTVERS [WANTVERS ...]] [\-n] [\-o OUTDIFF] [\-c] [\-m AMBOX AMBOX] [msgid]

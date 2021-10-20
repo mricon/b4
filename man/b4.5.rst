@@ -29,7 +29,7 @@ SUBCOMMANDS
 -----------
 * *b4 mbox*: Download a thread as an mbox file
 * *b4 am*: Create an mbox file that is ready to git-am
-* *b4 shazam*: Similar to *am*, but lets you apply patches
+* *b4 shazam*: Similar to *am*, but lets you apply patches directly
 * *b4 pr*: Work with pull requests
 * *b4 diff*: Show range-diff style diffs between patch versions
 * *b4 ty*: Create templated replies for processed patches and pull requests
@@ -131,6 +131,12 @@ b4 attest
 ~~~~~~~~~
 usage: b4 attest [-h] patchfile [patchfile ...]
 
+.. note::
+
+   This functionality is now implemented via an auxiliary library called
+   "patatt". You may instead install and use patatt directly with the
+   same results.
+
 positional arguments:
   patchfile             Patches to attest
 
@@ -163,7 +169,7 @@ optional arguments:
 b4 ty
 ~~~~~
 usage:
-  b4 ty [-h] [-g GITDIR] [-o OUTDIR] [-l] [-s SEND [SEND ...]] [-d DISCARD [DISCARD ...]] [-a] [-b BRANCH] [--since SINCE]
+  b4 ty [-h] [-g GITDIR] [-o OUTDIR] [-l] [-t THANK_FOR [THANK_FOR ...]] [-d DISCARD [DISCARD ...]] [-a] [-b BRANCH] [--since SINCE] [-S] [--dry-run]
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -172,15 +178,24 @@ optional arguments:
   -o OUTDIR, --outdir OUTDIR
                         Write thanks files into this dir (default=.)
   -l, --list            List pull requests and patch series you have retrieved
-  -s SEND, --send SEND  Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")
+  -t THANK_FOR, --thank-for THANK_FOR
+                        Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")
   -d DISCARD, --discard DISCARD
                         Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")
-  -a, --auto            Use the Auto-Thankanator to figure out what got applied/merged
+  -a, --auto            Use the Auto-Thankanator gun to figure out what got applied/merged
   -b BRANCH, --branch BRANCH
                         The branch to check against, instead of current
   --since SINCE         The --since option to use when auto-matching patches (default=1.week)
+  -S, --send-email      Send email instead of writing out .thanks files
+  --dry-run             Print out emails instead of sending them
 
-*Example*: b4 ty --auto
+.. note::
+
+   To send mails directly using -S, you should have a configured
+   [sendemail] section somewhere in your applicable git configuration
+   files (global or in-tree).
+
+*Example*: b4 ty -aS --dry-run
 
 b4 diff
 ~~~~~~~
