@@ -2505,6 +2505,7 @@ def get_smtp(identity: Optional[str] = None):
         raise smtplib.SMTPException('Invalid smtpport entry in %s' % sectname)
 
     encryption = sconfig.get('smtpencryption')
+    logger.info('Connecting to %s:%s', server, port)
     # We only authenticate if we have encryption
     if encryption:
         if encryption in ('tls', 'starttls'):

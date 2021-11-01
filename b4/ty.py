@@ -11,6 +11,7 @@ import b4
 import re
 import email
 import email.message
+import email.policy
 import json
 
 from string import Template
@@ -91,9 +92,9 @@ def make_reply(reply_template, jsondata):
     # Add original sender to the To
     allto.append((jsondata['fromname'], jsondata['fromemail']))
 
-    msg['To'] = b4.format_addrs(allto)
+    msg.add_header('To', b4.format_addrs(allto))
     if allcc:
-        msg['Cc'] = b4.format_addrs(allcc)
+        msg.add_header('Cc', b4.format_addrs(allcc))
     msg['In-Reply-To'] = '<%s>' % jsondata['msgid']
     if len(jsondata['references']):
         msg['References'] = '%s <%s>' % (jsondata['references'], jsondata['msgid'])
@@ -102,9 +103,9 @@ def make_reply(reply_template, jsondata):
 
     subject = re.sub(r'^Re:\s+', '', jsondata['subject'], flags=re.I)
     if jsondata.get('cherrypick'):
-        msg['Subject'] = 'Re: (subset) ' + subject
+        msg.add_header('Subject', 'Re: (subset) ' + subject)
     else:
-        msg['Subject'] = 'Re: ' + subject
+        msg.add_header('Subject', 'Re: ' + subject)
 
     mydomain = jsondata['myemail'].split('@')[1]
     msg['Message-Id'] = email.utils.make_msgid(idstring='b4-ty', domain=mydomain)
@@ -427,20 +428,29 @@ def send_messages(listing, branch, cmdargs):
         msg.set_charset('utf-8')
         msg.replace_header('Content-Transfer-Encoding', '8bit')
         if cmdargs.sendemail:
+            msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
+            emldata = msg.as_string()
             if not fromaddr:
                 fromaddr = jsondata['myemail']
             if cmdargs.dryrun:
                 logger.info('--- DRYRUN: message follows ---')
-                emldata = msg.as_string(policy=b4.emlpolicy)
                 logger.info('\t' + emldata.replace('\n', '\n\t'))
                 logger.info('--- DRYRUN: message ends ---')
             else:
                 alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
                 alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
                 sendto = {x[1] for x in alldests}
-                logger.info('Sending: %s', msg.get('subject'))
-                mypolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
-                smtp.sendmail(fromaddr, sendto, msg.as_string(policy=mypolicy))  # noqa
+                logger.info('  Sending: %s', msg.get('subject'))
+                # Python's sendmail implementation seems to have some logic problems where 8-bit messages are involved.
+                # As far as I understand the difference between 8BITMIME (supported by nearly all smtp servers) and
+                # SMTPUTF8 (supported by very few), SMTPUTF8 is only required when the addresses specified in either
+                # "MAIL FROM" or "RCPT TO" lines of the _protocol exchange_ themselves have 8bit characters, not
+                # anything in the From: header of the DATA payload. Python's smtplib seems to always try to encode
+                # strings as ascii regardless of what was policy was specified.
+                # Work around this by getting the payload as string and then encoding to bytes ourselves.
+                # Force compliant eols
+                emldata = re.sub(r'(?:\r\n|\n|\r(?!\n))', '\r\n', emldata) # noqa
+                smtp.sendmail(fromaddr, sendto, emldata.encode())  # noqa
         else:
             slug_from = re.sub(r'\W', '_', jsondata['fromemail'])
             slug_subj = re.sub(r'\W', '_', jsondata['subject'])
