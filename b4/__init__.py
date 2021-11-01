@@ -84,6 +84,19 @@ AMHDRS = [
     'List-Id',
 ]
 
+# Unicode chars that can be used to mess up legitimate code review
+BAD_UNI_CHARS = {
+    chr(0x202A),
+    chr(0x202B),
+    chr(0x202C),
+    chr(0x202D),
+    chr(0x202E),
+    chr(0x2066),
+    chr(0x2067),
+    chr(0x2068),
+    chr(0x2069),
+}
+
 # You can use bash-style globbing here
 # end with '*' to include any other trailers
 # You can change the default in your ~/.gitconfig, e.g.:
@@ -491,7 +504,7 @@ class LoreSeries:
         return slug[:100]
 
     def get_am_ready(self, noaddtrailers=False, covertrailers=False, trailer_order=None, addmysob=False,
-                     addlink=False, linkmask=None, cherrypick=None, copyccs=False) -> list:
+                     addlink=False, linkmask=None, cherrypick=None, copyccs=False, allowbadchars=False) -> list:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -579,7 +592,8 @@ class LoreSeries:
                 add_trailers = True
                 if noaddtrailers:
                     add_trailers = False
-                msg = lmsg.get_am_message(add_trailers=add_trailers, trailer_order=trailer_order, copyccs=copyccs)
+                msg = lmsg.get_am_message(add_trailers=add_trailers, trailer_order=trailer_order, copyccs=copyccs,
+                                          allowbadchars=allowbadchars)
                 msgs.append(msg)
             else:
                 logger.error('  ERROR: missing [%s/%s]!', at, self.expected)
@@ -1596,11 +1610,30 @@ class LoreMessage:
 
         return '[%s] %s' % (' '.join(parts), self.lsubject.subject)
 
-    def get_am_message(self, add_trailers=True, trailer_order=None, copyccs=False):
+    def get_am_message(self, add_trailers=True, trailer_order=None, copyccs=False, allowbadchars=False):
         if add_trailers:
             self.fix_trailers(trailer_order=trailer_order, copyccs=copyccs)
+        bbody = self.body.encode()
+        # Look through the body to make sure there aren't any unwanted unicode characters
+        # First, encode into ascii and compare for a quickie utf8 presence test
+        if self.body.encode('ascii', errors='replace') != bbody:
+            logger.debug('Body contains non-ascii characters. Performing a test against badchars.')
+            matches = {u for u in self.body if u in BAD_UNI_CHARS}
+            if matches and not allowbadchars:
+                logger.critical('---')
+                logger.critical('WARNING: Message contains unicode control characters!')
+                logger.critical('         Subject: %s', self.full_subject)
+                logger.critical('         If you know what you are doing, rerun with the right flag to allow this.')
+                sys.exit(1)
+            if matches and allowbadchars:
+                logger.info('---')
+                logger.info('WARNING: Message contains unicode control characters!')
+                logger.info('         Subject: %s', self.full_subject)
+                logger.info('         Allowing this through, I hope you know what you are doing.')
+                logger.info('---')
+
         am_msg = email.message.EmailMessage()
-        am_msg.set_payload(self.body.encode())
+        am_msg.set_payload(bbody)
         am_msg.add_header('Subject', self.get_am_subject(indicate_reroll=False))
         if self.fromname:
             am_msg.add_header('From', f'{self.fromname} <{self.fromemail}>')

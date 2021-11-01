@@ -104,7 +104,7 @@ def make_am(msgs, cmdargs, msgid):
                                     covertrailers=covertrailers, trailer_order=config['trailer-order'],
                                     addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
                                     linkmask=config['linkmask'], cherrypick=cherrypick,
-                                    copyccs=cmdargs.copyccs)
+                                    copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars)
     except KeyError:
         sys.exit(1)
 
