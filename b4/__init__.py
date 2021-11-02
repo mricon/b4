@@ -84,19 +84,6 @@ AMHDRS = [
     'List-Id',
 ]
 
-# Unicode chars that can be used to mess up legitimate code review
-BAD_UNI_CHARS = {
-    chr(0x202A),
-    chr(0x202B),
-    chr(0x202C),
-    chr(0x202D),
-    chr(0x202E),
-    chr(0x2066),
-    chr(0x2067),
-    chr(0x2068),
-    chr(0x2069),
-}
-
 # You can use bash-style globbing here
 # end with '*' to include any other trailers
 # You can change the default in your ~/.gitconfig, e.g.:
@@ -1614,23 +1601,32 @@ class LoreMessage:
         if add_trailers:
             self.fix_trailers(trailer_order=trailer_order, copyccs=copyccs)
         bbody = self.body.encode()
-        # Look through the body to make sure there aren't any unwanted unicode characters
+        # Look through the body to make sure there aren't any suspicious unicode control flow chars
         # First, encode into ascii and compare for a quickie utf8 presence test
-        if self.body.encode('ascii', errors='replace') != bbody:
-            logger.debug('Body contains non-ascii characters. Performing a test against badchars.')
-            matches = {u for u in self.body if u in BAD_UNI_CHARS}
-            if matches and not allowbadchars:
-                logger.critical('---')
-                logger.critical('WARNING: Message contains unicode control characters!')
-                logger.critical('         Subject: %s', self.full_subject)
-                logger.critical('         If you know what you are doing, rerun with the right flag to allow this.')
-                sys.exit(1)
-            if matches and allowbadchars:
-                logger.info('---')
-                logger.info('WARNING: Message contains unicode control characters!')
-                logger.info('         Subject: %s', self.full_subject)
-                logger.info('         Allowing this through, I hope you know what you are doing.')
-                logger.info('---')
+        if not allowbadchars and self.body.encode('ascii', errors='replace') != bbody:
+            import unicodedata
+            logger.debug('Body contains non-ascii characters. Running Unicode Cf char tests.')
+            for line in self.body.split('\n'):
+                # Does this line have any unicode?
+                if line.encode() == line.encode('ascii', errors='replace'):
+                    continue
+                ucats = {unicodedata.category(ch) for ch in line.rstrip('\r')}
+                # If we have Cf (control flow characters) but not Lo ("letter other") characters,
+                # indicating a language other than latin, then there's likely something funky going on
+                if 'Cf' in ucats and 'Lo' not in ucats:
+                    # find the offending char
+                    at = 0
+                    for c in line.rstrip('\r'):
+                        if unicodedata.category(c) == 'Cf':
+                            logger.critical('---')
+                            logger.critical('WARNING: Message contains suspicious unicode control characters!')
+                            logger.critical('         Subject: %s', self.full_subject)
+                            logger.critical('            Line: %s', line.rstrip('\r'))
+                            logger.critical('            ------%s^', '-'*at)
+                            logger.critical('            Char: %s (%s)', unicodedata.name(c), hex(ord(c)))
+                            logger.critical('         If you are sure about this, rerun with the right flag to allow.')
+                            sys.exit(1)
+                        at += 1
 
         am_msg = email.message.EmailMessage()
         am_msg.set_payload(bbody)
