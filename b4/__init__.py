@@ -1392,7 +1392,7 @@ class LoreMessage:
         was_trailer = False
         for line in body.split('\n'):
             line = line.strip('\r')
-            matches = re.search(r'^(\w\S+):\s+(\S.*)', line, flags=re.I)
+            matches = re.search(r'^\s*(\w\S+):\s+(\S.*)', line, flags=re.I)
             if matches:
                 groups = list(matches.groups())
                 # We only accept headers if we haven't seen any non-trailer lines
