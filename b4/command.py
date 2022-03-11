@@ -103,6 +103,11 @@ def cmd_diff(cmdargs):
     b4.diff.main(cmdargs)
 
 
+def cmd_rn(cmdargs):
+    import b4.rn
+    b4.rn.main(cmdargs)
+
+
 def cmd():
     # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
@@ -249,6 +254,15 @@ def cmd():
     sp_kr.add_argument('--show-keys', dest='showkeys', action='store_true', default=False,
                        help='Show all developer keys found in a thread')
     sp_kr.set_defaults(func=cmd_kr)
+
+    # b4 rn
+    sp_rn = subparsers.add_parser('rn', help='Generate release notes from pull request')
+    cmd_retrieval_common_opts(sp_rn)
+    sp_rn.add_argument('-g', '--gitdir', default=None,
+                       help='Operate on this git tree instead of current dir')
+    sp_rn.add_argument('-o', '--output-file', dest='outfile', default=None,
+                       help='Write release notes into this file instead of outputting to stdout')
+    sp_rn.set_defaults(func=cmd_rn)
 
     cmdargs = parser.parse_args()
 
