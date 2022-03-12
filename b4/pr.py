@@ -569,6 +569,13 @@ def main(cmdargs):
                         logger.info(out)
                     sys.exit(ecode)
 
+            # With "-o -" write mbox with no cover to stdout
+            if cmdargs.outmbox == '-':
+                b4.save_git_am_mbox(msgs[1:], sys.stdout)
+                sys.exit(0)
+            elif cmdargs.nocover:
+                msgs = msgs[1:]
+
             config = b4.get_main_config()
             if config.get('save-maildirs', 'no') == 'yes':
                 save_maildir = True

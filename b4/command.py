@@ -191,6 +191,8 @@ def cmd():
                              'the identity must match a [sendemail "identity"] config section'))
     sp_pr.add_argument('--dry-run', dest='dryrun', action='store_true', default=False,
                        help='Force a --dry-run on git-send-email invocation (use with -s)')
+    sp_pr.add_argument('--no-cover', dest='nocover', action='store_true', default=False,
+                       help='Do not save the cover letter (on by default when using -o -)')
     sp_pr.add_argument('msgid', nargs='?',
                        help='Message ID to process, or pipe a raw message')
     sp_pr.set_defaults(func=cmd_pr)

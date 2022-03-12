@@ -163,6 +163,8 @@ optional arguments:
   -l, --retrieve-links  Attempt to retrieve any Link: URLs (use with -e)
   -f MAILFROM, --from-addr MAILFROM
                         Use this From: in exploded messages (use with -e)
+  --no-cover
+                        Do not save the cover letter (on by default when using -o -)
 
 *Example*: b4 pr 202003292120.2BDCB41@keescook
 
