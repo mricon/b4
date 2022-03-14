@@ -104,6 +104,7 @@ DEFAULT_CONFIG = {
     'linkmask': LOREADDR + '/r/%s',
     'trailer-order': DEFAULT_TRAILER_ORDER,
     'listid-preference': '*.feeds.kernel.org,*.linux.dev,*.kernel.org,*',
+    'pr-tracker-email': 'pr-tracker-bot@kernel.org',
     'save-maildirs': 'no',
     # off: do not bother checking attestation
     # check: print an attaboy when attestation is found
@@ -860,6 +861,7 @@ class LoreMessage:
         self.pr_repo = None
         self.pr_ref = None
         self.pr_tip_commit = None
+        self.pr_merge_commit = None
         self.pr_remote_tip_commit = None
 
         # Patchwork hash
