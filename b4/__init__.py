@@ -275,7 +275,7 @@ class LoreMailbox:
             for member in lser.patches:
                 if member is not None and member.in_reply_to is not None:
                     potential = self.get_by_msgid(member.in_reply_to)
-                    if potential is not None and potential.has_diffstat and not potential.has_diff:
+                    if potential is not None and potential.maybe_cover():
                         # This is *probably* the cover letter
                         lser.patches[0] = potential
                         lser.has_cover = True
@@ -351,7 +351,7 @@ class LoreMailbox:
 
         return lser
 
-    def add_message(self, msg):
+    def add_message(self, msg, needcover=False):
         msgid = LoreMessage.get_clean_msgid(msg)
         if msgid in self.msgid_map:
             logger.debug('Already have a message with this msgid, skipping %s', msgid)
@@ -367,7 +367,7 @@ class LoreMailbox:
             self.followups.append(lmsg)
             return
 
-        if lmsg.counter == 0 and (not lmsg.counters_inferred or lmsg.has_diffstat):
+        if lmsg.likely_cover():
             # Cover letter
             # Add it to covers -- we'll deal with them later
             logger.debug('  adding as v%s cover letter', lmsg.revision)
@@ -375,12 +375,12 @@ class LoreMailbox:
             return
 
         if lmsg.has_diff:
-            if lmsg.revision not in self.series:
+            if lmsg.revision not in self.series or needcover:
                 if lmsg.revision_inferred and lmsg.in_reply_to:
                     # We have an inferred revision here.
                     # Do we have an upthread cover letter that specifies a revision?
                     irt = self.get_by_msgid(lmsg.in_reply_to)
-                    if irt is not None and irt.has_diffstat and not irt.has_diff:
+                    if irt is not None and irt.likely_cover():
                         # Yes, this is very likely our cover letter
                         logger.debug('  fixed revision to v%s', irt.revision)
                         lmsg.revision = irt.revision
@@ -967,6 +967,12 @@ class LoreMessage:
                 badtrailers = ('from', 'author', 'cc', 'to')
                 if trailer[0].lower() not in badtrailers:
                     self.trailers.append(trailer)
+
+    def maybe_cover(self):
+        return self.has_diffstat and not self.has_diff
+
+    def likely_cover(self):
+        return self.counter == 0 and (not self.counters_inferred or self.mayby_cover())
 
     def get_trailers(self, sloppy=False):
         trailers = list()
