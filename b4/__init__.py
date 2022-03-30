@@ -1293,6 +1293,17 @@ class LoreMessage:
                 msgid = matches.groups()[0]
         return msgid
 
+    # Get commit id from git am formatted patch
+    @staticmethod
+    def get_commit_id(msg):
+        commitid = None
+        unixhdr = msg.get_unixfrom()
+        if unixhdr:
+            matches = re.search(r'^From ([0-9a-f]+)', unixhdr)
+            if matches:
+                commitid = matches.groups()[0]
+        return commitid
+
     @staticmethod
     def get_preferred_duplicate(msg1, msg2):
         config = get_main_config()
@@ -2055,7 +2066,7 @@ def get_cache_dir(appname: str = 'b4') -> str:
         fullpath = os.path.join(cachedir, entry)
         st = os.stat(fullpath)
         if st.st_mtime < expage:
-            logger.debug('Cleaning up cache: %s', entry)
+            logger.debug('Cleaning up cache: %s mtime=%d < %d', entry, st.st_mtime, expage)
             if os.path.isdir(fullpath):
                 shutil.rmtree(fullpath)
             else:

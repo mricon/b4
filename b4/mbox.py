@@ -525,6 +525,36 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
         logger.debug('Could not find cover of 1st patch in mbox')
         return msgs
 
+    # For query by @base_msg, check if we have a cache of this lookup
+    base_msgid = b4.LoreMessage.get_clean_msgid(base_msg)
+    identifier = base_msgid
+    # Use commit id as key to cache of git am formatted @base_msg
+    if not identifier:
+        identifier = b4.LoreMessage.get_commit_id(base_msg)
+    if identifier is None:
+        logger.debug('Could not find find base msgid for series')
+        return msgs
+
+    cachedir = None
+    if identifier and len(msgs) == 0 and not wantvers:
+        if useproject:
+            identifier += '-' + useproject
+        if direction > 0:
+            identifier += '+'
+        elif direction < 0:
+            identifier += '-'
+        cachedir = b4.get_cache_file(identifier, suffix='extra.msgs')
+
+    if cachedir and os.path.exists(cachedir) and not nocache:
+        logger.debug('Using cached copy of %s at %s', identifier, cachedir)
+        msgs = list()
+        for msg in os.listdir(cachedir):
+            with open(os.path.join(cachedir, msg), 'rb') as fh:
+                msgs.append(email.message_from_binary_file(fh))
+        return msgs
+    else:
+        logger.debug('No cached copy for %s', identifier)
+
     config = b4.get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])
     if not useproject:
@@ -565,7 +595,6 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
         if direction < 0 and wantvers is None:
             wantvers = [latest_revision - 1]
 
-        base_msgid = b4.LoreMessage.get_clean_msgid(base_msg)
         fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
         msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
         startdate = time.strftime('%Y%m%d', msgdate[:9])
@@ -642,6 +671,13 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
                 nt_msgs += potentials
                 logger.info('   Added %s messages from that thread', len(potentials))
 
+    # Write results of @base_msg query to cache
+    if cachedir:
+        if os.path.exists(cachedir):
+            shutil.rmtree(cachedir)
+        pathlib.Path(cachedir).mkdir(parents=True)
+        at = 0
+
     # Append all of these to the existing mailbox
     for nt_msg in nt_msgs:
         nt_msgid = b4.LoreMessage.get_clean_msgid(nt_msg)
@@ -652,6 +688,10 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
         logger.debug('Adding: %s', nt_subject)
         msgs.append(nt_msg)
         seen_msgids.add(nt_msgid)
+        if cachedir:
+            with open(os.path.join(cachedir, '%04d' % at), 'wb') as fh:
+                fh.write(nt_msg.as_bytes(policy=b4.emlpolicy))
+            at += 1
 
     return msgs
 
