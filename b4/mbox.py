@@ -480,7 +480,7 @@ def save_as_quilt(am_msgs, q_dirname):
             sfh.write('%s\n' % patch_filename)
 
 
-def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None, nocache: bool = False,
+def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = None, nocache: bool = False,
                      useproject: Optional[str] = None) -> list:
     base_msg = None
     latest_revision = None
@@ -725,7 +725,8 @@ def main(cmdargs):
         return
 
     if len(msgs) and cmdargs.checknewer:
-        msgs = get_extra_series(msgs, direction=1, useproject=cmdargs.useproject)
+        msgs = get_extra_series(msgs, direction=1, nocache=cmdargs.nocache,
+                                useproject=cmdargs.useproject)
 
     if cmdargs.subcmd in ('am', 'shazam'):
         make_am(msgs, cmdargs, msgid)
