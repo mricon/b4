@@ -479,11 +479,15 @@ def save_as_quilt(am_msgs, q_dirname):
         for patch_filename in patch_filenames:
             sfh.write('%s\n' % patch_filename)
 
-
+# Get older/newer revisions of a patch series from public-inbox
+#
+# @direction:
+#  1 - look for newer revisions (default)
+# -1 - look for older revisions
+#  0 - look for latest revision in public-inbox (regardless of @base_msg)
 def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = None, nocache: bool = False,
-                     useproject: Optional[str] = None) -> list:
-    base_msg = None
-    latest_revision = None
+                     base_msg = None, useproject: Optional[str] = None) -> list:
+    latest_revision = 0
     seen_msgids = set()
     seen_covers = set()
     obsoleted = list()
@@ -552,7 +556,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
     else:
         # Get subject info from base_msg again
         lsub = b4.LoreSubject(base_msg['Subject'])
-        if not len(lsub.prefixes):
+        if direction > 0 and not len(lsub.prefixes):
             logger.debug('Not checking for new revisions: no prefixes on the cover letter.')
             return msgs
         if direction < 0 and latest_revision <= 1:
@@ -569,10 +573,15 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
             q = 's:"%s" AND f:"%s" AND d:%s..' % (lsub.subject.replace('"', ''), fromeml, startdate)
             queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '-1'}))
             logger.critical('Checking for newer revisions on %s', listarc)
-        else:
+        elif direction < 0:
             q = 's:"%s" AND f:"%s" AND d:..%s' % (lsub.subject.replace('"', ''), fromeml, startdate)
             queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '1'}))
             logger.critical('Checking for older revisions on %s', listarc)
+        else:
+            # Find latest revision in public-inbox to match base_msg subject
+            q = 's:"%s"' % (lsub.subject.replace('"', ''))
+            queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A'}))
+            logger.debug('Checking for revisions on %s', listarc)
 
         logger.debug('Query URL: %s', queryurl)
         session = b4.get_requests_session()
@@ -592,11 +601,11 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
         for entry in entries:
             title = entry.find('atom:title', ns).text
             lsub = b4.LoreSubject(title)
-            if lsub.reply or lsub.counter > 1:
+            if lsub.reply or (direction != 0 and lsub.counter > 1):
                 logger.debug('Ignoring result (not interesting): %s', title)
                 continue
             link = entry.find('atom:link', ns).get('href')
-            if direction > 0 and lsub.revision <= latest_revision:
+            if direction >= 0 and lsub.revision <= latest_revision:
                 logger.debug('Ignoring result (not new revision): %s', title)
                 continue
             elif direction < 0 and lsub.revision >= latest_revision:
@@ -610,13 +619,13 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = 
                 continue
             if lsub.revision == 1 and lsub.revision == latest_revision:
                 # Someone sent a separate message with an identical title but no new vX in the subject line
-                if direction > 0:
+                if direction >= 0:
                     # It's *probably* a new revision.
                     logger.debug('Likely a new revision: %s', title)
                 else:
                     # It's *probably* an older revision.
                     logger.debug('Likely an older revision: %s', title)
-            elif direction > 0 and lsub.revision > latest_revision:
+            elif direction >= 0 and lsub.revision > latest_revision:
                 logger.debug('Definitely a new revision [v%s]: %s', lsub.revision, title)
             elif direction < 0 and lsub.revision < latest_revision:
                 logger.debug('Definitely an older revision [v%s]: %s', lsub.revision, title)
