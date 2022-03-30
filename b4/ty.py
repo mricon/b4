@@ -13,6 +13,7 @@ import email
 import email.message
 import email.policy
 import json
+import fnmatch
 
 from string import Template
 from email import utils
@@ -50,6 +51,8 @@ ${signature}
 MY_COMMITS = None
 # Used to track additional branch info
 BRANCH_INFO = None
+# Used to track mailmap replacements
+MAILMAP_INFO = dict()
 
 
 def git_get_merge_id(gitdir, commit_id, branch=None):
@@ -73,24 +76,65 @@ def git_get_commit_message(gitdir, rev):
     return b4.git_run_command(gitdir, args)
 
 
-def make_reply(reply_template, jsondata):
+def fix_dests(addresses, excludes, gitdir):
+    global MAILMAP_INFO
+    for entry in list(addresses):
+        # Check if it's in excludes
+        removed = False
+        for exclude in excludes:
+            if fnmatch.fnmatch(entry[1], exclude):
+                logger.debug('Removed %s due to matching %s', entry[1], exclude)
+                addresses.remove(entry)
+                removed = True
+                break
+        if removed:
+            continue
+        # Check if it's mailmap-replaced
+        if entry[1] in MAILMAP_INFO:
+            if MAILMAP_INFO[entry[1]]:
+                addresses.remove(entry)
+                addresses.append(MAILMAP_INFO[entry[1]])
+            continue
+        logger.debug('Checking if %s is mailmap-replaced', entry[1])
+        args = ['check-mailmap', f'<{entry[1]}>']
+        ecode, out = b4.git_run_command(gitdir, args)
+        if ecode != 0:
+            MAILMAP_INFO[entry[1]] = None
+            continue
+        replacement = utils.getaddresses([out.strip()])
+        if len(replacement) == 1:
+            if entry == replacement[0]:
+                MAILMAP_INFO[entry[1]] = None
+                continue
+            logger.debug('Replaced %s with mailmap-updated %s', entry[1], replacement[0][1])
+            MAILMAP_INFO[entry[1]] = replacement[0]
+            addresses.remove(entry)
+            addresses.append(replacement[0])
+
+    return addresses
+
+
+def make_reply(reply_template, jsondata, gitdir):
     body = Template(reply_template).safe_substitute(jsondata)
     # Conform to email standards
     body = body.replace('\n', '\r\n')
     msg = email.message_from_string(body)
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
-    allto = utils.getaddresses([jsondata['to']])
-    allcc = utils.getaddresses([jsondata['cc']])
+    config = b4.get_main_config()
     # Remove ourselves and original sender from allto or allcc
-    for entry in list(allto):
-        if entry[1] == jsondata['myemail'] or entry[1] == jsondata['fromemail']:
-            allto.remove(entry)
-    for entry in list(allcc):
-        if entry[1] == jsondata['myemail'] or entry[1] == jsondata['fromemail']:
-            allcc.remove(entry)
+    excludes = [jsondata['myemail'], jsondata['fromemail']]
+    c_excludes = config.get('email-exclude')
+    if c_excludes:
+        for entry in c_excludes.split(','):
+            excludes.append(entry.strip())
+
+    allto = fix_dests(utils.getaddresses([jsondata['to']]), excludes, gitdir)
+    allcc = fix_dests(utils.getaddresses([jsondata['cc']]), excludes, gitdir)
 
     # Add original sender to the To
-    allto.append((jsondata['fromname'], jsondata['fromemail']))
+    newto = fix_dests([(jsondata['fromname'], jsondata['fromemail'])], excludes[2:], gitdir)
+    if newto:
+        allto += newto
 
     msg.add_header('To', b4.format_addrs(allto))
     if allcc:
@@ -286,7 +330,7 @@ def generate_pr_thanks(gitdir, jsondata, branch):
     if not cidmask:
         cidmask = 'merge commit: %s'
     jsondata['summary'] = cidmask % jsondata['merge_commit_id']
-    msg = make_reply(thanks_template, jsondata)
+    msg = make_reply(thanks_template, jsondata, gitdir)
     return msg
 
 
@@ -334,7 +378,7 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
                         nomatch, len(commits), jsondata['subject'])
         logger.critical('           Please review the resulting message')
 
-    msg = make_reply(thanks_template, jsondata)
+    msg = make_reply(thanks_template, jsondata, gitdir)
     return msg
 
 

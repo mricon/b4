@@ -320,6 +320,9 @@ Default configuration, with explanations::
       thanks-am-template = None
       # Used when preparing merge messages from cover letters. See shazam-merge-template.example
       shazam-merge-template = None
+      # Use to exclude certain mail addresses from ever being added to auto-generated mail
+      # Separate multiple entries using comma (spaces are ignored), shell-style globbing accepted
+      email-exclude = *@codeaurora.org, example@example.com
 
 SUPPORT
 -------
