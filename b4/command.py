@@ -133,7 +133,7 @@ def cmd():
                        help='Save patches in a quilt-ready folder')
     sp_am.add_argument('-g', '--guess-base', dest='guessbase', action='store_true', default=False,
                        help='Try to guess the base of the series (if not specified)')
-    sp_am.add_argument('-b', '--guess-branch', dest='guessbranch', default=None,
+    sp_am.add_argument('-b', '--guess-branch', dest='guessbranch', nargs='+', action='extend', type=str, default=None,
                        help='When guessing base, restrict to this branch (use with -g)')
     sp_am.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
                        help='When guessing base, go back this many days from the patch date (default: 2 weeks)')

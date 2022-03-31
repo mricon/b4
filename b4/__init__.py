@@ -643,7 +643,7 @@ class LoreSeries:
 
         return len(self.indexes), mismatches
 
-    def find_base(self, gitdir: str, branches: Optional[str] = None, maxdays: int = 30) -> Tuple[str, len, len]:
+    def find_base(self, gitdir: str, branches: Optional[list] = None, maxdays: int = 30) -> Tuple[str, len, len]:
         # Find the date of the first patch we have
         pdate = datetime.datetime.now()
         for lmsg in self.patches:
@@ -655,7 +655,7 @@ class LoreSeries:
         # Find latest commit on that date
         guntil = pdate.strftime('%Y-%m-%d')
         if branches:
-            where = ['--branches', branches]
+            where = branches
         else:
             where = ['--all']
 
