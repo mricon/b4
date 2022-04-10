@@ -16,7 +16,7 @@ import pathlib
 
 logger = b4.logger
 
-def note_series(lser, notes, fh):
+def note_series(lser, notes, fh, rst):
     cover = None
     if lser.has_cover:
         cover = lser.patches[0]
@@ -33,11 +33,14 @@ def note_series(lser, notes, fh):
 
     notes[cover.msgid] = cover
     config = b4.get_main_config()
-    fh.write('\n- %s\n' % cover.full_subject)
-    fh.write('  [%s]\n' % (config['linkmask'] % cover.msgid))
+    link = (config['linkmask'] % cover.msgid)
+    if rst:
+        fh.write('\n- `%s <%s>`_\n' % (cover.full_subject, link))
+    else:
+        fh.write('\n- %s\n  [%s]\n' % (cover.full_subject, link))
 
 
-def note_latest_series(msgs, notes, fh):
+def note_latest_series(msgs, notes, fh, rst):
     count = len(msgs)
     logger.debug('---')
     logger.debug('Analyzing %s messages in the thread', count)
@@ -52,12 +55,14 @@ def note_latest_series(msgs, notes, fh):
         logger.critical('No posted patches found')
         return None
 
-    note_series(lser, notes, fh)
+    note_series(lser, notes, fh, rst)
 
 
 # Breakup patch queue into series and report notes for every series
-def release_notes(msgs, cmdargs, fh):
-    fh.write('\n---\n')
+def release_notes(msgs, cmdargs, fh, rst):
+    fh.write('\n');
+    if not rst:
+        fh.write('---\n')
     notes = {}
 
     for msg in msgs:
@@ -71,11 +76,14 @@ def release_notes(msgs, cmdargs, fh):
             prsub = lsub.subject
             if prsub.startswith('Re: '):
                 prsub = prsub[4:]
-            fh.write('Changes in %s:\n' % prsub)
             prmsgid = b4.LoreMessage.get_clean_msgid(msg, header='In-Reply-To')
             if prmsgid:
                 config = b4.get_main_config()
-                fh.write('  [%s]\n' % (config['linkmask'] % prmsgid))
+                link = (config['linkmask'] % prmsgid)
+                if rst:
+                    fh.write('`%s: <%s>`_\n\n' % (prsub, link))
+                else:
+                    fh.write('Changes in %s:\n  [%s]\n' % (prsub, link))
             continue;
 
         # Find public-inbox series whose first patch matches this msg subject
@@ -84,12 +92,14 @@ def release_notes(msgs, cmdargs, fh):
                                          useproject=cmdargs.useproject)
         # Report notes for found series
         if len(ser_msgs) > 0:
-            note_latest_series(ser_msgs, notes, fh)
+            note_latest_series(ser_msgs, notes, fh, rst)
 
     if not notes:
         logger.critical('No posted patches found')
 
-    fh.write('\n---\n')
+    fh.write('\n');
+    if not rst:
+        fh.write('---\n')
 
 
 def main(cmdargs):
@@ -98,10 +108,12 @@ def main(cmdargs):
         logger.critical('Unable to retrieve messages')
         sys.exit(1)
 
+    rst = False
     if cmdargs.outfile is not None:
         logger.info('Writing %s', cmdargs.outfile)
         fh = open(cmdargs.outfile, 'w')
+        rst = cmdargs.outfile.endswith('.rst')
     else:
         fh = sys.stdout
 
-    release_notes(msgs, cmdargs, fh)
+    release_notes(msgs, cmdargs, fh, rst)
