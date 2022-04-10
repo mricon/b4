@@ -87,6 +87,9 @@ pr_tracker_rn "individual patch posted" \
 pr_tracker_rn "patch series posted" \
 	164408216661.7836.4930013315804213982.pr-tracker-bot@kernel.org
 
+pr_tracker_rn "series with fstest reference" \
+	162784611031.1186.18214929758593020802.pr-tracker-bot@kernel.org
+
 pr_tracker_rn "patch series including partial reroll" \
 	164817214223.9489.12483808836905609419.pr-tracker-bot@kernel.org
 

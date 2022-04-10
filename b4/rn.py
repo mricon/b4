@@ -13,10 +13,15 @@ import mailbox
 import email
 import shutil
 import pathlib
+import re
 
 logger = b4.logger
 
-def note_series(lser, notes, fh, rst):
+MSG_BODY_TEST_REF_RE = [
+        re.compile(r'\b(btrfs|ceph|cifs|ext4|f2fs|generic|nfs|ocfs2|overlay|perf|shared|udf|xfs)/([0-9]{3})\b'),
+]
+
+def note_series(lser, notes, tests, fh, rst):
     cover = None
     if lser.has_cover:
         cover = lser.patches[0]
@@ -38,6 +43,8 @@ def note_series(lser, notes, fh, rst):
         fh.write('\n- `%s <%s>`_\n' % (cover.full_subject, link))
     else:
         fh.write('\n- %s\n  [%s]\n' % (cover.full_subject, link))
+    if tests:
+        fh.write('  Tests: %s\n' % ' '.join(sorted(tests)))
 
 
 def note_latest_series(msgs, notes, fh, rst):
@@ -45,17 +52,28 @@ def note_latest_series(msgs, notes, fh, rst):
     logger.debug('---')
     logger.debug('Analyzing %s messages in the thread', count)
     lmbx = b4.LoreMailbox()
+    tests = set()
     # Add covers of all revisions first, so we are sure to find the right cover
     # when we add the message
     for msg in msgs:
+        lmsg = b4.LoreMessage(msg)
+        if lmsg.body is None:
+            logger.critical('Could not find a plain part in the message body')
+            continue
         lmbx.add_message(msg, needcover=True)
+        for tests_re in MSG_BODY_TEST_REF_RE:
+            for match in re.finditer(tests_re, lmsg.body):
+                test = match.group(0)
+                if not test in tests:
+                    logger.debug('Found reference to test: %s\n' % test)
+                    tests.add(test)
 
     lser = lmbx.get_series()
     if lser is None or len(lser.patches) == 0:
         logger.critical('No posted patches found')
         return None
 
-    note_series(lser, notes, fh, rst)
+    note_series(lser, notes, tests, fh, rst)
 
 
 # Breakup patch queue into series and report notes for every series
