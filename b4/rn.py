@@ -30,11 +30,11 @@ def note_series(lser, notes, tests, fh, rst):
 
     if not cover:
         logger.critical('No cover letter found for patch series')
-        return
+        return False
 
     if cover.msgid in notes:
         logger.debug('Duplicate series: %s', cover.subject)
-        return
+        return True
 
     notes[cover.msgid] = cover
     config = b4.get_main_config()
@@ -45,7 +45,7 @@ def note_series(lser, notes, tests, fh, rst):
         fh.write('\n- %s\n  [%s]\n' % (cover.full_subject, link))
     if tests:
         fh.write('  Tests: %s\n' % ' '.join(sorted(tests)))
-
+    return True
 
 def note_latest_series(msgs, notes, fh, rst):
     count = len(msgs)
@@ -71,9 +71,9 @@ def note_latest_series(msgs, notes, fh, rst):
     lser = lmbx.get_series()
     if lser is None or len(lser.patches) == 0:
         logger.critical('No posted patches found')
-        return None
+        return False
 
-    note_series(lser, notes, tests, fh, rst)
+    return note_series(lser, notes, tests, fh, rst)
 
 
 # Breakup patch queue into series and report notes for every series
@@ -109,8 +109,11 @@ def release_notes(msgs, cmdargs, fh, rst):
                                          nocache=cmdargs.nocache,
                                          useproject=cmdargs.useproject)
         # Report notes for found series
+        found = False
         if len(ser_msgs) > 0:
-            note_latest_series(ser_msgs, notes, fh, rst)
+            found = note_latest_series(ser_msgs, notes, fh, rst)
+        if not found:
+            fh.write('\n- [PATH ?/?] %s\n' % lsub.subject)
 
     if not notes:
         logger.critical('No posted patches found')
