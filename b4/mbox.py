@@ -479,11 +479,15 @@ def save_as_quilt(am_msgs, q_dirname):
         for patch_filename in patch_filenames:
             sfh.write('%s\n' % patch_filename)
 
-
-def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None, nocache: bool = False,
-                     useproject: Optional[str] = None) -> list:
-    base_msg = None
-    latest_revision = None
+# Get older/newer revisions of a patch series from public-inbox
+#
+# @direction:
+#  1 - look for newer revisions (default)
+# -1 - look for older revisions
+#  0 - look for latest revision in public-inbox (regardless of @base_msg)
+def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[list] = None, nocache: bool = False,
+                     base_msg = None, useproject: Optional[str] = None) -> list:
+    latest_revision = 0
     seen_msgids = set()
     seen_covers = set()
     obsoleted = list()
@@ -521,6 +525,36 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         logger.debug('Could not find cover of 1st patch in mbox')
         return msgs
 
+    # For query by @base_msg, check if we have a cache of this lookup
+    base_msgid = b4.LoreMessage.get_clean_msgid(base_msg)
+    identifier = base_msgid
+    # Use commit id as key to cache of git am formatted @base_msg
+    if not identifier:
+        identifier = b4.LoreMessage.get_commit_id(base_msg)
+    if identifier is None:
+        logger.debug('Could not find find base msgid for series')
+        return msgs
+
+    cachedir = None
+    if identifier and len(msgs) == 0 and not wantvers:
+        if useproject:
+            identifier += '-' + useproject
+        if direction > 0:
+            identifier += '+'
+        elif direction < 0:
+            identifier += '-'
+        cachedir = b4.get_cache_file(identifier, suffix='extra.msgs')
+
+    if cachedir and os.path.exists(cachedir) and not nocache:
+        logger.debug('Using cached copy of %s at %s', identifier, cachedir)
+        msgs = list()
+        for msg in os.listdir(cachedir):
+            with open(os.path.join(cachedir, msg), 'rb') as fh:
+                msgs.append(email.message_from_binary_file(fh))
+        return msgs
+    else:
+        logger.debug('No cached copy for %s', identifier)
+
     config = b4.get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])
     if not useproject:
@@ -552,7 +586,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     else:
         # Get subject info from base_msg again
         lsub = b4.LoreSubject(base_msg['Subject'])
-        if not len(lsub.prefixes):
+        if direction > 0 and not len(lsub.prefixes):
             logger.debug('Not checking for new revisions: no prefixes on the cover letter.')
             return msgs
         if direction < 0 and latest_revision <= 1:
@@ -561,7 +595,6 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         if direction < 0 and wantvers is None:
             wantvers = [latest_revision - 1]
 
-        base_msgid = b4.LoreMessage.get_clean_msgid(base_msg)
         fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
         msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
         startdate = time.strftime('%Y%m%d', msgdate[:9])
@@ -569,10 +602,15 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
             q = 's:"%s" AND f:"%s" AND d:%s..' % (lsub.subject.replace('"', ''), fromeml, startdate)
             queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '-1'}))
             logger.critical('Checking for newer revisions on %s', listarc)
-        else:
+        elif direction < 0:
             q = 's:"%s" AND f:"%s" AND d:..%s' % (lsub.subject.replace('"', ''), fromeml, startdate)
             queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '1'}))
             logger.critical('Checking for older revisions on %s', listarc)
+        else:
+            # Find latest revision in public-inbox to match base_msg subject
+            q = 's:"%s"' % (lsub.subject.replace('"', ''))
+            queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A'}))
+            logger.debug('Checking for revisions on %s', listarc)
 
         logger.debug('Query URL: %s', queryurl)
         session = b4.get_requests_session()
@@ -592,11 +630,11 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         for entry in entries:
             title = entry.find('atom:title', ns).text
             lsub = b4.LoreSubject(title)
-            if lsub.reply or lsub.counter > 1:
+            if lsub.reply or (direction != 0 and lsub.counter > 1):
                 logger.debug('Ignoring result (not interesting): %s', title)
                 continue
             link = entry.find('atom:link', ns).get('href')
-            if direction > 0 and lsub.revision <= latest_revision:
+            if direction >= 0 and lsub.revision <= latest_revision:
                 logger.debug('Ignoring result (not new revision): %s', title)
                 continue
             elif direction < 0 and lsub.revision >= latest_revision:
@@ -610,13 +648,13 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
                 continue
             if lsub.revision == 1 and lsub.revision == latest_revision:
                 # Someone sent a separate message with an identical title but no new vX in the subject line
-                if direction > 0:
+                if direction >= 0:
                     # It's *probably* a new revision.
                     logger.debug('Likely a new revision: %s', title)
                 else:
                     # It's *probably* an older revision.
                     logger.debug('Likely an older revision: %s', title)
-            elif direction > 0 and lsub.revision > latest_revision:
+            elif direction >= 0 and lsub.revision > latest_revision:
                 logger.debug('Definitely a new revision [v%s]: %s', lsub.revision, title)
             elif direction < 0 and lsub.revision < latest_revision:
                 logger.debug('Definitely an older revision [v%s]: %s', lsub.revision, title)
@@ -633,6 +671,13 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
                 nt_msgs += potentials
                 logger.info('   Added %s messages from that thread', len(potentials))
 
+    # Write results of @base_msg query to cache
+    if cachedir:
+        if os.path.exists(cachedir):
+            shutil.rmtree(cachedir)
+        pathlib.Path(cachedir).mkdir(parents=True)
+        at = 0
+
     # Append all of these to the existing mailbox
     for nt_msg in nt_msgs:
         nt_msgid = b4.LoreMessage.get_clean_msgid(nt_msg)
@@ -643,6 +688,10 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         logger.debug('Adding: %s', nt_subject)
         msgs.append(nt_msg)
         seen_msgids.add(nt_msgid)
+        if cachedir:
+            with open(os.path.join(cachedir, '%04d' % at), 'wb') as fh:
+                fh.write(nt_msg.as_bytes(policy=b4.emlpolicy))
+            at += 1
 
     return msgs
 
@@ -725,7 +774,8 @@ def main(cmdargs):
         return
 
     if len(msgs) and cmdargs.checknewer:
-        msgs = get_extra_series(msgs, direction=1, useproject=cmdargs.useproject)
+        msgs = get_extra_series(msgs, direction=1, nocache=cmdargs.nocache,
+                                useproject=cmdargs.useproject)
 
     if cmdargs.subcmd in ('am', 'shazam'):
         make_am(msgs, cmdargs, msgid)

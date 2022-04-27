@@ -44,7 +44,8 @@ def diff_same_thread_series(cmdargs):
         if not msgs:
             logger.critical('Unable to retrieve thread: %s', msgid)
             return
-        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=wantvers, useproject=cmdargs.useproject)
+        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=wantvers,
+                                        nocache=cmdargs.nocache, useproject=cmdargs.useproject)
         if os.path.exists(cachedir):
             shutil.rmtree(cachedir)
         pathlib.Path(cachedir).mkdir(parents=True)

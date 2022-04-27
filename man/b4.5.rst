@@ -13,7 +13,7 @@ Work with code submissions in a public-inbox archive
 
 SYNOPSIS
 --------
-b4 {mbox,am,shazam,attest,pr,ty,diff} [options]
+b4 {mbox,am,shazam,attest,pr,rn,ty,diff} [options]
 
 DESCRIPTION
 -----------
@@ -31,6 +31,7 @@ SUBCOMMANDS
 * *b4 am*: Create an mbox file that is ready to git-am
 * *b4 shazam*: Similar to *am*, but lets you apply patches directly
 * *b4 pr*: Work with pull requests
+* *b4 rn*: Generate release notes
 * *b4 diff*: Show range-diff style diffs between patch versions
 * *b4 ty*: Create templated replies for processed patches and pull requests
 * *b4 attest*: (EXPERIMENTAL) Add cryptographic attestation to patches
@@ -163,6 +164,8 @@ optional arguments:
   -l, --retrieve-links  Attempt to retrieve any Link: URLs (use with -e)
   -f MAILFROM, --from-addr MAILFROM
                         Use this From: in exploded messages (use with -e)
+  --no-cover
+                        Do not save the cover letter (on by default when using -o -)
 
 *Example*: b4 pr 202003292120.2BDCB41@keescook
 
@@ -246,6 +249,26 @@ optional arguments:
   --show-keys           Show all developer keys from the thread
 
 *Example*: b4 kr --show-keys 20210521184811.617875-1-konstantin@linuxfoundation.org
+
+b4 rn
+~~~~~
+usage:
+  command.py rn [-h] [-g GITDIR] [-p USEPROJECT] [-C] [-c] [msgid]
+
+positional arguments:
+  msgid                 Message ID to process, or pipe a raw message
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -g GITDIR, --gitdir GITDIR
+                        Operate on this git tree instead of current dir
+  -p USEPROJECT, --use-project USEPROJECT
+                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
+  -o OUTFILE, --output-file OUTFILE
+                        Write release notes into this file instead of outputting to stdout
+  -C, --no-cache        Do not use local cache
+
+*Example*: b4 rn 202003292120.2BDCB41@keescook
 
 CONFIGURATION
 -------------

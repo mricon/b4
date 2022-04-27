@@ -46,6 +46,10 @@ PULL_BODY_REMOTE_REF_RE = [
     re.compile(r'^\s*([\w+-]+(?:://|@)[\w/.@~-]+)\s*$', re.M | re.I),
 ]
 
+# PR tracker
+PULL_BODY_MERGE_COMMIT_ID_RE = [
+    re.compile(r'^https://git.kernel.org/torvalds/c/([0-9a-f]{5,40})$', re.M | re.I),
+]
 
 def format_addrs(pairs):
     return ', '.join([utils.formataddr(pair) for pair in pairs])
@@ -85,13 +89,40 @@ def git_get_commit_id_from_repo_ref(repo, ref):
     return commit_id
 
 
-def parse_pr_data(msg):
+def parse_pr_tracker_data(lmsg, gitdir):
+    for merge_cid_re in PULL_BODY_MERGE_COMMIT_ID_RE:
+        matches = merge_cid_re.search(lmsg.body)
+        if matches:
+            merge_cid = matches.groups()[0]
+            break
+
+    if merge_cid is None:
+        logger.debug('did not find merge commit-id, ignoring pull request')
+        return None
+
+    gitargs = ['rev-parse', '%s^2' % merge_cid]
+    ecode, out = b4.git_run_command(gitdir, gitargs)
+    if ecode > 0:
+        logger.debug('invalid merge commit: %s', merge_cid)
+        return None
+
+    lmsg.pr_remote_tip_commit = out.split('\n')[0]
+    lmsg.pr_merge_commit = merge_cid
+    logger.debug('success, merge commit-ids: %s <- %s', merge_cid, lmsg.pr_remote_tip_commit)
+    return lmsg
+
+
+def parse_pr_data(msg, gitdir):
     lmsg = b4.LoreMessage(msg)
     if lmsg.body is None:
         logger.critical('Could not find a plain part in the message body')
         return None
 
     logger.info('Looking at: %s', lmsg.full_subject)
+
+    config = b4.get_main_config()
+    if lmsg.fromemail == config['pr-tracker-email']:
+        return parse_pr_tracker_data(lmsg, gitdir)
 
     for since_re in PULL_BODY_SINCE_ID_RE:
         matches = since_re.search(lmsg.body)
@@ -258,15 +289,19 @@ def thanks_record_pr(lmsg):
 
 
 def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
-    ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
-    if ecode > 0:
-        raise RuntimeError('Fetching unsuccessful')
+    if lmsg.pr_repo and lmsg.pr_ref:
+        ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
+        if ecode > 0:
+            raise RuntimeError('Fetching unsuccessful')
 
     if not lmsg.pr_base_commit:
-        # Use git merge-base between HEAD and FETCH_HEAD to find
+        # Use git merge-base between HEAD and PR tip to find
         # where we should start
         logger.info('Running git merge-base to find common ancestry')
-        gitargs = ['merge-base', 'HEAD', 'FETCH_HEAD']
+        head = 'HEAD'
+        if lmsg.pr_merge_commit:
+            head = '%s^' % lmsg.pr_merge_commit
+        gitargs = ['merge-base', head, lmsg.pr_tip_commit]
         ecode, out = b4.git_run_command(gitdir, gitargs, logstderr=True)
         if ecode > 0:
             logger.critical('Could not find common ancestry.')
@@ -313,7 +348,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
         # of the archived threads.
         linked_ids.add(lmsg.msgid)
 
-    with b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', prefixes=prefixes, extraopts=fpopts) as pdir:
+    with b4.git_format_patches(gitdir, lmsg.pr_base_commit, lmsg.pr_tip_commit, prefixes=prefixes, extraopts=fpopts) as pdir:
         if pdir is None:
             raise RuntimeError('Could not run format-patches')
 
@@ -341,6 +376,9 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
                 cmsg.add_header('From', mailfrom)
                 cmsg.add_header('Subject', '[' + ' '.join(msubj.prefixes) + '] ' + lmsg.subject)
                 cmsg.add_header('Date', lmsg.msg.get('Date'))
+                # For PR tracker reply, include a referenece to original PR
+                if lmsg.fromemail == config['pr-tracker-email'] and lmsg.in_reply_to:
+                    cmsg.add_header('In-Reply-To', '<%s>' % lmsg.in_reply_to)
                 cmsg.set_charset('utf-8')
                 cmsg.replace_header('Content-Transfer-Encoding', '8bit')
 
@@ -505,11 +543,11 @@ def main(cmdargs):
     gitdir = cmdargs.gitdir
     lmsg = None
 
-    if not sys.stdin.isatty():
+    if not cmdargs.msgid and not sys.stdin.isatty():
         logger.debug('Getting PR message from stdin')
         msg = email.message_from_bytes(sys.stdin.buffer.read())
         cmdargs.msgid = b4.LoreMessage.get_clean_msgid(msg)
-        lmsg = parse_pr_data(msg)
+        lmsg = parse_pr_data(msg, gitdir)
     else:
         if cmdargs.msgid and 'github.com' in cmdargs.msgid and '/pull/' in cmdargs.msgid:
             logger.debug('Getting PR info from Github')
@@ -524,7 +562,7 @@ def main(cmdargs):
             for msg in msgs:
                 mmsgid = b4.LoreMessage.get_clean_msgid(msg)
                 if mmsgid == msgid:
-                    lmsg = parse_pr_data(msg)
+                    lmsg = parse_pr_data(msg, gitdir)
                     break
 
     if lmsg is None or lmsg.pr_remote_tip_commit is None:
@@ -568,6 +606,13 @@ def main(cmdargs):
                     if cmdargs.dryrun:
                         logger.info(out)
                     sys.exit(ecode)
+
+            # With "-o -" write mbox with no cover to stdout
+            if cmdargs.outmbox == '-':
+                b4.save_git_am_mbox(msgs[1:], sys.stdout)
+                sys.exit(0)
+            elif cmdargs.nocover:
+                msgs = msgs[1:]
 
             config = b4.get_main_config()
             if config.get('save-maildirs', 'no') == 'yes':
@@ -619,4 +664,5 @@ def main(cmdargs):
         logger.info('Pull request does not appear to be in this tree.')
         sys.exit(0)
 
-    fetch_remote(gitdir, lmsg, branch=cmdargs.branch)
+    if lmsg.pr_repo and lmsg.pr_ref:
+        fetch_remote(gitdir, lmsg, branch=cmdargs.branch)

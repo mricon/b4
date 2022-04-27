@@ -104,6 +104,7 @@ DEFAULT_CONFIG = {
     'linkmask': LOREADDR + '/r/%s',
     'trailer-order': DEFAULT_TRAILER_ORDER,
     'listid-preference': '*.feeds.kernel.org,*.linux.dev,*.kernel.org,*',
+    'pr-tracker-email': 'pr-tracker-bot@kernel.org',
     'save-maildirs': 'no',
     # off: do not bother checking attestation
     # check: print an attaboy when attestation is found
@@ -274,7 +275,7 @@ class LoreMailbox:
             for member in lser.patches:
                 if member is not None and member.in_reply_to is not None:
                     potential = self.get_by_msgid(member.in_reply_to)
-                    if potential is not None and potential.has_diffstat and not potential.has_diff:
+                    if potential is not None and potential.maybe_cover():
                         # This is *probably* the cover letter
                         lser.patches[0] = potential
                         lser.has_cover = True
@@ -350,7 +351,7 @@ class LoreMailbox:
 
         return lser
 
-    def add_message(self, msg):
+    def add_message(self, msg, needcover=False):
         msgid = LoreMessage.get_clean_msgid(msg)
         if msgid in self.msgid_map:
             logger.debug('Already have a message with this msgid, skipping %s', msgid)
@@ -366,7 +367,7 @@ class LoreMailbox:
             self.followups.append(lmsg)
             return
 
-        if lmsg.counter == 0 and (not lmsg.counters_inferred or lmsg.has_diffstat):
+        if lmsg.likely_cover():
             # Cover letter
             # Add it to covers -- we'll deal with them later
             logger.debug('  adding as v%s cover letter', lmsg.revision)
@@ -374,12 +375,12 @@ class LoreMailbox:
             return
 
         if lmsg.has_diff:
-            if lmsg.revision not in self.series:
+            if lmsg.revision not in self.series or needcover:
                 if lmsg.revision_inferred and lmsg.in_reply_to:
                     # We have an inferred revision here.
                     # Do we have an upthread cover letter that specifies a revision?
                     irt = self.get_by_msgid(lmsg.in_reply_to)
-                    if irt is not None and irt.has_diffstat and not irt.has_diff:
+                    if irt is not None and irt.likely_cover():
                         # Yes, this is very likely our cover letter
                         logger.debug('  fixed revision to v%s', irt.revision)
                         lmsg.revision = irt.revision
@@ -860,6 +861,7 @@ class LoreMessage:
         self.pr_repo = None
         self.pr_ref = None
         self.pr_tip_commit = None
+        self.pr_merge_commit = None
         self.pr_remote_tip_commit = None
 
         # Patchwork hash
@@ -965,6 +967,12 @@ class LoreMessage:
                 badtrailers = ('from', 'author', 'cc', 'to')
                 if trailer[0].lower() not in badtrailers:
                     self.trailers.append(trailer)
+
+    def maybe_cover(self):
+        return self.has_diffstat and not self.has_diff
+
+    def likely_cover(self):
+        return self.counter == 0 and (not self.counters_inferred or self.mayby_cover())
 
     def get_trailers(self, sloppy=False):
         trailers = list()
@@ -1284,6 +1292,17 @@ class LoreMessage:
             if matches:
                 msgid = matches.groups()[0]
         return msgid
+
+    # Get commit id from git am formatted patch
+    @staticmethod
+    def get_commit_id(msg):
+        commitid = None
+        unixhdr = msg.get_unixfrom()
+        if unixhdr:
+            matches = re.search(r'^From ([0-9a-f]+)', unixhdr)
+            if matches:
+                commitid = matches.groups()[0]
+        return commitid
 
     @staticmethod
     def get_preferred_duplicate(msg1, msg2):
@@ -2047,7 +2066,7 @@ def get_cache_dir(appname: str = 'b4') -> str:
         fullpath = os.path.join(cachedir, entry)
         st = os.stat(fullpath)
         if st.st_mtime < expage:
-            logger.debug('Cleaning up cache: %s', entry)
+            logger.debug('Cleaning up cache: %s mtime=%d < %d', entry, st.st_mtime, expage)
             if os.path.isdir(fullpath):
                 shutil.rmtree(fullpath)
             else:

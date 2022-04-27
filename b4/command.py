@@ -103,6 +103,11 @@ def cmd_diff(cmdargs):
     b4.diff.main(cmdargs)
 
 
+def cmd_rn(cmdargs):
+    import b4.rn
+    b4.rn.main(cmdargs)
+
+
 def cmd():
     # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
@@ -191,6 +196,8 @@ def cmd():
                              'the identity must match a [sendemail "identity"] config section'))
     sp_pr.add_argument('--dry-run', dest='dryrun', action='store_true', default=False,
                        help='Force a --dry-run on git-send-email invocation (use with -s)')
+    sp_pr.add_argument('--no-cover', dest='nocover', action='store_true', default=False,
+                       help='Do not save the cover letter (on by default when using -o -)')
     sp_pr.add_argument('msgid', nargs='?',
                        help='Message ID to process, or pipe a raw message')
     sp_pr.set_defaults(func=cmd_pr)
@@ -247,6 +254,15 @@ def cmd():
     sp_kr.add_argument('--show-keys', dest='showkeys', action='store_true', default=False,
                        help='Show all developer keys found in a thread')
     sp_kr.set_defaults(func=cmd_kr)
+
+    # b4 rn
+    sp_rn = subparsers.add_parser('rn', help='Generate release notes from pull request')
+    cmd_retrieval_common_opts(sp_rn)
+    sp_rn.add_argument('-g', '--gitdir', default=None,
+                       help='Operate on this git tree instead of current dir')
+    sp_rn.add_argument('-o', '--output-file', dest='outfile', default=None,
+                       help='Write release notes into this file instead of outputting to stdout')
+    sp_rn.set_defaults(func=cmd_rn)
 
     cmdargs = parser.parse_args()
 
