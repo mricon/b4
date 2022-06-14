@@ -100,7 +100,7 @@ DEFAULT_TRAILER_ORDER = '*'
 LOREADDR = 'https://lore.kernel.org'
 
 DEFAULT_CONFIG = {
-    'midmask': LOREADDR + '/r/%s',
+    'midmask': LOREADDR + '/all/%s',
     'linkmask': LOREADDR + '/r/%s',
     'trailer-order': DEFAULT_TRAILER_ORDER,
     'listid-preference': '*.feeds.kernel.org,*.linux.dev,*.kernel.org,*',
@@ -2235,6 +2235,9 @@ def get_pi_thread_by_url(t_mbx_url, nocache=False):
         logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
         session = get_requests_session()
         resp = session.get(t_mbx_url)
+        if resp.status_code == 404:
+            logger.critical('That message-id is not known.')
+            return None
         if resp.status_code != 200:
             logger.critical('Server returned an error: %s', resp.status_code)
             return None
@@ -2263,12 +2266,18 @@ def get_pi_thread_by_url(t_mbx_url, nocache=False):
 def get_pi_thread_by_msgid(msgid, useproject=None, nocache=False, onlymsgids: Optional[set] = None):
     qmsgid = urllib.parse.quote_plus(msgid)
     config = get_main_config()
-    # Grab the head from lore, to see where we are redirected
-    midmask = config['midmask'] % qmsgid
-    loc = urllib.parse.urlparse(midmask)
+    loc = urllib.parse.urlparse(config['midmask'])
+    # The public-inbox instance may provide a unified index at /all/.
+    # In fact, /all/ naming is arbitrary, but for now we are going to
+    # hardcode it to lore.kernel.org settings and maybe make it configurable
+    # in the future, if necessary.
+    if loc.path.startswith('/all/'):
+        useproject = 'all'
     if useproject:
         projurl = '%s://%s/%s' % (loc.scheme, loc.netloc, useproject)
     else:
+        # Grab the head from lore, to see where we are redirected
+        midmask = config['midmask'] % qmsgid
         logger.info('Looking up %s', midmask)
         session = get_requests_session()
         resp = session.head(midmask)
