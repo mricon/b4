@@ -1779,7 +1779,7 @@ class LoreAttestor:
         else:
             mode = self.mode
 
-        return '%s/%s' % (mode, self.identity)
+        return '%s/%s' % (mode, self.identity.lower())
 
     def check_time_drift(self, emldate, maxdays: int = 30) -> bool:
         if not self.passing or self.signtime is None:
@@ -1800,13 +1800,13 @@ class LoreAttestor:
             return False
 
         if self.level == 'domain':
-            if emlfrom.endswith('@' + self.identity):
+            if emlfrom.lower().endswith('@' + self.identity.lower()):
                 logger.debug('PASS : sig domain %s matches from identity %s', self.identity, emlfrom)
                 return True
             self.errors.append('signing domain %s does not match From: %s' % (self.identity, emlfrom))
             return False
 
-        if emlfrom == self.identity:
+        if emlfrom.lower() == self.identity.lower():
             logger.debug('PASS : sig identity %s matches from identity %s', self.identity, emlfrom)
             return True
         self.errors.append('signing identity %s does not match From: %s' % (self.identity, emlfrom))
