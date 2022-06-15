@@ -1842,8 +1842,11 @@ class LoreAttestorDKIM(LoreAttestor):
         self.keysrc = 'DNS'
         self.signtime = signtime
         self.passing = passing
-        self.identity = identity.lstrip('@')
         self.errors = errors
+        if identity.find('@') >= 0:
+            self.identity = identity.split('@')[1]
+        else:
+            self.identity = identity
 
 
 class LoreAttestorPatatt(LoreAttestor):
