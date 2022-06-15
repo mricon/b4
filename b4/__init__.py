@@ -395,7 +395,7 @@ class LoreMailbox:
                     logger.debug('Found new series v%s', lmsg.revision)
 
             # Attempt to auto-number series from the same author who did not bother
-            # to set v2, v3, etc in the patch revision
+            # to set v2, v3, etc. in the patch revision
             if (lmsg.counter == 1 and lmsg.counters_inferred
                     and not lmsg.reply and lmsg.lsubject.patch and not lmsg.lsubject.resend):
                 omsg = self.series[lmsg.revision].patches[lmsg.counter]
@@ -612,7 +612,7 @@ class LoreSeries:
             for fn, bh in lmsg.blob_indexes:
                 if fn in seenfiles:
                     # if we have seen this file once already, then it's a repeat patch
-                    # and it's no longer going to match current hash
+                    # it's no longer going to match current hash
                     continue
                 seenfiles.add(fn)
                 if set(bh) == {'0'}:
@@ -652,7 +652,7 @@ class LoreSeries:
             pdate = lmsg.date
             break
 
-        # Find latest commit on that date
+        # Find the latest commit on that date
         guntil = pdate.strftime('%Y-%m-%d')
         if branches:
             where = branches
@@ -682,7 +682,7 @@ class LoreSeries:
                 for line in lines:
                     commit = line.split()[0]
                     logger.debug('commit=%s', commit)
-                    # We try both that commit and the one preceding it, in case it was a delete
+                    # We try both that commit and the one preceding it, in case it was a deletion
                     # Keep track of the fewest mismatches
                     for tc in [commit, f'{commit}~1']:
                         sc, sm = self.check_applies_clean(gitdir, tc)
@@ -1368,7 +1368,7 @@ class LoreMessage:
             if matches and matches.groups()[0] == matches.groups()[1]:
                 curfile = matches.groups()[0]
                 continue
-            matches = re.search(r'^index\s+([0-9a-f]+)\.\.[0-9a-f]+.*$', line)
+            matches = re.search(r'^index\s+([\da-f]+)\.\.[\da-f]+.*$', line)
             if matches and curfile is not None:
                 indexes.add((curfile, matches.groups()[0]))
         return indexes
@@ -1383,7 +1383,7 @@ class LoreMessage:
         # Fix some more common copypasta trailer wrapping
         # Fixes: abcd0123 (foo bar
         # baz quux)
-        body = re.sub(r'^(\S+:\s+[0-9a-f]+\s+\([^)]+)\n([^\n]+\))', r'\1 \2', body, flags=re.M)
+        body = re.sub(r'^(\S+:\s+[\da-f]+\s+\([^)]+)\n([^\n]+\))', r'\1 \2', body, flags=re.M)
         # Signed-off-by: Long Name
         # <email.here@example.com>
         body = re.sub(r'^(\S+:\s+[^<]+)\n(<[^>]+>)$', r'\1 \2', body, flags=re.M)
@@ -2411,16 +2411,16 @@ def check_gpg_status(status: str) -> Tuple[bool, bool, bool, Optional[str], Opti
     signtime = None
 
     # Do we have a BADSIG?
-    bs_matches = re.search(r'^\[GNUPG:] BADSIG ([0-9A-F]+)\s+(.*)$', status, flags=re.M)
+    bs_matches = re.search(r'^\[GNUPG:] BADSIG ([\dA-F]+)\s+(.*)$', status, flags=re.M)
     if bs_matches:
         keyid = bs_matches.groups()[0]
         return good, valid, trusted, keyid, signtime
 
-    gs_matches = re.search(r'^\[GNUPG:] GOODSIG ([0-9A-F]+)\s+(.*)$', status, flags=re.M)
+    gs_matches = re.search(r'^\[GNUPG:] GOODSIG ([\dA-F]+)\s+(.*)$', status, flags=re.M)
     if gs_matches:
         good = True
         keyid = gs_matches.groups()[0]
-    vs_matches = re.search(r'^\[GNUPG:] VALIDSIG ([0-9A-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', status, flags=re.M)
+    vs_matches = re.search(r'^\[GNUPG:] VALIDSIG ([\dA-F]+) (\d{4}-\d{2}-\d{2}) (\d+)', status, flags=re.M)
     if vs_matches:
         valid = True
         signtime = vs_matches.groups()[2]

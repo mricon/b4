@@ -231,12 +231,12 @@ def make_am(msgs, cmdargs, msgid):
         logger.critical(' Link: %s', linkurl)
 
     base_commit = None
-    matches = re.search(r'base-commit: .*?([0-9a-f]+)', first_body, re.MULTILINE)
+    matches = re.search(r'base-commit: .*?([\da-f]+)', first_body, re.MULTILINE)
     if matches:
         base_commit = matches.groups()[0]
     else:
         # Try a more relaxed search
-        matches = re.search(r'based on .*?([0-9a-f]{40})', first_body, re.MULTILINE)
+        matches = re.search(r'based on .*?([\da-f]{40})', first_body, re.MULTILINE)
         if matches:
             base_commit = matches.groups()[0]
 
@@ -492,7 +492,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         seen_msgids.add(msgid)
         lsub = b4.LoreSubject(msg['Subject'])
         if direction > 0 and lsub.reply:
-            # Does it have an "Obsoleted-by: trailer?
+            # Does it have an Obsoleted-by: trailer?
             rmsg = b4.LoreMessage(msg)
             trailers, mismatches = rmsg.get_trailers()
             for tl in trailers:

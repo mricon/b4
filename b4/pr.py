@@ -32,12 +32,12 @@ charset.add_charset('utf-8', None)
 logger = b4.logger
 
 PULL_BODY_SINCE_ID_RE = [
-    re.compile(r'changes since commit ([0-9a-f]{5,40}):', re.M | re.I)
+    re.compile(r'changes since commit ([\da-f]{5,40}):', re.M | re.I)
 ]
 
 # I like these
 PULL_BODY_WITH_COMMIT_ID_RE = [
-    re.compile(r'fetch changes up to ([0-9a-f]{5,40}):', re.M | re.I),
+    re.compile(r'fetch changes up to ([\da-f]{5,40}):', re.M | re.I),
 ]
 
 # I don't like these
@@ -286,7 +286,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
         if prefix.lower() not in ('git', 'pull'):
             prefixes.append(prefix)
 
-    # get our to's and cc's
+    # get our To's and CC's
     allto = utils.getaddresses(lmsg.msg.get_all('to', []))
     allcc = utils.getaddresses(lmsg.msg.get_all('cc', []))
 
@@ -443,7 +443,7 @@ def get_pr_from_github(ghurl: str):
     rpull = chunks[-1]
     apiurl = f'https://api.github.com/repos/{rproj}/{rrepo}/pulls/{rpull}'
     req = requests.session()
-    # Do we have a github API key?
+    # Do we have a GitHub API key?
     config = b4.get_main_config()
     ghkey = config.get('gh-api-key')
     if ghkey:
