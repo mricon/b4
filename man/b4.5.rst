@@ -46,6 +46,12 @@ SUBCOMMAND OPTIONS
 ------------------
 b4 mbox
 ~~~~~~~
+
+This command allows retrieving entire threads from a remote public-inbox
+instance. The resulting mbox file can then be opened with most MUA
+clients for actions like replying to conversations or reviewing patch
+submissions.
+
 usage:
   b4 mbox [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-o OUTDIR] [-c] [-n WANTNAME] [-M] [-f] [msgid]
 
@@ -76,6 +82,25 @@ options:
 
 b4 am
 ~~~~~
+
+This command allows retrieving threads from a public-inbox instance and
+preparing them for applying to a git repository using the "git am"
+command. It will automatically perform the following operations:
+
+* pick the latest submitted version of the series (it can check for
+  newer threads using ``-c`` as well)
+* check DKIM signatures and patatt attestation on all patches and code
+  review messages
+* collate all submitted code-review trailers (Reviewed-by, Acked-by,
+  etc) and put them into the commit message
+* add your own Signed-off-by trailer (with ``-s``)
+* reroll series from partial updates (e.g. someone submits a v2 of a
+  single patch instead of rerolling the entire series)
+* guess where in the tree history the patches belong, if the exact
+  commit-base is not specified (with ``-g``)
+* prepare the tree for a 3-way merge (with ``-3``)
+* cherry-pick a subset of patches from a large series (with ``-P``)
+
 usage:
   b4 am [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-o OUTDIR] [-c] [-n WANTNAME] [-M] [-v WANTVER] [-t] [-S] [-T] [-s] [-l] [-P CHERRYPICK] [--cc-trailers] [--no-parent] [--allow-unicode-control-chars] [-Q] [-g] [-b GUESSBRANCH [GUESSBRANCH ...]] [--guess-lookback GUESSDAYS] [-3] [--no-cover] [--no-partial-reroll] [msgid]
 
@@ -137,11 +162,20 @@ options:
 
 *Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
 
-
 b4 shazam
 ---------
+
+This is very similar to **b4 am**, but will also apply patches
+directly to the current git tree using ``git am``. Alternatively, when
+used with ``-H``, it can fetch the patch series into ``FETCH_HEAD`` as
+if it were a pull request, so it can be reviewed and merged. In this
+case, the cover letter is used as a template for the merge commit.
+
+If you want to automatically invoke git-merge, you can use ``-M``
+instead of ``-H``.
+
 usage:
-  b4 shazam [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-v WANTVER] [-t] [-S] [-T] [-s] [-l] [-P CHERRYPICK] [--cc-trailers] [--no-parent] [--allow-unicode-control-chars] [-H] [--guess-lookback GUESSDAYS] [msgid]
+  b4 shazam [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-v WANTVER] [-t] [-S] [-T] [-s] [-l] [-P CHERRYPICK] [--cc-trailers] [--no-parent] [--allow-unicode-control-chars] [-H | -M] [--guess-lookback GUESSDAYS] [msgid]
 
 positional arguments:
   msgid                 Message ID to process, or pipe a raw message
@@ -171,15 +205,15 @@ options:
                         Allow unicode control characters (very rarely legitimate)
   -H, --make-fetch-head
                         Attempt to treat series as a pull request and fetch it into FETCH_HEAD
+  -M, --merge
+                        Attempt to merge series as if it were a pull request (execs git-merge)
   --guess-lookback GUESSDAYS
-                        (use with -H) When guessing base, go back this many days from the patch date (default: 3 weeks)
+                        (use with -H or -M) When guessing base, go back this many days from the patch date (default: 3 weeks)
 
 *Example*: b4 shazam -H 20200313231252.64999-1-keescook@chromium.org
 
 b4 attest
 ~~~~~~~~~
-usage: b4 attest [-h] patchfile [patchfile ...]
-
 .. note::
 
    **This subcommand is deprecated and will be removed in a future
@@ -189,6 +223,9 @@ usage: b4 attest [-h] patchfile [patchfile ...]
    "patatt". You may instead install and use patatt directly with the
    same results.
 
+usage:
+  b4 attest [-h] patchfile [patchfile ...]
+
 positional arguments:
   patchfile             Patches to attest
 
@@ -196,6 +233,9 @@ positional arguments:
 
 b4 pr
 ~~~~~
+This command is for working with pull requests submitted using
+``git-request-pull``.
+
 usage:
   command.py pr [-h] [-g GITDIR] [-b BRANCH] [-c] [-e] [-o OUTMBOX] [msgid]
 
@@ -251,7 +291,8 @@ optional arguments:
 
 b4 diff
 ~~~~~~~
-usage: b4 diff [-h] [-g GITDIR] [-p USEPROJECT] [-C] [-v WANTVERS [WANTVERS ...]] [-n] [-o OUTDIFF] [-c] [-m AMBOX AMBOX] [msgid]
+usage:
+  b4 diff [-h] [-g GITDIR] [-p USEPROJECT] [-C] [-v WANTVERS [WANTVERS ...]] [-n] [-o OUTDIFF] [-c] [-m AMBOX AMBOX] [msgid]
 
 positional arguments:
   msgid                 Message ID to process, pipe a raw message, or use -m
@@ -283,7 +324,8 @@ optional arguments:
 
 b4 kr
 ~~~~~
-usage: b4 kr [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [--show-keys] [msgid]
+usage:
+  b4 kr [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [--show-keys] [msgid]
 
 positional arguments:
   msgid                 Message ID to process, or pipe a raw message
@@ -370,6 +412,10 @@ Default configuration, with explanations::
       thanks-pr-template = None
       # See thanks-am-template.example. If not set, a default template will be used.
       thanks-am-template = None
+      # additional flags to pass to "git am" when we run "b4 shazam"
+      shazam-am-flags = None
+      # additional flags to pass to "git merge" when we run "b4 shazam -M"
+      shazam-merge-flags = --signoff
       # Used when preparing merge messages from cover letters. See shazam-merge-template.example
       shazam-merge-template = None
       # Use to exclude certain mail addresses from ever being added to auto-generated mail

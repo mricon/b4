@@ -7,12 +7,12 @@
 Merge ${patch_or_series} "${seriestitle}"
 
 ${authorname} <${authoremail}> says:
-====================
+
 # This will be the entirety of the cover letter minus anything
 # below the "-- \n" signature line. You will almost certainly
 # want to edit it down to only include the relevant info.
-${coverletter}
-====================
+${covermessage}
+
 # This will contain a lore link to the patches in question
 Link: ${midurl}
 # git-merge will append any additional information here, depending

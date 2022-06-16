@@ -152,15 +152,18 @@ def cmd():
     sp_sh = subparsers.add_parser('shazam', help='Like b4 am, but applies the series to your tree')
     cmd_retrieval_common_opts(sp_sh)
     cmd_am_common_opts(sp_sh)
-    sp_sh.add_argument('-H', '--make-fetch-head', dest='makefetchhead', action='store_true', default=False,
-                       help='Attempt to treat series as a pull request and fetch it into FETCH_HEAD')
+    sh_g = sp_sh.add_mutually_exclusive_group()
+    sh_g.add_argument('-H', '--make-fetch-head', dest='makefetchhead', action='store_true', default=False,
+                      help='Attempt to treat series as a pull request and fetch it into FETCH_HEAD')
+    sh_g.add_argument('-M', '--merge', dest='merge', action='store_true', default=False,
+                      help='Attempt to merge series as if it were a pull request (execs git-merge)')
     sp_sh.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
-                       help=('(use with -H) When guessing base, go back this many days from the patch date '
+                       help=('(use with -H or -M) When guessing base, go back this many days from the patch date '
                              '(default: 3 weeks)'))
     sp_sh.set_defaults(func=cmd_shazam)
 
     # b4 attest
-    sp_att = subparsers.add_parser('attest', help='Create cryptographic attestation for a set of patches')
+    sp_att = subparsers.add_parser('attest', help='(DEPRECATED) Create cryptographic attestation for a set of patches')
     sp_att.add_argument('-f', '--from', dest='sender', default=None,
                         help='OBSOLETE: this option does nothing and will be removed')
     sp_att.add_argument('-n', '--no-submit', dest='nosubmit', action='store_true', default=False,

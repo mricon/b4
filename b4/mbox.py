@@ -34,9 +34,9 @@ logger = b4.logger
 DEFAULT_MERGE_TEMPLATE = """Merge ${patch_or_series} "${seriestitle}"
 
 ${authorname} <${authoremail}> says:
-====================
-${coverletter}
-====================
+
+${covermessage}
+
 Link: ${midurl}
 """
 
@@ -263,7 +263,7 @@ def make_am(msgs, cmdargs, msgid):
         b4.save_git_am_mbox(am_msgs, ifh)
         ambytes = ifh.getvalue().encode()
         if not cmdargs.makefetchhead:
-            amflags = config.get('git-am-flags', '')
+            amflags = config.get('shazam-am-flags', '')
             sp = shlex.shlex(amflags, posix=True)
             sp.whitespace_split = True
             amargs = list(sp)
@@ -332,44 +332,59 @@ def make_am(msgs, cmdargs, msgid):
                 logger.critical(out.strip())
                 sys.exit(ecode)
             mmf = os.path.join(fhf.rstrip(), 'b4-cover')
-            if lser.has_cover:
-                merge_template = DEFAULT_MERGE_TEMPLATE
-                if config.get('shazam-merge-template'):
-                    # Try to load this template instead
-                    try:
-                        merge_template = b4.read_template(config['shazam-merge-template'])
-                    except FileNotFoundError:
-                        logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
-                                        config['shazam-merge-template'])
-                        sys.exit(2)
+            merge_template = DEFAULT_MERGE_TEMPLATE
+            if config.get('shazam-merge-template'):
+                # Try to load this template instead
+                try:
+                    merge_template = b4.read_template(config['shazam-merge-template'])
+                except FileNotFoundError:
+                    logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
+                                    config['shazam-merge-template'])
+                    sys.exit(2)
 
-                # Write out a sample merge message using the cover letter
-                cmsg = lser.patches[0]
-                parts = b4.LoreMessage.get_body_parts(cmsg.body)
-                tptvals = {
-                        'seriestitle': cmsg.subject,
-                        'authorname': cmsg.fromname,
-                        'authoremail': cmsg.fromemail,
-                        'coverletter': parts[1],
-                        'midurl': linkurl,
-                        }
-                if len(am_msgs) > 1:
-                    tptvals['patch_or_series'] = 'patch series'
-                else:
-                    tptvals['patch_or_series'] = 'patch'
-
-                body = Template(merge_template).safe_substitute(tptvals)
-                with open(mmf, 'w') as mmh:
-                    mmh.write(body)
-
-            elif os.path.exists(mmf):
+            # Write out a sample merge message using the cover letter
+            if os.path.exists(mmf):
                 # Make sure any old cover letters don't confuse anyone
                 os.unlink(mmf)
 
-        logger.info('You can now merge or checkout FETCH_HEAD')
-        if lser.has_cover:
-            logger.info('  e.g.: git merge -F $(git rev-parse --git-dir)/b4-cover --signoff --edit FETCH_HEAD')
+            if lser.has_cover:
+                cmsg = lser.patches[0]
+                parts = b4.LoreMessage.get_body_parts(cmsg.body)
+                covermessage = parts[1]
+            else:
+                cmsg = lser.patches[1]
+                covermessage = ('NOTE: No cover letter provided by the author.\n'
+                                '      Add merge commit message here.')
+            tptvals = {
+                'seriestitle': cmsg.subject,
+                'authorname': cmsg.fromname,
+                'authoremail': cmsg.fromemail,
+                'covermessage': covermessage,
+                'midurl': linkurl,
+            }
+            if len(am_msgs) > 1:
+                tptvals['patch_or_series'] = 'patch series'
+            else:
+                tptvals['patch_or_series'] = 'patch'
+
+            body = Template(merge_template).safe_substitute(tptvals)
+            with open(mmf, 'w') as mmh:
+                mmh.write(body)
+
+        mergeflags = config.get('shazam-merge-flags', '--signoff')
+        sp = shlex.shlex(mergeflags, posix=True)
+        sp.whitespace_split = True
+        mergeargs = ['merge', '--no-ff', '-F', mmf, '--edit', 'FETCH_HEAD'] + list(sp)
+        mergecmd = ['git'] + mergeargs
+
         thanks_record_am(lser, cherrypick=cherrypick)
+        if cmdargs.merge:
+            # We exec git-merge and let it take over
+            logger.info('Invoking: %s', ' '.join(mergecmd))
+            os.execvp(mergecmd[0], mergecmd)
+
+        logger.info('You can now merge or checkout FETCH_HEAD')
+        logger.info('  e.g.: %s', ' '.join(mergecmd))
         return
 
     if not base_commit:
@@ -711,6 +726,8 @@ def main(cmdargs):
         cmdargs.nopartialreroll = False
         cmdargs.outdir = '-'
         cmdargs.guessbranch = None
+        if cmdargs.merge:
+            cmdargs.makefetchhead = True
         if cmdargs.makefetchhead:
             cmdargs.guessbase = True
         else:
