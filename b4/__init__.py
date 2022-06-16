@@ -2148,8 +2148,9 @@ def get_msgid(cmdargs) -> Optional[str]:
     return msgid
 
 
-def get_strict_thread(msgs, msgid):
+def get_strict_thread(msgs, msgid, noparent=False):
     want = {msgid}
+    ignore = set()
     got = set()
     seen = set()
     maybe = dict()
@@ -2157,6 +2158,8 @@ def get_strict_thread(msgs, msgid):
     while True:
         for msg in msgs:
             c_msgid = LoreMessage.get_clean_msgid(msg)
+            if c_msgid in ignore:
+                continue
             seen.add(c_msgid)
             if c_msgid in got:
                 continue
@@ -2168,7 +2171,16 @@ def get_strict_thread(msgs, msgid):
                 msgrefs += email.utils.getaddresses([str(x) for x in msg.get_all('in-reply-to', [])])
             if msg.get('References', None):
                 msgrefs += email.utils.getaddresses([str(x) for x in msg.get_all('references', [])])
+            # If noparent is set, we pretend the message we got passed has no references, and add all
+            # parent references of this message to ignore
+            if noparent and msgid == c_msgid:
+                logger.info('Breaking thread to remove parents of %s', msgid)
+                ignore = set([x[1] for x in msgrefs])
+                msgrefs = list()
+
             for ref in set([x[1] for x in msgrefs]):
+                if ref in ignore:
+                    continue
                 if ref in got or ref in want:
                     want.add(c_msgid)
                 elif len(ref):
@@ -2206,7 +2218,7 @@ def get_strict_thread(msgs, msgid):
         return None
 
     if len(msgs) > len(strict):
-        logger.debug('Reduced mbox to strict matches only (%s->%s)', len(msgs), len(strict))
+        logger.debug('Reduced thread to requested matches only (%s->%s)', len(msgs), len(strict))
 
     return strict
 
@@ -2266,7 +2278,8 @@ def get_pi_thread_by_url(t_mbx_url, nocache=False):
     return list(deduped.values())
 
 
-def get_pi_thread_by_msgid(msgid, useproject=None, nocache=False, onlymsgids: Optional[set] = None):
+def get_pi_thread_by_msgid(msgid: str, useproject: Optional[str] = None, nocache: bool = False,
+                           onlymsgids: Optional[set] = None) -> Optional[list]:
     qmsgid = urllib.parse.quote_plus(msgid)
     config = get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])

@@ -29,7 +29,7 @@ SUBCOMMANDS
 -----------
 * *b4 mbox*: Download a thread as an mbox file
 * *b4 am*: Create an mbox file that is ready to git-am
-* *b4 shazam*: Similar to *am*, but lets you apply patches directly
+* *b4 shazam*: Similar to *am*, but lets you treat patch series similar to pull requests
 * *b4 pr*: Work with pull requests
 * *b4 diff*: Show range-diff style diffs between patch versions
 * *b4 ty*: Create templated replies for processed patches and pull requests
@@ -47,54 +47,111 @@ SUBCOMMAND OPTIONS
 b4 mbox
 ~~~~~~~
 usage:
-  b4 mbox [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME] [-m LOCALMBOX] [msgid]
+  b4 mbox [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-o OUTDIR] [-c] [-n WANTNAME] [-M] [-f] [msgid]
 
 positional arguments:
   msgid                 Message ID to process, or pipe a raw message
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
+  -p USEPROJECT, --use-project USEPROJECT
+                        Use a specific project instead of default (linux-mm, linux-hardening, etc)
+  -m LOCALMBOX, --use-local-mbox LOCALMBOX
+                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  -C, --no-cache
+                        Do not use local cache
   -o OUTDIR, --outdir OUTDIR
                         Output into this directory (or use - to output mailbox contents to stdout)
-  -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
   -c, --check-newer-revisions
                         Check if newer patch revisions exist
   -n WANTNAME, --mbox-name WANTNAME
-                        Filename to name the mbox file
-  -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this mbox file
-                        (or use - for stdin)
-  -C, --no-cache        Do not use local cache
-  -f, --filter-dupes    When adding messages to existing maildir, filter out duplicates
+                        Filename to name the mbox destination
   -M, --save-as-maildir
                         Save as maildir (avoids mbox format ambiguities)
+  -f, --filter-dupes
+                        When adding messages to existing maildir, filter out duplicates
+
 
 *Example*: b4 mbox 20200313231252.64999-1-keescook@chromium.org
 
 b4 am
 ~~~~~
 usage:
-  b4 am [-h] [-o OUTDIR] [-p USEPROJECT] [-c] [-n WANTNAME] [-m LOCALMBOX] [-v WANTVER] [-t] [-T] [-s] [-l] [-Q] [msgid]
+  b4 am [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-o OUTDIR] [-c] [-n WANTNAME] [-M] [-v WANTVER] [-t] [-S] [-T] [-s] [-l] [-P CHERRYPICK] [--cc-trailers] [--no-parent] [--allow-unicode-control-chars] [-Q] [-g] [-b GUESSBRANCH [GUESSBRANCH ...]] [--guess-lookback GUESSDAYS] [-3] [--no-cover] [--no-partial-reroll] [msgid]
 
 positional arguments:
   msgid                 Message ID to process, or pipe a raw message
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
+  -p USEPROJECT, --use-project USEPROJECT
+                        Use a specific project instead of default (linux-mm, linux-hardening, etc)
+  -m LOCALMBOX, --use-local-mbox LOCALMBOX
+                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  -C, --no-cache
+                        Do not use local cache
   -o OUTDIR, --outdir OUTDIR
                         Output into this directory (or use - to output mailbox contents to stdout)
-  -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
   -c, --check-newer-revisions
                         Check if newer patch revisions exist
   -n WANTNAME, --mbox-name WANTNAME
-                        Filename to name the mbox file
-  -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this mbox file
-                        (or use - for stdin)
+                        Filename to name the mbox destination
   -M, --save-as-maildir
                         Save as maildir (avoids mbox format ambiguities)
+  -v WANTVER, --use-version WANTVER
+                        Get a specific version of the patch/series
+  -t, --apply-cover-trailers
+                        Apply trailers sent to the cover letter to all patches
+  -S, --sloppy-trailers
+                        Apply trailers without email address match checking
+  -T, --no-add-trailers
+                        Do not add or sort any trailers
+  -s, --add-my-sob
+                        Add your own signed-off-by to every patch
+  -l, --add-link
+                        Add a Link: with message-id lookup URL to every patch
+  -P CHERRYPICK, --cherry-pick CHERRYPICK
+                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", "-P _" to use just the msgid specified, or "-P *globbing*" to match on commit subject)
+  --cc-trailers
+                        Copy all Cc'd addresses into Cc: trailers
+  --no-parent
+                        Break thread at the msgid specified and ignore any parent messages
+  --allow-unicode-control-chars
+                        Allow unicode control characters (very rarely legitimate)
+  -Q, --quilt-ready
+                        Save patches in a quilt-ready folder
+  -g, --guess-base
+                        Try to guess the base of the series (if not specified)
+
+  -b GUESSBRANCH [GUESSBRANCH ...], --guess-branch GUESSBRANCH [GUESSBRANCH ...]
+                        When guessing base, restrict to this branch (use with -g)
+
+  --guess-lookback GUESSDAYS
+                        When guessing base, go back this many days from the patch date (default: 2 weeks)
+  -3, --prep-3way
+                        Prepare for a 3-way merge (tries to ensure that all index blobs exist by making a fake commit range)
+  --no-cover
+                        Do not save the cover letter (on by default when using -o -)
+  --no-partial-reroll
+                        Do not reroll partial series when detected
+
+*Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
+
+
+b4 shazam
+---------
+usage:
+  b4 shazam [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-v WANTVER] [-t] [-S] [-T] [-s] [-l] [-P CHERRYPICK] [--cc-trailers] [--no-parent] [--allow-unicode-control-chars] [-H] [--guess-lookback GUESSDAYS] [msgid]
+
+positional arguments:
+  msgid                 Message ID to process, or pipe a raw message
+
+options:
+  -h, --help            show this help message and exit
+  -p USEPROJECT, --use-project USEPROJECT
+                        Use a specific project instead of default (linux-mm, linux-hardening, etc)
+  -m LOCALMBOX, --use-local-mbox LOCALMBOX
+                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
   -C, --no-cache        Do not use local cache
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
@@ -105,27 +162,19 @@ optional arguments:
   -T, --no-add-trailers
                         Do not add or sort any trailers
   -s, --add-my-sob      Add your own signed-off-by to every patch
-  -l, --add-link        Add a lore.kernel.org/r/ link to every patch
-  -Q, --quilt-ready     Save patches in a quilt-ready folder
+  -l, --add-link        Add a Link: with message-id lookup URL to every patch
   -P CHERRYPICK, --cherry-pick CHERRYPICK
-                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", "-P _" to use just the msgid specified, or "-P \*globbing\*" to match on commit subject)
-  -g, --guess-base
-                        Try to guess the base of the series (if not specified)
-  -3, --prep-3way
-                        Prepare for a 3-way merge (tries to ensure that all index blobs exist by making a fake commit range)
-  --cc-trailers
-                        Copy all Cc'd addresses into Cc: trailers, if not already present
-  --no-cover
-                        Do not save the cover letter (on by default when using -o -)
-  --no-partial-reroll
-                        Do not reroll partial series when detected
+                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", "-P _" to use just the msgid specified, or "-P *globbing*" to match on commit subject)
+  --cc-trailers         Copy all Cc'd addresses into Cc: trailers
+  --no-parent           Break thread at the msgid specified and ignore any parent messages
+  --allow-unicode-control-chars
+                        Allow unicode control characters (very rarely legitimate)
+  -H, --make-fetch-head
+                        Attempt to treat series as a pull request and fetch it into FETCH_HEAD
+  --guess-lookback GUESSDAYS
+                        (use with -H) When guessing base, go back this many days from the patch date (default: 3 weeks)
 
-
-*Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
-
-b4 shazam
----------
-TBD.
+*Example*: b4 shazam -H 20200313231252.64999-1-keescook@chromium.org
 
 b4 attest
 ~~~~~~~~~

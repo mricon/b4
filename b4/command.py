@@ -55,6 +55,8 @@ def cmd_am_common_opts(sp):
                          '"-P *globbing*" to match on commit subject)')
     sp.add_argument('--cc-trailers', dest='copyccs', action='store_true', default=False,
                     help='Copy all Cc\'d addresses into Cc: trailers')
+    sp.add_argument('--no-parent', dest='noparent', action='store_true', default=False,
+                    help='Break thread at the msgid specified and ignore any parent messages')
     sp.add_argument('--allow-unicode-control-chars', dest='allowbadchars', action='store_true', default=False,
                     help='Allow unicode control characters (very rarely legitimate)')
 

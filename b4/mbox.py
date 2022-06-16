@@ -656,12 +656,9 @@ def get_msgs(cmdargs) -> Tuple[Optional[str], Optional[list]]:
             sys.exit(1)
 
         pickings = set()
-        try:
-            if cmdargs.cherrypick == '_':
-                # Just that msgid, please
-                pickings = {msgid}
-        except AttributeError:
-            pass
+        if 'cherrypick' in cmdargs and cmdargs.cherrypick == '_':
+            # Just that msgid, please
+            pickings = {msgid}
         msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache,
                                          onlymsgids=pickings)
         if not msgs:
@@ -692,6 +689,9 @@ def get_msgs(cmdargs) -> Tuple[Optional[str], Optional[list]]:
         else:
             logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
             sys.exit(1)
+
+    if msgid and 'noparent' in cmdargs and cmdargs.noparent:
+        msgs = b4.get_strict_thread(msgs, msgid, noparent=True)
 
     if not msgid and msgs:
         for msg in msgs:

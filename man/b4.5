@@ -1,8 +1,5 @@
 .\" Man page generated from reStructuredText.
 .
-.TH B4 5 "2021-09-01" "0.9.0" ""
-.SH NAME
-B4 \- Work with code submissions in a public-inbox archive
 .
 .nr rst2man-indent-level 0
 .
@@ -30,6 +27,9 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
+.TH "B4" 5 "2021-09-01" "0.9.0" ""
+.SH NAME
+B4 \- Work with code submissions in a public-inbox archive
 .SH SYNOPSIS
 .sp
 b4 {mbox,am,shazam,attest,pr,ty,diff} [options]
@@ -49,7 +49,7 @@ precursor to Lore and Data in the Star Trek universe.
 .IP \(bu 2
 \fIb4 am\fP: Create an mbox file that is ready to git\-am
 .IP \(bu 2
-\fIb4 shazam\fP: Similar to \fIam\fP, but lets you apply patches directly
+\fIb4 shazam\fP: Similar to \fIam\fP, but lets you treat patch series similar to pull requests
 .IP \(bu 2
 \fIb4 pr\fP: Work with pull requests
 .IP \(bu 2
@@ -64,13 +64,13 @@ precursor to Lore and Data in the Star Trek universe.
 .SH OPTIONS
 .INDENT 0.0
 .TP
-.B \-h\fP,\fB  \-\-help
+.B  \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
-.B \-d\fP,\fB  \-\-debug
+.B  \-d\fP,\fB  \-\-debug
 Add more debugging info to the output (default: False)
 .TP
-.B \-q\fP,\fB  \-\-quiet
+.B  \-q\fP,\fB  \-\-quiet
 Output critical information only (default: False)
 .UNINDENT
 .SH SUBCOMMAND OPTIONS
@@ -78,41 +78,40 @@ Output critical information only (default: False)
 .INDENT 0.0
 .TP
 .B usage:
-b4 mbox [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME] [\-m LOCALMBOX] [msgid]
+b4 mbox [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-o OUTDIR] [\-c] [\-n WANTNAME] [\-M] [\-f] [msgid]
 .TP
 .B positional arguments:
 msgid                 Message ID to process, or pipe a raw message
 .TP
-.B optional arguments:
+.B options:
 .INDENT 7.0
 .TP
-.B \-h\fP,\fB  \-\-help
+.B  \-h\fP,\fB  \-\-help
 show this help message and exit
+.TP
+.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
+Use a specific project instead of default (linux\-mm, linux\-hardening, etc)
+.TP
+.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
+.TP
+.B  \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
 .TP
 .BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
-.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
-.TP
-.B \-c\fP,\fB  \-\-check\-newer\-revisions
+.B  \-c\fP,\fB  \-\-check\-newer\-revisions
 Check if newer patch revisions exist
 .TP
 .BI \-n \ WANTNAME\fR,\fB \ \-\-mbox\-name \ WANTNAME
-Filename to name the mbox file
+Filename to name the mbox destination
 .TP
-.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this mbox file
-(or use \- for stdin)
-.TP
-.B \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
-.TP
-.B \-f\fP,\fB  \-\-filter\-dupes
-When adding messages to existing maildir, filter out duplicates
-.TP
-.B \-M\fP,\fB  \-\-save\-as\-maildir
+.B  \-M\fP,\fB  \-\-save\-as\-maildir
 Save as maildir (avoids mbox format ambiguities)
+.TP
+.B  \-f\fP,\fB  \-\-filter\-dupes
+When adding messages to existing maildir, filter out duplicates
 .UNINDENT
 .UNINDENT
 .sp
@@ -121,84 +120,159 @@ Save as maildir (avoids mbox format ambiguities)
 .INDENT 0.0
 .TP
 .B usage:
-b4 am [\-h] [\-o OUTDIR] [\-p USEPROJECT] [\-c] [\-n WANTNAME] [\-m LOCALMBOX] [\-v WANTVER] [\-t] [\-T] [\-s] [\-l] [\-Q] [msgid]
+b4 am [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-o OUTDIR] [\-c] [\-n WANTNAME] [\-M] [\-v WANTVER] [\-t] [\-S] [\-T] [\-s] [\-l] [\-P CHERRYPICK] [\-\-cc\-trailers] [\-\-no\-parent] [\-\-allow\-unicode\-control\-chars] [\-Q] [\-g] [\-b GUESSBRANCH [GUESSBRANCH ...]] [\-\-guess\-lookback GUESSDAYS] [\-3] [\-\-no\-cover] [\-\-no\-partial\-reroll] [msgid]
 .TP
 .B positional arguments:
 msgid                 Message ID to process, or pipe a raw message
 .TP
-.B optional arguments:
+.B options:
 .INDENT 7.0
 .TP
-.B \-h\fP,\fB  \-\-help
+.B  \-h\fP,\fB  \-\-help
 show this help message and exit
+.TP
+.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
+Use a specific project instead of default (linux\-mm, linux\-hardening, etc)
+.TP
+.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
+.TP
+.B  \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
 .TP
 .BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
-.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
-.TP
-.B \-c\fP,\fB  \-\-check\-newer\-revisions
+.B  \-c\fP,\fB  \-\-check\-newer\-revisions
 Check if newer patch revisions exist
 .TP
 .BI \-n \ WANTNAME\fR,\fB \ \-\-mbox\-name \ WANTNAME
-Filename to name the mbox file
+Filename to name the mbox destination
 .TP
-.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this mbox file
-(or use \- for stdin)
-.TP
-.B \-M\fP,\fB  \-\-save\-as\-maildir
+.B  \-M\fP,\fB  \-\-save\-as\-maildir
 Save as maildir (avoids mbox format ambiguities)
-.TP
-.B \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
 .TP
 .BI \-v \ WANTVER\fR,\fB \ \-\-use\-version \ WANTVER
 Get a specific version of the patch/series
 .TP
-.B \-t\fP,\fB  \-\-apply\-cover\-trailers
+.B  \-t\fP,\fB  \-\-apply\-cover\-trailers
 Apply trailers sent to the cover letter to all patches
 .TP
-.B \-S\fP,\fB  \-\-sloppy\-trailers
+.B  \-S\fP,\fB  \-\-sloppy\-trailers
 Apply trailers without email address match checking
 .TP
-.B \-T\fP,\fB  \-\-no\-add\-trailers
+.B  \-T\fP,\fB  \-\-no\-add\-trailers
 Do not add or sort any trailers
 .TP
-.B \-s\fP,\fB  \-\-add\-my\-sob
+.B  \-s\fP,\fB  \-\-add\-my\-sob
 Add your own signed\-off\-by to every patch
 .TP
-.B \-l\fP,\fB  \-\-add\-link
-Add a lore.kernel.org/r/ link to every patch
-.TP
-.B \-Q\fP,\fB  \-\-quilt\-ready
-Save patches in a quilt\-ready folder
+.B  \-l\fP,\fB  \-\-add\-link
+Add a Link: with message\-id lookup URL to every patch
 .TP
 .BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
-Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P *globbing*" to match on commit subject)
+Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P \fIglobbing\fP" to match on commit subject)
 .TP
-.B \-g\fP,\fB  \-\-guess\-base
+.B  \-\-cc\-trailers
+Copy all Cc\(aqd addresses into Cc: trailers
+.TP
+.B  \-\-no\-parent
+Break thread at the msgid specified and ignore any parent messages
+.TP
+.B  \-\-allow\-unicode\-control\-chars
+Allow unicode control characters (very rarely legitimate)
+.TP
+.B  \-Q\fP,\fB  \-\-quilt\-ready
+Save patches in a quilt\-ready folder
+.TP
+.B  \-g\fP,\fB  \-\-guess\-base
 Try to guess the base of the series (if not specified)
+.UNINDENT
+.INDENT 7.0
 .TP
-.B \-3\fP,\fB  \-\-prep\-3way
+.B \-b GUESSBRANCH [GUESSBRANCH ...], \-\-guess\-branch GUESSBRANCH [GUESSBRANCH ...]
+When guessing base, restrict to this branch (use with \-g)
+.UNINDENT
+.INDENT 7.0
+.TP
+.BI \-\-guess\-lookback \ GUESSDAYS
+When guessing base, go back this many days from the patch date (default: 2 weeks)
+.TP
+.B  \-3\fP,\fB  \-\-prep\-3way
 Prepare for a 3\-way merge (tries to ensure that all index blobs exist by making a fake commit range)
 .TP
-.B \-\-cc\-trailers
-Copy all Cc\(aqd addresses into Cc: trailers, if not already present
-.TP
-.B \-\-no\-cover
+.B  \-\-no\-cover
 Do not save the cover letter (on by default when using \-o \-)
 .TP
-.B \-\-no\-partial\-reroll
+.B  \-\-no\-partial\-reroll
 Do not reroll partial series when detected
 .UNINDENT
 .UNINDENT
 .sp
 \fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SH B4 SHAZAM
+.INDENT 0.0
+.TP
+.B usage:
+b4 shazam [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-v WANTVER] [\-t] [\-S] [\-T] [\-s] [\-l] [\-P CHERRYPICK] [\-\-cc\-trailers] [\-\-no\-parent] [\-\-allow\-unicode\-control\-chars] [\-H] [\-\-guess\-lookback GUESSDAYS] [msgid]
+.TP
+.B positional arguments:
+msgid                 Message ID to process, or pipe a raw message
+.TP
+.B options:
+.INDENT 7.0
+.TP
+.B  \-h\fP,\fB  \-\-help
+show this help message and exit
+.TP
+.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
+Use a specific project instead of default (linux\-mm, linux\-hardening, etc)
+.TP
+.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
+.TP
+.B  \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
+.TP
+.BI \-v \ WANTVER\fR,\fB \ \-\-use\-version \ WANTVER
+Get a specific version of the patch/series
+.TP
+.B  \-t\fP,\fB  \-\-apply\-cover\-trailers
+Apply trailers sent to the cover letter to all patches
+.TP
+.B  \-S\fP,\fB  \-\-sloppy\-trailers
+Apply trailers without email address match checking
+.TP
+.B  \-T\fP,\fB  \-\-no\-add\-trailers
+Do not add or sort any trailers
+.TP
+.B  \-s\fP,\fB  \-\-add\-my\-sob
+Add your own signed\-off\-by to every patch
+.TP
+.B  \-l\fP,\fB  \-\-add\-link
+Add a Link: with message\-id lookup URL to every patch
+.TP
+.BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
+Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P \fIglobbing\fP" to match on commit subject)
+.TP
+.B  \-\-cc\-trailers
+Copy all Cc\(aqd addresses into Cc: trailers
+.TP
+.B  \-\-no\-parent
+Break thread at the msgid specified and ignore any parent messages
+.TP
+.B  \-\-allow\-unicode\-control\-chars
+Allow unicode control characters (very rarely legitimate)
+.TP
+.B  \-H\fP,\fB  \-\-make\-fetch\-head
+Attempt to treat series as a pull request and fetch it into FETCH_HEAD
+.TP
+.BI \-\-guess\-lookback \ GUESSDAYS
+(use with \-H) When guessing base, go back this many days from the patch date (default: 3 weeks)
+.UNINDENT
+.UNINDENT
 .sp
-TBD.
+\fIExample\fP: b4 shazam \-H \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 attest
 .sp
 usage: b4 attest [\-h] patchfile [patchfile ...]
@@ -230,7 +304,7 @@ msgid                 Message ID to process, or pipe a raw message
 .B optional arguments:
 .INDENT 7.0
 .TP
-.B \-h\fP,\fB  \-\-help
+.B  \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
 .BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
@@ -239,16 +313,16 @@ Operate on this git tree instead of current dir
 .BI \-b \ BRANCH\fR,\fB \ \-\-branch \ BRANCH
 Check out FETCH_HEAD into this branch after fetching
 .TP
-.B \-c\fP,\fB  \-\-check
+.B  \-c\fP,\fB  \-\-check
 Check if pull request has already been applied
 .TP
-.B \-e\fP,\fB  \-\-explode
+.B  \-e\fP,\fB  \-\-explode
 Convert a pull request into an mbox full of patches
 .TP
 .BI \-o \ OUTMBOX\fR,\fB \ \-\-output\-mbox \ OUTMBOX
 Save exploded messages into this mailbox (default: msgid.mbx)
 .TP
-.B \-l\fP,\fB  \-\-retrieve\-links
+.B  \-l\fP,\fB  \-\-retrieve\-links
 Attempt to retrieve any Link: URLs (use with \-e)
 .TP
 .BI \-f \ MAILFROM\fR,\fB \ \-\-from\-addr \ MAILFROM
@@ -266,7 +340,7 @@ b4 ty [\-h] [\-g GITDIR] [\-o OUTDIR] [\-l] [\-t THANK_FOR [THANK_FOR ...]] [\-d
 .B optional arguments:
 .INDENT 7.0
 .TP
-.B \-h\fP,\fB  \-\-help
+.B  \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
 .BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
@@ -275,7 +349,7 @@ Operate on this git tree instead of current dir
 .BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Write thanks files into this dir (default=.)
 .TP
-.B \-l\fP,\fB  \-\-list
+.B  \-l\fP,\fB  \-\-list
 List pull requests and patch series you have retrieved
 .TP
 .BI \-t \ THANK_FOR\fR,\fB \ \-\-thank\-for \ THANK_FOR
@@ -284,7 +358,7 @@ Generate thankyous for specific entries from \-l (e.g.: 1,3\-5,7\-; or "all")
 .BI \-d \ DISCARD\fR,\fB \ \-\-discard \ DISCARD
 Discard specific messages from \-l (e.g.: 1,3\-5,7\-; or "all")
 .TP
-.B \-a\fP,\fB  \-\-auto
+.B  \-a\fP,\fB  \-\-auto
 Use the Auto\-Thankanator gun to figure out what got applied/merged
 .TP
 .BI \-b \ BRANCH\fR,\fB \ \-\-branch \ BRANCH
@@ -293,10 +367,10 @@ The branch to check against, instead of current
 .BI \-\-since \ SINCE
 The \-\-since option to use when auto\-matching patches (default=1.week)
 .TP
-.B \-S\fP,\fB  \-\-send\-email
+.B  \-S\fP,\fB  \-\-send\-email
 Send email instead of writing out .thanks files
 .TP
-.B \-\-dry\-run
+.B  \-\-dry\-run
 Print out emails instead of sending them
 .UNINDENT
 .UNINDENT
@@ -325,7 +399,7 @@ optional arguments:
 .INDENT 3.5
 .INDENT 0.0
 .TP
-.B \-h\fP,\fB  \-\-help
+.B  \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
 .BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
@@ -334,7 +408,7 @@ Operate on this git tree instead of current dir
 .BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
 Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .TP
-.B \-C\fP,\fB  \-\-no\-cache
+.B  \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
 .UNINDENT
 .INDENT 0.0
@@ -344,13 +418,13 @@ Compare specific versions instead of latest and one before that, e.g. \-v 3 5
 .UNINDENT
 .INDENT 0.0
 .TP
-.B \-n\fP,\fB  \-\-no\-diff
+.B  \-n\fP,\fB  \-\-no\-diff
 Do not generate a diff, just show the command to do it
 .TP
 .BI \-o \ OUTDIFF\fR,\fB \ \-\-output\-diff \ OUTDIFF
 Save diff into this file instead of outputting to stdout
 .TP
-.B \-c\fP,\fB  \-\-color
+.B  \-c\fP,\fB  \-\-color
 Force color output even when writing to file
 .UNINDENT
 .INDENT 0.0
@@ -373,7 +447,7 @@ msgid                 Message ID to process, or pipe a raw message
 .B optional arguments:
 .INDENT 7.0
 .TP
-.B \-h\fP,\fB  \-\-help
+.B  \-h\fP,\fB  \-\-help
 show this help message and exit
 .TP
 .BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
@@ -382,10 +456,10 @@ Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
 Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
 .TP
-.B \-C\fP,\fB  \-\-no\-cache
+.B  \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
 .TP
-.B \-\-show\-keys
+.B  \-\-show\-keys
 Show all developer keys from the thread
 .UNINDENT
 .UNINDENT
