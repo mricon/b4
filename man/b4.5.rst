@@ -5,7 +5,7 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2021-09-01
+:Date:      2022-06-16
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
 :Version:   0.9.0
@@ -13,7 +13,7 @@ Work with code submissions in a public-inbox archive
 
 SYNOPSIS
 --------
-b4 {mbox,am,shazam,attest,pr,ty,diff} [options]
+b4 {mbox,am,shazam,pr,diff,ty,kr} [options]
 
 DESCRIPTION
 -----------
@@ -27,14 +27,14 @@ precursor to Lore and Data in the Star Trek universe.
 
 SUBCOMMANDS
 -----------
-* *b4 mbox*: Download a thread as an mbox file
-* *b4 am*: Create an mbox file that is ready to git-am
-* *b4 shazam*: Similar to *am*, but lets you treat patch series similar to pull requests
-* *b4 pr*: Work with pull requests
-* *b4 diff*: Show range-diff style diffs between patch versions
-* *b4 ty*: Create templated replies for processed patches and pull requests
-* *b4 attest*: (EXPERIMENTAL) Add cryptographic attestation to patches
-* *b4 kr* (EXPERIMENTAL) Operate on patatt-compatible keyrings
+* *mbox*: Download a thread as an mbox file
+* *am*: Create an mbox file that is ready to git-am
+* *shazam*: Apply patch series to git repositories
+* *pr*: Work with pull requests
+* *diff*: Show range-diff style diffs between patch versions
+* *ty*: Create templated replies for processed patches and pull requests
+* *kr* (EXPERIMENTAL) Operate on patatt-compatible keyrings
+* *attest*: (DEPRECATED) Add cryptographic attestation to patches
 
 OPTIONS
 -------
@@ -181,6 +181,9 @@ b4 attest
 usage: b4 attest [-h] patchfile [patchfile ...]
 
 .. note::
+
+   **This subcommand is deprecated and will be removed in a future
+   version of b4.**
 
    This functionality is now implemented via an auxiliary library called
    "patatt". You may instead install and use patatt directly with the
@@ -372,6 +375,12 @@ Default configuration, with explanations::
       # Use to exclude certain mail addresses from ever being added to auto-generated mail
       # Separate multiple entries using comma (spaces are ignored), shell-style globbing accepted
       email-exclude = *@codeaurora.org, example@example.com
+
+PROXYING REQUESTS
+-----------------
+Commands making remote HTTP requests may be configured to use a proxy by
+setting the **HTTPS_PROXY** environment variable, as described in
+https://docs.python-requests.org/en/latest/user/advanced/#proxies.
 
 SUPPORT
 -------

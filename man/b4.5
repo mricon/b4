@@ -27,12 +27,12 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "B4" 5 "2021-09-01" "0.9.0" ""
+.TH "B4" 5 "2022-06-16" "0.9.0" ""
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .SH SYNOPSIS
 .sp
-b4 {mbox,am,shazam,attest,pr,ty,diff} [options]
+b4 {mbox,am,shazam,pr,diff,ty,kr} [options]
 .SH DESCRIPTION
 .sp
 This is a helper utility to work with patches and pull requests made
@@ -45,21 +45,21 @@ precursor to Lore and Data in the Star Trek universe.
 .SH SUBCOMMANDS
 .INDENT 0.0
 .IP \(bu 2
-\fIb4 mbox\fP: Download a thread as an mbox file
+\fImbox\fP: Download a thread as an mbox file
 .IP \(bu 2
-\fIb4 am\fP: Create an mbox file that is ready to git\-am
+\fIam\fP: Create an mbox file that is ready to git\-am
 .IP \(bu 2
-\fIb4 shazam\fP: Similar to \fIam\fP, but lets you treat patch series similar to pull requests
+\fIshazam\fP: Apply patch series to git repositories
 .IP \(bu 2
-\fIb4 pr\fP: Work with pull requests
+\fIpr\fP: Work with pull requests
 .IP \(bu 2
-\fIb4 diff\fP: Show range\-diff style diffs between patch versions
+\fIdiff\fP: Show range\-diff style diffs between patch versions
 .IP \(bu 2
-\fIb4 ty\fP: Create templated replies for processed patches and pull requests
+\fIty\fP: Create templated replies for processed patches and pull requests
 .IP \(bu 2
-\fIb4 attest\fP: (EXPERIMENTAL) Add cryptographic attestation to patches
+\fIkr\fP (EXPERIMENTAL) Operate on patatt\-compatible keyrings
 .IP \(bu 2
-\fIb4 kr\fP (EXPERIMENTAL) Operate on patatt\-compatible keyrings
+\fIattest\fP: (DEPRECATED) Add cryptographic attestation to patches
 .UNINDENT
 .SH OPTIONS
 .INDENT 0.0
@@ -280,6 +280,9 @@ usage: b4 attest [\-h] patchfile [patchfile ...]
 \fBNOTE:\fP
 .INDENT 0.0
 .INDENT 3.5
+\fBThis subcommand is deprecated and will be removed in a future
+version of b4.\fP
+.sp
 This functionality is now implemented via an auxiliary library called
 "patatt". You may instead install and use patatt directly with the
 same results.
@@ -549,6 +552,11 @@ Default configuration, with explanations:
 .fi
 .UNINDENT
 .UNINDENT
+.SH PROXYING REQUESTS
+.sp
+Commands making remote HTTP requests may be configured to use a proxy by
+setting the \fBHTTPS_PROXY\fP environment variable, as described in
+\fI\%https://docs.python\-requests.org/en/latest/user/advanced/#proxies\fP\&.
 .SH SUPPORT
 .sp
 Please email \fI\%tools@linux.kernel.org\fP with support requests,
