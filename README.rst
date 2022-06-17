@@ -36,8 +36,8 @@ dependencies that are tracked via submodules::
 
     git submodule update --init
 
-Patch attestation (EXPERIMENTAL)
---------------------------------
+Patch attestation
+-----------------
 B4 implements two attestation verification mechanisms:
 
 - DKIM attestation using the dkimpy library
