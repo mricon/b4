@@ -379,8 +379,16 @@ def make_am(msgs, cmdargs, msgid):
 
         thanks_record_am(lser, cherrypick=cherrypick)
         if cmdargs.merge:
+            if not cmdargs.no_interactive:
+                logger.info('Will exec: %s', ' '.join(mergecmd))
+                try:
+                    input('Press Enter to continue or Ctrl-C to abort')
+                except KeyboardInterrupt:
+                    logger.info('')
+                    sys.exit(130)
+            else:
+                logger.info('Invoking: %s', ' '.join(mergecmd))
             # We exec git-merge and let it take over
-            logger.info('Invoking: %s', ' '.join(mergecmd))
             os.execvp(mergecmd[0], mergecmd)
 
         logger.info('You can now merge or checkout FETCH_HEAD')

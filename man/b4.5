@@ -72,9 +72,17 @@ Add more debugging info to the output (default: False)
 .TP
 .B  \-q\fP,\fB  \-\-quiet
 Output critical information only (default: False)
+.TP
+.B  \-n\fP,\fB  \-\-no\-interactive
+Do not ask any interactive questions (default: False)
 .UNINDENT
 .SH SUBCOMMAND OPTIONS
 .SS b4 mbox
+.sp
+This command allows retrieving entire threads from a remote public\-inbox
+instance. The resulting mbox file can then be opened with most MUA
+clients for actions like replying to conversations or reviewing patch
+submissions.
 .INDENT 0.0
 .TP
 .B usage:
@@ -117,6 +125,33 @@ When adding messages to existing maildir, filter out duplicates
 .sp
 \fIExample\fP: b4 mbox \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 am
+.sp
+This command allows retrieving threads from a public\-inbox instance and
+preparing them for applying to a git repository using the "git am"
+command. It will automatically perform the following operations:
+.INDENT 0.0
+.IP \(bu 2
+pick the latest submitted version of the series (it can check for
+newer threads using \fB\-c\fP as well)
+.IP \(bu 2
+check DKIM signatures and patatt attestation on all patches and code
+review messages
+.IP \(bu 2
+collate all submitted code\-review trailers (Reviewed\-by, Acked\-by,
+etc) and put them into the commit message
+.IP \(bu 2
+add your own Signed\-off\-by trailer (with \fB\-s\fP)
+.IP \(bu 2
+reroll series from partial updates (e.g. someone submits a v2 of a
+single patch instead of rerolling the entire series)
+.IP \(bu 2
+guess where in the tree history the patches belong, if the exact
+commit\-base is not specified (with \fB\-g\fP)
+.IP \(bu 2
+prepare the tree for a 3\-way merge (with \fB\-3\fP)
+.IP \(bu 2
+cherry\-pick a subset of patches from a large series (with \fB\-P\fP)
+.UNINDENT
 .INDENT 0.0
 .TP
 .B usage:
@@ -210,11 +245,20 @@ Do not reroll partial series when detected
 .UNINDENT
 .sp
 \fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
-.SH B4 SHAZAM
+.SS b4 shazam
+.sp
+This is very similar to \fBb4 am\fP, but will also apply patches
+directly to the current git tree using \fBgit am\fP\&. Alternatively, when
+used with \fB\-H\fP, it can fetch the patch series into \fBFETCH_HEAD\fP as
+if it were a pull request, so it can be reviewed and merged. In this
+case, the cover letter is used as a template for the merge commit.
+.sp
+If you want to automatically invoke git\-merge, you can use \fB\-M\fP
+instead of \fB\-H\fP\&.
 .INDENT 0.0
 .TP
 .B usage:
-b4 shazam [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-v WANTVER] [\-t] [\-S] [\-T] [\-s] [\-l] [\-P CHERRYPICK] [\-\-cc\-trailers] [\-\-no\-parent] [\-\-allow\-unicode\-control\-chars] [\-H] [\-\-guess\-lookback GUESSDAYS] [msgid]
+b4 shazam [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-v WANTVER] [\-t] [\-S] [\-T] [\-s] [\-l] [\-P CHERRYPICK] [\-\-cc\-trailers] [\-\-no\-parent] [\-\-allow\-unicode\-control\-chars] [\-H | \-M] [\-\-guess\-lookback GUESSDAYS] [msgid]
 .TP
 .B positional arguments:
 msgid                 Message ID to process, or pipe a raw message
@@ -267,15 +311,16 @@ Allow unicode control characters (very rarely legitimate)
 .B  \-H\fP,\fB  \-\-make\-fetch\-head
 Attempt to treat series as a pull request and fetch it into FETCH_HEAD
 .TP
+.B  \-M\fP,\fB  \-\-merge
+Attempt to merge series as if it were a pull request (execs git\-merge)
+.TP
 .BI \-\-guess\-lookback \ GUESSDAYS
-(use with \-H) When guessing base, go back this many days from the patch date (default: 3 weeks)
+(use with \-H or \-M) When guessing base, go back this many days from the patch date (default: 3 weeks)
 .UNINDENT
 .UNINDENT
 .sp
 \fIExample\fP: b4 shazam \-H \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 attest
-.sp
-usage: b4 attest [\-h] patchfile [patchfile ...]
 .sp
 \fBNOTE:\fP
 .INDENT 0.0
@@ -290,12 +335,18 @@ same results.
 .UNINDENT
 .INDENT 0.0
 .TP
+.B usage:
+b4 attest [\-h] patchfile [patchfile ...]
+.TP
 .B positional arguments:
 patchfile             Patches to attest
 .UNINDENT
 .sp
 \fIExample\fP: b4 attest outgoing/*.patch
 .SS b4 pr
+.sp
+This command is for working with pull requests submitted using
+\fBgit\-request\-pull\fP\&.
 .INDENT 0.0
 .TP
 .B usage:
@@ -389,9 +440,10 @@ files (global or in\-tree).
 .sp
 \fIExample\fP: b4 ty \-aS \-\-dry\-run
 .SS b4 diff
-.sp
-usage: b4 diff [\-h] [\-g GITDIR] [\-p USEPROJECT] [\-C] [\-v WANTVERS [WANTVERS ...]] [\-n] [\-o OUTDIFF] [\-c] [\-m AMBOX AMBOX] [msgid]
 .INDENT 0.0
+.TP
+.B usage:
+b4 diff [\-h] [\-g GITDIR] [\-p USEPROJECT] [\-C] [\-v WANTVERS [WANTVERS ...]] [\-n] [\-o OUTDIFF] [\-c] [\-m AMBOX AMBOX] [msgid]
 .TP
 .B positional arguments:
 msgid                 Message ID to process, pipe a raw message, or use \-m
@@ -440,9 +492,10 @@ Compare two mbx files prepared with "b4 am"
 .sp
 \fIExample\fP: b4 diff \fI\%20200526205322.23465\-1\-mic@digikod.net\fP
 .SS b4 kr
-.sp
-usage: b4 kr [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-\-show\-keys] [msgid]
 .INDENT 0.0
+.TP
+.B usage:
+b4 kr [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-\-show\-keys] [msgid]
 .TP
 .B positional arguments:
 msgid                 Message ID to process, or pipe a raw message
@@ -543,6 +596,10 @@ Default configuration, with explanations:
    thanks\-pr\-template = None
    # See thanks\-am\-template.example. If not set, a default template will be used.
    thanks\-am\-template = None
+   # additional flags to pass to "git am" when we run "b4 shazam"
+   shazam\-am\-flags = None
+   # additional flags to pass to "git merge" when we run "b4 shazam \-M"
+   shazam\-merge\-flags = \-\-signoff
    # Used when preparing merge messages from cover letters. See shazam\-merge\-template.example
    shazam\-merge\-template = None
    # Use to exclude certain mail addresses from ever being added to auto\-generated mail

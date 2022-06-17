@@ -117,6 +117,8 @@ def cmd():
                         help='Add more debugging info to the output')
     parser.add_argument('-q', '--quiet', action='store_true', default=False,
                         help='Output critical information only')
+    parser.add_argument('-n', '--no-interactive', action='store_true', default=False,
+                        help='Do not ask any interactive questions')
 
     subparsers = parser.add_subparsers(help='sub-command help', dest='subcmd')
 

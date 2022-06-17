@@ -41,9 +41,11 @@ OPTIONS
 -h, --help            show this help message and exit
 -d, --debug           Add more debugging info to the output (default: False)
 -q, --quiet           Output critical information only (default: False)
+-n, --no-interactive  Do not ask any interactive questions (default: False)
 
 SUBCOMMAND OPTIONS
 ------------------
+
 b4 mbox
 ~~~~~~~
 
@@ -163,7 +165,7 @@ options:
 *Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
 
 b4 shazam
----------
+~~~~~~~~~
 
 This is very similar to **b4 am**, but will also apply patches
 directly to the current git tree using ``git am``. Alternatively, when
