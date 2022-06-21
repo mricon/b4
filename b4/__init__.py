@@ -2625,7 +2625,10 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
     pses, url = get_patchwork_session(pwkey, pwurl)
     patches_url = '/'.join((url, 'patches'))
     tochange = list()
+    seen = set()
     for msgid in msgids:
+        if msgid in seen:
+            continue
         # Two calls, first to look up the patch-id, second to update its state
         params = [
             ('project', pwproj),
@@ -2642,6 +2645,7 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
                 if patch_id:
                     title = entry.get('name')
                     if entry.get('state') != state:
+                        seen.add(msgid)
                         tochange.append((patch_id, title))
         except requests.exceptions.RequestException as ex:
             logger.debug('Patchwork REST error: %s', ex)
