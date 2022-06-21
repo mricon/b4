@@ -14,8 +14,8 @@ import email.header
 import email.generator
 import tempfile
 import pathlib
+import argparse
 
-import requests
 import urllib.parse
 import datetime
 import time
@@ -24,6 +24,8 @@ import shutil
 import mailbox
 # noinspection PyCompatibility
 import pwd
+
+import requests
 
 from contextlib import contextmanager
 from typing import Optional, Tuple, Set, List, TextIO
@@ -44,7 +46,8 @@ try:
 except ModuleNotFoundError:
     can_patatt = False
 
-__VERSION__ = '0.9.0'
+__VERSION__ = '0.10.0-dev'
+PW_REST_API_VERSION = '1.2'
 
 
 def _dkim_log_filter(record):
@@ -1867,7 +1870,7 @@ class LoreAttestorPatatt(LoreAttestor):
             self.have_key = True
 
 
-def _run_command(cmdargs: list, stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
+def _run_command(cmdargs: List[str], stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
     logger.debug('Running %s' % ' '.join(cmdargs))
     sp = subprocess.Popen(cmdargs, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     (output, error) = sp.communicate(input=stdin)
@@ -2113,7 +2116,7 @@ def get_requests_session():
     return REQSESSION
 
 
-def get_msgid_from_stdin():
+def get_msgid_from_stdin() -> Optional[str]:
     if not sys.stdin.isatty():
         from email.parser import BytesParser
         message = BytesParser().parsebytes(
@@ -2122,7 +2125,7 @@ def get_msgid_from_stdin():
     return None
 
 
-def get_msgid(cmdargs) -> Optional[str]:
+def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
     if not cmdargs.msgid:
         logger.debug('Getting Message-ID from stdin')
         msgid = get_msgid_from_stdin()
@@ -2134,6 +2137,15 @@ def get_msgid(cmdargs) -> Optional[str]:
 
     msgid = msgid.strip('<>')
     # Handle the case when someone pastes a full URL to the message
+    # Is this a patchwork URL?
+    matches = re.search(r'^https?://.*/project/.*/patch/([^/]+@[^/]+)', msgid, re.IGNORECASE)
+    if matches:
+        logger.debug('Looks like a patchwork URL')
+        chunks = matches.groups()
+        msgid = urllib.parse.unquote(chunks[0])
+        return msgid
+
+    # Is it a lore URL?
     matches = re.search(r'^https?://[^/]+/([^/]+)/([^/]+@[^/]+)', msgid, re.IGNORECASE)
     if matches:
         chunks = matches.groups()
@@ -2588,3 +2600,67 @@ def get_smtp(identity: Optional[str] = None):
         smtp = smtplib.SMTP(server, port)
 
     return smtp, fromaddr
+
+
+def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str]:
+    session = requests.session()
+    session.headers.update({
+        'User-Agent': 'b4/%s' % __VERSION__,
+        'Authorization': f'Token {pwkey}',
+    })
+    url = '/'.join((pwurl.rstrip('/'), 'api', PW_REST_API_VERSION))
+    logger.debug('pw url=%s', url)
+    return session, url
+
+
+def patchwork_set_state(msgids: List[str], state: str) -> bool:
+    # Do we have a pw-key defined in config?
+    config = get_main_config()
+    pwkey = config.get('pw-key')
+    pwurl = config.get('pw-url')
+    pwproj = config.get('pw-project')
+    if not (pwkey and pwurl and pwproj):
+        logger.debug('Patchwork support not configured')
+        return False
+    pses, url = get_patchwork_session(pwkey, pwurl)
+    patches_url = '/'.join((url, 'patches'))
+    tochange = list()
+    for msgid in msgids:
+        # Two calls, first to look up the patch-id, second to update its state
+        params = [
+            ('project', pwproj),
+            ('archived', 'false'),
+            ('msgid', msgid),
+        ]
+        try:
+            logger.debug('looking up patch_id of msgid=%s', msgid)
+            rsp = pses.get(patches_url, params=params, stream=False)
+            rsp.raise_for_status()
+            pdata = rsp.json()
+            for entry in pdata:
+                patch_id = entry.get('id')
+                if patch_id:
+                    title = entry.get('name')
+                    if entry.get('state') != state:
+                        tochange.append((patch_id, title))
+        except requests.exceptions.RequestException as ex:
+            logger.debug('Patchwork REST error: %s', ex)
+
+    if tochange:
+        logger.info('---')
+        loc = urllib.parse.urlparse(pwurl)
+        logger.info('Patchwork: setting state on %s/%s', loc.netloc, pwproj)
+        for patch_id, title in tochange:
+            patchid_url = '/'.join((patches_url, str(patch_id), ''))
+            logger.debug('patchid_url=%s', patchid_url)
+            data = [
+                ('state', state),
+            ]
+            try:
+                rsp = pses.patch(patchid_url, data=data, stream=False)
+                rsp.raise_for_status()
+                newdata = rsp.json()
+                if newdata.get('state') == state:
+                    logger.info(' -> %s : %s', state, title)
+            except requests.exceptions.RequestException as ex:
+                logger.debug('Patchwork REST error: %s', ex)

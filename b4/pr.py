@@ -256,6 +256,11 @@ def thanks_record_pr(lmsg):
         json.dump(out, fh, ensure_ascii=False, indent=4)
         logger.debug('Wrote %s for thanks tracking', filename)
 
+    config = b4.get_main_config()
+    pwstate = config.get('pw-review-state')
+    if pwstate:
+        b4.patchwork_set_state(lmsg.msgid, pwstate)
+
 
 def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)

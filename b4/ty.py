@@ -454,6 +454,7 @@ def send_messages(listing, branch, cmdargs):
         signature = '%s <%s>' % (usercfg['name'], usercfg['email'])
 
     outgoing = 0
+    msgids = list()
     for jsondata in listing:
         jsondata['myname'] = usercfg['name']
         jsondata['myemail'] = usercfg['email']
@@ -467,6 +468,10 @@ def send_messages(listing, branch, cmdargs):
 
         if msg is None:
             continue
+
+        msgids.append(jsondata['msgid'])
+        for pdata in jsondata.get('patches', list()):
+            msgids.append(pdata[2])
 
         outgoing += 1
         msg.set_charset('utf-8')
@@ -516,13 +521,24 @@ def send_messages(listing, branch, cmdargs):
         logger.info('No thanks necessary.')
         return
 
+    config = b4.get_main_config()
+    pwstate = cmdargs.pw_set_state
+    if not pwstate:
+        pwstate = config.get('pw-accept-state')
+
     if cmdargs.sendemail:
         if cmdargs.dryrun:
             logger.info('DRYRUN: generated %s thank-you letters', outgoing)
         else:
             logger.info('Sent %s thank-you letters', outgoing)
+            if pwstate:
+                b4.patchwork_set_state(msgids, pwstate)
         smtp.quit()
     else:
+        if pwstate:
+            print(msgids, pwstate)
+            b4.patchwork_set_state(msgids, pwstate)
+            logger.info('---')
         logger.debug('Wrote %s thank-you letters', outgoing)
         logger.info('You can now run:')
         logger.info('  git send-email %s/*.thanks', cmdargs.outdir)
@@ -621,10 +637,21 @@ def discard_selected(cmdargs):
 
     datadir = b4.get_data_dir()
     logger.info('Discarding %s messages', len(listing))
+    msgids = list()
     for jsondata in listing:
         fullpath = os.path.join(datadir, jsondata['trackfile'])
         os.rename(fullpath, '%s.discarded' % fullpath)
         logger.info('  Discarded: %s', jsondata['subject'])
+        msgids.append(jsondata['msgid'])
+        for pdata in jsondata.get('patches', list()):
+            msgids.append(pdata[2])
+
+    config = b4.get_main_config()
+    pwstate = cmdargs.pw_set_state
+    if not pwstate:
+        pwstate = config.get('pw-discard-state')
+    if pwstate:
+        b4.patchwork_set_state(msgids, pwstate)
 
     sys.exit(0)
 

@@ -20,6 +20,7 @@ import pathlib
 import tempfile
 import io
 import shlex
+import argparse
 
 import urllib.parse
 import xml.etree.ElementTree
@@ -417,6 +418,7 @@ def thanks_record_am(lser, cherrypick=None):
     filename = '%s.am' % slug
 
     patches = list()
+    msgids = list()
     at = 0
     padlen = len(str(lser.expected))
     lmsg = None
@@ -425,6 +427,7 @@ def thanks_record_am(lser, cherrypick=None):
         if pmsg is None:
             at += 1
             continue
+        msgids.append(pmsg.msgid)
 
         if lmsg is None:
             lmsg = pmsg
@@ -471,6 +474,11 @@ def thanks_record_am(lser, cherrypick=None):
     with open(fullpath, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, ensure_ascii=False, indent=4)
         logger.debug('Wrote %s for thanks tracking', filename)
+
+    config = b4.get_main_config()
+    pwstate = config.get('pw-review-state')
+    if pwstate:
+        b4.patchwork_set_state(msgids, pwstate)
 
 
 def save_as_quilt(am_msgs, q_dirname):
@@ -670,7 +678,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     return msgs
 
 
-def get_msgs(cmdargs) -> Tuple[Optional[str], Optional[list]]:
+def get_msgs(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[list]]:
     msgid = None
     if not cmdargs.localmbox:
         msgid = b4.get_msgid(cmdargs)
