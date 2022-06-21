@@ -536,7 +536,6 @@ def send_messages(listing, branch, cmdargs):
         smtp.quit()
     else:
         if pwstate:
-            print(msgids, pwstate)
             b4.patchwork_set_state(msgids, pwstate)
             logger.info('---')
         logger.debug('Wrote %s thank-you letters', outgoing)
