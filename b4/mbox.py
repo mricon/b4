@@ -102,9 +102,8 @@ def make_am(msgs, cmdargs, msgid):
 
     try:
         am_msgs = lser.get_am_ready(noaddtrailers=cmdargs.noaddtrailers,
-                                    covertrailers=covertrailers, trailer_order=config['trailer-order'],
-                                    addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
-                                    linkmask=config['linkmask'], cherrypick=cherrypick,
+                                    covertrailers=covertrailers, addmysob=cmdargs.addmysob,
+                                    addlink=cmdargs.addlink, linkmask=config['linkmask'], cherrypick=cherrypick,
                                     copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars)
     except KeyError:
         sys.exit(1)

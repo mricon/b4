@@ -44,7 +44,7 @@ def cmd_am_common_opts(sp):
     sp.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
                     help='Apply trailers without email address match checking')
     sp.add_argument('-T', '--no-add-trailers', dest='noaddtrailers', action='store_true', default=False,
-                    help='Do not add or sort any trailers')
+                    help='Do not add any trailers from follow-up messages')
     sp.add_argument('-s', '--add-my-sob', dest='addmysob', action='store_true', default=False,
                     help='Add your own signed-off-by to every patch')
     sp.add_argument('-l', '--add-link', dest='addlink', action='store_true', default=False,

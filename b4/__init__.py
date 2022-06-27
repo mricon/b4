@@ -87,25 +87,11 @@ AMHDRS = [
     'List-Id',
 ]
 
-# You can use bash-style globbing here
-# end with '*' to include any other trailers
-# You can change the default in your ~/.gitconfig, e.g.:
-# [b4]
-#   # remember to end with ,*
-#   trailer-order=link*,fixes*,cc*,reported*,suggested*,original*,co-*,tested*,reviewed*,acked*,signed-off*,*
-#   (another common)
-#   trailer-order=fixes*,reported*,suggested*,original*,co-*,signed-off*,tested*,reviewed*,acked*,cc*,link*,*
-#
-# Or use _preserve_ (alias to *) to keep the order unchanged
-
-DEFAULT_TRAILER_ORDER = '*'
-
 LOREADDR = 'https://lore.kernel.org'
 
 DEFAULT_CONFIG = {
     'midmask': LOREADDR + '/all/%s',
     'linkmask': LOREADDR + '/r/%s',
-    'trailer-order': DEFAULT_TRAILER_ORDER,
     'listid-preference': '*.feeds.kernel.org,*.linux.dev,*.kernel.org,*',
     'save-maildirs': 'no',
     # off: do not bother checking attestation
@@ -493,8 +479,8 @@ class LoreSeries:
 
         return slug[:100]
 
-    def get_am_ready(self, noaddtrailers=False, covertrailers=False, trailer_order=None, addmysob=False,
-                     addlink=False, linkmask=None, cherrypick=None, copyccs=False, allowbadchars=False) -> list:
+    def get_am_ready(self, noaddtrailers=False, covertrailers=False, addmysob=False, addlink=False,
+                     linkmask=None, cherrypick=None, copyccs=False, allowbadchars=False) -> list:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -582,8 +568,7 @@ class LoreSeries:
                 add_trailers = True
                 if noaddtrailers:
                     add_trailers = False
-                msg = lmsg.get_am_message(add_trailers=add_trailers, trailer_order=trailer_order, copyccs=copyccs,
-                                          allowbadchars=allowbadchars)
+                msg = lmsg.get_am_message(add_trailers=add_trailers, copyccs=copyccs, allowbadchars=allowbadchars)
                 msgs.append(msg)
             else:
                 logger.error('  ERROR: missing [%s/%s]!', at, self.expected)
@@ -821,7 +806,7 @@ class LoreSeries:
 
     def save_cover(self, outfile):
         # noinspection PyUnresolvedReferences
-        cover_msg = self.patches[0].get_am_message(add_trailers=False, trailer_order=None)
+        cover_msg = self.patches[0].get_am_message(add_trailers=False)
         with open(outfile, 'w') as fh:
             fh.write(cover_msg.as_string(policy=emlpolicy))
         logger.critical('Cover: %s', outfile)
@@ -1496,7 +1481,7 @@ class LoreMessage:
 
         return githeaders, message, trailers, basement, signature
 
-    def fix_trailers(self, trailer_order=None, copyccs=False):
+    def fix_trailers(self, copyccs=False):
         config = get_main_config()
         attpolicy = config['attestation-policy']
 
@@ -1524,36 +1509,30 @@ class LoreMessage:
                         trailers.append(('Cc', pair[1], None, None))  # noqa
 
         fixtrailers = list()
-        if trailer_order is None:
-            trailer_order = DEFAULT_TRAILER_ORDER
-        elif trailer_order in ('preserve', '_preserve_'):
-            trailer_order = '*'
+        for trailer in trailers:
+            if list(trailer[:3]) in fixtrailers:
+                # Dupe
+                continue
 
-        for trailermatch in trailer_order:
-            for trailer in trailers:
-                if list(trailer[:3]) in fixtrailers:
-                    # Dupe
-                    continue
-                if fnmatch.fnmatch(trailer[0].lower(), trailermatch.strip()):
-                    fixtrailers.append(list(trailer[:3]))
-                    if trailer[:3] not in btrailers:
-                        extra = ''
-                        if trailer[3] is not None:
-                            fmsg = trailer[3]
-                            for attestor in fmsg.attestors:  # noqa
-                                if attestor.passing:
-                                    extra = ' (%s %s)' % (attestor.checkmark, attestor.trailer)
-                                elif attpolicy in ('hardfail', 'softfail'):
-                                    extra = ' (%s %s)' % (attestor.checkmark, attestor.trailer)
-                                    if attpolicy == 'hardfail':
-                                        import sys
-                                        logger.critical('---')
-                                        logger.critical('Exiting due to attestation-policy: hardfail')
-                                        sys.exit(1)
+            fixtrailers.append(list(trailer[:3]))
+            if trailer[:3] not in btrailers:
+                extra = ''
+                if trailer[3] is not None:
+                    fmsg = trailer[3]
+                    for attestor in fmsg.attestors:  # noqa
+                        if attestor.passing:
+                            extra = ' (%s %s)' % (attestor.checkmark, attestor.trailer)
+                        elif attpolicy in ('hardfail', 'softfail'):
+                            extra = ' (%s %s)' % (attestor.checkmark, attestor.trailer)
+                            if attpolicy == 'hardfail':
+                                import sys
+                                logger.critical('---')
+                                logger.critical('Exiting due to attestation-policy: hardfail')
+                                sys.exit(1)
 
-                        logger.info('    + %s: %s%s', trailer[0], trailer[1], extra)
-                    else:
-                        logger.debug('    . %s: %s', trailer[0], trailer[1])
+                    logger.info('    + %s: %s%s', trailer[0], trailer[1], extra)
+                else:
+                    logger.debug('    . %s: %s', trailer[0], trailer[1])
 
         # Reconstitute the message
         self.body = ''
@@ -1600,9 +1579,9 @@ class LoreMessage:
 
         return '[%s] %s' % (' '.join(parts), self.lsubject.subject)
 
-    def get_am_message(self, add_trailers=True, trailer_order=None, copyccs=False, allowbadchars=False):
+    def get_am_message(self, add_trailers=True, copyccs=False, allowbadchars=False):
         if add_trailers:
-            self.fix_trailers(trailer_order=trailer_order, copyccs=copyccs)
+            self.fix_trailers(copyccs=copyccs)
         bbody = self.body.encode()
         # Look through the body to make sure there aren't any suspicious unicode control flow chars
         # First, encode into ascii and compare for a quickie utf8 presence test
@@ -2005,9 +1984,6 @@ def get_main_config() -> dict:
         config = get_config_from_git(r'b4\..*', defaults=DEFAULT_CONFIG, multivals=['keyringsrc'])
         # Legacy name was get-lore-mbox, so load those as well
         config = get_config_from_git(r'get-lore-mbox\..*', defaults=config)
-        config['trailer-order'] = config['trailer-order'].split(',')
-        config['trailer-order'].remove('*')
-        config['trailer-order'].append('*')
         config['listid-preference'] = config['listid-preference'].split(',')
         config['listid-preference'].remove('*')
         config['listid-preference'].append('*')
