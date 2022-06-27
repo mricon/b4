@@ -537,11 +537,11 @@ class LoreSeries:
             if lmsg is not None:
                 if self.has_cover and covertrailers and self.patches[0].followup_trailers:  # noqa
                     lmsg.followup_trailers += self.patches[0].followup_trailers  # noqa
+                if addlink:
+                    lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid, None, None))
                 if addmysob:
                     lmsg.followup_trailers.append(('Signed-off-by',
                                                    '%s <%s>' % (usercfg['name'], usercfg['email']), None, None))
-                if addlink:
-                    lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid, None, None))
 
                 if attsame and not attcrit:
                     if attmark:
