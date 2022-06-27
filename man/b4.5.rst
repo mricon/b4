@@ -34,7 +34,6 @@ SUBCOMMANDS
 * *diff*: Show range-diff style diffs between patch versions
 * *ty*: Create templated replies for processed patches and pull requests
 * *kr* (EXPERIMENTAL) Operate on patatt-compatible keyrings
-* *attest*: (DEPRECATED) Add cryptographic attestation to patches
 
 OPTIONS
 -------
@@ -213,25 +212,6 @@ options:
                         (use with -H or -M) When guessing base, go back this many days from the patch date (default: 3 weeks)
 
 *Example*: b4 shazam -H 20200313231252.64999-1-keescook@chromium.org
-
-b4 attest
-~~~~~~~~~
-.. note::
-
-   **This subcommand is deprecated and will be removed in a future
-   version of b4.**
-
-   This functionality is now implemented via an auxiliary library called
-   "patatt". You may instead install and use patatt directly with the
-   same results.
-
-usage:
-  b4 attest [-h] patchfile [patchfile ...]
-
-positional arguments:
-  patchfile             Patches to attest
-
-*Example*: b4 attest outgoing/\*.patch
 
 b4 pr
 ~~~~~

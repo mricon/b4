@@ -81,15 +81,6 @@ def cmd_shazam(cmdargs):
     b4.mbox.main(cmdargs)
 
 
-def cmd_attest(cmdargs):
-    import b4.attest
-    if len(cmdargs.patchfile):
-        b4.attest.attest_patches(cmdargs)
-    else:
-        logger.critical('ERROR: missing patches to attest')
-        sys.exit(1)
-
-
 def cmd_pr(cmdargs):
     import b4.pr
     b4.pr.main(cmdargs)
@@ -163,19 +154,6 @@ def cmd():
                        help=('(use with -H or -M) When guessing base, go back this many days from the patch date '
                              '(default: 3 weeks)'))
     sp_sh.set_defaults(func=cmd_shazam)
-
-    # b4 attest
-    sp_att = subparsers.add_parser('attest', help='(DEPRECATED) Create cryptographic attestation for a set of patches')
-    sp_att.add_argument('-f', '--from', dest='sender', default=None,
-                        help='OBSOLETE: this option does nothing and will be removed')
-    sp_att.add_argument('-n', '--no-submit', dest='nosubmit', action='store_true', default=False,
-                        help='OBSOLETE: this option does nothing and will be removed')
-    sp_att.add_argument('-o', '--output', default=None,
-                        help='OBSOLETE: this option does nothing and will be removed')
-    sp_att.add_argument('-m', '--mutt-filter', default=None,
-                        help='OBSOLETE: this option does nothing and will be removed')
-    sp_att.add_argument('patchfile', nargs='*', help='Patches to attest')
-    sp_att.set_defaults(func=cmd_attest)
 
     # b4 pr
     sp_pr = subparsers.add_parser('pr', help='Fetch a pull request found in a message ID')

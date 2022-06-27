@@ -58,8 +58,6 @@ precursor to Lore and Data in the Star Trek universe.
 \fIty\fP: Create templated replies for processed patches and pull requests
 .IP \(bu 2
 \fIkr\fP (EXPERIMENTAL) Operate on patatt\-compatible keyrings
-.IP \(bu 2
-\fIattest\fP: (DEPRECATED) Add cryptographic attestation to patches
 .UNINDENT
 .SH OPTIONS
 .INDENT 0.0
@@ -320,29 +318,6 @@ Attempt to merge series as if it were a pull request (execs git\-merge)
 .UNINDENT
 .sp
 \fIExample\fP: b4 shazam \-H \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
-.SS b4 attest
-.sp
-\fBNOTE:\fP
-.INDENT 0.0
-.INDENT 3.5
-\fBThis subcommand is deprecated and will be removed in a future
-version of b4.\fP
-.sp
-This functionality is now implemented via an auxiliary library called
-"patatt". You may instead install and use patatt directly with the
-same results.
-.UNINDENT
-.UNINDENT
-.INDENT 0.0
-.TP
-.B usage:
-b4 attest [\-h] patchfile [patchfile ...]
-.TP
-.B positional arguments:
-patchfile             Patches to attest
-.UNINDENT
-.sp
-\fIExample\fP: b4 attest outgoing/*.patch
 .SS b4 pr
 .sp
 This command is for working with pull requests submitted using
