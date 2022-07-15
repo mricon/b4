@@ -3,3 +3,4 @@ requests>=2.24,<3.0
 dnspython>=2.1,<3.0
 dkimpy>=1.0,<2.0
 patatt>=0.5,<2.0
+git-filter-repo>=2.30,<3.0

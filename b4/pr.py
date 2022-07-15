@@ -318,84 +318,78 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
         # of the archived threads.
         linked_ids.add(lmsg.msgid)
 
-    with b4.git_format_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', prefixes=prefixes, extraopts=fpopts) as pdir:
-        if pdir is None:
-            raise RuntimeError('Could not run format-patches')
+    # FIXME: This is currently broken due to changes to git_range_to_patches
+    msgs = b4.git_range_to_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', with_cover=True,
+                                   prefixes=prefixes, extraopts=fpopts)
+    for msg in msgs:
+        msubj = b4.LoreSubject(msg.get('subject', ''))
 
-        for msgfile in sorted(os.listdir(pdir)):
-            with open(os.path.join(pdir, msgfile), 'rb') as fh:
-                msg = email.message_from_binary_file(fh)
+        # Is this the cover letter?
+        if msubj.counter == 0:
+            # We rebuild the message from scratch
+            # The cover letter body is the pull request body, plus a few trailers
+            body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
+                lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
 
-            msubj = b4.LoreSubject(msg.get('subject', ''))
-
-            # Is this the cover letter?
-            if msubj.counter == 0:
-                # We rebuild the message from scratch
-                # The cover letter body is the pull request body, plus a few trailers
-                body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
-                    lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
-
-                # Make it a multipart if we're doing retrieve_links
-                if retrieve_links:
-                    cmsg = MIMEMultipart()
-                    cmsg.attach(MIMEText(body, 'plain'))
-                else:
-                    cmsg = email.message.EmailMessage()
-                    cmsg.set_payload(body)
-
-                cmsg.add_header('From', mailfrom)
-                cmsg.add_header('Subject', '[' + ' '.join(msubj.prefixes) + '] ' + lmsg.subject)
-                cmsg.add_header('Date', lmsg.msg.get('Date'))
-                cmsg.set_charset('utf-8')
-                cmsg.replace_header('Content-Transfer-Encoding', '8bit')
-
-                msg = cmsg
-
+            # Make it a multipart if we're doing retrieve_links
+            if retrieve_links:
+                cmsg = MIMEMultipart()
+                cmsg.attach(MIMEText(body, 'plain'))
             else:
-                # Move the original From and Date into the body
-                prepend = list()
-                if msg.get('From') != mailfrom:
-                    cleanfrom = b4.LoreMessage.clean_header(msg['from'])
-                    prepend.append('From: %s' % ''.join(cleanfrom))
-                    msg.replace_header('From', mailfrom)
+                cmsg = email.message.EmailMessage()
+                cmsg.set_payload(body)
 
-                prepend.append('Date: %s' % msg['date'])
-                body = '%s\n\n%s' % ('\n'.join(prepend), msg.get_payload(decode=True).decode('utf-8'))
-                msg.set_payload(body)
-                msg.replace_header('Subject', msubj.full_subject)
+            cmsg.add_header('From', mailfrom)
+            cmsg.add_header('Subject', '[' + ' '.join(msubj.prefixes) + '] ' + lmsg.subject)
+            cmsg.add_header('Date', lmsg.msg.get('Date'))
+            cmsg.set_charset('utf-8')
+            cmsg.replace_header('Content-Transfer-Encoding', '8bit')
 
-                if retrieve_links:
-                    matches = re.findall(r'^Link:\s+https?://.*/(\S+@\S+)[^/]', body, flags=re.M | re.I)
-                    if matches:
-                        linked_ids.update(matches)
-                    matches = re.findall(r'^Message-ID:\s+(\S+@\S+)', body, flags=re.M | re.I)
-                    if matches:
-                        linked_ids.update(matches)
+            msg = cmsg
 
-                # Add a number of seconds equalling the counter, in hopes it gets properly threaded
-                newdate = lmsg.date + timedelta(seconds=msubj.counter)
-                msg.replace_header('Date', utils.format_datetime(newdate))
+        else:
+            # Move the original From and Date into the body
+            prepend = list()
+            if msg.get('From') != mailfrom:
+                cleanfrom = b4.LoreMessage.clean_header(msg['from'])
+                prepend.append('From: %s' % ''.join(cleanfrom))
+                msg.replace_header('From', mailfrom)
 
-                # Thread it to the cover letter
-                msg.add_header('In-Reply-To', '<b4-exploded-0-%s>' % lmsg.msgid)
-                msg.add_header('References', '<b4-exploded-0-%s>' % lmsg.msgid)
+            prepend.append('Date: %s' % msg['date'])
+            body = '%s\n\n%s' % ('\n'.join(prepend), msg.get_payload(decode=True).decode('utf-8'))
+            msg.set_payload(body)
+            msg.replace_header('Subject', msubj.full_subject)
 
-            msg.add_header('To', format_addrs(allto))
-            if allcc:
-                msg.add_header('Cc', format_addrs(allcc))
+            if retrieve_links:
+                matches = re.findall(r'^Link:\s+https?://.*/(\S+@\S+)[^/]', body, flags=re.M | re.I)
+                if matches:
+                    linked_ids.update(matches)
+                matches = re.findall(r'^Message-ID:\s+(\S+@\S+)', body, flags=re.M | re.I)
+                if matches:
+                    linked_ids.update(matches)
 
-            # Set the message-id based on the original pull request msgid
-            msg.add_header('Message-Id', '<b4-exploded-%s-%s>' % (msubj.counter, lmsg.msgid))
+            # Add a number of seconds equalling the counter, in hopes it gets properly threaded
+            newdate = lmsg.date + timedelta(seconds=msubj.counter)
+            msg.replace_header('Date', utils.format_datetime(newdate))
 
-            if mailfrom != lmsg.msg.get('From'):
-                msg.add_header('Reply-To', lmsg.msg.get('From'))
-                msg.add_header('X-Original-From', lmsg.msg.get('From'))
+            # Thread it to the cover letter
+            msg.add_header('In-Reply-To', '<b4-exploded-0-%s>' % lmsg.msgid)
+            msg.add_header('References', '<b4-exploded-0-%s>' % lmsg.msgid)
 
-            if lmsg.msg['List-Id']:
-                msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
-            logger.info('  %s', msg.get('Subject'))
-            msg.set_charset('utf-8')
-            msgs.append(msg)
+        msg.add_header('To', format_addrs(allto))
+        if allcc:
+            msg.add_header('Cc', format_addrs(allcc))
+
+        # Set the message-id based on the original pull request msgid
+        msg.add_header('Message-Id', '<b4-exploded-%s-%s>' % (msubj.counter, lmsg.msgid))
+
+        if mailfrom != lmsg.msg.get('From'):
+            msg.add_header('Reply-To', lmsg.msg.get('From'))
+            msg.add_header('X-Original-From', lmsg.msg.get('From'))
+
+        if lmsg.msg['List-Id']:
+            msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
+        logger.info('  %s', msg.get('Subject'))
 
     logger.info('Exploded %s messages', len(msgs))
     if retrieve_links and linked_ids:

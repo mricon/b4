@@ -7,13 +7,13 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import os
 import sys
+
 import b4
 import re
 import email
 import email.message
 import email.policy
 import json
-import fnmatch
 
 from string import Template
 from email import utils
@@ -51,8 +51,6 @@ ${signature}
 MY_COMMITS = None
 # Used to track additional branch info
 BRANCH_INFO = None
-# Used to track mailmap replacements
-MAILMAP_INFO = dict()
 
 
 def git_get_merge_id(gitdir, commit_id, branch=None):
@@ -76,63 +74,21 @@ def git_get_commit_message(gitdir, rev):
     return b4.git_run_command(gitdir, args)
 
 
-def fix_dests(addresses, excludes, gitdir):
-    global MAILMAP_INFO
-    for entry in list(addresses):
-        # Check if it's in excludes
-        removed = False
-        for exclude in excludes:
-            if fnmatch.fnmatch(entry[1], exclude):
-                logger.debug('Removed %s due to matching %s', entry[1], exclude)
-                addresses.remove(entry)
-                removed = True
-                break
-        if removed:
-            continue
-        # Check if it's mailmap-replaced
-        if entry[1] in MAILMAP_INFO:
-            if MAILMAP_INFO[entry[1]]:
-                addresses.remove(entry)
-                addresses.append(MAILMAP_INFO[entry[1]])
-            continue
-        logger.debug('Checking if %s is mailmap-replaced', entry[1])
-        args = ['check-mailmap', f'<{entry[1]}>']
-        ecode, out = b4.git_run_command(gitdir, args)
-        if ecode != 0:
-            MAILMAP_INFO[entry[1]] = None
-            continue
-        replacement = utils.getaddresses([out.strip()])
-        if len(replacement) == 1:
-            if entry == replacement[0]:
-                MAILMAP_INFO[entry[1]] = None
-                continue
-            logger.debug('Replaced %s with mailmap-updated %s', entry[1], replacement[0][1])
-            MAILMAP_INFO[entry[1]] = replacement[0]
-            addresses.remove(entry)
-            addresses.append(replacement[0])
-
-    return addresses
-
-
 def make_reply(reply_template, jsondata, gitdir):
     body = Template(reply_template).safe_substitute(jsondata)
     # Conform to email standards
     body = body.replace('\n', '\r\n')
     msg = email.message_from_string(body)
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
-    config = b4.get_main_config()
-    # Remove ourselves and original sender from allto or allcc
-    excludes = [jsondata['myemail'], jsondata['fromemail']]
-    c_excludes = config.get('email-exclude')
-    if c_excludes:
-        for entry in c_excludes.split(','):
-            excludes.append(entry.strip())
+    excludes = b4.get_excluded_addrs()
+    newto = b4.cleanup_email_addrs([(jsondata['fromname'], jsondata['fromemail'])], excludes, gitdir)
 
-    allto = fix_dests(utils.getaddresses([jsondata['to']]), excludes, gitdir)
-    allcc = fix_dests(utils.getaddresses([jsondata['cc']]), excludes, gitdir)
+    # Exclude ourselves and original sender from allto or allcc
+    excludes.add(jsondata['myemail'])
+    excludes.add(jsondata['fromemail'])
+    allto = b4.cleanup_email_addrs(utils.getaddresses([jsondata['to']]), excludes, gitdir)
+    allcc = b4.cleanup_email_addrs(utils.getaddresses([jsondata['cc']]), excludes, gitdir)
 
-    # Add original sender to the To
-    newto = fix_dests([(jsondata['fromname'], jsondata['fromemail'])], excludes[2:], gitdir)
     if newto:
         allto += newto
 
@@ -428,6 +384,7 @@ def send_messages(listing, branch, cmdargs):
     gitdir = cmdargs.gitdir
     datadir = b4.get_data_dir()
     fromaddr = None
+    smtp = None
     if cmdargs.sendemail:
         # See if we have sendemail-identity set
         config = b4.get_main_config()
@@ -445,13 +402,7 @@ def send_messages(listing, branch, cmdargs):
             os.mkdir(cmdargs.outdir)
 
     usercfg = b4.get_user_config()
-    # Do we have a .signature file?
-    sigfile = os.path.join(str(Path.home()), '.signature')
-    if os.path.exists(sigfile):
-        with open(sigfile, 'r', encoding='utf-8') as fh:
-            signature = fh.read()
-    else:
-        signature = '%s <%s>' % (usercfg['name'], usercfg['email'])
+    signature = b4.get_email_signature()
 
     outgoing = 0
     msgids = list()
@@ -477,29 +428,10 @@ def send_messages(listing, branch, cmdargs):
         msg.set_charset('utf-8')
         msg.replace_header('Content-Transfer-Encoding', '8bit')
         if cmdargs.sendemail:
-            msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
-            emldata = msg.as_string()
             if not fromaddr:
                 fromaddr = jsondata['myemail']
-            if cmdargs.dryrun:
-                logger.info('--- DRYRUN: message follows ---')
-                logger.info('\t' + emldata.replace('\n', '\n\t'))
-                logger.info('--- DRYRUN: message ends ---')
-            else:
-                alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
-                alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
-                sendto = {x[1] for x in alldests}
-                logger.info('  Sending: %s', msg.get('subject'))
-                # Python's sendmail implementation seems to have some logic problems where 8-bit messages are involved.
-                # As far as I understand the difference between 8BITMIME (supported by nearly all smtp servers) and
-                # SMTPUTF8 (supported by very few), SMTPUTF8 is only required when the addresses specified in either
-                # "MAIL FROM" or "RCPT TO" lines of the _protocol exchange_ themselves have 8bit characters, not
-                # anything in the From: header of the DATA payload. Python's smtplib seems to always try to encode
-                # strings as ascii regardless of what was policy was specified.
-                # Work around this by getting the payload as string and then encoding to bytes ourselves.
-                # Force compliant eols
-                emldata = re.sub(r'(?:\r\n|\n|\r(?!\n))', '\r\n', emldata) # noqa
-                smtp.sendmail(fromaddr, sendto, emldata.encode())  # noqa
+            logger.info('  Sending: %s', msg.get('subject'))
+            b4.send_smtp(smtp, msg, fromaddr, dryrun=cmdargs.dryrun)
         else:
             slug_from = re.sub(r'\W', '_', jsondata['fromemail'])
             slug_subj = re.sub(r'\W', '_', jsondata['subject'])

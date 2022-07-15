@@ -15,6 +15,7 @@ import email.generator
 import tempfile
 import pathlib
 import argparse
+import smtplib
 
 import urllib.parse
 import datetime
@@ -27,8 +28,9 @@ import pwd
 
 import requests
 
+from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, TextIO
+from typing import Optional, Tuple, Set, List, TextIO, Union
 
 from email import charset
 charset.add_charset('utf-8', None)
@@ -92,6 +94,7 @@ LOREADDR = 'https://lore.kernel.org'
 DEFAULT_CONFIG = {
     'midmask': LOREADDR + '/all/%s',
     'linkmask': LOREADDR + '/r/%s',
+    'searchmask': LOREADDR + '/all/?x=m&t=1&q=%s',
     'listid-preference': '*.feeds.kernel.org,*.linux.dev,*.kernel.org,*',
     'save-maildirs': 'no',
     # off: do not bother checking attestation
@@ -132,6 +135,8 @@ USER_CONFIG = None
 REQSESSION = None
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
+# Used to track mailmap replacements
+MAILMAP_INFO = dict()
 
 
 class LoreMailbox:
@@ -341,13 +346,15 @@ class LoreMailbox:
 
     def add_message(self, msg):
         msgid = LoreMessage.get_clean_msgid(msg)
-        if msgid in self.msgid_map:
+        if msgid and msgid in self.msgid_map:
             logger.debug('Already have a message with this msgid, skipping %s', msgid)
             return
 
         lmsg = LoreMessage(msg)
         logger.debug('Looking at: %s', lmsg.full_subject)
-        self.msgid_map[lmsg.msgid] = lmsg
+
+        if msgid:
+            self.msgid_map[lmsg.msgid] = lmsg
 
         if lmsg.reply:
             # We'll figure out where this belongs later
@@ -479,6 +486,16 @@ class LoreSeries:
 
         return slug[:100]
 
+    def add_extra_trailers(self, trailers: tuple) -> None:
+        for lmsg in self.patches[1:]:
+            if lmsg is None:
+                continue
+            lmsg.followup_trailers += trailers
+
+    def add_cover_trailers(self) -> None:
+        if self.patches[0] and self.patches[0].followup_trailers:  # noqa
+            self.add_extra_trailers(self.patches[0].followup_trailers)  # noqa
+
     def get_am_ready(self, noaddtrailers=False, covertrailers=False, addmysob=False, addlink=False,
                      linkmask=None, cherrypick=None, copyccs=False, allowbadchars=False) -> list:
 
@@ -521,6 +538,9 @@ class LoreSeries:
                 logger.debug('Attestation info is not the same')
                 break
 
+        if covertrailers:
+            self.add_cover_trailers()
+
         at = 1
         msgs = list()
         logger.info('---')
@@ -535,8 +555,6 @@ class LoreSeries:
                     raise KeyError('Cherrypick not in series')
 
             if lmsg is not None:
-                if self.has_cover and covertrailers and self.patches[0].followup_trailers:  # noqa
-                    lmsg.followup_trailers += self.patches[0].followup_trailers  # noqa
                 if addlink:
                     lmsg.followup_trailers.append(('Link', linkmask % lmsg.msgid, None, None))
                 if addmysob:
@@ -837,6 +855,7 @@ class LoreMessage:
 
         # Body and body-based info
         self.body = None
+        self.message = None
         self.charset = 'utf-8'
         self.has_diff = False
         self.has_diffstat = False
@@ -1303,6 +1322,14 @@ class LoreMessage:
         return msg2
 
     @staticmethod
+    def get_patch_id(diff: str) -> Optional[str]:
+        gitargs = ['patch-id', '--stable']
+        ecode, out = git_run_command(None, gitargs, stdin=diff.encode())
+        if ecode > 0:
+            return None
+        return out.split(maxsplit=1)[0]
+
+    @staticmethod
     def get_patchwork_hash(diff: str) -> str:
         """Generate a hash from a diff. Lifted verbatim from patchwork."""
 
@@ -1362,7 +1389,7 @@ class LoreMessage:
         return indexes
 
     @staticmethod
-    def find_trailers(body, followup=False):
+    def find_trailers(body: str, followup: bool = False) -> Tuple[List[Tuple], List[str]]:
         ignores = {'phone', 'email'}
         headers = {'subject', 'date', 'from'}
         nonperson = {'fixes', 'subject', 'date', 'link', 'buglink', 'obsoleted-by'}
@@ -1418,7 +1445,9 @@ class LoreMessage:
             was_trailer = False
             others.append(line)
 
-        return trailers, others
+        # convert to tuples for ease of matching
+        ttrailers = [tuple(x) for x in trailers]
+        return ttrailers, others
 
     @staticmethod
     def get_body_parts(body):
@@ -1484,7 +1513,7 @@ class LoreMessage:
 
         return githeaders, message, trailers, basement, signature
 
-    def fix_trailers(self, copyccs=False):
+    def fix_trailers(self, copyccs=False, signoff=None):
         config = get_main_config()
         attpolicy = config['attestation-policy']
 
@@ -1512,9 +1541,19 @@ class LoreMessage:
                         trailers.append(('Cc', pair[1], None, None))  # noqa
 
         fixtrailers = list()
+        # If we received a signoff trailer:
+        # - if it's already present, we move it to the bottom
+        # - if not already present, we add it
+        new_signoff = True
         for trailer in trailers:
             if list(trailer[:3]) in fixtrailers:
                 # Dupe
+                continue
+
+            if signoff and tuple(trailer[:3]) == tuple(signoff):
+                # Skip it, we'll add it at the bottom
+                new_signoff = False
+                logger.debug('    . %s: %s', signoff[0], signoff[1])
                 continue
 
             fixtrailers.append(list(trailer[:3]))
@@ -1537,6 +1576,12 @@ class LoreMessage:
                 else:
                     logger.debug('    . %s: %s', trailer[0], trailer[1])
 
+        if signoff:
+            # Tack on our signoff at the bottom
+            fixtrailers.append(list(signoff))
+            if new_signoff:
+                logger.info('    + %s: %s', signoff[0], signoff[1])
+
         # Reconstitute the message
         self.body = ''
         if bheaders:
@@ -1545,16 +1590,21 @@ class LoreMessage:
                 self.body += '%s: %s\n' % (bheader[0], bheader[1])
             self.body += '\n'
 
+        newmessage = ''
         if len(message):
-            self.body += message.rstrip('\r\n') + '\n'
+            newmessage += message.rstrip('\r\n') + '\n'
             if len(fixtrailers):
-                self.body += '\n'
+                newmessage += '\n'
 
         if len(fixtrailers):
             for trailer in fixtrailers:
-                self.body += '%s: %s\n' % (trailer[0], trailer[1])
+                newmessage += '%s: %s\n' % (trailer[0], trailer[1])
                 if trailer[2]:
-                    self.body += '%s\n' % trailer[2]
+                    newmessage += '%s\n' % trailer[2]
+
+        self.message = self.subject + '\n\n' + newmessage
+        self.body += newmessage
+
         if len(basement):
             self.body += '---\n'
             self.body += basement.rstrip('\r\n') + '\n\n'
@@ -1702,9 +1752,9 @@ class LoreSubject:
             subject = re.sub(r'^\s*\[[^]]*]\s*', '', subject)
         self.subject = subject
 
-    def get_slug(self):
-        unsafe = '%04d_%s' % (self.counter, self.subject)
-        return re.sub(r'\W+', '_', unsafe).strip('_').lower()
+    def get_slug(self, sep='_'):
+        unsafe = '%04d%s%s' % (self.counter, sep, self.subject)
+        return re.sub(r'\W+', sep, unsafe).strip(sep).lower()
 
     def __repr__(self):
         out = list()
@@ -1871,7 +1921,7 @@ def gpg_run_command(args: List[str], stdin: Optional[bytes] = None) -> Tuple[int
 
 
 def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[bytes] = None,
-                    logstderr: bool = False) -> Tuple[int, str]:
+                    logstderr: bool = False, decode: bool = True) -> Tuple[int, Union[str, bytes]]:
     cmdargs = ['git', '--no-pager']
     if gitdir:
         if os.path.exists(os.path.join(gitdir, '.git')):
@@ -1881,10 +1931,12 @@ def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[byte
 
     ecode, out, err = _run_command(cmdargs, stdin=stdin)
 
-    out = out.decode(errors='replace')
+    if decode:
+        out = out.decode(errors='replace')
 
     if logstderr and len(err.strip()):
-        err = err.decode(errors='replace')
+        if decode:
+            err = err.decode(errors='replace')
         logger.debug('Stderr: %s', err)
         out += err
 
@@ -1901,6 +1953,11 @@ def git_get_command_lines(gitdir: Optional[str], args: list) -> List[str]:
             lines.append(line)
 
     return lines
+
+
+def git_get_repo_status(gitdir: Optional[str] = None) -> List[str]:
+    args = ['status', '--porcelain=v1']
+    return git_get_command_lines(gitdir, args)
 
 
 @contextmanager
@@ -2229,32 +2286,48 @@ def mailsplit_bytes(bmbox: bytes, outdir: str) -> list:
     return msgs
 
 
-def get_pi_thread_by_url(t_mbx_url, nocache=False):
+def get_pi_search_results(query: str, nocache: bool = False):
+    config = get_main_config()
+    searchmask = config.get('searchmask')
+    if not searchmask:
+        logger.critical('b4.searchmask is not defined')
+        return None
     msgs = list()
-    cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
+    query = urllib.parse.quote_plus(query)
+    query_url = searchmask % query
+    cachedir = get_cache_file(query_url, 'pi.msgs')
     if os.path.exists(cachedir) and not nocache:
         logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
                 msgs.append(email.message_from_binary_file(fh))
-    else:
-        logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
-        session = get_requests_session()
-        resp = session.get(t_mbx_url)
-        if resp.status_code == 404:
-            logger.critical('That message-id is not known.')
-            return None
-        if resp.status_code != 200:
-            logger.critical('Server returned an error: %s', resp.status_code)
-            return None
-        t_mbox = gzip.decompress(resp.content)
-        resp.close()
-        if not len(t_mbox):
-            logger.critical('No messages found for that query')
-            return None
-        # Convert into individual files using git-mailsplit
-        with tempfile.TemporaryDirectory(suffix='-mailsplit') as tfd:
-            msgs = mailsplit_bytes(t_mbox, tfd)
+                return msgs
+
+    loc = urllib.parse.urlparse(query_url)
+    logger.info('Grabbing search results from %s', loc.netloc)
+    session = get_requests_session()
+    # For the query to retrieve a mbox file, we need to send a POST request
+    resp = session.post(query_url, data='')
+    if resp.status_code == 404:
+        logger.info('Nothing matching that query.')
+        return None
+    if resp.status_code != 200:
+        logger.info('Server returned an error: %s', resp.status_code)
+        return None
+    t_mbox = gzip.decompress(resp.content)
+    resp.close()
+    if not len(t_mbox):
+        logger.critical('No messages found for that query')
+        return None
+
+    return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
+
+
+def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -> List[email.message.Message]:
+    # Convert into individual files using git-mailsplit
+    with tempfile.TemporaryDirectory(suffix='-mailsplit') as tfd:
+        msgs = mailsplit_bytes(t_mbox, tfd)
+        if cachedir:
             if os.path.exists(cachedir):
                 shutil.rmtree(cachedir)
             shutil.copytree(tfd, cachedir)
@@ -2267,6 +2340,34 @@ def get_pi_thread_by_url(t_mbx_url, nocache=False):
             continue
         deduped[msgid] = msg
     return list(deduped.values())
+
+
+def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False):
+    msgs = list()
+    cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
+    if os.path.exists(cachedir) and not nocache:
+        logger.debug('Using cached copy: %s', cachedir)
+        for msg in os.listdir(cachedir):
+            with open(os.path.join(cachedir, msg), 'rb') as fh:
+                msgs.append(email.message_from_binary_file(fh))
+        return msgs
+
+    logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
+    session = get_requests_session()
+    resp = session.get(t_mbx_url)
+    if resp.status_code == 404:
+        logger.critical('That message-id is not known.')
+        return None
+    if resp.status_code != 200:
+        logger.critical('Server returned an error: %s', resp.status_code)
+        return None
+    t_mbox = gzip.decompress(resp.content)
+    resp.close()
+    if not len(t_mbox):
+        logger.critical('No messages found for that query')
+        return None
+
+    return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
 
 
 def get_pi_thread_by_msgid(msgid: str, useproject: Optional[str] = None, nocache: bool = False,
@@ -2317,21 +2418,96 @@ def get_pi_thread_by_msgid(msgid: str, useproject: Optional[str] = None, nocache
     return strict
 
 
-@contextmanager
-def git_format_patches(gitdir, start, end, prefixes=None, extraopts=None):
-    with tempfile.TemporaryDirectory() as tmpd:
-        gitargs = ['format-patch', '--cover-letter', '-o', tmpd, '--signature', f'b4 {__VERSION__}']
-        if prefixes is not None and len(prefixes):
-            gitargs += ['--subject-prefix', ' '.join(prefixes)]
-        if extraopts:
-            gitargs += extraopts
-        gitargs += ['%s..%s' % (start, end)]
-        ecode, out = git_run_command(gitdir, gitargs)
+def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
+                         covermsg: Optional[email.message.EmailMessage] = None,
+                         prefixes: Optional[List[str]] = None,
+                         msgid_tpt: Optional[str] = None,
+                         seriests: Optional[int] = None,
+                         mailfrom: Optional[Tuple[str, str]] = None,
+                         extrahdrs: Optional[List[Tuple[str, str]]] = None,
+                         keepdate: bool = False) -> List[Tuple[str, email.message.Message]]:
+    patches = list()
+    commits = git_get_command_lines(gitdir, ['rev-list', f'{start}..{end}'])
+    if not commits:
+        raise RuntimeError(f'Could not run rev-list {start}..{end}')
+    for commit in commits:
+        ecode, out = git_run_command(gitdir, ['show', '--format=email', commit], decode=False)
         if ecode > 0:
-            logger.critical('ERROR: Could not convert pull request into patches')
-            logger.critical(out)
-            yield None
-        yield tmpd
+            raise RuntimeError(f'Could not get a patch out of {commit}')
+        msg = email.message_from_bytes(out)
+        logger.debug('  %s', msg.get('Subject'))
+
+        patches.append((commit, msg))
+
+    startfrom = 1
+    fullcount = len(patches)
+    patches.insert(0, (None, covermsg))
+    if covermsg:
+        startfrom = 0
+
+    # Go through and apply any outstanding fixes
+    if prefixes:
+        prefixes = ' ' + ' '.join(prefixes)
+    else:
+        prefixes = ''
+
+    for counter in range(startfrom, fullcount+1):
+        msg = patches[counter][1]
+        subject = msg.get('Subject')
+        csubject = re.sub(r'^\[PATCH]\s*', '', subject)
+        pline = '[PATCH%s %s/%s]' % (prefixes, str(counter).zfill(len(str(fullcount))), fullcount)
+        msg.replace_header('Subject', f'{pline} {csubject}')
+        inbodyhdrs = list()
+        if mailfrom:
+            # Move the original From and Date into the body
+            origfrom = msg.get('From')
+            if origfrom:
+                origpair = email.utils.parseaddr(origfrom)
+                if origpair[1] != mailfrom[1]:
+                    msg.replace_header('From', format_addrs([mailfrom]))
+                    inbodyhdrs.append(f'From: {origfrom}')
+            else:
+                msg.add_header('From', format_addrs([mailfrom]))
+
+        if seriests:
+            patchts = seriests + counter
+            origdate = msg.get('Date')
+            if origdate:
+                if keepdate:
+                    inbodyhdrs.append(f'Date: {origdate}')
+                msg.replace_header('Date', email.utils.formatdate(patchts, localtime=True))
+            else:
+                msg.add_header('Date', email.utils.formatdate(patchts, localtime=True))
+
+        payload = msg.get_payload()
+        if inbodyhdrs:
+            payload = '\n'.join(inbodyhdrs) + '\n\n' + payload
+        if not payload.find('\n-- \n') > 0:
+            payload += f'\n-- \nb4 {__VERSION__}\n'
+        msg.set_payload(payload)
+
+        if extrahdrs is None:
+            extrahdrs = list()
+        for hdrname, hdrval in extrahdrs:
+            try:
+                msg.replace_header(hdrname, hdrval)
+            except KeyError:
+                msg.add_header(hdrname, hdrval)
+
+        if msgid_tpt:
+            msg.add_header('Message-Id', msgid_tpt % str(counter))
+            refto = None
+            if counter > 0 and covermsg:
+                # Thread to the cover letter
+                refto = msgid_tpt % str(0)
+            if counter > 1 and not covermsg:
+                # Tread to the first patch
+                refto = msgid_tpt % str(1)
+            if refto:
+                msg.add_header('References', refto)
+                msg.add_header('In-Reply-To', refto)
+
+    return patches
 
 
 def git_commit_exists(gitdir, commit_id):
@@ -2529,8 +2705,8 @@ def read_template(tptfile):
     return tpt
 
 
-def get_smtp(identity: Optional[str] = None):
-    import smtplib
+def get_smtp(identity: Optional[str] = None,
+             dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, None], str]:
     if identity:
         sconfig = get_config_from_git(rf'sendemail\.{identity}\..*')
         sectname = f'sendemail.{identity}'
@@ -2550,6 +2726,9 @@ def get_smtp(identity: Optional[str] = None):
         raise smtplib.SMTPException('Invalid smtpport entry in %s' % sectname)
 
     encryption = sconfig.get('smtpencryption')
+    if dryrun:
+        return None, fromaddr
+
     logger.info('Connecting to %s:%s', server, port)
     # We only authenticate if we have encryption
     if encryption:
@@ -2647,3 +2826,128 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
                     logger.info(' -> %s : %s', state, title)
             except requests.exceptions.RequestException as ex:
                 logger.debug('Patchwork REST error: %s', ex)
+
+
+def send_smtp(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msg: email.message.Message,
+              fromaddr: str, destaddrs: Optional[Union[Tuple, Set]] = None,
+              patatt_sign: bool = False, dryrun: bool = False,
+              maxheaderlen: Optional[int] = None) -> bool:
+    if not msg.get('X-Mailer'):
+        msg.add_header('X-Mailer', f'b4 {__VERSION__}')
+    msg.set_charset('utf-8')
+    msg.replace_header('Content-Transfer-Encoding', '8bit')
+    msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
+    # Python's sendmail implementation seems to have some logic problems where 8-bit messages are involved.
+    # As far as I understand the difference between 8BITMIME (supported by nearly all smtp servers) and
+    # SMTPUTF8 (supported by very few), SMTPUTF8 is only required when the addresses specified in either
+    # "MAIL FROM" or "RCPT TO" lines of the _protocol exchange_ themselves have 8bit characters, not
+    # anything in the From: header of the DATA payload. Python's smtplib seems to always try to encode
+    # strings as ascii regardless of what was policy was specified.
+    # Work around this by getting the payload as string and then encoding to bytes ourselves.
+    if maxheaderlen is None:
+        if dryrun:
+            # Make it fit the terminal window, but no wider than 120 minus visual padding
+            ts = shutil.get_terminal_size((120, 20))
+            maxheaderlen = ts.columns - 8
+            if maxheaderlen > 112:
+                maxheaderlen = 112
+        else:
+            # Use a sane-ish default (we don't need to stick to 80, but
+            # we need to make sure it's shorter than 255)
+            maxheaderlen = 120
+
+    emldata = msg.as_string(maxheaderlen=maxheaderlen)
+    # Force compliant eols
+    emldata = re.sub(r'\r\n|\n|\r(?!\n)', '\r\n', emldata)
+    bdata = emldata.encode()
+    if patatt_sign:
+        import patatt
+        # patatt.logger = logger
+        bdata = patatt.rfc2822_sign(bdata)
+    if dryrun or smtp is None:
+        logger.info('    --- DRYRUN: message follows ---')
+        logger.info('    | ' + bdata.decode().rstrip().replace('\n', '\n    | '))
+        logger.info('    --- DRYRUN: message ends ---')
+        return True
+    if not destaddrs:
+        alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
+        alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+        destaddrs = {x[1] for x in alldests}
+    smtp.sendmail(fromaddr, destaddrs, bdata)
+    # TODO: properly catch exceptions on sending
+    return True
+
+
+def git_get_current_branch(gitdir: Optional[str] = None, short: bool = True) -> Optional[str]:
+    gitargs = ['symbolic-ref', '-q', 'HEAD']
+    ecode, out = git_run_command(gitdir, gitargs)
+    if ecode > 0:
+        logger.critical('Not able to get current branch (git symbolic-ref HEAD)')
+        return None
+    mybranch = out.strip()
+    if short:
+        return re.sub(r'^refs/heads/', '', mybranch)
+    return mybranch
+
+
+def get_excluded_addrs() -> Set[str]:
+    config = get_main_config()
+    excludes = set()
+    c_excludes = config.get('email-exclude')
+    if c_excludes:
+        for entry in c_excludes.split(','):
+            excludes.add(entry.strip())
+
+    return excludes
+
+
+def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
+                        gitdir: Optional[str]) -> List[Tuple[str, str]]:
+    global MAILMAP_INFO
+    for entry in list(addresses):
+        # Check if it's in excludes
+        removed = False
+        for exclude in excludes:
+            if fnmatch.fnmatch(entry[1], exclude):
+                logger.debug('Removed %s due to matching %s', entry[1], exclude)
+                addresses.remove(entry)
+                removed = True
+                break
+        if removed:
+            continue
+        # Check if it's mailmap-replaced
+        if entry[1] in MAILMAP_INFO:
+            if MAILMAP_INFO[entry[1]]:
+                addresses.remove(entry)
+                addresses.append(MAILMAP_INFO[entry[1]])
+            continue
+        logger.debug('Checking if %s is mailmap-replaced', entry[1])
+        args = ['check-mailmap', f'<{entry[1]}>']
+        ecode, out = git_run_command(gitdir, args)
+        if ecode != 0:
+            MAILMAP_INFO[entry[1]] = None
+            continue
+        replacement = email.utils.getaddresses([out.strip()])
+        if len(replacement) == 1:
+            if entry[1] == replacement[0][1]:
+                MAILMAP_INFO[entry[1]] = None
+                continue
+            logger.debug('Replaced %s with mailmap-updated %s', entry[1], replacement[0][1])
+            MAILMAP_INFO[entry[1]] = replacement[0]
+            addresses.remove(entry)
+            addresses.append(replacement[0])
+
+    return addresses
+
+
+def get_email_signature() -> str:
+    usercfg = get_user_config()
+    # Do we have a .signature file?
+    sigfile = os.path.join(str(Path.home()), '.signature')
+    if os.path.exists(sigfile):
+        with open(sigfile, 'r', encoding='utf-8') as fh:
+            signature = fh.read()
+    else:
+        signature = '%s <%s>' % (usercfg['name'], usercfg['email'])
+
+    return signature
