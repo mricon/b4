@@ -2431,10 +2431,12 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
     if not commits:
         raise RuntimeError(f'Could not run rev-list {start}..{end}')
     for commit in commits:
-        ecode, out = git_run_command(gitdir, ['show', '--format=email', commit], decode=False)
+        ecode, out = git_run_command(gitdir, ['show', '--format=email', '--encoding=utf-8', commit], decode=False)
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')
         msg = email.message_from_bytes(out)
+        msg.set_charset('utf-8')
+        msg.replace_header('Content-Transfer-Encoding', '8bit')
         logger.debug('  %s', msg.get('Subject'))
 
         patches.append((commit, msg))
@@ -2462,6 +2464,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             # Move the original From and Date into the body
             origfrom = msg.get('From')
             if origfrom:
+                origfrom = LoreMessage.clean_header(origfrom)
                 origpair = email.utils.parseaddr(origfrom)
                 if origpair[1] != mailfrom[1]:
                     msg.replace_header('From', format_addrs([mailfrom]))
@@ -2484,7 +2487,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             payload = '\n'.join(inbodyhdrs) + '\n\n' + payload
         if not payload.find('\n-- \n') > 0:
             payload += f'\n-- \nb4 {__VERSION__}\n'
-        msg.set_payload(payload)
+        msg.set_payload(payload, charset='utf-8')
 
         if extrahdrs is None:
             extrahdrs = list()

@@ -325,12 +325,15 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
     logger.info('Calculating patch-ids from %s commits', len(patches)-1)
     msg_map = dict()
     commit_map = dict()
+    updates = dict()
     # Ignore the cover letter
     for commit, msg in patches[1:]:
         body = msg.get_payload()
         patchid = b4.LoreMessage.get_patch_id(body)
         msg_map[patchid] = msg
         commit_map[patchid] = commit
+        if signoff and f'{signoff[0]}: <{signoff[1]}>' not in body:
+            updates[patchid] = list()
 
     if cmdargs.thread_msgid:
         cmdargs.msgid = cmdargs.thread_msgid
@@ -348,7 +351,6 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
     for list_msg in list_msgs:
         bbox.add_message(list_msg)
 
-    updates = dict()
     lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers)
     mismatches = list(lser.trailer_mismatches)
     for lmsg in lser.patches[1:]:
@@ -476,7 +478,7 @@ def send(cover_commit: str, cmdargs: argparse.Namespace) -> None:
     }
     body = Template(cover_template.lstrip()).safe_substitute(tptvals)
     cmsg = email.message.EmailMessage()
-    cmsg.set_payload(body)
+    cmsg.set_payload(body, charset='utf-8')
     cmsg.add_header('Subject', csubject)
     if cmdargs.prefixes:
         prefixes = list(cmdargs.prefixes)
@@ -721,6 +723,7 @@ def main(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.new_series_name:
         start_new_series(cmdargs)
+        return
 
     if not check_our_branch():
         return
