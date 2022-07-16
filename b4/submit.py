@@ -332,8 +332,12 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
         patchid = b4.LoreMessage.get_patch_id(body)
         msg_map[patchid] = msg
         commit_map[patchid] = commit
-        if signoff and f'{signoff[0]}: <{signoff[1]}>' not in body:
+        parts = b4.LoreMessage.get_body_parts(body)
+        # Force SOB update
+        if signoff and (signoff not in parts[2] or (len(signoff) > 1 and parts[2][-1] != signoff)):
             updates[patchid] = list()
+            if signoff not in parts[2]:
+                updates[patchid].append(signoff)
 
     if cmdargs.thread_msgid:
         cmdargs.msgid = cmdargs.thread_msgid
@@ -347,38 +351,37 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
         query = f'"change-id: {changeid}"'
         list_msgs = b4.get_pi_search_results(query, nocache=True)
 
-    bbox = b4.LoreMailbox()
-    for list_msg in list_msgs:
-        bbox.add_message(list_msg)
 
-    lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers)
-    mismatches = list(lser.trailer_mismatches)
-    for lmsg in lser.patches[1:]:
-        addtrailers = list(lmsg.followup_trailers)
-        if lser.has_cover and len(lser.patches[0].followup_trailers):
-            addtrailers += list(lser.patches[0].followup_trailers)
-        if not addtrailers:
-            logger.debug('No follow-up trailers received to the %s', lmsg.subject)
-            continue
-        patchid = b4.LoreMessage.get_patch_id(lmsg.body)
-        if patchid not in commit_map:
-            logger.debug('No match for patchid %s', patchid)
-            continue
-        parts = b4.LoreMessage.get_body_parts(msg_map[patchid].get_payload())
-        if signoff and signoff not in parts[2]:
-            updates[patchid] = list()
-        for ftrailer in addtrailers:
-            if ftrailer[:3] not in parts[2]:
-                if patchid not in updates:
-                    updates[patchid] = list()
-                updates[patchid].append(ftrailer)
-        # Check if we've applied mismatched trailers already
-        if not cmdargs.sloppytrailers and mismatches:
-            for mtrailer in list(mismatches):
-                check = (mtrailer[0], mtrailer[1], None)
-                if check in parts[2]:
-                    logger.debug('Removing already-applied mismatch %s', check)
-                    mismatches.remove(mtrailer)
+    if list_msgs:
+        bbox = b4.LoreMailbox()
+        for list_msg in list_msgs:
+            bbox.add_message(list_msg)
+
+        lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers)
+        mismatches = list(lser.trailer_mismatches)
+        for lmsg in lser.patches[1:]:
+            addtrailers = list(lmsg.followup_trailers)
+            if lser.has_cover and len(lser.patches[0].followup_trailers):
+                addtrailers += list(lser.patches[0].followup_trailers)
+            if not addtrailers:
+                logger.debug('No follow-up trailers received to the %s', lmsg.subject)
+                continue
+            patchid = b4.LoreMessage.get_patch_id(lmsg.body)
+            if patchid not in commit_map:
+                logger.debug('No match for patchid %s', patchid)
+                continue
+            for ftrailer in addtrailers:
+                if ftrailer[:3] not in parts[2]:
+                    if patchid not in updates:
+                        updates[patchid] = list()
+                    updates[patchid].append(ftrailer)
+            # Check if we've applied mismatched trailers already
+            if not cmdargs.sloppytrailers and mismatches:
+                for mtrailer in list(mismatches):
+                    check = (mtrailer[0], mtrailer[1], None)
+                    if check in parts[2]:
+                        logger.debug('Removing already-applied mismatch %s', check)
+                        mismatches.remove(mtrailer)
 
     if not updates:
         logger.info('No trailer updates found.')
@@ -399,7 +402,12 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
         # Make it a LoreMessage, so we can run attestation on received trailers
         cmsg = b4.LoreMessage(msg_map[patchid])
         logger.info('  %s', cmsg.subject)
-        cmsg.followup_trailers = newtrailers
+        if len(newtrailers):
+            cmsg.followup_trailers = newtrailers
+            if signoff in newtrailers:
+                logger.info('    + %s: %s', signoff[0], signoff[1])
+        elif signoff:
+            logger.info('    > %s: %s', signoff[0], signoff[1])
         cmsg.fix_trailers(signoff=signoff)
         fred.add(commit_map[patchid], cmsg.message)
     logger.info('---')
