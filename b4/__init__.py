@@ -2427,7 +2427,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
                          keepdate: bool = False) -> List[Tuple[str, email.message.Message]]:
     patches = list()
-    commits = git_get_command_lines(gitdir, ['rev-list', f'{start}..{end}'])
+    commits = git_get_command_lines(gitdir, ['rev-list', '--reverse', f'{start}..{end}'])
     if not commits:
         raise RuntimeError(f'Could not run rev-list {start}..{end}')
     for commit in commits:
