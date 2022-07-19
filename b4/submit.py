@@ -22,6 +22,7 @@ import email
 import pathlib
 import base64
 import textwrap
+import gzip
 
 # from nacl.signing import SigningKey
 # from nacl.encoding import Base64Encoder
@@ -491,8 +492,9 @@ def send(cover_commit: str, cmdargs: argparse.Namespace) -> None:
     cmsg.add_header('Subject', csubject)
     # Store tracking info in the header in a safe format, which should allow us to
     # fully restore our work from the already sent series.
-    b64tracking = base64.b64encode(json.dumps(tracking).encode()).decode()
-    cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking, width=78)))
+    ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
+    b64tracking = base64.b64encode(ztracking)
+    cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
     cmsg.set_payload(body, charset='utf-8')
     if cmdargs.prefixes:
         prefixes = list(cmdargs.prefixes)
