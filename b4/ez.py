@@ -582,7 +582,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 logger.debug('No match for %s', lmsg.full_subject)
                 continue
 
-            parts = b4.LoreMessage.get_body_parts(lmsg.body)
+            parts = b4.LoreMessage.get_body_parts(commit_map[commit].get_payload())
             for ftrailer in addtrailers:
                 if ftrailer[:3] not in parts[2]:
                     if commit not in updates:
