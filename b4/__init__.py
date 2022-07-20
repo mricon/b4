@@ -2008,6 +2008,12 @@ def in_directory(dirname):
         os.chdir(cdir)
 
 
+def git_set_config(fullpath: Optional[str], param: str, value: str, operation: str = '--replace-all'):
+    args = ['config', operation, param, value]
+    ecode, out = git_run_command(fullpath, args)
+    return ecode
+
+
 def get_config_from_git(regexp: str, defaults: Optional[dict] = None, multivals: Optional[list] = None) -> dict:
     if multivals is None:
         multivals = list()

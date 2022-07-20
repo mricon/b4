@@ -71,9 +71,19 @@ def cmd_kr(cmdargs):
     b4.kr.main(cmdargs)
 
 
-def cmd_submit(cmdargs):
-    import b4.submit
-    b4.submit.main(cmdargs)
+def cmd_ez_series(cmdargs):
+    import b4.ez
+    b4.ez.cmd_ez_series(cmdargs)
+
+
+def cmd_ez_trailers(cmdargs):
+    import b4.ez
+    b4.ez.cmd_ez_trailers(cmdargs)
+
+
+def cmd_ez_send(cmdargs):
+    import b4.ez
+    b4.ez.cmd_ez_send(cmdargs)
 
 
 def cmd_am(cmdargs):
@@ -240,52 +250,53 @@ def cmd():
                        help='Show all developer keys found in a thread')
     sp_kr.set_defaults(func=cmd_kr)
 
-    # b4 submit
-    sp_submit = subparsers.add_parser('submit', help='Submit patches for review')
-    # xg_submit = sp_submit.add_mutually_exclusive_group()
-    # xg_submit.add_argument('--web-auth-new', action='store_true', default=False,
-    #                        help='Register a new email and pubkey with a web submission endpoint')
-    # xg_submit.add_argument('--web-auth-verify',
-    #                        help='Submit a response to a challenge received from a web submission endpoint')
-    sp_submit.add_argument('--edit-cover', action='store_true', default=False,
-                           help='Edit the cover letter in your defined $EDITOR (or core.editor)')
-    sp_submit.add_argument('--reroll', action='store_true', default=False,
-                           help='Increment revision and add changelog templates to the cover letter')
-    nn_submit = sp_submit.add_argument_group('New series', 'Set up a new work branch for a new patch series')
-    nn_submit.add_argument('-n', '--new', dest='new_series_name',
-                           help='Create a new branch and start working on new series')
-    nn_submit.add_argument('-f', '--fork-point', dest='fork_point',
-                           help='Create new branch at this fork point instead of HEAD')
-    ag_submit = sp_submit.add_argument_group('Sync trailers', 'Update series with latest received trailers')
-    ag_submit.add_argument('-u', '--update-trailers', action='store_true', default=False,
-                           help='Update commits with latest received trailers')
-    ag_submit.add_argument('-s', '--signoff', action='store_true', default=False,
-                           help='Add my Signed-off-by trailer, if not already present')
-    ag_submit.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
-                           help='Apply trailers without email address match checking')
-    ag_submit.add_argument('-F', '--trailers-from', dest='thread_msgid',
-                           help='Look for new trailers in the thread with this msgid instead of using the change-id')
-    se_submit = sp_submit.add_argument_group('Send series', 'Submits your series for review')
-    se_submit.add_argument('--send', action='store_true', default=False,
-                           help='Submit the series for review')
-    se_submit.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', default=False,
-                           help='Do not actually send, just dump out raw smtp messages to the stdout')
-    se_submit.add_argument('-o', '--output-dir',
-                           help='Do not send, just write patches into this directory (git-format-patch mode)')
-    se_submit.add_argument('--prefixes', nargs='+', choices=['RFC', 'WIP', 'RESEND'],
-                           help='Prefixes to add to PATCH (e.g. RFC, WIP, RESEND)')
-    se_submit.add_argument('--no-auto-to-cc', action='store_true', default=False,
-                           help='Do not automatically collect To: and Cc: addresses')
-    se_submit.add_argument('--to', nargs='+',
-                           help='Addresses to add to the automatically collected To: list')
-    se_submit.add_argument('--cc', nargs='+',
-                           help='Addresses to add to the automatically collected Cc: list')
-    se_submit.add_argument('--not-me-too', action='store_true', default=False,
-                           help='Remove yourself from the To: or Cc: list')
-    se_submit.add_argument('--no-sign', action='store_true', default=False,
-                           help='Do not cryptographically sign your patches with patatt')
+    # b4 ez commands
+    # ez-series
+    sp_ezs = subparsers.add_parser('ez-series', help='Simplify work on series submitted for review')
+    sp_ezs.add_argument('--edit-cover', action='store_true', default=False,
+                        help='Edit the cover letter in your defined $EDITOR (or core.editor)')
+    ag_ezn = sp_ezs.add_argument_group('Create new branch', 'Create new branch for ez-series')
+    ag_ezn.add_argument('-n', '--new', dest='new_series_name',
+                        help='Create a new branch and prepare for new series')
+    ag_ezn.add_argument('-f', '--fork-point', dest='fork_point',
+                        help='When creating a new branch, use this fork point instead of HEAD')
+    ag_ezn = sp_ezs.add_argument_group('Enroll existing branch', 'Enroll existing branch for ez-series')
+    ag_ezn.add_argument('-e', '--enroll-with-base', dest='base_branch',
+                        help='Enroll current branch, using the branch passed as parameter as base branch')
+    sp_ezs.set_defaults(func=cmd_ez_series)
 
-    sp_submit.set_defaults(func=cmd_submit)
+    # ez-trailers
+    sp_ezt = subparsers.add_parser('ez-trailers', help='Retrieve and apply trailers received for your submission')
+    sp_ezt.add_argument('-u', '--update-trailers', action='store_true', default=False,
+                        help='Update commits with latest received trailers')
+    sp_ezt.add_argument('-F', '--trailers-from', dest='msgid',
+                        help='Look for trailers in the thread with this msgid instead of using the series change-id')
+    sp_ezt.add_argument('-s', '--signoff', action='store_true', default=False,
+                        help='Add my Signed-off-by trailer, if not already present')
+    sp_ezt.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
+                        help='Apply trailers without email address match checking')
+    sp_ezt.set_defaults(func=cmd_ez_trailers)
+
+    # ez-send
+    sp_ezd = subparsers.add_parser('ez-send', help='Submit your series for review on the mailing lists')
+    ezd_x = sp_ezd.add_mutually_exclusive_group()
+    ezd_x.add_argument('-o', '--output-dir',
+                       help='Do not send, just write patches into this directory (git-format-patch mode)')
+    ezd_x.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', default=False,
+                       help='Do not actually send, just dump out raw smtp messages to the stdout')
+    sp_ezd.add_argument('--prefixes', nargs='+', choices=['RFC', 'WIP', 'RESEND'],
+                        help='Prefixes to add to PATCH (e.g. RFC, WIP, RESEND)')
+    sp_ezd.add_argument('--no-auto-to-cc', action='store_true', default=False,
+                        help='Do not automatically collect To: and Cc: addresses')
+    sp_ezd.add_argument('--to', nargs='+',
+                        help='Addresses to add to the automatically collected To: list')
+    sp_ezd.add_argument('--cc', nargs='+',
+                        help='Addresses to add to the automatically collected Cc: list')
+    sp_ezd.add_argument('--not-me-too', action='store_true', default=False,
+                        help='Remove yourself from the To: or Cc: list')
+    sp_ezd.add_argument('--no-sign', action='store_true', default=False,
+                        help='Do not cryptographically sign your patches with patatt')
+    sp_ezd.set_defaults(func=cmd_ez_send)
 
     cmdargs = parser.parse_args()
 

@@ -143,85 +143,171 @@ Changes in v${newrev}:
 #     sys.exit(1)
 
 
-def start_new_series(cmdargs: argparse.Namespace) -> None:
-    status = b4.git_get_repo_status()
-    if len(status):
-        logger.critical('CRITICAL: Repository contains uncommitted changes.')
-        logger.critical('          Stash or commit them first.')
-        sys.exit(1)
+def get_base_forkpoint(basebranch: str) -> Tuple[str, int]:
+    # Check that that branch exists
+    gitargs = ['rev-parse', '--verify', '--quiet', basebranch]
+    ecode, out = b4.git_run_command(None, gitargs)
+    if ecode > 0:
+        logger.crtitical('CRITICAL: Could not find branch with this name: %s', basebranch)
+        raise RuntimeError('Branch %s not found', basebranch)
+    # Find merge-base with that branch
+    mybranch = b4.git_get_current_branch()
+    logger.debug('Finding the fork-point with %s', basebranch)
+    gitargs = ['merge-base', '--fork-point', basebranch]
+    lines = b4.git_get_command_lines(None, gitargs)
+    if not lines:
+        logger.crtitical('CRITICAL: Could not find common ancestor with %s', basebranch)
+        raise RuntimeError('Branches %s and %s have no common ancestors', basebranch, mybranch)
+    fp = lines[0]
+    logger.debug('Fork-point between %s and %s is %s', mybranch, basebranch, fp)
+    # Check how many revisions there are between the fork-point and the current HEAD
+    gitargs = ['rev-list', f'{fp}..']
+    lines = b4.git_get_command_lines(None, gitargs)
+    # Arbitrarily, set it to 1000
+    if len(lines) > 1000:
+        logger.critical('CRITICAL: Too many revisions between %s and current branch: %s', basebranch, len(lines))
+        raise RuntimeError('Branches %s and %s are unreasonable as ancestors', basebranch, mybranch)
 
+    return fp, len(lines)
+
+
+def start_new_series(cmdargs: argparse.Namespace) -> None:
     usercfg = b4.get_user_config()
     if 'name' not in usercfg or 'email' not in usercfg:
         logger.critical('CRITICAL: Unable to add your Signed-off-by: git returned no user.name or user.email')
         sys.exit(1)
 
-    if not cmdargs.fork_point:
-        cmdargs.fork_point = 'HEAD'
-    slug = re.sub(r'\W+', '-', cmdargs.new_series_name).strip('-').lower()
-    branchname = 'b4/%s' % slug
-    args = ['checkout', '-b', branchname, cmdargs.fork_point]
-    ecode, out = b4.git_run_command(None, args, logstderr=True)
-    if ecode > 0:
-        logger.critical('CRITICAL: Failed to create a new branch %s', branchname)
-        logger.critical(out)
-        sys.exit(ecode)
-    logger.info('Created new branch %s', branchname)
-    # create an empty commit containing basic cover letter details
-    msgdata = ('EDITME: cover title for %s' % cmdargs.new_series_name,
-               '',
-               '# Lines starting with # will be removed from the cover letter. You can use',
-               '# them to add notes or reminders to yourself.',
-               '',
-               'EDITME: describe the purpose of this series. The information you put here',
-               'will be used by the project maintainer to make a decision whether your',
-               'patches should be reviewed, and in what priority order. Please be very',
-               'detailed and link to any relevant discussions or sites that the maintainer',
-               'can review to better understand your proposed changes.',
-               '',
-               'Signed-off-by: %s <%s>' % (usercfg.get('name', ''), usercfg.get('email', '')),
-               '',
-               '# You can add other trailers to the cover letter. Any email addresses found in',
-               '# these trailers will be added to the addresses specified/generated during',
-               '# the --send stage.',
-               '',
-               '',
-               )
+    cover = None
+    if cmdargs.new_series_name:
+        basebranch = None
+        if not cmdargs.fork_point:
+            cmdargs.fork_point = 'HEAD'
+        else:
+            strategy = get_cover_strategy()
+            # if our strategy is not "commit", then we need to know which branch we're using as base
+            mybranch = b4.git_get_current_branch()
+            if strategy != 'commit':
+                gitargs = ['branch', '-v', '--contains', cmdargs.fork_point]
+                lines = b4.git_get_command_lines(None, gitargs)
+                if not lines:
+                    logger.critical('CRITICAL: no branch contains fork-point %s', cmdargs.fork_point)
+                    sys.exit(1)
+                for line in lines:
+                    chunks = line.split(maxsplit=2)
+                    # There's got to be a better way than checking for '*'
+                    if chunks[0] != '*':
+                        continue
+                    if chunks[1] == mybranch:
+                        logger.debug('branch %s does contain fork-point %s', mybranch, cmdargs.fork_point)
+                        basebranch = mybranch
+                        break
+                if basebranch is None:
+                    logger.critical('CRITICAL: fork-point %s is not on the current branch.')
+                    logger.critical('          Switch to the branch you want to use as base and try again.')
+                    sys.exit(1)
+
+        slug = re.sub(r'\W+', '-', cmdargs.new_series_name).strip('-').lower()
+        branchname = 'b4/%s' % slug
+        args = ['checkout', '-b', branchname, cmdargs.fork_point]
+        ecode, out = b4.git_run_command(None, args, logstderr=True)
+        if ecode > 0:
+            logger.critical('CRITICAL: Failed to create a new branch %s', branchname)
+            logger.critical(out)
+            sys.exit(ecode)
+        logger.info('Created new branch %s', branchname)
+        seriesname = cmdargs.new_series_name
+
+    elif cmdargs.base_branch:
+        # Check that strategy isn't "commit" as we don't currently support that
+        if get_cover_strategy() == 'commit':
+            logger.critical('CRITICAL: enrolling branches with "commit" cover strategy is not currently supported')
+            sys.exit(1)
+
+        seriesname = b4.git_get_current_branch()
+        slug = re.sub(r'\W+', '-', seriesname).strip('-').lower()
+        basebranch = cmdargs.base_branch
+        try:
+            forkpoint, commitcount = get_base_forkpoint(basebranch)
+        except RuntimeError:
+            sys.exit(1)
+        # Try loading existing cover info
+        cover, jdata = load_cover()
+
+        logger.info('Will track %s commits for ez-series', commitcount)
+    else:
+        logger.critical('CRITICAL: unknown operation requested')
+        sys.exit(1)
+
+    if not cover:
+        # create a default cover letter and store it where the strategy indicates
+        cover = ('EDITME: cover title for %s' % seriesname,
+                 '',
+                 '# Lines starting with # will be removed from the cover letter. You can use',
+                 '# them to add notes or reminders to yourself.',
+                 '',
+                 'EDITME: describe the purpose of this series. The information you put here',
+                 'will be used by the project maintainer to make a decision whether your',
+                 'patches should be reviewed, and in what priority order. Please be very',
+                 'detailed and link to any relevant discussions or sites that the maintainer',
+                 'can review to better understand your proposed changes.',
+                 '',
+                 'Signed-off-by: %s <%s>' % (usercfg.get('name', ''), usercfg.get('email', '')),
+                 '',
+                 '# You can add other trailers to the cover letter. Any email addresses found in',
+                 '# these trailers will be added to the addresses specified/generated during',
+                 '# the ez-send stage.',
+                 '',
+                 '',
+                 )
+        cover = '\n'.join(cover)
+        logger.info('Created the default cover letter, you can edit with --edit-cover.')
+
     # We don't need all the entropy of uuid, just some of it
     changeid = '%s-%s-%s' % (datetime.date.today().strftime('%Y%m%d'), slug, uuid.uuid4().hex[:12])
     tracking = {
         'series': {
             'revision': 1,
             'change-id': changeid,
+            'base-branch': basebranch,
         },
     }
-    message = '\n'.join(msgdata) + make_magic_json(tracking)
-    args = ['commit', '--allow-empty', '-F', '-']
-    ecode, out = b4.git_run_command(None, args, stdin=message.encode(), logstderr=True)
-    if ecode > 0:
-        logger.critical('CRITICAL: Generating cover letter commit failed:')
-        logger.critical(out)
-    logger.info('Created empty commit with the cover letter.')
-    logger.info('You can prepare your commits now.')
+    store_cover(cover, tracking, new=True)
 
 
 def make_magic_json(data: dict) -> str:
     mj = (f'{MAGIC_MARKER}\n'
-          '# This section is used internally by b4 submit for tracking purposes.\n')
+          '# This section is used internally by b4 ez-series for tracking purposes.\n')
     return mj + json.dumps(data, indent=2)
 
 
-def load_cover(cover_commit: str, strip_comments: bool = False) -> Tuple[str, dict]:
-    # Grab the cover contents
-    gitargs = ['show', '-s', '--format=%B', cover_commit]
-    ecode, out = b4.git_run_command(None, gitargs)
-    if ecode > 0:
-        logger.critical('CRITICAL: unable to load cover letter')
-        sys.exit(1)
-    # Split on MAGIC_MARKER
-    cover, magic_json = out.split(MAGIC_MARKER)
-    # drop everything until the first {
-    junk, mdata = magic_json.split('{', maxsplit=1)
-    jdata = json.loads('{' + mdata)
+def load_cover(strip_comments: bool = False) -> Tuple[str, dict]:
+    strategy = get_cover_strategy()
+    if strategy == 'commit':
+        cover_commit = find_cover_commit()
+        if not cover_commit:
+            logger.critical('CRITICAL: unable to find cover commit!')
+            sys.exit(1)
+        gitargs = ['show', '-s', '--format=%B', cover_commit]
+        ecode, out = b4.git_run_command(None, gitargs)
+        if ecode > 0:
+            logger.critical('CRITICAL: unable to load cover letter')
+            sys.exit(1)
+        contents = out
+        # Split on MAGIC_MARKER
+        cover, magic_json = contents.split(MAGIC_MARKER)
+        # drop everything until the first {
+        junk, mdata = magic_json.split('{', maxsplit=1)
+        jdata = json.loads('{' + mdata)
+    elif strategy == 'branch-description':
+        mybranch = b4.git_get_current_branch()
+        bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
+        cover = bcfg.get('description', '')
+        jdata = json.loads(bcfg.get('b4-tracking', '{}'))
+    else:
+        # TODO: implement
+        logger.critical('Not yet supported for %s cover strategy', strategy)
+        sys.exit(0)
+
     logger.debug('tracking data: %s', jdata)
     if strip_comments:
         cover = re.sub(r'^#.*$', '', cover, flags=re.M)
@@ -230,31 +316,78 @@ def load_cover(cover_commit: str, strip_comments: bool = False) -> Tuple[str, di
     return cover.strip(), jdata
 
 
-def update_cover(commit: str, content: str, tracking: dict) -> None:
-    cover_message = content + '\n\n' + make_magic_json(tracking)
-    fred = FRCommitMessageEditor()
-    fred.add(commit, cover_message)
-    args = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{commit}~1..HEAD'])
-    args.refs = [f'{commit}~1..HEAD']
-    frf = fr.RepoFilter(args, commit_callback=fred.callback)
-    logger.info('Invoking git-filter-repo to update the cover letter.')
-    frf.run()
+def store_cover(content: str, tracking: dict, new: bool = False) -> None:
+    strategy = get_cover_strategy()
+    if strategy == 'commit':
+        cover_message = content + '\n\n' + make_magic_json(tracking)
+        if new:
+            args = ['commit', '--allow-empty', '-F', '-']
+            ecode, out = b4.git_run_command(None, args, stdin=cover_message.encode(), logstderr=True)
+            if ecode > 0:
+                logger.critical('CRITICAL: Generating cover letter commit failed:')
+                logger.critical(out)
+                raise RuntimeError('Error saving cover letter')
+        else:
+            commit = find_cover_commit()
+            if not commit:
+                logger.critical('CRITICAL: Could not find the cover letter commit.')
+                raise RuntimeError('Error saving cover letter (commit not found)')
+            fred = FRCommitMessageEditor()
+            fred.add(commit, cover_message)
+            args = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{commit}~1..HEAD'])
+            args.refs = [f'{commit}~1..HEAD']
+            frf = fr.RepoFilter(args, commit_callback=fred.callback)
+            logger.info('Invoking git-filter-repo to update the cover letter.')
+            frf.run()
+
+    if strategy == 'branch-description':
+        mybranch = b4.git_get_current_branch(None)
+        b4.git_set_config(None, f'branch.{mybranch}.description', content)
+        trackstr = json.dumps(tracking)
+        b4.git_set_config(None, f'branch.{mybranch}.b4-tracking', trackstr)
+        logger.info('Updated branch description and tracking info.')
 
 
-def check_our_branch() -> bool:
+def get_cover_strategy(branch: Optional[str] = None) -> str:
+    if branch is None:
+        branch = b4.git_get_current_branch()
+    # Check local branch config for the strategy
+    bconfig = b4.get_config_from_git(rf'branch\.{branch}\..*')
+    if 'b4-ez-cover-strategy' in bconfig:
+        strategy = bconfig.get('b4-ez-cover-strategy')
+    else:
+        config = b4.get_main_config()
+        strategy = config.get('ez-cover-strategy', 'commit')
+
+    return strategy
+
+
+def is_ez_branch() -> bool:
     mybranch = b4.git_get_current_branch()
-    if mybranch.startswith('b4/'):
+    strategy = get_cover_strategy(mybranch)
+    if strategy == 'commit':
+        if find_cover_commit() is None:
+            return False
         return True
-    logger.info('CRITICAL: This does not look like a b4-managed branch.')
-    logger.info('          "%s" does not start with "b4/"', mybranch)
-    return False
+    if strategy == 'branch-description':
+        # See if we have b4-tracking set for this branch
+        bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
+        if bcfg.get('b4-tracking'):
+            return True
+        return False
+    if strategy == 'tag':
+        logger.critical('CRITICAL: tag strategy not yet supported')
+        sys.exit(1)
+
+    logger.critical('CRITICAL: unknown cover strategy: %s', strategy)
+    sys.exit(1)
 
 
 def find_cover_commit() -> Optional[str]:
     # Walk back commits until we find the cover letter
     # Our covers always contain the MAGIC_MARKER line
     logger.debug('Looking for the cover letter commit with magic marker "%s"', MAGIC_MARKER)
-    gitargs = ['log', '--grep', MAGIC_MARKER, '-F', '--pretty=oneline', '--max-count=1']
+    gitargs = ['log', '--grep', MAGIC_MARKER, '-F', '--pretty=oneline', '--max-count=1', '--since=1.year']
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
         return None
@@ -280,8 +413,8 @@ class FRCommitMessageEditor:
             commit.message = self.edit_map[commit.original_id]
 
 
-def edit_cover(cover_commit: str) -> None:
-    cover, tracking = load_cover(cover_commit)
+def edit_cover() -> None:
+    cover, tracking = load_cover()
     # What's our editor? And yes, the default is vi, bite me.
     corecfg = b4.get_config_from_git(r'core\..*', {'editor': os.environ.get('EDITOR', 'vi')})
     editor = corecfg.get('editor')
@@ -305,55 +438,124 @@ def edit_cover(cover_commit: str) -> None:
         logger.info('New cover letter blank, leaving current one unchanged.')
         return
 
-    update_cover(cover_commit, new_cover, tracking)
+    store_cover(new_cover, tracking)
     logger.info('Cover letter updated.')
 
 
-def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
-    if cmdargs.signoff:
-        usercfg = b4.get_user_config()
-        if 'name' not in usercfg or 'email' not in usercfg:
-            logger.critical('CRITICAL: Unable to add your Signed-off-by: git returned no user.name or user.email')
+def get_series_start() -> str:
+    strategy = get_cover_strategy()
+    if strategy == 'commit':
+        # Easy, we start at the cover letter commit
+        return find_cover_commit()
+    if strategy == 'branch-description':
+        mybranch = b4.git_get_current_branch()
+        bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
+        tracking = bcfg.get('b4-tracking')
+        if not tracking:
+            logger.critical('CRITICAL: Could not find tracking info for %s', mybranch)
             sys.exit(1)
+        jdata = json.loads(tracking)
+        base_branch = jdata['series']['base-branch']
+        # Find merge-base with the tracking branch
+        logger.debug('Finding the fork-point with %s', base_branch)
+        gitargs = ['merge-base', '--fork-point', base_branch]
+        lines = b4.git_get_command_lines(None, gitargs)
+        if not lines:
+            logger.critical('CRITICAL: Could not find fork-point with base branch %s', base_branch)
+            sys.exit(1)
+        return lines[0]
+
+    # other strategies not yet implemented
+    logger.critical('CRITICAL: strategy %s not yet implemented', get_cover_strategy())
+    sys.exit(1)
+
+
+def update_trailers(cmdargs: argparse.Namespace) -> None:
+    usercfg = b4.get_user_config()
+    if 'name' not in usercfg or 'email' not in usercfg:
+        logger.critical('CRITICAL: Please set your user.name and user.email')
+        sys.exit(1)
+    if cmdargs.signoff:
         signoff = ('Signed-off-by', f"{usercfg['name']} <{usercfg['email']}>", None)
     else:
         signoff = None
 
+    # If we are in an ez-series branch, we start from the beginning of the series
+    # oterwise, we start at the first commit where we're the committer since 3.months
+    # TODO: consider making that settable?
+    if cmdargs.msgid:
+        changeid = None
+        myemail = usercfg['email']
+        # There doesn't appear to be a great way to find the first commit
+        # where we're NOT the committer, so we get all commits since "3.months" where
+        # we're the committer and stop at the first non-contiguous parent
+        gitargs = ['log', '-F', f'--committer={myemail}', '--since=3.months', '--format=%H %P']
+        lines = b4.git_get_command_lines(None, gitargs)
+        if not lines:
+            logger.critical('CRITICAL: could not find any commits where committer=%s', myemail)
+            sys.exit(1)
+
+        prevparent = None
+        end = None
+        commit = None
+        for line in lines:
+            commit, parent = line.split()
+            if end is None:
+                end = commit
+            if prevparent is None:
+                prevparent = parent
+                continue
+            if prevparent != commit:
+                break
+            prevparent = parent
+        start = f'{commit}~1'
+
+    elif is_ez_branch():
+        start = get_series_start()
+        end = 'HEAD'
+        cover, tracking = load_cover(strip_comments=True)
+        changeid = tracking['series'].get('change-id')
+
+    else:
+        logger.critical('CRITICAL: Please specify -F msgid to look up trailers from remote.')
+        sys.exit(1)
+
     try:
-        patches = b4.git_range_to_patches(None, cover_commit, 'HEAD')
+        patches = b4.git_range_to_patches(None, start, end)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
 
     logger.info('Calculating patch-ids from %s commits', len(patches)-1)
-    msg_map = dict()
     commit_map = dict()
+    by_patchid = dict()
+    by_subject = dict()
     updates = dict()
     # Ignore the cover letter
     for commit, msg in patches[1:]:
+        commit_map[commit] = msg
         body = msg.get_payload()
         patchid = b4.LoreMessage.get_patch_id(body)
-        msg_map[patchid] = msg
-        commit_map[patchid] = commit
+        subject = msg.get('subject')
+        by_subject[subject] = commit
+        by_patchid[patchid] = commit
         parts = b4.LoreMessage.get_body_parts(body)
         # Force SOB update
         if signoff and (signoff not in parts[2] or (len(signoff) > 1 and parts[2][-1] != signoff)):
-            updates[patchid] = list()
+            updates[commit] = list()
             if signoff not in parts[2]:
-                updates[patchid].append(signoff)
+                updates[commit].append(signoff)
 
-    if cmdargs.thread_msgid:
-        cmdargs.msgid = cmdargs.thread_msgid
+    if cmdargs.msgid:
         msgid = b4.get_msgid(cmdargs)
         logger.info('Retrieving thread matching %s', msgid)
         list_msgs = b4.get_pi_thread_by_msgid(msgid, nocache=True)
-    else:
-        cover, tracking = load_cover(cover_commit, strip_comments=True)
-        changeid = tracking['series'].get('change-id')
+    elif changeid:
         logger.info('Checking change-id "%s"', changeid)
         query = f'"change-id: {changeid}"'
         list_msgs = b4.get_pi_search_results(query, nocache=True)
-
+    else:
+        list_msgs = None
 
     if list_msgs:
         bbox = b4.LoreMailbox()
@@ -367,17 +569,25 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
             if lser.has_cover and len(lser.patches[0].followup_trailers):
                 addtrailers += list(lser.patches[0].followup_trailers)
             if not addtrailers:
-                logger.debug('No follow-up trailers received to the %s', lmsg.subject)
+                logger.debug('No follow-up trailers received to: %s', lmsg.subject)
                 continue
-            patchid = b4.LoreMessage.get_patch_id(lmsg.body)
-            if patchid not in commit_map:
-                logger.debug('No match for patchid %s', patchid)
+            commit = None
+            if lmsg.subject in by_subject:
+                commit = by_subject[lmsg.subject]
+            else:
+                patchid = b4.LoreMessage.get_patch_id(lmsg.body)
+                if patchid in by_patchid:
+                    commit = by_patchid[patchid]
+            if not commit:
+                logger.debug('No match for %s', lmsg.full_subject)
                 continue
+
+            parts = b4.LoreMessage.get_body_parts(lmsg.body)
             for ftrailer in addtrailers:
                 if ftrailer[:3] not in parts[2]:
-                    if patchid not in updates:
-                        updates[patchid] = list()
-                    updates[patchid].append(ftrailer)
+                    if commit not in updates:
+                        updates[commit] = list()
+                    updates[commit].append(ftrailer)
             # Check if we've applied mismatched trailers already
             if not cmdargs.sloppytrailers and mismatches:
                 for mtrailer in list(mismatches):
@@ -386,24 +596,24 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
                         logger.debug('Removing already-applied mismatch %s', check)
                         mismatches.remove(mtrailer)
 
+        if len(mismatches):
+            logger.critical('---')
+            logger.critical('NOTE: some trailers ignored due to from/email mismatches:')
+            for tname, tvalue, fname, femail in lser.trailer_mismatches:
+                logger.critical('    ! Trailer: %s: %s', tname, tvalue)
+                logger.critical('     Msg From: %s <%s>', fname, femail)
+            logger.critical('NOTE: Rerun with -S to apply them anyway')
+
     if not updates:
         logger.info('No trailer updates found.')
         return
 
-    if len(mismatches):
-        logger.critical('---')
-        logger.critical('NOTE: some trailers ignored due to from/email mismatches:')
-        for tname, tvalue, fname, femail in lser.trailer_mismatches:
-            logger.critical('    ! Trailer: %s: %s', tname, tvalue)
-            logger.critical('     Msg From: %s <%s>', fname, femail)
-        logger.critical('NOTE: Rerun with -S to apply them anyway')
-
     logger.info('---')
     # Create the map of new messages
     fred = FRCommitMessageEditor()
-    for patchid, newtrailers in updates.items():
+    for commit, newtrailers in updates.items():
         # Make it a LoreMessage, so we can run attestation on received trailers
-        cmsg = b4.LoreMessage(msg_map[patchid])
+        cmsg = b4.LoreMessage(commit_map[commit])
         logger.info('  %s', cmsg.subject)
         if len(newtrailers):
             cmsg.followup_trailers = newtrailers
@@ -412,10 +622,10 @@ def update_trailers(cover_commit: str, cmdargs: argparse.Namespace) -> None:
         elif signoff:
             logger.info('    > %s: %s', signoff[0], signoff[1])
         cmsg.fix_trailers(signoff=signoff)
-        fred.add(commit_map[patchid], cmsg.message)
+        fred.add(commit, cmsg.message)
     logger.info('---')
-    args = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{cover_commit}..HEAD'])
-    args.refs = [f'{cover_commit}..HEAD']
+    args = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{start}..'])
+    args.refs = [f'{start}..']
     frf = fr.RepoFilter(args, commit_callback=fred.callback)
     logger.info('Invoking git-filter-repo to update trailers.')
     frf.run()
@@ -434,22 +644,22 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     return utils.getaddresses(addrs.split('\n'))
 
 
-def get_series_details(cover_commit: str) -> Tuple[str, str, str]:
+def get_series_details(start_commit: str) -> Tuple[str, str, str]:
     # Not sure if we can reasonably expect all automation to handle this correctly
     # gitargs = ['describe', '--long', f'{cover_commit}~1']
-    gitargs = ['rev-parse', f'{cover_commit}~1']
+    gitargs = ['rev-parse', f'{start_commit}~1']
     lines = b4.git_get_command_lines(None, gitargs)
     base_commit = lines[0]
-    gitargs = ['shortlog', f'{cover_commit}..']
+    gitargs = ['shortlog', f'{start_commit}..']
     ecode, shortlog = b4.git_run_command(None, gitargs)
-    gitargs = ['diff', '--stat', f'{cover_commit}..']
+    gitargs = ['diff', '--stat', f'{start_commit}..']
     ecode, diffstat = b4.git_run_command(None, gitargs)
     return base_commit, shortlog.rstrip(), diffstat.rstrip()
 
 
-def send(cover_commit: str, cmdargs: argparse.Namespace) -> None:
+def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     # Check if the cover letter has 'EDITME' in it
-    cover, tracking = load_cover(cover_commit, strip_comments=True)
+    cover, tracking = load_cover(strip_comments=True)
     if 'EDITME' in cover:
         logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
         logger.info('---')
@@ -475,7 +685,8 @@ def send(cover_commit: str, cmdargs: argparse.Namespace) -> None:
 
     # Put together the cover letter
     csubject, cbody = cover.split('\n', maxsplit=1)
-    base_commit, shortlog, diffstat = get_series_details(cover_commit)
+    start_commit = get_series_start()
+    base_commit, shortlog, diffstat = get_series_details(start_commit=start_commit)
     change_id = tracking['series'].get('change-id')
     revision = tracking['series'].get('revision')
     tptvals = {
@@ -519,7 +730,7 @@ def send(cover_commit: str, cmdargs: argparse.Namespace) -> None:
     msgid_tpt = f'<{stablepart}-v{revision}-%s-{randompart}@{msgdomain}>'
 
     try:
-        patches = b4.git_range_to_patches(None, cover_commit, 'HEAD',
+        patches = b4.git_range_to_patches(None, start_commit, 'HEAD',
                                           covermsg=cmsg, prefixes=prefixes,
                                           msgid_tpt=msgid_tpt,
                                           seriests=seriests,
@@ -679,18 +890,13 @@ def send(cover_commit: str, cmdargs: argparse.Namespace) -> None:
         return
 
     logger.info('Recording series message-id in cover letter tracking')
-    cover, tracking = load_cover(cover_commit, strip_comments=False)
+    cover, tracking = load_cover(strip_comments=False)
     vrev = f'v{revision}'
     if 'history' not in tracking['series']:
         tracking['series']['history'] = dict()
     if vrev not in tracking['series']['history']:
         tracking['series']['history'][vrev] = list()
     tracking['series']['history'][vrev].append(cover_msgid)
-    update_cover(cover_commit, cover, tracking)
-
-
-def reroll(cover_commit: str, cmdargs: argparse.Namespace) -> None:
-    cover, tracking = load_cover(cover_commit, strip_comments=False)
     oldrev = tracking['series']['revision']
     newrev = oldrev + 1
     tracking['series']['revision'] = newrev
@@ -721,60 +927,43 @@ def reroll(cover_commit: str, cmdargs: argparse.Namespace) -> None:
         new_cover = '---\n'.join(new_sections)
     else:
         new_cover = cover + '\n\n---\n' + prepend
+
     logger.info('Created new revision v%s', newrev)
     logger.info('Updating cover letter with templated changelog entries.')
-    update_cover(cover_commit, new_cover, tracking)
-    logger.info('You may now edit the cover letter using "b4 submit --edit-cover"')
+    store_cover(new_cover, tracking)
 
 
-def main(cmdargs: argparse.Namespace) -> None:
+def check_can_gfr():
     if not can_gfr:
         logger.critical('ERROR: b4 submit requires git-filter-repo. You should be able')
         logger.critical('       to install it from your distro packages, or from pip.')
         sys.exit(1)
 
-    config = b4.get_main_config()
-    if 'submit-endpoint' not in config:
-        config['submit-endpoint'] = 'https://lkml.kernel.org/_b4_submit'
 
-    if cmdargs.new_series_name:
-        start_new_series(cmdargs)
-        return
-
-    if not check_our_branch():
-        return
-
-    cover_commit = find_cover_commit()
-    if not cover_commit:
-        logger.critical('CRITICAL: Unable to find cover letter commit')
+def cmd_ez_series(cmdargs: argparse.Namespace) -> None:
+    check_can_gfr()
+    status = b4.git_get_repo_status()
+    if len(status):
+        logger.critical('CRITICAL: Repository contains uncommitted changes.')
+        logger.critical('          Stash or commit them first.')
         sys.exit(1)
 
     if cmdargs.edit_cover:
-        edit_cover(cover_commit)
-        return
+        return edit_cover()
 
-    elif cmdargs.update_trailers:
-        update_trailers(cover_commit, cmdargs)
-        return
+    if is_ez_branch():
+        logger.critical('CRITICAL: This appears to already be an ez-series branch.')
+        sys.exit(1)
 
-    elif cmdargs.send:
-        send(cover_commit, cmdargs)
-        return
+    return start_new_series(cmdargs)
 
-    elif cmdargs.reroll:
-        reroll(cover_commit, cmdargs)
-        return
 
-    logger.critical('No action requested, please see "b4 submit --help"')
-    sys.exit(1)
+def cmd_ez_trailers(cmdargs: argparse.Namespace) -> None:
+    check_can_gfr()
+    status = b4.git_get_repo_status()
+    if len(status):
+        logger.critical('CRITICAL: Repository contains uncommitted changes.')
+        logger.critical('          Stash or commit them first.')
+        sys.exit(1)
 
-    # if not can_patatt:
-    #    logger.critical('ERROR: b4 submit requires patatt library. See:')
-    #    logger.critical('       https://git.kernel.org/pub/scm/utils/patatt/patatt.git/about/')
-    #    sys.exit(1)
-
-    # if cmdargs.web_auth_new:
-    #     auth_new(cmdargs)
-    #
-    # if cmdargs.web_auth_verify:
-    #     auth_verify(cmdargs)
+    update_trailers(cmdargs)
