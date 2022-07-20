@@ -657,6 +657,15 @@ def get_series_details(start_commit: str) -> Tuple[str, str, str]:
     return base_commit, shortlog.rstrip(), diffstat.rstrip()
 
 
+def print_pretty_addrs(addrs: list, hdrname: str) -> None:
+    if len(addrs) < 1:
+        return
+    logger.info('%s: %s', hdrname, b4.format_addrs([addrs[0]]))
+    if len(addrs) > 1:
+        for addr in addrs:
+            logger.info('    %s', b4.format_addrs([addr]))
+
+
 def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     # Check if the cover letter has 'EDITME' in it
     cover, tracking = load_cover(strip_comments=True)
@@ -851,9 +860,27 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
                 logger.info('  %s', filen)
         return
 
+    # Give the user the last opportunity to bail out
+    if not cmdargs.dryrun:
+        logger.info('Will send the following messages:')
+        logger.info('---')
+        print_pretty_addrs(allto, 'To')
+        print_pretty_addrs(allcc, 'Cc')
+        logger.info('---')
+        for commit, msg in patches:
+            if not msg:
+                continue
+            logger.info(msg.get('Subject'))
+        logger.info('---')
+        try:
+            input('Press Enter to send or Ctrl-C to abort')
+        except KeyboardInterrupt:
+            logger.info('')
+            sys.exit(130)
+
     # And now we go through each message to set addressees and send them off
     sign = True
-    if cmdargs.no_sign or config.get('submit-no-sign', '').lower() in {'yes', 'true', 'y'}:
+    if cmdargs.no_sign or config.get('ez-send-no-sign', '').lower() in {'yes', 'true', 'y'}:
         sign = False
     identity = config.get('sendemail-identity')
     try:
