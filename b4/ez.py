@@ -897,6 +897,11 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     if vrev not in tracking['series']['history']:
         tracking['series']['history'][vrev] = list()
     tracking['series']['history'][vrev].append(cover_msgid)
+    if 'RESEND' in prefixes:
+        logger.info('Not incrementing current revision due to RESEND')
+        store_cover(cover, tracking)
+        return
+
     oldrev = tracking['series']['revision']
     newrev = oldrev + 1
     tracking['series']['revision'] = newrev
