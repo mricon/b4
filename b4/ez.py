@@ -710,11 +710,6 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     body = Template(cover_template.lstrip()).safe_substitute(tptvals)
     cmsg = email.message.EmailMessage()
     cmsg.add_header('Subject', csubject)
-    # Store tracking info in the header in a safe format, which should allow us to
-    # fully restore our work from the already sent series.
-    ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
-    b64tracking = base64.b64encode(ztracking)
-    cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
     cmsg.set_payload(body, charset='utf-8')
     if cmdargs.prefixes:
         prefixes = list(cmdargs.prefixes)
@@ -856,7 +851,7 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
             ls = b4.LoreSubject(subject)
             filen = '%s.patch' % ls.get_slug(sep='-')
             with open(os.path.join(cmdargs.output_dir, filen), 'w') as fh:
-                fh.write(msg.as_string(unixfrom=True, maxheaderlen=80))
+                fh.write(msg.as_string(unixfrom=True, maxheaderlen=0))
                 logger.info('  %s', filen)
         return
 
@@ -898,7 +893,12 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
             continue
         if cover_msgid is None:
             cover_msgid = b4.LoreMessage.get_clean_msgid(msg)
-        msg.add_header('To', b4.format_addrs(allto))
+            # Store tracking info in the header in a safe format, which should allow us to
+            # fully restore our work from the already sent series.
+            ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
+            b64tracking = base64.b64encode(ztracking)
+            cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
+            msg.add_header('To', b4.format_addrs(allto))
         if allcc:
             msg.add_header('Cc', b4.format_addrs(allcc))
         logger.info('  %s', msg.get('Subject'))
