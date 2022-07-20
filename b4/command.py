@@ -255,6 +255,10 @@ def cmd():
     sp_ezs = subparsers.add_parser('ez-series', help='Simplify work on series submitted for review')
     sp_ezs.add_argument('--edit-cover', action='store_true', default=False,
                         help='Edit the cover letter in your defined $EDITOR (or core.editor)')
+    sp_ezs.add_argument('--show-revision', action='store_true', default=False,
+                        help='Show current series revision number')
+    sp_ezs.add_argument('--force-revision', default=False, type=int,
+                        help='Force revision to be this number instead')
     ag_ezn = sp_ezs.add_argument_group('Create new branch', 'Create new branch for ez-series')
     ag_ezn.add_argument('-n', '--new', dest='new_series_name',
                         help='Create a new branch and prepare for new series')

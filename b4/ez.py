@@ -933,11 +933,30 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     store_cover(new_cover, tracking)
 
 
-def check_can_gfr():
+def check_can_gfr() -> None:
     if not can_gfr:
         logger.critical('ERROR: b4 submit requires git-filter-repo. You should be able')
         logger.critical('       to install it from your distro packages, or from pip.')
         sys.exit(1)
+
+
+def show_revision() -> None:
+    cover, tracking = load_cover()
+    ts = tracking['series']
+    logger.info('v%s', ts.get('revision'))
+    if 'history' in ts:
+        config = b4.get_main_config()
+        logger.info('---')
+        for rn, links in ts['history'].items():
+            for link in links:
+                logger.info('  %s: %s', rn, config['linkmask'] % link)
+
+
+def force_revision(forceto: int) -> None:
+    cover, tracking = load_cover()
+    tracking['series']['revision'] = forceto
+    logger.info('Forced revision to v%s', forceto)
+    store_cover(cover, tracking)
 
 
 def cmd_ez_series(cmdargs: argparse.Namespace) -> None:
@@ -950,6 +969,12 @@ def cmd_ez_series(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.edit_cover:
         return edit_cover()
+
+    if cmdargs.show_revision:
+        return show_revision()
+
+    if cmdargs.force_revision:
+        return force_revision(cmdargs.force_revision)
 
     if is_ez_branch():
         logger.critical('CRITICAL: This appears to already be an ez-series branch.')
