@@ -330,7 +330,8 @@ class LoreMailbox:
                 if pmsg.in_reply_to and pmsg.in_reply_to in self.msgid_map:
                     lvl += 1
                     for ptrailer in pmsg.trailers:
-                        trailers.append(tuple(ptrailer + [pmsg]))
+                        print(ptrailer)
+                        trailers.append(tuple(ptrailer + (pmsg,)))
                     pmsg = self.msgid_map[pmsg.in_reply_to]
                     continue
                 break
