@@ -348,6 +348,11 @@ def store_cover(content: str, tracking: dict, new: bool = False) -> None:
         logger.info('Updated branch description and tracking info.')
 
 
+# Valid cover letter strategies:
+# 'commit': in a commit at the start of the series    : implemented
+# 'branch-description': in the branch description     : implemented
+# 'tip-commit': in a commit at the tip of the branch  : TODO
+# 'tag': in an annotated tag at the tip of the branch : TODO
 def get_cover_strategy(branch: Optional[str] = None) -> str:
     if branch is None:
         branch = b4.git_get_current_branch()
@@ -359,7 +364,11 @@ def get_cover_strategy(branch: Optional[str] = None) -> str:
         config = b4.get_main_config()
         strategy = config.get('ez-cover-strategy', 'commit')
 
-    return strategy
+    if strategy in {'commit', 'branch-description'}:
+        return strategy
+
+    logger.critical('CRITICAL: unknown ez-cover-strategy: %s', strategy)
+    sys.exit(1)
 
 
 def is_ez_branch() -> bool:
