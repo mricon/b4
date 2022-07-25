@@ -785,7 +785,7 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
         topdir = b4.git_get_toplevel()
         getm = os.path.join(topdir, 'scripts', 'get_maintainer.pl')
         if os.access(getm, os.X_OK):
-            logger.debug('Using kernel get_maintainer.pl for to and cc list')
+            logger.info('Using kernel get_maintainer.pl for to and cc lists')
             tocmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol'
             cccmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom'
         if tocmdstr:
@@ -921,6 +921,54 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
         return
     else:
         logger.info('Sent %s messages', counter)
+
+    mybranch = b4.git_get_current_branch()
+    if get_cover_strategy() == 'commit':
+        # Detach the head at our parent commit and apply the cover-less series
+        cover_commit = find_cover_commit()
+        gitargs = ['checkout', f'{cover_commit}~1']
+        ecode, out = b4.git_run_command(None, gitargs)
+        if ecode > 0:
+            # TODO: do something
+            raise RuntimeError('Could not switch to a detached head')
+        # cherry-pick from cover letter to the last commit
+        last_commit = patches[-1][0]
+        gitargs = ['cherry-pick', f'{cover_commit}..{last_commit}']
+        ecode, out = b4.git_run_command(None, gitargs)
+        if ecode > 0:
+            # TODO: do something
+            raise RuntimeError('Could not cherry-pick the cover-less range')
+        # Find out the head commit
+        gitargs = ['rev-parse', 'HEAD']
+        ecode, out = b4.git_run_command(None, gitargs)
+        if ecode > 0:
+            # TODO: do something
+            raise RuntimeError('Could not find the HEAD commit of the detached head')
+        tagcommit = out.strip()
+        # Switch back to our branch
+        gitargs = ['checkout', mybranch]
+        ecode, out = b4.git_run_command(None, gitargs)
+        if ecode > 0:
+            # TODO: do something
+            raise RuntimeError('Could not switch back to %s', mybranch)
+    else:
+        # TODO: commit-tip will have HEAD~1
+        tagcommit = 'HEAD'
+
+    # TODO: make sent/ prefix configurable?
+    tagprefix = 'sent/'
+    if mybranch.startswith('b4/'):
+        tagname = f'{tagprefix}{mybranch[3:]}-v{revision}'
+    else:
+        tagname = f'{tagprefix}{mybranch}-v{revision}'
+
+    # TODO: check if we already have this tag for some reason
+    logger.info('Tagging %s', tagname)
+    gitargs = ['tag', '-a', '-F', '-', tagname, tagcommit]
+    ecode, out = b4.git_run_command(None, gitargs, stdin=cover.encode())
+    if ecode > 0:
+        # TODO: do something
+        raise RuntimeError('Could not tag %s as %s', tagcommit, tagname)
 
     if not cover_msgid:
         return
