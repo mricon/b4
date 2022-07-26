@@ -233,7 +233,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         # Try loading existing cover info
         cover, jdata = load_cover()
 
-        logger.info('Will track %s commits for ez-series', commitcount)
+        logger.info('Will track %s commits', commitcount)
     else:
         logger.critical('CRITICAL: unknown operation requested')
         sys.exit(1)
@@ -255,7 +255,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                  '',
                  '# You can add other trailers to the cover letter. Any email addresses found in',
                  '# these trailers will be added to the addresses specified/generated during',
-                 '# the ez-send stage.',
+                 '# the b4 send stage.',
                  '',
                  '',
                  )
@@ -276,7 +276,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
 
 def make_magic_json(data: dict) -> str:
     mj = (f'{MAGIC_MARKER}\n'
-          '# This section is used internally by b4 ez-series for tracking purposes.\n')
+          '# This section is used internally by b4 prep for tracking purposes.\n')
     return mj + json.dumps(data, indent=2)
 
 
@@ -358,20 +358,20 @@ def get_cover_strategy(branch: Optional[str] = None) -> str:
         branch = b4.git_get_current_branch()
     # Check local branch config for the strategy
     bconfig = b4.get_config_from_git(rf'branch\.{branch}\..*')
-    if 'b4-ez-cover-strategy' in bconfig:
-        strategy = bconfig.get('b4-ez-cover-strategy')
+    if 'b4-prep-cover-strategy' in bconfig:
+        strategy = bconfig.get('b4-prep-cover-strategy')
     else:
         config = b4.get_main_config()
-        strategy = config.get('ez-cover-strategy', 'commit')
+        strategy = config.get('prep-cover-strategy', 'commit')
 
     if strategy in {'commit', 'branch-description'}:
         return strategy
 
-    logger.critical('CRITICAL: unknown ez-cover-strategy: %s', strategy)
+    logger.critical('CRITICAL: unknown prep-cover-strategy: %s', strategy)
     sys.exit(1)
 
 
-def is_ez_branch() -> bool:
+def is_prep_branch() -> bool:
     mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy(mybranch)
     if strategy == 'commit':
@@ -489,10 +489,15 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     else:
         signoff = None
 
-    # If we are in an ez-series branch, we start from the beginning of the series
+    # If we are in an b4-prep branch, we start from the beginning of the series
     # oterwise, we start at the first commit where we're the committer since 3.months
     # TODO: consider making that settable?
-    if cmdargs.msgid:
+    if is_prep_branch():
+        start = get_series_start()
+        end = 'HEAD'
+        cover, tracking = load_cover(strip_comments=True)
+        changeid = tracking['series'].get('change-id')
+    elif cmdargs.msgid:
         changeid = None
         myemail = usercfg['email']
         # There doesn't appear to be a great way to find the first commit
@@ -518,13 +523,6 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 break
             prevparent = parent
         start = f'{commit}~1'
-
-    elif is_ez_branch():
-        start = get_series_start()
-        end = 'HEAD'
-        cover, tracking = load_cover(strip_comments=True)
-        changeid = tracking['series'].get('change-id')
-
     else:
         logger.critical('CRITICAL: Please specify -F msgid to look up trailers from remote.')
         sys.exit(1)
@@ -675,31 +673,20 @@ def print_pretty_addrs(addrs: list, hdrname: str) -> None:
             logger.info('    %s', b4.format_addrs([addr]))
 
 
-def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
-    # Check if the cover letter has 'EDITME' in it
+def get_prep_branch_as_patches(prefixes: Optional[list] = None,
+                               movefrom: bool = True,
+                               thread: bool = True) -> List[Tuple[str, email.message.Message]]:
     cover, tracking = load_cover(strip_comments=True)
-    if 'EDITME' in cover:
-        logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
-        logger.info('---')
-        logger.info(cover)
-        logger.info('---')
-        sys.exit(1)
-
     config = b4.get_main_config()
     cover_template = DEFAULT_COVER_TEMPLATE
-    if config.get('submit-cover-template'):
+    if config.get('prep-cover-template'):
         # Try to load this template instead
         try:
-            cover_template = b4.read_template(config['submit-cover-template'])
+            cover_template = b4.read_template(config['prep-cover-template'])
         except FileNotFoundError:
-            logger.critical('ERROR: submit-cover-template says to use %s, but it does not exist',
-                            config['submit-cover-template'])
+            logger.critical('ERROR: prep-cover-template says to use %s, but it does not exist',
+                            config['prep-cover-template'])
             sys.exit(2)
-
-    # Generate the patches and collect all the addresses from trailers
-    parts = b4.LoreMessage.get_body_parts(cover)
-    trailers = set()
-    trailers.update(parts[2])
 
     # Put together the cover letter
     csubject, cbody = cover.split('\n', maxsplit=1)
@@ -720,9 +707,7 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     cmsg = email.message.EmailMessage()
     cmsg.add_header('Subject', csubject)
     cmsg.set_payload(body, charset='utf-8')
-    if cmdargs.prefixes:
-        prefixes = list(cmdargs.prefixes)
-    else:
+    if prefixes is None:
         prefixes = list()
 
     prefixes.append(f'v{revision}')
@@ -741,28 +726,76 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     # Message-IDs must not be predictable to avoid stuffing attacks
     randompart = uuid.uuid4().hex[:12]
     msgid_tpt = f'<{stablepart}-v{revision}-%s-{randompart}@{msgdomain}>'
+    if movefrom:
+        mailfrom = (myname, myemail)
+    else:
+        mailfrom = None
+
+    patches = b4.git_range_to_patches(None, start_commit, 'HEAD',
+                                      covermsg=cmsg, prefixes=prefixes,
+                                      msgid_tpt=msgid_tpt,
+                                      seriests=seriests,
+                                      thread=thread,
+                                      mailfrom=mailfrom)
+    return patches
+
+
+def format_patch(output_dir: str) -> None:
+    try:
+        patches = get_prep_branch_as_patches(thread=False, movefrom=False)
+    except RuntimeError as ex:
+        logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
+        sys.exit(1)
+
+    logger.info('Writing %s messages into %s', len(patches), output_dir)
+    pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+    for commit, msg in patches:
+        if not msg:
+            continue
+        msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
+        subject = msg.get('Subject', '')
+        ls = b4.LoreSubject(subject)
+        filen = '%s.patch' % ls.get_slug(sep='-')
+        with open(os.path.join(output_dir, filen), 'w') as fh:
+            fh.write(msg.as_string(unixfrom=True, maxheaderlen=0))
+            logger.info('  %s', filen)
+
+
+def cmd_send(cmdargs: argparse.Namespace) -> None:
+    # Check if the cover letter has 'EDITME' in it
+    cover, tracking = load_cover(strip_comments=True)
+    if 'EDITME' in cover:
+        logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
+        logger.info('---')
+        logger.info(cover)
+        logger.info('---')
+        sys.exit(1)
+
+    trailers = set()
+    parts = b4.LoreMessage.get_body_parts(cover)
+    trailers.update(parts[2])
 
     try:
-        patches = b4.git_range_to_patches(None, start_commit, 'HEAD',
-                                          covermsg=cmsg, prefixes=prefixes,
-                                          msgid_tpt=msgid_tpt,
-                                          seriests=seriests,
-                                          mailfrom=(myname, myemail))
+        patches = get_prep_branch_as_patches(prefixes=cmdargs.prefixes)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
 
     logger.info('Converted the branch to %s patches', len(patches)-1)
+    config = b4.get_main_config()
+    usercfg = b4.get_user_config()
+    myemail = usercfg.get('email')
+
     seen = set()
     todests = list()
-    if config.get('submit-to'):
-        for pair in utils.getaddresses([config.get('submit-to')]):
+    if config.get('send-series-to'):
+        for pair in utils.getaddresses([config.get('send-series-to')]):
             if pair[1] not in seen:
                 seen.add(pair[1])
                 todests.append(pair)
     ccdests = list()
-    if config.get('submit-cc'):
-        for pair in utils.getaddresses([config.get('submit-cc')]):
+    if config.get('send-series-cc'):
+        for pair in utils.getaddresses([config.get('send-series-cc')]):
             if pair[1] not in seen:
                 seen.add(pair[1])
                 ccdests.append(pair)
@@ -846,23 +879,9 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
         allcc = list()
 
     if cmdargs.output_dir:
+        cmdargs.dryrun = True
+        logger.info('Will write out messages into %s', cmdargs.output_dir)
         pathlib.Path(cmdargs.output_dir).mkdir(parents=True, exist_ok=True)
-        for commit, msg in patches:
-            if not msg:
-                continue
-            msg.add_header('To', b4.format_addrs(allto))
-            if allcc:
-                msg.add_header('Cc', b4.format_addrs(allcc))
-            msg.set_charset('utf-8')
-            msg.replace_header('Content-Transfer-Encoding', '8bit')
-            msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
-            subject = msg.get('Subject', '')
-            ls = b4.LoreSubject(subject)
-            filen = '%s.patch' % ls.get_slug(sep='-')
-            with open(os.path.join(cmdargs.output_dir, filen), 'w') as fh:
-                fh.write(msg.as_string(unixfrom=True, maxheaderlen=0))
-                logger.info('  %s', filen)
-        return
 
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
@@ -884,7 +903,7 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
 
     # And now we go through each message to set addressees and send them off
     sign = True
-    if cmdargs.no_sign or config.get('ez-send-no-sign', '').lower() in {'yes', 'true', 'y'}:
+    if cmdargs.no_sign or config.get('send-no-patatt-sign', '').lower() in {'yes', 'true', 'y'}:
         sign = False
     identity = config.get('sendemail-identity')
     try:
@@ -906,14 +925,23 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
             # fully restore our work from the already sent series.
             ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
             b64tracking = base64.b64encode(ztracking)
-            cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
+            msg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
 
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
             msg.add_header('Cc', b4.format_addrs(allcc))
-        logger.info('  %s', msg.get('Subject'))
+        if cmdargs.output_dir:
+            subject = msg.get('Subject', '')
+            ls = b4.LoreSubject(subject)
+            filen = '%s.eml' % ls.get_slug(sep='-')
+            logger.info('  %s', filen)
+            write_to = os.path.join(cmdargs.output_dir, filen)
+        else:
+            write_to = None
+            logger.info('  %s', re.sub(r'\s+', ' ', msg.get('Subject')))
+
         if b4.send_smtp(smtp, msg, fromaddr=fromaddr, destaddrs=alldests, patatt_sign=sign,
-                        dryrun=cmdargs.dryrun):
+                        dryrun=cmdargs.dryrun, write_to=write_to):
             counter += 1
 
     logger.info('---')
@@ -957,6 +985,7 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
         tagcommit = 'HEAD'
 
     # TODO: make sent/ prefix configurable?
+    revision = tracking['series']['revision']
     tagprefix = 'sent/'
     if mybranch.startswith('b4/'):
         tagname = f'{tagprefix}{mybranch[3:]}-v{revision}'
@@ -982,7 +1011,7 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
     if vrev not in tracking['series']['history']:
         tracking['series']['history'][vrev] = list()
     tracking['series']['history'][vrev].append(cover_msgid)
-    if 'RESEND' in prefixes:
+    if cmdargs.prefixes and 'RESEND' in cmdargs.prefixes:
         logger.info('Not incrementing current revision due to RESEND')
         store_cover(cover, tracking)
         return
@@ -1049,7 +1078,7 @@ def force_revision(forceto: int) -> None:
     store_cover(cover, tracking)
 
 
-def cmd_ez_series(cmdargs: argparse.Namespace) -> None:
+def cmd_prep(cmdargs: argparse.Namespace) -> None:
     check_can_gfr()
     status = b4.git_get_repo_status()
     if len(status):
@@ -1066,14 +1095,17 @@ def cmd_ez_series(cmdargs: argparse.Namespace) -> None:
     if cmdargs.force_revision:
         return force_revision(cmdargs.force_revision)
 
-    if is_ez_branch():
-        logger.critical('CRITICAL: This appears to already be an ez-series branch.')
+    if cmdargs.format_patch:
+        return format_patch(cmdargs.format_patch)
+
+    if is_prep_branch():
+        logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')
         sys.exit(1)
 
     return start_new_series(cmdargs)
 
 
-def cmd_ez_trailers(cmdargs: argparse.Namespace) -> None:
+def cmd_trailers(cmdargs: argparse.Namespace) -> None:
     check_can_gfr()
     status = b4.git_get_repo_status()
     if len(status):
@@ -1081,4 +1113,5 @@ def cmd_ez_trailers(cmdargs: argparse.Namespace) -> None:
         logger.critical('          Stash or commit them first.')
         sys.exit(1)
 
-    update_trailers(cmdargs)
+    if cmdargs.update:
+        update_trailers(cmdargs)

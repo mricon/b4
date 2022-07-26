@@ -1326,7 +1326,7 @@ class LoreMessage:
     def get_patch_id(diff: str) -> Optional[str]:
         gitargs = ['patch-id', '--stable']
         ecode, out = git_run_command(None, gitargs, stdin=diff.encode())
-        if ecode > 0:
+        if ecode > 0 or not len(out.strip()):
             return None
         return out.split(maxsplit=1)[0]
 
@@ -2432,6 +2432,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                          seriests: Optional[int] = None,
                          mailfrom: Optional[Tuple[str, str]] = None,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
+                         thread: bool = False,
                          keepdate: bool = False) -> List[Tuple[str, email.message.Message]]:
     patches = list()
     commits = git_get_command_lines(gitdir, ['rev-list', '--reverse', f'{start}..{end}'])
@@ -2513,7 +2514,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             if counter > 1 and not covermsg:
                 # Tread to the first patch
                 refto = msgid_tpt % str(1)
-            if refto:
+            if refto and thread:
                 msg.add_header('References', refto)
                 msg.add_header('In-Reply-To', refto)
 
@@ -2841,7 +2842,11 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
 def send_smtp(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msg: email.message.Message,
               fromaddr: str, destaddrs: Optional[Union[Tuple, Set]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
-              maxheaderlen: Optional[int] = None) -> bool:
+              maxheaderlen: Optional[int] = None,
+              write_to: Optional[str] = None) -> bool:
+
+    if write_to is not None:
+        dryrun = True
     if not msg.get('X-Mailer'):
         msg.add_header('X-Mailer', f'b4 {__VERSION__}')
     msg.set_charset('utf-8')
@@ -2875,6 +2880,10 @@ def send_smtp(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msg: email.mess
         # patatt.logger = logger
         bdata = patatt.rfc2822_sign(bdata)
     if dryrun or smtp is None:
+        if write_to:
+            with open(write_to, 'wb') as fh:
+                fh.write(bdata.replace(b'\r\n', b'\n'))
+            return True
         logger.info('    --- DRYRUN: message follows ---')
         logger.info('    | ' + bdata.decode().rstrip().replace('\n', '\n    | '))
         logger.info('    --- DRYRUN: message ends ---')
