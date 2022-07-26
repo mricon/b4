@@ -2915,6 +2915,10 @@ def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
                         gitdir: Optional[str]) -> List[Tuple[str, str]]:
     global MAILMAP_INFO
     for entry in list(addresses):
+        # Only qualified addresses, please
+        if not len(entry[1].strip()) or '@' not in entry[1]:
+            addresses.remove(entry)
+            continue
         # Check if it's in excludes
         removed = False
         for exclude in excludes:

@@ -819,7 +819,7 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
 
         # add addresses seen in trailers
         for trailer in trailers:
-            if '@' in trailer[1]:
+            if '@' in trailer[1] and '<' in trailer[1]:
                 for pair in utils.getaddresses([trailer[1]]):
                     if pair[1] not in seen:
                         seen.add(pair[1])
@@ -907,7 +907,8 @@ def cmd_ez_send(cmdargs: argparse.Namespace) -> None:
             ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
             b64tracking = base64.b64encode(ztracking)
             cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
-            msg.add_header('To', b4.format_addrs(allto))
+
+        msg.add_header('To', b4.format_addrs(allto))
         if allcc:
             msg.add_header('Cc', b4.format_addrs(allcc))
         logger.info('  %s', msg.get('Subject'))
