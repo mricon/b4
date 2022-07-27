@@ -179,6 +179,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
 
     cover = None
     strategy = get_cover_strategy()
+    cherry_range = None
     if cmdargs.new_series_name:
         basebranch = None
         if not cmdargs.fork_point:
@@ -218,11 +219,6 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         seriesname = cmdargs.new_series_name
 
     elif cmdargs.base_branch:
-        # Check that strategy isn't "commit" as we don't currently support that
-        if strategy == 'commit':
-            logger.critical('CRITICAL: enrolling branches with "commit" cover strategy is not currently supported')
-            sys.exit(1)
-
         branchname = b4.git_get_current_branch()
         seriesname = branchname
         slug = re.sub(r'\W+', '-', branchname).strip('-').lower()
@@ -231,10 +227,27 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             forkpoint, commitcount = get_base_forkpoint(basebranch)
         except RuntimeError:
             sys.exit(1)
+
+        logger.info('Will track %s commits', commitcount)
+        if strategy == 'commit':
+            gitargs = ['rev-parse', 'HEAD']
+            lines = b4.git_get_command_lines(None, gitargs)
+            if not lines:
+                logger.critical('CRITICAL: Could not rev-parse current HEAD')
+                sys.exit(1)
+            endpoint = lines[0].strip()
+            cherry_range = f'{forkpoint}..{endpoint}'
+            # Reset current branch to the forkpoint
+            gitargs = ['reset', '--hard', forkpoint]
+            ecode, out = b4.git_run_command(None, gitargs, logstderr=True)
+            if ecode > 0:
+                logger.critical('CRITICAL: not able to reset current branch to %s', forkpoint)
+                logger.critical(out)
+                sys.exit(1)
+
         # Try loading existing cover info
         cover, jdata = load_cover()
 
-        logger.info('Will track %s commits', commitcount)
     else:
         logger.critical('CRITICAL: unknown operation requested')
         sys.exit(1)
@@ -276,6 +289,13 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         },
     }
     store_cover(cover, tracking, new=True)
+    if cherry_range:
+        gitargs = ['cherry-pick', cherry_range]
+        ecode, out = b4.git_run_command(None, gitargs)
+        if ecode > 0:
+            # Woops, this is bad! At least tell them where the commit range is.
+            logger.critical('Could not cherry-pick commits from range %s', cherry_range)
+            sys.exit(1)
 
 
 def make_magic_json(data: dict) -> str:
@@ -289,19 +309,20 @@ def load_cover(strip_comments: bool = False) -> Tuple[str, dict]:
     if strategy == 'commit':
         cover_commit = find_cover_commit()
         if not cover_commit:
-            logger.critical('CRITICAL: unable to find cover commit!')
-            sys.exit(1)
-        gitargs = ['show', '-s', '--format=%B', cover_commit]
-        ecode, out = b4.git_run_command(None, gitargs)
-        if ecode > 0:
-            logger.critical('CRITICAL: unable to load cover letter')
-            sys.exit(1)
-        contents = out
-        # Split on MAGIC_MARKER
-        cover, magic_json = contents.split(MAGIC_MARKER)
-        # drop everything until the first {
-        junk, mdata = magic_json.split('{', maxsplit=1)
-        jdata = json.loads('{' + mdata)
+            cover = ''
+            jdata = dict()
+        else:
+            gitargs = ['show', '-s', '--format=%B', cover_commit]
+            ecode, out = b4.git_run_command(None, gitargs)
+            if ecode > 0:
+                logger.critical('CRITICAL: unable to load cover letter')
+                sys.exit(1)
+            contents = out
+            # Split on MAGIC_MARKER
+            cover, magic_json = contents.split(MAGIC_MARKER)
+            # drop everything until the first {
+            junk, mdata = magic_json.split('{', maxsplit=1)
+            jdata = json.loads('{' + mdata)
     elif strategy == 'branch-description':
         mybranch = b4.git_get_current_branch()
         bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
