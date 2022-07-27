@@ -2432,13 +2432,19 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                          seriests: Optional[int] = None,
                          mailfrom: Optional[Tuple[str, str]] = None,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
+                         ignore_commits: Optional[Set[str]] = None,
                          thread: bool = False,
                          keepdate: bool = False) -> List[Tuple[str, email.message.Message]]:
     patches = list()
     commits = git_get_command_lines(gitdir, ['rev-list', '--reverse', f'{start}..{end}'])
     if not commits:
         raise RuntimeError(f'Could not run rev-list {start}..{end}')
+    if ignore_commits is None:
+        ignore_commits = set()
     for commit in commits:
+        if commit in ignore_commits:
+            logger.debug('Ignoring commit %s', commit)
+            continue
         ecode, out = git_run_command(gitdir, ['show', '--format=email', '--encoding=utf-8', commit], decode=False)
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')

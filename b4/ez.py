@@ -306,11 +306,11 @@ def make_magic_json(data: dict) -> str:
 
 def load_cover(strip_comments: bool = False) -> Tuple[str, dict]:
     strategy = get_cover_strategy()
-    if strategy == 'commit':
+    if strategy in {'commit', 'tip-commit'}:
         cover_commit = find_cover_commit()
         if not cover_commit:
             cover = ''
-            jdata = dict()
+            tracking = dict()
         else:
             gitargs = ['show', '-s', '--format=%B', cover_commit]
             ecode, out = b4.git_run_command(None, gitargs)
@@ -322,28 +322,30 @@ def load_cover(strip_comments: bool = False) -> Tuple[str, dict]:
             cover, magic_json = contents.split(MAGIC_MARKER)
             # drop everything until the first {
             junk, mdata = magic_json.split('{', maxsplit=1)
-            jdata = json.loads('{' + mdata)
+            tracking = json.loads('{' + mdata)
+
     elif strategy == 'branch-description':
         mybranch = b4.git_get_current_branch()
         bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
         cover = bcfg.get('description', '')
-        jdata = json.loads(bcfg.get('b4-tracking', '{}'))
+        tracking = json.loads(bcfg.get('b4-tracking', '{}'))
+
     else:
         # TODO: implement
         logger.critical('Not yet supported for %s cover strategy', strategy)
         sys.exit(0)
 
-    logger.debug('tracking data: %s', jdata)
+    logger.debug('tracking data: %s', tracking)
     if strip_comments:
         cover = re.sub(r'^#.*$', '', cover, flags=re.M)
         while '\n\n\n' in cover:
             cover = cover.replace('\n\n\n', '\n\n')
-    return cover.strip(), jdata
+    return cover.strip(), tracking
 
 
 def store_cover(content: str, tracking: dict, new: bool = False) -> None:
     strategy = get_cover_strategy()
-    if strategy == 'commit':
+    if strategy in {'commit', 'tip-commit'}:
         cover_message = content + '\n\n' + make_magic_json(tracking)
         if new:
             args = ['commit', '--allow-empty', '-F', '-']
@@ -374,10 +376,13 @@ def store_cover(content: str, tracking: dict, new: bool = False) -> None:
 
 
 # Valid cover letter strategies:
-# 'commit': in a commit at the start of the series    : implemented
-# 'branch-description': in the branch description     : implemented
-# 'tip-commit': in a commit at the tip of the branch  : TODO
-# 'tag': in an annotated tag at the tip of the branch : TODO
+# 'commit': in an empty commit at the start of the series        : implemented
+# 'branch-description': in the branch description                : implemented
+# 'tip-commit': in an empty commit at the tip of the branch      : implemented
+# 'tag': in an annotated tag at the tip of the branch            : TODO
+# 'tip-merge': in an empty merge commit at the tip of the branch : TODO
+#              (once/if git upstream properly supports it)
+
 def get_cover_strategy(branch: Optional[str] = None) -> str:
     if branch is None:
         branch = b4.git_get_current_branch()
@@ -389,7 +394,7 @@ def get_cover_strategy(branch: Optional[str] = None) -> str:
         config = b4.get_main_config()
         strategy = config.get('prep-cover-strategy', 'commit')
 
-    if strategy in {'commit', 'branch-description'}:
+    if strategy in {'commit', 'branch-description', 'tip-commit'}:
         return strategy
 
     logger.critical('CRITICAL: unknown prep-cover-strategy: %s', strategy)
@@ -399,7 +404,7 @@ def get_cover_strategy(branch: Optional[str] = None) -> str:
 def is_prep_branch() -> bool:
     mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy(mybranch)
-    if strategy == 'commit':
+    if strategy in {'commit', 'tip-commit'}:
         if find_cover_commit() is None:
             return False
         return True
@@ -409,9 +414,6 @@ def is_prep_branch() -> bool:
         if bcfg.get('b4-tracking'):
             return True
         return False
-    if strategy == 'tag':
-        logger.critical('CRITICAL: tag strategy not yet supported')
-        sys.exit(1)
 
     logger.critical('CRITICAL: unknown cover strategy: %s', strategy)
     sys.exit(1)
@@ -489,19 +491,20 @@ def get_series_start() -> str:
             logger.critical('CRITICAL: Could not find tracking info for %s', mybranch)
             sys.exit(1)
         jdata = json.loads(tracking)
-        base_branch = jdata['series']['base-branch']
-        # Find merge-base with the tracking branch
-        logger.debug('Finding the fork-point with %s', base_branch)
-        gitargs = ['merge-base', '--fork-point', base_branch]
-        lines = b4.git_get_command_lines(None, gitargs)
-        if not lines:
-            logger.critical('CRITICAL: Could not find fork-point with base branch %s', base_branch)
+        basebranch = jdata['series']['base-branch']
+        try:
+            forkpoint, commitcount = get_base_forkpoint(basebranch)
+        except RuntimeError:
             sys.exit(1)
-        return lines[0]
-
-    # other strategies not yet implemented
-    logger.critical('CRITICAL: strategy %s not yet implemented', get_cover_strategy())
-    sys.exit(1)
+        return forkpoint
+    if strategy == 'tip-commit':
+        cover, tracking = load_cover()
+        basebranch = tracking['series']['base-branch']
+        try:
+            forkpoint, commitcount = get_base_forkpoint(basebranch)
+        except RuntimeError:
+            sys.exit(1)
+        return forkpoint
 
 
 def update_trailers(cmdargs: argparse.Namespace) -> None:
@@ -514,6 +517,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     else:
         signoff = None
 
+    ignore_commits = None
     # If we are in an b4-prep branch, we start from the beginning of the series
     # oterwise, we start at the first commit where we're the committer since 3.months
     # TODO: consider making that settable?
@@ -522,6 +526,13 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         end = 'HEAD'
         cover, tracking = load_cover(strip_comments=True)
         changeid = tracking['series'].get('change-id')
+        strategy = get_cover_strategy()
+        if strategy in {'commit', 'tip-commit'}:
+            # We need to me sure we ignore the cover commit
+            cover_commit = find_cover_commit()
+            if cover_commit:
+                ignore_commits = {cover_commit}
+
     elif cmdargs.msgid:
         changeid = None
         myemail = usercfg['email']
@@ -553,7 +564,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        patches = b4.git_range_to_patches(None, start, end)
+        patches = b4.git_range_to_patches(None, start, end, ignore_commits=ignore_commits)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
@@ -563,8 +574,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     by_patchid = dict()
     by_subject = dict()
     updates = dict()
-    # Ignore the cover letter
-    for commit, msg in patches[1:]:
+    for commit, msg in patches:
         commit_map[commit] = msg
         body = msg.get_payload()
         patchid = b4.LoreMessage.get_patch_id(body)
@@ -682,9 +692,15 @@ def get_series_details(start_commit: str) -> Tuple[str, str, str]:
     gitargs = ['rev-parse', f'{start_commit}~1']
     lines = b4.git_get_command_lines(None, gitargs)
     base_commit = lines[0]
-    gitargs = ['shortlog', f'{start_commit}..']
+    strategy = get_cover_strategy()
+    if strategy == 'tip-commit':
+        cover_commit = find_cover_commit()
+        endrange = f'{cover_commit}~1'
+    else:
+        endrange = ''
+    gitargs = ['shortlog', f'{start_commit}..{endrange}']
     ecode, shortlog = b4.git_run_command(None, gitargs)
-    gitargs = ['diff', '--stat', f'{start_commit}..']
+    gitargs = ['diff', '--stat', f'{start_commit}..{endrange}']
     ecode, diffstat = b4.git_run_command(None, gitargs)
     return base_commit, shortlog.rstrip(), diffstat.rstrip()
 
@@ -756,12 +772,20 @@ def get_prep_branch_as_patches(prefixes: Optional[list] = None,
     else:
         mailfrom = None
 
+    strategy = get_cover_strategy()
+    ignore_commits = None
+    if strategy in {'commit', 'tip-commit'}:
+        cover_commit = find_cover_commit()
+        if cover_commit:
+            ignore_commits = {cover_commit}
+
     patches = b4.git_range_to_patches(None, start_commit, 'HEAD',
                                       covermsg=cmsg, prefixes=prefixes,
                                       msgid_tpt=msgid_tpt,
                                       seriests=seriests,
                                       thread=thread,
-                                      mailfrom=mailfrom)
+                                      mailfrom=mailfrom,
+                                      ignore_commits=ignore_commits)
     return patches
 
 
@@ -980,7 +1004,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     revision = tracking['series']['revision']
 
     try:
-        if get_cover_strategy() == 'commit':
+        strategy = get_cover_strategy()
+        if strategy == 'commit':
             # Detach the head at our parent commit and apply the cover-less series
             cover_commit = find_cover_commit()
             gitargs = ['checkout', f'{cover_commit}~1']
@@ -1004,8 +1029,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             ecode, out = b4.git_run_command(None, gitargs)
             if ecode > 0:
                 raise RuntimeError('Could not switch back to %s', mybranch)
+        elif strategy == 'tip-commit':
+            cover_commit = find_cover_commit()
+            tagcommit = f'{cover_commit}~1'
         else:
-            # TODO: commit-tip will have HEAD~1
             tagcommit = 'HEAD'
 
         # TODO: make sent/ prefix configurable?
