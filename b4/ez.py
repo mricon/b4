@@ -178,12 +178,12 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     cover = None
+    strategy = get_cover_strategy()
     if cmdargs.new_series_name:
         basebranch = None
         if not cmdargs.fork_point:
             cmdargs.fork_point = 'HEAD'
         else:
-            strategy = get_cover_strategy()
             # if our strategy is not "commit", then we need to know which branch we're using as base
             mybranch = b4.git_get_current_branch()
             if strategy != 'commit':
@@ -219,12 +219,13 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
 
     elif cmdargs.base_branch:
         # Check that strategy isn't "commit" as we don't currently support that
-        if get_cover_strategy() == 'commit':
+        if strategy == 'commit':
             logger.critical('CRITICAL: enrolling branches with "commit" cover strategy is not currently supported')
             sys.exit(1)
 
-        seriesname = b4.git_get_current_branch()
-        slug = re.sub(r'\W+', '-', seriesname).strip('-').lower()
+        branchname = b4.git_get_current_branch()
+        seriesname = branchname
+        slug = re.sub(r'\W+', '-', branchname).strip('-').lower()
         basebranch = cmdargs.base_branch
         try:
             forkpoint, commitcount = get_base_forkpoint(basebranch)
@@ -237,6 +238,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
     else:
         logger.critical('CRITICAL: unknown operation requested')
         sys.exit(1)
+
+    # Store our cover letter strategy in the branch config
+    b4.git_set_config(None, f'branch.{branchname}.b4-prep-cover-strategy', strategy)
 
     if not cover:
         # create a default cover letter and store it where the strategy indicates
