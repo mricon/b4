@@ -390,6 +390,7 @@ def get_cover_strategy(branch: Optional[str] = None) -> str:
     bconfig = b4.get_config_from_git(rf'branch\.{branch}\..*')
     if 'b4-prep-cover-strategy' in bconfig:
         strategy = bconfig.get('b4-prep-cover-strategy')
+        logger.debug('Got strategy=%s from branch-config', strategy)
     else:
         config = b4.get_main_config()
         strategy = config.get('prep-cover-strategy', 'commit')
