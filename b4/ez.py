@@ -711,7 +711,7 @@ def print_pretty_addrs(addrs: list, hdrname: str) -> None:
         return
     logger.info('%s: %s', hdrname, b4.format_addrs([addrs[0]]))
     if len(addrs) > 1:
-        for addr in addrs:
+        for addr in addrs[1:]:
             logger.info('    %s', b4.format_addrs([addr]))
 
 
@@ -943,7 +943,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         for commit, msg in patches:
             if not msg:
                 continue
-            logger.info(msg.get('Subject'))
+            logger.info('  %s', re.sub(r'\s+', ' ', msg.get('Subject')))
         logger.info('---')
         try:
             input('Press Enter to send or Ctrl-C to abort')
