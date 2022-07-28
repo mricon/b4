@@ -576,6 +576,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     by_subject = dict()
     updates = dict()
     for commit, msg in patches:
+        if not msg:
+            continue
         commit_map[commit] = msg
         body = msg.get_payload()
         patchid = b4.LoreMessage.get_patch_id(body)
