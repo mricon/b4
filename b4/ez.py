@@ -148,7 +148,7 @@ def get_base_forkpoint(basebranch: str) -> Tuple[str, int]:
     gitargs = ['rev-parse', '--verify', '--quiet', basebranch]
     ecode, out = b4.git_run_command(None, gitargs)
     if ecode > 0:
-        logger.crtitical('CRITICAL: Could not find branch with this name: %s', basebranch)
+        logger.critical('CRITICAL: Could not find branch with this name: %s', basebranch)
         raise RuntimeError('Branch %s not found', basebranch)
     # Find merge-base with that branch
     mybranch = b4.git_get_current_branch()
@@ -156,7 +156,7 @@ def get_base_forkpoint(basebranch: str) -> Tuple[str, int]:
     gitargs = ['merge-base', '--fork-point', basebranch]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
-        logger.crtitical('CRITICAL: Could not find common ancestor with %s', basebranch)
+        logger.critical('CRITICAL: Could not find common ancestor with %s', basebranch)
         raise RuntimeError('Branches %s and %s have no common ancestors', basebranch, mybranch)
     fp = lines[0]
     logger.debug('Fork-point between %s and %s is %s', mybranch, basebranch, fp)
