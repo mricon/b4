@@ -678,7 +678,9 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
 
 
 def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[str, str]]:
-    ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes)  # noqa
+    # Run this command from git toplevel
+    topdir = b4.git_get_toplevel()
+    ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes, rundir=topdir)  # noqa
     if ecode > 0:
         logger.critical('CRITICAL: Running %s failed:', ' '.join(cmdargs))
         logger.critical(err.decode())

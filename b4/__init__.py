@@ -1903,10 +1903,21 @@ class LoreAttestorPatatt(LoreAttestor):
             self.have_key = True
 
 
-def _run_command(cmdargs: List[str], stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
+def _run_command(cmdargs: List[str], stdin: Optional[bytes] = None,
+                 rundir: Optional[str] = None) -> Tuple[int, bytes, bytes]:
+    if rundir:
+        logger.debug('Changing dir to %s', rundir)
+        curdir = os.getcwd()
+        os.chdir(rundir)
+    else:
+        curdir = None
+
     logger.debug('Running %s' % ' '.join(cmdargs))
     sp = subprocess.Popen(cmdargs, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     (output, error) = sp.communicate(input=stdin)
+    if curdir:
+        logger.debug('Changing back into %s', curdir)
+        os.chdir(curdir)
 
     return sp.returncode, output, error
 
