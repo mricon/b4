@@ -1967,8 +1967,10 @@ def git_get_command_lines(gitdir: Optional[str], args: list) -> List[str]:
     return lines
 
 
-def git_get_repo_status(gitdir: Optional[str] = None) -> List[str]:
+def git_get_repo_status(gitdir: Optional[str] = None, untracked: bool = False) -> List[str]:
     args = ['status', '--porcelain=v1']
+    if not untracked:
+        args.append('--untracked-files=no')
     return git_get_command_lines(gitdir, args)
 
 
