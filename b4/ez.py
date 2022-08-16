@@ -143,32 +143,29 @@ Changes in v${newrev}:
 #     sys.exit(1)
 
 
-def get_base_forkpoint(basebranch: str) -> Tuple[str, int]:
-    # Check that that branch exists
-    gitargs = ['rev-parse', '--verify', '--quiet', basebranch]
-    ecode, out = b4.git_run_command(None, gitargs)
-    if ecode > 0:
-        logger.critical('CRITICAL: Could not find branch with this name: %s', basebranch)
-        raise RuntimeError('Branch %s not found', basebranch)
-    # Find merge-base with that branch
-    mybranch = b4.git_get_current_branch()
+def get_rev_count(revrange: str, maxrevs: Optional[int] = 500) -> int:
+    # Check how many revisions there are between the fork-point and the current HEAD
+    gitargs = ['rev-list', revrange]
+    lines = b4.git_get_command_lines(None, gitargs)
+    # Check if this range is too large, if requested
+    if maxrevs and len(lines) > maxrevs:
+        raise RuntimeError('Too many commits in the range provided: %s' % len(lines))
+    return len(lines)
+
+
+def get_base_forkpoint(basebranch: str, mybranch: Optional[str] = None) -> str:
+    if mybranch is None:
+        mybranch = b4.git_get_current_branch()
     logger.debug('Finding the fork-point with %s', basebranch)
     gitargs = ['merge-base', '--fork-point', basebranch]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
         logger.critical('CRITICAL: Could not find common ancestor with %s', basebranch)
-        raise RuntimeError('Branches %s and %s have no common ancestors', basebranch, mybranch)
-    fp = lines[0]
-    logger.debug('Fork-point between %s and %s is %s', mybranch, basebranch, fp)
-    # Check how many revisions there are between the fork-point and the current HEAD
-    gitargs = ['rev-list', f'{fp}..']
-    lines = b4.git_get_command_lines(None, gitargs)
-    # Arbitrarily, set it to 1000
-    if len(lines) > 1000:
-        logger.critical('CRITICAL: Too many revisions between %s and current branch: %s', basebranch, len(lines))
-        raise RuntimeError('Branches %s and %s are unreasonable as ancestors', basebranch, mybranch)
+        raise RuntimeError('Branches %s and %s have no common ancestors' % (basebranch, mybranch))
+    forkpoint = lines[0]
+    logger.debug('Fork-point between %s and %s is %s', mybranch, basebranch, forkpoint)
 
-    return fp, len(lines)
+    return forkpoint
 
 
 def start_new_series(cmdargs: argparse.Namespace) -> None:
@@ -177,8 +174,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         logger.critical('CRITICAL: Unable to add your Signed-off-by: git returned no user.name or user.email')
         sys.exit(1)
 
-    cover = None
+    mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy()
+    cover = None
     cherry_range = None
     if cmdargs.new_series_name:
         basebranch = None
@@ -186,7 +184,6 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             cmdargs.fork_point = 'HEAD'
         else:
             # if our strategy is not "commit", then we need to know which branch we're using as base
-            mybranch = b4.git_get_current_branch()
             if strategy != 'commit':
                 gitargs = ['branch', '-v', '--contains', cmdargs.fork_point]
                 lines = b4.git_get_command_lines(None, gitargs)
@@ -218,18 +215,65 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         logger.info('Created new branch %s', branchname)
         seriesname = cmdargs.new_series_name
 
-    elif cmdargs.base_branch:
+    elif cmdargs.enroll_base:
+        basebranch = None
         branchname = b4.git_get_current_branch()
         seriesname = branchname
         slug = re.sub(r'\W+', '-', branchname).strip('-').lower()
-        basebranch = cmdargs.base_branch
+        enroll_base = cmdargs.enroll_base
+        # Is it a branch?
+        gitargs = ['show-ref', '--heads', enroll_base]
+        lines = b4.git_get_command_lines(None, gitargs)
+        if lines:
+            try:
+                forkpoint = get_base_forkpoint(enroll_base, mybranch)
+            except RuntimeError as ex:
+                logger.critical('CRITICAL: could not use %s as enrollment base:')
+                logger.critical('          %s', ex)
+                sys.exit(1)
+            basebranch = enroll_base
+        else:
+            # Check that that object exists
+            gitargs = ['rev-parse', '--verify', enroll_base]
+            ecode, out = b4.git_run_command(None, gitargs)
+            if ecode > 0:
+                logger.critical('CRITICAL: Could not find object: %s', enroll_base)
+                raise RuntimeError('Object %s not found' % enroll_base)
+            forkpoint = out.strip()
+            # check branches where this object lives
+            heads = b4.git_branch_contains(None, forkpoint)
+            if mybranch not in heads:
+                logger.critical('CRITICAL: object %s does not exist on current branch', enroll_base)
+                sys.exit(1)
+            if strategy != 'commit':
+                # Remove any branches starting with b4/
+                heads.remove(mybranch)
+                for head in list(heads):
+                    if head.startswith('b4/'):
+                        heads.remove(head)
+                if len(heads) > 1:
+                    logger.critical('CRITICAL: Multiple branches contain object %s, please pass a branch name as base',
+                                    enroll_base)
+                    logger.critical('          %s', ', '.join(heads))
+                    sys.exit(1)
+                if len(heads) < 1:
+                    logger.critical('CRITICAL: No other branch contains %s: cannot use as fork base', enroll_base)
+                    sys.exit(1)
+                basebranch = heads.pop()
+
         try:
-            forkpoint, commitcount = get_base_forkpoint(basebranch)
-        except RuntimeError:
+            commitcount = get_rev_count(f'{forkpoint}..')
+        except RuntimeError as ex:
+            logger.critical('CRITICAL: could not use %s as fork point:', enroll_base)
+            logger.critical('          %s', ex)
             sys.exit(1)
 
-        logger.info('Will track %s commits', commitcount)
-        if strategy == 'commit':
+        if commitcount:
+            logger.info('Will track %s commits', commitcount)
+        else:
+            logger.info('NOTE: No new commits since fork-point "%s"', enroll_base)
+
+        if commitcount and strategy == 'commit':
             gitargs = ['rev-parse', 'HEAD']
             lines = b4.git_get_command_lines(None, gitargs)
             if not lines:
@@ -481,6 +525,7 @@ def edit_cover() -> None:
 
 def get_series_start() -> str:
     strategy = get_cover_strategy()
+    forkpoint = None
     if strategy == 'commit':
         # Easy, we start at the cover letter commit
         return find_cover_commit()
@@ -494,18 +539,22 @@ def get_series_start() -> str:
         jdata = json.loads(tracking)
         basebranch = jdata['series']['base-branch']
         try:
-            forkpoint, commitcount = get_base_forkpoint(basebranch)
+            forkpoint = get_base_forkpoint(basebranch)
+            commitcount = get_rev_count(f'{forkpoint}..')
         except RuntimeError:
             sys.exit(1)
-        return forkpoint
+        logger.debug('series_start: %s, commitcount=%s', forkpoint, commitcount)
     if strategy == 'tip-commit':
         cover, tracking = load_cover()
         basebranch = tracking['series']['base-branch']
         try:
-            forkpoint, commitcount = get_base_forkpoint(basebranch)
+            forkpoint = get_base_forkpoint(basebranch)
+            commitcount = get_rev_count(f'{forkpoint}..HEAD~1')
         except RuntimeError:
             sys.exit(1)
-        return forkpoint
+        logger.debug('series_start: %s, commitcount=%s', forkpoint, commitcount)
+
+    return forkpoint
 
 
 def update_trailers(cmdargs: argparse.Namespace) -> None:
@@ -1033,7 +1082,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             gitargs = ['checkout', mybranch]
             ecode, out = b4.git_run_command(None, gitargs)
             if ecode > 0:
-                raise RuntimeError('Could not switch back to %s', mybranch)
+                raise RuntimeError('Could not switch back to %s' % mybranch)
         elif strategy == 'tip-commit':
             cover_commit = find_cover_commit()
             tagcommit = f'{cover_commit}~1'

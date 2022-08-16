@@ -266,8 +266,8 @@ def cmd():
     ag_prepn.add_argument('-f', '--fork-point', dest='fork_point',
                           help='When creating a new branch, use this fork point instead of HEAD')
     ag_prepe = sp_prep.add_argument_group('Enroll existing branch', 'Enroll existing branch for prep work')
-    ag_prepe.add_argument('-e', '--enroll-with-base', dest='base_branch',
-                          help='Enroll current branch, using the branch passed as parameter as base branch')
+    ag_prepe.add_argument('-e', '--enroll', dest='enroll_base',
+                          help='Enroll current branch, using the passed tag, branch, or commit as fork base')
     sp_prep.set_defaults(func=cmd_prep)
 
     # b4 trailers
