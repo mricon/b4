@@ -282,7 +282,7 @@ def cmd():
                         help='Apply trailers without email address match checking')
     sp_trl.set_defaults(func=cmd_trailers)
 
-    # ez-send
+    # b4 send
     sp_send = subparsers.add_parser('send', help='Submit your work for review on the mailing lists')
     sp_send.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', default=False,
                          help='Do not send, just dump out raw smtp messages to the stdout')
@@ -298,6 +298,11 @@ def cmd():
                          help='Remove yourself from the To: or Cc: list')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
                          help='Do not cryptographically sign your patches with patatt')
+    ag_sendh = sp_send.add_argument_group('Web submission', 'Authenticate with the web submission endpoint')
+    ag_sendh.add_argument('--web-auth-new', dest='auth_new', action='store_true', default=False,
+                          help='Initiate a new web authentication request')
+    ag_sendh.add_argument('--web-auth-verify', dest='auth_verify', metavar='VERIFY_TOKEN',
+                          help='Submit the token received via verification email')
     sp_send.set_defaults(func=cmd_send)
 
     cmdargs = parser.parse_args()
