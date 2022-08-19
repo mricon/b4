@@ -6,8 +6,56 @@ import logging
 import json
 import sqlalchemy as sa
 import patatt
+import smtplib
+import email
+import email.header
+import email.policy
+import re
+
+from configparser import ConfigParser, ExtendedInterpolation
+from string import Template
+from email import utils
+from typing import Tuple, Union
+
+from email import charset
+charset.add_charset('utf-8', None)
+emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
 DB_VERSION = 1
+
+# We'll make this configurable later
+TPT_VERIFY_SUBJECT = 'Web endpoint verification for ${identity}'
+TPT_VERIFY_BODY = '''Dear ${name}:
+
+Somebody, probably you, initiated a web endpoint verification routine
+for patch submissions at: ${myurl}
+
+If you have no idea what is going on, please ignore this message. 
+Otherwise, please follow instructions provided by your tool and paste
+the following string:
+
+${challenge}
+
+Happy patching!
+-- 
+Deet-doot-dot, I'm a bot
+https://korg.docs.kernel.org/
+'''
+
+DEFAULT_CFG = '''
+[main]
+  myname = Web Endpoint
+  myurl = http://localhost:8000/_b4_submit
+  dburl = sqlite:///:memory:
+  mydomains = kernel.org, linux.dev
+  dryrun = false
+[sendemail]
+  smtpserver = localhost
+  from = devnull@kernel.org
+[public-inbox]
+  repo = 
+  listid = patches.feeds.kernel.org
+'''
 
 logger = logging.getLogger('b4-send-receive')
 
@@ -15,8 +63,9 @@ logger = logging.getLogger('b4-send-receive')
 # noinspection PyBroadException, PyMethodMayBeStatic
 class SendReceiveListener(object):
 
-    def __init__(self, _engine):
+    def __init__(self, _engine, _config):
         self._engine = _engine
+        self._config = _config
         # You shouldn't use this in production
         if self._engine.driver == 'pysqlite':
             self._init_sa_db()
@@ -47,13 +96,50 @@ class SendReceiveListener(object):
         resp.content_type = falcon.MEDIA_TEXT
         resp.text = "We don't serve GETs here\n"
 
-    def send_error(self, resp, message):
+    def send_error(self, resp, message: str):
         resp.status = falcon.HTTP_500
         resp.text = json.dumps({'result': 'error', 'message': message})
 
-    def send_success(self, resp, message):
+    def send_success(self, resp, message: str):
         resp.status = falcon.HTTP_200
         resp.text = json.dumps({'result': 'success', 'message': message})
+
+    def get_smtp(self) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, None], Tuple[str, str]]:
+        sconfig = self._config['sendemail']
+        server = sconfig.get('smtpserver', 'localhost')
+        port = sconfig.get('smtpserverport', 0)
+        encryption = sconfig.get('smtpencryption')
+
+        logger.debug('Connecting to %s:%s', server, port)
+        # We only authenticate if we have encryption
+        if encryption:
+            if encryption in ('tls', 'starttls'):
+                # We do startssl
+                smtp = smtplib.SMTP(server, port)
+                # Introduce ourselves
+                smtp.ehlo()
+                # Start encryption
+                smtp.starttls()
+                # Introduce ourselves again to get new criteria
+                smtp.ehlo()
+            elif encryption in ('ssl', 'smtps'):
+                # We do TLS from the get-go
+                smtp = smtplib.SMTP_SSL(server, port)
+            else:
+                raise smtplib.SMTPException('Unclear what to do with smtpencryption=%s' % encryption)
+
+            # If we got to this point, we should do authentication.
+            auser = sconfig.get('smtpuser')
+            apass = sconfig.get('smtppass')
+            if auser and apass:
+                # Let any exceptions bubble up
+                smtp.login(auser, apass)
+        else:
+            # We assume you know what you're doing if you don't need encryption
+            smtp = smtplib.SMTP(server, port)
+
+        frompair = utils.getaddresses([sconfig.get('from')])[0]
+        return smtp, frompair
 
     def auth_new(self, jdata, resp):
         # Is it already authorized?
@@ -79,9 +165,33 @@ class SendReceiveListener(object):
         q = sa.insert(t_auth).values(identity=identity, selector=selector, pubkey=pubkey, challenge=cstr,
                                      verified=0)
         conn.execute(q)
-        # TODO: Actual mail sending
         logger.info('Challenge: %s', cstr)
-        self.send_success(resp, message='Challenge generated')
+        smtp, frompair = self.get_smtp()
+        cmsg = email.message.EmailMessage()
+        fromname, fromaddr = frompair
+        if len(fromname):
+            cmsg.add_header('From', f'{fromname} <{fromaddr}>')
+        else:
+            cmsg.add_header('From', fromaddr)
+        subject = Template(TPT_VERIFY_SUBJECT).safe_substitute({'identity': jdata.get('identity')})
+        cmsg.add_header('Subject', subject)
+        name = jdata.get('name', 'Anonymous Llama')
+        cmsg.add_header('To', f'{name} <{identity}>')
+        cmsg.add_header('Message-Id', utils.make_msgid('b4-verify'))
+        vals = {
+            'name': name,
+            'myurl': self._config['main'].get('myurl'),
+            'challenge': cstr,
+        }
+        body = Template(TPT_VERIFY_BODY).safe_substitute(vals)
+        cmsg.set_payload(body, charset='utf-8')
+        bdata = cmsg.as_bytes(policy=emlpolicy)
+        destaddrs = [identity]
+        alwaysbcc = self._config['main'].get('alwayscc')
+        if alwaysbcc:
+            destaddrs += [x[1] for x in utils.getaddresses(alwaysbcc)]
+        smtp.sendmail(fromaddr, [identity], bdata)
+        self.send_success(resp, message=f'Challenge generated and sent to {identity}')
 
     def validate_message(self, conn, t_auth, bdata, verified=1):
         # Returns auth_id of the matching record
@@ -161,6 +271,117 @@ class SendReceiveListener(object):
         conn.execute(q)
         self.send_success(resp, message='Authentication deleted')
 
+    def clean_header(self, hdrval):
+        if hdrval is None:
+            return ''
+
+        decoded = ''
+        for hstr, hcs in email.header.decode_header(hdrval):
+            if hcs is None:
+                hcs = 'utf-8'
+            try:
+                decoded += hstr.decode(hcs, errors='replace')
+            except LookupError:
+                # Try as utf-u
+                decoded += hstr.decode('utf-8', errors='replace')
+            except (UnicodeDecodeError, AttributeError):
+                decoded += hstr
+        new_hdrval = re.sub(r'\n?\s+', ' ', decoded)
+        return new_hdrval.strip()
+
+    def receive(self, jdata, resp):
+        servicename = self._config['main'].get('myname')
+        if not servicename:
+            servicename = 'Web Endpoint'
+        umsgs = jdata.get('messages')
+        if not umsgs:
+            self.send_error(resp, message='Missing the messages array')
+            return
+        msgs = list()
+        conn = self._engine.connect()
+        md = sa.MetaData()
+        t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
+        # First, validate all signatures
+        at = 0
+        for umsg in umsgs:
+            at += 1
+            auth_id = self.validate_message(conn, t_auth, umsg.encode())
+            if auth_id is None:
+                self.send_error(resp, message=f'Signature validation failed for message {at}')
+                return
+            msg = email.message_from_string(umsg)
+            msg.add_header('X-Endpoint-Received', f'by {servicename} with auth_id={auth_id}')
+            msgs.append(msg)
+
+        # All signatures verified. Prepare messages for sending.
+        cfgdomains = self._config['main'].get('mydomains')
+        if cfgdomains is not None:
+            mydomains = [x.strip() for x in cfgdomains.split(',')]
+        else:
+            mydomains = list()
+
+        smtp, frompair = self.get_smtp()
+
+        for msg in msgs:
+            # TODO: public-inbox writing at this point
+            subject = self.clean_header(msg.get('Subject'))
+            origfrom = self.clean_header(msg.get('From'))
+            origpair = utils.getaddresses([origfrom])[0]
+            origaddr = origpair[1]
+            # Does it match one of our domains
+            mydomain = False
+            for _domain in mydomains:
+                if origaddr.endswith(f'@{_domain}'):
+                    mydomain = True
+                    break
+            if mydomain:
+                fromaddr = origaddr
+            else:
+                fromaddr = frompair[1]
+                # We can't just send this as-is due to DMARC policies. Therefore, we set
+                # Reply-To and X-Original-From.
+                origname = origpair[0]
+                if not origname:
+                    origname = origpair[1]
+                msg.replace_header('From', f'{origname} via {servicename} <{fromaddr}>')
+
+                if msg.get('X-Original-From'):
+                    msg.replace_header('X-Original-From', origfrom)
+                else:
+                    msg.add_header('X-Original-From', origfrom)
+                if msg.get('Reply-To'):
+                    msg.replace_header('Reply-To', f'<{origpair[1]}>')
+                else:
+                    msg.add_header('Reply-To', f'<{origpair[1]}>')
+
+                # Does the subject start with [PATCH?
+                if subject.startswith('[PATCH '):
+                    body = msg.get_payload()
+                    # Parse it as a message and see if we get a From: header
+                    cmsg = email.message_from_string(body)
+                    if cmsg.get('From') is None:
+                        cmsg.add_header('From', origfrom)
+                        msg.set_payload(cmsg.as_string(policy=emlpolicy, maxheaderlen=0), charset='utf-8')
+
+            alldests = utils.getaddresses([str(x) for x in msg.get_all('to', [])])
+            alldests += utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+            alwaysbcc = self._config['main'].get('alwaysbcc')
+            if alwaysbcc:
+                alldests += utils.getaddresses([alwaysbcc])
+            destaddrs = {x[1] for x in alldests}
+
+            bdata = msg.as_string(policy=emlpolicy).encode()
+
+            if not self._config['main'].getboolean('dryrun'):
+                smtp.sendmail(fromaddr, list(destaddrs), bdata)
+                logger.info('Sent %s', subject)
+            else:
+                logger.info('---DRYRUN MSG START---')
+                logger.info(msg)
+                logger.info('---DRYRUN MSG END---')
+
+        self.send_success(resp, message=f'Sent {len(msgs)} messages')
+
     def on_post(self, req, resp):
         if not req.content_length:
             resp.status = falcon.HTTP_500
@@ -185,16 +406,29 @@ class SendReceiveListener(object):
         if action == 'auth-delete':
             self.auth_delete(jdata, resp)
             return
+        if action == 'receive':
+            self.receive(jdata, resp)
+            return
 
         resp.status = falcon.HTTP_500
         resp.content_type = falcon.MEDIA_TEXT
         resp.text = 'Unknown action: %s\n' % action
 
 
-app = falcon.App()
-dburl = os.getenv('DB_URL', 'sqlite:///:memory:')
+parser = ConfigParser(interpolation=ExtendedInterpolation())
+cfgfile = os.getenv('CONFIG')
+if cfgfile:
+    parser.read(cfgfile)
+else:
+    parser.read_string(DEFAULT_CFG)
+
+gpgbin = parser['main'].get('gpgbin')
+if gpgbin:
+    patatt.GPGBIN = gpgbin
+dburl = parser['main'].get('dburl')
 engine = sa.create_engine(dburl)
-srl = SendReceiveListener(engine)
+srl = SendReceiveListener(engine, parser)
+app = falcon.App()
 mp = os.getenv('MOUNTPOINT', '/_b4_submit')
 app.add_route(mp, srl)
 

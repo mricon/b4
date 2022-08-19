@@ -139,13 +139,7 @@ def auth_new(cmdargs: argparse.Namespace) -> None:
     }
     logger.info('Submitting new auth request to %s', endpoint)
     ses = b4.get_requests_session()
-    try:
-        res = ses.post(endpoint, json=req)
-        res.raise_for_status()
-    except Exception as ex:
-        logger.critical('CRITICAL: unable to send endpoint request')
-        logger.critical('          %s', ex)
-        sys.exit(1)
+    res = ses.post(endpoint, json=req)
     logger.info('---')
     if res.status_code == 200:
         try:
@@ -186,13 +180,7 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
     }
     logger.info('Submitting verification to %s', endpoint)
     ses = b4.get_requests_session()
-    try:
-        res = ses.post(endpoint, json=req)
-        res.raise_for_status()
-    except Exception as ex:
-        logger.critical('CRITICAL: unable to send endpoint request')
-        logger.critical('          %s', ex)
-        sys.exit(1)
+    res = ses.post(endpoint, json=req)
     logger.info('---')
     if res.status_code == 200:
         try:
@@ -1081,17 +1069,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     sign = True
     if cmdargs.no_sign or config.get('send-no-patatt-sign', '').lower() in {'yes', 'true', 'y'}:
         sign = False
-    identity = config.get('sendemail-identity')
-    try:
-        smtp, fromaddr = b4.get_smtp(identity, dryrun=cmdargs.dryrun)
-    except Exception as ex:  # noqa
-        logger.critical('Failed to configure the smtp connection:')
-        logger.critical(ex)
-        sys.exit(1)
 
-    counter = 0
     cover_msgid = None
     # TODO: Need to send obsoleted-by follow-ups, just need to figure out where.
+    send_msgs = list()
     for commit, msg in patches:
         if not msg:
             continue
@@ -1106,27 +1087,40 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
             msg.add_header('Cc', b4.format_addrs(allcc))
-        if cmdargs.output_dir:
-            subject = msg.get('Subject', '')
-            ls = b4.LoreSubject(subject)
-            filen = '%s.eml' % ls.get_slug(sep='-')
-            logger.info('  %s', filen)
-            write_to = os.path.join(cmdargs.output_dir, filen)
-        else:
-            write_to = None
+        if not cmdargs.output_dir:
             logger.info('  %s', re.sub(r'\s+', ' ', msg.get('Subject')))
 
-        if b4.send_smtp(smtp, msg, fromaddr=fromaddr, destaddrs=alldests, patatt_sign=sign,
-                        dryrun=cmdargs.dryrun, write_to=write_to):
-            counter += 1
+        send_msgs.append(msg)
+
+    if config.get('send-endpoint-web'):
+        # Web endpoint always requires signing
+        if not sign:
+            logger.critical('CRITICAL: Web endpoint is defined for sending, but signing is turned off')
+            logger.critical('          Please re-enable signing or use SMTP')
+            sys.exit(1)
+
+        sent = b4.send_mail(None, send_msgs, fromaddr=None, destaddrs=None, patatt_sign=True,
+                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir)
+    else:
+        identity = config.get('sendemail-identity')
+        try:
+            smtp, fromaddr = b4.get_smtp(identity, dryrun=cmdargs.dryrun)
+        except Exception as ex:  # noqa
+            logger.critical('Failed to configure the smtp connection:')
+            logger.critical(ex)
+            sys.exit(1)
+
+        sent = b4.send_mail(smtp, send_msgs, fromaddr=fromaddr, destaddrs=alldests, patatt_sign=sign,
+                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir)
 
     logger.info('---')
     if cmdargs.dryrun:
-        logger.info('DRYRUN: Would have sent %s messages', counter)
+        logger.info('DRYRUN: Would have sent %s messages', len(send_msgs))
         return
     else:
-        logger.info('Sent %s messages', counter)
+        logger.info('Sent %s messages', sent)
 
+    # TODO: need to make the reroll process smoother
     mybranch = b4.git_get_current_branch()
     revision = tracking['series']['revision']
 

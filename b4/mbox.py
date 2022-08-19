@@ -456,6 +456,7 @@ def thanks_record_am(lser, cherrypick=None):
     allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
     allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
 
+    # TODO: check for reply-to and x-original-from
     out = {
         'msgid': lmsg.msgid,
         'subject': lmsg.full_subject,

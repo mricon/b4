@@ -30,7 +30,7 @@ import requests
 
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, TextIO, Union
+from typing import Optional, Tuple, Set, List, TextIO, Union, Sequence
 
 from email import charset
 charset.add_charset('utf-8', None)
@@ -1210,9 +1210,27 @@ class LoreMessage:
                 if attpolicy == 'hardfail':
                     critical = True
             else:
+                passing = False
                 if not checkmark:
                     checkmark = attestor.checkmark
                 if attestor.check_identity(self.fromemail):
+                    passing = True
+                else:
+                    # Do we have an x-original-from?
+                    xofh = self.msg.get('X-Original-From')
+                    if xofh:
+                        logger.debug('Using X-Original-From for identity check')
+                        xpair = email.utils.getaddresses([xofh])[0]
+                        if attestor.check_identity(xpair[1]):
+                            passing = True
+                            # Fix our fromname and fromemail, mostly for thanks-tracking
+                            self.fromname = xpair[0]
+                            self.fromemail = xpair[1]
+                            # Drop the reply-to header if it's exactly the same
+                            for header in list(self.msg._headers):  # noqa
+                                if header[0].lower() == 'reply-to' and header[1].find(xpair[1]) > 0:
+                                    self.msg._headers.remove(header)  # noqa
+                if passing:
                     trailers.append('%s Signed: %s' % (attestor.checkmark, attestor.trailer))
                 else:
                     trailers.append('%s Signed: %s (From: %s)' % (attestor.checkmark, attestor.trailer,
@@ -2858,62 +2876,100 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
                 logger.debug('Patchwork REST error: %s', ex)
 
 
-def send_smtp(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msg: email.message.Message,
-              fromaddr: str, destaddrs: Optional[Union[Tuple, Set]] = None,
+def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[email.message.Message],
+              fromaddr: Optional[str], destaddrs: Optional[Union[set, list]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
               maxheaderlen: Optional[int] = None,
-              write_to: Optional[str] = None) -> bool:
+              output_dir: Optional[str] = None) -> Optional[int]:
 
-    if write_to is not None:
+    tosend = list()
+    if output_dir is not None:
         dryrun = True
-    if not msg.get('X-Mailer'):
-        msg.add_header('X-Mailer', f'b4 {__VERSION__}')
-    msg.set_charset('utf-8')
-    msg.replace_header('Content-Transfer-Encoding', '8bit')
-    msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
-    # Python's sendmail implementation seems to have some logic problems where 8-bit messages are involved.
-    # As far as I understand the difference between 8BITMIME (supported by nearly all smtp servers) and
-    # SMTPUTF8 (supported by very few), SMTPUTF8 is only required when the addresses specified in either
-    # "MAIL FROM" or "RCPT TO" lines of the _protocol exchange_ themselves have 8bit characters, not
-    # anything in the From: header of the DATA payload. Python's smtplib seems to always try to encode
-    # strings as ascii regardless of what was policy was specified.
-    # Work around this by getting the payload as string and then encoding to bytes ourselves.
-    if maxheaderlen is None:
-        if dryrun:
-            # Make it fit the terminal window, but no wider than 120 minus visual padding
-            ts = shutil.get_terminal_size((120, 20))
-            maxheaderlen = ts.columns - 8
-            if maxheaderlen > 112:
-                maxheaderlen = 112
-        else:
-            # Use a sane-ish default (we don't need to stick to 80, but
-            # we need to make sure it's shorter than 255)
-            maxheaderlen = 120
+    for msg in msgs:
+        if not msg.get('X-Mailer'):
+            msg.add_header('X-Mailer', f'b4 {__VERSION__}')
+        msg.set_charset('utf-8')
+        msg.replace_header('Content-Transfer-Encoding', '8bit')
+        msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
+        # Python's sendmail implementation seems to have some logic problems where 8-bit messages are involved.
+        # As far as I understand the difference between 8BITMIME (supported by nearly all smtp servers) and
+        # SMTPUTF8 (supported by very few), SMTPUTF8 is only required when the addresses specified in either
+        # "MAIL FROM" or "RCPT TO" lines of the _protocol exchange_ themselves have 8bit characters, not
+        # anything in the From: header of the DATA payload. Python's smtplib seems to always try to encode
+        # strings as ascii regardless of what was policy was specified.
+        # Work around this by getting the payload as string and then encoding to bytes ourselves.
+        if maxheaderlen is None:
+            if dryrun:
+                # Make it fit the terminal window, but no wider than 120 minus visual padding
+                ts = shutil.get_terminal_size((120, 20))
+                maxheaderlen = ts.columns - 8
+                if maxheaderlen > 112:
+                    maxheaderlen = 112
+            else:
+                # Use a sane-ish default (we don't need to stick to 80, but
+                # we need to make sure it's shorter than 255)
+                maxheaderlen = 120
 
-    emldata = msg.as_string(maxheaderlen=maxheaderlen)
-    # Force compliant eols
-    emldata = re.sub(r'\r\n|\n|\r(?!\n)', '\r\n', emldata)
-    bdata = emldata.encode()
-    if patatt_sign:
-        import patatt
-        # patatt.logger = logger
-        bdata = patatt.rfc2822_sign(bdata)
-    if dryrun or smtp is None:
-        if write_to:
-            with open(write_to, 'wb') as fh:
-                fh.write(bdata.replace(b'\r\n', b'\n'))
-            return True
-        logger.info('    --- DRYRUN: message follows ---')
-        logger.info('    | ' + bdata.decode().rstrip().replace('\n', '\n    | '))
-        logger.info('    --- DRYRUN: message ends ---')
-        return True
-    if not destaddrs:
-        alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
-        alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
-        destaddrs = {x[1] for x in alldests}
-    smtp.sendmail(fromaddr, destaddrs, bdata)
-    # TODO: properly catch exceptions on sending
-    return True
+        emldata = msg.as_string(maxheaderlen=maxheaderlen)
+        # Force compliant eols
+        emldata = re.sub(r'\r\n|\n|\r(?!\n)', '\r\n', emldata)
+        bdata = emldata.encode()
+        if patatt_sign:
+            import patatt
+            # patatt.logger = logger
+            bdata = patatt.rfc2822_sign(bdata)
+        if dryrun:
+            if output_dir:
+                subject = msg.get('Subject', '')
+                ls = LoreSubject(subject)
+                filen = '%s.eml' % ls.get_slug(sep='-')
+                logger.info('  %s', filen)
+                write_to = os.path.join(output_dir, filen)
+                with open(write_to, 'wb') as fh:
+                    fh.write(bdata)
+                continue
+            logger.info('    --- DRYRUN: message follows ---')
+            logger.info('    | ' + bdata.decode().rstrip().replace('\n', '\n    | '))
+            logger.info('    --- DRYRUN: message ends ---')
+            continue
+        if not destaddrs:
+            alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
+            alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+            destaddrs = {x[1] for x in alldests}
+
+        tosend.append((destaddrs, bdata))
+
+    if not len(tosend):
+        return 0
+
+    # Do we have an endpoint defined?
+    config = get_main_config()
+    endpoint = config.get('send-endpoint-web')
+    if endpoint:
+        logger.info('Sending via web endpoint %s', endpoint)
+        req = {
+            'action': 'receive',
+            'messages': [x[1].decode() for x in tosend],
+        }
+        ses = get_requests_session()
+        res = ses.post(endpoint, json=req)
+        if res.status_code == 200:
+            try:
+                rdata = res.json()
+                if rdata.get('result') == 'success':
+                    return len(tosend)
+            except Exception as ex:  # noqa
+                logger.critical('Odd response from the endpoint: %s', res.text)
+
+        logger.critical('500 response from the endpoint: %s', res.text)
+        return None
+
+    if smtp:
+        sent = 0
+        for destaddrs, bdata in tosend:
+            smtp.sendmail(fromaddr, destaddrs, bdata)
+            sent += 1
+        return sent
 
 
 def git_get_current_branch(gitdir: Optional[str] = None, short: bool = True) -> Optional[str]:
