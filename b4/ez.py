@@ -650,9 +650,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             logger.critical('CRITICAL: could not find any commits where committer=%s', myemail)
             sys.exit(1)
 
-        prevparent = None
-        end = None
-        commit = None
+        prevparent = prevcommit = end = None
         for line in lines:
             commit, parent = line.split()
             if end is None:
@@ -660,10 +658,13 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             if prevparent is None:
                 prevparent = parent
                 continue
+            if prevcommit is None:
+                prevcommit = commit
             if prevparent != commit:
                 break
             prevparent = parent
-        start = f'{commit}~1'
+            prevcommit = commit
+        start = f'{prevcommit}~1'
     else:
         logger.critical('CRITICAL: Please specify -F msgid to look up trailers from remote.')
         sys.exit(1)
