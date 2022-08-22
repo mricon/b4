@@ -973,16 +973,22 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if not cmdargs.no_auto_to_cc:
         logger.info('Populating the To: and Cc: fields with automatically collected addresses')
 
-        # Use a sane tocmd and cccmd for the kernel
-        # TODO: make it definable in the config
+        topdir = b4.git_get_toplevel()
+        # Use sane tocmd and cccmd defaults if we find a get_maintainer.pl
         tocmdstr = tocmd = None
         cccmdstr = cccmd = None
-        topdir = b4.git_get_toplevel()
         getm = os.path.join(topdir, 'scripts', 'get_maintainer.pl')
-        if os.access(getm, os.X_OK):
-            logger.info('Using kernel get_maintainer.pl for to and cc lists')
+        if config.get('send-auto-to-cmd'):
+            tocmdstr = config.get('send-auto-to-cmd')
+        elif os.access(getm, os.X_OK):
+            logger.info('Invoking get_maintainer.pl for To: addresses')
             tocmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol'
+        if config.get('send-auto-cc-cmd'):
+            cccmdstr = config.get('send-auto-cc-cmd')
+        elif os.access(getm, os.X_OK):
+            logger.info('Invoking get_maintainer.pl for Cc: addresses')
             cccmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom'
+
         if tocmdstr:
             sp = shlex.shlex(tocmdstr, posix=True)
             sp.whitespace_split = True
