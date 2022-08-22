@@ -86,7 +86,7 @@ def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     return endpoint, myname, myemail, selector, algo, keydata
 
 
-def auth_new(cmdargs: argparse.Namespace) -> None:
+def auth_new() -> None:
     try:
         endpoint, myname, myemail, selector, algo, keydata = get_auth_configs()
     except patatt.NoKeyError as ex:
@@ -430,7 +430,6 @@ def load_cover(strip_comments: bool = False) -> Tuple[str, dict]:
         tracking = json.loads(bcfg.get('b4-tracking', '{}'))
 
     else:
-        # TODO: implement
         logger.critical('Not yet supported for %s cover strategy', strategy)
         sys.exit(0)
 
@@ -624,8 +623,6 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
 
     ignore_commits = None
     # If we are in an b4-prep branch, we start from the beginning of the series
-    # oterwise, we start at the first commit where we're the committer since 3.months
-    # TODO: consider making that settable?
     if is_prep_branch():
         start = get_series_start()
         end = 'HEAD'
@@ -642,9 +639,9 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         changeid = None
         myemail = usercfg['email']
         # There doesn't appear to be a great way to find the first commit
-        # where we're NOT the committer, so we get all commits since "3.months" where
+        # where we're NOT the committer, so we get all commits since range specified where
         # we're the committer and stop at the first non-contiguous parent
-        gitargs = ['log', '-F', f'--committer={myemail}', '--since=3.months', '--format=%H %P']
+        gitargs = ['log', '-F', f'--committer={myemail}', '--since', cmdargs.since, '--format=%H %P']
         lines = b4.git_get_command_lines(None, gitargs)
         if not lines:
             logger.critical('CRITICAL: could not find any commits where committer=%s', myemail)
@@ -922,7 +919,7 @@ def format_patch(output_dir: str) -> None:
 
 def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.auth_new:
-        auth_new(cmdargs)
+        auth_new()
         return
     if cmdargs.auth_verify:
         auth_verify(cmdargs)

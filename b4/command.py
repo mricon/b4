@@ -274,12 +274,14 @@ def cmd():
     sp_trl = subparsers.add_parser('trailers', help='Operate on trailers received for mailing list reviews')
     sp_trl.add_argument('-u', '--update', action='store_true', default=False,
                         help='Update branch commits with latest received trailers')
-    sp_trl.add_argument('-F', '--trailers-from', dest='msgid',
-                        help='Look for trailers in the thread with this msgid instead of using the series change-id')
     sp_trl.add_argument('-s', '--signoff', action='store_true', default=False,
                         help='Add my Signed-off-by trailer, if not already present')
     sp_trl.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
                         help='Apply trailers without email address match checking')
+    sp_trl.add_argument('-F', '--trailers-from', dest='msgid',
+                        help='Look for trailers in the thread with this msgid instead of using the series change-id')
+    sp_trl.add_argument('--since', default='1.month',
+                        help='The --since option to use with -F when auto-matching patches (default=1.month)')
     sp_trl.set_defaults(func=cmd_trailers)
 
     # b4 send
