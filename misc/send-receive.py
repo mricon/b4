@@ -11,6 +11,8 @@ import email
 import email.header
 import email.policy
 import re
+import ezpi
+import copy
 
 from configparser import ConfigParser, ExtendedInterpolation
 from string import Template
@@ -310,6 +312,7 @@ class SendReceiveListener(object):
         t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         # First, validate all signatures
         at = 0
+        mustdest = self._config['main'].get('mustdest')
         for umsg in umsgs:
             at += 1
             auth_id = self.validate_message(conn, t_auth, umsg.encode())
@@ -337,8 +340,26 @@ class SendReceiveListener(object):
                 self.send_error(resp, message='This service only accepts patches')
                 return
 
+            # Make sure that From, Date, Subject, and Message-Id headers exist
+            if not msg.get('From') or not msg.get('Date') or not msg.get('Subject') or not msg.get('Message-Id'):
+                self.send_error(resp, message='Message is missing some required headers.')
+                return
+
+            # Check that To/Cc have a mailing list we recognize
+            alldests = utils.getaddresses([str(x) for x in msg.get_all('to', [])])
+            alldests += utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+            destaddrs = {x[1] for x in alldests}
+            if mustdest:
+                matched = False
+                for destaddr in destaddrs:
+                    if re.search(mustdest, destaddr, flags=re.I):
+                        matched = True
+                        break
+                if not matched:
+                    self.send_error(resp, message='Destinations must include a mailing list we recognize.')
+                    return
             msg.add_header('X-Endpoint-Received', f'by {servicename} with auth_id={auth_id}')
-            msgs.append(msg)
+            msgs.append((msg, destaddrs))
 
         # All signatures verified. Prepare messages for sending.
         cfgdomains = self._config['main'].get('mydomains')
@@ -348,9 +369,27 @@ class SendReceiveListener(object):
             mydomains = list()
 
         smtp, frompair = self.get_smtp()
+        bccaddrs = set()
+        _bcc = self._config['main'].get('alwaysbcc')
+        if _bcc:
+            bccaddrs.update([x[1] for x in utils.getaddresses([_bcc])])
 
-        for msg in msgs:
-            # TODO: public-inbox writing at this point
+        repo = listid = None
+        if 'public-inbox' in self._config and self._config['public-inbox'].get('repo'):
+            repo = self._config['public-inbox'].get('repo')
+            listid = self._config['public-inbox'].get('listid')
+            if not os.path.isdir(repo):
+                repo = None
+
+        for msg, destaddrs in msgs:
+            if repo:
+                pmsg = copy.deepcopy(msg)
+                if pmsg.get('List-Id'):
+                    pmsg.replace_header('List-Id', listid)
+                else:
+                    pmsg.add_header('List-Id', listid)
+                ezpi.add_rfc822(repo, pmsg)
+
             subject = self.clean_header(msg.get('Subject'))
             origfrom = self.clean_header(msg.get('From'))
             origpair = utils.getaddresses([origfrom])[0]
@@ -388,23 +427,8 @@ class SendReceiveListener(object):
                     cmsg.add_header('From', origfrom)
                     msg.set_payload(cmsg.as_string(policy=emlpolicy, maxheaderlen=0), charset='utf-8')
 
-            alldests = utils.getaddresses([str(x) for x in msg.get_all('to', [])])
-            alldests += utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
-
-            alwaysbcc = self._config['main'].get('alwaysbcc')
-            if alwaysbcc:
-                alldests += utils.getaddresses([alwaysbcc])
-            destaddrs = {x[1] for x in alldests}
-            mustdest = self._config['main'].get('mustdest')
-            if mustdest:
-                matched = False
-                for destaddr in destaddrs:
-                    if re.search(mustdest, destaddr, flags=re.I):
-                        matched = True
-                        break
-                if not matched:
-                    self.send_error(resp, message='Destinations must include a mailing list we recognize.')
-                    return
+            if bccaddrs:
+                destaddrs.update(bccaddrs)
 
             bdata = msg.as_string(policy=emlpolicy).encode()
 
@@ -416,6 +440,9 @@ class SendReceiveListener(object):
                 logger.info(msg)
                 logger.info('---DRYRUN MSG END---')
 
+        if repo:
+            # run it once after writing all messages
+            ezpi.run_hook(repo)
         self.send_success(resp, message=f'Sent {len(msgs)} messages')
 
     def on_post(self, req, resp):
