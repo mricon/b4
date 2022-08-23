@@ -916,8 +916,8 @@ class LoreMessage:
         if self.date.tzinfo is None:
             self.date = self.date.replace(tzinfo=datetime.timezone.utc)
 
-        diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', re.M | re.I)
-        diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', re.M | re.I)
+        diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
+        diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 
         # walk until we find the first text/plain part
         mcharset = self.msg.get_content_charset()
@@ -2954,16 +2954,17 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         }
         ses = get_requests_session()
         res = ses.post(endpoint, json=req)
-        if res.status_code == 200:
-            try:
-                rdata = res.json()
-                if rdata.get('result') == 'success':
-                    return len(tosend)
-            except Exception as ex:  # noqa
-                logger.critical('Odd response from the endpoint: %s', res.text)
+        try:
+            rdata = res.json()
+            if rdata.get('result') == 'success':
+                return len(tosend)
+        except Exception as ex:  # noqa
+            logger.critical('Odd response from the endpoint: %s', res.text)
+            return 0
 
-        logger.critical('500 response from the endpoint: %s', res.text)
-        return None
+        if rdata.get('result') == 'error':
+            logger.critical('Error from endpoint: %s', rdata.get('message'))
+            return 0
 
     if smtp:
         sent = 0

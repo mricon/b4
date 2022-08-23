@@ -821,7 +821,7 @@ def print_pretty_addrs(addrs: list, hdrname: str) -> None:
             logger.info('    %s', b4.format_addrs([addr]))
 
 
-def get_prep_branch_as_patches(prefixes: Optional[list] = None,
+def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
                                movefrom: bool = True,
                                thread: bool = True) -> List[Tuple[str, email.message.Message]]:
     cover, tracking = load_cover(strip_comments=True)
@@ -936,6 +936,12 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     trailers = set()
     parts = b4.LoreMessage.get_body_parts(cover)
     trailers.update(parts[2])
+
+    prefixes = cmdargs.prefixes
+    if cmdargs.prefixes is None:
+        prefixes = list()
+    if cmdargs.resend:
+        prefixes.append('RESEND')
 
     try:
         patches = get_prep_branch_as_patches(prefixes=cmdargs.prefixes)
@@ -1121,13 +1127,18 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.dryrun:
         logger.info('DRYRUN: Would have sent %s messages', len(send_msgs))
         return
-    else:
-        logger.info('Sent %s messages', sent)
+    if not sent:
+        logger.critical('CRITICAL: Was not able to send messages.')
+        sys.exit(1)
 
-    # TODO: need to make the reroll process smoother
+    logger.info('Sent %s messages', sent)
+
+    if cmdargs.resend:
+        logger.debug('Not updating cover/tracking on resend')
+        return
+
     mybranch = b4.git_get_current_branch()
     revision = tracking['series']['revision']
-
     try:
         strategy = get_cover_strategy()
         if strategy == 'commit':
@@ -1195,10 +1206,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if vrev not in tracking['series']['history']:
         tracking['series']['history'][vrev] = list()
     tracking['series']['history'][vrev].append(cover_msgid)
-    if cmdargs.prefixes and 'RESEND' in cmdargs.prefixes:
-        logger.info('Not incrementing current revision due to RESEND')
-        store_cover(cover, tracking)
-        return
 
     oldrev = tracking['series']['revision']
     newrev = oldrev + 1

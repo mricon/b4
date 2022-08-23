@@ -290,14 +290,16 @@ def cmd():
                          help='Do not send, just dump out raw smtp messages to the stdout')
     sp_send.add_argument('-o', '--output-dir',
                          help='Do not send, write raw messages to this directory (forces --dry-run)')
-    sp_send.add_argument('--prefixes', nargs='+', choices=['RFC', 'WIP', 'RESEND'],
-                         help='Prefixes to add to PATCH (e.g. RFC, WIP, RESEND)')
+    sp_send.add_argument('--prefixes', nargs='+',
+                         help='Prefixes to add to PATCH (e.g. RFC, WIP)')
     sp_send.add_argument('--no-auto-to-cc', action='store_true', default=False,
                          help='Do not automatically collect To: and Cc: addresses')
     sp_send.add_argument('--to', nargs='+', help='Addresses to add to the To: list')
     sp_send.add_argument('--cc', nargs='+', help='Addresses to add to the Cc: list')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,
                          help='Remove yourself from the To: or Cc: list')
+    sp_send.add_argument('--resend', action='store_true', default=False,
+                         help='This is a resend of a previously sent series')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
                          help='Do not cryptographically sign your patches with patatt')
     ag_sendh = sp_send.add_argument_group('Web submission', 'Authenticate with the web submission endpoint')
