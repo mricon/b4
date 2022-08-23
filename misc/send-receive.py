@@ -42,12 +42,15 @@ Deet-doot-dot, I'm a bot
 https://korg.docs.kernel.org/
 '''
 
-DEFAULT_CFG = '''
+DEFAULT_CFG = r'''
 [main]
   myname = Web Endpoint
   myurl = http://localhost:8000/_b4_submit
   dburl = sqlite:///:memory:
   mydomains = kernel.org, linux.dev
+  # One of the To: or Cc: addrs must match this regex
+  # (to ensure that the message was intended to go to mailing lists)
+  mustdest = .*@(vger\.kernel\.org|lists\.linux\.dev|lists\.infradead\.org)
   dryrun = false
 [sendemail]
   smtpserver = localhost
@@ -297,6 +300,10 @@ class SendReceiveListener(object):
         if not umsgs:
             self.send_error(resp, message='Missing the messages array')
             return
+
+        diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
+        diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
+
         msgs = list()
         conn = self._engine.connect()
         md = sa.MetaData()
@@ -310,6 +317,26 @@ class SendReceiveListener(object):
                 self.send_error(resp, message=f'Signature validation failed for message {at}')
                 return
             msg = email.message_from_string(umsg)
+            # Some quick sanity checking:
+            # - Subject has to start with [PATCH
+            # - Content-type may ONLY be text/plain
+            # - Has to include a diff or a diffstat
+            passes = True
+            if not msg.get('Subject', '').startswith('[PATCH '):
+                passes = False
+            if passes:
+                cte = msg.get_content_type()
+                if cte.lower() != 'text/plain':
+                    passes = False
+            if passes:
+                payload = msg.get_payload()
+                if not (diffre.search(payload) or diffstatre.search(payload)):
+                    passes = False
+
+            if not passes:
+                self.send_error(resp, message='This service only accepts patches')
+                return
+
             msg.add_header('X-Endpoint-Received', f'by {servicename} with auth_id={auth_id}')
             msgs.append(msg)
 
@@ -354,21 +381,30 @@ class SendReceiveListener(object):
                 else:
                     msg.add_header('Reply-To', f'<{origpair[1]}>')
 
-                # Does the subject start with [PATCH?
-                if subject.startswith('[PATCH '):
-                    body = msg.get_payload()
-                    # Parse it as a message and see if we get a From: header
-                    cmsg = email.message_from_string(body)
-                    if cmsg.get('From') is None:
-                        cmsg.add_header('From', origfrom)
-                        msg.set_payload(cmsg.as_string(policy=emlpolicy, maxheaderlen=0), charset='utf-8')
+                body = msg.get_payload()
+                # Parse it as a message and see if we get a From: header
+                cmsg = email.message_from_string(body)
+                if cmsg.get('From') is None:
+                    cmsg.add_header('From', origfrom)
+                    msg.set_payload(cmsg.as_string(policy=emlpolicy, maxheaderlen=0), charset='utf-8')
 
             alldests = utils.getaddresses([str(x) for x in msg.get_all('to', [])])
             alldests += utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+
             alwaysbcc = self._config['main'].get('alwaysbcc')
             if alwaysbcc:
                 alldests += utils.getaddresses([alwaysbcc])
             destaddrs = {x[1] for x in alldests}
+            mustdest = self._config['main'].get('mustdest')
+            if mustdest:
+                matched = False
+                for destaddr in destaddrs:
+                    if re.search(mustdest, destaddr, flags=re.I):
+                        matched = True
+                        break
+                if not matched:
+                    self.send_error(resp, message='Destinations must include a mailing list we recognize.')
+                    return
 
             bdata = msg.as_string(policy=emlpolicy).encode()
 
