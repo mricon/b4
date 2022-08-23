@@ -1104,7 +1104,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         sent = b4.send_mail(None, send_msgs, fromaddr=None, destaddrs=None, patatt_sign=True,
-                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir)
+                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=True)
     else:
         identity = config.get('sendemail-identity')
         try:
@@ -1115,7 +1115,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         sent = b4.send_mail(smtp, send_msgs, fromaddr=fromaddr, destaddrs=alldests, patatt_sign=sign,
-                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir)
+                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=False)
 
     logger.info('---')
     if cmdargs.dryrun:

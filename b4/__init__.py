@@ -2879,8 +2879,8 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
 def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[email.message.Message],
               fromaddr: Optional[str], destaddrs: Optional[Union[set, list]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
-              maxheaderlen: Optional[int] = None,
-              output_dir: Optional[str] = None) -> Optional[int]:
+              maxheaderlen: Optional[int] = None, output_dir: Optional[str] = None,
+              use_web_endpoint: bool = False) -> Optional[int]:
 
     tosend = list()
     if output_dir is not None:
@@ -2945,7 +2945,8 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
     # Do we have an endpoint defined?
     config = get_main_config()
     endpoint = config.get('send-endpoint-web')
-    if endpoint:
+    if use_web_endpoint and endpoint:
+        logger.info('---')
         logger.info('Sending via web endpoint %s', endpoint)
         req = {
             'action': 'receive',
