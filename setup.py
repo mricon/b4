@@ -46,7 +46,7 @@ setup(
         'dkimpy>=1.0,<2.0',
         'patatt>=0.5,<2.0',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.8',
     entry_points={
         'console_scripts': [
             'b4=b4.command:cmd'
