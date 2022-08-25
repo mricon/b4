@@ -755,7 +755,7 @@ def main(cmdargs):
 
     msgid, msgs = get_msgs(cmdargs)
     if not msgs:
-        return
+        sys.exit(1)
 
     if len(msgs) and cmdargs.checknewer:
         msgs = get_extra_series(msgs, direction=1, useproject=cmdargs.useproject)
