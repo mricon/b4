@@ -944,7 +944,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         prefixes.append('RESEND')
 
     try:
-        patches = get_prep_branch_as_patches(prefixes=cmdargs.prefixes)
+        patches = get_prep_branch_as_patches(prefixes=prefixes)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
