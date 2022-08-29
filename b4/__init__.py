@@ -2911,8 +2911,6 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
                 maxheaderlen = 120
 
         emldata = msg.as_string(maxheaderlen=maxheaderlen)
-        # Force compliant eols
-        emldata = re.sub(r'\r\n|\n|\r(?!\n)', '\r\n', emldata)
         bdata = emldata.encode()
         if patatt_sign:
             import patatt
@@ -2969,6 +2967,8 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
     if smtp:
         sent = 0
         for destaddrs, bdata in tosend:
+            # Force compliant eols
+            bdata = re.sub(rb'\r\n|\n|\r(?!\n)', b'\r\n', bdata)
             smtp.sendmail(fromaddr, destaddrs, bdata)
             sent += 1
         return sent
