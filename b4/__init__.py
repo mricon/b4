@@ -2755,11 +2755,14 @@ def read_template(tptfile):
 
 def get_smtp(identity: Optional[str] = None,
              dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, None], str]:
+    # Get the default settings first
+    _basecfg = get_config_from_git(r'sendemail\.[^.]+$')
     if identity:
-        sconfig = get_config_from_git(rf'sendemail\.{identity}\..*')
+        # Use this identity to override what we got from the default one
+        sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', defaults=_basecfg)
         sectname = f'sendemail.{identity}'
     else:
-        sconfig = get_config_from_git(rf'sendemail\..*')
+        sconfig = _basecfg
         sectname = 'sendemail'
     if not len(sconfig):
         raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
