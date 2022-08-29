@@ -2,7 +2,9 @@
 # noinspection PyUnresolvedReferences
 import falcon
 import os
+import sys
 import logging
+import logging.handlers
 import json
 import sqlalchemy as sa
 import patatt
@@ -25,58 +27,39 @@ emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length
 
 DB_VERSION = 1
 
-# We'll make this configurable later
-TPT_VERIFY_SUBJECT = 'Web endpoint verification for ${identity}'
-TPT_VERIFY_BODY = '''Dear ${name}:
-
-Somebody, probably you, initiated a web endpoint verification routine
-for patch submissions at: ${myurl}
-
-If you have no idea what is going on, please ignore this message. 
-Otherwise, please follow instructions provided by your tool and paste
-the following string:
-
-${challenge}
-
-Happy patching!
--- 
-Deet-doot-dot, I'm a bot
-https://korg.docs.kernel.org/
-'''
-
-DEFAULT_CFG = r'''
-[main]
-  myname = Web Endpoint
-  myurl = http://localhost:8000/_b4_submit
-  dburl = sqlite:///:memory:
-  mydomains = kernel.org, linux.dev
-  # One of the To: or Cc: addrs must match this regex
-  # (to ensure that the message was intended to go to mailing lists)
-  mustdest = .*@(vger\.kernel\.org|lists\.linux\.dev|lists\.infradead\.org)
-  dryrun = false
-[sendemail]
-  smtpserver = localhost
-  from = devnull@kernel.org
-[public-inbox]
-  repo = 
-  listid = patches.feeds.kernel.org
-'''
-
 logger = logging.getLogger('b4-send-receive')
+logger.setLevel(logging.DEBUG)
 
 
 # noinspection PyBroadException, PyMethodMayBeStatic
 class SendReceiveListener(object):
 
-    def __init__(self, _engine, _config):
+    def __init__(self, _engine, _config) -> None:
         self._engine = _engine
         self._config = _config
         # You shouldn't use this in production
         if self._engine.driver == 'pysqlite':
             self._init_sa_db()
+        logfile = _config['main'].get('logfile')
+        loglevel = _config['main'].get('loglevel', 'info')
+        if logfile:
+            self._init_logger(logfile, loglevel)
 
-    def _init_sa_db(self):
-        logger.info('Creating tables')
+    def _init_logger(self, logfile: str, loglevel: str) -> None:
+        global logger
+        lch = logging.handlers.WatchedFileHandler(os.path.expanduser(logfile))
+        lfmt = logging.Formatter('[%(process)d] %(asctime)s - %(levelname)s - %(message)s')
+        lch.setFormatter(lfmt)
+        if loglevel == 'critical':
+            lch.setLevel(logging.CRITICAL)
+        elif loglevel == 'debug':
+            lch.setLevel(logging.DEBUG)
+        else:
+            lch.setLevel(logging.INFO)
+        logger.addHandler(lch)
+
+    def _init_sa_db(self) -> None:
+        logger.info('Setting up SQLite database')
         conn = self._engine.connect()
         md = sa.MetaData()
         meta = sa.Table('meta', md,
@@ -101,12 +84,14 @@ class SendReceiveListener(object):
         resp.content_type = falcon.MEDIA_TEXT
         resp.text = "We don't serve GETs here\n"
 
-    def send_error(self, resp, message: str):
+    def send_error(self, resp, message: str) -> None:
         resp.status = falcon.HTTP_500
+        logger.critical('Returning error: %s', message)
         resp.text = json.dumps({'result': 'error', 'message': message})
 
-    def send_success(self, resp, message: str):
+    def send_success(self, resp, message: str) -> None:
         resp.status = falcon.HTTP_200
+        logger.debug('Returning success: %s', message)
         resp.text = json.dumps({'result': 'success', 'message': message})
 
     def get_smtp(self) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, None], Tuple[str, str]]:
@@ -146,12 +131,13 @@ class SendReceiveListener(object):
         frompair = utils.getaddresses([sconfig.get('from')])[0]
         return smtp, frompair
 
-    def auth_new(self, jdata, resp):
+    def auth_new(self, jdata, resp) -> None:
         # Is it already authorized?
         conn = self._engine.connect()
         md = sa.MetaData()
         identity = jdata.get('identity')
         selector = jdata.get('selector')
+        logger.info('New authentication request for %s/%s', identity, selector)
         pubkey = jdata.get('pubkey')
         t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         q = sa.select([t_auth.c.auth_id]).where(t_auth.c.identity == identity, t_auth.c.selector == selector,
@@ -170,7 +156,7 @@ class SendReceiveListener(object):
         q = sa.insert(t_auth).values(identity=identity, selector=selector, pubkey=pubkey, challenge=cstr,
                                      verified=0)
         conn.execute(q)
-        logger.info('Challenge: %s', cstr)
+        logger.info('Created new challenge for %s/%s: %s', identity, selector, cstr)
         smtp, frompair = self.get_smtp()
         cmsg = email.message.EmailMessage()
         fromname, fromaddr = frompair
@@ -178,7 +164,10 @@ class SendReceiveListener(object):
             cmsg.add_header('From', f'{fromname} <{fromaddr}>')
         else:
             cmsg.add_header('From', fromaddr)
-        subject = Template(TPT_VERIFY_SUBJECT).safe_substitute({'identity': jdata.get('identity')})
+        tpt_subject = self._config['templates']['verify-subject'].strip()
+        tpt_body = self._config['templates']['verify-body'].strip()
+        signature = self._config['templates']['signature'].strip()
+        subject = Template(tpt_subject).safe_substitute({'identity': jdata.get('identity')})
         cmsg.add_header('Subject', subject)
         name = jdata.get('name', 'Anonymous Llama')
         cmsg.add_header('To', f'{name} <{identity}>')
@@ -188,22 +177,27 @@ class SendReceiveListener(object):
             'myurl': self._config['main'].get('myurl'),
             'challenge': cstr,
         }
-        body = Template(TPT_VERIFY_BODY).safe_substitute(vals)
+        body = Template(tpt_body).safe_substitute(vals)
+        body += '\n-- \n'
+        body += Template(signature).safe_substitute(vals)
+        body += '\n'
         cmsg.set_payload(body, charset='utf-8')
         bdata = cmsg.as_bytes(policy=emlpolicy)
         destaddrs = [identity]
         alwaysbcc = self._config['main'].get('alwayscc')
         if alwaysbcc:
             destaddrs += [x[1] for x in utils.getaddresses(alwaysbcc)]
+        logger.info('Sending challenge to %s', identity)
         smtp.sendmail(fromaddr, [identity], bdata)
         self.send_success(resp, message=f'Challenge generated and sent to {identity}')
 
-    def validate_message(self, conn, t_auth, bdata, verified=1):
+    def validate_message(self, conn, t_auth, bdata, verified=1) -> Tuple[str, str, int]:
         # Returns auth_id of the matching record
         pm = patatt.PatattMessage(bdata)
         if not pm.signed:
-            return None
-        auth_id = identity = pubkey = None
+            raise patatt.ValidationError('Message is not signed')
+
+        auth_id = identity = selector = pubkey = None
         for ds in pm.get_sigs():
             selector = 'default'
             identity = ''
@@ -223,18 +217,16 @@ class SendReceiveListener(object):
                 auth_id, pubkey = res[0]
                 break
 
-        logger.debug('auth_id=%s', auth_id)
         if not auth_id:
-            return None
-        try:
-            pm.validate(identity, pubkey.encode())
-        except Exception as ex:
-            logger.debug('Validation failed: %s', ex)
-            return None
+            logger.debug('Did not find a matching identity!')
+            raise patatt.NoKeyError('No match for this identity')
 
-        return auth_id
+        logger.debug('Found matching %s/%s with auth_id=%s', identity, selector, auth_id)
+        pm.validate(identity, pubkey.encode())
 
-    def auth_verify(self, jdata, resp):
+        return identity, selector, auth_id
+
+    def auth_verify(self, jdata, resp) -> None:
         msg = jdata.get('msg')
         if msg.find('\nverify:') < 0:
             self.send_error(resp, message='Invalid verification message')
@@ -243,23 +235,27 @@ class SendReceiveListener(object):
         md = sa.MetaData()
         t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         bdata = msg.encode()
-        auth_id = self.validate_message(conn, t_auth, bdata, verified=0)
-        if auth_id is None:
-            self.send_error(resp, message='Signature validation failed')
+        try:
+            identity, selector, auth_id = self.validate_message(conn, t_auth, bdata, verified=0)
+        except Exception as ex:
+            self.send_error(resp, message='Signature validation failed: %s' % ex)
             return
+        logger.debug('Message validation passed for %s/%s with auth_id=%s', identity, selector, auth_id)
+
         # Now compare the challenge to what we received
         q = sa.select([t_auth.c.challenge]).where(t_auth.c.auth_id == auth_id)
         rp = conn.execute(q)
         res = rp.fetchall()
         challenge = res[0][0]
         if msg.find(f'\nverify:{challenge}') < 0:
-            self.send_error(resp, message='Invalid verification string')
+            self.send_error(resp, message='Challenge verification for %s/%s did not match' % (identity, selector))
             return
+        logger.info('Successfully verified challenge for %s/%s with auth_id=%s', identity, selector, auth_id)
         q = sa.update(t_auth).where(t_auth.c.auth_id == auth_id).values(challenge=None, verified=1)
         conn.execute(q)
-        self.send_success(resp, message='Challenge verified')
+        self.send_success(resp, message='Challenge verified for %s/%s' % (identity, selector))
 
-    def auth_delete(self, jdata, resp):
+    def auth_delete(self, jdata, resp) -> None:
         msg = jdata.get('msg')
         if msg.find('\nauth-delete') < 0:
             self.send_error(resp, message='Invalid key delete message')
@@ -268,15 +264,18 @@ class SendReceiveListener(object):
         md = sa.MetaData()
         t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         bdata = msg.encode()
-        auth_id = self.validate_message(conn, t_auth, bdata)
-        if auth_id is None:
-            self.send_error(resp, message='Signature validation failed')
+        try:
+            identity, selector, auth_id = self.validate_message(conn, t_auth, bdata)
+        except Exception as ex:
+            self.send_error(resp, message='Signature validation failed: %s' % ex)
             return
+
+        logger.info('Deleting record for %s/%s with auth_id=%s', identity, selector, auth_id)
         q = sa.delete(t_auth).where(t_auth.c.auth_id == auth_id)
         conn.execute(q)
-        self.send_success(resp, message='Authentication deleted')
+        self.send_success(resp, message='Record deleted for %s/%s' % (identity, selector))
 
-    def clean_header(self, hdrval):
+    def clean_header(self, hdrval: str) -> str:
         if hdrval is None:
             return ''
 
@@ -294,7 +293,7 @@ class SendReceiveListener(object):
         new_hdrval = re.sub(r'\n?\s+', ' ', decoded)
         return new_hdrval.strip()
 
-    def receive(self, jdata, resp):
+    def receive(self, jdata, resp) -> None:
         servicename = self._config['main'].get('myname')
         if not servicename:
             servicename = 'Web Endpoint'
@@ -302,6 +301,7 @@ class SendReceiveListener(object):
         if not umsgs:
             self.send_error(resp, message='Missing the messages array')
             return
+        logger.debug('Received a request for %s messages', len(umsgs))
 
         diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
         diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
@@ -310,16 +310,28 @@ class SendReceiveListener(object):
         conn = self._engine.connect()
         md = sa.MetaData()
         t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
-        # First, validate all signatures
-        at = 0
         mustdest = self._config['main'].get('mustdest')
+        # First, validate all messages
+        seenid = identity = selector = None
         for umsg in umsgs:
-            at += 1
-            auth_id = self.validate_message(conn, t_auth, umsg.encode())
-            if auth_id is None:
-                self.send_error(resp, message=f'Signature validation failed for message {at}')
+            try:
+                identity, selector, auth_id = self.validate_message(conn, t_auth, umsg.encode())
+            except patatt.NoKeyError as ex:  # noqa
+                self.send_error(resp, message='No matching record found, maybe you need to auth-verify first?')
                 return
+            except Exception as ex:
+                self.send_error(resp, message='Signature validation failed: %s' % ex)
+                return
+
+            # Make sure only a single auth_id is used within a receive session
+            if seenid is None:
+                seenid = auth_id
+            elif seenid != auth_id:
+                self.send_error(resp, message='We only support a single signing identity across patch series.')
+                return
+
             msg = email.message_from_string(umsg)
+            logger.debug('Checking sanity on message: %s', msg.get('Subject'))
             # Some quick sanity checking:
             # - Subject has to start with [PATCH
             # - Content-type may ONLY be text/plain
@@ -358,7 +370,7 @@ class SendReceiveListener(object):
                 if not matched:
                     self.send_error(resp, message='Destinations must include a mailing list we recognize.')
                     return
-            msg.add_header('X-Endpoint-Received', f'by {servicename} with auth_id={auth_id}')
+            msg.add_header('X-Endpoint-Received', f'by {servicename} for {identity}/{selector} with auth_id={auth_id}')
             msgs.append((msg, destaddrs))
 
         # All signatures verified. Prepare messages for sending.
@@ -381,7 +393,9 @@ class SendReceiveListener(object):
             if not os.path.isdir(repo):
                 repo = None
 
+        logger.info('Sending %s messages for %s/%s', len(msgs), identity, selector)
         for msg, destaddrs in msgs:
+            subject = self.clean_header(msg.get('Subject'))
             if repo:
                 pmsg = copy.deepcopy(msg)
                 if pmsg.get('List-Id'):
@@ -389,8 +403,8 @@ class SendReceiveListener(object):
                 else:
                     pmsg.add_header('List-Id', listid)
                 ezpi.add_rfc822(repo, pmsg)
+                logger.debug('Wrote %s to public-inbox at %s', subject, repo)
 
-            subject = self.clean_header(msg.get('Subject'))
             origfrom = self.clean_header(msg.get('From'))
             origpair = utils.getaddresses([origfrom])[0]
             origaddr = origpair[1]
@@ -401,8 +415,10 @@ class SendReceiveListener(object):
                     mydomain = True
                     break
             if mydomain:
+                logger.debug('%s matches mydomain, no substitution required', origaddr)
                 fromaddr = origaddr
             else:
+                logger.debug('%s does not match mydomain, substitution required', origaddr)
                 fromaddr = frompair[1]
                 # We can't just send this as-is due to DMARC policies. Therefore, we set
                 # Reply-To and X-Original-From.
@@ -434,7 +450,7 @@ class SendReceiveListener(object):
 
             if not self._config['main'].getboolean('dryrun'):
                 smtp.sendmail(fromaddr, list(destaddrs), bdata)
-                logger.info('Sent %s', subject)
+                logger.info('Sent: %s', subject)
             else:
                 logger.info('---DRYRUN MSG START---')
                 logger.info(msg)
@@ -442,8 +458,10 @@ class SendReceiveListener(object):
 
         if repo:
             # run it once after writing all messages
+            logger.debug('Running public-inbox repo hook (if present)')
             ezpi.run_hook(repo)
-        self.send_success(resp, message=f'Sent {len(msgs)} messages')
+        logger.info('Sent %s messages for %s/%s', len(msgs), identity, selector)
+        self.send_success(resp, message=f'Sent {len(msgs)} messages for {identity}/{selector}')
 
     def on_post(self, req, resp):
         if not req.content_length:
@@ -460,6 +478,10 @@ class SendReceiveListener(object):
             resp.text = 'Failed to parse the request\n'
             return
         action = jdata.get('action')
+        if not action:
+            logger.critical('Action not set from %s', req.remote_addr)
+
+        logger.info('Action: %s; from: %s', action, req.remote_addr)
         if action == 'auth-new':
             self.auth_new(jdata, resp)
             return
@@ -480,14 +502,16 @@ class SendReceiveListener(object):
 
 parser = ConfigParser(interpolation=ExtendedInterpolation())
 cfgfile = os.getenv('CONFIG')
-if cfgfile:
-    parser.read(cfgfile)
-else:
-    parser.read_string(DEFAULT_CFG)
+if not cfgfile or not os.path.exists(cfgfile):
+    sys.stderr.write('CONFIG env var is not set or is not valid')
+    sys.exit(1)
+
+parser.read(cfgfile)
 
 gpgbin = parser['main'].get('gpgbin')
 if gpgbin:
     patatt.GPGBIN = gpgbin
+
 dburl = parser['main'].get('dburl')
 engine = sa.create_engine(dburl)
 srl = SendReceiveListener(engine, parser)
