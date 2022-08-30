@@ -16,6 +16,7 @@ import tempfile
 import pathlib
 import argparse
 import smtplib
+import shlex
 
 import urllib.parse
 import datetime
@@ -2754,7 +2755,7 @@ def read_template(tptfile):
 
 
 def get_smtp(identity: Optional[str] = None,
-             dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, None], str]:
+             dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, list, None], str]:
     # Get the default settings first
     _basecfg = get_config_from_git(r'sendemail\.[^.]+$')
     if identity:
@@ -2775,6 +2776,14 @@ def get_smtp(identity: Optional[str] = None,
         port = int(port)
     except ValueError:
         raise smtplib.SMTPException('Invalid smtpport entry in %s' % sectname)
+
+    # If server contains slashes, then it's a local command
+    if '/' in server:
+        server = os.path.expanduser(os.path.expandvars(server))
+        sp = shlex.shlex(server, posix=True)
+        sp.whitespace_split = True
+        smtp = list(sp)
+        return smtp, fromaddr
 
     encryption = sconfig.get('smtpencryption')
     if dryrun:
@@ -2915,14 +2924,14 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
 
         emldata = msg.as_string(maxheaderlen=maxheaderlen)
         bdata = emldata.encode()
+        subject = msg.get('Subject', '')
+        ls = LoreSubject(subject)
         if patatt_sign:
             import patatt
             # patatt.logger = logger
             bdata = patatt.rfc2822_sign(bdata)
         if dryrun:
             if output_dir:
-                subject = msg.get('Subject', '')
-                ls = LoreSubject(subject)
                 filen = '%s.eml' % ls.get_slug(sep='-')
                 logger.info('  %s', filen)
                 write_to = os.path.join(output_dir, filen)
@@ -2938,16 +2947,16 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
             destaddrs = {x[1] for x in alldests}
 
-        tosend.append((destaddrs, bdata))
+        tosend.append((destaddrs, bdata, ls))
 
     if not len(tosend):
         return 0
 
+    logger.info('---')
     # Do we have an endpoint defined?
     config = get_main_config()
     endpoint = config.get('send-endpoint-web')
     if use_web_endpoint and endpoint:
-        logger.info('---')
         logger.info('Sending via web endpoint %s', endpoint)
         req = {
             'action': 'receive',
@@ -2967,14 +2976,26 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             logger.critical('Error from endpoint: %s', rdata.get('message'))
             return 0
 
-    if smtp:
-        sent = 0
-        for destaddrs, bdata in tosend:
+    sent = 0
+    if isinstance(smtp, list):
+        # This is a local command
+        logger.info('Sending via "%s"', ' '.join(smtp))
+        for destaddrs, bdata, lsubject in tosend:
+            logger.info('  %s', lsubject.full_subject)
+            ecode, out, err = _run_command(smtp, stdin=bdata)
+            if ecode > 0:
+                raise RuntimeError('Error running %s: %s' % (' '.join(smtp), err.decode()))
+            sent += 1
+
+    elif smtp:
+        for destaddrs, bdata, lsubject in tosend:
             # Force compliant eols
             bdata = re.sub(rb'\r\n|\n|\r(?!\n)', b'\r\n', bdata)
+            logger.info('  %s', lsubject.full_subject)
             smtp.sendmail(fromaddr, destaddrs, bdata)
             sent += 1
-        return sent
+
+    return sent
 
 
 def git_get_current_branch(gitdir: Optional[str] = None, short: bool = True) -> Optional[str]:

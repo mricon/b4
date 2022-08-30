@@ -1097,8 +1097,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
             msg.add_header('Cc', b4.format_addrs(allcc))
-        if not cmdargs.output_dir:
-            logger.info('  %s', re.sub(r'\s+', ' ', msg.get('Subject')))
 
         send_msgs.append(msg)
 
