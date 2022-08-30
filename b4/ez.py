@@ -821,6 +821,72 @@ def print_pretty_addrs(addrs: list, hdrname: str) -> None:
             logger.info('    %s', b4.format_addrs([addr]))
 
 
+def get_sent_tag_as_patches(tagname: str, revision: Optional[str] = None,
+                            prefixes: Optional[List[str]] = None) -> List[Tuple[str, email.message.Message]]:
+    gitargs = ['cat-file', '-p', tagname]
+    ecode, tagmsg = b4.git_run_command(None, gitargs)
+    if ecode > 0:
+        raise RuntimeError('No such tag: %s' % tagname)
+    # junk the headers
+    junk, cover = tagmsg.split('\n\n', maxsplit=1)
+    # Check that we have base-commit: in the body
+    matches = re.search(r'^base-commit:\s*(.*)$', cover, flags=re.I | re.M)
+    if not matches:
+        raise RuntimeError('Tag %s does not contain base-commit info' % tagname)
+    base_commit = matches.groups()[0]
+    matches = re.search(r'^change-id:\s*(.*)$', cover, flags=re.I | re.M)
+    if not matches:
+        raise RuntimeError('Tag %s does not contain change-id info' % tagname)
+    change_id = matches.groups()[0]
+    if revision is None:
+        matches = re.search(r'.*-v(\d+)$', tagname, flags=re.I | re.M)
+        if not matches:
+            raise RuntimeError('Could not grok revision number from %s' % tagname)
+        revision = matches.groups()[0]
+
+    # First line is the subject
+    csubject, cbody = cover.split('\n', maxsplit=1)
+    cbody = cbody.strip() + '\n-- \n' + b4.get_email_signature()
+
+    cmsg = email.message.EmailMessage()
+    cmsg.add_header('Subject', csubject)
+    cmsg.set_payload(cbody.lstrip(), charset='utf-8')
+    if prefixes is None:
+        prefixes = list()
+    prefixes.append(f'v{revision}')
+    seriests = int(time.time())
+    msgid_tpt = make_msgid_tpt(change_id, revision)
+    usercfg = b4.get_user_config()
+    mailfrom = (usercfg.get('name'), usercfg.get('email'))
+
+    patches = b4.git_range_to_patches(None, base_commit, tagname,
+                                      covermsg=cmsg, prefixes=prefixes,
+                                      msgid_tpt=msgid_tpt,
+                                      seriests=seriests,
+                                      thread=True,
+                                      mailfrom=mailfrom)
+    return patches
+
+
+def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) -> str:
+    if not domain:
+        usercfg = b4.get_user_config()
+        myemail = usercfg.get('email')
+        if myemail:
+            domain = re.sub(r'^[^@]*@', '', myemail)
+        else:
+            # Use the hostname of the system
+            import platform
+            domain = platform.node()
+
+    chunks = change_id.rsplit('-', maxsplit=1)
+    stablepart = chunks[0]
+    # Message-IDs must not be predictable to avoid stuffing attacks
+    randompart = uuid.uuid4().hex[:12]
+    msgid_tpt = f'<{stablepart}-v{revision}-%s-{randompart}@{domain}>'
+    return msgid_tpt
+
+
 def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
                                movefrom: bool = True,
                                thread: bool = True) -> List[Tuple[str, email.message.Message]]:
@@ -855,27 +921,20 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
     cmsg = email.message.EmailMessage()
     cmsg.add_header('Subject', csubject)
     cmsg.set_payload(body, charset='utf-8')
+    # Store tracking info in the header in a safe format, which should allow us to
+    # fully restore our work from the already sent series.
+    ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
+    b64tracking = base64.b64encode(ztracking)
+    cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
     if prefixes is None:
         prefixes = list()
 
     prefixes.append(f'v{revision}')
     seriests = int(time.time())
-    usercfg = b4.get_user_config()
-    myemail = usercfg.get('email')
-    myname = usercfg.get('name')
-    if myemail:
-        msgdomain = re.sub(r'^[^@]*@', '', myemail)
-    else:
-        # Use the hostname of the system
-        import platform
-        msgdomain = platform.node()
-    chunks = change_id.rsplit('-', maxsplit=1)
-    stablepart = chunks[0]
-    # Message-IDs must not be predictable to avoid stuffing attacks
-    randompart = uuid.uuid4().hex[:12]
-    msgid_tpt = f'<{stablepart}-v{revision}-%s-{randompart}@{msgdomain}>'
+    msgid_tpt = make_msgid_tpt(change_id, revision)
     if movefrom:
-        mailfrom = (myname, myemail)
+        usercfg = b4.get_user_config()
+        mailfrom = (usercfg.get('name'), usercfg.get('email'))
     else:
         mailfrom = None
 
@@ -924,38 +983,58 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.auth_verify:
         auth_verify(cmdargs)
         return
-    # Check if the cover letter has 'EDITME' in it
-    cover, tracking = load_cover(strip_comments=True)
-    if 'EDITME' in cover:
-        logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
-        logger.info('---')
-        logger.info(cover)
-        logger.info('---')
-        sys.exit(1)
 
-    trailers = set()
-    parts = b4.LoreMessage.get_body_parts(cover)
-    trailers.update(parts[2])
-
+    # Should we make the sent/ prefix configurable?
+    tagprefix = 'sent/'
+    mybranch = b4.git_get_current_branch()
     prefixes = cmdargs.prefixes
     if cmdargs.prefixes is None:
         prefixes = list()
+
     if cmdargs.resend:
+        # We accept both a full tag name and just a vN short form
+        matches = re.search(r'^v(\d+)$', cmdargs.resend)
+        if matches:
+            revision = matches.groups()[0]
+            if mybranch.startswith('b4/'):
+                tagname = f'{tagprefix}{mybranch[3:]}-v{revision}'
+            else:
+                tagname = f'{tagprefix}{mybranch}-v{revision}'
+        else:
+            revision = None
+            tagname = cmdargs.resend
+
         prefixes.append('RESEND')
+        try:
+            patches = get_sent_tag_as_patches(tagname, revision=revision, prefixes=prefixes)
+        except RuntimeError as ex:
+            logger.critical('CRITICAL: Failed to convert tag to patches: %s', ex)
+            sys.exit(1)
 
-    try:
-        patches = get_prep_branch_as_patches(prefixes=prefixes)
-    except RuntimeError as ex:
-        logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
-        sys.exit(1)
+    else:
+        # Check if the cover letter has 'EDITME' in it
+        cover, tracking = load_cover(strip_comments=True)
+        if 'EDITME' in cover:
+            logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
+            logger.info('---')
+            logger.info(cover)
+            logger.info('---')
+            sys.exit(1)
 
-    logger.info('Converted the branch to %s patches', len(patches)-1)
+        try:
+            patches = get_prep_branch_as_patches(prefixes=prefixes)
+        except RuntimeError as ex:
+            logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
+            sys.exit(1)
+        logger.info('Converted the branch to %s patches', len(patches)-1)
+
     config = b4.get_main_config()
     usercfg = b4.get_user_config()
     myemail = usercfg.get('email')
 
     seen = set()
     todests = list()
+    trailers = set()
     if config.get('send-series-to'):
         for pair in utils.getaddresses([config.get('send-series-to')]):
             if pair[1] not in seen:
@@ -1013,12 +1092,12 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             parts = b4.LoreMessage.get_body_parts(body)
             trailers.update(parts[2])
             msgbytes = msg.as_bytes()
-            if tocmd:
+            if commit and tocmd:
                 for pair in get_addresses_from_cmd(tocmd, msgbytes):
                     if pair[1] not in seen:
                         seen.add(pair[1])
                         todests.append(pair)
-            if cccmd:
+            if commit and cccmd:
                 for pair in get_addresses_from_cmd(cccmd, msgbytes):
                     if pair[1] not in seen:
                         seen.add(pair[1])
@@ -1080,7 +1159,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.no_sign or config.get('send-no-patatt-sign', '').lower() in {'yes', 'true', 'y'}:
         sign = False
 
-    cover_msgid = None
+    cover_msgid = cover_body = None
     # TODO: Need to send obsoleted-by follow-ups, just need to figure out where.
     send_msgs = list()
     for commit, msg in patches:
@@ -1088,11 +1167,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             continue
         if cover_msgid is None:
             cover_msgid = b4.LoreMessage.get_clean_msgid(msg)
-            # Store tracking info in the header in a safe format, which should allow us to
-            # fully restore our work from the already sent series.
-            ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
-            b64tracking = base64.b64encode(ztracking)
-            msg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
+            lsubject = b4.LoreSubject(msg.get('subject'))
+            cbody = msg.get_payload()
+            # Remove signature
+            chunks = cbody.rsplit('\n-- \n')
+            if len(chunks) > 1:
+                cbody = chunks[0] + '\n'
+            cover_body = lsubject.subject + '\n\n' + cbody
 
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
@@ -1135,63 +1216,62 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.debug('Not updating cover/tracking on resend')
         return
 
-    mybranch = b4.git_get_current_branch()
+    cover, tracking = load_cover(strip_comments=True)
     revision = tracking['series']['revision']
-    try:
-        strategy = get_cover_strategy()
-        if strategy == 'commit':
-            # Detach the head at our parent commit and apply the cover-less series
-            cover_commit = find_cover_commit()
-            gitargs = ['checkout', f'{cover_commit}~1']
-            ecode, out = b4.git_run_command(None, gitargs)
-            if ecode > 0:
-                raise RuntimeError('Could not switch to a detached head')
-            # cherry-pick from cover letter to the last commit
-            last_commit = patches[-1][0]
-            gitargs = ['cherry-pick', f'{cover_commit}..{last_commit}']
-            ecode, out = b4.git_run_command(None, gitargs)
-            if ecode > 0:
-                raise RuntimeError('Could not cherry-pick the cover-less range')
-            # Find out the head commit
-            gitargs = ['rev-parse', 'HEAD']
-            ecode, out = b4.git_run_command(None, gitargs)
-            if ecode > 0:
-                raise RuntimeError('Could not find the HEAD commit of the detached head')
-            tagcommit = out.strip()
-            # Switch back to our branch
-            gitargs = ['checkout', mybranch]
-            ecode, out = b4.git_run_command(None, gitargs)
-            if ecode > 0:
-                raise RuntimeError('Could not switch back to %s' % mybranch)
-        elif strategy == 'tip-commit':
-            cover_commit = find_cover_commit()
-            tagcommit = f'{cover_commit}~1'
-        else:
-            tagcommit = 'HEAD'
+    if mybranch.startswith('b4/'):
+        tagname = f'{tagprefix}{mybranch[3:]}-v{revision}'
+    else:
+        tagname = f'{tagprefix}{mybranch}-v{revision}'
 
-        # TODO: make sent/ prefix configurable?
-        tagprefix = 'sent/'
-        if mybranch.startswith('b4/'):
-            tagname = f'{tagprefix}{mybranch[3:]}-v{revision}'
-        else:
-            tagname = f'{tagprefix}{mybranch}-v{revision}'
+    logger.debug('checking if we already have %s', tagname)
+    gitargs = ['rev-parse', f'refs/tags/{tagname}']
+    ecode, out = b4.git_run_command(None, gitargs)
+    if ecode > 0:
+        try:
+            strategy = get_cover_strategy()
+            if strategy == 'commit':
+                # Detach the head at our parent commit and apply the cover-less series
+                cover_commit = find_cover_commit()
+                gitargs = ['checkout', f'{cover_commit}~1']
+                ecode, out = b4.git_run_command(None, gitargs)
+                if ecode > 0:
+                    raise RuntimeError('Could not switch to a detached head')
+                # cherry-pick from cover letter to the last commit
+                last_commit = patches[-1][0]
+                gitargs = ['cherry-pick', f'{cover_commit}..{last_commit}']
+                ecode, out = b4.git_run_command(None, gitargs)
+                if ecode > 0:
+                    raise RuntimeError('Could not cherry-pick the cover-less range')
+                # Find out the head commit
+                gitargs = ['rev-parse', 'HEAD']
+                ecode, out = b4.git_run_command(None, gitargs)
+                if ecode > 0:
+                    raise RuntimeError('Could not find the HEAD commit of the detached head')
+                tagcommit = out.strip()
+                # Switch back to our branch
+                gitargs = ['checkout', mybranch]
+                ecode, out = b4.git_run_command(None, gitargs)
+                if ecode > 0:
+                    raise RuntimeError('Could not switch back to %s' % mybranch)
+            elif strategy == 'tip-commit':
+                cover_commit = find_cover_commit()
+                tagcommit = f'{cover_commit}~1'
+            else:
+                tagcommit = 'HEAD'
 
-        logger.debug('checking if we already have %s', tagname)
-        gitargs = ['rev-parse', f'refs/tags/{tagname}']
-        ecode, out = b4.git_run_command(None, gitargs)
-        if ecode > 0:
             logger.info('Tagging %s', tagname)
             gitargs = ['tag', '-a', '-F', '-', tagname, tagcommit]
-            ecode, out = b4.git_run_command(None, gitargs, stdin=cover.encode())
+            ecode, out = b4.git_run_command(None, gitargs, stdin=cover_body.encode())
             if ecode > 0:
                 # Not a fatal error, just complain about it
                 logger.info('Could not tag %s as %s:', tagcommit, tagname)
                 logger.info(out)
-        else:
-            logger.info('NOTE: Tagname %s already exists', tagname)
 
-    except RuntimeError as ex:
-        logger.critical('Error tagging the revision: %s', ex)
+        except RuntimeError as ex:
+            logger.critical('Error tagging the revision: %s', ex)
+
+    else:
+        logger.info('NOTE: Tagname %s already exists', tagname)
 
     if not cover_msgid:
         return

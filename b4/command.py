@@ -298,8 +298,8 @@ def cmd():
     sp_send.add_argument('--cc', nargs='+', help='Addresses to add to the Cc: list')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,
                          help='Remove yourself from the To: or Cc: list')
-    sp_send.add_argument('--resend', action='store_true', default=False,
-                         help='This is a resend of a previously sent series')
+    sp_send.add_argument('--resend', default=None,
+                         help='Resend a previously sent version of the series')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
                          help='Do not cryptographically sign your patches with patatt')
     ag_sendh = sp_send.add_argument_group('Web submission', 'Authenticate with the web submission endpoint')
