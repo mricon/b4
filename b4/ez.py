@@ -637,7 +637,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         # There doesn't appear to be a great way to find the first commit
         # where we're NOT the committer, so we get all commits since range specified where
         # we're the committer and stop at the first non-contiguous parent
-        gitargs = ['log', '-F', f'--committer={myemail}', '--since', cmdargs.since, '--format=%H %P']
+        gitargs = ['log', '-F', '--no-merges', f'--committer={myemail}', '--since', cmdargs.since, '--format=%H %P']
         lines = b4.git_get_command_lines(None, gitargs)
         if not lines:
             logger.critical('CRITICAL: could not find any commits where committer=%s', myemail)
