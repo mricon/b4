@@ -720,18 +720,17 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 continue
 
             parts = b4.LoreMessage.get_body_parts(commit_map[commit].get_payload())
-            for ftrailer in addtrailers:
-                if ftrailer[:3] not in parts[2]:
+            for fltr in addtrailers:
+                if fltr not in parts[2]:
                     if commit not in updates:
                         updates[commit] = list()
-                    updates[commit].append(ftrailer)
+                    updates[commit].append(fltr)
             # Check if we've applied mismatched trailers already
             if not cmdargs.sloppytrailers and mismatches:
-                for mtrailer in list(mismatches):
-                    check = (mtrailer[0], mtrailer[1], None)
-                    if check in parts[2]:
+                for mltr in list(mismatches):
+                    if mltr in parts[2]:
                         logger.debug('Removing already-applied mismatch %s', check)
-                        mismatches.remove(mtrailer)
+                        mismatches.remove(mltr)
 
         if len(mismatches):
             logger.critical('---')

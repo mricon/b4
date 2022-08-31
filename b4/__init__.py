@@ -1719,7 +1719,7 @@ class LoreMessage:
 
                 logger.info('    + %s%s', ltr.as_string(omit_extinfo=True), extra)
 
-        if addmysob:
+        if addmysob or hasmysob:
             # Tack on our signoff at the bottom
             fixtrailers.append(sobtr)
             if not hasmysob:
