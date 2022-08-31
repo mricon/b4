@@ -78,6 +78,7 @@ class SendReceiveListener(object):
         md.create_all(self._engine)
         q = sa.insert(meta).values(version=DB_VERSION)
         conn.execute(q)
+        conn.close()
 
     def on_get(self, req, resp):  # noqa
         resp.status = falcon.HTTP_200
@@ -157,6 +158,7 @@ class SendReceiveListener(object):
                                      verified=0)
         conn.execute(q)
         logger.info('Created new challenge for %s/%s: %s', identity, selector, cstr)
+        conn.close()
         smtp, frompair = self.get_smtp()
         cmsg = email.message.EmailMessage()
         fromname, fromaddr = frompair
@@ -189,6 +191,7 @@ class SendReceiveListener(object):
             destaddrs += [x[1] for x in utils.getaddresses(alwaysbcc)]
         logger.info('Sending challenge to %s', identity)
         smtp.sendmail(fromaddr, [identity], bdata)
+        smtp.close()
         self.send_success(resp, message=f'Challenge generated and sent to {identity}')
 
     def validate_message(self, conn, t_auth, bdata, verified=1) -> Tuple[str, str, int]:
@@ -253,6 +256,7 @@ class SendReceiveListener(object):
         logger.info('Successfully verified challenge for %s/%s with auth_id=%s', identity, selector, auth_id)
         q = sa.update(t_auth).where(t_auth.c.auth_id == auth_id).values(challenge=None, verified=1)
         conn.execute(q)
+        conn.close()
         self.send_success(resp, message='Challenge verified for %s/%s' % (identity, selector))
 
     def auth_delete(self, jdata, resp) -> None:
@@ -273,6 +277,7 @@ class SendReceiveListener(object):
         logger.info('Deleting record for %s/%s with auth_id=%s', identity, selector, auth_id)
         q = sa.delete(t_auth).where(t_auth.c.auth_id == auth_id)
         conn.execute(q)
+        conn.close()
         self.send_success(resp, message='Record deleted for %s/%s' % (identity, selector))
 
     def clean_header(self, hdrval: str) -> str:
@@ -373,6 +378,7 @@ class SendReceiveListener(object):
             msg.add_header('X-Endpoint-Received', f'by {servicename} for {identity}/{selector} with auth_id={auth_id}')
             msgs.append((msg, destaddrs))
 
+        conn.close()
         # All signatures verified. Prepare messages for sending.
         cfgdomains = self._config['main'].get('mydomains')
         if cfgdomains is not None:
@@ -456,6 +462,7 @@ class SendReceiveListener(object):
                 logger.info(msg)
                 logger.info('---DRYRUN MSG END---')
 
+        smtp.close()
         if repo:
             # run it once after writing all messages
             logger.debug('Running public-inbox repo hook (if present)')
