@@ -1086,6 +1086,7 @@ class LoreMessage:
             if ltr.email_eq(self.fromemail):
                 logger.debug('  trailer email match')
                 trailers.append(ltr)
+                continue
 
             # Does the name match, at least?
             nmatch = False
@@ -1543,7 +1544,7 @@ class LoreMessage:
                 extinfo = None
                 mextinfo = re.search(r'(.*\S+)(\s+#[^#]+)$', ovalue)
                 if mextinfo:
-                    logger.debug('Trailer contains hashtag extinfo: ', line)
+                    logger.debug('Trailer contains hashtag extinfo: %s', line)
                     # Found extinfo of the hashtag genre
                     egr = mextinfo.groups()
                     ovalue = egr[0]
