@@ -1,7 +1,9 @@
 import pytest  # noqa
 import b4
-import re
 import os
+import email
+import mailbox
+import io
 
 
 @pytest.mark.parametrize('source,expected', [
@@ -25,7 +27,6 @@ def test_save_git_am_mbox(tmpdir, source, regex, flags, ismbox):
     import re
     if source is not None:
         if ismbox:
-            import mailbox
             mbx = mailbox.mbox(f'tests/samples/{source}.txt')
             msgs = list(mbx)
         else:
@@ -48,3 +49,64 @@ def test_save_git_am_mbox(tmpdir, source, regex, flags, ismbox):
     with open(dest, 'r') as fh:
         res = fh.read()
     assert re.search(regex, res, flags=flags)
+
+
+@pytest.mark.parametrize('source,expected', [
+    ('trailers-test-simple',
+     [('person', 'Reviewed-By', 'Bogus Bupkes <bogus@example.com>', None),
+      ('utility', 'Fixes', 'abcdef01234567890', None),
+      ('utility', 'Link', 'https://msgid.link/some@msgid.here', None),
+      ]),
+    ('trailers-test-extinfo',
+     [('person', 'Reviewed-by', 'Bogus Bupkes <bogus@example.com>', '[for the parts that are bogus]'),
+      ('utility', 'Fixes', 'abcdef01234567890', None),
+      ('person', 'Tested-by', 'Some Person <bogus2@example.com>', '           [this person visually indented theirs]'),
+      ('utility', 'Link', 'https://msgid.link/some@msgid.here', '  # initial submission'),
+      ('person', 'Signed-off-by', 'Wrapped Persontrailer <broken@example.com>', None),
+      ]),
+])
+def test_parse_trailers(source, expected):
+    with open(f'tests/samples/{source}.txt', 'r') as fh:
+        msg = email.message_from_file(fh)
+        lmsg = b4.LoreMessage(msg)
+        gh, m, trs, bas, sig = b4.LoreMessage.get_body_parts(lmsg.body)
+        assert len(expected) == len(trs)
+        for tr in trs:
+            mytype, myname, myvalue, myextinfo = expected.pop(0)
+            mytr = b4.LoreTrailer(name=myname, value=myvalue, extinfo=myextinfo)
+            assert tr == mytr
+            assert tr.type == mytype
+
+
+@pytest.mark.parametrize('source,serargs,amargs,reference,b4cfg', [
+    ('single', {}, {}, 'defaults', {}),
+    ('single', {}, {'noaddtrailers': True}, 'noadd', {}),
+    ('single', {}, {'addmysob': True}, 'addmysob', {}),
+    ('single', {}, {'addmysob': True, 'copyccs': True}, 'copyccs', {}),
+    ('single', {}, {'addmysob': True, 'addlink': True}, 'addlink', {}),
+    ('single', {}, {'addmysob': True, 'copyccs': True}, 'ordered',
+     {'trailer-order': 'Cc,Tested*,Reviewed*,*'}),
+    ('single', {'sloppytrailers': True}, {'addmysob': True}, 'sloppy', {}),
+    ('with-cover', {}, {'addmysob': True}, 'defaults', {}),
+    ('with-cover', {}, {'covertrailers': True, 'addmysob': True}, 'covertrailers', {}),
+    ('custody', {}, {'addmysob': True, 'copyccs': True}, 'unordered', {}),
+    ('custody', {}, {'addmysob': True, 'copyccs': True}, 'ordered',
+     {'trailer-order': 'Cc,Fixes*,Link*,Suggested*,Reviewed*,Tested*,*'}),
+])
+def test_followup_trailers(source, serargs, amargs, reference, b4cfg):
+    b4.USER_CONFIG = {
+        'name': 'Test Override',
+        'email': 'test-override@example.com',
+    }
+    b4.MAIN_CONFIG = dict(b4.DEFAULT_CONFIG)
+    b4.MAIN_CONFIG.update(b4cfg)
+    lmbx = b4.LoreMailbox()
+    for msg in mailbox.mbox(f'tests/samples/trailers-followup-{source}.mbox'):
+        lmbx.add_message(msg)
+    lser = lmbx.get_series(**serargs)
+    assert lser is not None
+    amsgs = lser.get_am_ready(**amargs)
+    ifh = io.StringIO()
+    b4.save_git_am_mbox(amsgs, ifh)
+    with open(f'tests/samples/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
+        assert ifh.getvalue() == fh.read()

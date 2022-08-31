@@ -1,0 +1,35 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH] Simple test
+From: Test Test <test@example.com>
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <orig-message@example.com>
+To: Some List <list-1@lists.example.com>
+Cc: Dev Eloper1 <dev-eloper1@example.com>, Dev Eloper2 <dev-eloper2@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Follow-up trailer collating test.
+
+Fixes: abcdef01234567890
+Reviewed-by: Original Reviewer <original-reviewer@example.com>
+Link: https://msgid.link/some@msgid.here
+Signed-off-by: Original Submitter <original-submitter@example.com>
+Reviewed-by: Followup Reviewer1 <followup-reviewer1@example.com>
+Tested-by: Followup Reviewer2 <followup-reviewer2@example.com>
+---
+
+diff --git a/b4/junk.py b/b4/junk.py
+index 12345678..23456789 100644
+--- a/b4/junk.py
+--- b/b4/junk.py
+@@@ -1,1 +1,1 @@ def junk():
+ 
+ 
+-junk1
++junk2
+ 
+ 
+-- 
+2.wong.fu
+

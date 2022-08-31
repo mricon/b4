@@ -1,0 +1,113 @@
+From foo@z Thu Jan  1 00:00:00 1970
+From: Test Test <test@example.com>
+Subject: [PATCH v2 0/2] Simple cover
+To: Some List <list-1@lists.example.com>
+Cc: Dev Eloper1 <dev-eloper1@example.com>,
+ Dev Eloper2 <dev-eloper2@example.com>
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <cover-message@example.com>
+
+This is a cover letter. It has a diffstat.
+
+---
+b4/junk.py    |  1 -
+b4/bupkes.py  |  1 -
+2 files changed, 2 insertions(+), 2 deletions(-)
+
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Test Test <test@example.com>
+Subject: [PATCH v2 1/2] Simple test 1
+To: Some List <list-1@lists.example.com>
+Cc: Dev Eloper1 <dev-eloper1@example.com>,
+ Dev Eloper2 <dev-eloper2@example.com>
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <patch-1-message@example.com>
+In-Reply-To: <cover-message@example.com>
+References: <cover-message@example.com>
+
+Follow-up trailer collating test patch 1.
+
+Fixes: abcdef01234567890
+Reviewed-by: Original Reviewer <original-reviewer@example.com>
+Link: https://msgid.link/some@msgid.here
+Signed-off-by: Original Submitter <original-submitter@example.com>
+---
+
+diff --git a/b4/junk.py b/b4/junk.py
+index 12345678..23456789 100644
+--- a/b4/junk.py
+--- b/b4/junk.py
+@@@ -1,1 +1,1 @@ def junk():
+ 
+ 
+-junk1
++junk2
+ 
+ 
+-- 
+2.wong.fu
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Test Test <test@example.com>
+Subject: [PATCH v2 2/2] Simple test 2
+To: Some List <list-1@lists.example.com>
+Cc: Dev Eloper1 <dev-eloper1@example.com>,
+ Dev Eloper2 <dev-eloper2@example.com>
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <patch-2-message@example.com>
+In-Reply-To: <cover-message@example.com>
+References: <cover-message@example.com>
+
+Follow-up trailer collating test patch 2.
+
+Fixes: abcdef01234567890
+Reviewed-by: Original Reviewer <original-reviewer@example.com>
+Link: https://msgid.link/some@msgid.here
+Signed-off-by: Original Submitter <original-submitter@example.com>
+---
+
+diff --git a/b4/bupkes.py b/b4/bupkes.py
+index 12345678..23456789 100644
+--- a/b4/bupkes.py
+--- b/b4/bupkes.py
+@@@ -1,1 +1,1 @@ def bupkes():
+ 
+ 
+-bupkes1
++bupkes2
+ 
+ 
+-- 
+2.wong.fu
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Followup Reviewer1 <followup-reviewer1@example.com>
+Subject: Re: [PATCH v2 2/2] Simple test 2
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <fwup-message-1@example.com>
+In-Reply-To: <patch-2-message@example.com>
+References: <patch-2-message@example.com> <cover-message@example.com>
+
+> This is a simple trailer parsing test.
+
+Reviewed-by: Followup Reviewer1 <followup-reviewer1@example.com>
+
+--
+My sig
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Followup Reviewer1 <followup-reviewer1@example.com>
+Subject: Re: [PATCH v2 0/2] Simple cover
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <fwup-message-2@example.com>
+In-Reply-To: <cover-message@example.com>
+References: <cover-message@example.com>
+
+> This is a simple trailer parsing test.
+
+Reviewed-by: Coverletter Reviewer1 <followup-reviewer1@example.com>
+
+--
+My sig
+

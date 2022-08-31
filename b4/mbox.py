@@ -121,9 +121,9 @@ def make_am(msgs, cmdargs, msgid):
             # Only check cover letter or first patch
             if not lmsg or lmsg.counter > 1:
                 continue
-            for trailer in list(lmsg.followup_trailers):
-                if trailer[0].lower() == 'obsoleted-by':
-                    lmsg.followup_trailers.remove(trailer)
+            for ltr in list(lmsg.followup_trailers):
+                if ltr.lname == 'obsoleted-by':
+                    lmsg.followup_trailers.remove(ltr)
                     if warned:
                         continue
                     logger.critical('---')
@@ -136,10 +136,10 @@ def make_am(msgs, cmdargs, msgid):
         logger.critical('---')
         logger.critical('NOTE: Some trailers were sent to the cover letter:')
         tseen = set()
-        for trailer in lser.patches[0].followup_trailers:
-            if tuple(trailer[:2]) not in tseen:
-                logger.critical('      %s: %s', trailer[0], trailer[1])
-                tseen.add(tuple(trailer[:2]))
+        for ltr in lser.patches[0].followup_trailers:
+            if ltr not in tseen:
+                logger.critical('      %s', ltr.as_string(omit_extinfo=True))
+                tseen.add(ltr)
         logger.critical('NOTE: Rerun with -t to apply them to all patches')
     if len(lser.trailer_mismatches):
         logger.critical('---')
@@ -526,9 +526,9 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
             # Does it have an Obsoleted-by: trailer?
             rmsg = b4.LoreMessage(msg)
             trailers, mismatches = rmsg.get_trailers()
-            for tl in trailers:
-                if tl[0].lower() == 'obsoleted-by':
-                    for chunk in tl[1].split('/'):
+            for ltr in trailers:
+                if ltr.lname == 'obsoleted-by':
+                    for chunk in ltr.value.split('/'):
                         if chunk.find('@') > 0 and chunk not in seen_msgids:
                             obsoleted.append(chunk)
                             break

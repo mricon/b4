@@ -616,10 +616,6 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     if 'name' not in usercfg or 'email' not in usercfg:
         logger.critical('CRITICAL: Please set your user.name and user.email')
         sys.exit(1)
-    if cmdargs.signoff:
-        signoff = ('Signed-off-by', f"{usercfg['name']} <{usercfg['email']}>", None)
-    else:
-        signoff = None
 
     ignore_commits = None
     # If we are in an b4-prep branch, we start from the beginning of the series
@@ -686,12 +682,6 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         subject = msg.get('subject')
         by_subject[subject] = commit
         by_patchid[patchid] = commit
-        parts = b4.LoreMessage.get_body_parts(body)
-        # Force SOB update
-        if signoff and (signoff not in parts[2] or (len(signoff) > 1 and parts[2][-1] != signoff)):
-            updates[commit] = list()
-            if signoff not in parts[2]:
-                updates[commit].append(signoff)
 
     if cmdargs.msgid:
         msgid = b4.get_msgid(cmdargs)
@@ -764,11 +754,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         logger.info('  %s', cmsg.subject)
         if len(newtrailers):
             cmsg.followup_trailers = newtrailers
-            if signoff in newtrailers:
-                logger.info('    + %s: %s', signoff[0], signoff[1])
-        elif signoff:
-            logger.info('    > %s: %s', signoff[0], signoff[1])
-        cmsg.fix_trailers(signoff=signoff)
+        cmsg.fix_trailers()
         fred.add(commit, cmsg.message)
     logger.info('---')
     args = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{start}..'])
@@ -1104,12 +1090,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         ccdests.append(pair)
 
         # add addresses seen in trailers
-        for trailer in trailers:
-            if '@' in trailer[1] and '<' in trailer[1]:
-                for pair in utils.getaddresses([trailer[1]]):
-                    if pair[1] not in seen:
-                        seen.add(pair[1])
-                        ccdests.append(pair)
+        for ltr in trailers:
+            if ltr.addr and ltr.addr[1] not in seen:
+                seen.add(ltr.addr[1])
+                ccdests.append(ltr.addr)
 
         excludes = b4.get_excluded_addrs()
         if cmdargs.not_me_too:
