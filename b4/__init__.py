@@ -1093,9 +1093,9 @@ class LoreMessage:
                 if trailer.lname not in badtrailers:
                     self.trailers.append(trailer)
 
-    def get_trailers(self, sloppy: bool = False) -> Tuple[List[LoreTrailer], List[LoreTrailer]]:
+    def get_trailers(self, sloppy: bool = False) -> Tuple[List[LoreTrailer], Set[LoreTrailer]]:
         trailers = list()
-        mismatches = list()
+        mismatches = set()
 
         for ltr in self.trailers:
             ltr.lmsg = self
@@ -1129,7 +1129,8 @@ class LoreMessage:
                 trailers.append(ltr)
                 continue
 
-            mismatches.append(ltr)
+            logger.debug('trailer did not match: %s: %s', ltr.name, ltr.value)
+            mismatches.add(ltr)
 
         return trailers, mismatches
 
@@ -1561,7 +1562,7 @@ class LoreMessage:
                         logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
                         continue
                     if re.search(r'https?://', ovalue):
-                        logger.debug('Ignoring a non-recognized link trailer')
+                        logger.debug('Ignoring %s (not a recognized link trailer)', line)
                         continue
 
                 extinfo = None
