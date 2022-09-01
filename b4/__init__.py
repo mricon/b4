@@ -1540,6 +1540,9 @@ class LoreMessage:
                     if not mperson and lname not in nonperson:
                         logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
                         continue
+                    if re.search(r'https?://', ovalue):
+                        logger.debug('Ignoring a non-recognized link trailer')
+                        continue
 
                 extinfo = None
                 mextinfo = re.search(r'(.*\S+)(\s+#[^#]+)$', ovalue)
