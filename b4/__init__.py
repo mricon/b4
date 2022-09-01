@@ -2564,7 +2564,7 @@ def get_pi_thread_by_msgid(msgid: str, useproject: Optional[str] = None, nocache
     # In fact, /all/ naming is arbitrary, but for now we are going to
     # hardcode it to lore.kernel.org settings and maybe make it configurable
     # in the future, if necessary.
-    if loc.path.startswith('/all/'):
+    if loc.path.startswith('/all/') and not useproject:
         useproject = 'all'
     if useproject:
         projurl = '%s://%s/%s' % (loc.scheme, loc.netloc, useproject)
