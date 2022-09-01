@@ -520,7 +520,9 @@ if gpgbin:
     patatt.GPGBIN = gpgbin
 
 dburl = parser['main'].get('dburl')
-engine = sa.create_engine(dburl)
+# By default, recycle db connections after 5 min
+db_pool_recycle = parser['main'].getint('dbpoolrecycle', 300)
+engine = sa.create_engine(dburl, pool_recycle=db_pool_recycle)
 srl = SendReceiveListener(engine, parser)
 app = falcon.App()
 mp = os.getenv('MOUNTPOINT', '/_b4_submit')
