@@ -92,6 +92,7 @@ def test_parse_trailers(source, expected):
     ('custody', {}, {'addmysob': True, 'copyccs': True}, 'unordered', {}),
     ('custody', {}, {'addmysob': True, 'copyccs': True}, 'ordered',
      {'trailer-order': 'Cc,Fixes*,Link*,Suggested*,Reviewed*,Tested*,*'}),
+    ('partial-reroll', {}, {'addmysob': True}, 'defaults', {}),
 ])
 def test_followup_trailers(source, serargs, amargs, reference, b4cfg):
     b4.USER_CONFIG = {
