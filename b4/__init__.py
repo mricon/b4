@@ -168,7 +168,7 @@ class LoreMailbox:
 
         return '\n'.join(out)
 
-    def get_by_msgid(self, msgid):
+    def get_by_msgid(self, msgid: str) -> Optional['LoreMessage']:
         if msgid in self.msgid_map:
             return self.msgid_map[msgid]
         return None
@@ -235,7 +235,7 @@ class LoreMailbox:
             lser.subject = pser.subject
             logger.debug('Reconstituted successfully')
 
-    def get_series(self, revision=None, sloppytrailers=False, reroll=True):
+    def get_series(self, revision=None, sloppytrailers=False, reroll=True) -> Optional['LoreSeries']:
         if revision is None:
             if not len(self.series):
                 return None
@@ -346,7 +346,7 @@ class LoreMailbox:
 
         return lser
 
-    def add_message(self, msg):
+    def add_message(self, msg: email.message.Message) -> None:
         msgid = LoreMessage.get_clean_msgid(msg)
         if msgid and msgid in self.msgid_map:
             logger.debug('Already have a message with this msgid, skipping %s', msgid)
@@ -411,17 +411,26 @@ class LoreMailbox:
 
 
 class LoreSeries:
-    def __init__(self, revision, expected):
+    revision: int
+    expected: int
+    patches: List[Optional['LoreMessage']]
+    followups: List['LoreMessage']
+    trailer_mismatches: Set[Tuple[str, str, str, str]]
+    complete: bool = False
+    has_cover: bool = False
+    partial_reroll: bool = False
+    subject: str
+    indexes: Optional[List[Tuple[str, str]]] = None
+    base_commit: Optional[str] = None
+    change_id: Optional[str] = None
+
+    def __init__(self, revision: int, expected: int) -> None:
         self.revision = revision
         self.expected = expected
         self.patches = [None] * (expected+1)
         self.followups = list()
         self.trailer_mismatches = set()
-        self.complete = False
-        self.has_cover = False
-        self.partial_reroll = False
         self.subject = '(untitled)'
-        self.indexes = None
 
     def __repr__(self):
         out = list()
@@ -430,6 +439,8 @@ class LoreSeries:
         out.append('  expected: %s' % self.expected)
         out.append('  complete: %s' % self.complete)
         out.append('  has_cover: %s' % self.has_cover)
+        out.append('  base_commit: %s' % self.base_commit)
+        out.append('  change_id: %s' % self.change_id)
         out.append('  partial_reroll: %s' % self.partial_reroll)
         out.append('  patches:')
         at = 0
@@ -442,7 +453,7 @@ class LoreSeries:
 
         return '\n'.join(out)
 
-    def add_patch(self, lmsg):
+    def add_patch(self, lmsg: 'LoreMessage') -> None:
         while len(self.patches) < lmsg.expected + 1:
             self.patches.append(None)
         self.expected = lmsg.expected
@@ -456,14 +467,23 @@ class LoreSeries:
         else:
             self.patches[lmsg.counter] = lmsg
         self.complete = not (None in self.patches[1:])
+        if lmsg.counter == 0:
+            # This is a cover letter
+            if '\nbase-commit:' in lmsg.body:
+                matches = re.search(r'^base-commit: .*?([\da-f]+)', lmsg.body, flags=re.I | re.M)
+                if matches:
+                    self.base_commit = matches.groups()[0]
+            if '\nchange-id:' in lmsg.body:
+                matches = re.search(r'^change-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
+                if matches:
+                    self.change_id = matches.groups()[0]
+
         if self.patches[0] is not None:
-            # noinspection PyUnresolvedReferences
             self.subject = self.patches[0].subject
         elif self.patches[1] is not None:
-            # noinspection PyUnresolvedReferences
             self.subject = self.patches[1].subject
 
-    def get_slug(self, extended=False):
+    def get_slug(self, extended: bool = False) -> str:
         # Find the first non-None entry
         lmsg = None
         for lmsg in self.patches:
@@ -499,7 +519,7 @@ class LoreSeries:
             self.add_extra_trailers(self.patches[0].followup_trailers)  # noqa
 
     def get_am_ready(self, noaddtrailers=False, covertrailers=False, addmysob=False, addlink=False,
-                     linkmask=None, cherrypick=None, copyccs=False, allowbadchars=False) -> list:
+                     linkmask=None, cherrypick=None, copyccs=False, allowbadchars=False) -> List[email.message.Message]:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -1896,8 +1916,10 @@ class LoreSubject:
             subject = re.sub(r'^\s*\[[^]]*]\s*', '', subject)
         self.subject = subject
 
-    def get_slug(self, sep='_'):
-        unsafe = '%04d%s%s' % (self.counter, sep, self.subject)
+    def get_slug(self, sep='_', with_counter: bool = True):
+        unsafe = self.subject
+        if with_counter:
+            unsafe = '%04d%s%s' % (self.counter, sep, unsafe)
         return re.sub(r'\W+', sep, unsafe).strip(sep).lower()
 
     def __repr__(self):

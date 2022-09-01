@@ -265,6 +265,8 @@ def cmd():
                           help='Create a new branch for working on a patch series')
     ag_prepn.add_argument('-f', '--fork-point', dest='fork_point',
                           help='When creating a new branch, use this fork point instead of HEAD')
+    ag_prepn.add_argument('-F', '--from-thread', metavar='MSGID', dest='msgid',
+                          help='When creating a new branch, use this thread')
     ag_prepe = sp_prep.add_argument_group('Enroll existing branch', 'Enroll existing branch for prep work')
     ag_prepe.add_argument('-e', '--enroll', dest='enroll_base',
                           help='Enroll current branch, using the passed tag, branch, or commit as fork base')

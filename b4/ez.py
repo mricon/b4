@@ -23,6 +23,7 @@ import pathlib
 import base64
 import textwrap
 import gzip
+import io
 
 from typing import Optional, Tuple, List
 from email import utils
@@ -229,9 +230,76 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         logger.critical('CRITICAL: Unable to add your Signed-off-by: git returned no user.name or user.email')
         sys.exit(1)
 
+    cover = tracking = patches = thread_msgid = revision = None
+    if cmdargs.msgid:
+        msgid = b4.get_msgid(cmdargs)
+        list_msgs = b4.get_pi_thread_by_msgid(msgid)
+        if not list_msgs:
+            logger.critical('CRITICAL: no messages in the thread')
+            sys.exit(1)
+        lmbx = b4.LoreMailbox()
+        for msg in list_msgs:
+            lmbx.add_message(msg)
+        lser = lmbx.get_series()
+        if lser.has_cover:
+            cmsg = lser.patches[0]
+            b64tracking = cmsg.msg.get('x-b4-tracking')
+            if b64tracking:
+                logger.debug('Found x-b4-tracking header, attempting to restore')
+                try:
+                    ztracking = base64.b64decode(b64tracking)
+                    btracking = gzip.decompress(ztracking)
+                    tracking = json.loads(btracking.decode())
+                    logger.debug('tracking: %s', tracking)
+                    cover_sections = list()
+                    diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
+                    for section in cmsg.body.split('\n---\n'):
+                        # we stop caring once we see a diffstat
+                        if diffstatre.search(section):
+                            break
+                        cover_sections.append(section)
+                    cover = '\n---\n'.join(cover_sections).strip()
+                except Exception as ex:  # noqa
+                    logger.critical('CRITICAL: unable to restore tracking information, ignoring')
+                    logger.critical('          %s', ex)
+
+            else:
+                thread_msgid = msgid
+
+            if not cover:
+                logger.debug('Unrecognized cover letter format, will use as-is')
+                cover = cmsg.body
+
+            cover = (f'{cmsg.subject}\n\n'
+                     f'EDITME: Imported from f{msgid}\n'
+                     f'        Please review before sending.\n\n') + cover
+
+            change_id = lser.change_id
+            if not cmdargs.new_series_name:
+                if change_id:
+                    cchunks = change_id.split('-')
+                    if len(cchunks) > 2:
+                        cmdargs.new_series_name = '-'.join(cchunks[1:-1])
+                else:
+                    slug = cmsg.lsubject.get_slug(with_counter=False)
+                    # If it's longer than 30 chars, use first 3 words
+                    if len(slug) > 30:
+                        slug = '_'.join(slug.split('_')[:3])
+                    cmdargs.new_series_name = slug
+
+            base_commit = lser.base_commit
+            if base_commit and not cmdargs.fork_point:
+                logger.debug('Using %s as fork-point', base_commit)
+                cmdargs.fork_point = base_commit
+
+        # We start with next revision
+        revision = lser.revision + 1
+        # Do or don't add follow-up trailers? Don't add for now, let them run b4 trailers -u.
+        patches = lser.get_am_ready(noaddtrailers=True)
+        logger.info('---')
+
     mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy()
-    cover = None
     cherry_range = None
     if cmdargs.new_series_name:
         basebranch = None
@@ -378,15 +446,21 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         cover = '\n'.join(cover)
         logger.info('Created the default cover letter, you can edit with --edit-cover.')
 
-    # We don't need all the entropy of uuid, just some of it
-    changeid = '%s-%s-%s' % (datetime.date.today().strftime('%Y%m%d'), slug, uuid.uuid4().hex[:12])
-    tracking = {
-        'series': {
-            'revision': 1,
-            'change-id': changeid,
-            'base-branch': basebranch,
-        },
-    }
+    if not tracking:
+        # We don't need all the entropy of uuid, just some of it
+        changeid = '%s-%s-%s' % (datetime.date.today().strftime('%Y%m%d'), slug, uuid.uuid4().hex[:12])
+        if revision is None:
+            revision = 1
+        tracking = {
+            'series': {
+                'revision': revision,
+                'change-id': changeid,
+                'base-branch': basebranch,
+            },
+        }
+        if thread_msgid:
+            tracking['series']['from-thread'] = thread_msgid
+
     store_cover(cover, tracking, new=True)
     if cherry_range:
         gitargs = ['cherry-pick', cherry_range]
@@ -395,6 +469,20 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             # Woops, this is bad! At least tell them where the commit range is.
             logger.critical('Could not cherry-pick commits from range %s', cherry_range)
             sys.exit(1)
+
+    if patches:
+        logger.info('Applying %s patches', len(patches))
+        logger.info('---')
+        ifh = io.StringIO()
+        b4.save_git_am_mbox(patches, ifh)
+        ambytes = ifh.getvalue().encode()
+        ecode, out = b4.git_run_command(None, ['am'], stdin=ambytes, logstderr=True)
+        logger.info(out.strip())
+        if ecode > 0:
+            logger.critical('Could not apply patches from thread: %s', out)
+            sys.exit(ecode)
+        logger.info('---')
+        logger.info('NOTE: any follow-up trailers were ignored; apply them with b4 trailers -u')
 
 
 def make_magic_json(data: dict) -> str:
@@ -624,6 +712,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         end = 'HEAD'
         cover, tracking = load_cover(strip_comments=True)
         changeid = tracking['series'].get('change-id')
+        msgid = tracking['series'].get('from-thread')
         strategy = get_cover_strategy()
         if strategy in {'commit', 'tip-commit'}:
             # We need to me sure we ignore the cover commit
@@ -632,6 +721,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 ignore_commits = {cover_commit}
 
     elif cmdargs.msgid:
+        msgid = b4.get_msgid(cmdargs)
         changeid = None
         myemail = usercfg['email']
         # There doesn't appear to be a great way to find the first commit
@@ -683,16 +773,18 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         by_subject[subject] = commit
         by_patchid[patchid] = commit
 
-    if cmdargs.msgid:
-        msgid = b4.get_msgid(cmdargs)
-        logger.info('Retrieving thread matching %s', msgid)
-        list_msgs = b4.get_pi_thread_by_msgid(msgid, nocache=True)
-    elif changeid:
+    list_msgs = list()
+    if changeid:
         logger.info('Checking change-id "%s"', changeid)
         query = f'"change-id: {changeid}"'
-        list_msgs = b4.get_pi_search_results(query, nocache=True)
-    else:
-        list_msgs = None
+        smsgs = b4.get_pi_search_results(query, nocache=True)
+        if smsgs is not None:
+            list_msgs += smsgs
+    if msgid:
+        logger.info('Retrieving thread matching %s', msgid)
+        tmsgs = b4.get_pi_thread_by_msgid(msgid, nocache=True)
+        if tmsgs is not None:
+            list_msgs += tmsgs
 
     if list_msgs:
         bbox = b4.LoreMailbox()
@@ -727,10 +819,10 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                     updates[commit].append(fltr)
             # Check if we've applied mismatched trailers already
             if not cmdargs.sloppytrailers and mismatches:
-                for mltr in list(mismatches):
-                    if mltr in parts[2]:
-                        logger.debug('Removing already-applied mismatch %s', check)
-                        mismatches.remove(mltr)
+                for mismatch in list(mismatches):
+                    if b4.LoreTrailer(name=mismatch[0], value=mismatch[1]) in parts[2]:
+                        logger.debug('Removing already-applied mismatch %s', mismatch[0])
+                        mismatches.remove(mismatch)
 
         if len(mismatches):
             logger.critical('---')
