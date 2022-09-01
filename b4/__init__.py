@@ -2367,10 +2367,16 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
         msgid = urllib.parse.unquote(chunks[0])
         return msgid
 
-    # Is it a lore URL?
+    # Does it look like a public-inbox URL?
     matches = re.search(r'^https?://[^/]+/([^/]+)/([^/]+@[^/]+)', msgid, re.IGNORECASE)
     if matches:
         chunks = matches.groups()
+        config = get_main_config()
+        myloc = urllib.parse.urlparse(config['midmask'])
+        wantloc = urllib.parse.urlparse(msgid)
+        if myloc.netloc != wantloc.netloc:
+            logger.debug('Overriding midmask with passed url parameters')
+            config['midmask'] = f'{wantloc.scheme}://{wantloc.netloc}/{chunks[0]}/%s'
         msgid = urllib.parse.unquote(chunks[1])
         # Infer the project name from the URL, if possible
         if chunks[0] != 'r':
