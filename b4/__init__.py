@@ -2519,19 +2519,26 @@ def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -
     # Convert into individual files using git-mailsplit
     with tempfile.TemporaryDirectory(suffix='-mailsplit') as tfd:
         msgs = mailsplit_bytes(t_mbox, tfd)
-        if cachedir:
-            if os.path.exists(cachedir):
-                shutil.rmtree(cachedir)
-            shutil.copytree(tfd, cachedir)
 
     deduped = dict()
+
     for msg in msgs:
         msgid = LoreMessage.get_clean_msgid(msg)
         if msgid in deduped:
             deduped[msgid] = LoreMessage.get_preferred_duplicate(deduped[msgid], msg)
             continue
         deduped[msgid] = msg
-    return list(deduped.values())
+
+    msgs = list(deduped.values())
+    if cachedir:
+        if os.path.exists(cachedir):
+            shutil.rmtree(cachedir)
+        pathlib.Path(cachedir).mkdir(parents=True, exist_ok=True)
+        for at, msg in enumerate(msgs):
+            with open(os.path.join(cachedir, '%04d' % at), 'wb') as fh:
+                fh.write(msg.as_bytes())
+
+    return msgs
 
 
 def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False):
