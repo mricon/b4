@@ -2689,11 +2689,12 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                 msg.add_header('Date', email.utils.formatdate(patchts, localtime=True))
 
         payload = msg.get_payload()
-        if inbodyhdrs:
-            payload = '\n'.join(inbodyhdrs) + '\n\n' + payload
-        if not payload.find('\n-- \n') > 0:
-            payload += f'\n-- \nb4 {__VERSION__}\n'
-        msg.set_payload(payload, charset='utf-8')
+        if isinstance(payload, str):
+            if inbodyhdrs:
+                payload = '\n'.join(inbodyhdrs) + '\n\n' + payload
+            if not payload.find('\n-- \n') > 0:
+                payload += f'\n-- \nb4 {__VERSION__}\n'
+            msg.set_payload(payload, charset='utf-8')
 
         if extrahdrs is None:
             extrahdrs = list()
@@ -2710,7 +2711,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                 # Thread to the cover letter
                 refto = msgid_tpt % str(0)
             if counter > 1 and not covermsg:
-                # Tread to the first patch
+                # Thread to the first patch
                 refto = msgid_tpt % str(1)
             if refto and thread:
                 msg.add_header('References', refto)

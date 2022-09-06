@@ -26,6 +26,8 @@ from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 
+from typing import Optional, List
+
 
 charset.add_charset('utf-8', None)
 
@@ -262,7 +264,8 @@ def thanks_record_pr(lmsg):
         b4.patchwork_set_state(lmsg.msgid, pwstate)
 
 
-def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
+def explode(gitdir: Optional[str], lmsg: b4.LoreMessage, mailfrom: Optional[str] = None,
+            retrieve_links: bool = True) -> List[email.message.Message]:
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
         raise RuntimeError('Fetching unsuccessful')
@@ -284,9 +287,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
 
     logger.info('Generating patches starting from the base-commit')
 
-    msgs = list()
-
-    prefixes = ['PATCH']
+    prefixes = list()
     for prefix in lmsg.lsubject.prefixes:
         if prefix.lower() not in ('git', 'pull'):
             prefixes.append(prefix)
@@ -295,21 +296,16 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
     allto = utils.getaddresses(lmsg.msg.get_all('to', []))
     allcc = utils.getaddresses(lmsg.msg.get_all('cc', []))
 
+    emlfrom = email.utils.parseaddr(b4.LoreMessage.clean_header(lmsg.msg.get('From')))
     if mailfrom is None:
-        mailfrom = b4.LoreMessage.clean_header(lmsg.msg.get('From'))
+        mailfrom = emlfrom
     else:
-        realname = None
-        for fromaddr in utils.getaddresses(lmsg.msg.get_all('from', [])):
-            realname = fromaddr[0]
-            if not realname:
-                realname = fromaddr[1]
-            if fromaddr not in allcc:
-                allcc.append(fromaddr)
-        if realname:
-            # Use "Name via Foo" notation
-            if mailfrom.find('@') > 0 > mailfrom.find('<'):
-                mailfrom = f'<{mailfrom}>'
-            mailfrom = f'{realname} via {mailfrom}'
+        mailfrom = email.utils.parseaddr(mailfrom)
+        vianame = mailfrom[0]
+        if not vianame:
+            vianame = 'B4 Explode'
+        if emlfrom[1].lower() != mailfrom[1].lower():
+            mailfrom = (f'{emlfrom[0]} via {vianame}', mailfrom[1])
 
     config = b4.get_main_config()
     linked_ids = set()
@@ -318,78 +314,50 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
         # of the archived threads.
         linked_ids.add(lmsg.msgid)
 
-    # FIXME: This is currently broken due to changes to git_range_to_patches
-    msgs = b4.git_range_to_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD', with_cover=True,
-                                   prefixes=prefixes, extraopts=fpopts)
-    for msg in msgs:
-        msubj = b4.LoreSubject(msg.get('subject', ''))
+    # Build the cover message from the pull request body
+    body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
+        lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
 
-        # Is this the cover letter?
-        if msubj.counter == 0:
-            # We rebuild the message from scratch
-            # The cover letter body is the pull request body, plus a few trailers
-            body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
-                lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
+    # Make it a multipart if we're doing retrieve_links
+    if retrieve_links:
+        cmsg = MIMEMultipart()
+        cmsg.attach(MIMEText(body, 'plain'))
+    else:
+        cmsg = email.message.EmailMessage()
+        cmsg.set_payload(body)
 
-            # Make it a multipart if we're doing retrieve_links
-            if retrieve_links:
-                cmsg = MIMEMultipart()
-                cmsg.attach(MIMEText(body, 'plain'))
-            else:
-                cmsg = email.message.EmailMessage()
-                cmsg.set_payload(body)
+    msgid_tpt = f'<b4-exploded-%s-{lmsg.msgid}>'
+    cmsg.add_header('From', b4.format_addrs([mailfrom]))
+    cmsg.add_header('Subject', lmsg.full_subject)
+    cmsg.add_header('Date', lmsg.msg.get('Date'))
+    cmsg.set_charset('utf-8')
+    cmsg.replace_header('Content-Transfer-Encoding', '8bit')
 
-            cmsg.add_header('From', mailfrom)
-            cmsg.add_header('Subject', '[' + ' '.join(msubj.prefixes) + '] ' + lmsg.subject)
-            cmsg.add_header('Date', lmsg.msg.get('Date'))
-            cmsg.set_charset('utf-8')
-            cmsg.replace_header('Content-Transfer-Encoding', '8bit')
+    pmsgs = b4.git_range_to_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD',
+                                    covermsg=cmsg, prefixes=prefixes, msgid_tpt=msgid_tpt,
+                                    seriests=lmsg.date.timestamp(), mailfrom=mailfrom, thread=True)
 
-            msg = cmsg
+    msgs = list()
+    for at, (commit, msg) in enumerate(pmsgs):
+        body = msg.get_payload()
 
-        else:
-            # Move the original From and Date into the body
-            prepend = list()
-            if msg.get('From') != mailfrom:
-                cleanfrom = b4.LoreMessage.clean_header(msg['from'])
-                prepend.append('From: %s' % ''.join(cleanfrom))
-                msg.replace_header('From', mailfrom)
-
-            prepend.append('Date: %s' % msg['date'])
-            body = '%s\n\n%s' % ('\n'.join(prepend), msg.get_payload(decode=True).decode('utf-8'))
-            msg.set_payload(body)
-            msg.replace_header('Subject', msubj.full_subject)
-
-            if retrieve_links:
-                matches = re.findall(r'^Link:\s+https?://.*/(\S+@\S+)[^/]', body, flags=re.M | re.I)
-                if matches:
-                    linked_ids.update(matches)
-                matches = re.findall(r'^Message-ID:\s+(\S+@\S+)', body, flags=re.M | re.I)
-                if matches:
-                    linked_ids.update(matches)
-
-            # Add a number of seconds equalling the counter, in hopes it gets properly threaded
-            newdate = lmsg.date + timedelta(seconds=msubj.counter)
-            msg.replace_header('Date', utils.format_datetime(newdate))
-
-            # Thread it to the cover letter
-            msg.add_header('In-Reply-To', '<b4-exploded-0-%s>' % lmsg.msgid)
-            msg.add_header('References', '<b4-exploded-0-%s>' % lmsg.msgid)
+        if isinstance(body, str) and retrieve_links:
+            matches = re.findall(r'^Link:\s+https?://.*/(\S+@\S+)[^/]', body, flags=re.M | re.I)
+            if matches:
+                linked_ids.update(matches)
+            matches = re.findall(r'^Message-ID:\s+(\S+@\S+)', body, flags=re.M | re.I)
+            if matches:
+                linked_ids.update(matches)
 
         msg.add_header('To', format_addrs(allto))
         if allcc:
             msg.add_header('Cc', format_addrs(allcc))
 
-        # Set the message-id based on the original pull request msgid
-        msg.add_header('Message-Id', '<b4-exploded-%s-%s>' % (msubj.counter, lmsg.msgid))
-
-        if mailfrom != lmsg.msg.get('From'):
-            msg.add_header('Reply-To', lmsg.msg.get('From'))
-            msg.add_header('X-Original-From', lmsg.msg.get('From'))
-
         if lmsg.msg['List-Id']:
             msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
-        logger.info('  %s', msg.get('Subject'))
+
+        msgs.append(msg)
+        logger.info('  %s', re.sub(r'\n\s*', ' ' , msg.get('Subject')))
 
     logger.info('Exploded %s messages', len(msgs))
     if retrieve_links and linked_ids:
@@ -423,7 +391,7 @@ def explode(gitdir, lmsg, mailfrom=None, retrieve_links=True, fpopts=None):
                     fname = 'linked-threads.mbox.gz'
                     att = MIMEApplication(mbz, 'x-gzip')
                     att.add_header('Content-Disposition', f'attachment; filename={fname}')
-                    msgs[0].attach(att)
+                    cmsg.attach(att)
 
         logger.info('---')
         if len(seen_msgids):
