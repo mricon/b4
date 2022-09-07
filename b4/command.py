@@ -254,12 +254,14 @@ def cmd():
     sp_prep = subparsers.add_parser('prep', help='Work on patch series to submit for mailing list review')
     sp_prep.add_argument('--edit-cover', action='store_true', default=False,
                          help='Edit the cover letter in your defined $EDITOR (or core.editor)')
-    sp_prep.add_argument('--show-revision', action='store_true', default=False,
-                         help='Show current series revision number')
-    sp_prep.add_argument('--force-revision', default=False, metavar='N', type=int,
-                         help='Force revision to be this number instead')
     sp_prep.add_argument('--format-patch', metavar='OUTPUT_DIR',
                          help='Output prep-tracked commits as patches')
+    sp_prep.add_argument('--show-revision', action='store_true', default=False,
+                         help='Show current series revision number')
+    sp_prep.add_argument('--force-revision', metavar='N', type=int,
+                         help='Force revision to be this number instead')
+    sp_prep.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
+                         help='Mark current revision as sent and reroll (requires cover letter msgid)')
     ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
     ag_prepn.add_argument('-n', '--new', dest='new_series_name',
                           help='Create a new branch for working on a patch series')

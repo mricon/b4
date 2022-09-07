@@ -1234,21 +1234,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.no_sign or config.get('send-no-patatt-sign', '').lower() in {'yes', 'true', 'y'}:
         sign = False
 
-    cover_msgid = cover_body = None
+    cover_msg = None
     # TODO: Need to send obsoleted-by follow-ups, just need to figure out where.
     send_msgs = list()
     for commit, msg in patches:
         if not msg:
             continue
-        if cover_msgid is None:
-            cover_msgid = b4.LoreMessage.get_clean_msgid(msg)
-            lsubject = b4.LoreSubject(msg.get('subject'))
-            cbody = msg.get_payload()
-            # Remove signature
-            chunks = cbody.rsplit('\n-- \n')
-            if len(chunks) > 1:
-                cbody = chunks[0] + '\n'
-            cover_body = lsubject.subject + '\n\n' + cbody
+        if cover_msg is None:
+            cover_msg = msg
 
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
@@ -1291,6 +1284,19 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.debug('Not updating cover/tracking on resend')
         return
 
+    reroll(mybranch, cover_msg)
+
+
+def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = 'sent/'):
+    # Prepare annotated tag body from the cover letter
+    lsubject = b4.LoreSubject(cover_msg.get('subject'))
+    cbody = cover_msg.get_payload()
+    # Remove signature
+    chunks = cbody.rsplit('\n-- \n')
+    if len(chunks) > 1:
+        cbody = chunks[0] + '\n'
+    cover_body = lsubject.subject + '\n\n' + cbody
+
     cover, tracking = load_cover(strip_comments=True)
     revision = tracking['series']['revision']
     if mybranch.startswith('b4/'):
@@ -1305,6 +1311,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         try:
             strategy = get_cover_strategy()
             if strategy == 'commit':
+                # Find out the head commit, which is the end of our range
+                gitargs = ['rev-parse', 'HEAD']
+                ecode, out = b4.git_run_command(None, gitargs)
+                end_commit = out.strip()
                 # Detach the head at our parent commit and apply the cover-less series
                 cover_commit = find_cover_commit()
                 gitargs = ['checkout', f'{cover_commit}~1']
@@ -1312,8 +1322,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 if ecode > 0:
                     raise RuntimeError('Could not switch to a detached head')
                 # cherry-pick from cover letter to the last commit
-                last_commit = patches[-1][0]
-                gitargs = ['cherry-pick', f'{cover_commit}..{last_commit}']
+                gitargs = ['cherry-pick', f'{cover_commit}..{end_commit}']
                 ecode, out = b4.git_run_command(None, gitargs)
                 if ecode > 0:
                     raise RuntimeError('Could not cherry-pick the cover-less range')
@@ -1348,9 +1357,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     else:
         logger.info('NOTE: Tagname %s already exists', tagname)
 
-    if not cover_msgid:
-        return
-
+    cover_msgid = b4.LoreMessage.get_clean_msgid(cover_msg)
     logger.info('Recording series message-id in cover letter tracking')
     cover, tracking = load_cover(strip_comments=False)
     vrev = f'v{revision}'
@@ -1432,6 +1439,17 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.edit_cover:
         return edit_cover()
+
+    if cmdargs.reroll:
+        msgid = cmdargs.reroll
+        msgs = b4.get_pi_thread_by_msgid(msgid, onlymsgids={msgid}, nocache=True)
+        mybranch = b4.git_get_current_branch(None)
+        if msgs:
+            for msg in msgs:
+                if b4.LoreMessage.get_clean_msgid(msg) == msgid:
+                    return reroll(mybranch, msg)
+        logger.critical('CRITICAL: could not retrieve %s', msgid)
+        sys.exit(1)
 
     if cmdargs.show_revision:
         return show_revision()

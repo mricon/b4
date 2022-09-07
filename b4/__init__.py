@@ -1413,7 +1413,7 @@ class LoreMessage:
         return hdata
 
     @staticmethod
-    def get_clean_msgid(msg, header='Message-Id'):
+    def get_clean_msgid(msg: email.message.Message, header='Message-Id') -> str:
         msgid = None
         raw = msg.get(header)
         if raw:
@@ -1423,7 +1423,7 @@ class LoreMessage:
         return msgid
 
     @staticmethod
-    def get_preferred_duplicate(msg1, msg2):
+    def get_preferred_duplicate(msg1: email.message.Message, msg2: email.message.Message) -> email.message.Message:
         config = get_main_config()
         listid1 = LoreMessage.get_clean_msgid(msg1, 'list-id')
         if listid1:
