@@ -1,4 +1,4 @@
-project = 'B4 Enduser Docs'
+project = 'B4 end-user docs'
 copyright = '2019-2022, The Linux Foundation and contributors'
 author = 'Kernel.org'
 templates_path = ['_templates']
