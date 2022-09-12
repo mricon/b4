@@ -2202,10 +2202,14 @@ def git_set_config(fullpath: Optional[str], param: str, value: str, operation: s
     return ecode
 
 
-def get_config_from_git(regexp: str, defaults: Optional[dict] = None, multivals: Optional[list] = None) -> dict:
+def get_config_from_git(regexp: str, defaults: Optional[dict] = None,
+                        multivals: Optional[list] = None, source: Optional[str] = None) -> dict:
     if multivals is None:
         multivals = list()
-    args = ['config', '-z', '--get-regexp', regexp]
+    args = ['config']
+    if source:
+        args += ['--file', source]
+    args += ['-z', '--get-regexp', regexp]
     ecode, out = git_run_command(None, args)
     gitconfig = defaults
     if not gitconfig:
@@ -2236,15 +2240,28 @@ def get_main_config() -> dict:
     global MAIN_CONFIG
     if MAIN_CONFIG is None:
         config = get_config_from_git(r'b4\..*', defaults=DEFAULT_CONFIG, multivals=['keyringsrc'])
-        # Legacy name was get-lore-mbox, so load those as well
-        config = get_config_from_git(r'get-lore-mbox\..*', defaults=config)
         config['listid-preference'] = config['listid-preference'].split(',')
         config['listid-preference'].remove('*')
         config['listid-preference'].append('*')
         if config['gpgbin'] is None:
             gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
             config['gpgbin'] = gpgcfg['program']
+
+        # send- options can be provided via the toplevel .b4-config file
+        topdir = git_get_toplevel()
+        if topdir:
+            wtcfg = os.path.join(topdir, '.b4-config')
+            if os.access(wtcfg, os.R_OK):
+                logger.debug('Loading worktree configs from %s', wtcfg)
+                wtconfig = get_config_from_git(r'b4\.send-.*', source=wtcfg)
+                logger.debug('wtcfg=%s', wtconfig)
+                # We don't override any other settings
+                for key, val in wtconfig.items():
+                    if key not in config:
+                        config[key] = val
+
         MAIN_CONFIG = config
+
     return MAIN_CONFIG
 
 
@@ -2740,7 +2757,7 @@ def git_branch_contains(gitdir, commit_id):
     return lines
 
 
-def git_get_toplevel(path=None):
+def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
     topdir = None
     # Are we in a git tree and if so, what is our toplevel?
     gitargs = ['rev-parse', '--show-toplevel']
