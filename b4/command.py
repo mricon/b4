@@ -294,8 +294,10 @@ def cmd():
                          help='Do not send, write raw messages to this directory (forces --dry-run)')
     sp_send.add_argument('--prefixes', nargs='+',
                          help='Prefixes to add to PATCH (e.g. RFC, WIP)')
-    sp_send.add_argument('--no-auto-to-cc', action='store_true', default=False,
-                         help='Do not automatically collect To: and Cc: addresses')
+    sp_send.add_argument('--no-auto-cc', action='store_true', default=False,
+                         help='Do not add addresses from trailers into the Cc: field')
+    sp_send.add_argument('--no-tocc-cmd', action='store_true', default=False,
+                         help='Do not execute any commands to populate the To: and Cc: fields')
     sp_send.add_argument('--to', nargs='+', help='Addresses to add to the To: list')
     sp_send.add_argument('--cc', nargs='+', help='Addresses to add to the Cc: list')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,
@@ -303,7 +305,7 @@ def cmd():
     sp_send.add_argument('--resend', default=None,
                          help='Resend a previously sent version of the series')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
-                         help='Do not cryptographically sign your patches with patatt')
+                         help='Do not add the cryptographic attestation signature header')
     ag_sendh = sp_send.add_argument_group('Web submission', 'Authenticate with the web submission endpoint')
     ag_sendh.add_argument('--web-auth-new', dest='auth_new', action='store_true', default=False,
                           help='Initiate a new web authentication request')

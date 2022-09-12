@@ -109,7 +109,7 @@ def auth_new() -> None:
     elif algo == 'ed25519':
         from nacl.signing import SigningKey
         from nacl.encoding import Base64Encoder
-        sk = SigningKey(keydata, encoder=Base64Encoder)
+        sk = SigningKey(keydata.encode(), encoder=Base64Encoder)
         pubkey = base64.b64encode(sk.verify_key.encode()).decode()
     else:
         logger.critical('CRITICAL: algorithm %s not currently supported for web endpoint submission', algo)
@@ -1132,36 +1132,36 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         ccdests = [('', x) for x in cmdargs.cc]
         seen.update(set(cmdargs.cc))
 
-    if not cmdargs.no_auto_to_cc:
-        logger.info('Populating the To: and Cc: fields with automatically collected addresses')
-
+    tocmdstr = tocmd = None
+    cccmdstr = cccmd = None
+    if not cmdargs.no_tocc_cmd:
         topdir = b4.git_get_toplevel()
         # Use sane tocmd and cccmd defaults if we find a get_maintainer.pl
-        tocmdstr = tocmd = None
-        cccmdstr = cccmd = None
         getm = os.path.join(topdir, 'scripts', 'get_maintainer.pl')
         if config.get('send-auto-to-cmd'):
             tocmdstr = config.get('send-auto-to-cmd')
         elif os.access(getm, os.X_OK):
-            logger.info('Invoking get_maintainer.pl for To: addresses')
             tocmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol'
         if config.get('send-auto-cc-cmd'):
             cccmdstr = config.get('send-auto-cc-cmd')
         elif os.access(getm, os.X_OK):
-            logger.info('Invoking get_maintainer.pl for Cc: addresses')
             cccmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom'
 
         if tocmdstr:
             sp = shlex.shlex(tocmdstr, posix=True)
             sp.whitespace_split = True
             tocmd = list(sp)
+            logger.info('Will collect To: addresses using %s', os.path.basename(tocmd[0]))
         if cccmdstr:
             sp = shlex.shlex(cccmdstr, posix=True)
             sp.whitespace_split = True
             cccmd = list(sp)
+            logger.info('Will collect Cc: addresses using %s', os.path.basename(cccmd[0]))
 
+    if not (cmdargs.no_tocc_cmd and cmdargs.no_auto_cc):
+        logger.info('Collecting To/Cc addresses')
         seen = set()
-        # Go through them again to make to/cc headers
+        # Go through the messages to make to/cc headers
         for commit, msg in patches:
             if not msg:
                 continue
