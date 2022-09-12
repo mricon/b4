@@ -1,0 +1,4 @@
+[b4]
+  send-series-to = Kernel.org Tools <tools@linux.kernel.org>
+  send-series-cc = Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+  send-endpoint-web = https://lore.kernel.org/_b4_submit
