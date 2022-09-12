@@ -252,16 +252,19 @@ def cmd():
 
     # b4 prep
     sp_prep = subparsers.add_parser('prep', help='Work on patch series to submit for mailing list review')
-    sp_prep.add_argument('--edit-cover', action='store_true', default=False,
-                         help='Edit the cover letter in your defined $EDITOR (or core.editor)')
-    sp_prep.add_argument('--format-patch', metavar='OUTPUT_DIR',
-                         help='Output prep-tracked commits as patches')
-    sp_prep.add_argument('--show-revision', action='store_true', default=False,
-                         help='Show current series revision number')
-    sp_prep.add_argument('--force-revision', metavar='N', type=int,
-                         help='Force revision to be this number instead')
-    sp_prep.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
-                         help='Mark current revision as sent and reroll (requires cover letter msgid)')
+    spp_g = sp_prep.add_mutually_exclusive_group()
+    spp_g.add_argument('-c', '--auto-to-cc', action='store_true', default=False,
+                       help='Automatically populate cover letter trailers with To and Cc addresses')
+    spp_g.add_argument('-p', '--format-patch', metavar='OUTPUT_DIR',
+                       help='Output prep-tracked commits as patches')
+    spp_g.add_argument('--edit-cover', action='store_true', default=False,
+                       help='Edit the cover letter in your defined $EDITOR (or core.editor)')
+    spp_g.add_argument('--show-revision', action='store_true', default=False,
+                       help='Show current series revision number')
+    spp_g.add_argument('--force-revision', metavar='N', type=int,
+                       help='Force revision to be this number instead')
+    spp_g.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
+                       help='Mark current revision as sent and reroll (requires cover letter msgid)')
     ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
     ag_prepn.add_argument('-n', '--new', dest='new_series_name',
                           help='Create a new branch for working on a patch series')
@@ -294,10 +297,10 @@ def cmd():
                          help='Do not send, write raw messages to this directory (forces --dry-run)')
     sp_send.add_argument('--prefixes', nargs='+',
                          help='Prefixes to add to PATCH (e.g. RFC, WIP)')
-    sp_send.add_argument('--no-auto-cc', action='store_true', default=False,
-                         help='Do not add addresses from trailers into the Cc: field')
-    sp_send.add_argument('--no-tocc-cmd', action='store_true', default=False,
-                         help='Do not execute any commands to populate the To: and Cc: fields')
+    sp_send.add_argument('--no-trailer-to-cc', action='store_true', default=False,
+                         help='Do not add any addresses found in the cover or patch trailers to To: or Cc:')
+    sp_send.add_argument('--hide-cover-to-cc', action='store_true', default=False,
+                         help='Hide To: and Cc: entries from the cover letter trailers (but still send to them)')
     sp_send.add_argument('--to', nargs='+', help='Addresses to add to the To: list')
     sp_send.add_argument('--cc', nargs='+', help='Addresses to add to the Cc: list')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,

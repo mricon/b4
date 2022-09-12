@@ -24,6 +24,7 @@ import base64
 import textwrap
 import gzip
 import io
+import copy
 
 from typing import Optional, Tuple, List
 from email import utils
@@ -439,7 +440,8 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                  '',
                  '# You can add other trailers to the cover letter. Any email addresses found in',
                  '# these trailers will be added to the addresses specified/generated during',
-                 '# the b4 send stage.',
+                 '# the b4 send stage. You can also run "b4 prep --auto-to-cc" to auto-populate',
+                 '# the To: and Cc: trailers based on the code being modified.',
                  '',
                  '',
                  )
@@ -857,6 +859,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
 
 
 def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[str, str]]:
+    if not cmdargs:
+        return list()
     # Run this command from git toplevel
     topdir = b4.git_get_toplevel()
     ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes, rundir=topdir)  # noqa
@@ -1111,56 +1115,33 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     seen = set()
     todests = list()
-    trailers = set()
-    if config.get('send-series-to'):
-        for pair in utils.getaddresses([config.get('send-series-to')]):
-            if pair[1] not in seen:
-                seen.add(pair[1])
-                todests.append(pair)
     ccdests = list()
-    if config.get('send-series-cc'):
-        for pair in utils.getaddresses([config.get('send-series-cc')]):
-            if pair[1] not in seen:
-                seen.add(pair[1])
-                ccdests.append(pair)
+    trailers = set()
     excludes = set()
     # These override config values
     if cmdargs.to:
         todests = [('', x) for x in cmdargs.to]
         seen.update(set(cmdargs.to))
+    elif config.get('send-series-to'):
+        for pair in utils.getaddresses([config.get('send-series-to')]):
+            if pair[1] in seen:
+                continue
+            seen.add(pair[1])
+            logger.debug('added %s to seen', pair[1])
+            todests.append(pair)
     if cmdargs.cc:
         ccdests = [('', x) for x in cmdargs.cc]
         seen.update(set(cmdargs.cc))
+    elif config.get('send-series-cc'):
+        for pair in utils.getaddresses([config.get('send-series-cc')]):
+            if pair[1] in seen:
+                continue
+            seen.add(pair[1])
+            logger.debug('added %s to seen', pair[1])
+            ccdests.append(pair)
 
-    tocmdstr = tocmd = None
-    cccmdstr = cccmd = None
-    if not cmdargs.no_tocc_cmd:
-        topdir = b4.git_get_toplevel()
-        # Use sane tocmd and cccmd defaults if we find a get_maintainer.pl
-        getm = os.path.join(topdir, 'scripts', 'get_maintainer.pl')
-        if config.get('send-auto-to-cmd'):
-            tocmdstr = config.get('send-auto-to-cmd')
-        elif os.access(getm, os.X_OK):
-            tocmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol'
-        if config.get('send-auto-cc-cmd'):
-            cccmdstr = config.get('send-auto-cc-cmd')
-        elif os.access(getm, os.X_OK):
-            cccmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom'
-
-        if tocmdstr:
-            sp = shlex.shlex(tocmdstr, posix=True)
-            sp.whitespace_split = True
-            tocmd = list(sp)
-            logger.info('Will collect To: addresses using %s', os.path.basename(tocmd[0]))
-        if cccmdstr:
-            sp = shlex.shlex(cccmdstr, posix=True)
-            sp.whitespace_split = True
-            cccmd = list(sp)
-            logger.info('Will collect Cc: addresses using %s', os.path.basename(cccmd[0]))
-
-    if not (cmdargs.no_tocc_cmd and cmdargs.no_auto_cc):
-        logger.info('Collecting To/Cc addresses')
-        seen = set()
+    if not cmdargs.no_trailer_to_cc:
+        logger.info('Populating To/Cc addresses')
         # Go through the messages to make to/cc headers
         for commit, msg in patches:
             if not msg:
@@ -1168,23 +1149,15 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             body = msg.get_payload()
             parts = b4.LoreMessage.get_body_parts(body)
             trailers.update(parts[2])
-            msgbytes = msg.as_bytes()
-            if commit and tocmd:
-                for pair in get_addresses_from_cmd(tocmd, msgbytes):
-                    if pair[1] not in seen:
-                        seen.add(pair[1])
-                        todests.append(pair)
-            if commit and cccmd:
-                for pair in get_addresses_from_cmd(cccmd, msgbytes):
-                    if pair[1] not in seen:
-                        seen.add(pair[1])
-                        ccdests.append(pair)
 
         # add addresses seen in trailers
         for ltr in trailers:
             if ltr.addr and ltr.addr[1] not in seen:
                 seen.add(ltr.addr[1])
-                ccdests.append(ltr.addr)
+                if ltr.lname == 'to':
+                    todests.append(ltr.addr)
+                else:
+                    ccdests.append(ltr.addr)
 
         excludes = b4.get_excluded_addrs()
         if cmdargs.not_me_too:
@@ -1200,6 +1173,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if ccdests:
         allcc = b4.cleanup_email_addrs(ccdests, excludes, None)
         alldests.update(set([x[1] for x in allcc]))
+
+    if not len(alldests):
+        logger.critical('CRITICAL: Could not find any destination addresses (try: b4 prep --auto-to-cc).')
+        sys.exit(1)
 
     if not len(allto):
         # Move all cc's into the To field if there's nothing in "To"
@@ -1241,7 +1218,12 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if not msg:
             continue
         if cover_msg is None:
-            cover_msg = msg
+            cover_msg = copy.deepcopy(msg)
+            if cmdargs.hide_cover_to_cc or config.get('send-hide-cover-to-cc', '').lower() in {'yes', 'true', '1'}:
+                logger.debug('Hiding To: and Cc: trailers from the cover letter')
+                lcm = b4.LoreMessage(msg)
+                lcm.fix_trailers(omit_trailers=['to', 'cc'])
+                msg.set_payload(lcm.body, charset='utf-8')
 
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
@@ -1429,6 +1411,103 @@ def force_revision(forceto: int) -> None:
     store_cover(cover, tracking)
 
 
+def auto_to_cc() -> None:
+    tocmdstr = None
+    cccmdstr = None
+    topdir = b4.git_get_toplevel()
+    # Use sane tocmd and cccmd defaults if we find a get_maintainer.pl
+    getm = os.path.join(topdir, 'scripts', 'get_maintainer.pl')
+    config = b4.get_main_config()
+    if config.get('send-auto-to-cmd'):
+        tocmdstr = config.get('send-auto-to-cmd')
+    elif os.access(getm, os.X_OK):
+        tocmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol'
+    if config.get('send-auto-cc-cmd'):
+        cccmdstr = config.get('send-auto-cc-cmd')
+    elif os.access(getm, os.X_OK):
+        cccmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom'
+
+    tocmd = list()
+    cccmd = list()
+    if tocmdstr:
+        sp = shlex.shlex(tocmdstr, posix=True)
+        sp.whitespace_split = True
+        tocmd = list(sp)
+        logger.info('Will collect To: addresses using %s', os.path.basename(tocmd[0]))
+    if cccmdstr:
+        sp = shlex.shlex(cccmdstr, posix=True)
+        sp.whitespace_split = True
+        cccmd = list(sp)
+        logger.info('Will collect Cc: addresses using %s', os.path.basename(cccmd[0]))
+
+    logger.debug('Getting addresses from cover letter')
+    cover, tracking = load_cover(strip_comments=False)
+    parts = b4.LoreMessage.get_body_parts(cover)
+    seen = set()
+    for ltr in parts[2]:
+        if not ltr.addr:
+            continue
+        seen.add(ltr.addr[1])
+        logger.debug('added %s to seen', ltr.addr[1])
+
+    extras = list()
+    for tname, addrs in (('To', config.get('send-series-to')), ('Cc', config.get('send-series-cc'))):
+        if not addrs:
+            continue
+        for pair in utils.getaddresses([addrs]):
+            if pair[1] in seen:
+                continue
+            seen.add(pair[1])
+            ltr = b4.LoreTrailer(name=tname, value=b4.format_addrs([pair]))
+            logger.debug('added %s to seen', ltr.addr[1])
+            extras.append(pair)
+
+    patches = get_prep_branch_as_patches()
+    logger.info('Collecting To/Cc addresses')
+    # Go through the messages to make to/cc headers
+    for commit, msg in patches:
+        if not msg:
+            continue
+        payload = msg.get_payload()
+        parts = b4.LoreMessage.get_body_parts(payload)
+        for ltr in parts[2]:
+            if not ltr.addr:
+                continue
+            if ltr.addr[1] in seen:
+                continue
+            seen.add(ltr.addr[1])
+            logger.debug('added %s to seen', ltr.addr[1])
+            # Make it a Cc: trailer
+            ltr.name = 'Cc'
+            extras.append(ltr)
+
+        if not commit:
+            continue
+
+        msgbytes = msg.as_bytes()
+        for tname, pairs in (('To', get_addresses_from_cmd(tocmd, msgbytes)),
+                             ('Cc', get_addresses_from_cmd(cccmd, msgbytes))):
+            for pair in pairs:
+                if pair[1] not in seen:
+                    seen.add(pair[1])
+                    ltr = b4.LoreTrailer(name=tname, value=b4.format_addrs([pair]))
+                    extras.append(ltr)
+
+    if not extras:
+        logger.info('No new addresses to add.')
+        return
+
+    # Make it a LoreMessage, so we can run a fix_trailers on it
+    cmsg = email.message.EmailMessage()
+    cmsg.set_payload(cover, charset='utf-8')
+    clm = b4.LoreMessage(cmsg)
+    fallback_order = config.get('send-trailer-order', 'To,Cc,*')
+    clm.fix_trailers(extras=extras, fallback_order=fallback_order)
+    logger.info('---')
+    logger.info('You can trim/expand this list with: b4 prep --edit-cover')
+    store_cover(clm.body, tracking)
+
+
 def cmd_prep(cmdargs: argparse.Namespace) -> None:
     check_can_gfr()
     status = b4.git_get_repo_status()
@@ -1439,6 +1518,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.edit_cover:
         return edit_cover()
+
+    if cmdargs.auto_to_cc:
+        return auto_to_cc()
 
     if cmdargs.reroll:
         msgid = cmdargs.reroll

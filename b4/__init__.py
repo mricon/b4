@@ -1655,7 +1655,9 @@ class LoreMessage:
         return githeaders, message, trailers, basement, signature
 
     def fix_trailers(self, extras: Optional[List[LoreTrailer]] = None,
-                     copyccs: bool = False, addmysob: bool = False) -> None:
+                     copyccs: bool = False, addmysob: bool = False,
+                     fallback_order: str = '*',
+                     omit_trailers: Optional[List[str]] = None) -> None:
 
         config = get_main_config()
 
@@ -1697,7 +1699,7 @@ class LoreMessage:
                         altr = LoreTrailer(name='Cc', value=pair[1])
                     new_trailers.append(altr)
 
-        torder = config.get('trailer-order')
+        torder = config.get('trailer-order', fallback_order)
         if torder and torder != '*':
             # this only applies to trailers within our chain of custody, so walk existing
             # body trailers backwards and stop at the outermost Signed-off-by we find (if any)
@@ -1743,6 +1745,9 @@ class LoreMessage:
 
                 logger.info('    + %s%s', ltr.as_string(omit_extinfo=True), extra)
 
+            elif extras is not None and ltr in extras:
+                logger.info('    + %s%s', ltr.as_string(omit_extinfo=True), extra)
+
         if addmysob or hasmysob:
             # Tack on our signoff at the bottom
             fixtrailers.append(sobtr)
@@ -1764,8 +1769,11 @@ class LoreMessage:
                 newmessage += '\n'
 
         if len(fixtrailers):
+            if omit_trailers is None:
+                omit_trailers = set()
             for ltr in fixtrailers:
-                newmessage += ltr.as_string() + '\n'
+                if ltr.lname not in omit_trailers:
+                    newmessage += ltr.as_string() + '\n'
 
         self.message = self.subject + '\n\n' + newmessage
         self.body += newmessage
