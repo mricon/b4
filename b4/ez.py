@@ -1460,7 +1460,7 @@ def auto_to_cc() -> None:
             seen.add(pair[1])
             ltr = b4.LoreTrailer(name=tname, value=b4.format_addrs([pair]))
             logger.debug('added %s to seen', ltr.addr[1])
-            extras.append(pair)
+            extras.append(ltr)
 
     patches = get_prep_branch_as_patches()
     logger.info('Collecting To/Cc addresses')
