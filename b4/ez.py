@@ -73,9 +73,12 @@ Changes in v${newrev}:
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     config = b4.get_main_config()
-    endpoint = config.get('send-endpoint-web')
+    endpoint = config.get('send-endpoint-web', '')
+    if not re.search(r'https?://', endpoint):
+        endpoint = None
+
     if not endpoint:
-        raise RuntimeError('No web submission endpoint defined, set b4.send-endpoint-web')
+        raise RuntimeError('Web submission endpoint (b4.send-endpoint-web) is not defined, or is not a web URL.')
 
     usercfg = b4.get_user_config()
     myemail = usercfg.get('email')
@@ -1231,7 +1234,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
         send_msgs.append(msg)
 
-    if config.get('send-endpoint-web'):
+    endpoint = config.get('send-endpoint-web', '')
+    if not re.search(r'https?://', endpoint):
+        endpoint = None
+
+    if endpoint:
         # Web endpoint always requires signing
         if not sign:
             logger.critical('CRITICAL: Web endpoint is defined for sending, but signing is turned off')

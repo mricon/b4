@@ -3148,7 +3148,9 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
     logger.info('---')
     # Do we have an endpoint defined?
     config = get_main_config()
-    endpoint = config.get('send-endpoint-web')
+    endpoint = config.get('send-endpoint-web', '')
+    if not re.search(r'https?://', endpoint):
+        endpoint = None
     if use_web_endpoint and endpoint:
         logger.info('Sending via web endpoint %s', endpoint)
         req = {
