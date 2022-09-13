@@ -9,13 +9,20 @@ maintainers who primarily receive, review, and apply patches to their
 trees, and the other at developers who submit patches or patch series
 for maintainer review.
 
+Installation and configuration
+------------------------------
+.. toctree::
+   :maxdepth: 1
+
+   installing
+   config
+
 For maintainers
 ---------------
 .. toctree::
    :maxdepth: 1
 
    maintainer/overview
-   maintainer/config
    maintainer/mbox
    maintainer/patches
    maintainer/prs
@@ -31,13 +38,6 @@ For developers
    contributor/prep
    contributor/send
    contributor/trailers
-
-Installation and support
-------------------------
-.. toctree::
-   :maxdepth: 1
-
-   installing
 
 Getting help
 ------------
