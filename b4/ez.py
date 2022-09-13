@@ -74,7 +74,7 @@ Changes in v${newrev}:
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     config = b4.get_main_config()
     endpoint = config.get('send-endpoint-web', '')
-    if not re.search(r'https?://', endpoint):
+    if not re.search(r'^https?://', endpoint):
         endpoint = None
 
     if not endpoint:
@@ -1235,7 +1235,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         send_msgs.append(msg)
 
     endpoint = config.get('send-endpoint-web', '')
-    if not re.search(r'https?://', endpoint):
+    if not re.search(r'^https?://', endpoint):
         endpoint = None
 
     if endpoint:
