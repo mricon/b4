@@ -1073,10 +1073,17 @@ class LoreMessage:
                     signtime = self.date
 
             self.msg._headers.append((hn, hval))  # noqa
-            res = dkim.verify(self.msg.as_bytes(), logger=dkimlogger)
+            try:
+                res = dkim.verify(self.msg.as_bytes(), logger=dkimlogger)
+                logger.debug('DKIM verify results: %s=%s', identity, res)
+            except Exception as ex:  # noqa
+                # Usually, this is due to some DNS resolver failure, which we can't
+                # possibly cleanly try/catch. Just mark it as failed and move on.
+                logger.debug('DKIM attestation failed: %s', ex)
+                errors.append(str(ex))
+                res = False
 
             attestor = LoreAttestorDKIM(res, identity, signtime, errors)
-            logger.debug('DKIM verify results: %s=%s', identity, res)
             if attestor.check_identity(self.fromemail):
                 # use this one, regardless of any other DKIM signatures
                 self._attestors.append(attestor)
