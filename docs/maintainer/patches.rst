@@ -1,36 +1,65 @@
-b4 mbox: retrieving threads
-===========================
+b4 am/shazam: retrieving and applying patches
+=============================================
+Most commonly, b4 is used to retrieve, prepare, and apply patches sent
+via distribution lists. The base functionality is similar to that of
+``b4 mbox``::
 
-.. note::
+    b4 am 20200313231252.64999-1-keescook@chromium.org
 
-   If you are looking for a way to continuously retrieve full threads
-   (or even full search results) from a public-inbox server, the ``lei``
-   tool provides a much more robust way of doing that.
+This will do the following:
 
-Retrieving full discussion threads is the most basic use of b4. All you
-need to know is the message-id of any message in the thread::
+1. look up if that message-id is known by the public-inbox server
+   (e.g. lore.kernel.org)
+2. retrieve all threads matching that message-id
+3. process all replies to collect code review trailers and apply them to
+   the relevant patch commit messages
+4. perform attestation checks on patches and code review follow-ups
+5. put all patches in the correct order and prepare for "git am"
+6. write out the resulting mailbox so it is ready to be applied to a git
+   tree
 
-    b4 mbox 20200313231252.64999-1-keescook@chromium.org
+For example::
 
-Alternatively, if you have found a thread on lore.kernel.org and you
-want to retrieve it in full, you can just use the full URL::
+    $ b4 am 20200313231252.64999-1-keescook@chromium.org
+    Analyzing 5 messages in the thread
+    Checking attestation on all messages, may take a moment...
+    ---
+      ✓ [PATCH v2 1/2] selftests/harness: Move test child waiting logic
+      ✓ [PATCH v2 2/2] selftests/harness: Handle timeouts cleanly
+      ---
+      ✓ Signed: DKIM/chromium.org
+    ---
+    Total patches: 2
+    ---
+    Cover: ./v2_20200313_keescook_selftests_harness_handle_timeouts_cleanly.cover
+     Link: https://lore.kernel.org/r/20200313231252.64999-1-keescook@chromium.org
+     Base: not specified
+           git am ./v2_20200313_keescook_selftests_harness_handle_timeouts_cleanly.mbx
 
-    b4 mbox https://lore.kernel.org/lkml/20200313231252.64999-1-keescook@chromium.org/#t
 
-By default, b4 will save the thread in a mailbox format using the
-message-id of the message as the filename base::
+b4 am vs. b4 shazam
+-------------------
+The two commands are very similar -- the main distinction is that ``b4
+am`` will prepare the patch series for application to the git tree, but
+will not modify your git tree in any way.
 
-    $ b4 mbox 20200313231252.64999-1-keescook@chromium.org
-    Grabbing thread from lore.kernel.org/all/20200313231252.64999-1-keescook%40chromium.org/t.mbox.gz
-    5 messages in the thread
-    Saved ./20200313231252.64999-1-keescook@chromium.org.mbx
+The ``b4 shazam`` command will do the same as ``b4 am`` *and* will apply
+the patch series to the git tree (if it is possible to do so cleanly).
 
-Other flags
-~~~~~~~~~~~
+Common flags
+------------
+The following flags are common to both commands:
+
 ``-p USEPROJECT, --use-project USEPROJECT``
   **DEPRECATED**: This is a legacy option that made sense before
   public-inbox supported collating and retrieving threads from across
   multiple lists. This flag will probably go away in the future.
+
+``-m LOCALMBOX, --use-local-mbox LOCALMBOX``
+  By default, b4 will retrieve threads from remote public-inbox servers,
+  but it can also use a local mailbox/maildir. This is useful if you
+  have a tool like ``mbsync`` or ``lei`` copying remote messages locally
+  and you need to do some work while offline.
 
 ``-C, --no-cache``
   By default, b4 will cache the retrieved threads for about 10 minutes.
@@ -42,6 +71,8 @@ Other flags
   to this location instead. You can also pass a path to an existing
   mbox or maildir location to have the results appended to that mailbox
   instead (see also the ``-f`` flag below).
+
+  When ``-`` is specified, the output is dumped to stdout.
 
 ``-c, --check-newer-revisions``
   When retrieving patch series, check if a newer revision is available.
@@ -60,24 +91,161 @@ Other flags
   ("mboxo" vs "mboxrd", etc), you may want to instead save the results
   as a Maildir directory.
 
-``-f, --filter-dupes``
-  When adding messages to existing mailbox or maildir (with ``-o``),
-  this will check all existing messages and will only add those messages
-  that aren't already present. Note, that this uses simple message-id
-  matching and no other checks for correctness are performed.
+``-v WANTVER, --use-version WANTVER``
+  If a thread (or threads, when used with ``-c``) contains multiple
+  patch series revisions, b4 will automatically pick the highest
+  numbered version. This switch lets you pick a different revision.
 
-Using with mutt
-~~~~~~~~~~~~~~~
-If you are a mutt or neomutt user and your mail is stored locally, you
-can define a quick macro that would let you quickly retrieve full
-threads and add them to your inbox. This is handy if you are cc'd in the
-middle of a conversation and you want to retrieve the rest of the thread
-for context.
+``-t, --apply-cover-trailers``
+  By default, b4 will not apply any code review trailers sent to the
+  cover letter (but will let you know when it finds those). This lets
+  you automatically apply these trailers to all commits in the series.
+  **This will become the default in a future version of b4.**
 
-Add something like the following to your ``~/.muttrc``::
+``-S, --sloppy-trailers``
+  B4 tries to be careful when collecting code review trailers and will
+  refuse to consider the trailers where the email address in the From:
+  header does not patch the address in the trailer itself.
 
-    macro index 4 "<pipe-message>b4 mbox -fo ~/Mail<return>"
+  For example, the following message will not be processed::
 
-Now selecting a message in the message index and pressing "4" will
-retrieve the rest of the thread from the public-inbox server and add
-them to the local maildir (``~/Mail`` in the example above).
+      From: Alice Maintainer <alice@personalemail.org>
+      Subject: Re: [PATCH v3 3/3] Some patch title
+
+      > [...]
+      Reviewed-by: Alice Maintainer <alice.maintainer@workemail.com>
+
+  In such situations, b4 will print a warning and refuse to apply the
+  trailer due to the email address mismatch. You can override this by
+  passing the ``-S`` flag.
+
+``-T, --no-add-trailers``
+  This tells b4 to ignore any follow-up trailers and just save the
+  patches as sent by the contributor.
+
+``-s, --add-my-sob``
+  Applies your own ``Signed-off-by:`` trailer to every commit.
+
+``-l, --add-link``
+  Adds a ``Link:`` trailer with the URL of the retrieved message using
+  the ``linkmask`` template. Note, that such trailers may be considered
+  redundant by the upstream maintainer.
+
+``-P CHERRYPICK, --cherry-pick CHERRYPICK``
+  This allows you to select a subset of patches from a larger series.
+  Here are a few examples.
+
+  This will pick patches 1, 3, 5, 6, 7, 9 and any others that follow::
+
+      b4 am -P 1,3,5-7,9- <msgid>
+
+  This will pick just the patch that matches the exact message-id
+  provided::
+
+      b4 am -P _ <msgid>
+
+  This will pick all patches where the subject matches "iscsi"::
+
+      b4 am -P *iscsi*
+
+``--cc-trailers``
+  Copies all addresses found in the message Cc's into ``Cc:`` commit
+  message trailers.
+
+``--no-parent``
+  Break thread at the msgid specified and ignore any parent messages.
+  This is handy with very convoluted threads, for example when someone
+  replies with a different patch series in the middle of a larger
+  conversation and b4 gets confused about which patch series is being
+  requested.
+
+``--allow-unicode-control-chars``
+  There are some clever tricks that can be accomplished with unicode
+  control chars that make the code as printed on the screen (and
+  reviewed by a human) to actually do something totally different when
+  processed by a compiler. Such unicode control chars are almost never
+  legitimately useful in the code, so b4 will print a warning and bail
+  out when it finds them. However, just in case there are legitimate
+  reasons for these characters to be in the code (e.g. as part of
+  translated documentation), this behaviour can be overridden.
+
+Flags only valid for ``b4 am``
+------------------------------
+The following flags only make sense for ``b4 am``:
+
+``-Q, --quilt-ready``
+  Saves the patches as a folder that can be fed directly to quilt. If
+  you don't know what quilt is, you don't really need to worry about
+  this option.
+
+``-b GUESSBRANCH [...], --guess-branch GUESSBRANCH [...]``
+  When using ``--guess-base``, you can restrict which branch(es) b4 will
+  use to find the match. If not specified, b4 will use the entire tree
+  history.
+
+``--guess-lookback GUESSDAYS``
+  When using ``--guess-base``, you can specify how far back b4 should
+  look *from the date of the patch* to find the base commit. By default,
+  b4 will only consider the last 14 days prior to the date of the patch,
+  but you can expand or shrink it as necessary.
+
+``-3, --prep-3way``
+  This will try to prepare your tree for a 3-way merge by doing some
+  behind the scenes git magic and preparing some fake commits.
+
+``--no-cover``
+  By default, b4 will save the cover letter as a separate file in the
+  output directory specified. This flag turns it off (this is also the
+  default when used with ``-o -``).
+
+``--no-partial-reroll``
+  For minor changes, it is common practice for contributors to send
+  follow-ups to just the patches they have modified. For example::
+
+      [PATCH v1 1/3] foo: add foo to bar
+      [PATCH v1 2/3] bar: add bar to baz
+       \- [PATCH v2 2/3] bar: add bar to baz
+      [PATCH v1 3/3] baz: add baz to quux
+
+  In this case, b4 will properly create a v2 of the entire series by
+  reusing ``[PATCH v1 1/3]`` and ``[PATCH v1 3/3]``. However, sometimes
+  that is not the right thing to do, so you can turn off this feature
+  using ``--no-partial-reroll``.
+
+
+Flags only valid for ``b4 shazam``
+----------------------------------
+By default, ``b4 shazam`` will apply the patch series directly to the
+git tree where the command is being executed. However, instead of
+just running ``git am`` and applying the patches directly on top of the
+current branch, it can also treat the series similar to a git pull
+request and either prepare a ``FETCH_HEAD`` that you can merge manually,
+or even automatically merge the series using the series cover letter as
+the basis for the merge commit.
+
+``-H, --make-fetch-head``
+  This will prepare the series and place it into the ``FETCH_HEAD`` that
+  can then be merged just as if it were a pull request:
+
+  1. b4 will prepare a temporary sparse worktree
+  2. b4 will apply the series to that worktree
+  3. if ``git am`` completed successfully, b4 will fetch that tree into
+     your current tree's ``FETCH_HEAD`` (and get rid of the temporary
+     tree)
+  4. b4 will place the cover letter into ``.git/b4-cover``
+  5. b4 will offer the command you can run to merge the change into your
+     current branch, e.g.::
+
+         git merge --no-ff -F .git/b4-cover --edit FETCH_HEAD --signoff
+
+  Generally, this command is also a good test for "will this patch
+  series apply cleanly to my tree". You can perform any actions with the
+  ``FETCH_HEAD`` as you normally would, e.g. run ``git diff``, make a
+  new branch out of it using ``git checkout``, etc.
+
+``-M, --merge``
+  Exactly the same as ``--make-fetch-head``, but will actually execute
+  the suggested ``git merge`` command.
+
+Please also see the :ref:`shazam_settings` section for some
+configuration file options that affect some of ``b4 shazam`` behaviour.

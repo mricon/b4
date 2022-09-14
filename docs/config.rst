@@ -107,9 +107,10 @@ These options control many of the core features of b4.
 
   Default: ``10``
 
+.. _shazam_settings:
 
 shazam settings
-~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
 These settings control how ``b4 shazam`` applies patches to your tree.
 
 ``b4.shazam-am-flags``

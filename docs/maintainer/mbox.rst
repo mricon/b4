@@ -1,6 +1,5 @@
 b4 mbox: retrieving threads
 ===========================
-
 .. note::
 
    If you are looking for a way to continuously retrieve full threads
@@ -25,8 +24,8 @@ message-id of the message as the filename base::
     5 messages in the thread
     Saved ./20200313231252.64999-1-keescook@chromium.org.mbx
 
-Other flags
-~~~~~~~~~~~
+Option flags
+------------
 ``-p USEPROJECT, --use-project USEPROJECT``
   **DEPRECATED**: This is a legacy option that made sense before
   public-inbox supported collating and retrieving threads from across
@@ -67,7 +66,7 @@ Other flags
   matching and no other checks for correctness are performed.
 
 Using with mutt
-~~~~~~~~~~~~~~~
+---------------
 If you are a mutt or neomutt user and your mail is stored locally, you
 can define a quick macro that would let you quickly retrieve full
 threads and add them to your inbox. This is handy if you are cc'd in the
