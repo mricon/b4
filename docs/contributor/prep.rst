@@ -1,4 +1,4 @@
-Preparing your patch series
-===========================
+prep: preparing your patch series
+=================================
 
 Stub.

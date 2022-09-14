@@ -1,4 +1,4 @@
-Retrieving code-review trailers
-===============================
+trailers: retrieving code-review trailers
+=========================================
 
 Stub.
