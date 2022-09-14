@@ -24,10 +24,11 @@ For maintainers
 
    maintainer/overview
    maintainer/mbox
-   maintainer/patches
-   maintainer/prs
-   maintainer/thanks
-   maintainer/keys
+   maintainer/am-shazam
+   maintainer/diff
+   maintainer/pr
+   maintainer/ty
+   maintainer/kr
 
 For developers
 --------------

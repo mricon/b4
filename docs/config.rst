@@ -198,6 +198,8 @@ These settings control patch attestation.
 
   Default: ``None``
 
+.. _ty_settings:
+
 Thank-you (ty) settings
 ~~~~~~~~~~~~~~~~~~~~~~~
 These settings control the behaviour of ``b4 ty`` command.
@@ -222,6 +224,7 @@ These settings control the behaviour of ``b4 ty`` command.
 
   Default: ``None``
 
+.. _patchwork_settings:
 
 Patchwork integration settings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
