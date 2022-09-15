@@ -1,5 +1,5 @@
-b4 pr: working with pull requests
-=================================
+pr: working with pull requests
+==============================
 In addition to working with patches and patch series, b4 is also able to
 work with pull requests. It provides the following benefits as opposed
 to using git directly:

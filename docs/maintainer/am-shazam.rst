@@ -1,5 +1,5 @@
-b4 am,shazam: retrieving and applying patches
-=============================================
+am,shazam: retrieving and applying patches
+==========================================
 Most commonly, b4 is used to retrieve, prepare, and apply patches sent
 via distribution lists. The base functionality is similar to that of
 ``b4 mbox``::

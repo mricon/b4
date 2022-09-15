@@ -1,5 +1,5 @@
-b4 ty: sending automated contributor feedback
-=============================================
+ty: sending automated contributor feedback
+==========================================
 B4 makes it easier to send automated developer feedback when you apply
 patches or pull requests to your git tree.
 

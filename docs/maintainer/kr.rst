@@ -1,5 +1,5 @@
-b4 kr: working with contributor keys
-====================================
+kr: working with contributor keys
+=================================
 This subcommand allows maintaining a local keyring of contributor keys.
 
 .. note::

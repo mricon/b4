@@ -1,5 +1,5 @@
-b4 mbox: retrieving threads
-===========================
+mbox: retrieving threads
+========================
 .. note::
 
    If you are looking for a way to continuously retrieve full threads

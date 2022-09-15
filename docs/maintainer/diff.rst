@@ -1,5 +1,5 @@
-b4 diff: comparing patch series
-===============================
+diff: comparing patch series
+============================
 The ``diff`` subcommand allows comparing two different revisions of the
 same patch series using ``git range-diff``. Note, that in order to
 perform the ``range-diff`` comparison, both revisions need to cleanly
