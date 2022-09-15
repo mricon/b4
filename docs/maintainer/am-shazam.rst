@@ -89,12 +89,6 @@ The following flags are common to both commands:
   By default, the resulting mailbox file will use the message-id as the
   basis for its filename. This option lets you override this behaviour.
 
-``-M, --save-as-maildir``
-  By default, the retrieved thread will be saved as an mbox file.
-  However, due to subtle incompatibilities between various mbox formats
-  ("mboxo" vs "mboxrd", etc), you may want to instead save the results
-  as a Maildir directory.
-
 ``-v WANTVER, --use-version WANTVER``
   If a thread (or threads, when used with ``-c``) contains multiple
   patch series revisions, b4 will automatically pick the highest
@@ -176,6 +170,12 @@ The following flags are common to both commands:
 Flags only valid for ``b4 am``
 ------------------------------
 The following flags only make sense for ``b4 am``:
+
+``-M, --save-as-maildir``
+  By default, the retrieved thread will be saved as an mbox file.
+  However, due to subtle incompatibilities between various mbox formats
+  ("mboxo" vs "mboxrd", etc), you may want to instead save the results
+  as a Maildir directory.
 
 ``-Q, --quilt-ready``
   Saves the patches as a folder that can be fed directly to quilt. If
