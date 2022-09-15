@@ -5,15 +5,15 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2022-06-16
+:Date:      2022-09-16
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.9.0
+:Version:   0.10.0
 :Manual section: 5
 
 SYNOPSIS
 --------
-b4 {mbox,am,shazam,pr,diff,ty,kr} [options]
+b4 {mbox,am,shazam,pr,diff,ty,kr,prep,send,trailers} [options]
 
 DESCRIPTION
 -----------
@@ -25,15 +25,25 @@ like those used in the Linux kernel development.
 The name "b4" was chosen for ease of typing and because B-4 was the
 precursor to Lore and Data in the Star Trek universe.
 
+Full documentation is available on https://b4.docs.kernel.org/.
+
 SUBCOMMANDS
 -----------
+Maintainer-oriented:
+
 * *mbox*: Download a thread as an mbox file
 * *am*: Create an mbox file that is ready to git-am
 * *shazam*: Apply patch series to git repositories
 * *pr*: Work with pull requests
 * *diff*: Show range-diff style diffs between patch versions
 * *ty*: Create templated replies for processed patches and pull requests
-* *kr* (EXPERIMENTAL) Operate on patatt-compatible keyrings
+* *kr*: (EXPERIMENTAL) Operate on patatt-compatible keyrings
+
+Contributor-oriented:
+
+* *prep*: (EXPERIMENTAL) prepare your series for submission
+* *send*: (EXPERIMENTAL) send your series for review on distribution lists
+* *trailers*: (EXPERIMENTAL) retrieve and apply code-review trailers
 
 OPTIONS
 -------
@@ -323,79 +333,100 @@ optional arguments:
 
 *Example*: b4 kr --show-keys 20210521184811.617875-1-konstantin@linuxfoundation.org
 
+b4 prep
+~~~~~~~
+usage:
+  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --manual-reroll COVER_MSGID] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
+
+options:
+  -h, --help            show this help message and exit
+  -c, --auto-to-cc      Automatically populate cover letter trailers with To and Cc addresses
+  -p OUTPUT_DIR, --format-patch OUTPUT_DIR
+                        Output prep-tracked commits as patches
+  --edit-cover          Edit the cover letter in your defined $EDITOR (or core.editor)
+  --show-revision       Show current series revision number
+  --force-revision N    Force revision to be this number instead
+  --manual-reroll COVER_MSGID
+                        Mark current revision as sent and reroll (requires cover letter msgid)
+
+Create new branch:
+  Create a new branch for working on patch series
+
+  -n NEW_SERIES_NAME, --new NEW_SERIES_NAME
+                        Create a new branch for working on a patch series
+  -f FORK_POINT, --fork-point FORK_POINT
+                        When creating a new branch, use this fork point instead of HEAD
+  -F MSGID, --from-thread MSGID
+                        When creating a new branch, use this thread
+
+Enroll existing branch:
+  Enroll existing branch for prep work
+
+  -e ENROLL_BASE, --enroll ENROLL_BASE
+                        Enroll current branch, using the passed tag, branch, or commit as fork base
+
+b4 send
+~~~~~~~
+usage:
+  b4 send [-h] [-d] [-o OUTPUT_DIR] [--prefixes PREFIXES [PREFIXES ...]] [--no-trailer-to-cc] [--hide-cover-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend RESEND] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
+
+options:
+  -h, --help            show this help message and exit
+  -d, --dry-run         Do not send, just dump out raw smtp messages to the stdout
+  -o OUTPUT_DIR, --output-dir OUTPUT_DIR
+                        Do not send, write raw messages to this directory (forces --dry-run)
+
+  --prefixes PREFIXES [PREFIXES ...]
+                        Prefixes to add to PATCH (e.g. RFC, WIP)
+
+  --no-trailer-to-cc
+                        Do not add any addresses found in the cover or patch trailers to To: or Cc:
+
+  --hide-cover-to-cc
+                        Hide To: and Cc: entries from the cover letter trailers (but still send to them)
+
+  --to TO [TO ...]
+                        Addresses to add to the To: list
+  --cc CC [CC ...]
+                        Addresses to add to the Cc: list
+
+  --not-me-too
+                        Remove yourself from the To: or Cc: list
+  --resend RESEND
+                        Resend a previously sent version of the series
+  --no-sign
+                        Do not add the cryptographic attestation signature header
+
+Web submission:
+  Authenticate with the web submission endpoint
+
+  --web-auth-new        Initiate a new web authentication request
+  --web-auth-verify VERIFY_TOKEN
+                        Submit the token received via verification email
+
+b4 trailers
+~~~~~~~~~~~
+usage:
+  b4 trailers [-h] [-u] [-S] [-F MSGID] [--since SINCE]
+
+options:
+  -h, --help            show this help message and exit
+  -u, --update          Update branch commits with latest received trailers
+  -S, --sloppy-trailers
+                        Apply trailers without email address match checking
+  -F MSGID, --trailers-from MSGID
+                        Look for trailers in the thread with this msgid instead of using the series change-id
+  --since SINCE         The --since option to use with -F when auto-matching patches (default=1.month)
+
+
 CONFIGURATION
 -------------
 B4 configuration is handled via git-config(1), so you can store it in
 either the toplevel $HOME/.gitconfig file, or in a per-repository
 .git/config file if your workflow changes per project.
 
-Default configuration, with explanations::
-
-   [b4]
-      # Where to look up threads by message id
-      midmask = https://lore.kernel.org/r/%s
-      #
-      # When recording Link: trailers, use this mask
-      linkmask = https://lore.kernel.org/r/%s
-      #
-      # When duplicate messages exist, use the following order to decide
-      # which list-id is likely to have the least mangled version. Default
-      # preference is listed below, in the order of lists most likely to
-      # preserve proper DKIM validation. Use shell-style globbing and
-      # separate multiple entries with commas. Must end with ,*
-      listid-preference = *.feeds.kernel.org,*.linux.dev,*.kernel.org,*
-      #
-      # Set to "yes" to save maildirs instead of mailboxes
-      # This will help avoid mboxo/mboxrd format inconsistencies between
-      # public-inbox, python, and git
-      save-maildirs = no
-      #
-      # Attestation-checking configuration parameters
-      # off: do not bother checking attestation
-      # check: print an attaboy when attestation is found
-      # softfail: print a warning when no attestation found
-      # hardfail: exit with an error when no attestation found
-      attestation-policy = softfail
-      #
-      # Perform DKIM attestation?
-      attestation-check-dkim = yes
-      #
-      # When showing attestation check results, do you like "fancy" (color, unicode)
-      # or simple markers?
-      attestation-checkmarks = fancy
-      #
-      # How long before we consider attestation to be too old?
-      attestation-staleness-days = 30
-      #
-      # You can point this at a non-default home dir, if you like, or leave out to
-      # use the OS default.
-      attestation-gnupghome = None
-      #
-      # If this is not set, we'll use what we find in
-      # git-config for gpg.program; and if that's not set,
-      # we'll use "gpg" and hope for the best
-      gpgbin = None
-      #
-      # How long to keep downloaded threads in cache (minutes)?
-      cache-expire = 10
-      # Used when creating summaries for b4 ty, and can be set to a value like
-      # thanks-commit-url-mask = https://git.kernel.org/username/c/%.12s
-      # See this page for more info on convenient git.kernel.org shorterners:
-      # https://korg.wiki.kernel.org/userdoc/git-url-shorterners
-      thanks-commit-url-mask = None
-      # See thanks-pr-template.example. If not set, a default template will be used.
-      thanks-pr-template = None
-      # See thanks-am-template.example. If not set, a default template will be used.
-      thanks-am-template = None
-      # additional flags to pass to "git am" when we run "b4 shazam"
-      shazam-am-flags = None
-      # additional flags to pass to "git merge" when we run "b4 shazam -M"
-      shazam-merge-flags = --signoff
-      # Used when preparing merge messages from cover letters. See shazam-merge-template.example
-      shazam-merge-template = None
-      # Use to exclude certain mail addresses from ever being added to auto-generated mail
-      # Separate multiple entries using comma (spaces are ignored), shell-style globbing accepted
-      email-exclude = *@codeaurora.org, example@example.com
+To see configuration options available, see online documentation at
+https://b4.docs.kernel.org/en/latest/config.html
 
 PROXYING REQUESTS
 -----------------
