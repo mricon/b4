@@ -46,6 +46,12 @@ this purpose.
 
 Creating a new ed25519 key
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. note::
+
+   Creating a new ed25519 key is not required if you already have a PGP
+   key configured with git using the ``user.signingKey`` git-config
+   setting.
+
 Installing b4 should have already pulled in the patatt patch attestation
 library. To start using the web submission endpoint, you will need to
 create a key::
@@ -73,7 +79,7 @@ Configuring the web endpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The web endpoint you will use is going to be dependent on the project.
 For the Linux kernel and associated tools (like Git, B4, patatt, etc),
-the endpoint can be enabled by adding the following to your
+the kernel.org endpoint can be enabled by adding the following to your
 ``~/.gitconfig``::
 
     [b4]
