@@ -35,6 +35,8 @@ other upsides:
    you will need it to take part in discussions and for sending and
    receiving code review feedback.
 
+.. _web_endpoint:
+
 Authenticating with the web submission endpoint
 -----------------------------------------------
 Before you start, you will need to configure your attestation mechanism.
@@ -195,7 +197,9 @@ Command line flags
 ``--no-trailer-to-cc``
   Do not add any addresses found in the cover or patch trailers to To:
   or Cc:. This is usually handy for testing purposes, in case you want
-  to send a set of patches to yourself.
+  to send a set of patches to yourself. Can be set in the configuration
+  file using the ``b4.send-hide-cover-to-cc`` option (see
+  :ref:`contributor_settings`).
 
 ``--hide-cover-to-cc``
   It is common for the ``To:`` and ``Cc:`` sections in cover letters to
@@ -205,11 +209,13 @@ Command line flags
 
 ``--to``
   Add any more email addresses to include into the To: header here
-  (comma-separated)
+  (comma-separated). Can be set in the configuration file using the
+  ``b4.send-series-to`` option (see :ref:`contributor_settings`).
 
 ``--cc``
   Add any more email addresses to include into the Cc: header here
-  (comma-separated)
+  (comma-separated). Can be set in the configuration file using the
+  ``b4.send-series-cc`` option (see :ref:`contributor_settings`).
 
 ``--not-me-too``
   Removes your own email address from the recipients.
@@ -218,7 +224,8 @@ Command line flags
   Don't sign your patches with your configured attestation mechanism.
   Note, that patch signing is required for the web submission endpoint,
   so this is only a valid option to use with ``-o`` or when using your
-  own SMTP server.
+  own SMTP server. This can be set in the configuration using the
+  ``b4.send-no-patatt-sign`` (see :ref:`contributor_settings`).
 
 ``--resend V``
   Resend a previously sent version (see above for more info).

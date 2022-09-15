@@ -42,6 +42,8 @@ This will fire up a text editor using your defined ``$EDITOR`` or
 ``core.editor`` and automatically update the cover letter commit when
 you are done.
 
+.. _prep_cover_strategies:
+
 Cover letter strategies
 ~~~~~~~~~~~~~~~~~~~~~~~
 By default, b4 will keep the cover letter in an empty commit at the
@@ -169,6 +171,7 @@ should be preserved through all rebase operations.
    you do want to edit it directly using ``git rebase -i``, remember to
    use ``git commit --allow-empty`` to commit it back into the tree.
 
+.. _prep_recipients:
 
 Prepare the list of recipients
 ------------------------------
@@ -195,6 +198,8 @@ repository's ``.git/config`` file as follows::
 
     [b4]
       send-series-to = some@list.name
+
+.. _prep_flags:
 
 Prep command flags
 ------------------

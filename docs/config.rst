@@ -224,6 +224,16 @@ These settings control the behaviour of ``b4 ty`` command.
 
   Default: ``None``
 
+``b4.email-exclude``
+  A comma-separated list of shell-style globbing patterns with addresses
+  that should always be excluded from the recipient list.
+
+``b4.sendemail-identity``
+  Sendemail identity to use when sending mail directly from b4 (applies
+  to ``b4 send`` and ``b4 ty``). See ``man git-send-email`` for info
+  about sendemail identities.
+
+
 .. _patchwork_settings:
 
 Patchwork integration settings
@@ -270,43 +280,45 @@ integrate your b4 workflow with patchwork.
 
   Default: ``deferred``
 
-TO DOCUMENT
-~~~~~~~~~~~
+.. _contributor_settings:
+
+Contributor-oriented settings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``b4.send-endpoint-web``
-  TODO
+  The web submission endpoint to use (see :ref:`web_endpoint`).
 
 ``b4.send-series-to``
-  TODO
+  Address or comma-separated addresses to always add to the To: header
+  (see :ref:`prep_recipients`).
 
 ``b4.send-series-cc``
-  TODO
+  Address or comma-separated addresses to always add to the To: header
+  (see :ref:`prep_recipients`).
 
 ``b4.send-no-patatt-sign``
-  TODO
+  Do not sign patches with patatt before sending them (ignored when
+  using the web submission endpoint).
 
 ``b4.send-hide-cover-to-cc``
-  TODO
+  Always hide To: and Cc: trailers from the cover letter, just include
+  them into the corresponding message recipient headers.
 
 ``b4.send-auto-to-cmd``
-  TODO
+  Alternative command to use to generate the list of To: recipients.
 
 ``b4.send-auto-cc-cmd``
-  TODO
-
-``b4.sendemail-identity``
-  TODO
+  Alternative command to use to generate the list of Cc: recipients.
 
 ``b4.prep-cover-strategy``
-  TODO
+  Alternative cover letter storage strategy to use (see
+  :ref:`prep_cover_strategies`).
 
 ``b4.prep-cover-template``
-  TODO
-
-``b4.email-exclude``
-  TODO
+  Path to the template to use for the cover letter.
 
 ``b4.gh-api-key``
-  TODO
+  Deliberately undocumented because the feature is incomplete and poorly
+  tested.
 
 .. _`patatt`: https://pypi.org/project/patatt/
