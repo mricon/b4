@@ -67,7 +67,7 @@ rebase -i``. In general, the process goes like this:
    feedback you receive. Remember to record these changes in the cover
    letter's changelog.
 
-9. GOTO 3.
+9. Unless series accepted upstream, GOTO 3.
 
 Please read the rest of these docs for details on the ``prep``,
 ``send``, and ``trailers`` subcommands.
