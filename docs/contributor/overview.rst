@@ -1,5 +1,10 @@
 Contributor overview
 ====================
+.. note::
+
+   ``b4 prep``, ``b4 send`` and ``b4 trailers`` are available starting
+   with version 0.10.
+
 Even though b4 started out as a tool to help maintainers, beginning with
 the version ``0.10`` there is also a set of features aimed at making it
 easier for contributors to submit patch series:

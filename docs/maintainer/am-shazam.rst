@@ -1,4 +1,4 @@
-b4 am/shazam: retrieving and applying patches
+b4 am,shazam: retrieving and applying patches
 =============================================
 Most commonly, b4 is used to retrieve, prepare, and apply patches sent
 via distribution lists. The base functionality is similar to that of
@@ -39,6 +39,10 @@ For example::
 
 b4 am vs. b4 shazam
 -------------------
+.. note::
+
+   ``b4 shazam`` was added in version v0.9.
+
 The two commands are very similar -- the main distinction is that ``b4
 am`` will prepare the patch series for application to the git tree, but
 will not modify your git tree in any way.

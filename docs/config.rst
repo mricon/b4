@@ -41,7 +41,7 @@ These options control many of the core features of b4.
 
   Default: ``https://lore.kernel.org/%s``
 
-``b4.searchmask``
+``b4.searchmask`` (v0.9+)
   If the public-inbox server provides a global searchable index (usually
   in ``/all/``, this setting can be used to query and retrieve matching
   discussion threads based on specific search terms -- for example, to
@@ -49,7 +49,7 @@ These options control many of the core features of b4.
 
   Default: ``https://lore.kernel.org/all/?x=m&t=1&q=%s``
 
-``b4.listid-preference``
+``b4.listid-preference`` (v0.8+)
   Messages are frequently sent to multiple distribution lists, and some
   servers may apply content munging to modify the headers or the message
   content. B4 will deduplicate the results and this configuration option
@@ -113,18 +113,18 @@ shazam settings
 ~~~~~~~~~~~~~~~
 These settings control how ``b4 shazam`` applies patches to your tree.
 
-``b4.shazam-am-flags``
+``b4.shazam-am-flags`` (v0.9+)
   Additional flags to pass to ``git am`` when applying patches.
 
   Default: ``None``
 
-``b4.shazam-merge-flags``
+``b4.shazam-merge-flags`` (v0.9+)
   Additional flags to pass to ``git merge`` when performing a merge with
   ``b4 shazam -M``
 
   Default: ``--signoff``
 
-``b4.shazam-merge-template``
+``b4.shazam-merge-template`` (v0.9+)
   Path to a template to use when creating a merge commit. See
   ``shazam-merge-template.example`` for some info on how to tweak one.
 
@@ -224,7 +224,7 @@ These settings control the behaviour of ``b4 ty`` command.
 
   Default: ``None``
 
-``b4.email-exclude``
+``b4.email-exclude`` (v0.9+)
   A comma-separated list of shell-style globbing patterns with addresses
   that should always be excluded from the recipient list.
 
@@ -241,40 +241,39 @@ Patchwork integration settings
 If your project uses a patchwork server, these settings allow you to
 integrate your b4 workflow with patchwork.
 
-``b4.pw-url``
+``b4.pw-url`` (v0.9+)
   The URL of your patchwork server. Note, that this should point at the
   toplevel of your patchwork installation and NOT at the project patch
   listing. E.g.: ``https://patchwork.kernel.org/``.
 
   Default: ``None``
 
-``b4.pw-key``
+``b4.pw-key`` (v0.9+)
   You should be able to obtain an API key from your patchwork user
   profile. This API key will be used to perform actions on your behalf.
 
   Default: ``None``
 
-``b4.pw-project``
+``b4.pw-project`` (v0.9+)
   This should contain the name of your patchwork project, as seen in the
   URL subpath to it (e.g. ``linux-usb``).
 
   Default: ``None``
 
-
-``b4.pw-review-state``:
+``b4.pw-review-state`` (v0.9+)
   When patchwork integration is enabled, every time you run ``b4 am`` or
   ``b4 shazam``, b4 will mark those patches as with this state (e.g.
   "under review").
 
   Default: ``under-review``
 
-``b4.pw-accept-state``:
+``b4.pw-accept-state`` (v0.9+)
   After you run ``b4 ty`` to thank the contributor, b4 will move the
   matching patches into this state.
 
   Default: ``accepted``
 
-``b4.pw-discard-state``
+``b4.pw-discard-state`` (v0.9+)
   If you run ``b4 ty -d`` to delete the tracking information for a patch
   series, it will also be set on the patchwork server with this state.
 
@@ -285,38 +284,41 @@ integrate your b4 workflow with patchwork.
 Contributor-oriented settings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``b4.send-endpoint-web``
+``b4.send-endpoint-web`` (v0.10+)
   The web submission endpoint to use (see :ref:`web_endpoint`).
 
-``b4.send-series-to``
+``b4.send-series-to`` (v0.10+)
   Address or comma-separated addresses to always add to the To: header
   (see :ref:`prep_recipients`).
 
-``b4.send-series-cc``
+``b4.send-series-cc`` (v0.10+)
   Address or comma-separated addresses to always add to the To: header
   (see :ref:`prep_recipients`).
 
-``b4.send-no-patatt-sign``
+``b4.send-no-patatt-sign`` (v0.10+)
   Do not sign patches with patatt before sending them (ignored when
   using the web submission endpoint).
 
-``b4.send-hide-cover-to-cc``
+``b4.send-hide-cover-to-cc`` (v0.10+)
   Always hide To: and Cc: trailers from the cover letter, just include
   them into the corresponding message recipient headers.
 
-``b4.send-auto-to-cmd``
+``b4.send-auto-to-cmd`` (v0.10+)
   Alternative command to use to generate the list of To: recipients.
 
-``b4.send-auto-cc-cmd``
+``b4.send-auto-cc-cmd`` (v0.10+)
   Alternative command to use to generate the list of Cc: recipients.
 
-``b4.prep-cover-strategy``
+``b4.prep-cover-strategy`` (v0.10+)
   Alternative cover letter storage strategy to use (see
   :ref:`prep_cover_strategies`).
 
-``b4.prep-cover-template``
+``b4.prep-cover-template`` (v0.10+)
   Path to the template to use for the cover letter.
 
+
+To document
+-----------
 ``b4.gh-api-key``
   Deliberately undocumented because the feature is incomplete and poorly
   tested.
