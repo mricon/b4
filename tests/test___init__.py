@@ -92,6 +92,8 @@ def test_parse_trailers(source, expected):
     ('custody', {}, {'addmysob': True, 'copyccs': True}, 'unordered', {}),
     ('custody', {}, {'addmysob': True, 'copyccs': True}, 'ordered',
      {'trailer-order': 'Cc,Fixes*,Link*,Suggested*,Reviewed*,Tested*,*'}),
+    ('custody', {}, {'addmysob': True, 'copyccs': True}, 'with-ignored',
+     {'trailers-ignore-from': 'followup-reviewer1@example.com'}),
     ('partial-reroll', {}, {'addmysob': True}, 'defaults', {}),
 ])
 def test_followup_trailers(source, serargs, amargs, reference, b4cfg):

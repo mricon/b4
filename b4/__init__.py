@@ -1732,8 +1732,21 @@ class LoreMessage:
         attpolicy = config['attestation-policy']
         fixtrailers = btrailers
 
+        # load trailers we should ignore
+        ignore_from = config.get('trailers-ignore-from')
+        if ignore_from:
+            ignores = [x[1].lower() for x in email.utils.getaddresses([ignore_from])]
+        else:
+            ignores = list()
+
+        ignored = set()
         for ltr in new_trailers:
-            if ltr in fixtrailers:
+            if ltr in fixtrailers or ltr in ignored:
+                continue
+
+            if ltr.addr and ltr.addr[1].lower() in ignores:
+                logger.info('    x %s', ltr.as_string(omit_extinfo=True))
+                ignored.add(ltr)
                 continue
 
             fixtrailers.append(ltr)
@@ -2250,7 +2263,7 @@ def get_main_config() -> dict:
         # some options can be provided via the toplevel .b4-config file,
         # so load them up and use as defaults
         topdir = git_get_toplevel()
-        wtglobs = ['send-*', '*mask', '*template*']
+        wtglobs = ['send-*', '*mask', '*template*', 'trailer*']
         if topdir:
             wtcfg = os.path.join(topdir, '.b4-config')
             if os.access(wtcfg, os.R_OK):
