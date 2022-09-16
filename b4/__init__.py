@@ -49,7 +49,7 @@ try:
 except ModuleNotFoundError:
     can_patatt = False
 
-__VERSION__ = '0.10.0-dev'
+__VERSION__ = '0.10.0'
 PW_REST_API_VERSION = '1.2'
 
 
