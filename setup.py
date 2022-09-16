@@ -38,13 +38,14 @@ setup(
     license='GPLv2+',
     long_description=read('man/b4.5.rst'),
     long_description_content_type='text/x-rst',
-    data_files = [('share/man/man5', ['man/b4.5'])],
-    keywords=['git', 'lore.kernel.org', 'patches'],
+    data_files=[('share/man/man5', ['man/b4.5'])],
+    keywords=['git', 'public-inbox', 'lore.kernel.org', 'patches'],
     install_requires=[
         'requests>=2.24,<3.0',
-        'dnspython>=2.0,<3.0',
+        'dnspython>=2.1,<3.0',
         'dkimpy>=1.0,<2.0',
-        'patatt>=0.5,<2.0',
+        'patatt>=0.6,<2.0',
+        'git-filter-repo>=2.30,<3.0',
     ],
     python_requires='>=3.8',
     entry_points={
