@@ -1,8 +1,8 @@
 B4 end-user documentation
 =========================
-B4 is a tool created to make it easier for project maintainers to use a
-distributed development workflow that relies on patches and distribution
-lists for code contributions and review.
+B4 is a tool created to make it easier for project developers and
+maintainers to use a distributed development workflow that relies on
+patches and distribution lists for code contributions and review.
 
 This documentation is split into two main areas -- one aimed at
 maintainers who primarily receive, review, and apply patches to their

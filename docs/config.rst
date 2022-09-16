@@ -12,16 +12,25 @@ Since the purpose of b4 is to work with git repositories, this allows
 the usual fall-through configuration that can be overridden by more
 local settings on the repository level.
 
-.. note:: Per-project defaults
+Per-project defaults
+~~~~~~~~~~~~~~~~~~~~
+.. note::
 
-   A project may ship their own b4 config with some defaults, placed in
-   the toplevel of the git tree. If you're not sure where a
-   configuration option is coming from, check if there is a
-   ``.b4-config`` file in the repository you're currently using.
+   This feature is new in v0.10.
+
+A project may ship their own b4 config with some defaults, placed in the
+toplevel of the git tree. If you're not sure where a configuration
+option is coming from, check if there is a ``.b4-config`` file in the
+repository you're currently using.
 
 Configuration options
 ---------------------
-All settings are under the ``b4`` section.
+All settings are under the ``b4`` section. E.g to set a ``b4.midmask``
+option, you can just edit your ``~/.gitconfig`` or ``.git/config`` file
+and add the following section::
+
+    [b4]
+      midmask = https://some.host/%s
 
 Core options
 ~~~~~~~~~~~~
@@ -98,6 +107,9 @@ These options control many of the core features of b4.
   own Signed-off-by trailer is always at the bottom of your own custody
   section).
 
+  Note: versions prior to v0.10 did not properly respect the chain of
+  custody.
+
   Default: ``*``
 
 ``b4.cache-expire``
@@ -133,7 +145,6 @@ These settings control how ``b4 shazam`` applies patches to your tree.
 
 Attestation settings
 ~~~~~~~~~~~~~~~~~~~~
-These settings control patch attestation.
 
 ``b4.attestation-policy``
   B4 supports domain-level and end-to-end attestation of patches using
@@ -141,7 +152,7 @@ These settings control patch attestation.
 
   * ``off``: do not bother checking attestation at all
   * ``check``: print green checkmarks when attestation is passing, but
-    nothing if attestation is failing (DEPRECATED, use ``softfail``)
+    nothing if attestation is failing (**DEPRECATED**, use ``softfail``)
   * ``softfail``: print green checkmarks when attestation is passing and
     red x-marks when it is failing
   * ``hardfail``: exit with an error when any attestation checks fail
@@ -228,10 +239,14 @@ These settings control the behaviour of ``b4 ty`` command.
   A comma-separated list of shell-style globbing patterns with addresses
   that should always be excluded from the recipient list.
 
-``b4.sendemail-identity``
+  Default: ``None``
+
+``b4.sendemail-identity`` (v0.8+)
   Sendemail identity to use when sending mail directly from b4 (applies
   to ``b4 send`` and ``b4 ty``). See ``man git-send-email`` for info
   about sendemail identities.
+
+  Default: ``None``
 
 
 .. _patchwork_settings:
@@ -287,34 +302,54 @@ Contributor-oriented settings
 ``b4.send-endpoint-web`` (v0.10+)
   The web submission endpoint to use (see :ref:`web_endpoint`).
 
+  Default: ``None``
+
 ``b4.send-series-to`` (v0.10+)
   Address or comma-separated addresses to always add to the To: header
   (see :ref:`prep_recipients`).
 
+  Default: ``None``
+
 ``b4.send-series-cc`` (v0.10+)
-  Address or comma-separated addresses to always add to the To: header
+  Address or comma-separated addresses to always add to the Cc: header
   (see :ref:`prep_recipients`).
 
+  Default: ``None``
+
 ``b4.send-no-patatt-sign`` (v0.10+)
-  Do not sign patches with patatt before sending them (ignored when
-  using the web submission endpoint).
+  Do not sign patches with patatt before sending them (unless using the
+  web submission endpoint where signing is required).
+
+  Default: ``no``
 
 ``b4.send-hide-cover-to-cc`` (v0.10+)
   Always hide To: and Cc: trailers from the cover letter, just include
   them into the corresponding message recipient headers.
 
+  Default: ``no``
+
 ``b4.send-auto-to-cmd`` (v0.10+)
-  Alternative command to use to generate the list of To: recipients.
+  Command to use to generate the list of To: recipients. Has no effect
+  if the specified script is not found in the repository.
+
+  Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol``
 
 ``b4.send-auto-cc-cmd`` (v0.10+)
-  Alternative command to use to generate the list of Cc: recipients.
+  Command to use to generate the list of Cc: recipients. Has no effect
+  if the specified script is not found in the repository.
+
+  Default:: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
+
 
 ``b4.prep-cover-strategy`` (v0.10+)
-  Alternative cover letter storage strategy to use (see
-  :ref:`prep_cover_strategies`).
+  Alternative cover letter storage strategy to use (see :ref:`prep_cover_strategies`).
+
+  Default: ``commit``
 
 ``b4.prep-cover-template`` (v0.10+)
   Path to the template to use for the cover letter.
+
+  Default: ``None``
 
 
 To document

@@ -3,11 +3,10 @@ prep: preparing your patch series
 The first stage of contributor workflow is to prepare your patch series
 for submission upstream. It generally consists of the following stages:
 
-1. start a new topical branch using ``b4 prep -n``
+1. start a new topical branch using ``b4 prep -n topical-name``
 2. add commits as usual and work with them using ``git rebase -i``
 3. prepare the cover letter using ``b4 prep --edit-cover``
 4. prepare the list of recipients using ``b4 prep --auto-to-cc``
-
 
 Starting a new topical branch
 -----------------------------
@@ -16,23 +15,21 @@ is to create a topical branch::
 
     b4 prep -n descriptive-name [-f tagname]
 
-.. note::
-
-   It is important to give your branch a succinct descriptive name,
-   because it will become part of the unique ``change-id`` that will be
-   used to track your proposal across revisions. In other words, don't
-   call it "stuff" or "foo".
-
-.. note::
-
-   Generally, you will want to fork from some known point in the
-   history, not from a random HEAD commit. You can use ``-f`` to specify
-   a fork-point for b4 to use, such as a recent tag name.
+It is important to give your branch a short descriptive name, because it
+will become part of the unique ``change-id`` that will be used to track
+your proposal across revisions. In other words, don't call it "stuff" or
+"foo".
 
 This command will do the following:
 
 1. Create a new branch called ``b4/descriptive-name`` and switch to it.
 2. Create an empty commit with a cover letter template.
+
+.. note::
+
+   Generally, you will want to fork from some known point in the
+   history, not from some random HEAD commit. You can use ``-f`` to
+   specify a fork-point for b4 to use, such as a recent tag name.
 
 You can then edit the cover letter using::
 
@@ -69,7 +66,7 @@ For this reason, b4 supports alternative strategies for storing the
 cover letter, which can be set using the ``b4.prep-cover-strategy``
 configuration variable.
 
-``commit`` strategy
+``commit`` strategy (default)
   This is the default strategy that keeps the cover letter and all
   tracking information in an empty commit at the start of your series.
   See above for upsides and downsides.
@@ -108,11 +105,11 @@ configuration variable.
   * allows you to push the series to a remote and pull it from a
     different location to continue working on a series
   * editing the cover letter does not rewrite commit history, which may
-    be easier for working in teams
+    be easier when working in teams
 
   Downsides:
 
-  * adding new commits is more complicated, because you have to
+  * adding new commits is a bit more complicated, because you have to
     immediately rebase them to be in front of the cover letter
   * you have to rely on the base branch for keeping track of where your
     series starts
@@ -126,8 +123,8 @@ configuration variable.
 Enrolling an existing branch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 If you've already started working on a set of commits without first
-preparing a topical branch using ``b4 prep -n``, you can enroll your
-existing branch as well.
+running ``b4 prep -n``, you can enroll your existing branch to make it
+"prep-tracked."
 
 For example, if you have a branch called ``my-topical-branch`` that was
 forked from ``master``, you can enroll it with b4::
@@ -158,11 +155,11 @@ and you can work with them using any regular git tooling:
 * you can rebase them on a different (or an updated) branch using ``git
   rebase``
 * you can amend (reword, split, squash, etc) commits interactively using
-  ``git rebase -i``; there are many excellent tutorials available on how
-  to use interactive rebase
+  ``git rebase -i``; there are many excellent tutorials available online
+  on how to use interactive rebase
 
-Unless you are using a very old version of git, your empty cover commit
-should be preserved through all rebase operations.
+Unless you are using a very old version of git, your empty cover letter
+commit should be preserved through all rebase operations.
 
 .. note::
 
@@ -171,18 +168,27 @@ should be preserved through all rebase operations.
    you do want to edit it directly using ``git rebase -i``, remember to
    use ``git commit --allow-empty`` to commit it back into the tree.
 
+What if I only have a single patch?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Even if you only have a single commit, you should still treat it as a
+single-patch series and send it along with a cover letter. It is very
+likely that you will be asked to make some changes to your patch or
+split it into several patches. Having a cover letter will help retain
+the change-id of the series across revisions, and will provide a
+convenient place to keep the changelog of revisions.
+
 .. _prep_recipients:
 
 Prepare the list of recipients
 ------------------------------
-When you are getting ready to submit your work, you should figure out
+When you are getting ready to submit your work, you need to figure out
 who the recipients of your series should be. By default, b4 will send
 the series to any address mentioned in the trailers (and to any other
 addresses you tell it to use).
 
 For the Linux kernel, a required step is to gather the recipients from
 the output of ``get_maintainer.pl``, which b4 will do for you
-automatically when you run the auto-to-cc command::
+automatically when you run the ``auto-to-cc`` command::
 
     b4 prep --auto-to-cc
 
@@ -199,10 +205,16 @@ repository's ``.git/config`` file as follows::
     [b4]
       send-series-to = some@list.name
 
+This may also be already set by the project, if they have a
+``.b4-config`` file in the root of their git repository.
+
 .. _prep_flags:
 
 Prep command flags
 ------------------
+Please also see :ref:`contributor_settings`, which allow setting
+or modifying defaults for some of these flags.
+
 ``-c, --auto-to-cc``
   Automatically populate the cover letter with addresses collected from
   commit trailers. If a ``MAINTAINERS`` file is found, together with

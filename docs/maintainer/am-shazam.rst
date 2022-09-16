@@ -8,9 +8,9 @@ via distribution lists. The base functionality is similar to that of
 
 This will do the following:
 
-1. look up if that message-id is known by the public-inbox server
-   (e.g. lore.kernel.org)
-2. retrieve all threads matching that message-id
+1. look up if that message-id is known on the specified public-inbox
+   server (e.g. lore.kernel.org)
+2. retrieve the full thread containing that message-id
 3. process all replies to collect code review trailers and apply them to
    the relevant patch commit messages
 4. perform attestation checks on patches and code review follow-ups
@@ -45,10 +45,11 @@ b4 am vs. b4 shazam
 
 The two commands are very similar -- the main distinction is that ``b4
 am`` will prepare the patch series for application to the git tree, but
-will not modify your git tree in any way.
+will not make any modifications to your current branch.
 
 The ``b4 shazam`` command will do the same as ``b4 am`` *and* will apply
-the patch series to the git tree (if it is possible to do so cleanly).
+the patch series to the current branch (if it is possible to do so
+cleanly).
 
 Common flags
 ------------
@@ -69,25 +70,6 @@ The following flags are common to both commands:
   By default, b4 will cache the retrieved threads for about 10 minutes.
   This lets you force b4 to ignore cache and retrieve the latest
   results.
-
-``-o OUTDIR, --outdir OUTDIR``
-  Instead of writing the .mbox file to the current directory, write it
-  to this location instead. You can also pass a path to an existing
-  mbox or maildir location to have the results appended to that mailbox
-  instead (see also the ``-f`` flag below).
-
-  When ``-`` is specified, the output is dumped to stdout.
-
-``-c, --check-newer-revisions``
-  When retrieving patch series, check if a newer revision is available.
-  For example, if you are trying to retrieve a series titled ``[PATCH v2
-  0/3]``, b4 will use a number of mechanisms to check if a ``v3`` or
-  later revision is also available and will add these results to the
-  retrieved thread.
-
-``-n WANTNAME, --mbox-name WANTNAME``
-  By default, the resulting mailbox file will use the message-id as the
-  basis for its filename. This option lets you override this behaviour.
 
 ``-v WANTVER, --use-version WANTVER``
   If a thread (or threads, when used with ``-c``) contains multiple
@@ -148,7 +130,7 @@ The following flags are common to both commands:
 
 ``--cc-trailers``
   Copies all addresses found in the message Cc's into ``Cc:`` commit
-  message trailers.
+  trailers.
 
 ``--no-parent``
   Break thread at the msgid specified and ignore any parent messages.
@@ -165,11 +147,31 @@ The following flags are common to both commands:
   legitimately useful in the code, so b4 will print a warning and bail
   out when it finds them. However, just in case there are legitimate
   reasons for these characters to be in the code (e.g. as part of
-  translated documentation), this behaviour can be overridden.
+  documentation translated into LTR languages), this behaviour can be
+  overridden.
 
 Flags only valid for ``b4 am``
 ------------------------------
 The following flags only make sense for ``b4 am``:
+
+``-o OUTDIR, --outdir OUTDIR``
+  Instead of writing the .mbox file to the current directory, write it
+  to this location instead. You can also pass a path to an existing
+  mbox or maildir location to have the results appended to that mailbox
+  instead (see also the ``-f`` flag below).
+
+  When ``-`` is specified, the output is dumped to stdout.
+
+``-c, --check-newer-revisions``
+  When retrieving patch series, check if a newer revision is available.
+  For example, if you are trying to retrieve a series titled ``[PATCH v2
+  0/3]``, b4 will use a number of mechanisms to check if a ``v3`` or
+  later revision is also available and will add these results to the
+  retrieved thread.
+
+``-n WANTNAME, --mbox-name WANTNAME``
+  By default, the resulting mailbox file will use the message-id as the
+  basis for its filename. This option lets you override this behaviour.
 
 ``-M, --save-as-maildir``
   By default, the retrieved thread will be saved as an mbox file.
@@ -195,7 +197,7 @@ The following flags only make sense for ``b4 am``:
 
 ``-3, --prep-3way``
   This will try to prepare your tree for a 3-way merge by doing some
-  behind the scenes git magic and preparing some fake commits.
+  behind the scenes git magic and preparing some fake loose commits.
 
 ``--no-cover``
   By default, b4 will save the cover letter as a separate file in the
@@ -243,7 +245,7 @@ the basis for the merge commit.
          git merge --no-ff -F .git/b4-cover --edit FETCH_HEAD --signoff
 
   Generally, this command is also a good test for "will this patch
-  series apply cleanly to my tree". You can perform any actions with the
+  series apply cleanly to my tree." You can perform any actions with the
   ``FETCH_HEAD`` as you normally would, e.g. run ``git diff``, make a
   new branch out of it using ``git checkout``, etc.
 

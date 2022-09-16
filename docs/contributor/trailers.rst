@@ -1,15 +1,15 @@
 trailers: retrieving code-review trailers
 =========================================
 This commands allows you to easily retrieve code-review trailers sent in
-reply to your work and apply them to the matching commits. It will
-retrieve code-review trailers sent in response to any previously
-submitted versions of your series, as long as:
+reply to your work and apply them to the matching commits. It should
+locate code-review trailers sent in response to any previously submitted
+versions of your series, as long as:
 
 * either the patch-id of the commit still matches what was sent, or
 * the title of the commit is exactly the same
 
 You can always edit the trailers after they are applied by using ``git
-rebase -i`` and choosing ``reword`` as action.
+rebase -i`` and choosing ``reword`` as rebase action.
 
 Most commonly, you just need to run::
 

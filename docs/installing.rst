@@ -16,7 +16,7 @@ If that is the case, you can install it from other sources.
 
 Installing with pip
 -------------------
-To install from pypi::
+To install from PyPi::
 
     python3 -m pip install --user b4
 
@@ -26,7 +26,7 @@ that your ``~/.local/bin/`` is in your ``$PATH``.
 
 Upgrading
 ~~~~~~~~~
-If you have previously installed from pypi, you can upgrade using pip as
+If you have previously installed from PyPi, you can upgrade using pip as
 well::
 
     python3 -m pip install --user --upgrade b4

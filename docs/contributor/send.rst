@@ -13,12 +13,13 @@ Upsides of using your own SMTP server:
 
 However, using your own SMTP server may not always be a valid option:
 
+* your mail provider may not offer an SMTP compliant server for sending
+  mail (e.g. if it only uses a webmail/exchange client)
+* there may be limits on the number of messages you can send through
+  your SMTP server in a short period of time (which is normal for large
+  patch series)
 * your company SMTP server may modify the message bodies by adding huge
   legal disclaimers to all outgoing mail
-* there may be limits on the number of messages you can send in a short
-  period of time (which is normal for large patch series)
-* your company mail system may not provide an SMTP compliant server for
-  sending mail (e.g. if it only uses a webmail/exchange client)
 
 The web submission endpoint helps with such cases, plus offers several
 other upsides:
@@ -31,7 +32,7 @@ other upsides:
 .. note::
 
    Even if you opt to use the web submission endpoint, you still need a
-   valid email address for participating in decentralized development --
+   valid email account for participating in decentralized development --
    you will need it to take part in discussions and for sending and
    receiving code review feedback.
 
@@ -41,8 +42,8 @@ Authenticating with the web submission endpoint
 -----------------------------------------------
 Before you start, you will need to configure your attestation mechanism.
 If you already have a PGP key configured for use with git, you can just
-use that. Alternatively, you can set up your own ed25519 key for just
-this purpose.
+use that and skip the next section. If you don't already have a PGP key,
+you can create a separate ed25519 key just for web submission purposes.
 
 Creating a new ed25519 key
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -53,8 +54,7 @@ Creating a new ed25519 key
    setting.
 
 Installing b4 should have already pulled in the patatt patch attestation
-library. To start using the web submission endpoint, you will need to
-create a key::
+library. You can use the command line tool to create your ed25519 key::
 
     $ patatt genkey
     Generating a new ed25519 keypair
@@ -110,7 +110,8 @@ below::
 
 As the instructions say, you should receive a verification email to the
 address you specified in your ``user.email``. Once you have received it,
-run the verification command using the UUID from the email::
+run the verification command by copy-pasting the UUID from the
+confirmation message::
 
     $ b4 send --web-auth-verify abcd9b34-2ecf-4d25-946a-0631c414227e
     Signing challenge
@@ -167,7 +168,7 @@ The following happens after you send your patches:
 
 * b4 will automatically create a detached head containing the commits
   from your sent series and tag it with the contents of the cover
-  letter; this creates a historical record of your submissions, as well
+  letter; this creates a historical record of your submission, as well
   as adds a way to easily resend a previously sent series
 * b4 will reroll your series to the next version, so that if you just
   sent off a ``v1`` of the series, the working version will be marked as
@@ -203,15 +204,15 @@ Command line flags
 ``--no-trailer-to-cc``
   Do not add any addresses found in the cover or patch trailers to To:
   or Cc:. This is usually handy for testing purposes, in case you want
-  to send a set of patches to yourself. Can be set in the configuration
-  file using the ``b4.send-hide-cover-to-cc`` option (see
-  :ref:`contributor_settings`).
+  to send a set of patches to yourself. 
 
 ``--hide-cover-to-cc``
   It is common for the ``To:`` and ``Cc:`` sections in cover letters to
   be pretty large on large patch sets. Passing this flag will remove
   these trailers from the cover letter, but still add the addresses to
-  the corresponding To: and Cc: headers.
+  the corresponding To: and Cc: headers. This can be made permanent in
+  the configuration file using the ``b4.send-hide-cover-to-cc`` option
+  (see :ref:`contributor_settings`).
 
 ``--to``
   Add any more email addresses to include into the To: header here

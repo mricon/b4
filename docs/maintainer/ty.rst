@@ -8,7 +8,7 @@ Tracking retrieved patches and PRs
 Any patches or pull requests you retrieve with ``b4 am,shazam,pr`` will
 be automatically tracked by b4 in your homedir (usually, in
 ``$HOME/.local/share/b4``, but may vary if your ``$XDG_DATA_HOME`` is
-set to a different value). There are three 4 kids of files in that
+set to a different value). There are four kinds of files in that
 directory:
 
 * .am: contain information about patches retrieved with ``b4 am`` or
@@ -22,8 +22,8 @@ directory:
 All of these files contain JSON data about the series or pull requests
 being tracked.
 
-Using the --auto thankanator
-----------------------------
+Using the Auto-Thankanator
+--------------------------
 If you've retrieved and applied some patches to your tree, you should be
 able to fire up the "auto-thankanator", which uses patch-id and commit
 subject tracking to figure out which series from those you have

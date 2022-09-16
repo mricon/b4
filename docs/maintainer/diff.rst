@@ -49,7 +49,8 @@ Optional flags
 
 ``-o OUTDIFF, --output-diff OUTDIFF``
   **(DEPRECATED)** Sends ``range-diff`` output into a file. You should use
-  ``-n`` instead and redirect output from there.
+  ``-n`` instead and redirect output from the actual ``git range-diff``
+  command.
 
 ``-c, --color``
   **(DEPRECATED)** Show colour output even when outputting into a file.

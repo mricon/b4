@@ -12,7 +12,7 @@ easier for contributors to submit patch series:
 * ``b4 prep`` allows to get your patch series ready for sending to the
   maintainer for review
 * ``b4 send`` simplifies the process of submitting your patches to the
-  upstream maintainer even if you don't have access to a very good SMTP
+  upstream maintainer even if you don't have access to a compliant SMTP
   server
 * ``b4 trailers`` simplifies the process of retrieving code-review
   trailers received on the distribution lists and applying them to your
@@ -26,6 +26,9 @@ easier for contributors to submit patch series:
   and to always check things with ``--dry-run`` when that option is
   available.
 
+  If you come across a bug or unexpected behaviour, please report the
+  problem to the Tools mailing list.
+
 Do I still need to be able to send email?
 -----------------------------------------
 While ``b4 send`` makes it possible to submit patches without having
@@ -33,14 +36,15 @@ access to an SMTP server, you still need a reasonable mail server for
 participating in conversations and code review.
 
 The main benefit of ``b4 send`` is that you no longer have to really
-care if your SMTP server performs some kind of content mangling that
-causes patches to become corrupted.
+care if your mail server performs some kind of content mangling that
+causes patches to become corrupted, or if it doesn't provide a way to
+send mail via SMTP.
 
 What is the b4 contributor workflow?
 ------------------------------------
-The workflow is still very git-oriented, so you should expect to need to
-know a lot about such git commands like ``git amend`` and ``git
-rebase -i``. In general, the process goes like this:
+The workflow is very much git-oriented, so you should expect to need to
+know a lot about such git commands like ``git amend`` and ``git rebase
+-i``. In general, the process goes like this:
 
 1. Prepare your patch series by using ``b4 prep`` and queueing your
    commits. Use ``git rebase -i`` to arrange the commits in the right
@@ -72,7 +76,7 @@ rebase -i``. In general, the process goes like this:
    feedback you receive. Remember to record these changes in the cover
    letter's changelog.
 
-9. Unless series accepted upstream, GOTO 3.
+9. Unless series is accepted upstream, GOTO 3.
 
 Please read the rest of these docs for details on the ``prep``,
 ``send``, and ``trailers`` subcommands.
