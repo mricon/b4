@@ -115,7 +115,8 @@ def cmd():
     # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
         prog='b4',
-        description='A tool to work with public-inbox patches',
+        description='A tool to work with patches in public-inbox archives',
+        epilog='Online docs available at https://b4.docs.kernel.org',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument('--version', action='version', version=b4.__VERSION__)
