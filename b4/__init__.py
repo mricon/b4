@@ -2263,7 +2263,7 @@ def get_main_config() -> dict:
         # some options can be provided via the toplevel .b4-config file,
         # so load them up and use as defaults
         topdir = git_get_toplevel()
-        wtglobs = ['send-*', '*mask', '*template*', 'trailer*']
+        wtglobs = ['send-*', '*mask', '*template*', 'trailer*', 'pw-*']
         if topdir:
             wtcfg = os.path.join(topdir, '.b4-config')
             if os.access(wtcfg, os.R_OK):
@@ -3061,7 +3061,7 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
     pwurl = config.get('pw-url')
     pwproj = config.get('pw-project')
     if not (pwkey and pwurl and pwproj):
-        logger.debug('Patchwork support not configured')
+        logger.debug('Patchwork support requires pw-key, pw-url and pw-project settings')
         return False
     pses, url = get_patchwork_session(pwkey, pwurl)
     patches_url = '/'.join((url, 'patches'))
