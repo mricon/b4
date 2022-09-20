@@ -2996,6 +2996,16 @@ def get_smtp(identity: Optional[str] = None,
         sp = shlex.shlex(server, posix=True)
         sp.whitespace_split = True
         smtp = list(sp)
+        if '-i' not in smtp:
+            smtp.append('-i')
+        # Do we have the envelopesender defined?
+        env_sender = sconfig.get('envelopesender', '')
+        if env_sender:
+            envpair = email.utils.parseaddr(env_sender)
+        else:
+            envpair = email.utils.parseaddr(fromaddr)
+        if envpair[1]:
+            smtp += ['-f', envpair[1]]
         return smtp, fromaddr
 
     encryption = sconfig.get('smtpencryption')
@@ -3197,7 +3207,8 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         logger.info('Sending via "%s"', ' '.join(smtp))
         for destaddrs, bdata, lsubject in tosend:
             logger.info('  %s', lsubject.full_subject)
-            ecode, out, err = _run_command(smtp, stdin=bdata)
+            cmdargs = list(smtp) + list(destaddrs)
+            ecode, out, err = _run_command(cmdargs, stdin=bdata)
             if ecode > 0:
                 raise RuntimeError('Error running %s: %s' % (' '.join(smtp), err.decode()))
             sent += 1
