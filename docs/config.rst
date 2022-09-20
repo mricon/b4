@@ -266,43 +266,44 @@ Patchwork integration settings
 If your project uses a patchwork server, these settings allow you to
 integrate your b4 workflow with patchwork.
 
-``b4.pw-url`` (v0.9+)
+``b4.pw-url`` (v0.10+)
   The URL of your patchwork server. Note, that this should point at the
   toplevel of your patchwork installation and NOT at the project patch
   listing. E.g.: ``https://patchwork.kernel.org/``.
 
   Default: ``None``
 
-``b4.pw-key`` (v0.9+)
+``b4.pw-key`` (v0.10+)
   You should be able to obtain an API key from your patchwork user
   profile. This API key will be used to perform actions on your behalf.
 
   Default: ``None``
 
-``b4.pw-project`` (v0.9+)
+``b4.pw-project`` (v0.10+)
   This should contain the name of your patchwork project, as seen in the
   URL subpath to it (e.g. ``linux-usb``).
 
   Default: ``None``
 
-``b4.pw-review-state`` (v0.9+)
+``b4.pw-review-state`` (v0.10+)
   When patchwork integration is enabled, every time you run ``b4 am`` or
-  ``b4 shazam``, b4 will mark those patches as with this state (e.g.
-  "under review").
+  ``b4 shazam``, b4 will mark those patches as with this state. E.g.:
+  ``under-review``).
 
-  Default: ``under-review``
+  Default: ``None``
 
-``b4.pw-accept-state`` (v0.9+)
+``b4.pw-accept-state`` (v0.10+)
   After you run ``b4 ty`` to thank the contributor, b4 will move the
-  matching patches into this state.
+  matching patches into this state. E.g.: ``accepted``.
 
-  Default: ``accepted``
+  Default: ``None``
 
-``b4.pw-discard-state`` (v0.9+)
+``b4.pw-discard-state`` (v0.10+)
   If you run ``b4 ty -d`` to delete the tracking information for a patch
   series, it will also be set on the patchwork server with this state.
+  E.g.: ``deferred`` (or ``rejected``).
 
-  Default: ``deferred``
+  Default: ``None``
 
 .. _contributor_settings:
 
