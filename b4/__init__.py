@@ -2689,7 +2689,8 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         if commit in ignore_commits:
             logger.debug('Ignoring commit %s', commit)
             continue
-        ecode, out = git_run_command(gitdir, ['show', '--format=email', '--encoding=utf-8', commit], decode=False)
+        ecode, out = git_run_command(gitdir, ['show', '--format=email', '--patch-with-stat', '--encoding=utf-8',
+                                              commit], decode=False)
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')
         msg = email.message_from_bytes(out)
