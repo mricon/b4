@@ -1178,6 +1178,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                     continue
                 if btr.addr[1] in seen:
                     continue
+                seen.add(btr.addr[1])
                 if btr.lname == 'to':
                     todests.append(btr.addr)
                     continue
@@ -1187,25 +1188,27 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if cmdargs.not_me_too:
             excludes.add(myemail)
 
+    tos = set()
     if cmdargs.to:
-        todests += [('', x) for x in cmdargs.to]
-        seen.update(set(cmdargs.to))
+        tos.update(cmdargs.to)
     if config.get('send-series-to'):
-        for pair in utils.getaddresses([config.get('send-series-to')]):
+        tos.add(config.get('send-series-to'))
+    if tos:
+        for pair in utils.getaddresses(list(tos)):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
-            logger.debug('added %s to seen', pair[1])
             todests.append(pair)
+    ccs = set()
     if cmdargs.cc:
-        ccdests += [('', x) for x in cmdargs.cc]
-        seen.update(set(cmdargs.cc))
+        ccs.update(cmdargs.cc)
     if config.get('send-series-cc'):
-        for pair in utils.getaddresses([config.get('send-series-cc')]):
+        ccs.add(config.get('send-series-cc'))
+    if ccs:
+        for pair in utils.getaddresses(list(ccs)):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
-            logger.debug('added %s to seen', pair[1])
             ccdests.append(pair)
 
     allto = list()
