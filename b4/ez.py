@@ -437,7 +437,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                  'will be used by the project maintainer to make a decision whether your',
                  'patches should be reviewed, and in what priority order. Please be very',
                  'detailed and link to any relevant discussions or sites that the maintainer',
-                 'can review to better understand your proposed changes.',
+                 'can review to better understand your proposed changes. If you only have a',
+                 'single patch in your series, the contents of the cover letter will be',
+                 'appended to the "under-the-cut" portion of the patch.',
                  '',
                  '# You can add trailers to the cover letter. Any email addresses found in',
                  '# these trailers will be added to the addresses specified/generated during',
@@ -906,7 +908,9 @@ def print_pretty_addrs(addrs: list, hdrname: str) -> None:
 
 
 def get_sent_tag_as_patches(tagname: str, revision: Optional[str] = None,
-                            prefixes: Optional[List[str]] = None) -> List[Tuple[str, email.message.Message]]:
+                            prefixes: Optional[List[str]] = None,
+                            hide_cover_to_cc: bool = False
+                            ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
     gitargs = ['cat-file', '-p', tagname]
     ecode, tagmsg = b4.git_run_command(None, gitargs)
     if ecode > 0:
@@ -931,13 +935,19 @@ def get_sent_tag_as_patches(tagname: str, revision: Optional[str] = None,
     # First line is the subject
     csubject, cbody = cover.split('\n', maxsplit=1)
     cbody = cbody.strip() + '\n-- \n' + b4.get_email_signature()
+    if hide_cover_to_cc:
+        tos, ccs, body = remove_to_cc_trailers(cbody)
+    else:
+        tos = list()
+        ccs = list()
 
     cmsg = email.message.EmailMessage()
     cmsg.add_header('Subject', csubject)
     cmsg.set_payload(cbody.lstrip(), charset='utf-8')
     if prefixes is None:
         prefixes = list()
-    prefixes.append(f'v{revision}')
+    if revision != 1:
+        prefixes.append(f'v{revision}')
     seriests = int(time.time())
     msgid_tpt = make_msgid_tpt(change_id, revision)
     usercfg = b4.get_user_config()
@@ -949,7 +959,7 @@ def get_sent_tag_as_patches(tagname: str, revision: Optional[str] = None,
                                       seriests=seriests,
                                       thread=True,
                                       mailfrom=mailfrom)
-    return patches
+    return tos, ccs, patches
 
 
 def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) -> str:
@@ -971,9 +981,25 @@ def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) 
     return msgid_tpt
 
 
+def remove_to_cc_trailers(body: str) -> Tuple[List, List, str]:
+    htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(body)
+    tos = list()
+    ccs = list()
+    for mtr in list(mtrs):
+        if mtr.lname == 'to':
+            tos.append(mtr.addr)
+            mtrs.remove(mtr)
+        elif mtr.lname == 'cc':
+            ccs.append(mtr.addr)
+            mtrs.remove(mtr)
+    body = b4.LoreMessage.rebuild_message(htrs, cmsg, mtrs, basement, sig)
+    return tos, ccs, body
+
+
 def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
-                               movefrom: bool = True,
-                               thread: bool = True) -> List[Tuple[str, email.message.Message]]:
+                               movefrom: bool = True, thread: bool = True,
+                               hide_cover_to_cc: bool = False
+                               ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
     cover, tracking = load_cover(strip_comments=True)
     config = b4.get_main_config()
     cover_template = DEFAULT_COVER_TEMPLATE
@@ -988,6 +1014,7 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
 
     # Put together the cover letter
     csubject, cbody = cover.split('\n', maxsplit=1)
+
     start_commit = get_series_start()
     base_commit, shortlog, diffstat = get_series_details(start_commit=start_commit)
     change_id = tracking['series'].get('change-id')
@@ -1002,6 +1029,12 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
         'signature': b4.get_email_signature(),
     }
     body = Template(cover_template.lstrip()).safe_substitute(tptvals)
+    if hide_cover_to_cc:
+        tos, ccs, body = remove_to_cc_trailers(body)
+    else:
+        tos = list()
+        ccs = list()
+
     cmsg = email.message.EmailMessage()
     cmsg.add_header('Subject', csubject)
     cmsg.set_payload(body, charset='utf-8')
@@ -1012,8 +1045,9 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
     cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
     if prefixes is None:
         prefixes = list()
+    if revision != 1:
+        prefixes.append(f'v{revision}')
 
-    prefixes.append(f'v{revision}')
     seriests = int(time.time())
     msgid_tpt = make_msgid_tpt(change_id, revision)
     if movefrom:
@@ -1036,12 +1070,12 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
                                       thread=thread,
                                       mailfrom=mailfrom,
                                       ignore_commits=ignore_commits)
-    return patches
+    return tos, ccs, patches
 
 
 def format_patch(output_dir: str) -> None:
     try:
-        patches = get_prep_branch_as_patches(thread=False, movefrom=False)
+        tos, ccs, patches = get_prep_branch_as_patches(thread=False, movefrom=False)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
@@ -1075,6 +1109,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.prefixes is None:
         prefixes = list()
 
+    config = b4.get_main_config()
+    if not cmdargs.hide_cover_to_cc and config.get('send-hide-cover-to-cc', '').lower() in {'yes', 'true', '1'}:
+        cmdargs.hide_cover_to_cc = True
+
     if cmdargs.resend:
         # We accept both a full tag name and just a vN short form
         matches = re.search(r'^v(\d+)$', cmdargs.resend)
@@ -1090,10 +1128,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
         prefixes.append('RESEND')
         try:
-            patches = get_sent_tag_as_patches(tagname, revision=revision, prefixes=prefixes)
+            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision, prefixes=prefixes,
+                                                                hide_cover_to_cc=cmdargs.hide_cover_to_cc)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert tag to patches: %s', ex)
             sys.exit(1)
+
+        logger.info('Converted the tag to %s messages', len(patches))
 
     else:
         # Check if the cover letter has 'EDITME' in it
@@ -1106,26 +1147,50 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            patches = get_prep_branch_as_patches(prefixes=prefixes)
+            todests, ccdests, patches = get_prep_branch_as_patches(prefixes=prefixes,
+                                                                   hide_cover_to_cc=cmdargs.hide_cover_to_cc)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
             sys.exit(1)
-        logger.info('Converted the branch to %s patches', len(patches)-1)
+        logger.info('Converted the branch to %s messages', len(patches))
 
-    config = b4.get_main_config()
     usercfg = b4.get_user_config()
     myemail = usercfg.get('email')
 
     seen = set()
-    todests = list()
-    ccdests = list()
-    trailers = set()
     excludes = set()
-    # These override config values
+
+    if cmdargs.no_trailer_to_cc:
+        todests = list()
+        ccdests = list()
+    else:
+        seen.update(todests)
+        seen.update(ccdests)
+        logger.info('Populating To/Cc addresses')
+        # Go through the messages to make to/cc headers
+        for commit, msg in patches:
+            if not msg:
+                continue
+            body = msg.get_payload()
+            btrs, junk = b4.LoreMessage.find_trailers(body)
+            for btr in btrs:
+                if btr.type != 'person':
+                    continue
+                if btr.addr[1] in seen:
+                    continue
+                if btr.lname == 'to':
+                    todests.append(btr.addr)
+                    continue
+                ccdests.append(btr.addr)
+
+        excludes = b4.get_excluded_addrs()
+        if cmdargs.not_me_too:
+            excludes.add(myemail)
+
     if cmdargs.to:
-        todests = [('', x) for x in cmdargs.to]
+        todests += [('', x) for x in cmdargs.to]
         seen.update(set(cmdargs.to))
-    elif config.get('send-series-to'):
+    if config.get('send-series-to'):
         for pair in utils.getaddresses([config.get('send-series-to')]):
             if pair[1] in seen:
                 continue
@@ -1133,38 +1198,15 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.debug('added %s to seen', pair[1])
             todests.append(pair)
     if cmdargs.cc:
-        ccdests = [('', x) for x in cmdargs.cc]
+        ccdests += [('', x) for x in cmdargs.cc]
         seen.update(set(cmdargs.cc))
-    elif config.get('send-series-cc'):
+    if config.get('send-series-cc'):
         for pair in utils.getaddresses([config.get('send-series-cc')]):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
             logger.debug('added %s to seen', pair[1])
             ccdests.append(pair)
-
-    if not cmdargs.no_trailer_to_cc:
-        logger.info('Populating To/Cc addresses')
-        # Go through the messages to make to/cc headers
-        for commit, msg in patches:
-            if not msg:
-                continue
-            body = msg.get_payload()
-            parts = b4.LoreMessage.get_body_parts(body)
-            trailers.update(parts[2])
-
-        # add addresses seen in trailers
-        for ltr in trailers:
-            if ltr.addr and ltr.addr[1] not in seen:
-                seen.add(ltr.addr[1])
-                if ltr.lname == 'to':
-                    todests.append(ltr.addr)
-                else:
-                    ccdests.append(ltr.addr)
-
-        excludes = b4.get_excluded_addrs()
-        if cmdargs.not_me_too:
-            excludes.add(myemail)
 
     allto = list()
     allcc = list()
@@ -1222,11 +1264,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             continue
         if cover_msg is None:
             cover_msg = copy.deepcopy(msg)
-            if cmdargs.hide_cover_to_cc or config.get('send-hide-cover-to-cc', '').lower() in {'yes', 'true', '1'}:
-                logger.debug('Hiding To: and Cc: trailers from the cover letter')
-                lcm = b4.LoreMessage(msg)
-                lcm.fix_trailers(omit_trailers=['to', 'cc'])
-                msg.set_payload(lcm.body, charset='utf-8')
 
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
@@ -1469,7 +1506,7 @@ def auto_to_cc() -> None:
             logger.debug('added %s to seen', ltr.addr[1])
             extras.append(ltr)
 
-    patches = get_prep_branch_as_patches()
+    tos, ccs, patches = get_prep_branch_as_patches()
     logger.info('Collecting To/Cc addresses')
     # Go through the messages to make to/cc headers
     for commit, msg in patches:

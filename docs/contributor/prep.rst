@@ -170,12 +170,12 @@ commit should be preserved through all rebase operations.
 
 What if I only have a single patch?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Even if you only have a single commit, you should still treat it as a
-single-patch series and send it along with a cover letter. It is very
-likely that you will be asked to make some changes to your patch or
-split it into several patches. Having a cover letter will help retain
-the change-id of the series across revisions, and will provide a
-convenient place to keep the changelog of revisions.
+When you only have a single patch, the contents of the cover letter will
+be mixed into the "under-the-cut" portion of the patch. You can just use
+the cover letter for extra To/Cc trailers and changelog entries as your
+patch goes through revisions. If you add more commits in the future
+version, you can fill in the cover letter content with additional
+information about the intent of your entire series.
 
 .. _prep_recipients:
 
