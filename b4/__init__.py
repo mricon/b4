@@ -864,7 +864,7 @@ class LoreTrailer:
     addr: Optional[Tuple[str, str]] = None
     lmsg = None
     # Small list of recognized utility trailers
-    _utility: Set[str] = {'fixes', 'link', 'buglink', 'obsoleted-by', 'message-id', 'change-id'}
+    _utility: Set[str] = {'fixes', 'link', 'buglink', 'obsoleted-by', 'message-id', 'change-id', 'base-commit'}
 
     def __init__(self, name: Optional[str] = None, value: Optional[str] = None, extinfo: Optional[str] = None,
                  msg: Optional[email.message.Message] = None):
@@ -1529,7 +1529,7 @@ class LoreMessage:
     def find_trailers(body: str, followup: bool = False) -> Tuple[List[LoreTrailer], List[str]]:
         ignores = {'phone', 'email'}
         headers = {'subject', 'date', 'from'}
-        nonperson = {'fixes', 'subject', 'date', 'link', 'buglink', 'obsoleted-by'}
+        nonperson = {'fixes', 'subject', 'date', 'link', 'buglink', 'obsoleted-by', 'change-id', 'base-commit'}
         # Ignore everything below standard email signature marker
         body = body.split('\n-- \n', 1)[0].strip() + '\n'
         # Fix some more common copypasta trailer wrapping
@@ -1596,6 +1596,36 @@ class LoreMessage:
             others.append(line)
 
         return trailers, others
+
+    @staticmethod
+    def rebuild_message(headers: List[LoreTrailer], message: str, trailers: List[LoreTrailer],
+                        basement: str, signature: str) -> str:
+        body = ''
+        if headers:
+            for ltr in headers:
+                # There is no [extdata] in git headers, so we omit it
+                body += ltr.as_string(omit_extinfo=True) + '\n'
+            body += '\n'
+
+        if len(message):
+            body += message.rstrip('\r\n') + '\n'
+            if len(trailers):
+                body += '\n'
+
+        for ltr in trailers:
+            body += ltr.as_string() + '\n'
+
+        if len(basement):
+            if not len(trailers):
+                body += '\n'
+            body += '---\n'
+            body += basement.rstrip('\r\n') + '\n'
+
+        if len(signature):
+            body += '-- \n'
+            body += signature.rstrip('\r\n') + '\n'
+
+        return body
 
     @staticmethod
     def get_body_parts(body: str) -> Tuple[List[LoreTrailer], str, List[LoreTrailer], str, str]:
@@ -1774,36 +1804,23 @@ class LoreMessage:
             if not hasmysob:
                 logger.info('    + %s', sobtr.as_string(omit_extinfo=True))
 
-        # Reconstitute the message
-        self.body = ''
-        if bheaders:
-            for bltr in bheaders:
-                # There is no [extdata] in git headers, so we ignore bheader[2]
-                self.body += bltr.as_string(omit_extinfo=True) + '\n'
-            self.body += '\n'
-
-        newmessage = ''
-        if len(message):
-            newmessage += message.rstrip('\r\n') + '\n'
-            if len(fixtrailers):
-                newmessage += '\n'
-
-        if len(fixtrailers):
-            if omit_trailers is None:
-                omit_trailers = set()
+        if omit_trailers and fixtrailers:
             for ltr in fixtrailers:
-                if ltr.lname not in omit_trailers:
-                    newmessage += ltr.as_string() + '\n'
+                if ltr.lname in omit_trailers:
+                    fixtrailers.remove(ltr)
 
-        self.message = self.subject + '\n\n' + newmessage
-        self.body += newmessage
+        # Build the new commit message in case we're working directly
+        # on the tree.
+        self.message = self.subject + '\n\n'
+        if len(message):
+            self.message = message.rstrip('\r\n') + '\n'
+            if len(fixtrailers):
+                self.message += '\n'
+        if len(fixtrailers):
+            for ltr in fixtrailers:
+                self.message += ltr.as_string() + '\n'
 
-        if len(basement):
-            self.body += '---\n'
-            self.body += basement.rstrip('\r\n') + '\n'
-        if len(signature):
-            self.body += '-- \n'
-            self.body += signature.rstrip('\r\n') + '\n'
+        self.body = LoreMessage.rebuild_message(bheaders, message, fixtrailers, basement, signature)
 
     def get_am_subject(self, indicate_reroll=True):
         # Return a clean patch subject
@@ -2702,9 +2719,60 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
 
     startfrom = 1
     fullcount = len(patches)
-    patches.insert(0, (None, covermsg))
+    if fullcount == 0:
+        raise RuntimeError(f'Could not run rev-list {start}..{end}')
+
     if covermsg:
-        startfrom = 0
+        if fullcount == 1:
+            # Single-patch series, mix in the cover letter into the patch basement
+            pmsg = patches[0][1]
+            pbody = pmsg.get_payload()
+            pheaders, pmessage, ptrailers, pbasement, psignature = LoreMessage.get_body_parts(pbody)
+            cbody = covermsg.get_payload()
+            cheaders, cmessage, ctrailers, cbasement, csignature = LoreMessage.get_body_parts(cbody)
+            nbparts = list()
+            nmessage = ''
+            if len(cmessage.strip()):
+                cls = LoreSubject(covermsg.get('Subject'))
+                nmessage += cls.subject + '\n\n' + cmessage.rstrip('\r\n') + '\n'
+            for ctr in list(ctrailers):
+                if ctr in ptrailers:
+                    ctrailers.remove(ctr)
+            if ctrailers:
+                if nmessage:
+                    nmessage += '\n'
+                for ctr in ctrailers:
+                    nmessage += ctr.as_string() + '\n'
+            nbparts.append(nmessage)
+
+            # Find the section with changelogs
+            utility = None
+            for section in cbasement.split('---\n'):
+                if re.search(r'^change-id: ', section, flags=re.I | re.M):
+                    utility = section
+                    continue
+                if re.search(r'^changes in v\d', section, flags=re.I | re.M):
+                    nbparts.append(section.strip('\r\n') + '\n')
+
+            nbparts.append(pbasement.rstrip('\r\n') + '\n\n')
+            if utility:
+                nbparts.append(utility)
+
+            newbasement = '---\n'.join(nbparts)
+
+            pbody = LoreMessage.rebuild_message(pheaders, pmessage, ptrailers, newbasement, csignature)
+            pmsg.set_payload(pbody, charset='utf-8')
+            # Add any To: and Cc: headers from the cover_message
+            toh = covermsg.get('To')
+            if toh:
+                pmsg.add_header('To', toh)
+            cch = covermsg.get('Cc')
+            if cch:
+                pmsg.add_header('Cc', cch)
+            startfrom = 0
+        else:
+            patches.insert(0, (None, covermsg))
+            startfrom = 0
 
     # Go through and apply any outstanding fixes
     if prefixes:
@@ -2712,11 +2780,14 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
     else:
         prefixes = ''
 
-    for counter in range(startfrom, fullcount+1):
+    for counter in range(startfrom, len(patches)):
         msg = patches[counter][1]
         subject = msg.get('Subject')
         csubject = re.sub(r'^\[PATCH]\s*', '', subject)
-        pline = '[PATCH%s %s/%s]' % (prefixes, str(counter).zfill(len(str(fullcount))), fullcount)
+        if fullcount > 1:
+            pline = '[PATCH%s %s/%s]' % (prefixes, str(counter).zfill(len(str(fullcount))), fullcount)
+        else:
+            pline = '[PATCH%s]' % prefixes
         msg.replace_header('Subject', f'{pline} {csubject}')
         inbodyhdrs = list()
         if mailfrom:
