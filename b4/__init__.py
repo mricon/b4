@@ -1813,7 +1813,7 @@ class LoreMessage:
         # on the tree.
         self.message = self.subject + '\n\n'
         if len(message):
-            self.message = message.rstrip('\r\n') + '\n'
+            self.message += message.rstrip('\r\n') + '\n'
             if len(fixtrailers):
                 self.message += '\n'
         if len(fixtrailers):
