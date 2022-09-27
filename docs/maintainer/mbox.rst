@@ -46,7 +46,7 @@ Option flags
   This is most useful when piping threads directly from mutt. In your
   ``.muttrc`` add the following configuration parameter::
 
-      set pipe_sep = '\n---randomstr---\n'
+      set pipe_sep = "\n---randomstr---\n"
 
   Then invoke b4 with ``-m - --stdin-pipe-sep='\n---randomstr---\n'``
 
