@@ -20,6 +20,8 @@ def cmd_retrieval_common_opts(sp):
                     help='Use a specific project instead of default (linux-mm, linux-hardening, etc)')
     sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
                     help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
+    sp.add_argument('--stdin-pipe-sep',
+                    help='When accepting messages on stdin, split using this pipe separator string')
     sp.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                     help='Do not use local cache')
 

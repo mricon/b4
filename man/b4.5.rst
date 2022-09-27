@@ -75,6 +75,8 @@ options:
                         Use a specific project instead of default (linux-mm, linux-hardening, etc)
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  --stdin-pipe-sep STDIN_PIPE_SEP
+                        When accepting messages on stdin, split using this pipe separator string
   -C, --no-cache
                         Do not use local cache
   -o OUTDIR, --outdir OUTDIR
@@ -124,6 +126,8 @@ options:
                         Use a specific project instead of default (linux-mm, linux-hardening, etc)
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  --stdin-pipe-sep STDIN_PIPE_SEP
+                        When accepting messages on stdin, split using this pipe separator string
   -C, --no-cache
                         Do not use local cache
   -o OUTDIR, --outdir OUTDIR
@@ -197,6 +201,8 @@ options:
                         Use a specific project instead of default (linux-mm, linux-hardening, etc)
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  --stdin-pipe-sep STDIN_PIPE_SEP
+                        When accepting messages on stdin, split using this pipe separator string
   -C, --no-cache        Do not use local cache
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series

@@ -698,7 +698,7 @@ def get_msgs(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[list]
         if cmdargs.localmbox == '-':
             # The entire mbox is passed via stdin, so mailsplit it and use the first message for our msgid
             with tempfile.TemporaryDirectory() as tfd:
-                msgs = b4.mailsplit_bytes(sys.stdin.buffer.read(), tfd)
+                msgs = b4.mailsplit_bytes(sys.stdin.buffer.read(), tfd, pipesep=cmdargs.stdin_pipe_sep)
             if not len(msgs):
                 logger.critical('Stdin did not contain any messages')
                 sys.exit(1)

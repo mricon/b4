@@ -2532,11 +2532,21 @@ def get_strict_thread(msgs, msgid, noparent=False):
     return strict
 
 
-def mailsplit_bytes(bmbox: bytes, outdir: str) -> list:
+def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) -> List[email.message.Message]:
+    msgs = list()
+    if pipesep:
+        logger.debug('Mailsplitting using pipesep=%s', pipesep)
+        if '\\' in pipesep:
+            import codecs
+            pipesep = codecs.decode(pipesep.encode(), 'unicode_escape')
+        for chunk in bmbox.split(pipesep.encode()):
+            if chunk.strip():
+                msgs.append(email.message_from_bytes(chunk))
+        return msgs
+
     logger.debug('Mailsplitting the mbox into %s', outdir)
     args = ['mailsplit', '--mboxrd', '-o%s' % outdir]
     ecode, out = git_run_command(None, args, stdin=bmbox)
-    msgs = list()
     if ecode > 0:
         logger.critical('Unable to parse mbox received from the server')
         return msgs

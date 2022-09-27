@@ -31,6 +31,25 @@ Option flags
   public-inbox supported collating and retrieving threads from across
   multiple lists. This flag will probably go away in the future.
 
+``-m LOCALMBOX, --use-local-mbox LOCALMBOX``
+  By default, b4 will retrieve threads from remote public-inbox servers,
+  but it can also use a local mailbox/maildir. This is useful if you
+  have a tool like ``mbsync`` or ``lei`` copying remote messages locally
+  and you need to do some work while offline. You can pass ``-`` to read
+  messages from stdin.
+
+``--stdin-pipe-sep STDIN_PIPE_SEP`` **(0.11+)**
+  When reading input from stdin, split messages using the string passed
+  as parameter. Otherwise, b4 expects stdin to be a single message or a
+  valid mbox.
+
+  This is most useful when piping threads directly from mutt. In your
+  ``.muttrc`` add the following configuration parameter::
+
+      set pipe_sep = '\n---randomstr---\n'
+
+  Then invoke b4 with ``-m - --stdin-pipe-sep='\n---randomstr---\n'``
+
 ``-C, --no-cache``
   By default, b4 will cache the retrieved threads for about 10 minutes.
   This lets you force b4 to ignore cache and retrieve the latest
