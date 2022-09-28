@@ -3065,6 +3065,11 @@ def get_smtp(identity: Optional[str] = None,
 
     # Limited support for smtp settings to begin with, but should cover the vast majority of cases
     fromaddr = sconfig.get('from')
+    if not fromaddr:
+        # We fall back to user.email
+        usercfg = get_user_config()
+        fromaddr = usercfg['email']
+
     server = sconfig.get('smtpserver', 'localhost')
     port = sconfig.get('smtpserverport', 0)
     try:
