@@ -342,7 +342,7 @@ optional arguments:
 b4 prep
 ~~~~~~~
 usage:
-  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --manual-reroll COVER_MSGID] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
+  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --compare-to vN | --manual-reroll COVER_MSGID] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
 
 options:
   -h, --help            show this help message and exit
@@ -352,6 +352,7 @@ options:
   --edit-cover          Edit the cover letter in your defined $EDITOR (or core.editor)
   --show-revision       Show current series revision number
   --force-revision N    Force revision to be this number instead
+  --compare-to vN       Display a range-diff to previously sent revision N
   --manual-reroll COVER_MSGID
                         Mark current revision as sent and reroll (requires cover letter msgid)
 

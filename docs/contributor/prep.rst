@@ -239,6 +239,11 @@ or modifying defaults for some of these flags.
   Forces the revision to a different integer number. This modifies your
   cover letter and tracking information and makes this change permanent.
 
+``--compare-to vN`` **(v0.11+)**
+  This executes a ``git range-diff`` command that lets you compare the
+  previously sent version of the series to what is currently in your
+  working branch.
+
 ``--manual-reroll MSGID``
   Normally, your patch series will be automatically rerolled to the next
   version after a successful ``b4 send`` (see :doc:`send`). However, if

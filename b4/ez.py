@@ -26,7 +26,7 @@ import gzip
 import io
 import copy
 
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 from email import utils
 from string import Template
 
@@ -45,6 +45,8 @@ except ModuleNotFoundError:
 logger = b4.logger
 
 MAGIC_MARKER = '--- b4-submit-tracking ---'
+# Make this configurable?
+SENT_TAG_PREFIX = 'sent/'
 
 DEFAULT_COVER_TEMPLATE = """
 ${cover}
@@ -907,10 +909,7 @@ def print_pretty_addrs(addrs: list, hdrname: str) -> None:
             logger.info('    %s', b4.format_addrs([addr]))
 
 
-def get_sent_tag_as_patches(tagname: str, revision: Optional[str] = None,
-                            prefixes: Optional[List[str]] = None,
-                            hide_cover_to_cc: bool = False
-                            ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
+def get_base_changeid_from_tag(tagname: str) -> Tuple[str, str, str]:
     gitargs = ['cat-file', '-p', tagname]
     ecode, tagmsg = b4.git_run_command(None, gitargs)
     if ecode > 0:
@@ -926,12 +925,13 @@ def get_sent_tag_as_patches(tagname: str, revision: Optional[str] = None,
     if not matches:
         raise RuntimeError('Tag %s does not contain change-id info' % tagname)
     change_id = matches.groups()[0]
-    if revision is None:
-        matches = re.search(r'.*-v(\d+)$', tagname, flags=re.I | re.M)
-        if not matches:
-            raise RuntimeError('Could not grok revision number from %s' % tagname)
-        revision = matches.groups()[0]
+    return cover, base_commit, change_id
 
+
+def get_sent_tag_as_patches(tagname: str, revision: int, prefixes: Optional[List[str]] = None,
+                            hide_cover_to_cc: bool = False
+                            ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
+    cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
     # First line is the subject
     csubject, cbody = cover.split('\n', maxsplit=1)
     cbody = cbody.strip() + '\n-- \n' + b4.get_email_signature()
@@ -949,7 +949,7 @@ def get_sent_tag_as_patches(tagname: str, revision: Optional[str] = None,
     if revision != 1:
         prefixes.append(f'v{revision}')
     seriests = int(time.time())
-    msgid_tpt = make_msgid_tpt(change_id, revision)
+    msgid_tpt = make_msgid_tpt(change_id, str(revision))
     usercfg = b4.get_user_config()
     mailfrom = (usercfg.get('name'), usercfg.get('email'))
 
@@ -1102,8 +1102,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         auth_verify(cmdargs)
         return
 
-    # Should we make the sent/ prefix configurable?
-    tagprefix = 'sent/'
     mybranch = b4.git_get_current_branch()
     prefixes = cmdargs.prefixes
     if cmdargs.prefixes is None:
@@ -1114,17 +1112,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         cmdargs.hide_cover_to_cc = True
 
     if cmdargs.resend:
-        # We accept both a full tag name and just a vN short form
-        matches = re.search(r'^v(\d+)$', cmdargs.resend)
-        if matches:
-            revision = matches.groups()[0]
-            if mybranch.startswith('b4/'):
-                tagname = f'{tagprefix}{mybranch[3:]}-v{revision}'
-            else:
-                tagname = f'{tagprefix}{mybranch}-v{revision}'
-        else:
-            revision = None
-            tagname = cmdargs.resend
+        tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, cmdargs.resend)
+
+        if revision is None:
+            logger.critical('Could not figure out revision from %s', cmdargs.resend)
+            sys.exit(1)
 
         prefixes.append('RESEND')
         try:
@@ -1316,7 +1308,26 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     reroll(mybranch, cover_msg)
 
 
-def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = 'sent/'):
+def get_sent_tagname(branch: str, tagprefix: str, revstr: Union[str, int]) -> Tuple[str, Optional[int]]:
+    revision = None
+    try:
+        revision = int(revstr)
+    except ValueError:
+        matches = re.search(r'^v(\d+)$', revstr)
+        if not matches:
+            # assume we got a full tag name, so try to find the revision there
+            matches = re.search(r'v(\d+)$', revstr)
+            if matches:
+                revision = int(matches.groups()[0])
+            return revstr.replace('refs/tags/', ''), revision
+        revision = int(matches.groups()[0])
+
+    if branch.startswith('b4/'):
+        return f'{tagprefix}{branch[3:]}-v{revision}', revision
+    return f'{tagprefix}{branch}-v{revision}', revision
+
+
+def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = SENT_TAG_PREFIX):
     # Prepare annotated tag body from the cover letter
     lsubject = b4.LoreSubject(cover_msg.get('subject'))
     cbody = cover_msg.get_payload()
@@ -1328,11 +1339,7 @@ def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = 'se
 
     cover, tracking = load_cover(strip_comments=True)
     revision = tracking['series']['revision']
-    if mybranch.startswith('b4/'):
-        tagname = f'{tagprefix}{mybranch[3:]}-v{revision}'
-    else:
-        tagname = f'{tagprefix}{mybranch}-v{revision}'
-
+    tagname, revision = get_sent_tagname(mybranch, tagprefix, revision)
     logger.debug('checking if we already have %s', tagname)
     gitargs = ['rev-parse', f'refs/tags/{tagname}']
     ecode, out = b4.git_run_command(None, gitargs)
@@ -1456,6 +1463,38 @@ def force_revision(forceto: int) -> None:
     tracking['series']['revision'] = forceto
     logger.info('Forced revision to v%s', forceto)
     store_cover(cover, tracking)
+
+
+def compare(compareto: str) -> None:
+    mybranch = b4.git_get_current_branch(None)
+    tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, compareto)
+    gitargs = ['rev-parse', tagname]
+    lines = b4.git_get_command_lines(None, gitargs)
+    if not lines:
+        logger.critical('CRITICAL: Could not rev-parse %s', tagname)
+        sys.exit(1)
+    prev_end = lines[0]
+    try:
+        cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+    except RuntimeError as ex:
+        logger.critical('CRITICAL: %s', str(ex))
+        sys.exit(1)
+    prev_start = base_commit
+    curr_start = get_series_start()
+    strategy = get_cover_strategy()
+    if strategy == 'tip-commit':
+        cover_commit = find_cover_commit()
+        series_end = f'{cover_commit}~1'
+    else:
+        series_end = 'HEAD'
+
+    gitargs = ['rev-parse', series_end]
+    lines = b4.git_get_command_lines(None, gitargs)
+    curr_end = lines[0]
+    grdcmd = ['git', 'range-diff', '%.12s..%.12s' % (prev_start, prev_end), '%.12s..%.12s' % (curr_start, curr_end)]
+    # We exec range-diff and let it take over
+    logger.debug('Running %s', ' '.join(grdcmd))
+    os.execvp(grdcmd[0], grdcmd)
 
 
 def auto_to_cc() -> None:
@@ -1588,6 +1627,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.format_patch:
         return format_patch(cmdargs.format_patch)
+
+    if cmdargs.compare_to:
+        return compare(cmdargs.compare_to)
 
     if is_prep_branch():
         logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')

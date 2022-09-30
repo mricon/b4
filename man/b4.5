@@ -523,7 +523,7 @@ Show all developer keys from the thread
 .INDENT 0.0
 .TP
 .B usage:
-b4 prep [\-h] [\-c | \-p OUTPUT_DIR | \-\-edit\-cover | \-\-show\-revision | \-\-force\-revision N | \-\-manual\-reroll COVER_MSGID] [\-n NEW_SERIES_NAME] [\-f FORK_POINT] [\-F MSGID] [\-e ENROLL_BASE]
+b4 prep [\-h] [\-c | \-p OUTPUT_DIR | \-\-edit\-cover | \-\-show\-revision | \-\-force\-revision N | \-\-compare\-to vN | \-\-manual\-reroll COVER_MSGID] [\-n NEW_SERIES_NAME] [\-f FORK_POINT] [\-F MSGID] [\-e ENROLL_BASE]
 .TP
 .B options:
 .INDENT 7.0
@@ -545,6 +545,9 @@ Show current series revision number
 .TP
 .BI \-\-force\-revision \ N
 Force revision to be this number instead
+.TP
+.BI \-\-compare\-to \ vN
+Display a range\-diff to previously sent revision N
 .TP
 .BI \-\-manual\-reroll \ COVER_MSGID
 Mark current revision as sent and reroll (requires cover letter msgid)

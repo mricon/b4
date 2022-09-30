@@ -266,6 +266,8 @@ def cmd():
                        help='Show current series revision number')
     spp_g.add_argument('--force-revision', metavar='N', type=int,
                        help='Force revision to be this number instead')
+    spp_g.add_argument('--compare-to', metavar='vN',
+                       help='Display a range-diff to previously sent revision N')
     spp_g.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
                        help='Mark current revision as sent and reroll (requires cover letter msgid)')
     ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
@@ -308,7 +310,7 @@ def cmd():
     sp_send.add_argument('--cc', nargs='+', help='Addresses to add to the Cc: list')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,
                          help='Remove yourself from the To: or Cc: list')
-    sp_send.add_argument('--resend', default=None,
+    sp_send.add_argument('--resend', metavar='vN', default=None,
                          help='Resend a previously sent version of the series')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
                          help='Do not add the cryptographic attestation signature header')
