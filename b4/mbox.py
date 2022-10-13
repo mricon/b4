@@ -374,7 +374,12 @@ def make_am(msgs, cmdargs, msgid):
         mergeflags = config.get('shazam-merge-flags', '--signoff')
         sp = shlex.shlex(mergeflags, posix=True)
         sp.whitespace_split = True
-        mergeargs = ['merge', '--no-ff', '-F', mmf, '--edit', 'FETCH_HEAD'] + list(sp)
+        edit = None
+        if cmdargs.no_interactive:
+            edit = '--no-edit'
+        else:
+            edit = '--edit'
+        mergeargs = ['merge', '--no-ff', '-F', mmf, edit, 'FETCH_HEAD'] + list(sp)
         mergecmd = ['git'] + mergeargs
 
         thanks_record_am(lser, cherrypick=cherrypick)
