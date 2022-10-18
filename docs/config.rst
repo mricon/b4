@@ -258,6 +258,12 @@ These settings control the behaviour of ``b4 ty`` command.
 
   Default: ``None``
 
+``b4.ty-send-email`` (v0.11+)
+  When set to ``yes``, will instruct ``b4 ty`` to send email directly
+  instead of generating .thanks files.
+
+  Default: ``no``
+
 
 .. _patchwork_settings:
 

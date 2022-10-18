@@ -385,7 +385,10 @@ def send_messages(listing, branch, cmdargs):
     datadir = b4.get_data_dir()
     fromaddr = None
     smtp = None
-    if cmdargs.sendemail:
+    config = b4.get_main_config()
+
+    if cmdargs.sendemail or config.get('ty-send-email', 'no').lower() in ['yes', 'true', '1']:
+        send_email = True
         # See if we have sendemail-identity set
         config = b4.get_main_config()
         identity = config.get('sendemail-identity')
@@ -397,6 +400,7 @@ def send_messages(listing, branch, cmdargs):
             sys.exit(1)
     else:
         # We write .thanks notes
+        send_email = False
         # Check if the outdir exists and if it has any .thanks files in it
         if not os.path.exists(cmdargs.outdir):
             os.mkdir(cmdargs.outdir)
@@ -427,7 +431,7 @@ def send_messages(listing, branch, cmdargs):
         outgoing += 1
         msg.set_charset('utf-8')
         msg.replace_header('Content-Transfer-Encoding', '8bit')
-        if cmdargs.sendemail:
+        if send_email:
             if not fromaddr:
                 fromaddr = jsondata['myemail']
             logger.info('  Sending: %s', msg.get('subject'))
@@ -459,7 +463,7 @@ def send_messages(listing, branch, cmdargs):
     if not pwstate:
         pwstate = config.get('pw-accept-state')
 
-    if cmdargs.sendemail:
+    if send_email:
         if cmdargs.dryrun:
             logger.info('DRYRUN: generated %s thank-you letters', outgoing)
         else:
