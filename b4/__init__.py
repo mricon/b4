@@ -2753,7 +2753,8 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                     nmessage += '\n'
                 for ctr in ctrailers:
                     nmessage += ctr.as_string() + '\n'
-            nbparts.append(nmessage)
+            if len(nmessage.strip()):
+                nbparts.append(nmessage)
 
             # Find the section with changelogs
             utility = None
