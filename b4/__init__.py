@@ -877,7 +877,7 @@ class LoreTrailer:
         else:
             self.name = name
             self.value = value
-            if name.lower() in self._utility:
+            if name.lower() in self._utility or '://' in value:
                 self.type = 'utility'
             elif re.search(r'\S+@\S+\.\S+', value):
                 self.type = 'person'
