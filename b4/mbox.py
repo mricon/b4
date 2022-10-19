@@ -240,6 +240,14 @@ def make_am(msgs, cmdargs, msgid):
         if matches:
             base_commit = matches.groups()[0]
 
+    if base_commit and topdir:
+        # Does it actually exist in this tree?
+        if not b4.git_commit_exists(topdir, base_commit):
+            logger.info(' Base: base-commit %s not known, ignoring', base_commit)
+            base_commit = None
+        else:
+            logger.info(' Base: using specified base-commit %s', base_commit)
+
     if not base_commit and topdir and cmdargs.guessbase:
         logger.critical(' Base: attempting to guess base-commit...')
         try:
