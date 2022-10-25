@@ -113,7 +113,7 @@ def cmd_diff(cmdargs):
     b4.diff.main(cmdargs)
 
 
-def cmd():
+def setup_parser() -> argparse.ArgumentParser:
     # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
         prog='b4',
@@ -321,8 +321,12 @@ def cmd():
                           help='Submit the token received via verification email')
     sp_send.set_defaults(func=cmd_send)
 
-    cmdargs = parser.parse_args()
+    return parser
 
+
+def cmd():
+    parser = setup_parser()
+    cmdargs = parser.parse_args()
     logger.setLevel(logging.DEBUG)
 
     ch = logging.StreamHandler()
