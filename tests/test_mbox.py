@@ -5,29 +5,25 @@ import b4.mbox
 import b4.command
 
 
-def _setup_bundle(tmpdir, bundle, chdir=False):
-    dest = os.path.join(tmpdir, 'bundle')
-    args = ['clone', bundle, dest]
-    b4.git_run_command(None, args)
-    if chdir:
-        os.chdir(dest)
-    return dest
-
-
-@pytest.mark.parametrize('bundle,mboxf,msgid', [
-    ('git1', 'shazam-git1-just-series', '20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org'),
+@pytest.mark.parametrize('mboxf, msgid, shazamargs, compareargs, compareout, b4cfg', [
+    ('shazam-git1-just-series', '20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org',
+     [], ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-defaults', []),
 ])
-def test_shazam(tmpdir, bundle, mboxf, msgid):
-    bfile = f'tests/samples/{bundle}.bundle'
-    assert os.path.exists(bfile)
-    mfile = os.path.abspath(f'tests/samples/{mboxf}.mbox')
+def test_shazam(sampledir, gitdir, mboxf, msgid, shazamargs, compareargs, compareout, b4cfg):
+    b4.MAIN_CONFIG.update(b4cfg)
+    mfile = os.path.join(sampledir, f'{mboxf}.mbox')
+    cfile = os.path.join(sampledir, f'{compareout}.verify')
     assert os.path.exists(mfile)
-    gitdir = _setup_bundle(tmpdir, bfile, chdir=True)
+    assert os.path.exists(cfile)
     parser = b4.command.setup_parser()
-    cmdargs = parser.parse_args(['shazam', '-m', mfile, msgid])
-    b4.can_patatt = False
-    b4.can_dkim = False
+    shazamargs = ['shazam', '-m', mfile] + shazamargs + [msgid]
+    cmdargs = parser.parse_args(shazamargs)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
         assert e.type == SystemExit
         assert e.value.code == 0
+    out, logstr = b4.git_run_command(None, compareargs)
+    assert out == 0
+    with open(cfile, 'r') as fh:
+        cstr = fh.read()
+    assert logstr == cstr

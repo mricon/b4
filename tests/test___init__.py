@@ -23,15 +23,15 @@ def test_check_gpg_status(source, expected):
     (None, r'^From git@z ', 0, False),
     (None, r'\n\nFrom git@z ', 0, False),
 ])
-def test_save_git_am_mbox(tmpdir, source, regex, flags, ismbox):
+def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
     import re
     if source is not None:
         if ismbox:
-            mbx = mailbox.mbox(f'tests/samples/{source}.txt')
+            mbx = mailbox.mbox(f'{sampledir}/{source}.txt')
             msgs = list(mbx)
         else:
             import email
-            with open(f'tests/samples/{source}.txt', 'rb') as fh:
+            with open(f'{sampledir}/{source}.txt', 'rb') as fh:
                 msg = email.message_from_binary_file(fh)
             msgs = [msg]
     else:
@@ -43,7 +43,7 @@ def test_save_git_am_mbox(tmpdir, source, regex, flags, ismbox):
             msg['Subject'] = f'Hello world {x}'
             msg['From'] = f'Me{x} <me{x}@foo.bar>'
             msgs.append(msg)
-    dest = os.path.join(tmpdir, 'out')
+    dest = os.path.join(tmp_path, 'out')
     with open(dest, 'w') as fh:
         b4.save_git_am_mbox(msgs, fh)
     with open(dest, 'r') as fh:
@@ -65,8 +65,8 @@ def test_save_git_am_mbox(tmpdir, source, regex, flags, ismbox):
       ('person', 'Signed-off-by', 'Wrapped Persontrailer <broken@example.com>', None),
       ]),
 ])
-def test_parse_trailers(source, expected):
-    with open(f'tests/samples/{source}.txt', 'r') as fh:
+def test_parse_trailers(sampledir, source, expected):
+    with open(f'{sampledir}/{source}.txt', 'r') as fh:
         msg = email.message_from_file(fh)
         lmsg = b4.LoreMessage(msg)
         gh, m, trs, bas, sig = b4.LoreMessage.get_body_parts(lmsg.body)
@@ -96,20 +96,15 @@ def test_parse_trailers(source, expected):
      {'trailers-ignore-from': 'followup-reviewer1@example.com'}),
     ('partial-reroll', {}, {'addmysob': True}, 'defaults', {}),
 ])
-def test_followup_trailers(source, serargs, amargs, reference, b4cfg):
-    b4.USER_CONFIG = {
-        'name': 'Test Override',
-        'email': 'test-override@example.com',
-    }
-    b4.MAIN_CONFIG = dict(b4.DEFAULT_CONFIG)
+def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg):
     b4.MAIN_CONFIG.update(b4cfg)
     lmbx = b4.LoreMailbox()
-    for msg in mailbox.mbox(f'tests/samples/trailers-followup-{source}.mbox'):
+    for msg in mailbox.mbox(f'{sampledir}/trailers-followup-{source}.mbox'):
         lmbx.add_message(msg)
     lser = lmbx.get_series(**serargs)
     assert lser is not None
     amsgs = lser.get_am_ready(**amargs)
     ifh = io.StringIO()
     b4.save_git_am_mbox(amsgs, ifh)
-    with open(f'tests/samples/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
+    with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
         assert ifh.getvalue() == fh.read()
