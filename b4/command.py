@@ -128,6 +128,8 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Output critical information only')
     parser.add_argument('-n', '--no-interactive', action='store_true', default=False,
                         help='Do not ask any interactive questions')
+    parser.add_argument('-f', '--offline-mode', action='store_true', default=False,
+                        help='Do not perform any network queries')
 
     subparsers = parser.add_subparsers(help='sub-command help', dest='subcmd')
 
@@ -345,6 +347,10 @@ def cmd():
     if 'func' not in cmdargs:
         parser.print_help()
         sys.exit(1)
+
+    if cmdargs.offline_mode:
+        logger.info('Running in OFFLINE mode')
+        b4.can_network = False
 
     cmdargs.func(cmdargs)
 

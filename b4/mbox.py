@@ -694,6 +694,9 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
 def get_msgs(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[list]]:
     msgid = None
     if not cmdargs.localmbox:
+        if not b4.can_network:
+            logger.critical('Cannot retrieve threads from remote in offline mode')
+            sys.exit(1)
         msgid = b4.get_msgid(cmdargs)
         if not msgid:
             logger.error('Error: pipe a message or pass msgid as parameter')
@@ -770,7 +773,7 @@ def main(cmdargs):
     if not msgs:
         sys.exit(1)
 
-    if len(msgs) and cmdargs.checknewer:
+    if len(msgs) and cmdargs.checknewer and b4.can_network:
         msgs = get_extra_series(msgs, direction=1, useproject=cmdargs.useproject)
 
     if cmdargs.subcmd in ('am', 'shazam'):

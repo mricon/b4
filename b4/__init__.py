@@ -49,6 +49,9 @@ try:
 except ModuleNotFoundError:
     can_patatt = False
 
+# global setting allowing us to turn off networking
+can_network = True
+
 __VERSION__ = '0.11.0-dev'
 PW_REST_API_VERSION = '1.2'
 
@@ -1155,6 +1158,9 @@ class LoreMessage:
         return self._attestors
 
     def _load_dkim_attestors(self) -> None:
+        if not can_network:
+            logger.debug('Message has DKIM signatures, but can_network is off')
+            return
         if not can_dkim:
             logger.debug('Message has DKIM signatures, but can_dkim is off')
             return
