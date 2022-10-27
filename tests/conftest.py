@@ -1,6 +1,7 @@
 import pytest  # noqa
 import b4
 import os
+import sys
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -17,6 +18,8 @@ def settestdefaults(tmp_path):
     }
     os.environ['XDG_DATA_HOME'] = str(tmp_path)
     os.environ['XDG_CACHE_HOME'] = str(tmp_path)
+    # This lets us avoid execvp-ing from inside b4 when testing
+    sys._running_in_pytest = True
 
 
 @pytest.fixture(scope="function")

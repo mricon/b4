@@ -8,6 +8,10 @@ import b4.command
 @pytest.mark.parametrize('mboxf, shazamargs, compareargs, compareout, b4cfg', [
     ('shazam-git1-just-series', [],
      ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-defaults', []),
+    ('shazam-git1-just-series', ['-H'],
+     ['log', '--format=%ae%n%s%n%b---', 'HEAD..FETCH_HEAD'], 'shazam-git1-just-series-defaults', []),
+    ('shazam-git1-just-series', ['-M'],
+     ['log', '--format=%ae%n%s%n%b---', 'HEAD~5..'], 'shazam-git1-just-series-merged', []),
 ])
 def test_shazam(sampledir, gitdir, mboxf, shazamargs, compareargs, compareout, b4cfg):
     b4.MAIN_CONFIG.update(b4cfg)
@@ -16,7 +20,7 @@ def test_shazam(sampledir, gitdir, mboxf, shazamargs, compareargs, compareout, b
     assert os.path.exists(mfile)
     assert os.path.exists(cfile)
     parser = b4.command.setup_parser()
-    shazamargs = ['--no-stdin', 'shazam', '-m', mfile] + shazamargs
+    shazamargs = ['--no-stdin', '--no-interactive', '--offline-mode', 'shazam', '-m', mfile] + shazamargs
     cmdargs = parser.parse_args(shazamargs)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)

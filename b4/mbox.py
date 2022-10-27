@@ -382,7 +382,6 @@ def make_am(msgs, cmdargs, msgid):
         mergeflags = config.get('shazam-merge-flags', '--signoff')
         sp = shlex.shlex(mergeflags, posix=True)
         sp.whitespace_split = True
-        edit = None
         if cmdargs.no_interactive:
             edit = '--no-edit'
         else:
@@ -401,12 +400,17 @@ def make_am(msgs, cmdargs, msgid):
                     sys.exit(130)
             else:
                 logger.info('Invoking: %s', ' '.join(mergecmd))
+            if hasattr(sys, '_running_in_pytest'):
+                # Don't execvp, as this kills our tests
+                out, logstr = b4.git_run_command(None, mergeargs)
+                sys.exit(out)
+
             # We exec git-merge and let it take over
             os.execvp(mergecmd[0], mergecmd)
 
         logger.info('You can now merge or checkout FETCH_HEAD')
         logger.info('  e.g.: %s', ' '.join(mergecmd))
-        return
+        sys.exit(0)
 
     if not base_commit:
         checked, mismatches = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
