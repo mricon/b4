@@ -709,6 +709,10 @@ def get_series_start() -> str:
 
 
 def update_trailers(cmdargs: argparse.Namespace) -> None:
+    if not b4.can_network and not cmdargs.localmbox:
+        logger.critical('CRITICAL: To work in offline mode you have to pass a local mailbox.')
+        sys.exit(1)
+
     usercfg = b4.get_user_config()
     if 'name' not in usercfg or 'email' not in usercfg:
         logger.critical('CRITICAL: Please set your user.name and user.email')
@@ -767,7 +771,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
 
-    logger.info('Calculating patch-ids from %s commits', len(patches)-1)
+    logger.info('Calculating patch-ids from commits, this may take a moment...')
     commit_map = dict()
     by_patchid = dict()
     by_subject = dict()
@@ -783,15 +787,19 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         by_patchid[patchid] = commit
 
     list_msgs = list()
-    if changeid:
+    if changeid and b4.can_network:
         logger.info('Checking change-id "%s"', changeid)
         query = f'"change-id: {changeid}"'
         smsgs = b4.get_pi_search_results(query, nocache=True)
         if smsgs is not None:
             list_msgs += smsgs
-    if msgid:
-        logger.info('Retrieving thread matching %s', msgid)
-        tmsgs = b4.get_pi_thread_by_msgid(msgid, nocache=True)
+
+    if msgid or cmdargs.localmbox:
+        try:
+            msgid, tmsgs = b4.retrieve_messages(cmdargs)
+        except LookupError as ex:
+            logger.critical('CRITICAL: %s', ex)
+            sys.exit(1)
         if tmsgs is not None:
             list_msgs += tmsgs
 

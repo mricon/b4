@@ -128,8 +128,10 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Output critical information only')
     parser.add_argument('-n', '--no-interactive', action='store_true', default=False,
                         help='Do not ask any interactive questions')
-    parser.add_argument('-f', '--offline-mode', action='store_true', default=False,
+    parser.add_argument('--offline-mode', action='store_true', default=False,
                         help='Do not perform any network queries')
+    parser.add_argument('--no-stdin', action='store_true', default=False,
+                        help='Disable TTY detection for stdin')
 
     subparsers = parser.add_subparsers(help='sub-command help', dest='subcmd')
 
@@ -294,6 +296,7 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Look for trailers in the thread with this msgid instead of using the series change-id')
     sp_trl.add_argument('--since', default='1.month',
                         help='The --since option to use with -F when auto-matching patches (default=1.month)')
+    cmd_retrieval_common_opts(sp_trl)
     sp_trl.set_defaults(func=cmd_trailers)
 
     # b4 send

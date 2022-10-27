@@ -691,65 +691,6 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     return msgs
 
 
-def get_msgs(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[list]]:
-    msgid = None
-    if not cmdargs.localmbox:
-        if not b4.can_network:
-            logger.critical('Cannot retrieve threads from remote in offline mode')
-            sys.exit(1)
-        msgid = b4.get_msgid(cmdargs)
-        if not msgid:
-            logger.error('Error: pipe a message or pass msgid as parameter')
-            sys.exit(1)
-
-        pickings = set()
-        if 'cherrypick' in cmdargs and cmdargs.cherrypick == '_':
-            # Just that msgid, please
-            pickings = {msgid}
-        msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache,
-                                         onlymsgids=pickings)
-        if not msgs:
-            return None, msgs
-    else:
-        if cmdargs.localmbox == '-':
-            # The entire mbox is passed via stdin, so mailsplit it and use the first message for our msgid
-            with tempfile.TemporaryDirectory() as tfd:
-                msgs = b4.mailsplit_bytes(sys.stdin.buffer.read(), tfd, pipesep=cmdargs.stdin_pipe_sep)
-            if not len(msgs):
-                logger.critical('Stdin did not contain any messages')
-                sys.exit(1)
-
-        elif os.path.exists(cmdargs.localmbox):
-            msgid = b4.get_msgid(cmdargs)
-            if os.path.isdir(cmdargs.localmbox):
-                in_mbx = mailbox.Maildir(cmdargs.localmbox)
-            else:
-                in_mbx = mailbox.mbox(cmdargs.localmbox)
-
-            if msgid:
-                msgs = b4.get_strict_thread(in_mbx, msgid)
-                if not msgs:
-                    logger.critical('Could not find %s in %s', msgid, cmdargs.localmbox)
-                    sys.exit(1)
-            else:
-                msgs = in_mbx
-        else:
-            logger.critical('Mailbox %s does not exist', cmdargs.localmbox)
-            sys.exit(1)
-
-    if msgid and 'noparent' in cmdargs and cmdargs.noparent:
-        msgs = b4.get_strict_thread(msgs, msgid, noparent=True)
-
-    if not msgid and msgs:
-        for msg in msgs:
-            msgid = msg.get('Message-ID', None)
-            if msgid:
-                msgid = msgid.strip('<>')
-                break
-
-    return msgid, msgs
-
-
 def main(cmdargs):
     if cmdargs.subcmd == 'shazam':
         # We force some settings
@@ -769,7 +710,12 @@ def main(cmdargs):
         # Force nocache mode
         cmdargs.nocache = True
 
-    msgid, msgs = get_msgs(cmdargs)
+    try:
+        msgid, msgs = b4.retrieve_messages(cmdargs)
+    except LookupError as ex:
+        logger.critical('CRITICAL: %s', ex)
+        sys.exit(1)
+
     if not msgs:
         sys.exit(1)
 

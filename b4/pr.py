@@ -472,7 +472,7 @@ def main(cmdargs):
     gitdir = cmdargs.gitdir
     lmsg = None
 
-    if not sys.stdin.isatty():
+    if not cmdargs.no_stdin and not sys.stdin.isatty():
         logger.debug('Getting PR message from stdin')
         msg = email.message_from_bytes(sys.stdin.buffer.read())
         cmdargs.msgid = b4.LoreMessage.get_clean_msgid(msg)

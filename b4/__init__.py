@@ -2423,7 +2423,7 @@ def get_msgid_from_stdin() -> Optional[str]:
 
 
 def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
-    if not cmdargs.msgid:
+    if not cmdargs.msgid and not cmdargs.no_stdin:
         logger.debug('Getting Message-ID from stdin')
         msgid = get_msgid_from_stdin()
     else:
@@ -3395,3 +3395,57 @@ def get_email_signature() -> str:
         signature = '%s <%s>' % (usercfg['name'], usercfg['email'])
 
     return signature
+
+
+def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[list]]:
+    msgid = None
+    if not cmdargs.localmbox:
+        if not can_network:
+            raise LookupError('Cannot retrieve threads from remote in offline mode')
+        msgid = get_msgid(cmdargs)
+        if not msgid:
+            raise LookupError('Pipe a message or pass msgid as parameter')
+
+        pickings = set()
+        if 'cherrypick' in cmdargs and cmdargs.cherrypick == '_':
+            # Just that msgid, please
+            pickings = {msgid}
+        msgs = get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache,
+                                      onlymsgids=pickings)
+        if not msgs:
+            return None, msgs
+    else:
+        if cmdargs.localmbox == '-':
+            # The entire mbox is passed via stdin, so mailsplit it and use the first message for our msgid
+            with tempfile.TemporaryDirectory() as tfd:
+                msgs = mailsplit_bytes(sys.stdin.buffer.read(), tfd, pipesep=cmdargs.stdin_pipe_sep)
+            if not len(msgs):
+                raise LookupError('Stdin did not contain any messages')
+
+        elif os.path.exists(cmdargs.localmbox):
+            msgid = get_msgid(cmdargs)
+            if os.path.isdir(cmdargs.localmbox):
+                in_mbx = mailbox.Maildir(cmdargs.localmbox)
+            else:
+                in_mbx = mailbox.mbox(cmdargs.localmbox)
+
+            if msgid:
+                msgs = get_strict_thread(in_mbx, msgid)
+                if not msgs:
+                    raise LookupError('Could not find %s in %s' % (msgid, cmdargs.localmbox))
+            else:
+                msgs = in_mbx
+        else:
+            raise LookupError('Mailbox %s does not exist' % cmdargs.localmbox)
+
+    if msgid and 'noparent' in cmdargs and cmdargs.noparent:
+        msgs = get_strict_thread(msgs, msgid, noparent=True)
+
+    if not msgid and msgs:
+        for msg in msgs:
+            msgid = msg.get('Message-ID', None)
+            if msgid:
+                msgid = msgid.strip('<>')
+                break
+
+    return msgid, msgs
