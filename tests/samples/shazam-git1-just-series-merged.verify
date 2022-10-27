@@ -1,25 +1,29 @@
-konstantin@linuxfoundation.org
+test-override@example.com
+test-override@example.com
 Merge patch series "This is a cover for test series 1"
 Konstantin Ryabitsev <konstantin@linuxfoundation.org> says:
 
 Test patches for pytest.
 
 Link: https://lore.kernel.org/r/20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org
-Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Signed-off-by: Test Override <test-override@example.com>
 ---
 konstantin@linuxfoundation.org
+test-override@example.com
 Minor typo changes imitation
 Life imitatus artem.
 
 Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
 ---
 konstantin@linuxfoundation.org
+test-override@example.com
 Add some paragraphs to lipsum
 Mostly junk. As expected.
 
 Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
 ---
 konstantin@linuxfoundation.org
+test-override@example.com
 Add more lines to file 1
 This is a second patch in the series. It needed a paragraph with the
 words of wisdom.
@@ -27,6 +31,7 @@ words of wisdom.
 Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
 ---
 konstantin@linuxfoundation.org
+test-override@example.com
 Remove line 2 from file2
 Etiam in rhoncus lacus. Ut velit nisl, mollis ac commodo vitae, ultrices
 quis felis. Proin varius hendrerit volutpat. Pellentesque nec laoreet
@@ -42,30 +47,6 @@ metus, nec rutrum nulla porttitor vel. Ut tristique commodo sem, ac
 sollicitudin enim pharetra et. Mauris sed tellus vitae nunc sollicitudin
 fermentum. Phasellus dui elit, malesuada quis metus vel, blandit
 tristique felis. Aenean quis tempus enim.
-
-Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
----
-konstantin@linuxfoundation.org
-Add lipsum.txt
-Another commit.
-
-Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
----
-konstantin@linuxfoundation.org
-Add line 2 in file 2
-I lost count, which commit is this?
-
-Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
----
-konstantin@linuxfoundation.org
-Add file 2
-This is a third commit.
-
-Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
----
-konstantin@linuxfoundation.org
-Add a second line
-This is a second commit.
 
 Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
 ---

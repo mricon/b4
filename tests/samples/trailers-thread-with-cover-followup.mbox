@@ -1,0 +1,249 @@
+From mboxrd@git Thu Jan  1 00:00:00 1970
+Subject: [PATCH 0/4] This is a cover for test series 1
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+From: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Date: Tue, 25 Oct 2022 13:38:41 -0400
+Message-Id: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+To: list@example.org
+
+Test patches for pytest.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+
+---
+Konstantin Ryabitsev (4):
+      Remove line 2 from file2
+      Add more lines to file 1
+      Add some paragraphs to lipsum
+      Minor typo changes imitation
+
+ file1.txt  | 12 ++++++++++++
+ file2.txt  |  1 -
+ lipsum.txt | 14 ++++++++++++--
+ 3 files changed, 24 insertions(+), 3 deletions(-)
+---
+base-commit: f435c12df7c0ecf20ab8937859e63cddffacabb4
+change-id: 20221025-test1-e8520c2200a3
+
+Best regards,
+-- 
+Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+From: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Date: Tue, 25 Oct 2022 13:38:42 -0400
+Subject: [PATCH 1/4] Remove line 2 from file2
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+Message-Id: <20221025-test1-v1-1-e4f28f57990c@linuxfoundation.org>
+References: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+In-Reply-To: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+To: list@example.org
+
+Etiam in rhoncus lacus. Ut velit nisl, mollis ac commodo vitae, ultrices
+quis felis. Proin varius hendrerit volutpat. Pellentesque nec laoreet
+quam, eu ullamcorper mi. Donec ut purus ac sapien dignissim elementum eu
+ac ante. Mauris sed faucibus orci.
+
+Vivamus eleifend accumsan ultricies. Cras at erat nec mauris iaculis
+eleifend sit amet eu libero. Suspendisse auctor a erat at vestibulum.
+Nullam efficitur quis turpis quis sodales.
+
+Nunc elementum hendrerit arcu eget feugiat. Nulla placerat pellentesque
+metus, nec rutrum nulla porttitor vel. Ut tristique commodo sem, ac
+sollicitudin enim pharetra et. Mauris sed tellus vitae nunc sollicitudin
+fermentum. Phasellus dui elit, malesuada quis metus vel, blandit
+tristique felis. Aenean quis tempus enim.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+---
+ file2.txt | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/file2.txt b/file2.txt
+index d5a0124..3eac351 100644
+--- a/file2.txt
++++ b/file2.txt
+@@ -1,2 +1 @@
+ This is file 2.
+-This is a new line in file 2.
+
+-- 
+b4 0.11.0-dev-58177
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+From: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Date: Tue, 25 Oct 2022 13:38:43 -0400
+Subject: [PATCH 2/4] Add more lines to file 1
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+Message-Id: <20221025-test1-v1-2-e4f28f57990c@linuxfoundation.org>
+References: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+In-Reply-To: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+To: list@example.org
+
+This is a second patch in the series. It needed a paragraph with the
+words of wisdom.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+---
+ file1.txt | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/file1.txt b/file1.txt
+index b352682..936a0c8 100644
+--- a/file1.txt
++++ b/file1.txt
+@@ -1,3 +1,15 @@
+ This is file 1.
+ It has a single line.
+ This is a second line I added.
++This is a third line that belongs here.
++
++As well as the following words of wisdom:
++
++Duis rutrum eu urna eu viverra. Curabitur vehicula ut nisl id accumsan.
++Praesent condimentum mattis rutrum. Maecenas tincidunt ipsum nec hendrerit
++pulvinar. Suspendisse sed commodo nisl, vitae tincidunt libero. Donec lacus
++ante, maximus eu nulla in, lacinia aliquam sem. Fusce efficitur nisl elit, et
++sodales nisi pellentesque in. Nulla eros sem, sagittis sit amet nisi non,
++venenatis accumsan augue. Sed ipsum ligula, sodales nec pharetra eget, congue
++id mi. Duis et accumsan lacus, in sollicitudin metus. In eu velit ut tortor
++finibus sodales.
+
+-- 
+b4 0.11.0-dev-58177
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+From: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Date: Tue, 25 Oct 2022 13:38:44 -0400
+Subject: [PATCH 3/4] Add some paragraphs to lipsum
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+Message-Id: <20221025-test1-v1-3-e4f28f57990c@linuxfoundation.org>
+References: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+In-Reply-To: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+To: list@example.org
+
+Mostly junk. As expected.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+---
+ lipsum.txt | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/lipsum.txt b/lipsum.txt
+index d8f8dc5..750dabb 100644
+--- a/lipsum.txt
++++ b/lipsum.txt
+@@ -4,9 +4,19 @@ est. Proin vestibulum enim et sagittis eleifend. Maecenas mattis, felis ac
+ aliquet gravida, risus erat tempor sapien, tempor ultricies urna magna non
+ urna. Nam luctus lorem a enim pulvinar, eget viverra dui viverra. Praesent ut
+ libero a lectus posuere tempus. Interdum et malesuada fames ac ante ipsum
+-primis in faucibus. Phasellus cursus lectus sed metus interdum aliquet. Ut non
++primis in faucibus. Phasellius cursus lectus sed metus interdum aliquet. Ut non
+ erat consectetur, pretium quam at, maximus nisl. Donec tempus facilisis ex sit
+ amet condimentum. Suspendisse vitae diam sem. Donec ligula tellus, scelerisque
+-efficitur mauris non, euismod auctor urna. Morbi ac hendrerit erat. Phasellus
++efficitur mauris non, euismodae auctor urna. Morbi ac hendrerit erat. Phasellus
+ at mauris id dui malesuada porta ut et justo. Integer convallis quis ligula
+ vitae sollicitudin. Nulla sit amet tincidunt nulla, eget vestibulum massa.
++
++Interdum et malesuada fames ac ante ipsum primis in faucibus. Curabitur nec dui
++ut lacus vehicula aliquet. Curabitur ac tincidunt risus. Etiam in eros massa.
++Curabitur scelerisque orci non justo sollicitudin bibendum. Sed quis risus
++imperdiet, tincidunt quam eget, consectetur eros. Maecenas sollicitudin augue
++quis odio fermentum, eget elementum ipsum maximus. Etiam quam odio, tempus nec
++posuere at, facilisis nec turpis.
++
++Curabitur porttitor sit amet odio ac rutrum.
++Integer bibendum metus eu bibendum porttitor.
+
+-- 
+b4 0.11.0-dev-58177
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+From: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Date: Tue, 25 Oct 2022 13:38:45 -0400
+Subject: [PATCH 4/4] Minor typo changes imitation
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+Message-Id: <20221025-test1-v1-4-e4f28f57990c@linuxfoundation.org>
+References: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+In-Reply-To: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+To: list@example.org
+
+Life imitatus artem.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+---
+ lipsum.txt | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lipsum.txt b/lipsum.txt
+index 750dabb..d304f7f 100644
+--- a/lipsum.txt
++++ b/lipsum.txt
+@@ -13,10 +13,10 @@ vitae sollicitudin. Nulla sit amet tincidunt nulla, eget vestibulum massa.
+ 
+ Interdum et malesuada fames ac ante ipsum primis in faucibus. Curabitur nec dui
+ ut lacus vehicula aliquet. Curabitur ac tincidunt risus. Etiam in eros massa.
+-Curabitur scelerisque orci non justo sollicitudin bibendum. Sed quis risus
++Curabitur scelerisque orci non justo sollicitudin vivendum. Sed quis risus
+ imperdiet, tincidunt quam eget, consectetur eros. Maecenas sollicitudin augue
+ quis odio fermentum, eget elementum ipsum maximus. Etiam quam odio, tempus nec
+ posuere at, facilisis nec turpis.
+ 
+ Curabitur porttitor sit amet odio ac rutrum.
+-Integer bibendum metus eu bibendum porttitor.
++Floatus bibendum metus eu bibendum porttitor.
+
+-- 
+b4 0.11.0-dev-58177
+
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+From: Follow Upper <follow.upper@example.org>
+Date: Tue, 25 Oct 2022 13:38:45 -0400
+Subject: Re: [PATCH 4/4] Minor typo changes imitation
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+Message-Id: <fwup1@example.org>
+In-Reply-To: <20221025-test1-v1-4-e4f28f57990c@linuxfoundation.org>
+References: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org> <20221025-test1-v1-4-e4f28f57990c@linuxfoundation.org>
+To: list@example.org
+
+> Life imitatus artem.
+> 
+> Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+
+Tested-by: Follow Upper <follow.upper@example.org>
+
+-- 
+Follow Upper
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+From: Cover Upper <cover.upper@example.org>
+Date: Tue, 25 Oct 2022 13:38:45 -0400
+Subject: Re: [PATCH 0/4] This is a cover for test series 1
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+Message-Id: <cover-fwup1@example.org>
+In-Reply-To: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+References: <20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org>
+To: list@example.org
+
+> Test patches for pytest.
+
+Reviewed-by: Cover Upper <cover.upper@example.org>
+
+-- 
+Cover Upper

@@ -7,11 +7,11 @@ import b4.command
 
 @pytest.mark.parametrize('mboxf, shazamargs, compareargs, compareout, b4cfg', [
     ('shazam-git1-just-series', [],
-     ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-defaults', []),
+     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-defaults', {}),
     ('shazam-git1-just-series', ['-H'],
-     ['log', '--format=%ae%n%s%n%b---', 'HEAD..FETCH_HEAD'], 'shazam-git1-just-series-defaults', []),
+     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD..FETCH_HEAD'], 'shazam-git1-just-series-defaults', {}),
     ('shazam-git1-just-series', ['-M'],
-     ['log', '--format=%ae%n%s%n%b---', 'HEAD~5..'], 'shazam-git1-just-series-merged', []),
+     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD^..'], 'shazam-git1-just-series-merged', {}),
 ])
 def test_shazam(sampledir, gitdir, mboxf, shazamargs, compareargs, compareout, b4cfg):
     b4.MAIN_CONFIG.update(b4cfg)

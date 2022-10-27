@@ -39,7 +39,10 @@ def gitdir(request, tmp_path):
     assert os.path.exists(bfile)
     dest = os.path.join(tmp_path, 'repo')
     args = ['clone', bfile, dest]
-    b4.git_run_command(None, args)
+    out, logstr = b4.git_run_command(None, args)
+    assert out == 0
+    b4.git_set_config(dest, 'user.name', b4.USER_CONFIG['name'])
+    b4.git_set_config(dest, 'user.email', b4.USER_CONFIG['email'])
     olddir = os.getcwd()
     os.chdir(dest)
     yield dest
