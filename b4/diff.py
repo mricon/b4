@@ -29,8 +29,6 @@ def diff_same_thread_series(cmdargs):
     identifier = msgid
     if wantvers:
         identifier += '-' + '-'.join([str(x) for x in wantvers])
-    if cmdargs.useproject:
-        identifier += '-' + cmdargs.useproject
 
     cachedir = b4.get_cache_file(identifier, suffix='diff.msgs')
     if os.path.exists(cachedir) and not cmdargs.nocache:
@@ -40,11 +38,11 @@ def diff_same_thread_series(cmdargs):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
                 msgs.append(email.message_from_binary_file(fh))
     else:
-        msgs = b4.get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache)
+        msgs = b4.get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache)
         if not msgs:
             logger.critical('Unable to retrieve thread: %s', msgid)
             return
-        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=wantvers, useproject=cmdargs.useproject)
+        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=wantvers)
         if os.path.exists(cachedir):
             shutil.rmtree(cachedir)
         pathlib.Path(cachedir).mkdir(parents=True)

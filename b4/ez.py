@@ -1264,7 +1264,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         sign = False
 
     cover_msg = None
-    # TODO: Need to send obsoleted-by follow-ups, just need to figure out where.
     send_msgs = list()
     for commit, msg in patches:
         if not msg:

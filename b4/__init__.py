@@ -2453,9 +2453,6 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
             logger.debug('Overriding midmask with passed url parameters')
             config['midmask'] = f'{wantloc.scheme}://{wantloc.netloc}/{chunks[0]}/%s'
         msgid = urllib.parse.unquote(chunks[1])
-        # Infer the project name from the URL, if possible
-        if chunks[0] != 'r':
-            cmdargs.useproject = chunks[0]
     # Handle special case when msgid is prepended by id: or rfc822msgid:
     if msgid.find('id:') >= 0:
         msgid = re.sub(r'^\w*id:', '', msgid)
@@ -2563,7 +2560,7 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
     return msgs
 
 
-def get_pi_search_results(query: str, nocache: bool = False):
+def get_pi_search_results(query: str, nocache: bool = False) -> Optional[List[email.message.Message]]:
     config = get_main_config()
     searchmask = config.get('searchmask')
     if not searchmask:
@@ -2654,7 +2651,7 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False):
     return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
 
 
-def get_pi_thread_by_msgid(msgid: str, useproject: Optional[str] = None, nocache: bool = False,
+def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
                            onlymsgids: Optional[set] = None) -> Optional[list]:
     qmsgid = urllib.parse.quote_plus(msgid)
     config = get_main_config()
@@ -2663,10 +2660,8 @@ def get_pi_thread_by_msgid(msgid: str, useproject: Optional[str] = None, nocache
     # In fact, /all/ naming is arbitrary, but for now we are going to
     # hardcode it to lore.kernel.org settings and maybe make it configurable
     # in the future, if necessary.
-    if loc.path.startswith('/all/') and not useproject:
-        useproject = 'all'
-    if useproject:
-        projurl = '%s://%s/%s' % (loc.scheme, loc.netloc, useproject)
+    if loc.path.startswith('/all/'):
+        projurl = '%s://%s/all' % (loc.scheme, loc.netloc)
     else:
         # Grab the head from lore, to see where we are redirected
         midmask = config['midmask'] % qmsgid
@@ -3410,8 +3405,7 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
         if 'cherrypick' in cmdargs and cmdargs.cherrypick == '_':
             # Just that msgid, please
             pickings = {msgid}
-        msgs = get_pi_thread_by_msgid(msgid, useproject=cmdargs.useproject, nocache=cmdargs.nocache,
-                                      onlymsgids=pickings)
+        msgs = get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache, onlymsgids=pickings)
         if not msgs:
             return None, msgs
     else:

@@ -16,8 +16,6 @@ logger = b4.logger
 def cmd_retrieval_common_opts(sp):
     sp.add_argument('msgid', nargs='?',
                     help='Message ID to process, or pipe a raw message')
-    sp.add_argument('-p', '--use-project', dest='useproject', default=None,
-                    help='Use a specific project instead of default (linux-mm, linux-hardening, etc)')
     sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
                     help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
     sp.add_argument('--stdin-pipe-sep',
@@ -234,8 +232,6 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Message ID to process, or pipe a raw message')
     sp_diff.add_argument('-g', '--gitdir', default=None,
                          help='Operate on this git tree instead of current dir')
-    sp_diff.add_argument('-p', '--use-project', dest='useproject', default=None,
-                         help='Use a specific project instead of default (linux-mm, linux-hardening, etc)')
     sp_diff.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                          help='Do not use local cache')
     sp_diff.add_argument('-v', '--compare-versions', dest='wantvers', type=int, default=None, nargs='+',

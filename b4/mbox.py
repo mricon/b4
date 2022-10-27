@@ -27,7 +27,7 @@ import xml.etree.ElementTree
 
 import b4
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from string import Template
 
 logger = b4.logger
@@ -114,22 +114,6 @@ def make_am(msgs, cmdargs, msgid):
         logger.critical('Total patches: %s', len(am_msgs))
     else:
         logger.info('Total patches: %s (cherrypicked: %s)', len(am_msgs), cmdargs.cherrypick)
-    # Check if any of the followup-trailers is an Obsoleted-by
-    if not cmdargs.checknewer:
-        warned = False
-        for lmsg in lser.patches:
-            # Only check cover letter or first patch
-            if not lmsg or lmsg.counter > 1:
-                continue
-            for ltr in list(lmsg.followup_trailers):
-                if ltr.lname == 'obsoleted-by':
-                    lmsg.followup_trailers.remove(ltr)
-                    if warned:
-                        continue
-                    logger.critical('---')
-                    logger.critical('WARNING: Found an Obsoleted-by follow-up trailer!')
-                    logger.critical('         Rerun with -c to automatically retrieve the new series.')
-                    warned = True
 
     if lser.has_cover and lser.patches[0].followup_trailers and not covertrailers:
         # Warn that some trailers were sent to the cover letter
@@ -528,30 +512,31 @@ def save_as_quilt(am_msgs, q_dirname):
             sfh.write('%s\n' % patch_filename)
 
 
-def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None, nocache: bool = False,
-                     useproject: Optional[str] = None) -> list:
+def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None,
+                     nocache: bool = False) -> List[email.message.Message]:
     base_msg = None
     latest_revision = None
     seen_msgids = set()
     seen_covers = set()
-    obsoleted = list()
+    queries = set()
     for msg in msgs:
         msgid = b4.LoreMessage.get_clean_msgid(msg)
         seen_msgids.add(msgid)
         lsub = b4.LoreSubject(msg['Subject'])
-        if direction > 0 and lsub.reply:
-            # Does it have an Obsoleted-by: trailer?
-            rmsg = b4.LoreMessage(msg)
-            trailers, mismatches = rmsg.get_trailers()
-            for ltr in trailers:
-                if ltr.lname == 'obsoleted-by':
-                    for chunk in ltr.value.split('/'):
-                        if chunk.find('@') > 0 and chunk not in seen_msgids:
-                            obsoleted.append(chunk)
-                            break
+
         # Ignore patches above 1
         if lsub.counter > 1:
             continue
+
+        if not lsub.reply:
+            payload = msg.get_payload()
+            if isinstance(payload, str):
+                matches = re.search(r'^change-id:\s+(\S+)', payload, flags=re.I | re.M)
+                if matches:
+                    logger.debug('Found change-id %s', matches.groups()[0])
+                    q = 'nq:"change-id: %s"' % matches.groups()[0]
+                    queries.add(q)
+
         if base_msg is not None:
             logger.debug('Current base_msg: %s', base_msg['Subject'])
         logger.debug('Checking the subject on %s', lsub.full_subject)
@@ -565,132 +550,85 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
                 # A patch/series without a cover letter
                 base_msg = msg
 
-    if base_msg is None:
-        logger.debug('Could not find cover of 1st patch in mbox')
+    if not queries and base_msg is None:
         return msgs
 
-    config = b4.get_main_config()
-    loc = urllib.parse.urlparse(config['midmask'])
-    if not useproject:
-        useproject = 'all'
-
-    listarc = f'{loc.scheme}://{loc.netloc}/{useproject}/'
-    # Make sure it exists
-    queryurl = f'{listarc}_/text/config/raw'
-    session = b4.get_requests_session()
-    resp = session.get(queryurl)
-    if not resp.status_code == 200:
-        logger.info('Unable to figure out list archive location')
+    # Get subject info from base_msg again
+    lsub = b4.LoreSubject(base_msg['Subject'])
+    if not len(lsub.prefixes):
+        logger.debug('Not checking for new revisions: no prefixes on the cover letter.')
         return msgs
+    if direction < 0 and latest_revision <= 1:
+        logger.debug('This is the earliest version of the series')
+        return msgs
+    if direction < 0 and wantvers is None:
+        wantvers = [latest_revision - 1]
 
-    nt_msgs = list()
-    if len(obsoleted):
-        for nt_msgid in obsoleted:
-            logger.info('Obsoleted-by: %s', nt_msgid)
-            # Grab this thread from remote
-            t_mbx_url = '%s/%s/t.mbox.gz' % (listarc.rstrip('/'), nt_msgid)
-            potentials = b4.get_pi_thread_by_url(t_mbx_url, nocache=nocache)
-            if potentials:
-                potentials = b4.get_strict_thread(potentials, nt_msgid)
-                nt_msgs += potentials
-                logger.info('   Added %s messages from that thread', len(potentials))
-            else:
-                logger.info('   No messages added from that thread')
-
+    fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
+    msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
+    q = 's:"%s" AND f:"%s"' % (lsub.subject.replace('"', ''), fromeml)
+    queries.add(q)
+    startdate = time.strftime('%Y%m%d', msgdate[:9])
+    if direction > 0:
+        logger.critical('Checking for newer revisions')
+        datelim = 'd:%s..' % startdate
     else:
-        # Get subject info from base_msg again
-        lsub = b4.LoreSubject(base_msg['Subject'])
-        if not len(lsub.prefixes):
-            logger.debug('Not checking for new revisions: no prefixes on the cover letter.')
-            return msgs
-        if direction < 0 and latest_revision <= 1:
-            logger.debug('This is the latest version of the series')
-            return msgs
-        if direction < 0 and wantvers is None:
-            wantvers = [latest_revision - 1]
+        logger.critical('Checking for older revisions')
+        datelim = 'd:..%s' % startdate
 
-        base_msgid = b4.LoreMessage.get_clean_msgid(base_msg)
-        fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
-        msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
-        startdate = time.strftime('%Y%m%d', msgdate[:9])
-        if direction > 0:
-            q = 's:"%s" AND f:"%s" AND d:%s..' % (lsub.subject.replace('"', ''), fromeml, startdate)
-            queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '-1'}))
-            logger.critical('Checking for newer revisions on %s', listarc)
-        else:
-            q = 's:"%s" AND f:"%s" AND d:..%s' % (lsub.subject.replace('"', ''), fromeml, startdate)
-            queryurl = '%s?%s' % (listarc, urllib.parse.urlencode({'q': q, 'x': 'A', 'o': '1'}))
-            logger.critical('Checking for older revisions on %s', listarc)
+    q = '(%s) AND %s' % (' OR '.join(queries), datelim)
+    q_msgs = b4.get_pi_search_results(q, nocache=nocache)
+    if not q_msgs:
+        return msgs
 
-        logger.debug('Query URL: %s', queryurl)
-        session = b4.get_requests_session()
-        resp = session.get(queryurl)
-        # try to parse it
-        try:
-            tree = xml.etree.ElementTree.fromstring(resp.content)
-        except xml.etree.ElementTree.ParseError as ex:
-            logger.debug('Unable to parse results, ignoring: %s', ex)
-            resp.close()
-            return msgs
-        resp.close()
-        ns = {'atom': 'http://www.w3.org/2005/Atom'}
-        entries = tree.findall('atom:entry', ns)
-        seen_urls = set()
-
-        for entry in entries:
-            title = entry.find('atom:title', ns).text
-            lsub = b4.LoreSubject(title)
-            if lsub.reply or lsub.counter > 1:
-                logger.debug('Ignoring result (not interesting): %s', title)
-                continue
-            link = entry.find('atom:link', ns).get('href')
-            if direction > 0 and lsub.revision <= latest_revision:
-                logger.debug('Ignoring result (not new revision): %s', title)
-                continue
-            elif direction < 0 and lsub.revision >= latest_revision:
-                logger.debug('Ignoring result (not old revision): %s', title)
-                continue
-            elif direction < 0 and lsub.revision not in wantvers:
-                logger.debug('Ignoring result (not revision we want): %s', title)
-                continue
-            if link.find('/%s/' % base_msgid) > 0:
-                logger.debug('Ignoring result (same thread as ours):%s', title)
-                continue
-            if lsub.revision == 1 and lsub.revision == latest_revision:
-                # Someone sent a separate message with an identical title but no new vX in the subject line
-                if direction > 0:
-                    # It's *probably* a new revision.
-                    logger.debug('Likely a new revision: %s', title)
-                else:
-                    # It's *probably* an older revision.
-                    logger.debug('Likely an older revision: %s', title)
-            elif direction > 0 and lsub.revision > latest_revision:
-                logger.debug('Definitely a new revision [v%s]: %s', lsub.revision, title)
-            elif direction < 0 and lsub.revision < latest_revision:
-                logger.debug('Definitely an older revision [v%s]: %s', lsub.revision, title)
-            else:
-                logger.debug('No idea what this is: %s', title)
-                continue
-            t_mbx_url = '%st.mbox.gz' % link
-            if t_mbx_url in seen_urls:
-                continue
-            seen_urls.add(t_mbx_url)
-            logger.info('New revision: %s', title)
-            potentials = b4.get_pi_thread_by_url(t_mbx_url, nocache=nocache)
-            if potentials:
-                nt_msgs += potentials
-                logger.info('   Added %s messages from that thread', len(potentials))
-
-    # Append all of these to the existing mailbox
-    for nt_msg in nt_msgs:
-        nt_msgid = b4.LoreMessage.get_clean_msgid(nt_msg)
-        if nt_msgid in seen_msgids:
-            logger.debug('Duplicate message, skipping')
+    seen_revisions = dict()
+    for q_msg in q_msgs:
+        q_msgid = b4.LoreMessage.get_clean_msgid(q_msg)
+        lsub = b4.LoreSubject(q_msg.get('subject'))
+        if q_msgid in seen_msgids:
+            logger.debug('Skipping %s: already have it', lsub.full_subject)
             continue
-        nt_subject = re.sub(r'\s+', ' ', nt_msg['Subject'])
-        logger.debug('Adding: %s', nt_subject)
-        msgs.append(nt_msg)
-        seen_msgids.add(nt_msgid)
+        if lsub.reply:
+            # These will get sorted out later
+            logger.debug('Adding reply: %s', lsub.full_subject)
+            msgs.append(q_msg)
+            seen_msgids.add(q_msgid)
+            continue
+
+        if direction > 0 and lsub.revision <= latest_revision:
+            logger.debug('Ignoring result (not new revision): %s', lsub.full_subject)
+            continue
+        elif direction < 0 and lsub.revision >= latest_revision:
+            logger.debug('Ignoring result (not old revision): %s', lsub.full_subject)
+            continue
+        elif direction < 0 and lsub.revision not in wantvers:
+            logger.debug('Ignoring result (not revision we want): %s', lsub.full_subject)
+            continue
+
+        if lsub.revision == 1 and lsub.revision == latest_revision:
+            # Someone sent a separate message with an identical title but no new vX in the subject line
+            if direction > 0:
+                # It's *probably* a new revision.
+                logger.debug('Likely a new revision: %s', lsub.full_subject)
+            else:
+                # It's *probably* an older revision.
+                logger.debug('Likely an older revision: %s', lsub.full_subject)
+        elif direction > 0 and lsub.revision > latest_revision:
+            logger.debug('Definitely a new revision [v%s]: %s', lsub.revision, lsub.full_subject)
+        elif direction < 0 and lsub.revision < latest_revision:
+            logger.debug('Definitely an older revision [v%s]: %s', lsub.revision, lsub.full_subject)
+        else:
+            logger.debug('No idea what this is: %s', lsub.subject)
+            continue
+        if lsub.revision not in seen_revisions:
+            seen_revisions[lsub.revision] = 0
+        seen_revisions[lsub.revision] += 1
+        logger.debug('Adding: %s', lsub.full_subject)
+        msgs.append(q_msg)
+        seen_msgids.add(q_msgid)
+
+    for rev, count in seen_revisions.items():
+        logger.info('  Added from v%s: %s patches', rev, count)
 
     return msgs
 
@@ -724,7 +662,7 @@ def main(cmdargs):
         sys.exit(1)
 
     if len(msgs) and cmdargs.checknewer and b4.can_network:
-        msgs = get_extra_series(msgs, direction=1, useproject=cmdargs.useproject)
+        msgs = get_extra_series(msgs, direction=1, nocache=cmdargs.nocache)
 
     if cmdargs.subcmd in ('am', 'shazam'):
         make_am(msgs, cmdargs, msgid)
