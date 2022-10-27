@@ -15,15 +15,19 @@ def prepdir(gitdir):
     yield gitdir
 
 
-@pytest.mark.parametrize('mboxf, trargs, compareargs, compareout, b4cfg', [
-    ('trailers-thread-with-followups', [],
+@pytest.mark.parametrize('mboxf, rep, trargs, compareargs, compareout, b4cfg', [
+    ('trailers-thread-with-followups', None, [],
      ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'trailers-thread-with-followups',
      {'shazam-am-flags': '--signoff'}),
-    ('trailers-thread-with-cover-followup', [],
+    ('trailers-thread-with-cover-followup', None, [],
      ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'trailers-thread-with-cover-followup',
      {'shazam-am-flags': '--signoff'}),
+    # Test matching trailer updates by subject when patch-id changes
+    ('trailers-thread-with-followups', (b'vivendum', b'addendum'), [],
+     ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'trailers-thread-with-followups',
+     {'shazam-am-flags': '--signoff'}),
 ])
-def test_trailers(sampledir, prepdir, mboxf, trargs, compareargs, compareout, b4cfg):
+def test_trailers(sampledir, prepdir, mboxf, rep, trargs, compareargs, compareout, b4cfg):
     b4.MAIN_CONFIG.update(b4cfg)
     config = b4.get_main_config()
     assert config.get('shazam-am-flags') == '--signoff'
@@ -32,7 +36,17 @@ def test_trailers(sampledir, prepdir, mboxf, trargs, compareargs, compareout, b4
     assert os.path.exists(mfile)
     assert os.path.exists(cfile)
     parser = b4.command.setup_parser()
-    b4args = ['--no-stdin', '--no-interactive', '--offline-mode', 'shazam', '--no-add-trailers', '-m', mfile]
+    if rep:
+        with open(mfile, 'rb') as fh:
+            contents = fh.read()
+        contents = contents.replace(rep[0], rep[1])
+        tfile = os.path.join(prepdir, '.git', 'modified.mbox')
+        with open(tfile, 'wb') as fh:
+            fh.write(contents)
+    else:
+        tfile = mfile
+    b4args = ['--no-stdin', '--no-interactive', '--offline-mode', 'shazam', '--no-add-trailers', '-m', tfile]
+
     cmdargs = parser.parse_args(b4args)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
