@@ -26,11 +26,6 @@ message-id of the message as the filename base::
 
 Option flags
 ------------
-``-p USEPROJECT, --use-project USEPROJECT``
-  **DEPRECATED**: This is a legacy option that made sense before
-  public-inbox supported collating and retrieving threads from across
-  multiple lists. This flag will probably go away in the future.
-
 ``-m LOCALMBOX, --use-local-mbox LOCALMBOX``
   By default, b4 will retrieve threads from remote public-inbox servers,
   but it can also use a local mailbox/maildir. This is useful if you

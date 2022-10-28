@@ -18,11 +18,6 @@ Optional flags
   Specify a path to the git tree to use, if not running the command
   inside a git tree.
 
-``-p USEPROJECT, --use-project USEPROJECT``
-  **(DEPRECATED)**: This is a legacy option that made sense before
-  public-inbox supported collating and retrieving threads from across
-  multiple lists. This flag will probably go away in the future.
-
 ``-C, --no-cache``
   By default, b4 will cache the retrieved threads for about 10 minutes.
   This lets you force b4 to ignore cache and retrieve the latest
