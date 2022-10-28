@@ -17,17 +17,13 @@ import json
 import fnmatch
 import shutil
 import pathlib
-import tempfile
 import io
 import shlex
 import argparse
 
-import urllib.parse
-import xml.etree.ElementTree
-
 import b4
 
-from typing import Optional, Tuple, List
+from typing import Optional, List
 from string import Template
 
 logger = b4.logger
@@ -42,7 +38,7 @@ Link: ${midurl}
 """
 
 
-def make_am(msgs, cmdargs, msgid):
+def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgid: str) -> None:
     config = b4.get_main_config()
     outdir = cmdargs.outdir
     if outdir == '-':
@@ -411,7 +407,7 @@ def make_am(msgs, cmdargs, msgid):
     thanks_record_am(lser, cherrypick=cherrypick)
 
 
-def thanks_record_am(lser, cherrypick=None):
+def thanks_record_am(lser: b4.LoreSeries, cherrypick: bool = None) -> None:
     # Are we tracking this already?
     datadir = b4.get_data_dir()
     slug = lser.get_slug(extended=True)
@@ -482,7 +478,7 @@ def thanks_record_am(lser, cherrypick=None):
         b4.patchwork_set_state(msgids, pwstate)
 
 
-def save_as_quilt(am_msgs, q_dirname):
+def save_as_quilt(am_msgs: List[email.message.Message], q_dirname: str) -> None:
     if os.path.exists(q_dirname):
         logger.critical('ERROR: Directory %s exists, not saving quilt patches', q_dirname)
         return
@@ -566,7 +562,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
 
     fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
     msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
-    q = 's:"%s" AND f:"%s"' % (lsub.subject.replace('"', ''), fromeml)
+    q = '(s:"%s" AND f:"%s")' % (lsub.subject.replace('"', ''), fromeml)
     queries.add(q)
     startdate = time.strftime('%Y%m%d', msgdate[:9])
     if direction > 0:
@@ -633,7 +629,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     return msgs
 
 
-def main(cmdargs):
+def main(cmdargs: argparse.Namespace) -> None:
     if cmdargs.subcmd == 'shazam':
         # We force some settings
         cmdargs.checknewer = True
