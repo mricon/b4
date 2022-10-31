@@ -134,6 +134,8 @@ DEFAULT_CONFIG = {
 MAIN_CONFIG = None
 # This is git-config user.*
 USER_CONFIG = None
+# This is git-config sendemail.*
+SENDEMAIL_CONFIG = None
 
 # Used for storing our requests session
 REQSESSION = None
@@ -3051,20 +3053,30 @@ def read_template(tptfile):
     return tpt
 
 
-def get_smtp(identity: Optional[str] = None,
-             dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, list, None], str]:
-    # Get the default settings first
-    _basecfg = get_config_from_git(r'sendemail\.[^.]+$')
-    if identity:
-        # Use this identity to override what we got from the default one
-        sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', defaults=_basecfg)
-        sectname = f'sendemail.{identity}'
-    else:
-        sconfig = _basecfg
-        sectname = 'sendemail'
-    if not len(sconfig):
-        raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
+def get_sendemail_config() -> dict:
+    global SENDEMAIL_CONFIG
+    if SENDEMAIL_CONFIG is None:
+        # Get the default settings first
+        config = get_main_config()
+        identity = config.get('sendemail-identity')
+        _basecfg = get_config_from_git(r'sendemail\.[^.]+$')
+        if identity:
+            # Use this identity to override what we got from the default one
+            sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', defaults=_basecfg)
+            sectname = f'sendemail.{identity}'
+        else:
+            sconfig = _basecfg
+            sectname = 'sendemail'
+        if not len(sconfig):
+            raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
+        logger.debug('Using values from %s', sectname)
+        SENDEMAIL_CONFIG = sconfig
 
+    return SENDEMAIL_CONFIG
+
+
+def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, list, None], str]:
+    sconfig = get_sendemail_config()
     # Limited support for smtp settings to begin with, but should cover the vast majority of cases
     fromaddr = sconfig.get('from')
     if not fromaddr:
@@ -3077,7 +3089,7 @@ def get_smtp(identity: Optional[str] = None,
     try:
         port = int(port)
     except ValueError:
-        raise smtplib.SMTPException('Invalid smtpport entry in %s' % sectname)
+        raise smtplib.SMTPException('Invalid smtpport entry in config')
 
     # If server contains slashes, then it's a local command
     if '/' in server:

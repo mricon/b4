@@ -389,11 +389,8 @@ def send_messages(listing, branch, cmdargs):
 
     if cmdargs.sendemail or config.get('ty-send-email', 'no').lower() in ['yes', 'true', '1']:
         send_email = True
-        # See if we have sendemail-identity set
-        config = b4.get_main_config()
-        identity = config.get('sendemail-identity')
         try:
-            smtp, fromaddr = b4.get_smtp(identity)
+            smtp, fromaddr = b4.get_smtp()
         except Exception as ex:  # noqa
             logger.critical('Failed to configure the smtp connection:')
             logger.critical(ex)

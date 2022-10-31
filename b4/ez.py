@@ -958,8 +958,13 @@ def get_sent_tag_as_patches(tagname: str, revision: int, prefixes: Optional[List
         prefixes.append(f'v{revision}')
     seriests = int(time.time())
     msgid_tpt = make_msgid_tpt(change_id, str(revision))
-    usercfg = b4.get_user_config()
-    mailfrom = (usercfg.get('name'), usercfg.get('email'))
+    sconfig = b4.get_sendemail_config()
+    fromaddr = sconfig.get('from')
+    if fromaddr:
+        mailfrom = email.utils.parseaddr(fromaddr)
+    else:
+        usercfg = b4.get_user_config()
+        mailfrom = (usercfg.get('name'), usercfg.get('email'))
 
     patches = b4.git_range_to_patches(None, base_commit, tagname,
                                       covermsg=cmsg, prefixes=prefixes,
@@ -1063,8 +1068,13 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
     seriests = int(time.time())
     msgid_tpt = make_msgid_tpt(change_id, revision)
     if movefrom:
-        usercfg = b4.get_user_config()
-        mailfrom = (usercfg.get('name'), usercfg.get('email'))
+        sconfig = b4.get_sendemail_config()
+        fromaddr = sconfig.get('from')
+        if fromaddr:
+            mailfrom = email.utils.parseaddr(fromaddr)
+        else:
+            usercfg = b4.get_user_config()
+            mailfrom = (usercfg.get('name'), usercfg.get('email'))
     else:
         mailfrom = None
 
@@ -1291,9 +1301,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         sent = b4.send_mail(None, send_msgs, fromaddr=None, destaddrs=None, patatt_sign=True,
                             dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=True)
     else:
-        identity = config.get('sendemail-identity')
         try:
-            smtp, fromaddr = b4.get_smtp(identity, dryrun=cmdargs.dryrun)
+            smtp, fromaddr = b4.get_smtp(dryrun=cmdargs.dryrun)
         except Exception as ex:  # noqa
             logger.critical('Failed to configure the smtp connection:')
             logger.critical(ex)
