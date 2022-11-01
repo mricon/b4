@@ -95,6 +95,7 @@ def test_parse_trailers(sampledir, source, expected):
     ('custody', {}, {'addmysob': True, 'copyccs': True}, 'with-ignored',
      {'trailers-ignore-from': 'followup-reviewer1@example.com'}),
     ('partial-reroll', {}, {'addmysob': True}, 'defaults', {}),
+    ('nore', {}, {}, 'defaults', {}),
 ])
 def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg):
     b4.MAIN_CONFIG.update(b4cfg)

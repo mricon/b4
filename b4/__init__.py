@@ -1089,9 +1089,12 @@ class LoreMessage:
             self.pwhash = LoreMessage.get_patchwork_hash(self.body)
             self.blob_indexes = LoreMessage.get_indexes(self.body)
 
+        trailers, others = LoreMessage.find_trailers(self.body, followup=True)
         # We only pay attention to trailers that are sent in reply
+        if trailers and self.in_reply_to and not self.has_diff:
+            logger.debug('A follow-up missing a Re: but containing a trailer with no patch diff')
+            self.reply = True
         if self.reply:
-            trailers, others = LoreMessage.find_trailers(self.body, followup=True)
             for trailer in trailers:
                 # These are commonly part of patch/commit metadata
                 badtrailers = {'from', 'author', 'cc', 'to'}
