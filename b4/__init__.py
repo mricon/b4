@@ -632,16 +632,16 @@ class LoreSeries:
         for lmsg in self.patches[1:]:
             if lmsg is None or lmsg.blob_indexes is None:
                 continue
-            for fn, bh in lmsg.blob_indexes:
-                if fn in seenfiles:
+            for ofn, obh, nfn in lmsg.blob_indexes:
+                if ofn in seenfiles:
                     # if we have seen this file once already, then it's a repeat patch
                     # it's no longer going to match current hash
                     continue
-                seenfiles.add(fn)
-                if set(bh) == {'0'}:
+                seenfiles.add(ofn)
+                if set(obh) == {'0'}:
                     # New file, will for sure apply clean
                     continue
-                self.indexes.append((fn, bh))
+                self.indexes.append((ofn, obh))
 
     def check_applies_clean(self, gitdir: str, at: Optional[str] = None) -> Tuple[int, list]:
         if self.indexes is None:
@@ -785,29 +785,33 @@ class LoreSeries:
                     logger.critical('ERROR: some patches do not have indexes')
                     logger.critical('       unable to create a fake-am range')
                     return None, None
-                for fn, fi in lmsg.blob_indexes:
-                    if fn in seenfiles:
+                for ofn, ofi, nfn in lmsg.blob_indexes:
+                    if ofn in seenfiles:
                         # We already processed this file, so this blob won't match
                         continue
-                    seenfiles.add(fn)
-                    if set(fi) == {'0'}:
+                    seenfiles.add(ofn)
+                    if set(ofi) == {'0'}:
                         # New file creation, nothing to do here
-                        logger.debug('  New file: %s', fn)
+                        logger.debug('  New file: %s', ofn)
                         continue
+                    if not ofn == nfn:
+                        # renamed file, make sure to not add the new name later on
+                        logger.debug('  Renamed file: %s -> %s', ofn, nfn)
+                        seenfiles.add(nfn)
                     # Try to grab full ref_id of this hash
-                    ecode, out = git_run_command(gitdir, ['rev-parse', fi])
+                    ecode, out = git_run_command(gitdir, ['rev-parse', ofi])
                     if ecode > 0:
-                        logger.critical('  ERROR: Could not find matching blob for %s (%s)', fn, fi)
+                        logger.critical('  ERROR: Could not find matching blob for %s (%s)', ofn, ofi)
                         logger.critical('         If you know on which tree this patchset is based,')
                         logger.critical('         add it as a remote and perform "git remote update"')
                         logger.critical('         in order to fetch the missing objects.')
                         return None, None
-                    logger.debug('  Found matching blob for: %s', fn)
+                    logger.debug('  Found matching blob for: %s', ofn)
                     fullref = out.strip()
-                    gitargs = ['update-index', '--add', '--cacheinfo', f'0644,{fullref},{fn}']
+                    gitargs = ['update-index', '--add', '--cacheinfo', f'0644,{fullref},{ofn}']
                     ecode, out = git_run_command(None, gitargs)
                     if ecode > 0:
-                        logger.critical('  ERROR: Could not run update-index for %s (%s)', fn, fullref)
+                        logger.critical('  ERROR: Could not run update-index for %s (%s)', ofn, fullref)
                         return None, None
                 mbx.add(lmsg.msg.as_string(policy=emlpolicy).encode('utf-8'))
 
@@ -1515,12 +1519,13 @@ class LoreMessage:
             if line.find('diff ') != 0 and line.find('index ') != 0:
                 continue
             matches = re.search(r'^diff\s+--git\s+\w/(.*)\s+\w/(.*)$', line)
-            if matches and matches.groups()[0] == matches.groups()[1]:
-                curfile = matches.groups()[0]
+            if matches:
+                oldfile = matches.groups()[0]
+                newfile = matches.groups()[1]
                 continue
             matches = re.search(r'^index\s+([\da-f]+)\.\.[\da-f]+.*$', line)
-            if matches and curfile is not None:
-                indexes.add((curfile, matches.groups()[0]))
+            if matches and oldfile is not None:
+                indexes.add((oldfile, matches.groups()[0], newfile))
         return indexes
 
     @staticmethod
