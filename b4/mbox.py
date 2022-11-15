@@ -525,8 +525,9 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
             continue
 
         if not lsub.reply:
-            payload = msg.get_payload()
-            if isinstance(payload, str):
+            payload = msg.get_payload(decode=True)
+            if isinstance(payload, bytes):
+                payload = payload.decode()
                 matches = re.search(r'^change-id:\s+(\S+)', payload, flags=re.I | re.M)
                 if matches:
                     logger.debug('Found change-id %s', matches.groups()[0])

@@ -308,8 +308,8 @@ class SendReceiveListener(object):
             return
         logger.debug('Received a request for %s messages', len(umsgs))
 
-        diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
-        diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
+        diffre = re.compile(rb'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
+        diffstatre = re.compile(rb'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 
         msgs = list()
         conn = self._engine.connect()
@@ -349,7 +349,7 @@ class SendReceiveListener(object):
                 if cte.lower() != 'text/plain':
                     passes = False
             if passes:
-                payload = msg.get_payload()
+                payload = msg.get_payload(decode=True)
                 if not (diffre.search(payload) or diffstatre.search(payload)):
                     passes = False
 
@@ -442,9 +442,9 @@ class SendReceiveListener(object):
                 else:
                     msg.add_header('Reply-To', f'<{origpair[1]}>')
 
-                body = msg.get_payload()
+                body = msg.get_payload(decode=True)
                 # Parse it as a message and see if we get a From: header
-                cmsg = email.message_from_string(body)
+                cmsg = email.message_from_bytes(body)
                 if cmsg.get('From') is None:
                     cmsg.add_header('From', origfrom)
                     msg.set_payload(cmsg.as_string(policy=emlpolicy, maxheaderlen=0), charset='utf-8')
