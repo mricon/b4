@@ -2728,9 +2728,9 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         if fullcount == 1:
             # Single-patch series, mix in the cover letter into the patch basement
             pmsg = patches[0][1]
-            pbody = pmsg.get_payload()
+            pbody = pmsg.get_payload(decode=True).decode()
             pheaders, pmessage, ptrailers, pbasement, psignature = LoreMessage.get_body_parts(pbody)
-            cbody = covermsg.get_payload()
+            cbody = covermsg.get_payload(decode=True).decode()
             cheaders, cmessage, ctrailers, cbasement, csignature = LoreMessage.get_body_parts(cbody)
             nbparts = list()
             nmessage = ''
@@ -2783,6 +2783,12 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
     else:
         prefixes = ''
 
+    vlines = git_get_command_lines(None, ['--version'])
+    if len(vlines) == 1:
+        gitver = vlines[0].split()[-1]
+    else:
+        gitver = None
+
     for counter in range(startfrom, len(patches)):
         msg = patches[counter][1]
         subject = msg.get('Subject')
@@ -2815,12 +2821,13 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             else:
                 msg.add_header('Date', email.utils.formatdate(patchts, localtime=True))
 
-        payload = msg.get_payload()
-        if isinstance(payload, str):
+        payload = msg.get_payload(decode=True)
+        if isinstance(payload, bytes):
+            payload = payload.decode()
             if inbodyhdrs:
                 payload = '\n'.join(inbodyhdrs) + '\n\n' + payload
-            if not payload.find('\n-- \n') > 0:
-                payload += f'\n-- \nb4 {__VERSION__}\n'
+            if gitver and not payload.find('\n-- \n') > 0:
+                payload += f'\n-- \n{gitver}\n'
             msg.set_payload(payload, charset='utf-8')
 
         if extrahdrs is None:

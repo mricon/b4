@@ -339,9 +339,10 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage, mailfrom: Optional[str]
 
     msgs = list()
     for at, (commit, msg) in enumerate(pmsgs):
-        body = msg.get_payload()
+        body = msg.get_payload(decode=True)
 
-        if isinstance(body, str) and retrieve_links:
+        if isinstance(body, bytes) and retrieve_links:
+            body = body.decode()
             matches = re.findall(r'^Link:\s+https?://.*/(\S+@\S+)[^/]', body, flags=re.M | re.I)
             if matches:
                 linked_ids.update(matches)

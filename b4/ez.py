@@ -774,7 +774,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if not msg:
             continue
         commit_map[commit] = msg
-        body = msg.get_payload()
+        body = msg.get_payload(decode=True).decode()
         patchid = b4.LoreMessage.get_patch_id(body)
         ls = b4.LoreSubject(msg.get('subject'))
         by_subject[ls.subject] = commit
@@ -818,7 +818,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 logger.debug('No match for %s', lmsg.full_subject)
                 continue
 
-            parts = b4.LoreMessage.get_body_parts(commit_map[commit].get_payload())
+            parts = b4.LoreMessage.get_body_parts(commit_map[commit].get_payload(decode=True).decode())
             for fltr in addtrailers:
                 if fltr not in parts[2]:
                     if commit not in updates:
@@ -1185,7 +1185,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         for commit, msg in patches:
             if not msg:
                 continue
-            body = msg.get_payload()
+            body = msg.get_payload(decode=True).decode()
             btrs, junk = b4.LoreMessage.find_trailers(body)
             for btr in btrs:
                 if btr.type != 'person':
@@ -1332,7 +1332,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = 'sent/'):
     # Prepare annotated tag body from the cover letter
     lsubject = b4.LoreSubject(cover_msg.get('subject'))
-    cbody = cover_msg.get_payload()
+    cbody = cover_msg.get_payload(decode=True).decode()
     # Remove signature
     chunks = cbody.rsplit('\n-- \n')
     if len(chunks) > 1:
@@ -1528,7 +1528,7 @@ def auto_to_cc() -> None:
     for commit, msg in patches:
         if not msg:
             continue
-        payload = msg.get_payload()
+        payload = msg.get_payload(decode=True).decode()
         parts = b4.LoreMessage.get_body_parts(payload)
         for ltr in parts[2]:
             if not ltr.addr:
