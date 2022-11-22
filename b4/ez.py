@@ -183,7 +183,7 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
 
     req = {
         'action': 'auth-verify',
-        'msg': bdata.encode(),
+        'msg': bdata,
     }
     logger.info('Submitting verification to %s', endpoint)
     ses = b4.get_requests_session()
