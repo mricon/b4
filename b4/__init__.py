@@ -3238,15 +3238,6 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         if not msg.get('X-Mailer'):
             msg.add_header('X-Mailer', f'b4 {__VERSION__}')
         msg.set_charset('utf-8')
-        msg.replace_header('Content-Transfer-Encoding', '8bit')
-        msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
-        # Python's sendmail implementation seems to have some logic problems where 8-bit messages are involved.
-        # As far as I understand the difference between 8BITMIME (supported by nearly all smtp servers) and
-        # SMTPUTF8 (supported by very few), SMTPUTF8 is only required when the addresses specified in either
-        # "MAIL FROM" or "RCPT TO" lines of the _protocol exchange_ themselves have 8bit characters, not
-        # anything in the From: header of the DATA payload. Python's smtplib seems to always try to encode
-        # strings as ascii regardless of what was policy was specified.
-        # Work around this by getting the payload as string and then encoding to bytes ourselves.
         if maxheaderlen is None:
             if dryrun:
                 # Make it fit the terminal window, but no wider than 120 minus visual padding
@@ -3259,8 +3250,14 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
                 # we need to make sure it's shorter than 255)
                 maxheaderlen = 120
 
-        emldata = msg.as_string(maxheaderlen=maxheaderlen)
-        bdata = emldata.encode()
+        if dryrun or use_web_endpoint:
+            # Use 8bit-clean policy if we're not actually sending anything via SMTP
+            emldata = msg.as_string(policy=emlpolicy, maxheaderlen=maxheaderlen)
+            bdata = emldata.encode()
+        else:
+            # Use SMTP policy if we're actually going to send things out
+            bdata = msg.as_bytes(policy=email.policy.SMTP)
+
         subject = msg.get('Subject', '')
         ls = LoreSubject(subject)
         if patatt_sign:
