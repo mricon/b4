@@ -319,8 +319,9 @@ class SendReceiveListener(object):
         # First, validate all messages
         seenid = identity = selector = None
         for umsg in umsgs:
+            bdata = umsg.encode()
             try:
-                identity, selector, auth_id = self.validate_message(conn, t_auth, umsg.encode())
+                identity, selector, auth_id = self.validate_message(conn, t_auth, bdata)
             except patatt.NoKeyError as ex:  # noqa
                 self.send_error(resp, message='No matching record found, maybe you need to auth-verify first?')
                 return
@@ -335,7 +336,7 @@ class SendReceiveListener(object):
                 self.send_error(resp, message='We only support a single signing identity across patch series.')
                 return
 
-            msg = email.message_from_string(umsg)
+            msg = email.message_from_bytes(bdata, policy=emlpolicy)
             logger.debug('Checking sanity on message: %s', msg.get('Subject'))
             # Some quick sanity checking:
             # - Subject has to start with [PATCH
@@ -425,12 +426,17 @@ class SendReceiveListener(object):
                 fromaddr = origaddr
             else:
                 logger.debug('%s does not match mydomain, substitution required', origaddr)
-                fromaddr = frompair[1]
                 # We can't just send this as-is due to DMARC policies. Therefore, we set
                 # Reply-To and X-Original-From.
+                fromaddr = frompair[1]
                 origname = origpair[0]
                 if not origname:
                     origname = origpair[1]
+                delim = self._config['main'].get('from-recipient-delimiter', '+')
+                if delim and '@' in fromaddr:
+                    _flocal, _fdomain = fromaddr.split('@', maxsplit=1)
+                    _forig = origaddr.replace('@', '.')
+                    fromaddr = f'{_flocal}{delim}{_forig}@{_fdomain}'
                 msg.replace_header('From', f'{origname} via {servicename} <{fromaddr}>')
 
                 if msg.get('X-Original-From'):
@@ -443,11 +449,18 @@ class SendReceiveListener(object):
                     msg.add_header('Reply-To', f'<{origpair[1]}>')
 
                 body = msg.get_payload(decode=True)
-                # Parse it as a message and see if we get a From: header
-                cmsg = email.message_from_bytes(body, policy=emlpolicy)
-                if cmsg.get('From') is None:
-                    cmsg.add_header('From', origfrom)
-                    msg.set_payload(cmsg.as_string(policy=emlpolicy, maxheaderlen=0), charset='utf-8')
+                # Add a From: header (if there isn't already one), but only if it's a patch
+                if diffre.search(body):
+                    # Parse it as a message and see if we get a From: header
+                    cmsg = email.message_from_bytes(body, policy=emlpolicy)
+                    if cmsg.get('From') is None:
+                        newbody = f'From: {origfrom}\n'
+                        if cmsg.get('Subject'):
+                            newbody += 'Subject: ' + self.clean_header(cmsg.get('Subject')) + '\n'
+                        if cmsg.get('Date'):
+                            newbody += 'Date: ' + self.clean_header(cmsg.get('Date')) + '\n'
+                        newbody += '\n' + body.decode()
+                        msg.set_payload(newbody, charset='utf-8')
 
             if bccaddrs:
                 destaddrs.update(bccaddrs)
