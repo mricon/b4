@@ -444,7 +444,7 @@ class SendReceiveListener(object):
 
                 body = msg.get_payload(decode=True)
                 # Parse it as a message and see if we get a From: header
-                cmsg = email.message_from_bytes(body)
+                cmsg = email.message_from_bytes(body, policy=emlpolicy)
                 if cmsg.get('From') is None:
                     cmsg.add_header('From', origfrom)
                     msg.set_payload(cmsg.as_string(policy=emlpolicy, maxheaderlen=0), charset='utf-8')
@@ -452,9 +452,8 @@ class SendReceiveListener(object):
             if bccaddrs:
                 destaddrs.update(bccaddrs)
 
-            bdata = msg.as_string(policy=emlpolicy).encode()
-
             if not self._config['main'].getboolean('dryrun'):
+                bdata = msg.as_bytes(policy=email.policy.SMTP)
                 smtp.sendmail(fromaddr, list(destaddrs), bdata)
                 logger.info('Sent: %s', subject)
             else:
