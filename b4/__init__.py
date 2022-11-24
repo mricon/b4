@@ -31,10 +31,11 @@ import requests
 
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, TextIO, Union, Sequence
+from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence
 
 from email import charset
 charset.add_charset('utf-8', None)
+# Policy we use for saving mail locally
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
 try:
@@ -1204,7 +1205,7 @@ class LoreMessage:
 
             self.msg._headers.append((hn, hval))  # noqa
             try:
-                res = dkim.verify(self.msg.as_bytes(), logger=dkimlogger)
+                res = dkim.verify(self.msg.as_bytes(policy=email.policy.SMTP), logger=dkimlogger)
                 logger.debug('DKIM verify results: %s=%s', identity, res)
             except Exception as ex:  # noqa
                 # Usually, this is due to some DNS resolver failure, which we can't
@@ -1234,7 +1235,7 @@ class LoreMessage:
         if not matches:
             return
         bl = int(matches.groups()[0])
-        i, m, p = get_mailinfo(self.msg.as_bytes(), scissors=False)
+        i, m, p = get_mailinfo(self.msg.as_bytes(policy=emlpolicy), scissors=False)
         bb = b''
         for line in re.sub(rb'[\r\n]*$', b'', m + p).split(b'\n'):
             bb += re.sub(rb'[\r\n]*$', b'', line) + b'\r\n'
@@ -1274,7 +1275,7 @@ class LoreMessage:
         success = False
         trim_body = False
         while True:
-            attestations = patatt.validate_message(self.msg.as_bytes(), sources, trim_body=trim_body)
+            attestations = patatt.validate_message(self.msg.as_bytes(policy=emlpolicy), sources, trim_body=trim_body)
             # Do we have any successes?
             for attestation in attestations:
                 if attestation[0] == patatt.RES_VALID:
@@ -2549,7 +2550,7 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
             pipesep = codecs.decode(pipesep.encode(), 'unicode_escape')
         for chunk in bmbox.split(pipesep.encode()):
             if chunk.strip():
-                msgs.append(email.message_from_bytes(chunk))
+                msgs.append(email.message_from_bytes(chunk, policy=emlpolicy))
         return msgs
 
     logger.debug('Mailsplitting the mbox into %s', outdir)
@@ -2561,7 +2562,7 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
     # Read in the files
     for msg in os.listdir(outdir):
         with open(os.path.join(outdir, msg), 'rb') as fh:
-            msgs.append(email.message_from_binary_file(fh))
+            msgs.append(email.message_from_binary_file(fh, policy=emlpolicy))
     return msgs
 
 
@@ -2579,7 +2580,7 @@ def get_pi_search_results(query: str, nocache: bool = False) -> Optional[List[em
         logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.message_from_binary_file(fh))
+                msgs.append(email.message_from_binary_file(fh, policy=emlpolicy))
                 return msgs
 
     loc = urllib.parse.urlparse(query_url)
@@ -2623,7 +2624,7 @@ def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -
         pathlib.Path(cachedir).mkdir(parents=True, exist_ok=True)
         for at, msg in enumerate(msgs):
             with open(os.path.join(cachedir, '%04d' % at), 'wb') as fh:
-                fh.write(msg.as_bytes())
+                fh.write(msg.as_bytes(policy=emlpolicy))
 
     return msgs
 
@@ -2635,7 +2636,7 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False):
         logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.message_from_binary_file(fh))
+                msgs.append(email.message_from_binary_file(fh, policy=emlpolicy))
         return msgs
 
     logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
@@ -2726,9 +2727,11 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                                               commit], decode=False)
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')
-        msg = email.message_from_bytes(out)
+        msg = email.message_from_bytes(out, policy=emlpolicy)
         msg.set_charset('utf-8')
-        msg.replace_header('Content-Transfer-Encoding', '8bit')
+        # Clean subject and From to remove any 7bit-safe encoding
+        msg.replace_header('From', LoreMessage.clean_header(msg.get('From')))
+        msg.replace_header('Subject', LoreMessage.clean_header(msg.get('Subject')))
         logger.debug('  %s', msg.get('Subject'))
 
         patches.append((commit, msg))
@@ -2989,13 +2992,13 @@ def get_gpg_uids(keyid: str) -> list:
     return uids
 
 
-def save_git_am_mbox(msgs: list, dest: TextIO):
+def save_git_am_mbox(msgs: list, dest: BinaryIO):
     # Git-am has its own understanding of what "mbox" format is that differs from Python's
     # mboxo implementation. Specifically, it never escapes the ">From " lines found in bodies
     # unless invoked with --patch-format=mboxrd (this is wrong, because ">From " escapes are also
     # required in the original mbox "mboxo" format).
     # So, save in the format that git-am expects
-    gen = email.generator.Generator(dest, policy=emlpolicy)
+    gen = email.generator.BytesGenerator(dest, policy=emlpolicy)
     for msg in msgs:
         msg.set_unixfrom('From git@z Thu Jan  1 00:00:00 1970')
         gen.flatten(msg, unixfrom=True)
