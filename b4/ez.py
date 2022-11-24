@@ -253,6 +253,11 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             if b64tracking:
                 logger.debug('Found x-b4-tracking header, attempting to restore')
                 try:
+                    # If we have b=, strip that out (we only support a single format,
+                    # so there is currently no need to check what it's set to)
+                    if b64tracking.find('v=1; b=') >= 0:
+                        chunks = b64tracking.split('b=', maxsplit=1)
+                        b64tracking = chunks[1].strip()
                     ztracking = base64.b64decode(b64tracking)
                     btracking = gzip.decompress(ztracking)
                     tracking = json.loads(btracking.decode())
@@ -1058,8 +1063,10 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
     # Store tracking info in the header in a safe format, which should allow us to
     # fully restore our work from the already sent series.
     ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
-    b64tracking = base64.b64encode(ztracking)
-    cmsg.add_header('X-b4-tracking', ' '.join(textwrap.wrap(b64tracking.decode(), width=78)))
+    b64tracking = base64.b64encode(ztracking).decode()
+    # A little trick for pretty wrapping
+    wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, width=76)
+    cmsg.add_header('X-B4-Tracking', ' '.join(wrapped).replace('X-B4-Tracking: ', ''))
     if prefixes is None:
         prefixes = list()
     if revision != 1:
