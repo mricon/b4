@@ -1,0 +1,11 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: Test Sûbject
+From: Unicôdé Nàmè <8-bit-header-unicodename@example.org>
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <patch-1-message@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+This is à Méssagè with 8bit content éverywhère.
+

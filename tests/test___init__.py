@@ -22,6 +22,8 @@ def test_check_gpg_status(source, expected):
 @pytest.mark.parametrize('source,regex,flags,ismbox', [
     (None, r'^From git@z ', 0, False),
     (None, r'\n\nFrom git@z ', 0, False),
+    ('save-8bit-clean', r'Unicôdé', 0, True),
+    ('save-7bit-clean', r'=\?utf-8\?q\?S=C3=BBbject\?=', 0, True),
 ])
 def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
     import re
@@ -32,7 +34,7 @@ def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
         else:
             import email
             with open(f'{sampledir}/{source}.txt', 'rb') as fh:
-                msg = email.message_from_binary_file(fh)
+                msg = email.message_from_binary_file(fh, policy=b4.emlpolicy)
             msgs = [msg]
     else:
         import email.message
@@ -44,7 +46,7 @@ def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
             msg['From'] = f'Me{x} <me{x}@foo.bar>'
             msgs.append(msg)
     dest = os.path.join(tmp_path, 'out')
-    with open(dest, 'w') as fh:
+    with open(dest, 'wb') as fh:
         b4.save_git_am_mbox(msgs, fh)
     with open(dest, 'r') as fh:
         res = fh.read()
@@ -105,7 +107,7 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
     lser = lmbx.get_series(**serargs)
     assert lser is not None
     amsgs = lser.get_am_ready(**amargs)
-    ifh = io.StringIO()
+    ifh = io.BytesIO()
     b4.save_git_am_mbox(amsgs, ifh)
-    with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
+    with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'rb') as fh:
         assert ifh.getvalue() == fh.read()
