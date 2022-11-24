@@ -213,11 +213,11 @@ def make_am(msgs, cmdargs, msgid):
             if save_maildir:
                 b4.save_maildir(am_msgs, am_filename)
             else:
-                with open(am_filename, 'w') as fh:
+                with open(am_filename, 'wb') as fh:
                     b4.save_git_am_mbox(am_msgs, fh)
         else:
             am_cover = None
-            b4.save_git_am_mbox(am_msgs, sys.stdout)
+            b4.save_git_am_mbox(am_msgs, sys.stdout.buffer)
 
         if lser.has_cover and not cmdargs.nocover:
             lser.save_cover(am_cover)
@@ -267,9 +267,9 @@ def make_am(msgs, cmdargs, msgid):
         if not topdir:
             logger.critical('Could not figure out where your git dir is, cannot shazam.')
             sys.exit(1)
-        ifh = io.StringIO()
+        ifh = io.BytesIO()
         b4.save_git_am_mbox(am_msgs, ifh)
-        ambytes = ifh.getvalue().encode()
+        ambytes = ifh.getvalue()
         if not cmdargs.makefetchhead:
             amflags = config.get('shazam-am-flags', '')
             sp = shlex.shlex(amflags, posix=True)
@@ -780,7 +780,7 @@ def main(cmdargs):
     logger.info('%s messages in the thread', len(msgs))
     if cmdargs.outdir == '-':
         logger.info('---')
-        b4.save_git_am_mbox(msgs, sys.stdout)
+        b4.save_git_am_mbox(msgs, sys.stdout.buffer)
         return
 
     # Check if outdir is a maildir
@@ -824,7 +824,7 @@ def main(cmdargs):
         logger.info('Saved maildir %s', savename)
         return
 
-    with open(savename, 'w') as fh:
+    with open(savename, 'wb') as fh:
         b4.save_git_am_mbox(msgs, fh)
 
     logger.info('Saved %s', savename)

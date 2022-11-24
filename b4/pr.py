@@ -554,7 +554,7 @@ def main(cmdargs):
             if save_maildir:
                 b4.save_maildir(msgs, savefile)
             else:
-                with open(savefile, 'w') as fh:
+                with open(savefile, 'wb') as fh:
                     b4.save_git_am_mbox(msgs, fh)
             logger.info('---')
             logger.info('Saved %s', savefile)

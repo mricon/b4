@@ -480,9 +480,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
     if patches:
         logger.info('Applying %s patches', len(patches))
         logger.info('---')
-        ifh = io.StringIO()
+        ifh = io.BytesIO()
         b4.save_git_am_mbox(patches, ifh)
-        ambytes = ifh.getvalue().encode()
+        ambytes = ifh.getvalue()
         ecode, out = b4.git_run_command(None, ['am'], stdin=ambytes, logstderr=True)
         logger.info(out.strip())
         if ecode > 0:
