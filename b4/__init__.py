@@ -80,20 +80,6 @@ ATT_PASS_FANCY = '\033[32m\u2713\033[0m'
 ATT_FAIL_FANCY = '\033[31m\u2717\033[0m'
 
 DEVSIG_HDR = 'X-Developer-Signature'
-
-# Headers to include into am-ready messages
-# From: and Subject: are always included
-AMHDRS = [
-    'Date',
-    'Message-Id',
-    'To',
-    'Cc',
-    'Reply-To',
-    'In-Reply-To',
-    'References',
-    'List-Id',
-]
-
 LOREADDR = 'https://lore.kernel.org'
 
 DEFAULT_CONFIG = {
@@ -1834,7 +1820,7 @@ class LoreMessage:
 
         self.body = LoreMessage.rebuild_message(bheaders, message, fixtrailers, basement, signature)
 
-    def get_am_subject(self, indicate_reroll=True):
+    def get_am_subject(self, indicate_reroll=True, use_subject=None):
         # Return a clean patch subject
         parts = ['PATCH']
         if self.lsubject.rfc:
@@ -1852,15 +1838,15 @@ class LoreMessage:
         if not self.lsubject.counters_inferred:
             parts.append('%d/%d' % (self.lsubject.counter, self.lsubject.expected))
 
-        return '[%s] %s' % (' '.join(parts), self.lsubject.subject)
+        if not use_subject:
+            use_subject = self.lsubject.subject
+
+        return '[%s] %s' % (' '.join(parts), use_subject)
 
     def get_am_message(self, add_trailers=True, addmysob=False, extras=None, copyccs=False, allowbadchars=False):
-        if add_trailers:
-            self.fix_trailers(copyccs=copyccs, addmysob=addmysob, extras=extras)
-        bbody = self.body.encode()
         # Look through the body to make sure there aren't any suspicious unicode control flow chars
         # First, encode into ascii and compare for a quickie utf8 presence test
-        if not allowbadchars and self.body.encode('ascii', errors='replace') != bbody:
+        if not allowbadchars and self.body.encode('ascii', errors='replace') != self.body.encode():
             import unicodedata
             logger.debug('Body contains non-ascii characters. Running Unicode Cf char tests.')
             for line in self.body.split('\n'):
@@ -1885,27 +1871,22 @@ class LoreMessage:
                             sys.exit(1)
                         at += 1
 
-        am_msg = email.message.EmailMessage()
-        am_msg.set_payload(bbody)
-        am_msg.add_header('Subject', self.get_am_subject(indicate_reroll=False))
-        if self.fromname:
-            am_msg.add_header('From', f'{self.fromname} <{self.fromemail}>')
-        else:
-            am_msg.add_header('From', self.fromemail)
+        # Remove anything that's cut off by scissors
+        i, m, p = get_mailinfo(self.msg.as_bytes(policy=emlpolicy), scissors=True)
+        self.body = m.decode() + p.decode()
+        if add_trailers:
+            self.fix_trailers(copyccs=copyccs, addmysob=addmysob, extras=extras)
 
-        # Add select headers from the original message
-        for hname in AMHDRS:
-            hval = self.msg.get(hname)
-            if not hval:
-                continue
-            hval = LoreMessage.clean_header(hval)
-            # noinspection PyBroadException
-            try:
-                am_msg.add_header(hname, hval)
-            except:
-                # A broad except to handle any potential weird header conditions
-                pass
-        am_msg.set_charset('utf-8')
+        am_msg = email.message.EmailMessage()
+        if i.get('Author'):
+            hfrom = f'{i.get("Author")} <{i.get("Email")}>'
+        else:
+            hfrom = i.get('Email')
+        am_msg.add_header('Subject', self.get_am_subject(indicate_reroll=False, use_subject=i.get('Subject')))
+        am_msg.add_header('From', hfrom)
+        am_msg.add_header('Date', i.get('Date'))
+        am_msg.add_header('Message-Id', f'<{self.msgid}>')
+        am_msg.set_payload(self.body, charset='utf-8')
         return am_msg
 
 

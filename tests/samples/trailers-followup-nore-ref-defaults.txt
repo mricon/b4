@@ -3,8 +3,6 @@ Subject: [PATCH] Simple test
 From: Test Test <test@example.com>
 Date: Tue, 30 Aug 2022 11:19:07 -0400
 Message-Id: <orig-message@example.com>
-To: Some List <list-1@lists.example.com>
-Cc: Dev Eloper1 <dev-eloper1@example.com>, Dev Eloper2 <dev-eloper2@example.com>
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit

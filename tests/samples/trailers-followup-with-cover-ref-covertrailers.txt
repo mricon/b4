@@ -3,10 +3,6 @@ Subject: [PATCH v2 1/2] Simple test 1
 From: Test Test <test@example.com>
 Date: Tue, 30 Aug 2022 11:19:07 -0400
 Message-Id: <patch-1-message@example.com>
-To: Some List <list-1@lists.example.com>
-Cc: Dev Eloper1 <dev-eloper1@example.com>, Dev Eloper2 <dev-eloper2@example.com>
-In-Reply-To: <cover-message@example.com>
-References: <cover-message@example.com>
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit
@@ -40,10 +36,6 @@ Subject: [PATCH v2 2/2] Simple test 2
 From: Test Test <test@example.com>
 Date: Tue, 30 Aug 2022 11:19:07 -0400
 Message-Id: <patch-2-message@example.com>
-To: Some List <list-1@lists.example.com>
-Cc: Dev Eloper1 <dev-eloper1@example.com>, Dev Eloper2 <dev-eloper2@example.com>
-In-Reply-To: <cover-message@example.com>
-References: <cover-message@example.com>
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit

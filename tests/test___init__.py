@@ -109,5 +109,5 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
     amsgs = lser.get_am_ready(**amargs)
     ifh = io.BytesIO()
     b4.save_git_am_mbox(amsgs, ifh)
-    with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'rb') as fh:
-        assert ifh.getvalue() == fh.read()
+    with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
+        assert ifh.getvalue().decode() == fh.read()
