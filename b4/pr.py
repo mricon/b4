@@ -382,7 +382,7 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage, mailfrom: Optional[str]
                         if amsgid not in seen_msgids:
                             seen_msgids.add(amsgid)
                             logger.debug('Added linked: %s', lmsg.get('Subject'))
-                            tmbx.add(lmsg.as_string(policy=b4.emlpolicy).encode())
+                            tmbx.add(lmsg.as_bytes(policy=b4.emlpolicy))
 
             if len(tmbx):
                 tmbx.close()
@@ -423,8 +423,6 @@ def get_pr_from_github(ghurl: str):
         return None
     prdata = resp.json()
 
-    msg = email.message.EmailMessage()
-    msg.set_payload(prdata.get('body', '(no body)'))
     head = prdata.get('head', {})
     repo = head.get('repo', {})
     base = prdata.get('base', {})
@@ -446,6 +444,7 @@ def get_pr_from_github(ghurl: str):
         uname = ulogin
         uemail = fake_email
 
+    msg = email.message.EmailMessage(policy=b4.emlpolicy)
     msg['From'] = f'{uname} <{uemail}>'
     title = prdata.get('title', '')
     msg['Subject'] = f'[GIT PULL] {title}'
@@ -453,14 +452,9 @@ def get_pr_from_github(ghurl: str):
     msg['Message-Id'] = utils.make_msgid(idstring=f'{rproj}-{rrepo}-pr-{rpull}', domain='github.com')
     created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ'))
     msg['Date'] = created_at
-    # We are going to turn it into bytes and then parse again
-    # in order to avoid bugs with python's message parsing routines that
-    # end up not doing the right thing when decoding 8bit message bodies
     msg.set_charset('utf-8')
-    msg.replace_header('Content-Transfer-Encoding', '8bit')
-    bug_avoidance = msg.as_string(policy=b4.emlpolicy).encode()
-    cmsg = email.message_from_bytes(bug_avoidance)
-    lmsg = b4.LoreMessage(cmsg)
+    msg.set_payload(prdata.get('body', '(no body)'), charset='utf-8')
+    lmsg = b4.LoreMessage(msg)
     lmsg.pr_base_commit = base.get('sha')
     lmsg.pr_repo = repo.get('clone_url')
     lmsg.pr_ref = head.get('ref')
@@ -529,7 +523,7 @@ def main(cmdargs):
                     for msg in msgs:
                         outfile = os.path.join(tfd, '%04d' % counter)
                         with open(outfile, 'wb') as tfh:
-                            tfh.write(msg.as_string(policy=b4.emlpolicy).encode())
+                            tfh.write(msg.as_bytes(policy=b4.emlpolicy))
                         gitargs.append(outfile)
                         counter += 1
                     ecode, out = b4.git_run_command(cmdargs.gitdir, gitargs, logstderr=True)

@@ -3012,7 +3012,7 @@ def save_maildir(msgs: list, dest):
         lsubj = LoreSubject(msg.get('subject', ''))
         slug = '%04d_%s' % (lsubj.counter, re.sub(r'\W+', '_', lsubj.subject).strip('_').lower())
         with open(os.path.join(d_tmp, f'{slug}.eml'), 'wb') as mfh:
-            mfh.write(msg.as_string(policy=emlpolicy).encode())
+            mfh.write(msg.as_bytes(policy=emlpolicy))
         os.rename(os.path.join(d_tmp, f'{slug}.eml'), os.path.join(d_new, f'{slug}.eml'))
 
 

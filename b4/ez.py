@@ -172,7 +172,8 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
     cmsg = email.message.EmailMessage()
     cmsg.add_header('From', myemail)
     cmsg.add_header('Subject', 'b4-send-verify')
-    cmsg.set_payload(f'verify:{vstr}\n')
+    cmsg.set_charset('utf-8')
+    cmsg.set_payload(f'verify:{vstr}\n', charset='utf-8')
     bdata = cmsg.as_bytes(policy=b4.emlpolicy)
     try:
         bdata = patatt.rfc2822_sign(bdata).decode()
@@ -1120,8 +1121,8 @@ def format_patch(output_dir: str) -> None:
         subject = msg.get('Subject', '')
         ls = b4.LoreSubject(subject)
         filen = '%s.patch' % ls.get_slug(sep='-')
-        with open(os.path.join(output_dir, filen), 'w') as fh:
-            fh.write(msg.as_string(unixfrom=True, maxheaderlen=0))
+        with open(os.path.join(output_dir, filen), 'wb') as fh:
+            fh.write(msg.as_bytes(unixfrom=True, policy=b4.emlpolicy))
             logger.info('  %s', filen)
 
 

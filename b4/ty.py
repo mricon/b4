@@ -78,7 +78,7 @@ def make_reply(reply_template, jsondata, gitdir):
     body = Template(reply_template).safe_substitute(jsondata)
     # Conform to email standards
     body = body.replace('\n', '\r\n')
-    msg = email.message_from_string(body)
+    msg = email.message_from_string(body, policy=b4.emlpolicy)
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
     excludes = b4.get_excluded_addrs()
     newto = b4.cleanup_email_addrs([(jsondata['fromname'], jsondata['fromemail'])], excludes, gitdir)
@@ -427,7 +427,6 @@ def send_messages(listing, branch, cmdargs):
 
         outgoing += 1
         msg.set_charset('utf-8')
-        msg.replace_header('Content-Transfer-Encoding', '8bit')
         if send_email:
             if not fromaddr:
                 fromaddr = jsondata['myemail']
@@ -441,8 +440,8 @@ def send_messages(listing, branch, cmdargs):
             slug = re.sub(r'_+', '_', slug)
             outfile = os.path.join(cmdargs.outdir, '%s.thanks' % slug)
             logger.info('  Writing: %s', outfile)
-            with open(outfile, 'w') as fh:
-                fh.write(msg.as_string(policy=b4.emlpolicy))
+            with open(outfile, 'wb') as fh:
+                fh.write(msg.as_bytes(policy=b4.emlpolicy))
         if cmdargs.dryrun:
             logger.info('Dry run, preserving tracked series.')
         else:
