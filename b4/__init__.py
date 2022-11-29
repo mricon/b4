@@ -1038,8 +1038,8 @@ class LoreMessage:
         if self.date.tzinfo is None:
             self.date = self.date.replace(tzinfo=datetime.timezone.utc)
 
-        diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
-        diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
+        self.diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
+        self.diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 
         # walk until we find the first text/plain part
         mcharset = self.msg.get_content_charset()
@@ -1071,7 +1071,7 @@ class LoreMessage:
                 continue
             # If we already found a body, but we now find something that contains a diff,
             # then we prefer this part
-            if diffre.search(payload):
+            if self.diffre.search(payload):
                 self.body = payload
 
         if self.body is None:
@@ -1080,9 +1080,9 @@ class LoreMessage:
             logger.info('  Not plaintext: %s', self.full_subject)
             return
 
-        if diffstatre.search(self.body):
+        if self.diffstatre.search(self.body):
             self.has_diffstat = True
-        if diffre.search(self.body):
+        if self.diffre.search(self.body):
             self.has_diff = True
             self.pwhash = LoreMessage.get_patchwork_hash(self.body)
             self.blob_indexes = LoreMessage.get_indexes(self.body)
@@ -1822,6 +1822,15 @@ class LoreMessage:
         if len(fixtrailers):
             for ltr in fixtrailers:
                 self.message += ltr.as_string() + '\n'
+        # Split the basement along '---', in case there is extra info in the
+        # message of the commit (used by devs to keep extra info about the patch)
+        bparts = basement.split('---\n')
+        for bpart in list(bparts):
+            # If it's a diff or diffstat, we don't care to keep it
+            if self.diffre.search(bpart) or self.diffstatre.search(bpart):
+                bparts.remove(bpart)
+        if bparts:
+            self.message += '---\n' + '---\n'.join(bparts)
 
         self.body = LoreMessage.rebuild_message(bheaders, message, fixtrailers, basement, signature)
 
