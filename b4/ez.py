@@ -309,6 +309,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         basebranch = None
         if not cmdargs.fork_point:
             cmdargs.fork_point = 'HEAD'
+            basebranch = mybranch
         else:
             # if our strategy is not "commit", then we need to know which branch we're using as base
             if strategy != 'commit':
@@ -326,10 +327,11 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                         logger.debug('branch %s does contain fork-point %s', mybranch, cmdargs.fork_point)
                         basebranch = mybranch
                         break
-                if basebranch is None:
-                    logger.critical('CRITICAL: fork-point %s is not on the current branch.')
-                    logger.critical('          Switch to the branch you want to use as base and try again.')
-                    sys.exit(1)
+
+            if basebranch is None:
+                logger.critical('CRITICAL: fork-point %s is not on the current branch.')
+                logger.critical('          Switch to the branch you want to use as base and try again.')
+                sys.exit(1)
 
         slug = re.sub(r'\W+', '-', cmdargs.new_series_name).strip('-').lower()
         branchname = 'b4/%s' % slug
