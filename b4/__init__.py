@@ -2834,7 +2834,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             if inbodyhdrs:
                 payload = '\n'.join(inbodyhdrs) + '\n\n' + payload
             if gitver and not payload.find('\n-- \n') > 0:
-                payload += f'\n-- \n{gitver}-b4-{__VERSION__}\n'
+                payload += f'\n-- \n{gitver}\n'
             msg.set_payload(payload, charset='utf-8')
 
         if extrahdrs is None:
