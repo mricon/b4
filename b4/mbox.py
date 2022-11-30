@@ -466,8 +466,16 @@ def thanks_record_am(lser, cherrypick=None):
         logger.debug('All patches missing, not tracking for thanks')
         return
 
-    allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
-    allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
+    try:
+        allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
+    except Exception as ex:  # noqa
+        allto = []
+        logger.debug('Unable to parse the To: header in %s: %s', lmsg.msgid, str(ex))
+    try:
+        allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
+    except Exception as ex:  # noqa
+        allcc = []
+        logger.debug('Unable to parse the Cc: header in %s: %s', lmsg.msgid, str(ex))
 
     # TODO: check for reply-to and x-original-from
     out = {
