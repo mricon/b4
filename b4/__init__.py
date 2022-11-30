@@ -1519,7 +1519,8 @@ class LoreMessage:
     @staticmethod
     def get_indexes(diff: str) -> Set[tuple]:
         indexes = set()
-        curfile = None
+        oldfile = None
+        newfile = None
         for line in diff.split('\n'):
             if line.find('diff ') != 0 and line.find('index ') != 0:
                 continue
@@ -1529,7 +1530,7 @@ class LoreMessage:
                 newfile = matches.groups()[1]
                 continue
             matches = re.search(r'^index\s+([\da-f]+)\.\.[\da-f]+.*$', line)
-            if matches and oldfile is not None:
+            if matches and oldfile is not None and newfile is not None:
                 indexes.add((oldfile, matches.groups()[0], newfile))
         return indexes
 
