@@ -75,10 +75,7 @@ def git_get_commit_message(gitdir, rev):
 
 
 def make_reply(reply_template, jsondata, gitdir):
-    body = Template(reply_template).safe_substitute(jsondata)
-    # Conform to email standards
-    body = body.replace('\n', '\r\n')
-    msg = email.message_from_string(body, policy=b4.emlpolicy)
+    msg = email.message.EmailMessage()
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
     excludes = b4.get_excluded_addrs()
     newto = b4.cleanup_email_addrs([(jsondata['fromname'], jsondata['fromemail'])], excludes, gitdir)
@@ -110,6 +107,10 @@ def make_reply(reply_template, jsondata, gitdir):
     mydomain = jsondata['myemail'].split('@')[1]
     msg['Message-Id'] = email.utils.make_msgid(idstring='b4-ty', domain=mydomain)
     msg['Date'] = email.utils.formatdate(localtime=True)
+    body = Template(reply_template).safe_substitute(jsondata)
+    msg.set_payload(body, charset='utf-8')
+    msg.set_charset('utf-8')
+
     return msg
 
 
@@ -426,11 +427,10 @@ def send_messages(listing, branch, cmdargs):
             msgids.append(pdata[2])
 
         outgoing += 1
-        msg.set_charset('utf-8')
         if send_email:
             if not fromaddr:
                 fromaddr = jsondata['myemail']
-            logger.info('  Sending: %s', msg.get('subject'))
+            logger.info('  Sending: %s', b4.LoreMessage.clean_header(msg.get('subject')))
             # We never want to use the web endpoint for this (it's only for submitting patches)
             b4.send_mail(smtp, [msg], fromaddr, dryrun=cmdargs.dryrun, use_web_endpoint=False)
         else:

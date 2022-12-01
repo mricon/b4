@@ -2890,7 +2890,7 @@ def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
 
 
 def format_addrs(pairs, clean=True):
-    addrs = set()
+    addrs = list()
     for pair in pairs:
         pair = list(pair)
         if pair[0] == pair[1]:
@@ -2898,7 +2898,7 @@ def format_addrs(pairs, clean=True):
         if clean:
             # Remove any quoted-printable header junk from the name
             pair[0] = LoreMessage.clean_header(pair[0])
-        addrs.add(email.utils.formataddr(pair))  # noqa
+        addrs.append(email.utils.formataddr(pair))  # noqa
     return ', '.join(addrs)
 
 
@@ -3246,13 +3246,19 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
                 # we need to make sure it's shorter than 255)
                 maxheaderlen = 120
 
-        if dryrun or use_web_endpoint:
-            # Use 8bit-clean policy if we're not actually sending anything via SMTP
+        if dryrun and not output_dir:
+            # Use 8bit-clean policy if we're dumping things to screen
             emldata = msg.as_string(policy=emlpolicy, maxheaderlen=maxheaderlen)
             bdata = emldata.encode()
         else:
             # Use SMTP policy if we're actually going to send things out
-            bdata = msg.as_bytes(policy=email.policy.SMTP)
+            msg = sevenbitify_headers(msg)
+            if dryrun or use_web_endpoint:
+                # Use HTTP policy, but no CRLF
+                policy = email.policy.HTTP.clone(linesep='\n')
+            else:
+                policy = email.policy.SMTP
+            bdata = msg.as_bytes(policy=policy)
 
         subject = msg.get('Subject', '')
         ls = LoreSubject(subject)
@@ -3461,3 +3467,48 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
                 break
 
     return msgid, msgs
+
+
+# When qp-encoding a header, encode just the 8bit content,
+# not the entire header.
+def qp_smallest(srcstr: str) -> str:
+    import email.quoprimime
+    qpstr = ''
+    toqp = ''
+    chunks = re.split(r'(\S+)', srcstr)
+    for pos, chunk in enumerate(chunks):
+        if not len(toqp):
+            if chunk.isascii():
+                qpstr += chunk
+                continue
+            toqp += chunk
+            continue
+        # is this chunk whitespace?
+        if not len(chunk.strip()):
+            # are all the remaining words after this one ascii?
+            if pos+1 >= len(chunks) or all(_chunk.isascii() for _chunk in chunks[pos+1:]):
+                qpstr += email.quoprimime.header_encode(toqp.encode(), charset='utf-8') + chunk
+                toqp = ''
+                continue
+        toqp += chunk
+    return qpstr
+
+
+def sevenbitify_headers(msg: email.message.Message) -> email.message.Message:
+    import email.quoprimime
+    for pos, hdr in enumerate(msg._headers):  # noqa
+        if hdr[1].isascii():
+            continue
+        # Do we have an email address in there?
+        if re.search(r'<\S+@\S+>', hdr[1], flags=re.I | re.M):
+            newaddrs = list()
+            for addr in email.utils.getaddresses([hdr[1]]):
+                if addr[0].isascii():
+                    newaddrs.append(addr)
+                    continue
+                newaddrs.append((qp_smallest(addr[0]), addr[1]))
+            newval = format_addrs(newaddrs, clean=False)
+        else:
+            newval = qp_smallest(hdr[1])
+        msg._headers[pos] = (hdr[0], newval)  # noqa
+    return msg
