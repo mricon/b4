@@ -111,3 +111,26 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
     b4.save_git_am_mbox(amsgs, ifh)
     with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
         assert ifh.getvalue().decode() == fh.read()
+
+
+@pytest.mark.parametrize('headers,verify', [
+    ({
+        'From': 'Unicode Nâme <unicode-name@example.com',
+        'To': 'Ascii Name <ascii-name@example.com>, '
+              'Unicôde Firstname <unicode-firstname@example.com>, '
+              'Unicode Lâstname <unicode-lastname@example.com>',
+        'Subject': 'Subject with unicôde that is randomly interspérsed thrôughout the wrapped subject',
+     }, 'sevenbitify-1')
+])
+def test_sevenbitify_headers(sampledir, headers, verify):
+    msg = email.message.Message(policy=b4.emlpolicy)
+    for header, value in headers.items():
+        msg[header] = value
+    msg.set_payload('Unicôde Côntent in the body.\n', charset='utf-8')
+    msg.set_charset('utf-8')
+    msg = b4.sevenbitify_headers(msg)
+    odata = msg.as_bytes(policy=email.policy.SMTP)
+    vfile = os.path.join(sampledir, f'{verify}.verify')
+    with open(vfile, 'rb') as fh:
+        vdata = fh.read()
+        assert odata.decode() == vdata.decode()

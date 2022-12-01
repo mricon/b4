@@ -1,0 +1,11 @@
+From: Unicode =?utf-8?q?N=C3=A2me?= <unicode-name@example.com>
+To: Ascii Name <ascii-name@example.com>,
+ =?utf-8?q?Unic=C3=B4de?= Firstname <unicode-firstname@example.com>,
+ Unicode =?utf-8?q?L=C3=A2stname?= <unicode-lastname@example.com>
+Subject: Subject with =?utf-8?q?unic=C3=B4de_that_is_randomly_intersp=C3=A9r?=
+ =?utf-8?q?sed_thr=C3=B4ughout?= the wrapped subject
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Unicôde Côntent in the body.
