@@ -184,7 +184,8 @@ class SendReceiveListener(object):
         body += Template(signature).safe_substitute(vals)
         body += '\n'
         cmsg.set_payload(body, charset='utf-8')
-        bdata = cmsg.as_bytes(policy=emlpolicy)
+        cmsg.set_charset('utf-8')
+        bdata = cmsg.as_bytes(policy=email.policy.SMTP)
         destaddrs = [identity]
         alwaysbcc = self._config['main'].get('alwayscc')
         if alwaysbcc:
@@ -336,14 +337,15 @@ class SendReceiveListener(object):
                 self.send_error(resp, message='We only support a single signing identity across patch series.')
                 return
 
-            msg = email.message_from_bytes(bdata, policy=emlpolicy)
+            msg = email.message_from_bytes(bdata, policy=email.policy.SMTP)
             logger.debug('Checking sanity on message: %s', msg.get('Subject'))
             # Some quick sanity checking:
             # - Subject has to start with [PATCH
             # - Content-type may ONLY be text/plain
             # - Has to include a diff or a diffstat
             passes = True
-            if not msg.get('Subject', '').startswith('[PATCH '):
+            subject = self.clean_header(msg.get('Subject', ''))
+            if not subject.startswith('[PATCH '):
                 passes = False
             if passes:
                 cte = msg.get_content_type()
@@ -412,7 +414,7 @@ class SendReceiveListener(object):
                 ezpi.add_rfc822(repo, pmsg)
                 logger.debug('Wrote %s to public-inbox at %s', subject, repo)
 
-            origfrom = self.clean_header(msg.get('From'))
+            origfrom = msg.get('From')
             origpair = utils.getaddresses([origfrom])[0]
             origaddr = origpair[1]
             # Does it match one of our domains
@@ -454,13 +456,17 @@ class SendReceiveListener(object):
                     # Parse it as a message and see if we get a From: header
                     cmsg = email.message_from_bytes(body, policy=emlpolicy)
                     if cmsg.get('From') is None:
-                        newbody = f'From: {origfrom}\n'
+                        newbody = 'From: ' + self.clean_header(origfrom) + '\n'
                         if cmsg.get('Subject'):
                             newbody += 'Subject: ' + self.clean_header(cmsg.get('Subject')) + '\n'
                         if cmsg.get('Date'):
                             newbody += 'Date: ' + self.clean_header(cmsg.get('Date')) + '\n'
                         newbody += '\n' + body.decode()
                         msg.set_payload(newbody, charset='utf-8')
+                        # If we have non-ascii content in the new body, force CTE to 8bit
+                        if msg['Content-Transfer-Encoding'] == '7bit' and not all(ord(char) < 128 for char in newbody):
+                            msg.set_charset('utf-8')
+                            msg.replace_header('Content-Transfer-Encoding', '8bit')
 
             if bccaddrs:
                 destaddrs.update(bccaddrs)
