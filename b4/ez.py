@@ -922,7 +922,7 @@ def print_pretty_addrs(addrs: list, hdrname: str) -> None:
     logger.info('%s: %s', hdrname, b4.format_addrs([addrs[0]]))
     if len(addrs) > 1:
         for addr in addrs[1:]:
-            logger.info('    %s', b4.format_addrs([addr]))
+            logger.info('%s  %s', ' ' * len(hdrname), b4.format_addrs([addr]))
 
 
 def get_base_changeid_from_tag(tagname: str) -> Tuple[str, str, str]:
@@ -1183,6 +1183,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     seen = set()
     excludes = set()
+    pccs = dict()
 
     if cmdargs.no_trailer_to_cc:
         todests = list()
@@ -1201,6 +1202,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 if btr.type != 'person':
                     continue
                 if btr.addr[1] in seen:
+                    continue
+                if commit and btr.lname == 'cc':
+                    # CC's in individual patches don't get added to global Cc's,
+                    # we use the pcss dict to track them.
+                    if commit not in pccs:
+                        pccs[commit] = list()
+                    pccs[commit].append(btr.addr)
+                    # Doesn't get added to seen, in case a later patch puts it into global
                     continue
                 seen.add(btr.addr[1])
                 if btr.lname == 'to':
@@ -1270,7 +1279,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         for commit, msg in patches:
             if not msg:
                 continue
-            logger.info('  %s', re.sub(r'\s+', ' ', msg.get('Subject')))
+            logger.info('  %s', re.sub(r'\s+', ' ', b4.LoreMessage.clean_header(msg.get('Subject'))))
+            if commit in pccs:
+                extracc = list()
+                for pair in pccs[commit]:
+                    if pair[1] not in seen:
+                        extracc.append(pair)
+                if extracc:
+                    print_pretty_addrs(extracc, '    +Cc')
         logger.info('---')
         try:
             input('Press Enter to send or Ctrl-C to abort')
@@ -1292,8 +1308,26 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             cover_msg = copy.deepcopy(msg)
 
         msg.add_header('To', b4.format_addrs(allto))
-        if allcc:
-            msg.add_header('Cc', b4.format_addrs(allcc))
+        # extend the global cc's with per-patch cc's, if any
+        if commit and commit in pccs:
+            # Remove any addresses already in seen
+            mycc = list(allcc)
+            for pair in pccs[commit]:
+                if pair[1] not in seen:
+                    mycc.append(pair)
+            pcc = b4.cleanup_email_addrs(mycc, excludes, None)
+        elif not commit and len(pccs):
+            # the cover letter gets sent to folks with individual patch cc's
+            mycc = list(allcc)
+            for _commit, _ccs in pccs.items():
+                for pair in _ccs:
+                    if pair[1] not in seen:
+                        mycc.append(pair)
+            pcc = b4.cleanup_email_addrs(mycc, excludes, None)
+        else:
+            pcc = allcc
+        if pcc:
+            msg.add_header('Cc', b4.format_addrs(pcc))
 
         send_msgs.append(msg)
 
@@ -1587,6 +1621,10 @@ def auto_to_cc() -> None:
         payload = msg.get_payload(decode=True).decode()
         parts = b4.LoreMessage.get_body_parts(payload)
         for ltr in parts[2]:
+            if ltr.lname == 'cc':
+                # We treat Cc: in individual patches differently from all other trailers:
+                # they only receive individual patches, not the entire series.
+                continue
             if not ltr.addr:
                 continue
             if ltr.addr[1] in seen:
