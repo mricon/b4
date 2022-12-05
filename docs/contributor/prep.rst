@@ -242,7 +242,9 @@ or modifying defaults for some of these flags.
 ``--compare-to vN`` **(v0.11+)**
   This executes a ``git range-diff`` command that lets you compare the
   previously sent version of the series to what is currently in your
-  working branch.
+  working branch. This is very useful right before sending off a new
+  revision to make sure that you didn't forget to include anything into
+  changelogs.
 
 ``--manual-reroll MSGID``
   Normally, your patch series will be automatically rerolled to the next
