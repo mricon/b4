@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "B4" 5 "2022-09-16" "0.10.0" ""
+.TH "B4" 5 "2022-12-05" "0.11.0" ""
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .SH SYNOPSIS
@@ -40,7 +40,7 @@ available via a public\-inbox archive like lore.kernel.org. It is
 written to make it easier to participate in a patch\-based workflows,
 like those used in the Linux kernel development.
 .sp
-The name "b4" was chosen for ease of typing and because B\-4 was the
+The name \(dqb4\(dq was chosen for ease of typing and because B\-4 was the
 precursor to Lore and Data in the Star Trek universe.
 .sp
 Full documentation is available on \fI\%https://b4.docs.kernel.org/\fP\&.
@@ -87,6 +87,12 @@ Output critical information only (default: False)
 .TP
 .B  \-n\fP,\fB  \-\-no\-interactive
 Do not ask any interactive questions (default: False)
+.TP
+.B  \-\-offline\-mode
+Do not perform any network queries (default: False)
+.TP
+.B  \-\-no\-stdin
+Disable TTY detection for stdin (default: False)
 .UNINDENT
 .SH SUBCOMMAND OPTIONS
 .SS b4 mbox
@@ -142,7 +148,7 @@ When adding messages to existing maildir, filter out duplicates
 .SS b4 am
 .sp
 This command allows retrieving threads from a public\-inbox instance and
-preparing them for applying to a git repository using the "git am"
+preparing them for applying to a git repository using the \(dqgit am\(dq
 command. It will automatically perform the following operations:
 .INDENT 0.0
 .IP \(bu 2
@@ -224,7 +230,7 @@ Add your own signed\-off\-by to every patch
 Add a Link: with message\-id lookup URL to every patch
 .TP
 .BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
-Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P \fIglobbing\fP" to match on commit subject)
+Cherry\-pick a subset of patches (e.g. \(dq\-P 1\-2,4,6\-\(dq, \(dq\-P _\(dq to use just the msgid specified, or \(dq\-P \fIglobbing\fP\(dq to match on commit subject)
 .TP
 .B  \-\-cc\-trailers
 Copy all Cc\(aqd addresses into Cc: trailers
@@ -318,7 +324,7 @@ Add your own signed\-off\-by to every patch
 Add a Link: with message\-id lookup URL to every patch
 .TP
 .BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
-Cherry\-pick a subset of patches (e.g. "\-P 1\-2,4,6\-", "\-P _" to use just the msgid specified, or "\-P \fIglobbing\fP" to match on commit subject)
+Cherry\-pick a subset of patches (e.g. \(dq\-P 1\-2,4,6\-\(dq, \(dq\-P _\(dq to use just the msgid specified, or \(dq\-P \fIglobbing\fP\(dq to match on commit subject)
 .TP
 .B  \-\-cc\-trailers
 Copy all Cc\(aqd addresses into Cc: trailers
@@ -405,10 +411,10 @@ Write thanks files into this dir (default=.)
 List pull requests and patch series you have retrieved
 .TP
 .BI \-t \ THANK_FOR\fR,\fB \ \-\-thank\-for \ THANK_FOR
-Generate thankyous for specific entries from \-l (e.g.: 1,3\-5,7\-; or "all")
+Generate thankyous for specific entries from \-l (e.g.: 1,3\-5,7\-; or \(dqall\(dq)
 .TP
 .BI \-d \ DISCARD\fR,\fB \ \-\-discard \ DISCARD
-Discard specific messages from \-l (e.g.: 1,3\-5,7\-; or "all")
+Discard specific messages from \-l (e.g.: 1,3\-5,7\-; or \(dqall\(dq)
 .TP
 .B  \-a\fP,\fB  \-\-auto
 Use the Auto\-Thankanator gun to figure out what got applied/merged
@@ -424,6 +430,9 @@ Send email instead of writing out .thanks files
 .TP
 .B  \-\-dry\-run
 Print out emails instead of sending them
+.TP
+.BI \-\-pw\-set\-state \ PW_STATE
+Set this patchwork state instead of default (use with \-a, \-t or \-d)
 .UNINDENT
 .UNINDENT
 .sp
@@ -483,7 +492,7 @@ Force color output even when writing to file
 .INDENT 0.0
 .TP
 .B \-m AMBOX AMBOX, \-\-compare\-am\-mboxes AMBOX AMBOX
-Compare two mbx files prepared with "b4 am"
+Compare two mbx files prepared with \(dqb4 am\(dq
 .UNINDENT
 .UNINDENT
 .UNINDENT
@@ -509,6 +518,9 @@ Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
 .TP
 .BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
 Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
+.TP
+.BI \-\-stdin\-pipe\-sep \ STDIN_PIPE_SEP
+When accepting messages on stdin, split using this pipe separator string
 .TP
 .B  \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
@@ -660,6 +672,15 @@ Look for trailers in the thread with this msgid instead of using the series chan
 .TP
 .BI \-\-since \ SINCE
 The \-\-since option to use with \-F when auto\-matching patches (default=1.month)
+.TP
+.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
+Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
+.TP
+.BI \-\-stdin\-pipe\-sep \ STDIN_PIPE_SEP
+When accepting messages on stdin, split using this pipe separator string
+.TP
+.B  \-C\fP,\fB  \-\-no\-cache
+Do not use local cache
 .UNINDENT
 .UNINDENT
 .SH CONFIGURATION

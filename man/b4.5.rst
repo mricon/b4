@@ -5,10 +5,10 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2022-09-16
+:Date:      2022-12-05
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.10.0
+:Version:   0.11.0
 :Manual section: 5
 
 SYNOPSIS
@@ -51,6 +51,8 @@ OPTIONS
 -d, --debug           Add more debugging info to the output (default: False)
 -q, --quiet           Output critical information only (default: False)
 -n, --no-interactive  Do not ask any interactive questions (default: False)
+--offline-mode        Do not perform any network queries (default: False)
+--no-stdin            Disable TTY detection for stdin (default: False)
 
 SUBCOMMAND OPTIONS
 ------------------
@@ -278,6 +280,8 @@ optional arguments:
   --since SINCE         The --since option to use when auto-matching patches (default=1.week)
   -S, --send-email      Send email instead of writing out .thanks files
   --dry-run             Print out emails instead of sending them
+  --pw-set-state PW_STATE
+                        Set this patchwork state instead of default (use with -a, -t or -d)
 
 .. note::
 
@@ -334,6 +338,8 @@ optional arguments:
                         Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
   -m LOCALMBOX, --use-local-mbox LOCALMBOX
                         Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  --stdin-pipe-sep STDIN_PIPE_SEP
+                        When accepting messages on stdin, split using this pipe separator string
   -C, --no-cache        Do not use local cache
   --show-keys           Show all developer keys from the thread
 
@@ -424,6 +430,11 @@ options:
   -F MSGID, --trailers-from MSGID
                         Look for trailers in the thread with this msgid instead of using the series change-id
   --since SINCE         The --since option to use with -F when auto-matching patches (default=1.month)
+  -m LOCALMBOX, --use-local-mbox LOCALMBOX
+                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
+  --stdin-pipe-sep STDIN_PIPE_SEP
+                        When accepting messages on stdin, split using this pipe separator string
+  -C, --no-cache        Do not use local cache
 
 
 CONFIGURATION
