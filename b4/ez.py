@@ -468,11 +468,20 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         changeid = '%s-%s-%s' % (datetime.date.today().strftime('%Y%m%d'), slug, uuid.uuid4().hex[:12])
         if revision is None:
             revision = 1
+        prefixes = list()
+        if cmdargs.set_prefixes and len(prefixes[0].strip()):
+            prefixes = list(cmdargs.set_prefixes)
+        else:
+            config = b4.get_main_config()
+            if config.get('send-prefixes'):
+                prefixes = config.get('send-prefixes').split()
+
         tracking = {
             'series': {
                 'revision': revision,
                 'change-id': changeid,
                 'base-branch': basebranch,
+                'prefixes': prefixes,
             },
         }
         if thread_msgid:
@@ -944,8 +953,7 @@ def get_base_changeid_from_tag(tagname: str) -> Tuple[str, str, str]:
     return cover, base_commit, change_id
 
 
-def get_sent_tag_as_patches(tagname: str, revision: int, prefixes: Optional[List[str]] = None,
-                            hide_cover_to_cc: bool = False
+def get_sent_tag_as_patches(tagname: str, revision: int, hide_cover_to_cc: bool = False
                             ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
     cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
     # First line is the subject
@@ -957,11 +965,12 @@ def get_sent_tag_as_patches(tagname: str, revision: int, prefixes: Optional[List
         tos = list()
         ccs = list()
 
+    lsubject = b4.LoreSubject(csubject)
     cmsg = email.message.EmailMessage()
-    cmsg.add_header('Subject', csubject)
+    cmsg.add_header('Subject', lsubject.subject)
     cmsg.set_payload(cbody.lstrip(), charset='utf-8')
-    if prefixes is None:
-        prefixes = list()
+    prefixes = ['RESEND']
+    prefixes += lsubject.get_extra_prefixes(exclude=['resend'])
     if revision != 1:
         prefixes.append(f'v{revision}')
     seriests = int(time.time())
@@ -1017,8 +1026,7 @@ def remove_to_cc_trailers(body: str) -> Tuple[List, List, str]:
     return tos, ccs, body
 
 
-def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
-                               movefrom: bool = True, thread: bool = True,
+def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
                                hide_cover_to_cc: bool = False
                                ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
     cover, tracking = load_cover(strip_comments=True)
@@ -1070,8 +1078,7 @@ def get_prep_branch_as_patches(prefixes: Optional[List[str]] = None,
     # A little trick for pretty wrapping
     wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, width=76)
     cmsg.add_header('X-B4-Tracking', ' '.join(wrapped).replace('X-B4-Tracking: ', ''))
-    if prefixes is None:
-        prefixes = list()
+    prefixes = tracking['series'].get('prefixes', list())
     if revision != 1:
         prefixes.append(f'v{revision}')
 
@@ -1135,9 +1142,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         return
 
     mybranch = b4.git_get_current_branch()
-    prefixes = cmdargs.prefixes
-    if cmdargs.prefixes is None:
-        prefixes = list()
 
     config = b4.get_main_config()
     if not cmdargs.hide_cover_to_cc and config.get('send-hide-cover-to-cc', '').lower() in {'yes', 'true', '1'}:
@@ -1150,9 +1154,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.critical('Could not figure out revision from %s', cmdargs.resend)
             sys.exit(1)
 
-        prefixes.append('RESEND')
         try:
-            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision, prefixes=prefixes,
+            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision,
                                                                 hide_cover_to_cc=cmdargs.hide_cover_to_cc)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert tag to patches: %s', ex)
@@ -1171,8 +1174,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            todests, ccdests, patches = get_prep_branch_as_patches(prefixes=prefixes,
-                                                                   hide_cover_to_cc=cmdargs.hide_cover_to_cc)
+            todests, ccdests, patches = get_prep_branch_as_patches(hide_cover_to_cc=cmdargs.hide_cover_to_cc)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
             sys.exit(1)
@@ -1399,7 +1401,12 @@ def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = SEN
     chunks = cbody.rsplit('\n-- \n')
     if len(chunks) > 1:
         cbody = chunks[0] + '\n'
-    cover_body = lsubject.subject + '\n\n' + cbody
+    prefixes = lsubject.get_extra_prefixes()
+    if prefixes:
+        subject = '[%s] %s' % (' '.join(prefixes), lsubject.subject)
+    else:
+        subject = lsubject.subject
+    cover_body = subject + '\n\n' + cbody
 
     cover, tracking = load_cover(strip_comments=True)
     revision = tracking['series']['revision']
@@ -1662,6 +1669,22 @@ def auto_to_cc() -> None:
     store_cover(clm.body, tracking)
 
 
+def set_prefixes(prefixes: list) -> None:
+    cover, tracking = load_cover()
+    old_prefixes = tracking['series'].get('prefixes', list())
+    if len(prefixes) == 1 and not prefixes[0].strip():
+        prefixes = list()
+    tracking['series']['prefixes'] = prefixes
+    if tracking['series']['prefixes'] != old_prefixes:
+        store_cover(cover, tracking)
+        if tracking['series']['prefixes']:
+            logger.info('Updated extra prefixes to: %s', ' '.join(prefixes))
+        else:
+            logger.info('Removed all extra prefixes.')
+    else:
+        logger.info('No changes to extra prefixes.')
+
+
 def cmd_prep(cmdargs: argparse.Namespace) -> None:
     check_can_gfr()
     status = b4.git_get_repo_status()
@@ -1698,6 +1721,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.compare_to:
         return compare(cmdargs.compare_to)
+
+    if cmdargs.set_prefixes:
+        return set_prefixes(cmdargs.set_prefixes)
 
     if is_prep_branch():
         logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')

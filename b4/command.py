@@ -270,6 +270,8 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Display a range-diff to previously sent revision N')
     spp_g.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
                        help='Mark current revision as sent and reroll (requires cover letter msgid)')
+    spp_g.add_argument('--set-prefixes', metavar='PREFIX', nargs='+',
+                       help='Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)')
     ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
     ag_prepn.add_argument('-n', '--new', dest='new_series_name',
                           help='Create a new branch for working on a patch series')
@@ -301,8 +303,6 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Do not send, just dump out raw smtp messages to the stdout')
     sp_send.add_argument('-o', '--output-dir',
                          help='Do not send, write raw messages to this directory (forces --dry-run)')
-    sp_send.add_argument('--prefixes', nargs='+',
-                         help='Prefixes to add to PATCH (e.g. RFC, WIP)')
     sp_send.add_argument('--no-trailer-to-cc', action='store_true', default=False,
                          help='Do not add any addresses found in the cover or patch trailers to To: or Cc:')
     sp_send.add_argument('--hide-cover-to-cc', action='store_true', default=False,

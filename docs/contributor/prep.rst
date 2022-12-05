@@ -253,6 +253,13 @@ or modifying defaults for some of these flags.
   can properly add the reference to the previously sent series to the
   cover letter changelog.
 
+``--set-prefixes PREFIX [PREFIX ...]`` **(v0.11+)**
+  If you want to mark your patch as ``RFC``, ``WIP``, or add any other
+  subsystem identifiers, you can define them via this command. Do
+  **not** add ``PATCH`` or ``v1`` here, as these will already be
+  automatically added to the subject lines. To remove any extra
+  prefixes you previously set, you can run ``--set-prefixes ''``.
+
 ``-n NEW_SERIES_NAME, --new NEW_SERIES_NAME``
   Creates a new branch to start work on a new patch series.
 

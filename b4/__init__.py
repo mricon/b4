@@ -1970,6 +1970,21 @@ class LoreSubject:
             subject = re.sub(r'^\s*\[[^]]*]\s*', '', subject)
         self.subject = subject
 
+    def get_extra_prefixes(self, exclude: Optional[List[str]] = None) -> List[str]:
+        ret = list()
+        for _prf in self.prefixes:
+            if exclude and _prf in exclude:
+                continue
+            if _prf.lower() == 'patch':
+                continue
+            elif re.search(r'v\d+', _prf, flags=re.I):
+                continue
+            elif re.search(r'\d+/\d+', _prf):
+                continue
+            ret.append(_prf)
+
+        return ret
+
     def get_slug(self, sep='_', with_counter: bool = True):
         unsafe = self.subject
         if with_counter:

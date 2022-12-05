@@ -195,12 +195,6 @@ Command line flags
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
 
-``--prefixes PREFIXES [PREFIXES ...]``
-  If you want to mark your patch as ``RFC``, ``WIP``, or add any
-  other subsystem identifiers, you can pass them as parameters. Do
-  **not** add ``PATCH`` or ``v1`` here, as they will already be
-  automatically added to the series.
-
 ``--no-trailer-to-cc``
   Do not add any addresses found in the cover or patch trailers to To:
   or Cc:. This is usually handy for testing purposes, in case you want
