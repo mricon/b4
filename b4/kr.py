@@ -18,8 +18,8 @@ logger = b4.logger
 
 
 def main(cmdargs):
-    msgid, msgs = b4.mbox.get_msgs(cmdargs)
     if cmdargs.showkeys:
+        msgid, msgs = b4.retrieve_messages(cmdargs)
         logger.info('---')
         try:
             import patatt
@@ -91,3 +91,5 @@ def main(cmdargs):
             logger.info('    echo [pubkey] > [fullpath]')
 
         sys.exit(0)
+
+    logger.info('This command is experimental. Try --show-keys [msgid].')
