@@ -1195,7 +1195,7 @@ class LoreMessage:
 
             self.msg._headers.append((hn, hval))  # noqa
             try:
-                res = dkim.verify(self.msg.as_bytes(policy=email.policy.SMTP), logger=dkimlogger)
+                res = dkim.verify(self.msg.as_bytes(policy=emlpolicy), logger=dkimlogger)
                 logger.debug('DKIM verify results: %s=%s', identity, res)
             except Exception as ex:  # noqa
                 # Usually, this is due to some DNS resolver failure, which we can't
