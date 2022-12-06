@@ -209,11 +209,11 @@ Command line flags
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
 
-``--reroll``
+``--reflect``
   Prepares everything for sending, but only emails yourself (the address
-  in the From: header). Useful as a last check to make sure that
-  everything is looking good. Especially useful when using the web
-  endpoint.
+  in the ``From:`` header). Useful as a last check to make sure that
+  everything is looking good, and especially useful when using the web
+  endpoint, because it may rewrite your From: header for DMARC reasons.
 
 ``--no-trailer-to-cc``
   Do not add any addresses found in the cover or patch trailers to To:
