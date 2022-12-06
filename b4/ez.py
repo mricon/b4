@@ -1200,7 +1200,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     else:
         seen.update(todests)
         seen.update(ccdests)
-        logger.info('Populating To/Cc addresses')
         # Go through the messages to make to/cc headers
         for commit, msg in patches:
             if not msg:
@@ -1278,15 +1277,15 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.info('Will write out messages into %s', cmdargs.output_dir)
         pathlib.Path(cmdargs.output_dir).mkdir(parents=True, exist_ok=True)
 
+    endpoint = config.get('send-endpoint-web', '')
+    if not re.search(r'^https?://', endpoint):
+        endpoint = None
+
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
-        logger.info('Will send the following messages:')
         logger.info('---')
-        if cmdargs.reflect:
-            logger.info('To: yourself only (REFLECT MODE)')
-        else:
-            print_pretty_addrs(allto, 'To')
-            print_pretty_addrs(allcc, 'Cc')
+        print_pretty_addrs(allto, 'To')
+        print_pretty_addrs(allcc, 'Cc')
         logger.info('---')
         for commit, msg in patches:
             if not msg:
@@ -1297,11 +1296,36 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 for pair in pccs[commit]:
                     if pair[1] not in seen:
                         extracc.append(pair)
-                if extracc and not cmdargs.reflect:
+                if extracc:
                     print_pretty_addrs(extracc, '    +Cc')
+
         logger.info('---')
+        usercfg = b4.get_user_config()
+        fromaddr = usercfg['email']
+        logger.info('Ready to:')
+        if endpoint:
+            if cmdargs.reflect:
+                logger.info('  - send the above messages to just %s (REFLECT MODE)', fromaddr)
+            else:
+                logger.info('  - send the above messages to actual recipients')
+            logger.info('  - via web endpoint: %s', endpoint)
+        else:
+            sconfig = b4.get_sendemail_config()
+            if sconfig.get('from'):
+                fromaddr = sconfig.get('from')
+            if cmdargs.reflect:
+                logger.info('  - send the above messages to just %s (REFLECT MODE)', fromaddr)
+            else:
+                logger.info('  - send the above messages to actual listed recipients')
+            logger.info('  - with envelope-from: %s', fromaddr)
+
+            smtpserver = sconfig.get('smtpserver', 'localhost')
+            logger.info('  - via SMTP server %s', smtpserver)
+        if not cmdargs.reflect:
+            logger.info('  - tag and reroll the series to the next revision')
+        logger.info('')
         try:
-            input('Press Enter to send or Ctrl-C to abort')
+            input('Press Enter to proceed or Ctrl-C to abort')
         except KeyboardInterrupt:
             logger.info('')
             sys.exit(130)
@@ -1342,10 +1366,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             msg.add_header('Cc', b4.format_addrs(pcc))
 
         send_msgs.append(msg)
-
-    endpoint = config.get('send-endpoint-web', '')
-    if not re.search(r'^https?://', endpoint):
-        endpoint = None
 
     if endpoint:
         # Web endpoint always requires signing
