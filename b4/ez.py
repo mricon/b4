@@ -335,9 +335,11 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                         logger.debug('branch %s does contain fork-point %s', mybranch, cmdargs.fork_point)
                         basebranch = mybranch
                         break
+            else:
+                basebranch = mybranch
 
             if basebranch is None:
-                logger.critical('CRITICAL: fork-point %s is not on the current branch.')
+                logger.critical('CRITICAL: fork-point %s is not on the current branch.', cmdargs.fork_point)
                 logger.critical('          Switch to the branch you want to use as base and try again.')
                 sys.exit(1)
 
