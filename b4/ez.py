@@ -1282,8 +1282,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if not cmdargs.dryrun:
         logger.info('Will send the following messages:')
         logger.info('---')
-        print_pretty_addrs(allto, 'To')
-        print_pretty_addrs(allcc, 'Cc')
+        if cmdargs.reflect:
+            logger.info('To: yourself only (REFLECT MODE)')
+        else:
+            print_pretty_addrs(allto, 'To')
+            print_pretty_addrs(allcc, 'Cc')
         logger.info('---')
         for commit, msg in patches:
             if not msg:
@@ -1294,7 +1297,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 for pair in pccs[commit]:
                     if pair[1] not in seen:
                         extracc.append(pair)
-                if extracc:
+                if extracc and not cmdargs.reflect:
                     print_pretty_addrs(extracc, '    +Cc')
         logger.info('---')
         try:
@@ -1352,7 +1355,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         sent = b4.send_mail(None, send_msgs, fromaddr=None, destaddrs=None, patatt_sign=True,
-                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=True)
+                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=True,
+                            reflect=cmdargs.reflect)
     else:
         try:
             smtp, fromaddr = b4.get_smtp(dryrun=cmdargs.dryrun)
@@ -1362,7 +1366,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         sent = b4.send_mail(smtp, send_msgs, fromaddr=fromaddr, destaddrs=alldests, patatt_sign=sign,
-                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=False)
+                            dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=False,
+                            reflect=cmdargs.reflect)
 
     logger.info('---')
     if cmdargs.dryrun:
@@ -1371,6 +1376,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if not sent:
         logger.critical('CRITICAL: Was not able to send messages.')
         sys.exit(1)
+
+    if cmdargs.reflect:
+        logger.info('Reflected %s messages', sent)
+        logger.debug('Not updating cover/tracking on reflect')
+        return
 
     logger.info('Sent %s messages', sent)
 

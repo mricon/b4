@@ -384,13 +384,16 @@ Enroll existing branch:
 b4 send
 ~~~~~~~
 usage:
-  b4 send [-h] [-d] [-o OUTPUT_DIR] [--no-trailer-to-cc] [--hide-cover-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend RESEND] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
+  b4 send [-h] [-d] [-o OUTPUT_DIR] [--reflect] [--no-trailer-to-cc] [--hide-cover-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend RESEND] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
 
 options:
   -h, --help            show this help message and exit
   -d, --dry-run         Do not send, just dump out raw smtp messages to the stdout
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Do not send, write raw messages to this directory (forces --dry-run)
+
+  --reflect
+                        Send everything to yourself instead of the actual recipients
 
   --no-trailer-to-cc
                         Do not add any addresses found in the cover or patch trailers to To: or Cc:

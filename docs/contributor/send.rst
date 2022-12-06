@@ -159,8 +159,22 @@ running the send command with ``-o somedir``, e.g.::
 This will write out the messages just as they would be sent out, giving
 you a way to check that everything is looking as it should.
 
-Please check the command flag summary below to see what other flags are
-available.
+Checking things over with ``--reflect``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+One final test you can do before you submit your series is to send
+everything to yourself. This is especially useful when using the web
+endpoint, because this allows you to see what the messages will look
+like after being potentially post-processed on the remote end.
+
+When ``--reflect`` is on:
+
+* b4 will still populate the To:/Cc: headers with all the addresses,
+  because this allows to check for any encoding problems
+* b4 will **only send the series to the address in the From: field**
+* when using the web endpoint, the messages will not be added to the
+  public-inbox feed
+* your branch will **not** be automatically rerolled to the next
+  revision
 
 What happens after you send
 ---------------------------
@@ -195,10 +209,16 @@ Command line flags
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
 
+``--reroll``
+  Prepares everything for sending, but only emails yourself (the address
+  in the From: header). Useful as a last check to make sure that
+  everything is looking good. Especially useful when using the web
+  endpoint.
+
 ``--no-trailer-to-cc``
   Do not add any addresses found in the cover or patch trailers to To:
   or Cc:. This is usually handy for testing purposes, in case you want
-  to send a set of patches to yourself. 
+  to send a set of patches to a test address (also see ``--reflect``).
 
 ``--hide-cover-to-cc``
   It is common for the ``To:`` and ``Cc:`` sections in cover letters to

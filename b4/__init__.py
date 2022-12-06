@@ -3240,7 +3240,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
               fromaddr: Optional[str], destaddrs: Optional[Union[set, list]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
               maxheaderlen: Optional[int] = None, output_dir: Optional[str] = None,
-              use_web_endpoint: bool = False) -> Optional[int]:
+              use_web_endpoint: bool = False, reflect: bool = False) -> Optional[int]:
 
     tosend = list()
     if output_dir is not None:
@@ -3310,9 +3310,14 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
     if not re.search(r'^https?://', endpoint):
         endpoint = None
     if use_web_endpoint and endpoint:
-        logger.info('Sending via web endpoint %s', endpoint)
+        if reflect:
+            logger.info('Reflecting via web endpoint %s', endpoint)
+            wpaction = 'reflect'
+        else:
+            logger.info('Sending via web endpoint %s', endpoint)
+            wpaction = 'receive'
         req = {
-            'action': 'receive',
+            'action': wpaction,
             'messages': [x[1].decode() for x in tosend],
         }
         ses = get_requests_session()
@@ -3330,12 +3335,19 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             return 0
 
     sent = 0
+    envpair = email.utils.parseaddr(fromaddr)
     if isinstance(smtp, list):
         # This is a local command
-        logger.info('Sending via "%s"', ' '.join(smtp))
+        if reflect:
+            logger.info('Reflecting via "%s"', ' '.join(smtp))
+        else:
+            logger.info('Sending via "%s"', ' '.join(smtp))
         for destaddrs, bdata, lsubject in tosend:
             logger.info('  %s', lsubject.full_subject)
-            cmdargs = list(smtp) + list(destaddrs)
+            if reflect:
+                cmdargs = list(smtp) + [envpair[1]]
+            else:
+                cmdargs = list(smtp) + list(destaddrs)
             ecode, out, err = _run_command(cmdargs, stdin=bdata)
             if ecode > 0:
                 raise RuntimeError('Error running %s: %s' % (' '.join(smtp), err.decode()))
@@ -3346,7 +3358,10 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             # Force compliant eols
             bdata = re.sub(rb'\r\n|\n|\r(?!\n)', b'\r\n', bdata)
             logger.info('  %s', lsubject.full_subject)
-            smtp.sendmail(fromaddr, destaddrs, bdata)
+            if reflect:
+                smtp.sendmail(fromaddr, [envpair[1]], bdata)
+            else:
+                smtp.sendmail(fromaddr, destaddrs, bdata)
             sent += 1
 
     return sent

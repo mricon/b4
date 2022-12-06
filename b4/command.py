@@ -303,6 +303,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Do not send, just dump out raw smtp messages to the stdout')
     sp_send.add_argument('-o', '--output-dir',
                          help='Do not send, write raw messages to this directory (forces --dry-run)')
+    sp_send.add_argument('--reflect', action='store_true', default=False,
+                         help='Send everything to yourself instead of the actual recipients')
     sp_send.add_argument('--no-trailer-to-cc', action='store_true', default=False,
                          help='Do not add any addresses found in the cover or patch trailers to To: or Cc:')
     sp_send.add_argument('--hide-cover-to-cc', action='store_true', default=False,

@@ -299,7 +299,7 @@ class SendReceiveListener(object):
         new_hdrval = re.sub(r'\n?\s+', ' ', decoded)
         return new_hdrval.strip()
 
-    def receive(self, jdata, resp) -> None:
+    def receive(self, jdata, resp, reflect: bool = False) -> None:
         servicename = self._config['main'].get('myname')
         if not servicename:
             servicename = 'Web Endpoint'
@@ -318,7 +318,7 @@ class SendReceiveListener(object):
         t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         mustdest = self._config['main'].get('mustdest')
         # First, validate all messages
-        seenid = identity = selector = None
+        seenid = identity = selector = validfrom = None
         for umsg in umsgs:
             bdata = umsg.encode()
             try:
@@ -365,6 +365,29 @@ class SendReceiveListener(object):
                 self.send_error(resp, message='Message is missing some required headers.')
                 return
 
+            # Make sure that From: matches the validated identity. We allow + expansion,
+            # such that foo+listname@example.com is allowed for foo@example.com
+            allfroms = utils.getaddresses([str(x) for x in msg.get_all('from')])
+            # Allow only a single From: address
+            if len(allfroms) > 1:
+                self.send_error(resp, message='Message may only contain a single From: address.')
+                return
+
+            fromaddr = allfroms[0][1]
+            if validfrom != fromaddr:
+                ldparts = fromaddr.split('@')
+                if len(ldparts) != 2:
+                    self.send_error(resp, message=f'Invalid address in From: {fromaddr}')
+                    return
+                lparts = ldparts[0].split('+', maxsplit=1)
+                toval = f'{lparts[0]}@{ldparts[1]}'
+                if toval != identity:
+                    self.send_error(resp, message=f'From header invalid for identity {identity}: {fromaddr}')
+                    return
+                # usually, all From: addresses will be the same, so use validfrom as a quick bypass
+                if validfrom is None:
+                    validfrom = fromaddr
+
             # Check that To/Cc have a mailing list we recognize
             alldests = utils.getaddresses([str(x) for x in msg.get_all('to', [])])
             alldests += utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
@@ -402,7 +425,13 @@ class SendReceiveListener(object):
             if not os.path.isdir(repo):
                 repo = None
 
-        logger.info('Sending %s messages for %s/%s', len(msgs), identity, selector)
+        if reflect:
+            logger.info('Reflecting %s messages back to %s', len(msgs), identity, selector)
+            sentaction = 'Reflected'
+        else:
+            logger.info('Sending %s messages for %s/%s', len(msgs), identity, selector)
+            sentaction = 'Sent'
+
         for msg, destaddrs in msgs:
             subject = self.clean_header(msg.get('Subject'))
             if repo:
@@ -473,20 +502,23 @@ class SendReceiveListener(object):
 
             if not self._config['main'].getboolean('dryrun'):
                 bdata = msg.as_bytes(policy=email.policy.SMTP)
-                smtp.sendmail(fromaddr, list(destaddrs), bdata)
-                logger.info('Sent: %s', subject)
+                if reflect:
+                    smtp.sendmail(fromaddr, [identity], bdata)
+                else:
+                    smtp.sendmail(fromaddr, list(destaddrs), bdata)
+                logger.info('%s: %s', sentaction, subject)
             else:
                 logger.info('---DRYRUN MSG START---')
                 logger.info(msg)
                 logger.info('---DRYRUN MSG END---')
 
         smtp.close()
-        if repo:
+        if repo and not reflect:
             # run it once after writing all messages
             logger.debug('Running public-inbox repo hook (if present)')
             ezpi.run_hook(repo)
-        logger.info('Sent %s messages for %s/%s', len(msgs), identity, selector)
-        self.send_success(resp, message=f'Sent {len(msgs)} messages for {identity}/{selector}')
+        logger.info('%s %s messages for %s/%s', sentaction, len(msgs), identity, selector)
+        self.send_success(resp, message=f'{sentaction} {len(msgs)} messages for {identity}/{selector}')
 
     def on_post(self, req, resp):
         if not req.content_length:
@@ -518,6 +550,9 @@ class SendReceiveListener(object):
             return
         if action == 'receive':
             self.receive(jdata, resp)
+            return
+        if action == 'reflect':
+            self.receive(jdata, resp, reflect=True)
             return
 
         resp.status = falcon.HTTP_500
