@@ -1069,7 +1069,17 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
         ccs = list()
 
     cmsg = email.message.EmailMessage()
-    cmsg.add_header('Subject', csubject)
+    prefixes = tracking['series'].get('prefixes', list())
+    if '[' in csubject:
+        lsubject = b4.LoreSubject(csubject)
+        prefixes += lsubject.get_extra_prefixes(exclude=prefixes)
+        subject = lsubject.subject
+    else:
+        subject = csubject
+    if revision != 1:
+        prefixes.append(f'v{revision}')
+
+    cmsg.add_header('Subject', subject)
     cmsg.set_payload(body, charset='utf-8')
     # Store tracking info in the header in a safe format, which should allow us to
     # fully restore our work from the already sent series.
@@ -1078,9 +1088,6 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
     # A little trick for pretty wrapping
     wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, width=76)
     cmsg.add_header('X-B4-Tracking', ' '.join(wrapped).replace('X-B4-Tracking: ', ''))
-    prefixes = tracking['series'].get('prefixes', list())
-    if revision != 1:
-        prefixes.append(f'v{revision}')
 
     seriests = int(time.time())
     msgid_tpt = make_msgid_tpt(change_id, revision)

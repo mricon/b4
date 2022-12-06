@@ -262,6 +262,14 @@ or modifying defaults for some of these flags.
   automatically added to the subject lines. To remove any extra
   prefixes you previously set, you can run ``--set-prefixes ''``.
 
+  Alternatively, you can add any extra prefixes to the cover letter
+  subject line, using the usual square brackets notation, e.g.::
+
+      [RFC] Cover letter subject
+
+  When b4 sends the message, it will be expanded with the usual
+  ``PATCH``, ``vN``, etc.
+
 ``-n NEW_SERIES_NAME, --new NEW_SERIES_NAME``
   Creates a new branch to start work on a new patch series.
 
