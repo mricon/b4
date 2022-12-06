@@ -209,7 +209,7 @@ Command line flags
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
 
-``--reflect``
+``--reflect`` **(v0.11+)**
   Prepares everything for sending, but only emails yourself (the address
   in the ``From:`` header). Useful as a last check to make sure that
   everything is looking good, and especially useful when using the web
