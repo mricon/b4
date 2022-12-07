@@ -345,7 +345,7 @@ class SendReceiveListener(object):
             # - Has to include a diff or a diffstat
             passes = True
             subject = self.clean_header(msg.get('Subject', ''))
-            if not subject.startswith('[PATCH '):
+            if not subject.startswith('[PATCH'):
                 passes = False
             if passes:
                 cte = msg.get_content_type()
