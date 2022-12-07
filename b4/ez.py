@@ -303,6 +303,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             if base_commit and not cmdargs.fork_point:
                 logger.debug('Using %s as fork-point', base_commit)
                 cmdargs.fork_point = base_commit
+        else:
+            # Use the first patch as our thread_msgid
+            thread_msgid = lser.patches[1].msgid
 
         # We start with next revision
         revision = lser.revision + 1
@@ -744,7 +747,10 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         end = 'HEAD'
         cover, tracking = load_cover(strip_comments=True)
         changeid = tracking['series'].get('change-id')
-        msgid = tracking['series'].get('from-thread')
+        if cmdargs.trailers_from:
+            msgid = cmdargs.trailers_from
+        else:
+            msgid = tracking['series'].get('from-thread')
         strategy = get_cover_strategy()
         if strategy in {'commit', 'tip-commit'}:
             # We need to me sure we ignore the cover commit
@@ -752,7 +758,10 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             if cover_commit:
                 ignore_commits = {cover_commit}
 
-    elif cmdargs.msgid:
+    elif cmdargs.msgid or cmdargs.trailers_from:
+        if cmdargs.trailers_from:
+            # Compatibility with b4 overall retrieval tools
+            cmdargs.msgid = cmdargs.trailers_from
         msgid = b4.get_msgid(cmdargs)
         changeid = None
         myemail = usercfg['email']
@@ -814,6 +823,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             list_msgs += smsgs
 
     if msgid or cmdargs.localmbox:
+        if msgid:
+            cmdargs.msgid = msgid
         try:
             msgid, tmsgs = b4.retrieve_messages(cmdargs)
         except LookupError as ex:

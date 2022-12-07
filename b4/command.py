@@ -290,7 +290,7 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Update branch commits with latest received trailers')
     sp_trl.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
                         help='Apply trailers without email address match checking')
-    sp_trl.add_argument('-F', '--trailers-from', dest='msgid',
+    sp_trl.add_argument('-F', '--trailers-from', dest='trailers_from',
                         help='Look for trailers in the thread with this msgid instead of using the series change-id')
     sp_trl.add_argument('--since', default='1.month',
                         help='The --since option to use with -F when auto-matching patches (default=1.month)')
