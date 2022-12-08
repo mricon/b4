@@ -2761,12 +2761,21 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             cbody = covermsg.get_payload(decode=True).decode()
             cheaders, cmessage, ctrailers, cbasement, csignature = LoreMessage.get_body_parts(cbody)
             nbparts = list()
+            todests = list()
+            ccdests = list()
             nmessage = ''
             if len(cmessage.strip()):
                 cls = LoreSubject(covermsg.get('Subject'))
                 nmessage += cls.subject + '\n\n' + cmessage.rstrip('\r\n') + '\n'
             for ctr in list(ctrailers):
-                if ctr in ptrailers:
+                # We always hide To: and Cc: cover trailers from single-patch series
+                if ctr.lname == 'to':
+                    ctrailers.remove(ctr)
+                    todests.append(ctr.addr)
+                elif ctr.lname == 'cc':
+                    ctrailers.remove(ctr)
+                    ccdests.append(ctr.addr)
+                elif ctr in ptrailers:
                     ctrailers.remove(ctr)
             if ctrailers:
                 if nmessage:
@@ -2796,10 +2805,15 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             # Add any To: and Cc: headers from the cover_message
             toh = covermsg.get('To')
             if toh:
-                pmsg.add_header('To', toh)
+                todests.append(email.utils.getaddresses([toh]))
             cch = covermsg.get('Cc')
             if cch:
-                pmsg.add_header('Cc', cch)
+                ccdests.append(email.utils.getaddresses([cch]))
+
+            if todests:
+                pmsg.add_header('To', format_addrs(todests))
+            if ccdests:
+                pmsg.add_header('Cc', format_addrs(ccdests))
             startfrom = 0
         else:
             patches.insert(0, (None, covermsg))

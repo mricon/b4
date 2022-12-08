@@ -1356,27 +1356,41 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if cover_msg is None:
             cover_msg = copy.deepcopy(msg)
 
-        msg.add_header('To', b4.format_addrs(allto))
+        myto = list(allto)
+        mycc = list(allcc)
+        if msg['To']:
+            myto += email.utils.getaddresses([msg['To']])
+        if msg['Cc']:
+            mycc += email.utils.getaddresses([msg['Cc']])
+
         # extend the global cc's with per-patch cc's, if any
         if commit and commit in pccs:
             # Remove any addresses already in seen
-            mycc = list(allcc)
             for pair in pccs[commit]:
                 if pair[1] not in seen:
                     mycc.append(pair)
-            pcc = b4.cleanup_email_addrs(mycc, excludes, None)
         elif not commit and len(pccs):
             # the cover letter gets sent to folks with individual patch cc's
-            mycc = list(allcc)
             for _commit, _ccs in pccs.items():
                 for pair in _ccs:
                     if pair[1] not in seen:
                         mycc.append(pair)
+        if mycc and not myto:
+            # Move all Cc's into To when there's no To:
+            myto = mycc
+            mycc = list()
+        if myto:
+            pto = b4.cleanup_email_addrs(myto, excludes, None)
+            if msg['To']:
+                msg.replace_header('To', b4.format_addrs(pto))
+            else:
+                msg.add_header('To', b4.format_addrs(pto))
+        if mycc:
             pcc = b4.cleanup_email_addrs(mycc, excludes, None)
-        else:
-            pcc = allcc
-        if pcc:
-            msg.add_header('Cc', b4.format_addrs(pcc))
+            if msg['Cc']:
+                msg.replace_header('Cc', b4.format_addrs(pcc))
+            else:
+                msg.add_header('Cc', b4.format_addrs(pcc))
 
         send_msgs.append(msg)
 
