@@ -419,7 +419,7 @@ class SendReceiveListener(object):
             bccaddrs.update([x[1] for x in utils.getaddresses([_bcc])])
 
         repo = listid = None
-        if 'public-inbox' in self._config and self._config['public-inbox'].get('repo'):
+        if 'public-inbox' in self._config and self._config['public-inbox'].get('repo') and not reflect:
             repo = self._config['public-inbox'].get('repo')
             listid = self._config['public-inbox'].get('listid')
             if not os.path.isdir(repo):
@@ -513,7 +513,7 @@ class SendReceiveListener(object):
                 logger.info('---DRYRUN MSG END---')
 
         smtp.close()
-        if repo and not reflect:
+        if repo:
             # run it once after writing all messages
             logger.debug('Running public-inbox repo hook (if present)')
             ezpi.run_hook(repo)
