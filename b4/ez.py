@@ -1055,11 +1055,13 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
             sys.exit(2)
 
     # Put together the cover letter
-    try:
-        csubject, cbody = cover.split('\n', maxsplit=1)
-    except ValueError:
+    clines = cover.splitlines()
+    if len(clines) < 2 or len(clines[1].strip()) or not len(clines[0].strip()):
         csubject = '(no cover subject)'
         cbody = cover
+    else:
+        csubject = clines[0]
+        cbody = '\n'.join(clines[2:])
 
     start_commit = get_series_start()
     base_commit, shortlog, diffstat = get_series_details(start_commit=start_commit)
