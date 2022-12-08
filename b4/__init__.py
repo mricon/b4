@@ -3296,9 +3296,11 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         if not destaddrs:
             alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
             alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
-            destaddrs = {x[1] for x in alldests}
+            myaddrs = {x[1] for x in alldests}
+        else:
+            myaddrs = destaddrs
 
-        tosend.append((destaddrs, bdata, ls))
+        tosend.append((myaddrs, bdata, ls))
 
     if not len(tosend):
         return 0

@@ -1387,7 +1387,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.critical('          Please re-enable signing or use SMTP')
             sys.exit(1)
 
-        sent = b4.send_mail(None, send_msgs, fromaddr=None, destaddrs=None, patatt_sign=True,
+        sent = b4.send_mail(None, send_msgs, fromaddr=None, patatt_sign=True,
                             dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=True,
                             reflect=cmdargs.reflect)
     else:
@@ -1398,7 +1398,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.critical(ex)
             sys.exit(1)
 
-        sent = b4.send_mail(smtp, send_msgs, fromaddr=fromaddr, destaddrs=alldests, patatt_sign=sign,
+        sent = b4.send_mail(smtp, send_msgs, fromaddr=fromaddr, patatt_sign=sign,
                             dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=False,
                             reflect=cmdargs.reflect)
 
