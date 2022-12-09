@@ -1688,6 +1688,11 @@ def show_info() -> None:
     for line in oneline:
         short, subject = line.split(maxsplit=1)
         print('commit-%s: %s' % (short, subject))
+    if 'history' in ts:
+        for rn, links in reversed(ts['history'].items()):
+            tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
+            cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+            print('series-%s: %s..%s %s' % (rn, base_commit[:12], tagname, links[0]))
 
 
 def force_revision(forceto: int) -> None:
