@@ -263,7 +263,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                     tracking = json.loads(btracking.decode())
                     logger.debug('tracking: %s', tracking)
                     cover_sections = list()
-                    for section in cmsg.body.split('\n---\n'):
+                    for section in re.split(r'^---\n', cmsg.body, flags=re.M):
                         # we stop caring once we see a diffstat
                         if b4.DIFFSTAT_RE.search(section):
                             break
@@ -1044,7 +1044,7 @@ def mixin_cover(cbody: str, patches: List[Tuple[str, email.message.Message]]) ->
 
     # Find the section with changelogs
     utility = None
-    for section in cbasement.split('---\n'):
+    for section in re.split(r'^---\n', cbasement, flags=re.M):
         if re.search(b4.DIFFSTAT_RE, section):
             # Skip this section
             continue

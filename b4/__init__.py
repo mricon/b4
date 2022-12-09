@@ -1824,7 +1824,7 @@ class LoreMessage:
                 self.message += ltr.as_string() + '\n'
         # Split the basement along '---', in case there is extra info in the
         # message of the commit (used by devs to keep extra info about the patch)
-        bparts = basement.split('---\n')
+        bparts = re.split(r'^---\n', basement, flags=re.M)
         for bpart in list(bparts):
             # If it's a diff or diffstat, we don't care to keep it
             if DIFF_RE.search(bpart) or DIFFSTAT_RE.search(bpart):
