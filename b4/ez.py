@@ -24,7 +24,6 @@ import base64
 import textwrap
 import gzip
 import io
-import copy
 
 from typing import Optional, Tuple, List, Union
 from email import utils
@@ -264,10 +263,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                     tracking = json.loads(btracking.decode())
                     logger.debug('tracking: %s', tracking)
                     cover_sections = list()
-                    diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
                     for section in cmsg.body.split('\n---\n'):
                         # we stop caring once we see a diffstat
-                        if diffstatre.search(section):
+                        if b4.DIFFSTAT_RE.search(section):
                             break
                         cover_sections.append(section)
                     cover = '\n---\n'.join(cover_sections).strip()
@@ -966,45 +964,6 @@ def get_base_changeid_from_tag(tagname: str) -> Tuple[str, str, str]:
     return cover, base_commit, change_id
 
 
-def get_sent_tag_as_patches(tagname: str, revision: int, hide_cover_to_cc: bool = False
-                            ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
-    cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
-    # First line is the subject
-    csubject, cbody = cover.split('\n', maxsplit=1)
-    cbody = cbody.strip() + '\n-- \n' + b4.get_email_signature()
-    if hide_cover_to_cc:
-        tos, ccs, body = remove_to_cc_trailers(cbody)
-    else:
-        tos = list()
-        ccs = list()
-
-    lsubject = b4.LoreSubject(csubject)
-    cmsg = email.message.EmailMessage()
-    cmsg.add_header('Subject', lsubject.subject)
-    cmsg.set_payload(cbody.lstrip(), charset='utf-8')
-    prefixes = ['RESEND']
-    prefixes += lsubject.get_extra_prefixes(exclude=['resend'])
-    if revision != 1:
-        prefixes.append(f'v{revision}')
-    seriests = int(time.time())
-    msgid_tpt = make_msgid_tpt(change_id, str(revision))
-    sconfig = b4.get_sendemail_config()
-    fromaddr = sconfig.get('from')
-    if fromaddr:
-        mailfrom = email.utils.parseaddr(fromaddr)
-    else:
-        usercfg = b4.get_user_config()
-        mailfrom = (usercfg.get('name'), usercfg.get('email'))
-
-    patches = b4.git_range_to_patches(None, base_commit, tagname,
-                                      covermsg=cmsg, prefixes=prefixes,
-                                      msgid_tpt=msgid_tpt,
-                                      seriests=seriests,
-                                      thread=True,
-                                      mailfrom=mailfrom)
-    return tos, ccs, patches
-
-
 def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) -> str:
     if not domain:
         usercfg = b4.get_user_config()
@@ -1024,8 +983,8 @@ def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) 
     return msgid_tpt
 
 
-def remove_to_cc_trailers(body: str) -> Tuple[List, List, str]:
-    htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(body)
+def get_cover_dests(cbody: str, hide: bool = True) -> Tuple[List, List, str]:
+    htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(cbody)
     tos = list()
     ccs = list()
     for mtr in list(mtrs):
@@ -1035,14 +994,143 @@ def remove_to_cc_trailers(body: str) -> Tuple[List, List, str]:
         elif mtr.lname == 'cc':
             ccs.append(mtr.addr)
             mtrs.remove(mtr)
-    body = b4.LoreMessage.rebuild_message(htrs, cmsg, mtrs, basement, sig)
-    return tos, ccs, body
+    if hide:
+        cbody = b4.LoreMessage.rebuild_message(htrs, cmsg, mtrs, basement, sig)
+    return tos, ccs, cbody
+
+
+def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, email.message.Message]],
+              cbody: str, thread: bool = True):
+    fp = patches[0][1]
+    cmsg = email.message.EmailMessage()
+    cmsg.add_header('From', fp['From'])
+    fpls = b4.LoreSubject(fp['Subject'])
+
+    csubject.expected = fpls.expected
+    csubject.counter = 0
+    csubject.revision = fpls.revision
+    cmsg.add_header('Subject', csubject.get_rebuilt_subject(eprefixes=fpls.get_extra_prefixes()))
+    cmsg.add_header('Message-Id', msgid_tpt % str(0))
+
+    cmsg.set_payload(cbody, charset='utf-8')
+    cmsg.set_charset('utf-8')
+
+    patches.insert(0, ('', cmsg))
+    if thread:
+        rethread(patches)
+
+
+def mixin_cover(cbody: str, patches: List[Tuple[str, email.message.Message]]) -> None:
+    msg = patches[0][1]
+    pbody = msg.get_payload(decode=True).decode()
+    pheaders, pmessage, ptrailers, pbasement, psignature = b4.LoreMessage.get_body_parts(pbody)
+    cheaders, cmessage, ctrailers, cbasement, csignature = b4.LoreMessage.get_body_parts(cbody)
+    nbparts = list()
+    nmessage = cmessage.rstrip('\r\n') + '\n'
+
+    for ctr in list(ctrailers):
+        # We hide any trailers already present in the patch itself,
+        # or To:/Cc: trailers, which we parse elsewhere
+        if ctr in ptrailers or ctr.lname in ('to', 'cc'):
+            ctrailers.remove(ctr)
+    if ctrailers:
+        if nmessage:
+            nmessage += '\n'
+        for ctr in ctrailers:
+            nmessage += ctr.as_string() + '\n'
+
+    if len(nmessage.strip()):
+        nbparts.append(nmessage)
+
+    # Find the section with changelogs
+    utility = None
+    for section in cbasement.split('---\n'):
+        if re.search(b4.DIFFSTAT_RE, section):
+            # Skip this section
+            continue
+        if re.search(r'^change-id: ', section, flags=re.I | re.M):
+            # We move this to the bottom
+            utility = section
+            continue
+        nbparts.append(section.strip('\r\n') + '\n')
+
+    nbparts.append(pbasement.rstrip('\r\n') + '\n\n')
+    if utility:
+        nbparts.append(utility)
+
+    newbasement = '---\n'.join(nbparts)
+
+    pbody = b4.LoreMessage.rebuild_message(pheaders, pmessage, ptrailers, newbasement, csignature)
+    msg.set_payload(pbody, charset='utf-8')
+
+
+def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
+    clines = cover.splitlines()
+    if len(clines) < 2 or len(clines[1].strip()) or not len(clines[0].strip()):
+        csubject = '(no cover subject)'
+        cbody = cover.strip()
+    else:
+        csubject = clines[0]
+        cbody = '\n'.join(clines[2:]).strip()
+
+    lsubject = b4.LoreSubject(csubject)
+    return lsubject, cbody
+
+
+def rethread(patches: List[Tuple[str, email.message.Message]]):
+    refto  = patches[0][1].get('message-id')
+    for commit, msg in patches[1:]:
+        msg.add_header('References', refto)
+        msg.add_header('In-Reply-To', refto)
+
+
+def get_mailfrom() -> Tuple[str, str]:
+    sconfig = b4.get_sendemail_config()
+    fromaddr = sconfig.get('from')
+    if fromaddr:
+        return email.utils.parseaddr(fromaddr)
+
+    usercfg = b4.get_user_config()
+    return usercfg.get('name'), usercfg.get('email')
 
 
 def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
-                               hide_cover_to_cc: bool = False
-                               ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
+                               addtracking: bool = True, hide_cover_to_cc: bool = False
+                               ) -> Tuple[List, List, str, List[Tuple[str, email.message.Message]]]:
     cover, tracking = load_cover(strip_comments=True)
+
+    prefixes = tracking['series'].get('prefixes', list())
+    start_commit = get_series_start()
+    change_id = tracking['series'].get('change-id')
+    revision = tracking['series'].get('revision')
+    msgid_tpt = make_msgid_tpt(change_id, revision)
+    seriests = int(time.time())
+
+    mailfrom = None
+    if movefrom:
+        mailfrom = get_mailfrom()
+
+    strategy = get_cover_strategy()
+    ignore_commits = None
+    if strategy in {'commit', 'tip-commit'}:
+        cover_commit = find_cover_commit()
+        if cover_commit:
+            ignore_commits = {cover_commit}
+
+    csubject, cbody = get_cover_subject_body(cover)
+    for cprefix in csubject.get_extra_prefixes(exclude=prefixes):
+        prefixes.append(cprefix)
+
+    patches = b4.git_range_to_patches(None, start_commit, 'HEAD',
+                                      revision=revision,
+                                      prefixes=prefixes,
+                                      msgid_tpt=msgid_tpt,
+                                      seriests=seriests,
+                                      mailfrom=mailfrom,
+                                      ignore_commits=ignore_commits)
+
+    base_commit, shortlog, diffstat = get_series_details(start_commit=start_commit)
+
     config = b4.get_main_config()
     cover_template = DEFAULT_COVER_TEMPLATE
     if config.get('prep-cover-template'):
@@ -1055,88 +1143,66 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
             sys.exit(2)
 
     # Put together the cover letter
-    clines = cover.splitlines()
-    if len(clines) < 2 or len(clines[1].strip()) or not len(clines[0].strip()):
-        csubject = '(no cover subject)'
-        cbody = cover
-    else:
-        csubject = clines[0]
-        cbody = '\n'.join(clines[2:])
-
-    start_commit = get_series_start()
-    base_commit, shortlog, diffstat = get_series_details(start_commit=start_commit)
-    change_id = tracking['series'].get('change-id')
-    revision = tracking['series'].get('revision')
     tptvals = {
-        'subject': csubject,
-        'cover': cbody.strip(),
+        'cover': cbody,
         'shortlog': shortlog,
         'diffstat': diffstat,
         'change_id': change_id,
         'base_commit': base_commit,
         'signature': b4.get_email_signature(),
     }
-    body = Template(cover_template.lstrip()).safe_substitute(tptvals)
-    if hide_cover_to_cc:
-        tos, ccs, body = remove_to_cc_trailers(body)
-    else:
-        tos = list()
-        ccs = list()
-
-    cmsg = email.message.EmailMessage()
-    prefixes = tracking['series'].get('prefixes', list())
-    if '[' in csubject:
-        lsubject = b4.LoreSubject(csubject)
-        prefixes += lsubject.get_extra_prefixes(exclude=prefixes)
-        subject = lsubject.subject
-    else:
-        subject = csubject
-    if revision != 1:
-        prefixes.append(f'v{revision}')
-
-    cmsg.add_header('Subject', subject)
-    cmsg.set_payload(body, charset='utf-8')
+    cover_letter = Template(cover_template.lstrip()).safe_substitute(tptvals)
     # Store tracking info in the header in a safe format, which should allow us to
     # fully restore our work from the already sent series.
     ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
     b64tracking = base64.b64encode(ztracking).decode()
     # A little trick for pretty wrapping
-    wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, width=76)
-    cmsg.add_header('X-B4-Tracking', ' '.join(wrapped).replace('X-B4-Tracking: ', ''))
+    wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, width=75)
+    thdata = ' '.join(wrapped).replace('X-B4-Tracking: ', '')
 
-    seriests = int(time.time())
-    msgid_tpt = make_msgid_tpt(change_id, revision)
-    if movefrom:
-        sconfig = b4.get_sendemail_config()
-        fromaddr = sconfig.get('from')
-        if fromaddr:
-            mailfrom = email.utils.parseaddr(fromaddr)
-        else:
-            usercfg = b4.get_user_config()
-            mailfrom = (usercfg.get('name'), usercfg.get('email'))
+    alltos, allccs, cbody = get_cover_dests(cover_letter, hide=hide_cover_to_cc)
+    if len(patches) == 1:
+        mixin_cover(cbody, patches)
     else:
-        mailfrom = None
+        add_cover(csubject, msgid_tpt, patches, cbody, thread=thread)
 
-    strategy = get_cover_strategy()
-    ignore_commits = None
-    if strategy in {'commit', 'tip-commit'}:
-        cover_commit = find_cover_commit()
-        if cover_commit:
-            ignore_commits = {cover_commit}
+    if addtracking:
+        patches[0][1].add_header('X-B4-Tracking', thdata)
 
-    patches = b4.git_range_to_patches(None, start_commit, 'HEAD',
-                                      covermsg=cmsg, prefixes=prefixes,
+    tag_msg = f'{csubject.full_subject}\n\n{cover_letter}'
+    return alltos, allccs, tag_msg, patches
+
+
+def get_sent_tag_as_patches(tagname: str, revision: int, hide_cover_to_cc: bool = False
+                            ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
+    cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+
+    csubject, cbody = get_cover_subject_body(cover)
+    cbody = cbody.strip() + '\n-- \n' + b4.get_email_signature()
+    prefixes = ['RESEND'] + csubject.get_extra_prefixes(exclude=['RESEND'])
+    msgid_tpt = make_msgid_tpt(change_id, str(revision))
+    seriests = int(time.time())
+    mailfrom = get_mailfrom()
+
+    patches = b4.git_range_to_patches(None, base_commit, tagname,
+                                      revision=revision,
+                                      prefixes=prefixes,
                                       msgid_tpt=msgid_tpt,
                                       seriests=seriests,
-                                      thread=thread,
-                                      mailfrom=mailfrom,
-                                      ignore_commits=ignore_commits)
-    return tos, ccs, patches
+                                      mailfrom=mailfrom)
+
+    alltos, allccs, cbody = get_cover_dests(cbody, hide=hide_cover_to_cc)
+    if len(patches) == 1:
+        mixin_cover(cbody, patches)
+    else:
+        add_cover(csubject, msgid_tpt, patches, cbody)
+
+    return alltos, allccs, patches
 
 
 def format_patch(output_dir: str) -> None:
     try:
-        tos, ccs, patches = get_prep_branch_as_patches(thread=False, movefrom=False)
+        tos, ccs, tstr, patches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
@@ -1169,6 +1235,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if not cmdargs.hide_cover_to_cc and config.get('send-hide-cover-to-cc', '').lower() in {'yes', 'true', '1'}:
         cmdargs.hide_cover_to_cc = True
 
+    tag_msg = None
+    cl_msgid = None
     if cmdargs.resend:
         tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, cmdargs.resend)
 
@@ -1196,7 +1264,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            todests, ccdests, patches = get_prep_branch_as_patches(hide_cover_to_cc=cmdargs.hide_cover_to_cc)
+            todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(
+                hide_cover_to_cc=cmdargs.hide_cover_to_cc)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
             sys.exit(1)
@@ -1336,7 +1405,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
             smtpserver = sconfig.get('smtpserver', 'localhost')
             logger.info('  - via SMTP server %s', smtpserver)
-        if not cmdargs.reflect:
+        if not (cmdargs.reflect or cmdargs.resend):
             logger.info('  - tag and reroll the series to the next revision')
         logger.info('')
         try:
@@ -1350,13 +1419,12 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.no_sign or config.get('send-no-patatt-sign', '').lower() in {'yes', 'true', 'y'}:
         sign = False
 
-    cover_msg = None
     send_msgs = list()
     for commit, msg in patches:
         if not msg:
             continue
-        if cover_msg is None:
-            cover_msg = copy.deepcopy(msg)
+        if not cl_msgid:
+            cl_msgid = b4.LoreMessage.get_clean_msgid(msg)
 
         myto = list(allto)
         mycc = list(allcc)
@@ -1437,7 +1505,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.debug('Not updating cover/tracking on resend')
         return
 
-    reroll(mybranch, cover_msg)
+    reroll(mybranch, tag_msg, cl_msgid)
 
 
 def get_sent_tagname(branch: str, tagprefix: str, revstr: Union[str, int]) -> Tuple[str, Optional[int]]:
@@ -1459,20 +1527,11 @@ def get_sent_tagname(branch: str, tagprefix: str, revstr: Union[str, int]) -> Tu
     return f'{tagprefix}{branch}-v{revision}', revision
 
 
-def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = SENT_TAG_PREFIX):
-    # Prepare annotated tag body from the cover letter
-    lsubject = b4.LoreSubject(cover_msg.get('subject'))
-    cbody = cover_msg.get_payload(decode=True).decode()
+def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PREFIX):
     # Remove signature
-    chunks = cbody.rsplit('\n-- \n')
+    chunks = tag_msg.rsplit('\n-- \n')
     if len(chunks) > 1:
-        cbody = chunks[0] + '\n'
-    prefixes = lsubject.get_extra_prefixes()
-    if prefixes:
-        subject = '[%s] %s' % (' '.join(prefixes), lsubject.subject)
-    else:
-        subject = lsubject.subject
-    cover_body = subject + '\n\n' + cbody
+        tag_msg = chunks[0] + '\n'
 
     cover, tracking = load_cover(strip_comments=True)
     revision = tracking['series']['revision']
@@ -1518,7 +1577,7 @@ def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = SEN
 
             logger.info('Tagging %s', tagname)
             gitargs = ['tag', '-a', '-F', '-', tagname, tagcommit]
-            ecode, out = b4.git_run_command(None, gitargs, stdin=cover_body.encode())
+            ecode, out = b4.git_run_command(None, gitargs, stdin=tag_msg.encode())
             if ecode > 0:
                 # Not a fatal error, just complain about it
                 logger.info('Could not tag %s as %s:', tagcommit, tagname)
@@ -1530,7 +1589,6 @@ def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = SEN
     else:
         logger.info('NOTE: Tagname %s already exists', tagname)
 
-    cover_msgid = b4.LoreMessage.get_clean_msgid(cover_msg)
     logger.info('Recording series message-id in cover letter tracking')
     cover, tracking = load_cover(strip_comments=False)
     vrev = f'v{revision}'
@@ -1538,7 +1596,7 @@ def reroll(mybranch: str, cover_msg: email.message.Message, tagprefix: str = SEN
         tracking['series']['history'] = dict()
     if vrev not in tracking['series']['history']:
         tracking['series']['history'][vrev] = list()
-    tracking['series']['history'][vrev].append(cover_msgid)
+    tracking['series']['history'][vrev].append(msgid)
 
     oldrev = tracking['series']['revision']
     newrev = oldrev + 1
@@ -1685,7 +1743,7 @@ def auto_to_cc() -> None:
             logger.debug('added %s to seen', ltr.addr[1])
             extras.append(ltr)
 
-    tos, ccs, patches = get_prep_branch_as_patches()
+    tos, ccs, tag_msg, patches = get_prep_branch_as_patches()
     logger.info('Collecting To/Cc addresses')
     # Go through the messages to make to/cc headers
     for commit, msg in patches:
@@ -1772,7 +1830,16 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         if msgs:
             for msg in msgs:
                 if b4.LoreMessage.get_clean_msgid(msg) == msgid:
-                    return reroll(mybranch, msg)
+                    # Prepare annotated tag body from the cover letter
+                    lsubject = b4.LoreSubject(msg.get('subject'))
+                    cbody = msg.get_payload(decode=True).decode()
+                    prefixes = lsubject.get_extra_prefixes()
+                    if prefixes:
+                        subject = '[%s] %s' % (' '.join(prefixes), lsubject.subject)
+                    else:
+                        subject = lsubject.subject
+                    tag_msg = subject + '\n\n' + cbody
+                    return reroll(mybranch, tag_msg, msgid)
         logger.critical('CRITICAL: could not retrieve %s', msgid)
         sys.exit(1)
 

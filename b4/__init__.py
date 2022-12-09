@@ -73,6 +73,8 @@ dkimlogger.addFilter(_dkim_log_filter)
 
 HUNK_RE = re.compile(r'^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@')
 FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
+DIFF_RE = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
+DIFFSTAT_RE = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 
 ATT_PASS_SIMPLE = 'v'
 ATT_FAIL_SIMPLE = 'x'
@@ -1031,9 +1033,6 @@ class LoreMessage:
         if self.date.tzinfo is None:
             self.date = self.date.replace(tzinfo=datetime.timezone.utc)
 
-        self.diffre = re.compile(r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I)
-        self.diffstatre = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
-
         # walk until we find the first text/plain part
         mcharset = self.msg.get_content_charset()
         if not mcharset:
@@ -1064,7 +1063,7 @@ class LoreMessage:
                 continue
             # If we already found a body, but we now find something that contains a diff,
             # then we prefer this part
-            if self.diffre.search(payload):
+            if DIFF_RE.search(payload):
                 self.body = payload
 
         if self.body is None:
@@ -1073,9 +1072,9 @@ class LoreMessage:
             logger.info('  Not plaintext: %s', self.full_subject)
             return
 
-        if self.diffstatre.search(self.body):
+        if DIFFSTAT_RE.search(self.body):
             self.has_diffstat = True
-        if self.diffre.search(self.body):
+        if DIFF_RE.search(self.body):
             self.has_diff = True
             self.pwhash = LoreMessage.get_patchwork_hash(self.body)
             self.blob_indexes = LoreMessage.get_indexes(self.body)
@@ -1828,7 +1827,7 @@ class LoreMessage:
         bparts = basement.split('---\n')
         for bpart in list(bparts):
             # If it's a diff or diffstat, we don't care to keep it
-            if self.diffre.search(bpart) or self.diffstatre.search(bpart):
+            if DIFF_RE.search(bpart) or DIFFSTAT_RE.search(bpart):
                 bparts.remove(bpart)
         if bparts:
             self.message += '---\n' + '---\n'.join(bparts)
@@ -1984,6 +1983,22 @@ class LoreSubject:
             ret.append(_prf)
 
         return ret
+
+    def get_rebuilt_subject(self, eprefixes: Optional[List[str]]):
+        _pfx = self.get_extra_prefixes()
+        if eprefixes:
+            for _epfx in eprefixes:
+                if _epfx not in _pfx:
+                    _pfx.append(_epfx)
+        if self.revision > 1:
+            _pfx.append(f'v{self.revision}')
+        if self.expected > 1:
+            _pfx.append('%s/%s' % (str(self.counter).zfill(len(str(self.expected))), self.expected))
+
+        if len(_pfx):
+            return '[PATCH ' + ' '.join(_pfx) + '] ' + self.subject
+        else:
+            return f'[PATCH] {self.subject}'
 
     def get_slug(self, sep='_', with_counter: bool = True):
         unsafe = self.subject
@@ -2715,21 +2730,21 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
 
 
 def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
-                         covermsg: Optional[email.message.EmailMessage] = None,
                          prefixes: Optional[List[str]] = None,
+                         revision: Optional[int] = 1,
                          msgid_tpt: Optional[str] = None,
                          seriests: Optional[int] = None,
                          mailfrom: Optional[Tuple[str, str]] = None,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
-                         ignore_commits: Optional[Set[str]] = None,
-                         thread: bool = False,
-                         keepdate: bool = False) -> List[Tuple[str, email.message.Message]]:
-    patches = list()
+                         ignore_commits: Optional[Set[str]] = None) -> List[Tuple[str, email.message.Message]]:
     commits = git_get_command_lines(gitdir, ['rev-list', '--reverse', f'{start}..{end}'])
     if not commits:
         raise RuntimeError(f'Could not run rev-list {start}..{end}')
     if ignore_commits is None:
         ignore_commits = set()
+
+    # Go through them once to drop ignored commits and get bodies
+    patches = list()
     for commit in commits:
         if commit in ignore_commits:
             logger.debug('Ignoring commit %s', commit)
@@ -2739,91 +2754,11 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')
         msg = email.message_from_bytes(out, policy=emlpolicy)
-        msg.set_charset('utf-8')
-        # Clean subject and From to remove any 7bit-safe encoding
-        msg.replace_header('From', LoreMessage.clean_header(msg.get('From')))
-        msg.replace_header('Subject', LoreMessage.clean_header(msg.get('Subject')))
-        logger.debug('  %s', msg.get('Subject'))
-
         patches.append((commit, msg))
 
-    startfrom = 1
     fullcount = len(patches)
     if fullcount == 0:
         raise RuntimeError(f'Could not run rev-list {start}..{end}')
-
-    if covermsg:
-        if fullcount == 1:
-            # Single-patch series, mix in the cover letter into the patch basement
-            pmsg = patches[0][1]
-            pbody = pmsg.get_payload(decode=True).decode()
-            pheaders, pmessage, ptrailers, pbasement, psignature = LoreMessage.get_body_parts(pbody)
-            cbody = covermsg.get_payload(decode=True).decode()
-            cheaders, cmessage, ctrailers, cbasement, csignature = LoreMessage.get_body_parts(cbody)
-            nbparts = list()
-            todests = list()
-            ccdests = list()
-            nmessage = ''
-            if len(cmessage.strip()):
-                cls = LoreSubject(covermsg.get('Subject'))
-                nmessage += cls.subject + '\n\n' + cmessage.rstrip('\r\n') + '\n'
-            for ctr in list(ctrailers):
-                # We always hide To: and Cc: cover trailers from single-patch series
-                if ctr.lname == 'to':
-                    ctrailers.remove(ctr)
-                    todests.append(ctr.addr)
-                elif ctr.lname == 'cc':
-                    ctrailers.remove(ctr)
-                    ccdests.append(ctr.addr)
-                elif ctr in ptrailers:
-                    ctrailers.remove(ctr)
-            if ctrailers:
-                if nmessage:
-                    nmessage += '\n'
-                for ctr in ctrailers:
-                    nmessage += ctr.as_string() + '\n'
-            if len(nmessage.strip()):
-                nbparts.append(nmessage)
-
-            # Find the section with changelogs
-            utility = None
-            for section in cbasement.split('---\n'):
-                if re.search(r'^change-id: ', section, flags=re.I | re.M):
-                    utility = section
-                    continue
-                if re.search(r'^changes in v\d', section, flags=re.I | re.M):
-                    nbparts.append(section.strip('\r\n') + '\n')
-
-            nbparts.append(pbasement.rstrip('\r\n') + '\n\n')
-            if utility:
-                nbparts.append(utility)
-
-            newbasement = '---\n'.join(nbparts)
-
-            pbody = LoreMessage.rebuild_message(pheaders, pmessage, ptrailers, newbasement, csignature)
-            pmsg.set_payload(pbody, charset='utf-8')
-            # Add any To: and Cc: headers from the cover_message
-            toh = covermsg.get('To')
-            if toh:
-                todests.append(email.utils.getaddresses([toh]))
-            cch = covermsg.get('Cc')
-            if cch:
-                ccdests.append(email.utils.getaddresses([cch]))
-
-            if todests:
-                pmsg.add_header('To', format_addrs(todests))
-            if ccdests:
-                pmsg.add_header('Cc', format_addrs(ccdests))
-            startfrom = 0
-        else:
-            patches.insert(0, (None, covermsg))
-            startfrom = 0
-
-    # Go through and apply any outstanding fixes
-    if prefixes:
-        prefixes = ' ' + ' '.join(prefixes)
-    else:
-        prefixes = ''
 
     vlines = git_get_command_lines(None, ['--version'])
     if len(vlines) == 1:
@@ -2831,34 +2766,34 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
     else:
         gitver = None
 
-    for counter in range(startfrom, len(patches)):
-        msg = patches[counter][1]
-        subject = msg.get('Subject')
-        csubject = re.sub(r'^\[PATCH]\s*', '', subject)
-        if fullcount > 1:
-            pline = '[PATCH%s %s/%s]' % (prefixes, str(counter).zfill(len(str(fullcount))), fullcount)
-        else:
-            pline = '[PATCH%s]' % prefixes
-        msg.replace_header('Subject', f'{pline} {csubject}')
+    expected = len(patches)
+    for counter, (commit, msg) in enumerate(patches):
+        msg.set_charset('utf-8')
+        # Clean From to remove any 7bit-safe encoding
+        origfrom = LoreMessage.clean_header(msg.get('From'))
+        lsubject = LoreSubject(msg.get('Subject'))
+        lsubject.counter = counter + 1
+        lsubject.expected = expected
+        lsubject.revision = revision
+        subject = lsubject.get_rebuilt_subject(eprefixes=prefixes)
+
+        logger.debug('  %s', subject)
+        msg.replace_header('Subject', subject)
+
         inbodyhdrs = list()
+        setfrom = origfrom
         if mailfrom:
             # Move the original From and Date into the body
-            origfrom = msg.get('From')
-            if origfrom:
-                origfrom = LoreMessage.clean_header(origfrom)
-                origpair = email.utils.parseaddr(origfrom)
-                if origpair[1] != mailfrom[1]:
-                    msg.replace_header('From', format_addrs([mailfrom]))
-                    inbodyhdrs.append(f'From: {origfrom}')
-            else:
-                msg.add_header('From', format_addrs([mailfrom]))
+            origpair = email.utils.parseaddr(origfrom)
+            if origpair[1] != mailfrom[1]:
+                setfrom = format_addrs([mailfrom])
+                inbodyhdrs.append(f'From: {origfrom}')
+        msg.replace_header('From', setfrom)
 
         if seriests:
             patchts = seriests + counter
             origdate = msg.get('Date')
             if origdate:
-                if keepdate:
-                    inbodyhdrs.append(f'Date: {origdate}')
                 msg.replace_header('Date', email.utils.formatdate(patchts, localtime=True))
             else:
                 msg.add_header('Date', email.utils.formatdate(patchts, localtime=True))
@@ -2881,17 +2816,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                 msg.add_header(hdrname, hdrval)
 
         if msgid_tpt:
-            msg.add_header('Message-Id', msgid_tpt % str(counter))
-            refto = None
-            if counter > 0 and covermsg:
-                # Thread to the cover letter
-                refto = msgid_tpt % str(0)
-            if counter > 1 and not covermsg:
-                # Thread to the first patch
-                refto = msgid_tpt % str(1)
-            if refto and thread:
-                msg.add_header('References', refto)
-                msg.add_header('In-Reply-To', refto)
+            msg.add_header('Message-Id', msgid_tpt % str(lsubject.counter))
 
     return patches
 
