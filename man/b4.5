@@ -535,7 +535,7 @@ Show all developer keys from the thread
 .INDENT 0.0
 .TP
 .B usage:
-b4 prep [\-h] [\-c | \-p OUTPUT_DIR | \-\-edit\-cover | \-\-show\-revision | \-\-force\-revision N | \-\-compare\-to vN | \-\-manual\-reroll COVER_MSGID] [\-n NEW_SERIES_NAME] [\-f FORK_POINT] [\-F MSGID] [\-e ENROLL_BASE]
+b4 prep [\-h] [\-c | \-p OUTPUT_DIR | \-\-edit\-cover | \-\-show\-revision | \-\-force\-revision N | \-\-compare\-to vN | \-\-manual\-reroll COVER_MSGID | \-\-set\-prefixes PREFIX [PREFIX ...] | \-\-show\-info ] [\-n NEW_SERIES_NAME] [\-f FORK_POINT] [\-F MSGID] [\-e ENROLL_BASE]
 .TP
 .B options:
 .INDENT 7.0
@@ -568,6 +568,11 @@ Mark current revision as sent and reroll (requires cover letter msgid)
 .TP
 .B \-\-set\-prefixes PREFIX [PREFIX ...]
 Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)
+.UNINDENT
+.INDENT 7.0
+.TP
+.B  \-\-show\-info
+Show current series info in a column\-parseable format
 .UNINDENT
 .TP
 .B Create new branch:

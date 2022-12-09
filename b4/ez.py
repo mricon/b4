@@ -617,11 +617,15 @@ def get_cover_strategy(branch: Optional[str] = None) -> str:
     sys.exit(1)
 
 
-def is_prep_branch() -> bool:
+def is_prep_branch(mustbe: bool = False) -> bool:
+    mustmsg = 'CRITICAL: This is not a prep-managed branch.'
     mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy(mybranch)
     if strategy in {'commit', 'tip-commit'}:
         if find_cover_commit() is None:
+            if mustbe:
+                logger.critical(mustmsg)
+                sys.exit(1)
             return False
         return True
     if strategy == 'branch-description':
@@ -629,6 +633,9 @@ def is_prep_branch() -> bool:
         bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
         if bcfg.get('b4-tracking'):
             return True
+        if mustbe:
+            logger.critical(mustmsg)
+            sys.exit(1)
         return False
 
     logger.critical('CRITICAL: unknown cover strategy: %s', strategy)
@@ -917,23 +924,26 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     return utils.getaddresses(addrs.split('\n'))
 
 
-def get_series_details(start_commit: str) -> Tuple[str, str, str]:
-    # Not sure if we can reasonably expect all automation to handle this correctly
-    # gitargs = ['describe', '--long', f'{cover_commit}~1']
+def get_series_details(start_commit: Optional[str] = None) -> Tuple[str, str, str, List[str], str, str]:
+    if not start_commit:
+        start_commit = get_series_start()
     gitargs = ['rev-parse', f'{start_commit}~1']
     lines = b4.git_get_command_lines(None, gitargs)
     base_commit = lines[0]
     strategy = get_cover_strategy()
     if strategy == 'tip-commit':
         cover_commit = find_cover_commit()
-        endrange = f'{cover_commit}~1'
+        endrange = b4.git_revparse_obj(f'{cover_commit}~1')
     else:
-        endrange = ''
+        endrange = b4.git_revparse_obj('HEAD')
     gitargs = ['shortlog', f'{start_commit}..{endrange}']
     ecode, shortlog = b4.git_run_command(None, gitargs)
     gitargs = ['diff', '--stat', f'{start_commit}..{endrange}']
     ecode, diffstat = b4.git_run_command(None, gitargs)
-    return base_commit, shortlog.rstrip(), diffstat.rstrip()
+    gitargs = ['log', '--oneline', f'{start_commit}..{endrange}']
+    ecode, oneline = b4.git_run_command(None, gitargs)
+    oneline = oneline.rstrip().splitlines()
+    return base_commit, start_commit, endrange, oneline, shortlog.rstrip(), diffstat.rstrip()
 
 
 def print_pretty_addrs(addrs: list, hdrname: str) -> None:
@@ -1129,7 +1139,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
                                       mailfrom=mailfrom,
                                       ignore_commits=ignore_commits)
 
-    base_commit, shortlog, diffstat = get_series_details(start_commit=start_commit)
+    base_commit, stc, endc, oneline, shortlog, diffstat = get_series_details(start_commit=start_commit)
 
     config = b4.get_main_config()
     cover_template = DEFAULT_COVER_TEMPLATE
@@ -1642,6 +1652,7 @@ def check_can_gfr() -> None:
 
 
 def show_revision() -> None:
+    is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     ts = tracking['series']
     logger.info('v%s', ts.get('revision'))
@@ -1651,6 +1662,32 @@ def show_revision() -> None:
         for rn, links in ts['history'].items():
             for link in links:
                 logger.info('  %s: %s', rn, config['linkmask'] % link)
+
+
+def show_info() -> None:
+    is_prep_branch(mustbe=True)
+    mybranch = b4.git_get_current_branch(None)
+    print('branch: %s' % mybranch)
+    cover, tracking = load_cover()
+    csubject, cbody = get_cover_subject_body(cover)
+    print('cover-subject: %s' % csubject.full_subject)
+    ts = tracking['series']
+    if ts.get('prefixes'):
+        print('prefixes: %s' % ' '.join(ts.get('prefixes')))
+    print('change-id: %s' % ts.get('change-id'))
+    revision = ts.get('revision')
+    print('revision: %s' % revision)
+    strategy = get_cover_strategy()
+    print('cover-strategy: %s' % strategy)
+    if ts.get('base-branch'):
+        print('base-branch: %s' % ts['base-branch'])
+    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details()
+    print('base-commit: %s' % base_commit)
+    print('start-commit: %s' % start_commit)
+    print('end-commit: %s' % end_commit)
+    for line in oneline:
+        short, subject = line.split(maxsplit=1)
+        print('commit-%s: %s' % (short, subject))
 
 
 def force_revision(forceto: int) -> None:
@@ -1845,6 +1882,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.show_revision:
         return show_revision()
+
+    if cmdargs.show_info:
+        return show_info()
 
     if cmdargs.force_revision:
         return force_revision(cmdargs.force_revision)

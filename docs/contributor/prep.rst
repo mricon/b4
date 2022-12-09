@@ -270,6 +270,10 @@ or modifying defaults for some of these flags.
   When b4 sends the message, it will be expanded with the usual
   ``PATCH``, ``vN``, etc.
 
+``--show-info`` **(v0.11+)**
+  Dumps information about the current series that can be parsed by other
+  tools.
+
 ``-n NEW_SERIES_NAME, --new NEW_SERIES_NAME``
   Creates a new branch to start work on a new patch series.
 

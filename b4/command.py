@@ -272,6 +272,9 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Mark current revision as sent and reroll (requires cover letter msgid)')
     spp_g.add_argument('--set-prefixes', metavar='PREFIX', nargs='+',
                        help='Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)')
+    spp_g.add_argument('--show-info', action='store_true', default=False,
+                       help='Show current series info in a column-parseable format')
+
     ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
     ag_prepn.add_argument('-n', '--new', dest='new_series_name',
                           help='Create a new branch for working on a patch series')

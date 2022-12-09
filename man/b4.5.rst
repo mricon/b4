@@ -348,7 +348,7 @@ optional arguments:
 b4 prep
 ~~~~~~~
 usage:
-  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --compare-to vN | --manual-reroll COVER_MSGID] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
+  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --compare-to vN | --manual-reroll COVER_MSGID | --set-prefixes PREFIX [PREFIX ...] | --show-info ] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
 
 options:
   -h, --help            show this help message and exit
@@ -364,6 +364,8 @@ options:
 
   --set-prefixes PREFIX [PREFIX ...]
                         Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)
+
+  --show-info           Show current series info in a column-parseable format
 
 Create new branch:
   Create a new branch for working on patch series

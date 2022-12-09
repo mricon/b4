@@ -1984,7 +1984,7 @@ class LoreSubject:
 
         return ret
 
-    def get_rebuilt_subject(self, eprefixes: Optional[List[str]]):
+    def get_rebuilt_subject(self, eprefixes: Optional[List[str]] = None):
         _pfx = self.get_extra_prefixes()
         if eprefixes:
             for _epfx in eprefixes:
@@ -3483,3 +3483,10 @@ def sevenbitify_headers(msg: email.message.Message) -> email.message.Message:
             newval = qp_smallest(hdr[1])
         msg._headers[pos] = (hdr[0], newval)  # noqa
     return msg
+
+
+def git_revparse_obj(gitobj: str) -> str:
+    ecode, out = git_run_command(None, ['rev-parse', gitobj])
+    if ecode > 0:
+        raise RuntimeError('No such object: %s' % gitobj)
+    return out.strip()
