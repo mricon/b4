@@ -1292,8 +1292,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         todests = list()
         ccdests = list()
     else:
-        seen.update(todests)
-        seen.update(ccdests)
+        seen.update([x[1] for x in todests])
+        seen.update([x[1] for x in ccdests])
         # Go through the messages to make to/cc headers
         for commit, msg in patches:
             if not msg:
