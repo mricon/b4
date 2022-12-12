@@ -1886,7 +1886,14 @@ class LoreMessage:
                         at += 1
 
         # Remove anything that's cut off by scissors
-        i, m, p = get_mailinfo(self.msg.as_bytes(policy=emlpolicy), scissors=True)
+        mi_msg = email.message.EmailMessage()
+        mi_msg['From'] = self.msg['From']
+        mi_msg['Date'] = self.msg['Date']
+        mi_msg['Subject'] = self.msg['Subject']
+        mi_msg.set_payload(self.body, charset='utf-8')
+        mi_msg.set_charset('utf-8')
+
+        i, m, p = get_mailinfo(mi_msg.as_bytes(policy=emlpolicy), scissors=True)
         self.body = m.decode() + p.decode()
         if add_trailers:
             self.fix_trailers(copyccs=copyccs, addmysob=addmysob, extras=extras)
