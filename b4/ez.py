@@ -1418,6 +1418,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if not (cmdargs.reflect or cmdargs.resend):
             logger.info('  - tag and reroll the series to the next revision')
         logger.info('')
+        if cmdargs.reflect:
+            logger.info('REFLECT MODE:')
+            logger.info('    The To: and Cc: headers will be fully populated, but the only')
+            logger.info('    address given to the mail server for actual delivery will be')
+            logger.info('    %s', fromaddr)
+            logger.info('')
+            logger.info('    Addresses in To: and Cc: headers will NOT receive this series.')
+            logger.info('')
         try:
             input('Press Enter to proceed or Ctrl-C to abort')
         except KeyboardInterrupt:
