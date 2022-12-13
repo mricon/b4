@@ -1010,7 +1010,7 @@ def get_cover_dests(cbody: str, hide: bool = True) -> Tuple[List, List, str]:
 
 
 def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, email.message.Message]],
-              cbody: str, thread: bool = True):
+              cbody: str, datets: int, thread: bool = True):
     fp = patches[0][1]
     cmsg = email.message.EmailMessage()
     cmsg.add_header('From', fp['From'])
@@ -1020,6 +1020,7 @@ def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str,
     csubject.counter = 0
     csubject.revision = fpls.revision
     cmsg.add_header('Subject', csubject.get_rebuilt_subject(eprefixes=fpls.get_extra_prefixes()))
+    cmsg.add_header('Date', email.utils.formatdate(datets, localtime=True))
     cmsg.add_header('Message-Id', msgid_tpt % str(0))
 
     cmsg.set_payload(cbody, charset='utf-8')
@@ -1174,7 +1175,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
     if len(patches) == 1:
         mixin_cover(cbody, patches)
     else:
-        add_cover(csubject, msgid_tpt, patches, cbody, thread=thread)
+        add_cover(csubject, msgid_tpt, patches, cbody, seriests, thread=thread)
 
     if addtracking:
         patches[0][1].add_header('X-B4-Tracking', thdata)
@@ -1205,7 +1206,7 @@ def get_sent_tag_as_patches(tagname: str, revision: int, hide_cover_to_cc: bool 
     if len(patches) == 1:
         mixin_cover(cbody, patches)
     else:
-        add_cover(csubject, msgid_tpt, patches, cbody)
+        add_cover(csubject, msgid_tpt, patches, cbody, seriests)
 
     return alltos, allccs, patches
 
