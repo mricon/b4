@@ -2211,6 +2211,18 @@ def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[byte
     return ecode, out
 
 
+def git_credential_fill(gitdir: Optional[str], protocol: str, host: str, username: str) -> Optional[str]:
+    stdin = f'protocol={protocol}\nhost={host}\nusername={username}\n'.encode()
+    ecode, out = git_run_command(gitdir, args=['credential', 'fill'], stdin=stdin)
+    if ecode == 0:
+        for line in out.splitlines():
+            if not line.startswith('password='):
+                continue
+            chunks = line.split('=', maxsplit=1)
+            return chunks[1]
+    return None
+
+
 def git_get_command_lines(gitdir: Optional[str], args: list) -> List[str]:
     ecode, out = git_run_command(gitdir, args)
     lines = list()
@@ -3104,6 +3116,15 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
         # If we got to this point, we should do authentication.
         auser = sconfig.get('smtpuser')
         apass = sconfig.get('smtppass')
+        if auser and not apass:
+            # Try with git-credential-helper
+            if port:
+                gchost = f'{server}:{port}'
+            else:
+                gchost = server
+            apass = git_credential_fill(None, protocol='smtp', host=gchost, username=auser)
+            if not apass:
+                raise smtplib.SMTPException('No password specified for connecting to %s', server)
         if auser and apass:
             # Let any exceptions bubble up
             smtp.login(auser, apass)
