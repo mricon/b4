@@ -3046,11 +3046,11 @@ def get_sendemail_config() -> dict:
             # Use this identity to override what we got from the default one
             sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', defaults=_basecfg)
             sectname = f'sendemail.{identity}'
+            if not len(sconfig):
+                raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
         else:
             sconfig = _basecfg
             sectname = 'sendemail'
-        if not len(sconfig):
-            raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
         logger.debug('Using values from %s', sectname)
         SENDEMAIL_CONFIG = sconfig
 
