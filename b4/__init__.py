@@ -3212,6 +3212,12 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
     tosend = list()
     if output_dir is not None:
         dryrun = True
+    # Do we have an endpoint defined?
+    config = get_main_config()
+    endpoint = config.get('send-endpoint-web', '')
+    if not re.search(r'^https?://', endpoint):
+        endpoint = None
+
     for msg in msgs:
         if not msg.get('X-Mailer'):
             msg.add_header('X-Mailer', f'b4 {__VERSION__}')
@@ -3247,7 +3253,15 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         if patatt_sign:
             import patatt
             # patatt.logger = logger
-            bdata = patatt.rfc2822_sign(bdata)
+            try:
+                bdata = patatt.rfc2822_sign(bdata)
+            except patatt.NoKeyError as ex:
+                logger.critical('CRITICAL: Error signing: no key configured')
+                logger.critical('          Run "patatt genkey" or configure "user.signingKey" to use PGP')
+                logger.critical('          As a last resort, rerun with --no-sign')
+                raise RuntimeError(str(ex))
+            except patatt.SigningError as ex:
+                raise RuntimeError('Failure trying to patatt-sign: %s' % str(ex))
         if dryrun:
             if output_dir:
                 filen = '%s.eml' % ls.get_slug(sep='-')
@@ -3273,11 +3287,6 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         return 0
 
     logger.info('---')
-    # Do we have an endpoint defined?
-    config = get_main_config()
-    endpoint = config.get('send-endpoint-web', '')
-    if not re.search(r'^https?://', endpoint):
-        endpoint = None
     if use_web_endpoint and endpoint:
         if reflect:
             logger.info('Reflecting via web endpoint %s', endpoint)
