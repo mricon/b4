@@ -431,8 +431,7 @@ def send_messages(listing, branch, cmdargs):
             if not fromaddr:
                 fromaddr = jsondata['myemail']
             logger.info('  Sending: %s', b4.LoreMessage.clean_header(msg.get('subject')))
-            # We never want to use the web endpoint for this (it's only for submitting patches)
-            b4.send_mail(smtp, [msg], fromaddr, dryrun=cmdargs.dryrun, use_web_endpoint=False)
+            b4.send_mail(smtp, [msg], fromaddr, dryrun=cmdargs.dryrun)
         else:
             slug_from = re.sub(r'\W', '_', jsondata['fromemail'])
             slug_subj = re.sub(r'\W', '_', jsondata['subject'])

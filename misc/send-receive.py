@@ -324,7 +324,7 @@ class SendReceiveListener(object):
             try:
                 identity, selector, auth_id = self.validate_message(conn, t_auth, bdata)
             except patatt.NoKeyError as ex:  # noqa
-                self.send_error(resp, message='No matching record found, maybe you need to auth-verify first?')
+                self.send_error(resp, message='No matching key, please complete web auth first.')
                 return
             except Exception as ex:
                 self.send_error(resp, message='Signature validation failed: %s' % ex)
