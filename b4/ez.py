@@ -47,6 +47,8 @@ MAGIC_MARKER = '--- b4-submit-tracking ---'
 # Make this configurable?
 SENT_TAG_PREFIX = 'sent/'
 
+DEFAULT_ENDPOINT = 'https://lkml.kernel.org/_b4_submit'
+
 DEFAULT_COVER_TEMPLATE = """
 ${cover}
 
@@ -79,7 +81,13 @@ def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
         endpoint = None
 
     if not endpoint:
-        raise RuntimeError('Web submission endpoint (b4.send-endpoint-web) is not defined, or is not a web URL.')
+        # Use the default endpoint if we are in the kernel repo
+        topdir = b4.git_get_toplevel()
+        if os.path.exists(os.path.join(topdir, 'Kconfig')):
+            logger.debug('No sendemail configs found, will use the default web endpoint')
+            endpoint = DEFAULT_ENDPOINT
+        else:
+            raise RuntimeError('Web submission endpoint (b4.send-endpoint-web) is not defined, or is not a web URL.')
 
     usercfg = b4.get_user_config()
     myemail = usercfg.get('email')
@@ -1372,9 +1380,16 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.info('Will write out messages into %s', cmdargs.output_dir)
         pathlib.Path(cmdargs.output_dir).mkdir(parents=True, exist_ok=True)
 
+    sconfig = b4.get_sendemail_config()
     endpoint = config.get('send-endpoint-web', '')
     if not re.search(r'^https?://', endpoint):
         endpoint = None
+    if not endpoint and not sconfig.get('smtpserver'):
+        # Use the default endpoint if we are in the kernel repo
+        topdir = b4.git_get_toplevel()
+        if os.path.exists(os.path.join(topdir, 'Kconfig')):
+            logger.debug('No sendemail configs found, will use the default web endpoint')
+            endpoint = DEFAULT_ENDPOINT
 
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
@@ -1405,7 +1420,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 logger.info('  - send the above messages to actual recipients')
             logger.info('  - via web endpoint: %s', endpoint)
         else:
-            sconfig = b4.get_sendemail_config()
             if sconfig.get('from'):
                 fromaddr = sconfig.get('from')
             if cmdargs.reflect:
@@ -1486,13 +1500,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if endpoint:
         # Web endpoint always requires signing
         if not sign:
-            logger.critical('CRITICAL: Web endpoint is defined for sending, but signing is turned off')
+            logger.critical('CRITICAL: Web endpoint will be used for sending, but signing is turned off')
             logger.critical('          Please re-enable signing or use SMTP')
             sys.exit(1)
 
         try:
             sent = b4.send_mail(None, send_msgs, fromaddr=None, patatt_sign=True,
-                                dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=True,
+                                dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, web_endpoint=endpoint,
                                 reflect=cmdargs.reflect)
         except RuntimeError as ex:
             logger.critical('CRITICAL: %s', ex)
@@ -1507,7 +1521,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
         try:
             sent = b4.send_mail(smtp, send_msgs, fromaddr=fromaddr, patatt_sign=sign,
-                                dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir, use_web_endpoint=False,
+                                dryrun=cmdargs.dryrun, output_dir=cmdargs.output_dir,
                                 reflect=cmdargs.reflect)
         except RuntimeError as ex:
             logger.critical('CRITICAL: %s', ex)

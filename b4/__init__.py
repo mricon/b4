@@ -3207,16 +3207,11 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
               fromaddr: Optional[str], destaddrs: Optional[Union[set, list]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
               maxheaderlen: Optional[int] = None, output_dir: Optional[str] = None,
-              use_web_endpoint: bool = False, reflect: bool = False) -> Optional[int]:
+              web_endpoint: Optional[str] = None, reflect: bool = False) -> Optional[int]:
 
     tosend = list()
     if output_dir is not None:
         dryrun = True
-    # Do we have an endpoint defined?
-    config = get_main_config()
-    endpoint = config.get('send-endpoint-web', '')
-    if not re.search(r'^https?://', endpoint):
-        endpoint = None
 
     for msg in msgs:
         if not msg.get('X-Mailer'):
@@ -3241,7 +3236,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         else:
             # Use SMTP policy if we're actually going to send things out
             msg = sevenbitify_headers(msg)
-            if dryrun or use_web_endpoint:
+            if dryrun or web_endpoint:
                 # Use SMTP policy, but no CRLF
                 policy = email.policy.SMTP.clone(linesep='\n')
             else:
@@ -3287,19 +3282,19 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         return 0
 
     logger.info('---')
-    if use_web_endpoint and endpoint:
+    if web_endpoint:
         if reflect:
-            logger.info('Reflecting via web endpoint %s', endpoint)
+            logger.info('Reflecting via web endpoint %s', web_endpoint)
             wpaction = 'reflect'
         else:
-            logger.info('Sending via web endpoint %s', endpoint)
+            logger.info('Sending via web endpoint %s', web_endpoint)
             wpaction = 'receive'
         req = {
             'action': wpaction,
             'messages': [x[1].decode() for x in tosend],
         }
         ses = get_requests_session()
-        res = ses.post(endpoint, json=req)
+        res = ses.post(web_endpoint, json=req)
         try:
             rdata = res.json()
             if rdata.get('result') == 'success':
