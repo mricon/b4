@@ -2195,6 +2195,11 @@ def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[byte
         if os.path.exists(os.path.join(gitdir, '.git')):
             gitdir = os.path.join(gitdir, '.git')
         cmdargs += ['--git-dir', gitdir]
+
+    # counteract some potential local settings
+    if args[0] == 'log':
+        args.insert(1, '--no-abbrev-commit')
+
     cmdargs += args
 
     ecode, out, err = _run_command(cmdargs, stdin=stdin)
