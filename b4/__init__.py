@@ -1958,7 +1958,7 @@ class LoreSubject:
             for chunk in bracketed.split():
                 # Remove any trailing commas or semicolons
                 chunk = chunk.strip(',;')
-                if re.search(r'^\d{1,3}/\d{1,3}$', chunk):
+                if re.search(r'^\d{1,4}/\d{1,4}$', chunk):
                     counters = chunk.split('/')
                     self.counter = int(counters[0])
                     self.expected = int(counters[1])
