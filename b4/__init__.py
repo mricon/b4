@@ -3241,8 +3241,11 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
         else:
             # Use SMTP policy if we're actually going to send things out
             msg = sevenbitify_headers(msg)
-            if dryrun or web_endpoint:
-                # Use SMTP policy, but no CRLF
+            if dryrun:
+                # Use HTTP policy, to avoid header wrapping
+                policy = email.policy.HTTP.clone(linesep='\n')
+            elif web_endpoint:
+                # Use SMTP policy with LF endings
                 policy = email.policy.SMTP.clone(linesep='\n')
             else:
                 policy = email.policy.SMTP
