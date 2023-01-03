@@ -1474,10 +1474,12 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                     mycc.append(pair)
         elif not commit and len(pccs):
             # the cover letter gets sent to folks with individual patch cc's
+            _seen = set(seen)
             for _commit, _ccs in pccs.items():
                 for pair in _ccs:
-                    if pair[1] not in seen:
+                    if pair[1] not in _seen:
                         mycc.append(pair)
+                        _seen.add(pair[1])
         if mycc and not myto:
             # Move all Cc's into To when there's no To:
             myto = mycc
