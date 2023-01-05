@@ -1724,8 +1724,11 @@ def show_info() -> None:
     if 'history' in ts:
         for rn, links in reversed(ts['history'].items()):
             tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
-            cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
-            print('series-%s: %s..%s %s' % (rn, base_commit[:12], tagname, links[0]))
+            try:
+                cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+                print('series-%s: %s..%s %s' % (rn, base_commit[:12], tagname, links[0]))
+            except RuntimeError:
+                logger.debug('No tag matching %s', tagname)
 
 
 def force_revision(forceto: int) -> None:
