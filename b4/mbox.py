@@ -638,6 +638,37 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     return msgs
 
 
+def is_maildir(dest: str) -> bool:
+    if (os.path.isdir(os.path.join(dest, 'new'))
+            and os.path.isdir(os.path.join(dest, 'cur'))
+            and os.path.isdir(os.path.join(dest, 'tmp'))):
+        return True
+    return False
+
+
+def refetch(dest: str) -> None:
+    if is_maildir(dest):
+        mbox = mailbox.Maildir(dest)
+    else:
+        mbox = mailbox.mbox(dest)
+
+    by_msgid = dict()
+    for key, msg in mbox.items():
+        msgid = b4.LoreMessage.get_clean_msgid(msg)
+        if msgid not in by_msgid:
+            amsgs = b4.get_pi_thread_by_msgid(msgid, nocache=True)
+            for amsg in amsgs:
+                amsgid = b4.LoreMessage.get_clean_msgid(amsg)
+                if amsgid not in by_msgid:
+                    by_msgid[amsgid] = amsg
+        if msgid in by_msgid:
+            mbox.update(((key, by_msgid[msgid]),))
+            logger.info('Refetched: %s', msg.get('Subject'))
+        else:
+            logger.warn('WARNING: Message-id not known: %s', msgid)
+    mbox.close()
+
+
 def main(cmdargs: argparse.Namespace) -> None:
     if cmdargs.subcmd == 'shazam':
         # We force some settings
@@ -656,6 +687,9 @@ def main(cmdargs: argparse.Namespace) -> None:
     if cmdargs.checknewer:
         # Force nocache mode
         cmdargs.nocache = True
+
+    if cmdargs.subcmd == 'mbox' and cmdargs.refetch:
+        return refetch(cmdargs.refetch)
 
     try:
         msgid, msgs = b4.retrieve_messages(cmdargs)
@@ -680,9 +714,7 @@ def main(cmdargs: argparse.Namespace) -> None:
         return
 
     # Check if outdir is a maildir
-    if (os.path.isdir(os.path.join(cmdargs.outdir, 'new'))
-            and os.path.isdir(os.path.join(cmdargs.outdir, 'cur'))
-            and os.path.isdir(os.path.join(cmdargs.outdir, 'tmp'))):
+    if is_maildir(cmdargs.outdir):
         mdr = mailbox.Maildir(cmdargs.outdir)
         have_msgids = set()
         added = 0

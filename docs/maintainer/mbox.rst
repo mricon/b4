@@ -79,6 +79,14 @@ Option flags
   that aren't already present. Note, that this uses simple message-id
   matching and no other checks for correctness are performed.
 
+``-r MBOX, --refetch MBOX`` **(v0.12+)**
+  This allows you to refetch all messages in the provided mailbox from
+  the upstream public-inbox server. For example, this is useful when you
+  have a .mbx file prepared by ``b4 am`` and you want to send a
+  response to one of the patches. Performing a refetch will restore the
+  original message headers that may have been dropped or modified by
+  ``b4 am``.
+
 Using with mutt
 ---------------
 If you are a mutt or neomutt user and your mail is stored locally, you

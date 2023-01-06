@@ -138,6 +138,8 @@ def setup_parser() -> argparse.ArgumentParser:
     cmd_mbox_common_opts(sp_mbox)
     sp_mbox.add_argument('-f', '--filter-dupes', dest='filterdupes', action='store_true', default=False,
                          help='When adding messages to existing maildir, filter out duplicates')
+    sp_mbox.add_argument('-r', '--refetch', dest='refetch', metavar='MBOX', default=False,
+                         help='Refetch all messages in specified mbox with their original headers')
     sp_mbox.set_defaults(func=cmd_mbox)
 
     # b4 am
