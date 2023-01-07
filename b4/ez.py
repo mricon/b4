@@ -1314,13 +1314,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                     continue
                 if btr.addr[1] in seen:
                     continue
-                if commit and btr.lname == 'cc':
-                    # CC's in individual patches don't get added to global Cc's,
-                    # we use the pcss dict to track them.
+                if commit:
                     if commit not in pccs:
                         pccs[commit] = list()
-                    pccs[commit].append(btr.addr)
-                    # Doesn't get added to seen, in case a later patch puts it into global
+                    if btr.addr not in pccs[commit]:
+                        pccs[commit].append(btr.addr)
                     continue
                 seen.add(btr.addr[1])
                 if btr.lname == 'to':
@@ -1825,28 +1823,10 @@ def auto_to_cc() -> None:
     logger.info('Collecting To/Cc addresses')
     # Go through the messages to make to/cc headers
     for commit, msg in patches:
-        if not msg:
-            continue
-        payload = msg.get_payload(decode=True).decode()
-        parts = b4.LoreMessage.get_body_parts(payload)
-        for ltr in parts[2]:
-            if ltr.lname == 'cc':
-                # We treat Cc: in individual patches differently from all other trailers:
-                # they only receive individual patches, not the entire series.
-                continue
-            if not ltr.addr:
-                continue
-            if ltr.addr[1] in seen:
-                continue
-            seen.add(ltr.addr[1])
-            logger.debug('added %s to seen', ltr.addr[1])
-            # Make it a Cc: trailer
-            ltr.name = 'Cc'
-            extras.append(ltr)
-
-        if not commit:
+        if not msg or not commit:
             continue
 
+        logger.debug('Collecting from: %s', msg.get('subject'))
         msgbytes = msg.as_bytes()
         for tname, pairs in (('To', get_addresses_from_cmd(tocmd, msgbytes)),
                              ('Cc', get_addresses_from_cmd(cccmd, msgbytes))):
@@ -1854,6 +1834,7 @@ def auto_to_cc() -> None:
                 if pair[1] not in seen:
                     seen.add(pair[1])
                     ltr = b4.LoreTrailer(name=tname, value=b4.format_addrs([pair]))
+                    logger.debug('  => %s', ltr.as_string())
                     extras.append(ltr)
 
     if not extras:
