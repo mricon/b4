@@ -38,7 +38,7 @@ def gitdir(request, tmp_path):
         bfile = os.path.join(sampledir, 'gitdir.bundle')
     assert os.path.exists(bfile)
     dest = os.path.join(tmp_path, 'repo')
-    args = ['clone', bfile, dest]
+    args = ['clone', '--branch', 'master', bfile, dest]
     out, logstr = b4.git_run_command(None, args)
     assert out == 0
     b4.git_set_config(dest, 'user.name', b4.USER_CONFIG['name'])
