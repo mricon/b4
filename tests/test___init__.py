@@ -113,24 +113,48 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
         assert ifh.getvalue().decode() == fh.read()
 
 
-@pytest.mark.parametrize('headers,verify', [
-    ({
-        'From': 'Unicode Nâme <unicode-name@example.com',
-        'To': 'Ascii Name <ascii-name@example.com>, '
-              'Unicôde Firstname <unicode-firstname@example.com>, '
-              'Unicode Lâstname <unicode-lastname@example.com>',
-        'Subject': 'Subject with unicôde that is randomly interspérsed thrôughout the wrapped subject',
-     }, 'sevenbitify-1')
+@pytest.mark.parametrize('hval,verify', [
+    ('short-ascii', 'short-ascii'),
+    ('short-unicôde', '=?utf-8?q?short-unic=C3=B4de?='),
+    # Long ascii
+    (('Lorem ipsum dolor sit amet consectetur adipiscing elit '
+      'sed do eiusmod tempor incididunt ut labore et dolore magna aliqua'),
+     ('Lorem ipsum dolor sit amet consectetur adipiscing elit sed do\n'
+      ' eiusmod tempor incididunt ut labore et dolore magna aliqua')
+     ),
+    # Long unicode
+    (('Lorem îpsum dolor sit amet consectetur adipiscing elît '
+      'sed do eiusmod tempôr incididunt ut labore et dolôre magna aliqua'),
+     ('=?utf-8?q?Lorem_=C3=AEpsum_dolor_sit_amet_consectetur_adipiscin?=\n'
+      ' =?utf-8?q?g_el=C3=AEt_sed_do_eiusmod_temp=C3=B4r_incididunt_ut_labore_et?=\n'
+      ' =?utf-8?q?_dol=C3=B4re_magna_aliqua?=')
+     ),
+    # Exactly 75 long
+    ('Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiu',
+     'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiu'),
+    # Unicode that breaks on escape boundary
+    ('Lorem ipsum dolor sit amet consectetur adipiscin elît',
+     '=?utf-8?q?Lorem_ipsum_dolor_sit_amet_consectetur_adipiscin_el?=\n =?utf-8?q?=C3=AEt?='),
+    # Unicode that's just 1 too long
+    ('Lorem ipsum dolor sit amet consectetur adipi elît',
+     '=?utf-8?q?Lorem_ipsum_dolor_sit_amet_consectetur_adipi_el=C3=AE?=\n =?utf-8?q?t?='),
+    # A single address
+    ('foo@example.com', 'foo@example.com'),
+    # Two addresses
+    ('foo@example.com, bar@example.com', 'foo@example.com, bar@example.com'),
+    # Mixed addresses
+    ('foo@example.com, Foo Bar <bar@example.com>', 'foo@example.com, Foo Bar <bar@example.com>'),
+    # Mixed Unicode
+    ('foo@example.com, Foo Bar <bar@example.com>, Fôo Baz <baz@example.com>',
+     'foo@example.com, Foo Bar <bar@example.com>, \n =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>'),
+    ('foo@example.com, Foo Bar <bar@example.com>, Fôo Baz <baz@example.com>, "Quux, Foo" <quux@example.com>',
+     ('foo@example.com, Foo Bar <bar@example.com>, \n'
+      ' =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>, "Quux, Foo" <quux@example.com>')),
 ])
-def test_sevenbitify_headers(sampledir, headers, verify):
-    msg = email.message.Message(policy=b4.emlpolicy)
-    for header, value in headers.items():
-        msg[header] = value
-    msg.set_payload('Unicôde Côntent in the body.\n', charset='utf-8')
-    msg.set_charset('utf-8')
-    msg = b4.sevenbitify_headers(msg)
-    odata = msg.as_bytes(policy=email.policy.SMTP)
-    vfile = os.path.join(sampledir, f'{verify}.verify')
-    with open(vfile, 'rb') as fh:
-        vdata = fh.read()
-        assert odata.decode() == vdata.decode()
+def test_header_wrapping(sampledir, hval, verify):
+    hname = 'To' if '@' in hval else "X-Header"
+    wrapped = b4.LoreMessage.wrap_header((hname, hval))
+    assert wrapped == f'{hname}: {verify}'.encode()
+    wname, wval = wrapped.split(b':', maxsplit=1)
+    cval = b4.LoreMessage.clean_header(wval.decode())
+    assert cval == hval

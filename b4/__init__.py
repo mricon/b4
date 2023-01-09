@@ -12,11 +12,13 @@ import email.utils
 import email.policy
 import email.header
 import email.generator
+import email.quoprimime
 import tempfile
 import pathlib
 import argparse
 import smtplib
 import shlex
+import textwrap
 
 import urllib.parse
 import datetime
@@ -1395,19 +1397,92 @@ class LoreMessage:
         if hdrval is None:
             return ''
 
-        decoded = ''
-        for hstr, hcs in email.header.decode_header(hdrval):
-            if hcs is None:
-                hcs = 'utf-8'
-            try:
-                decoded += hstr.decode(hcs, errors='replace')
-            except LookupError:
-                # Try as utf-u
-                decoded += hstr.decode('utf-8', errors='replace')
-            except (UnicodeDecodeError, AttributeError):
-                decoded += hstr
+        if hdrval.find('=?') >= 0:
+            # Do we have any email addresses in there?
+            if re.search(r'<\S+@\S+>', hdrval, flags=re.I | re.M):
+                newaddrs = list()
+                for addr in email.utils.getaddresses([hdrval]):
+                    if addr[0].find('=?') >= 0:
+                        # Nothing wrong with nested calls, right?
+                        addr = (LoreMessage.clean_header(addr[0]), addr[1])
+                    newaddrs.append(email.utils.formataddr(addr))
+                return ', '.join(newaddrs)
+
+            decoded = ''
+            for hstr, hcs in email.header.decode_header(hdrval):
+                if hcs is None:
+                    hcs = 'utf-8'
+                try:
+                    decoded += hstr.decode(hcs, errors='replace')
+                except LookupError:
+                    # Try as utf-8
+                    decoded += hstr.decode('utf-8', errors='replace')
+                except (UnicodeDecodeError, AttributeError):
+                    decoded += hstr
+        else:
+            decoded = hdrval
+
         new_hdrval = re.sub(r'\n?\s+', ' ', decoded)
         return new_hdrval.strip()
+
+    @staticmethod
+    def wrap_header(hdr, width: int = 75, nl: str = '\n') -> bytes:
+        hname, hval = hdr
+        if hname.lower() in ('to', 'cc', 'from', 'x-original-from'):
+            _parts = [f'{hname}: ',]
+            first = True
+            for addr in email.utils.getaddresses([hval]):
+                if not addr[0].isascii():
+                    addr = (email.quoprimime.header_encode(addr[0].encode(), charset='utf-8'), addr[1])
+                qp = email.utils.formataddr(addr)
+                # See if there is enough room on the existing line
+                if first:
+                    _parts[-1] += qp
+                    first = False
+                    continue
+                if len(_parts[-1] + ', ' + qp) > width:
+                    _parts[-1] += ', '
+                    _parts.append(qp)
+                    continue
+                _parts[-1] += ', ' + qp
+        else:
+            if hval.isascii():
+                hdata = f'{hname}: {hval}'
+                # Use simple textwrap
+                if len(hdata) <= width:
+                    return hdata.encode()
+                wrapped = textwrap.wrap(hdata, break_long_words=False, subsequent_indent=' ', width=width)
+                return nl.join(wrapped).encode()
+
+            qp = f'{hname}: ' + email.quoprimime.header_encode(hval.encode(), charset='utf-8')
+            # is it longer than width?
+            if len(qp) <= width:
+                return qp.encode()
+
+            _parts = list()
+            while len(qp) > width:
+                wrapat = width - 2
+                if len(_parts):
+                    # Also allow for the ' ' at the front on continuation lines
+                    wrapat -= 1
+                # Make sure we don't break on a =XX escape sequence
+                while '=' in qp[wrapat-2:wrapat]:
+                    wrapat -= 1
+                _parts.append(qp[:wrapat] + '?=')
+                qp = ('=?utf-8?q?' + qp[wrapat:])
+            _parts.append(qp)
+        return f'{nl} '.join(_parts).encode()
+
+    @staticmethod
+    def get_msg_as_bytes(msg: email.message.Message, nl: str ='\n') -> bytes:
+        bdata = b''
+        for hdr in msg._headers:  # noqa
+            bdata += LoreMessage.wrap_header(hdr, nl=nl) + nl.encode()
+        bdata += nl.encode()
+        payload = msg.get_payload(decode=True)
+        for bline in payload.split(b'\n'):
+            bdata += re.sub(rb'[\r\n]*$', b'', bline) + nl.encode()
+        return bdata
 
     @staticmethod
     def get_parts_from_header(hstr: str) -> dict:
@@ -3239,17 +3314,12 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             emldata = msg.as_string(policy=emlpolicy, maxheaderlen=maxheaderlen)
             bdata = emldata.encode()
         else:
-            # Use SMTP policy if we're actually going to send things out
-            msg = sevenbitify_headers(msg)
-            if dryrun:
-                # Use HTTP policy, to avoid header wrapping
-                policy = email.policy.HTTP.clone(linesep='\n')
-            elif web_endpoint:
-                # Use SMTP policy with LF endings
-                policy = email.policy.SMTP.clone(linesep='\n')
+            if dryrun or web_endpoint:
+                nl = '\n'
             else:
-                policy = email.policy.SMTP
-            bdata = msg.as_bytes(policy=policy)
+                nl = '\r\n'
+
+            bdata = LoreMessage.get_msg_as_bytes(msg, nl=nl)
 
         subject = msg.get('Subject', '')
         ls = LoreSubject(subject)
@@ -3478,52 +3548,6 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
                 break
 
     return msgid, msgs
-
-
-# When qp-encoding a header, encode just the 8bit content,
-# not the entire header.
-def qp_smallest(srcstr: str) -> str:
-    import email.quoprimime
-    qpstr = ''
-    toqp = ''
-    chunks = re.split(r'(\S+)', srcstr)
-    for pos, chunk in enumerate(chunks):
-        if not len(toqp):
-            if chunk.isascii():
-                qpstr += chunk
-                continue
-            toqp += chunk
-            continue
-        # is this chunk whitespace?
-        if not len(chunk.strip()):
-            # are all the remaining words after this one ascii?
-            if pos+1 >= len(chunks) or all(_chunk.isascii() for _chunk in chunks[pos+1:]):
-                qpstr += email.quoprimime.header_encode(toqp.encode(), charset='utf-8') + chunk
-                toqp = ''
-                continue
-        toqp += chunk
-    return qpstr
-
-
-def sevenbitify_headers(msg: email.message.Message) -> email.message.Message:
-    import email.quoprimime
-    for pos, hdr in enumerate(msg._headers):  # noqa
-        if hdr[1].isascii():
-            continue
-        # Do we have an email address in there?
-        if re.search(r'<\S+@\S+>', hdr[1], flags=re.I | re.M):
-            newaddrs = list()
-            for addr in email.utils.getaddresses([hdr[1]]):
-                if addr[0].isascii():
-                    newaddrs.append(addr)
-                    continue
-                newaddrs.append((qp_smallest(addr[0]), addr[1]))
-            newval = format_addrs(newaddrs, clean=False)
-        else:
-            newval = qp_smallest(hdr[1])
-        msg._headers[pos] = (hdr[0], newval)  # noqa
-    return msg
-
 
 def git_revparse_obj(gitobj: str) -> str:
     ecode, out = git_run_command(None, ['rev-parse', gitobj])
