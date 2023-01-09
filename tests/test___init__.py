@@ -150,6 +150,9 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
     ('foo@example.com, Foo Bar <bar@example.com>, Fôo Baz <baz@example.com>, "Quux, Foo" <quux@example.com>',
      ('foo@example.com, Foo Bar <bar@example.com>, \n'
       ' =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>, "Quux, Foo" <quux@example.com>')),
+    ('01234567890123456789012345678901234567890123456789012345678901@example.org, ä <foo@example.org>',
+     ('01234567890123456789012345678901234567890123456789012345678901@example.org, \n'
+      ' =?utf-8?q?=C3=A4?= <foo@example.org>')),
 ])
 def test_header_wrapping(sampledir, hval, verify):
     hname = 'To' if '@' in hval else "X-Header"
