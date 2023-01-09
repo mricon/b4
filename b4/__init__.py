@@ -1451,7 +1451,8 @@ class LoreMessage:
                 # Use simple textwrap
                 if len(hdata) <= width:
                     return hdata.encode()
-                wrapped = textwrap.wrap(hdata, break_long_words=False, subsequent_indent=' ', width=width)
+                wrapped = textwrap.wrap(hdata, break_long_words=False, break_on_hyphens=False,
+                                        subsequent_indent=' ', width=width)
                 return nl.join(wrapped).encode()
 
             qp = f'{hname}: ' + email.quoprimime.header_encode(hval.encode(), charset='utf-8')
