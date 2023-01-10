@@ -1176,8 +1176,8 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
     ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
     b64tracking = base64.b64encode(ztracking).decode()
     # A little trick for pretty wrapping
-    wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, width=75)
-    thdata = ' '.join(wrapped).replace('X-B4-Tracking: ', '')
+    wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, subsequent_indent=' ', width=75)
+    thdata = ''.join(wrapped).replace('X-B4-Tracking: ', '')
 
     alltos, allccs, cbody = get_cover_dests(cover_letter, hide=hide_cover_to_cc)
     if len(patches) == 1:
