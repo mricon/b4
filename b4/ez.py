@@ -1825,7 +1825,12 @@ def auto_to_cc() -> None:
             logger.debug('added %s to seen', ltr.addr[1])
             extras.append(ltr)
 
-    tos, ccs, tag_msg, patches = get_prep_branch_as_patches()
+    try:
+        tos, ccs, tag_msg, patches = get_prep_branch_as_patches()
+    except RuntimeError:
+        logger.info('No commits in branch')
+        return
+
     logger.info('Collecting To/Cc addresses')
     # Go through the messages to make to/cc headers
     for commit, msg in patches:
