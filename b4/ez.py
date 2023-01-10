@@ -1282,6 +1282,12 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.info('---')
             sys.exit(1)
 
+        status = b4.git_get_repo_status()
+        if len(status):
+            logger.critical('CRITICAL: Repository contains uncommitted changes.')
+            logger.critical('          Stash or commit them first.')
+            sys.exit(1)
+
         try:
             todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(
                 hide_cover_to_cc=cmdargs.hide_cover_to_cc)
