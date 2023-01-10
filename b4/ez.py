@@ -480,7 +480,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         if revision is None:
             revision = 1
         prefixes = list()
-        if cmdargs.set_prefixes and len(prefixes[0].strip()):
+        if cmdargs.set_prefixes:
             prefixes = list(cmdargs.set_prefixes)
         else:
             config = b4.get_main_config()
@@ -1887,12 +1887,6 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         logger.critical('          Stash or commit them first.')
         sys.exit(1)
 
-    if cmdargs.edit_cover:
-        return edit_cover()
-
-    if cmdargs.auto_to_cc:
-        return auto_to_cc()
-
     if cmdargs.reroll:
         msgid = cmdargs.reroll
         msgs = b4.get_pi_thread_by_msgid(msgid, onlymsgids={msgid}, nocache=True)
@@ -1919,23 +1913,30 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
     if cmdargs.show_info:
         return show_info()
 
-    if cmdargs.force_revision:
-        return force_revision(cmdargs.force_revision)
-
     if cmdargs.format_patch:
         return format_patch(cmdargs.format_patch)
 
     if cmdargs.compare_to:
         return compare(cmdargs.compare_to)
 
+    if cmdargs.enroll_base or cmdargs.new_series_name:
+        if is_prep_branch():
+            logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')
+            sys.exit(1)
+
+        start_new_series(cmdargs)
+
+    if cmdargs.force_revision:
+        force_revision(cmdargs.force_revision)
+
     if cmdargs.set_prefixes:
-        return set_prefixes(cmdargs.set_prefixes)
+        set_prefixes(cmdargs.set_prefixes)
 
-    if is_prep_branch():
-        logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')
-        sys.exit(1)
+    if cmdargs.auto_to_cc:
+        auto_to_cc()
 
-    return start_new_series(cmdargs)
+    if cmdargs.edit_cover:
+        return edit_cover()
 
 
 def cmd_trailers(cmdargs: argparse.Namespace) -> None:

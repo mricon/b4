@@ -257,23 +257,24 @@ def setup_parser() -> argparse.ArgumentParser:
 
     # b4 prep
     sp_prep = subparsers.add_parser('prep', help='Work on patch series to submit for mailing list review')
-    spp_g = sp_prep.add_mutually_exclusive_group()
-    spp_g.add_argument('-c', '--auto-to-cc', action='store_true', default=False,
+    sp_prep.add_argument('-c', '--auto-to-cc', action='store_true', default=False,
                        help='Automatically populate cover letter trailers with To and Cc addresses')
+    sp_prep.add_argument('--force-revision', metavar='N', type=int,
+                       help='Force revision to be this number instead')
+    sp_prep.add_argument('--set-prefixes', metavar='PREFIX', nargs='+',
+                       help='Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)')
+
+    spp_g = sp_prep.add_mutually_exclusive_group()
     spp_g.add_argument('-p', '--format-patch', metavar='OUTPUT_DIR',
                        help='Output prep-tracked commits as patches')
     spp_g.add_argument('--edit-cover', action='store_true', default=False,
                        help='Edit the cover letter in your defined $EDITOR (or core.editor)')
     spp_g.add_argument('--show-revision', action='store_true', default=False,
                        help='Show current series revision number')
-    spp_g.add_argument('--force-revision', metavar='N', type=int,
-                       help='Force revision to be this number instead')
     spp_g.add_argument('--compare-to', metavar='vN',
                        help='Display a range-diff to previously sent revision N')
     spp_g.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
                        help='Mark current revision as sent and reroll (requires cover letter msgid)')
-    spp_g.add_argument('--set-prefixes', metavar='PREFIX', nargs='+',
-                       help='Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)')
     spp_g.add_argument('--show-info', action='store_true', default=False,
                        help='Show current series info in a column-parseable format')
 
