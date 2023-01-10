@@ -113,51 +113,72 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
         assert ifh.getvalue().decode() == fh.read()
 
 
-@pytest.mark.parametrize('hval,verify', [
-    ('short-ascii', 'short-ascii'),
-    ('short-unicôde', '=?utf-8?q?short-unic=C3=B4de?='),
+@pytest.mark.parametrize('hval,verify,qp', [
+    ('short-ascii', 'short-ascii', True),
+    ('short-unicôde', '=?utf-8?q?short-unic=C3=B4de?=', True),
     # Long ascii
     (('Lorem ipsum dolor sit amet consectetur adipiscing elit '
       'sed do eiusmod tempor incididunt ut labore et dolore magna aliqua'),
      ('Lorem ipsum dolor sit amet consectetur adipiscing elit sed do\n'
-      ' eiusmod tempor incididunt ut labore et dolore magna aliqua')
-     ),
+      ' eiusmod tempor incididunt ut labore et dolore magna aliqua'), True),
     # Long unicode
     (('Lorem îpsum dolor sit amet consectetur adipiscing elît '
       'sed do eiusmod tempôr incididunt ut labore et dolôre magna aliqua'),
      ('=?utf-8?q?Lorem_=C3=AEpsum_dolor_sit_amet_consectetur_adipiscin?=\n'
       ' =?utf-8?q?g_el=C3=AEt_sed_do_eiusmod_temp=C3=B4r_incididunt_ut_labore_et?=\n'
-      ' =?utf-8?q?_dol=C3=B4re_magna_aliqua?=')
-     ),
+      ' =?utf-8?q?_dol=C3=B4re_magna_aliqua?='), True),
     # Exactly 75 long
     ('Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiu',
-     'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiu'),
+     'Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiu', True),
     # Unicode that breaks on escape boundary
     ('Lorem ipsum dolor sit amet consectetur adipiscin elît',
-     '=?utf-8?q?Lorem_ipsum_dolor_sit_amet_consectetur_adipiscin_el?=\n =?utf-8?q?=C3=AEt?='),
+     '=?utf-8?q?Lorem_ipsum_dolor_sit_amet_consectetur_adipiscin_el?=\n =?utf-8?q?=C3=AEt?=', True),
     # Unicode that's just 1 too long
     ('Lorem ipsum dolor sit amet consectetur adipi elît',
-     '=?utf-8?q?Lorem_ipsum_dolor_sit_amet_consectetur_adipi_el=C3=AE?=\n =?utf-8?q?t?='),
+     '=?utf-8?q?Lorem_ipsum_dolor_sit_amet_consectetur_adipi_el=C3=AE?=\n =?utf-8?q?t?=', True),
     # A single address
-    ('foo@example.com', 'foo@example.com'),
+    ('foo@example.com', 'foo@example.com', True),
     # Two addresses
-    ('foo@example.com, bar@example.com', 'foo@example.com, bar@example.com'),
+    ('foo@example.com, bar@example.com', 'foo@example.com, bar@example.com', True),
     # Mixed addresses
-    ('foo@example.com, Foo Bar <bar@example.com>', 'foo@example.com, Foo Bar <bar@example.com>'),
+    ('foo@example.com, Foo Bar <bar@example.com>', 'foo@example.com, Foo Bar <bar@example.com>', True),
     # Mixed Unicode
     ('foo@example.com, Foo Bar <bar@example.com>, Fôo Baz <baz@example.com>',
-     'foo@example.com, Foo Bar <bar@example.com>, \n =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>'),
+     'foo@example.com, Foo Bar <bar@example.com>, \n =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>', True),
     ('foo@example.com, Foo Bar <bar@example.com>, Fôo Baz <baz@example.com>, "Quux, Foo" <quux@example.com>',
      ('foo@example.com, Foo Bar <bar@example.com>, \n'
-      ' =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>, "Quux, Foo" <quux@example.com>')),
+      ' =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>, "Quux, Foo" <quux@example.com>'), True),
     ('01234567890123456789012345678901234567890123456789012345678901@example.org, ä <foo@example.org>',
      ('01234567890123456789012345678901234567890123456789012345678901@example.org, \n'
-      ' =?utf-8?q?=C3=A4?= <foo@example.org>')),
+      ' =?utf-8?q?=C3=A4?= <foo@example.org>'), True),
+    # Test for https://github.com/python/cpython/issues/100900
+    ('foo@example.com, Foo Bar <bar@example.com>, Fôo Baz <baz@example.com>, "Quûx, Foo" <quux@example.com>',
+     ('foo@example.com, Foo Bar <bar@example.com>, \n'
+      ' =?utf-8?q?F=C3=B4o_Baz?= <baz@example.com>, \n =?utf-8?q?Qu=C3=BBx=2C_Foo?= <quux@example.com>'), True),
 ])
-def test_header_wrapping(sampledir, hval, verify):
+def test_header_wrapping(sampledir, hval, verify, qp):
     hname = 'To' if '@' in hval else "X-Header"
     wrapped = b4.LoreMessage.wrap_header((hname, hval))
     assert wrapped == f'{hname}: {verify}'.encode()
     wname, wval = wrapped.split(b':', maxsplit=1)
     cval = b4.LoreMessage.clean_header(wval.decode())
     assert cval == hval
+
+
+@pytest.mark.parametrize('pairs,verify,clean', [
+    ([('', 'foo@example.com'), ('Foo Bar', 'bar@example.com')],
+        'foo@example.com, Foo Bar <bar@example.com>', True),
+    ([('', 'foo@example.com'), ('Foo, Bar', 'bar@example.com')],
+        'foo@example.com, "Foo, Bar" <bar@example.com>', True),
+    ([('', 'foo@example.com'), ('Fôo, Bar', 'bar@example.com')],
+        'foo@example.com, "Fôo, Bar" <bar@example.com>', True),
+    ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx_Foo?=', 'quux@example.com')],
+     'foo@example.com, Quûx Foo <quux@example.com>', True),
+    ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx=2C_Foo?=', 'quux@example.com')],
+        'foo@example.com, "Quûx, Foo" <quux@example.com>', True),
+    ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx=2C_Foo?=', 'quux@example.com')],
+     'foo@example.com, =?utf-8?q?Qu=C3=BBx=2C_Foo?= <quux@example.com>', False),
+])
+def test_format_addrs(pairs, verify, clean):
+    formatted = b4.format_addrs(pairs, clean)
+    assert formatted == verify

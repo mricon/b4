@@ -1405,7 +1405,11 @@ class LoreMessage:
                     if addr[0].find('=?') >= 0:
                         # Nothing wrong with nested calls, right?
                         addr = (LoreMessage.clean_header(addr[0]), addr[1])
-                    newaddrs.append(email.utils.formataddr(addr))
+                    # Work around https://github.com/python/cpython/issues/100900
+                    if re.search(r'[^\w\s]', addr[0]):
+                        newaddrs.append(f'"{addr[0]}" <{addr[1]}>')
+                    else:
+                        newaddrs.append(email.utils.formataddr(addr))
                 return ', '.join(newaddrs)
 
             decoded = ''
@@ -1426,15 +1430,15 @@ class LoreMessage:
         return new_hdrval.strip()
 
     @staticmethod
-    def wrap_header(hdr, width: int = 75, nl: str = '\n') -> bytes:
+    def wrap_header(hdr, width: int = 75, nl: str = '\n', qpencode: bool = True) -> bytes:
         hname, hval = hdr
         if hname.lower() in ('to', 'cc', 'from', 'x-original-from'):
             _parts = [f'{hname}: ',]
             first = True
             for addr in email.utils.getaddresses([hval]):
-                if not addr[0].isascii():
+                if not addr[0].isascii() and qpencode:
                     addr = (email.quoprimime.header_encode(addr[0].encode(), charset='utf-8'), addr[1])
-                qp = email.utils.formataddr(addr)
+                qp = format_addrs([addr], clean=False)
                 # See if there is enough room on the existing line
                 if first:
                     _parts[-1] += qp
@@ -1446,7 +1450,7 @@ class LoreMessage:
                     continue
                 _parts[-1] += ', ' + qp
         else:
-            if hval.isascii():
+            if not qpencode or hval.isascii():
                 hdata = f'{hname}: {hval}'
                 # Use simple textwrap
                 if len(hdata) <= width:
@@ -2946,13 +2950,17 @@ def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
 def format_addrs(pairs, clean=True):
     addrs = list()
     for pair in pairs:
-        pair = list(pair)
         if pair[0] == pair[1]:
-            pair[0] = ''
+            addrs.append(pair[1])
+            continue
         if clean:
             # Remove any quoted-printable header junk from the name
-            pair[0] = LoreMessage.clean_header(pair[0])
-        addrs.append(email.utils.formataddr(pair))  # noqa
+            pair = (LoreMessage.clean_header(pair[0]), pair[1])
+            # Work around https://github.com/python/cpython/issues/100900
+            if re.search(r'[^\w\s]', pair[0]):
+                addrs.append(f'"{pair[0]}" <{pair[1]}>')
+                continue
+        addrs.append(email.utils.formataddr(pair))
     return ', '.join(addrs)
 
 
