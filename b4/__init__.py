@@ -3061,7 +3061,7 @@ def get_gpg_uids(keyid: str) -> list:
     return uids
 
 
-def save_git_am_mbox(msgs: list, dest: BinaryIO):
+def save_git_am_mbox(msgs: list[email.message.Message], dest: BinaryIO):
     # Git-am has its own understanding of what "mbox" format is that differs from Python's
     # mboxo implementation. Specifically, it never escapes the ">From " lines found in bodies
     # unless invoked with --patch-format=mboxrd (this is wrong, because ">From " escapes are also
@@ -3070,6 +3070,13 @@ def save_git_am_mbox(msgs: list, dest: BinaryIO):
     for msg in msgs:
         dest.write(b'From git@z Thu Jan  1 00:00:00 1970\n')
         dest.write(LoreMessage.get_msg_as_bytes(msg, headers='decode'))
+
+
+def save_mboxrd_mbox(msgs: list[email.message.Message], dest: BinaryIO, mangle_from: bool = False):
+    gen = email.generator.BytesGenerator(dest, mangle_from_=mangle_from, policy=emlpolicy)
+    for msg in msgs:
+        dest.write(b'From mboxrd@z Thu Jan  1 00:00:00 1970\n')
+        gen.flatten(msg)
 
 
 def save_maildir(msgs: list, dest):

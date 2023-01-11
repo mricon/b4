@@ -710,7 +710,7 @@ def main(cmdargs: argparse.Namespace) -> None:
     logger.info('%s messages in the thread', len(msgs))
     if cmdargs.outdir == '-':
         logger.info('---')
-        b4.save_git_am_mbox(msgs, sys.stdout.buffer)
+        b4.save_mboxrd_mbox(msgs, sys.stdout.buffer, mangle_from=False)
         return
 
     # Check if outdir is a maildir
@@ -753,6 +753,6 @@ def main(cmdargs: argparse.Namespace) -> None:
         return
 
     with open(savename, 'wb') as fh:
-        b4.save_git_am_mbox(msgs, fh)
+        b4.save_mboxrd_mbox(msgs, fh, mangle_from=True)
 
     logger.info('Saved %s', savename)
