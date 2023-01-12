@@ -451,21 +451,22 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         # create a default cover letter and store it where the strategy indicates
         cover = ('EDITME: cover title for %s' % seriesname,
                  '',
-                 '# Lines starting with # will be removed from the cover letter. You can use',
-                 '# them to add notes or reminders to yourself.',
+                 '# Lines starting with # will be removed from the cover letter. You can',
+                 '# use them to add notes or reminders to yourself.',
                  '',
-                 'EDITME: describe the purpose of this series. The information you put here',
-                 'will be used by the project maintainer to make a decision whether your',
-                 'patches should be reviewed, and in what priority order. Please be very',
-                 'detailed and link to any relevant discussions or sites that the maintainer',
-                 'can review to better understand your proposed changes. If you only have a',
-                 'single patch in your series, the contents of the cover letter will be',
-                 'appended to the "under-the-cut" portion of the patch.',
+                 'EDITME: describe the purpose of this series. The information you put',
+                 'here will be used by the project maintainer to make a decision whether',
+                 'your patches should be reviewed, and in what priority order. Please be',
+                 'very detailed and link to any relevant discussions or sites that the',
+                 'maintainer can review to better understand your proposed changes. If you',
+                 'only have a single patch in your series, the contents of the cover',
+                 'letter will be appended to the "under-the-cut" portion of the patch.',
                  '',
                  '# You can add trailers to the cover letter. Any email addresses found in',
-                 '# these trailers will be added to the addresses specified/generated during',
-                 '# the b4 send stage. You can also run "b4 prep --auto-to-cc" to auto-populate',
-                 '# the To: and Cc: trailers based on the code being modified.',
+                 '# these trailers will be added to the addresses specified/generated',
+                 '# during the b4 send stage. You can also run "b4 prep --auto-to-cc" to',
+                 '# auto-populate the To: and Cc: trailers based on the code being',
+                 '# modified.',
                  '',
                  'Signed-off-by: %s <%s>' % (usercfg.get('name', ''), usercfg.get('email', '')),
                  '',
@@ -686,17 +687,21 @@ def edit_cover() -> None:
     corecfg = b4.get_config_from_git(r'core\..*', {'editor': os.environ.get('EDITOR', 'vi')})
     editor = corecfg.get('editor')
     logger.debug('editor=%s', editor)
-    # We give it a suffix .rst in hopes that editors autoload restructured-text rules
-    with tempfile.NamedTemporaryFile(suffix='.rst') as temp_cover:
-        temp_cover.write(cover.encode())
-        temp_cover.seek(0)
+    # Use COMMIT_EDITMSG name in hopes that editors autoload git commit rules
+    with tempfile.TemporaryDirectory(prefix='b4-') as temp_dir:
+        temp_fpath = os.path.join(temp_dir, 'COMMIT_EDITMSG')
+        with open(temp_fpath, 'xb') as temp_cover:
+            temp_cover.write(cover.encode())
+
         sp = shlex.shlex(editor, posix=True)
         sp.whitespace_split = True
-        cmdargs = list(sp) + [temp_cover.name]
+        cmdargs = list(sp) + [temp_fpath]
         logger.debug('Running %s' % ' '.join(cmdargs))
         sp = subprocess.Popen(cmdargs)
         sp.wait()
-        new_cover = temp_cover.read().decode(errors='replace').strip()
+
+        with open(temp_fpath, 'rb') as temp_cover:
+            new_cover = temp_cover.read().decode(errors='replace').strip()
 
     if new_cover == cover:
         logger.info('Cover letter unchanged.')
