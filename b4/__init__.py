@@ -40,6 +40,10 @@ charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 
+# Presence of these characters requires quoting of the name in the header
+# adapted from email._parseaddr
+qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
+
 try:
     import dkim
     can_dkim = True
@@ -2968,8 +2972,9 @@ def format_addrs(pairs, clean=True):
             # Remove any quoted-printable header junk from the name
             pair = (LoreMessage.clean_header(pair[0]), pair[1])
         # Work around https://github.com/python/cpython/issues/100900
-        if not pair[0].startswith('=?') and not pair[0].startswith('"') and re.search(r'[^\w\s]', pair[0]):
-            addrs.append(f'"{pair[0]}" <{pair[1]}>')
+        if not pair[0].startswith('=?') and not pair[0].startswith('"') and qspecials.search(pair[0]):
+            quoted = email.utils.quote(pair[0])
+            addrs.append(f'"{quoted}" <{pair[1]}>')
             continue
         addrs.append(email.utils.formataddr(pair))
     return ', '.join(addrs)
