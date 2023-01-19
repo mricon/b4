@@ -220,14 +220,6 @@ Command line flags
   or Cc:. This is usually handy for testing purposes, in case you want
   to send a set of patches to a test address (also see ``--reflect``).
 
-``--hide-cover-to-cc``
-  It is common for the ``To:`` and ``Cc:`` sections in cover letters to
-  be pretty large on large patch sets. Passing this flag will remove
-  these trailers from the cover letter, but still add the addresses to
-  the corresponding To: and Cc: headers. This can be made permanent in
-  the configuration file using the ``b4.send-hide-cover-to-cc`` option
-  (see :ref:`contributor_settings`).
-
 ``--to``
   Add any more email addresses to include into the To: header here
   (comma-separated). Can be set in the configuration file using the

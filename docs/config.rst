@@ -339,12 +339,6 @@ Contributor-oriented settings
 
   Default: ``no``
 
-``b4.send-hide-cover-to-cc`` (v0.10+)
-  Always hide To: and Cc: trailers from the cover letter, just include
-  them into the corresponding message recipient headers.
-
-  Default: ``no``
-
 ``b4.send-auto-to-cmd`` (v0.10+)
   Command to use to generate the list of To: recipients. Has no effect
   if the specified script is not found in the repository.

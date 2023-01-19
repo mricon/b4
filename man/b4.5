@@ -604,7 +604,7 @@ Enroll current branch, using the passed tag, branch, or commit as fork base
 .INDENT 0.0
 .TP
 .B usage:
-b4 send [\-h] [\-d] [\-o OUTPUT_DIR] [\-\-reflect] [\-\-no\-trailer\-to\-cc] [\-\-hide\-cover\-to\-cc] [\-\-to TO [TO ...]] [\-\-cc CC [CC ...]] [\-\-not\-me\-too] [\-\-resend RESEND] [\-\-no\-sign] [\-\-web\-auth\-new] [\-\-web\-auth\-verify VERIFY_TOKEN]
+b4 send [\-h] [\-d] [\-o OUTPUT_DIR] [\-\-reflect] [\-\-no\-trailer\-to\-cc] [\-\-to TO [TO ...]] [\-\-cc CC [CC ...]] [\-\-not\-me\-too] [\-\-resend RESEND] [\-\-no\-sign] [\-\-web\-auth\-new] [\-\-web\-auth\-verify VERIFY_TOKEN]
 .TP
 .B options:
 .INDENT 7.0
@@ -623,9 +623,6 @@ Send everything to yourself instead of the actual recipients
 .TP
 .B  \-\-no\-trailer\-to\-cc
 Do not add any addresses found in the cover or patch trailers to To: or Cc:
-.TP
-.B  \-\-hide\-cover\-to\-cc
-Hide To: and Cc: entries from the cover letter trailers (but still send to them)
 .UNINDENT
 .INDENT 7.0
 .TP

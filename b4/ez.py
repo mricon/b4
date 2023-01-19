@@ -1006,7 +1006,7 @@ def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) 
     return msgid_tpt
 
 
-def get_cover_dests(cbody: str, hide: bool = True) -> Tuple[List, List, str]:
+def get_cover_dests(cbody: str) -> Tuple[List, List, str]:
     htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(cbody)
     tos = list()
     ccs = list()
@@ -1017,8 +1017,7 @@ def get_cover_dests(cbody: str, hide: bool = True) -> Tuple[List, List, str]:
         elif mtr.lname == 'cc':
             ccs.append(mtr.addr)
             mtrs.remove(mtr)
-    if hide:
-        cbody = b4.LoreMessage.rebuild_message(htrs, cmsg, mtrs, basement, sig)
+    cbody = b4.LoreMessage.rebuild_message(htrs, cmsg, mtrs, basement, sig)
     return tos, ccs, cbody
 
 
@@ -1118,8 +1117,7 @@ def get_mailfrom() -> Tuple[str, str]:
     return usercfg.get('name'), usercfg.get('email')
 
 
-def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
-                               addtracking: bool = True, hide_cover_to_cc: bool = False
+def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True
                                ) -> Tuple[List, List, str, List[Tuple[str, email.message.Message]]]:
     cover, tracking = load_cover(strip_comments=True)
 
@@ -1184,7 +1182,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
     wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, subsequent_indent=' ', width=75)
     thdata = ''.join(wrapped).replace('X-B4-Tracking: ', '')
 
-    alltos, allccs, cbody = get_cover_dests(cover_letter, hide=hide_cover_to_cc)
+    alltos, allccs, cbody = get_cover_dests(cover_letter)
     if len(patches) == 1:
         mixin_cover(cbody, patches)
     else:
@@ -1197,8 +1195,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True,
     return alltos, allccs, tag_msg, patches
 
 
-def get_sent_tag_as_patches(tagname: str, revision: int, hide_cover_to_cc: bool = False
-                            ) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
+def get_sent_tag_as_patches(tagname: str, revision: int) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
     cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
 
     csubject, cbody = get_cover_subject_body(cover)
@@ -1215,7 +1212,7 @@ def get_sent_tag_as_patches(tagname: str, revision: int, hide_cover_to_cc: bool 
                                       seriests=seriests,
                                       mailfrom=mailfrom)
 
-    alltos, allccs, cbody = get_cover_dests(cbody, hide=hide_cover_to_cc)
+    alltos, allccs, cbody = get_cover_dests(cbody)
     if len(patches) == 1:
         mixin_cover(cbody, patches)
     else:
@@ -1256,8 +1253,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     mybranch = b4.git_get_current_branch()
 
     config = b4.get_main_config()
-    if not cmdargs.hide_cover_to_cc and config.get('send-hide-cover-to-cc', '').lower() in {'yes', 'true', '1'}:
-        cmdargs.hide_cover_to_cc = True
 
     tag_msg = None
     cl_msgid = None
@@ -1269,8 +1264,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision,
-                                                                hide_cover_to_cc=cmdargs.hide_cover_to_cc)
+            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert tag to patches: %s', ex)
             sys.exit(1)
@@ -1294,8 +1288,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         try:
-            todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(
-                hide_cover_to_cc=cmdargs.hide_cover_to_cc)
+            todests, ccdests, tag_msg, patches = get_prep_branch_as_patches()
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
             sys.exit(1)

@@ -388,7 +388,7 @@ Enroll existing branch:
 b4 send
 ~~~~~~~
 usage:
-  b4 send [-h] [-d] [-o OUTPUT_DIR] [--reflect] [--no-trailer-to-cc] [--hide-cover-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend RESEND] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
+  b4 send [-h] [-d] [-o OUTPUT_DIR] [--reflect] [--no-trailer-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend RESEND] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
 
 options:
   -h, --help            show this help message and exit
@@ -401,9 +401,6 @@ options:
 
   --no-trailer-to-cc
                         Do not add any addresses found in the cover or patch trailers to To: or Cc:
-
-  --hide-cover-to-cc
-                        Hide To: and Cc: entries from the cover letter trailers (but still send to them)
 
   --to TO [TO ...]
                         Addresses to add to the To: list
