@@ -775,7 +775,7 @@ class LoreSeries:
 
             if stalecache:
                 logger.debug('Stale cache for [v%s] %s', self.revision, self.subject)
-                save_cache(None, msgid, suffix='fakeam')
+                clear_cache(msgid, suffix='fakeam')
 
         logger.info('Preparing fake-am for v%s: %s', self.revision, self.subject)
         with git_temp_worktree(gitdir):
@@ -2510,7 +2510,7 @@ def get_cache_dir(appname: str = 'b4') -> str:
     return cachedir
 
 
-def get_cache_file(identifier, suffix=None):
+def get_cache_file(identifier: str, suffix: Optional[str] = None):
     cachedir = get_cache_dir()
     cachefile = hashlib.sha1(identifier.encode()).hexdigest()
     if suffix:
@@ -2518,7 +2518,7 @@ def get_cache_file(identifier, suffix=None):
     return os.path.join(cachedir, cachefile)
 
 
-def get_cache(identifier, suffix=None):
+def get_cache(identifier: str, suffix: Optional[str] = None) -> Optional[str]:
     fullpath = get_cache_file(identifier, suffix=suffix)
     try:
         with open(fullpath) as fh:
@@ -2529,15 +2529,15 @@ def get_cache(identifier, suffix=None):
     return None
 
 
-def save_cache(contents, identifier, suffix=None, mode='w'):
+def clear_cache(identifier: str, suffix: Optional[str] = None) -> None:
     fullpath = get_cache_file(identifier, suffix=suffix)
-    if not contents:
-        # noinspection PyBroadException
-        try:
-            os.unlink(fullpath)
-            logger.debug('Removed cache %s for %s', fullpath, identifier)
-        except:
-            pass
+    if os.path.exists(fullpath):
+        os.unlink(fullpath)
+        logger.debug('Removed cache %s for %s', fullpath, identifier)
+
+
+def save_cache(contents: str, identifier: str, suffix: Optional[str] = None, mode: str = 'w') -> None:
+    fullpath = get_cache_file(identifier, suffix=suffix)
     try:
         with open(fullpath, mode) as fh:
             fh.write(contents)
