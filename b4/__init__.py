@@ -2906,7 +2906,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         msg.replace_header('From', setfrom)
 
         if seriests:
-            patchts = seriests + counter
+            patchts = seriests + counter + 1
             origdate = msg.get('Date')
             if origdate:
                 msg.replace_header('Date', email.utils.formatdate(patchts, localtime=True))
