@@ -1390,15 +1390,20 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         pathlib.Path(cmdargs.output_dir).mkdir(parents=True, exist_ok=True)
 
     sconfig = b4.get_sendemail_config()
-    endpoint = config.get('send-endpoint-web', '')
-    if not re.search(r'^https?://', endpoint):
-        endpoint = None
-    if not endpoint and not sconfig.get('smtpserver'):
-        # Use the default endpoint if we are in the kernel repo
-        topdir = b4.git_get_toplevel()
-        if os.path.exists(os.path.join(topdir, 'Kconfig')):
-            logger.debug('No sendemail configs found, will use the default web endpoint')
-            endpoint = DEFAULT_ENDPOINT
+    # If we have an smtp server defined, always use that instead of the endpoint
+    # we may make this configurable in the future, but this almost always makes sense
+    endpoint = None
+    if not sconfig.get('smtpserver'):
+        endpoint = config.get('send-endpoint-web', '')
+        if not re.search(r'^https?://', endpoint):
+            logger.debug('Endpoint does not start with https, ignoring: %s', endpoint)
+            endpoint = None
+        if not endpoint:
+            # Use the default endpoint if we are in the kernel repo
+            topdir = b4.git_get_toplevel()
+            if os.path.exists(os.path.join(topdir, 'Kconfig')):
+                logger.debug('No sendemail configs found, will use the default web endpoint')
+                endpoint = DEFAULT_ENDPOINT
 
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
