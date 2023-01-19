@@ -226,8 +226,8 @@ def get_rev_count(revrange: str, maxrevs: Optional[int] = 500) -> int:
 def get_base_forkpoint(basebranch: str, mybranch: Optional[str] = None) -> str:
     if mybranch is None:
         mybranch = b4.git_get_current_branch()
-    logger.debug('Finding the merge-base with %s', basebranch)
-    gitargs = ['merge-base', basebranch]
+    logger.debug('Finding the fork-point with %s', basebranch)
+    gitargs = ['merge-base', '--fork-point', basebranch]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
         logger.critical('CRITICAL: Could not find common ancestor with %s', basebranch)
