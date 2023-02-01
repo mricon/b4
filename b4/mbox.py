@@ -211,14 +211,17 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
         logger.critical(' Link: %s', linkurl)
 
     base_commit = None
-    matches = re.search(r'base-commit: .*?([\da-f]+)', first_body, re.MULTILINE)
-    if matches:
-        base_commit = matches.groups()[0]
+    if cmdargs.mergebase:
+        base_commit = cmdargs.mergebase
     else:
-        # Try a more relaxed search
-        matches = re.search(r'based on .*?([\da-f]{40})', first_body, re.MULTILINE)
+        matches = re.search(r'base-commit: .*?([\da-f]+)', first_body, re.MULTILINE)
         if matches:
             base_commit = matches.groups()[0]
+        else:
+            # Try a more relaxed search
+            matches = re.search(r'based on .*?([\da-f]{40})', first_body, re.MULTILINE)
+            if matches:
+                base_commit = matches.groups()[0]
 
     if base_commit and topdir:
         # Does it actually exist in this tree?
@@ -670,8 +673,8 @@ def refetch(dest: str) -> None:
 
 
 def main(cmdargs: argparse.Namespace) -> None:
+    # We force some settings
     if cmdargs.subcmd == 'shazam':
-        # We force some settings
         cmdargs.checknewer = True
         cmdargs.threeway = False
         cmdargs.nopartialreroll = False
@@ -683,6 +686,8 @@ def main(cmdargs: argparse.Namespace) -> None:
             cmdargs.guessbase = True
         else:
             cmdargs.guessbase = False
+    else:
+        cmdargs.mergebase = False
 
     if cmdargs.checknewer:
         # Force nocache mode

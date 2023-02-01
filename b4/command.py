@@ -175,6 +175,8 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_sh.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
                        help=('(use with -H or -M) When guessing base, go back this many days from the patch date '
                              '(default: 3 weeks)'))
+    sp_sh.add_argument('--merge-base', dest='mergebase', type=str, default=None,
+                       help=('(use with -H or -M) Force this base when merging'))
     sp_sh.set_defaults(func=cmd_shazam)
 
     # b4 pr

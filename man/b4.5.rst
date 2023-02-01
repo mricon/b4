@@ -230,6 +230,8 @@ options:
                         Attempt to merge series as if it were a pull request (execs git-merge)
   --guess-lookback GUESSDAYS
                         (use with -H or -M) When guessing base, go back this many days from the patch date (default: 3 weeks)
+  --merge-base COMMIT
+                        (use with -H or -M) Force this base when merging
 
 *Example*: b4 shazam -H 20200313231252.64999-1-keescook@chromium.org
 
