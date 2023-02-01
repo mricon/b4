@@ -59,7 +59,7 @@ except ModuleNotFoundError:
 # global setting allowing us to turn off networking
 can_network = True
 
-__VERSION__ = '0.12.0'
+__VERSION__ = '0.13-dev'
 PW_REST_API_VERSION = '1.2'
 
 
