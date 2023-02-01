@@ -1704,38 +1704,48 @@ def show_revision() -> None:
                 logger.info('  %s: %s', rn, config['linkmask'] % link)
 
 
-def show_info() -> None:
+def show_info(param: str) -> None:
     is_prep_branch(mustbe=True)
+    info = dict()
     mybranch = b4.git_get_current_branch(None)
-    print('branch: %s' % mybranch)
+    info['branch'] = mybranch
     cover, tracking = load_cover()
     csubject, cbody = get_cover_subject_body(cover)
-    print('cover-subject: %s' % csubject.full_subject)
+    info['cover-subject'] = csubject.full_subject
     ts = tracking['series']
     if ts.get('prefixes'):
-        print('prefixes: %s' % ' '.join(ts.get('prefixes')))
-    print('change-id: %s' % ts.get('change-id'))
+        info['prefixes'] = ' '.join(ts.get('prefixes'))
+    info['change-id'] = ts.get('change-id')
     revision = ts.get('revision')
-    print('revision: %s' % revision)
+    info['revision'] = revision
     strategy = get_cover_strategy()
-    print('cover-strategy: %s' % strategy)
+    info['cover-strategy'] = strategy
     if ts.get('base-branch'):
-        print('base-branch: %s' % ts['base-branch'])
+        info['base-branch'] = ts['base-branch']
     base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details()
-    print('base-commit: %s' % base_commit)
-    print('start-commit: %s' % start_commit)
-    print('end-commit: %s' % end_commit)
+    info['base-commit'] = base_commit
+    info['start-commit'] = start_commit
+    info['end-commit'] = end_commit
+    info['series-range'] = f'{start_commit}..{end_commit}'
     for line in oneline:
         short, subject = line.split(maxsplit=1)
-        print('commit-%s: %s' % (short, subject))
+        info[f'commit-{short}'] = subject
     if 'history' in ts:
         for rn, links in reversed(ts['history'].items()):
             tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
             try:
                 cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
-                print('series-%s: %s..%s %s' % (rn, base_commit[:12], tagname, links[0]))
+                info[f'series-{rn}'] = '%s..%s %s' % (base_commit[:12], tagname, links[0])
             except RuntimeError:
                 logger.debug('No tag matching %s', tagname)
+    if param == '_all':
+        for key, val in info.items():
+            print('%s: %s' % (key, val))
+    elif param in info:
+        print(info[param])
+    else:
+        logger.critical('No info about %s', param)
+        sys.exit(1)
 
 
 def force_revision(forceto: int) -> None:
@@ -1914,7 +1924,7 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         return show_revision()
 
     if cmdargs.show_info:
-        return show_info()
+        return show_info(cmdargs.show_info)
 
     if cmdargs.format_patch:
         return format_patch(cmdargs.format_patch)
