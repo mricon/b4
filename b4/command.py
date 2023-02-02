@@ -176,7 +176,7 @@ def setup_parser() -> argparse.ArgumentParser:
                        help=('(use with -H or -M) When guessing base, go back this many days from the patch date '
                              '(default: 3 weeks)'))
     sp_sh.add_argument('--merge-base', dest='mergebase', type=str, default=None,
-                       help=('(use with -H or -M) Force this base when merging'))
+                       help='(use with -H or -M) Force this base when merging')
     sp_sh.set_defaults(func=cmd_shazam)
 
     # b4 pr
@@ -260,11 +260,11 @@ def setup_parser() -> argparse.ArgumentParser:
     # b4 prep
     sp_prep = subparsers.add_parser('prep', help='Work on patch series to submit for mailing list review')
     sp_prep.add_argument('-c', '--auto-to-cc', action='store_true', default=False,
-                       help='Automatically populate cover letter trailers with To and Cc addresses')
+                         help='Automatically populate cover letter trailers with To and Cc addresses')
     sp_prep.add_argument('--force-revision', metavar='N', type=int,
-                       help='Force revision to be this number instead')
+                         help='Force revision to be this number instead')
     sp_prep.add_argument('--set-prefixes', metavar='PREFIX', nargs='+',
-                       help='Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)')
+                         help='Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)')
 
     spp_g = sp_prep.add_mutually_exclusive_group()
     spp_g.add_argument('-p', '--format-patch', metavar='OUTPUT_DIR',

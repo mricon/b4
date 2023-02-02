@@ -1101,7 +1101,7 @@ def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
 
 
 def rethread(patches: List[Tuple[str, email.message.Message]]):
-    refto  = patches[0][1].get('message-id')
+    refto = patches[0][1].get('message-id')
     for commit, msg in patches[1:]:
         msg.add_header('References', refto)
         msg.add_header('In-Reply-To', refto)

@@ -1438,7 +1438,7 @@ class LoreMessage:
                     transform: Literal['encode', 'decode', 'preserve'] = 'preserve') -> bytes:
         hname, hval = hdr
         if hname.lower() in ('to', 'cc', 'from', 'x-original-from'):
-            _parts = [f'{hname}: ',]
+            _parts = [f'{hname}: ']
             first = True
             for addr in email.utils.getaddresses([hval]):
                 if transform == 'encode' and not addr[0].isascii():
@@ -1493,7 +1493,7 @@ class LoreMessage:
         return f'{nl} '.join(_parts).encode()
 
     @staticmethod
-    def get_msg_as_bytes(msg: email.message.Message, nl: str ='\n',
+    def get_msg_as_bytes(msg: email.message.Message, nl: str = '\n',
                          headers: Literal['encode', 'decode', 'preserve'] = 'preserve') -> bytes:
         bdata = b''
         for hname, hval in msg.items():
@@ -3562,6 +3562,7 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
                 break
 
     return msgid, msgs
+
 
 def git_revparse_obj(gitobj: str) -> str:
     ecode, out = git_run_command(None, ['rev-parse', gitobj])

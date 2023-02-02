@@ -19,7 +19,7 @@ import gzip
 import urllib.parse
 import requests
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from email import utils, charset
 from email.mime.text import MIMEText
@@ -358,7 +358,7 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage, mailfrom: Optional[str]
             msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
 
         msgs.append(msg)
-        logger.info('  %s', re.sub(r'\n\s*', ' ' , msg.get('Subject')))
+        logger.info('  %s', re.sub(r'\n\s*', ' ', msg.get('Subject')))
 
     logger.info('Exploded %s messages', len(msgs))
     if retrieve_links and linked_ids:
