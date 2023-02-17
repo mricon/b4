@@ -388,7 +388,7 @@ Enroll existing branch:
 b4 send
 ~~~~~~~
 usage:
-  b4 send [-h] [-d] [-o OUTPUT_DIR] [--reflect] [--no-trailer-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend RESEND] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
+  b4 send [-h] [-d] [-o OUTPUT_DIR] [--reflect] [--no-trailer-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend [RESEND]] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
 
 options:
   -h, --help            show this help message and exit
@@ -409,7 +409,7 @@ options:
 
   --not-me-too
                         Remove yourself from the To: or Cc: list
-  --resend RESEND
+  --resend [RESEND]
                         Resend a previously sent version of the series
   --no-sign
                         Do not add the cryptographic attestation signature header
