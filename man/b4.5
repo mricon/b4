@@ -604,7 +604,7 @@ Enroll current branch, using the passed tag, branch, or commit as fork base
 .INDENT 0.0
 .TP
 .B usage:
-b4 send [\-h] [\-d] [\-o OUTPUT_DIR] [\-\-reflect] [\-\-no\-trailer\-to\-cc] [\-\-to TO [TO ...]] [\-\-cc CC [CC ...]] [\-\-not\-me\-too] [\-\-resend RESEND] [\-\-no\-sign] [\-\-web\-auth\-new] [\-\-web\-auth\-verify VERIFY_TOKEN]
+b4 send [\-h] [\-d] [\-o OUTPUT_DIR] [\-\-reflect] [\-\-no\-trailer\-to\-cc] [\-\-to TO [TO ...]] [\-\-cc CC [CC ...]] [\-\-not\-me\-too] [\-\-resend [RESEND]] [\-\-no\-sign] [\-\-web\-auth\-new] [\-\-web\-auth\-verify VERIFY_TOKEN]
 .TP
 .B options:
 .INDENT 7.0
@@ -637,7 +637,7 @@ Addresses to add to the Cc: list
 .B  \-\-not\-me\-too
 Remove yourself from the To: or Cc: list
 .TP
-.BI \-\-resend \ RESEND
+.BI \-\-resend \ [RESEND]
 Resend a previously sent version of the series
 .TP
 .B  \-\-no\-sign

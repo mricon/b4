@@ -1257,10 +1257,16 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     tag_msg = None
     cl_msgid = None
     if cmdargs.resend:
-        tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, cmdargs.resend)
+        if cmdargs.resend == 'latest':
+            cover, tracking = load_cover()
+            revstr = tracking['series']['revision'] - 1
+        else:
+            revstr = cmdargs.resend
+
+        tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, revstr)
 
         if revision is None:
-            logger.critical('Could not figure out revision from %s', cmdargs.resend)
+            logger.critical('Could not figure out revision from %s', revstr)
             sys.exit(1)
 
         try:
