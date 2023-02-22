@@ -940,10 +940,13 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
 def get_series_details(start_commit: Optional[str] = None) -> Tuple[str, str, str, List[str], str, str]:
     if not start_commit:
         start_commit = get_series_start()
-    gitargs = ['rev-parse', f'{start_commit}~1']
-    lines = b4.git_get_command_lines(None, gitargs)
-    base_commit = lines[0]
     strategy = get_cover_strategy()
+    if strategy == 'commit':
+        gitargs = ['rev-parse', f'{start_commit}~1']
+        lines = b4.git_get_command_lines(None, gitargs)
+        base_commit = lines[0]
+    else:
+        base_commit = start_commit
     if strategy == 'tip-commit':
         cover_commit = find_cover_commit()
         endrange = b4.git_revparse_obj(f'{cover_commit}~1')
