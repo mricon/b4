@@ -1192,6 +1192,17 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     if addtracking:
         patches[0][1].add_header('X-B4-Tracking', thdata)
 
+    samethread = config.get('send-same-thread', '').lower() in {'yes', 'true', 'y'}
+    if samethread and revision > 1:
+        oldrev = revision - 1
+        voldrev = f'v{oldrev}'
+        try:
+            oldmsgid = tracking['series']['history'][voldrev][-1]
+            patches[0][1].add_header('In-Reply-To', f'<{oldmsgid}>')
+            patches[0][1].add_header('References', f'<{oldmsgid}>')
+        except (KeyError, IndexError):
+            logger.debug('Could not find previous series msgid, skipping %s', voldrev)
+
     tag_msg = f'{csubject.full_subject}\n\n{cover_letter}'
     return alltos, allccs, tag_msg, patches
 

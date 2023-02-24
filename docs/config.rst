@@ -363,6 +363,12 @@ Contributor-oriented settings
 
   Default:: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
 
+``b4.send-same-thread`` (v0.13+)
+  When sending a new version of a series, make it part of the same
+  thread as the previous one. The first mail will be sent as a reply
+  to the previous version's cover letter.
+
+  Default: ``no``
 
 ``b4.prep-cover-strategy`` (v0.10+)
   Alternative cover letter storage strategy to use (see :ref:`prep_cover_strategies`).
