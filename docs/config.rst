@@ -58,6 +58,18 @@ These options control many of the core features of b4.
 
   Default: ``https://lore.kernel.org/all/?x=m&t=1&q=%s``
 
+``b4.linktrailermask`` (v0.13+)
+  This allows overriding the format of the Link: trailer, in case you
+  want to call it something other thank "Link". For example, some
+  projects require "Message-Id" trailers, so you can make b4 behave the
+  way you like by setting::
+
+      linktrailermask = Message-Id: <%s>
+
+  The ``%s`` will be replaced by the message-id.
+
+  Default: ``Link: https://lore.kernel.org/%s``
+
 ``b4.listid-preference`` (v0.8+)
   Messages are frequently sent to multiple distribution lists, and some
   servers may apply content munging to modify the headers or the message

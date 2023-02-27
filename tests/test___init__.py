@@ -87,6 +87,7 @@ def test_parse_trailers(sampledir, source, expected):
     ('single', {}, {'addmysob': True}, 'addmysob', {}),
     ('single', {}, {'addmysob': True, 'copyccs': True}, 'copyccs', {}),
     ('single', {}, {'addmysob': True, 'addlink': True}, 'addlink', {}),
+    ('single', {}, {'addmysob': True, 'addlink': True}, 'addmsgid', {'linktrailermask': 'Message-Id: <%s>'}),
     ('single', {}, {'addmysob': True, 'copyccs': True}, 'ordered',
      {'trailer-order': 'Cc,Tested*,Reviewed*,*'}),
     ('single', {'sloppytrailers': True}, {'addmysob': True}, 'sloppy', {}),

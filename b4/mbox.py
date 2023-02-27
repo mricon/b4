@@ -99,7 +99,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     try:
         am_msgs = lser.get_am_ready(noaddtrailers=cmdargs.noaddtrailers,
                                     covertrailers=covertrailers, addmysob=cmdargs.addmysob,
-                                    addlink=cmdargs.addlink, linkmask=config['linkmask'], cherrypick=cherrypick,
+                                    addlink=cmdargs.addlink, cherrypick=cherrypick,
                                     copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars)
     except KeyError:
         sys.exit(1)
@@ -351,6 +351,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
                 'authorname': cmsg.fromname,
                 'authoremail': cmsg.fromemail,
                 'covermessage': covermessage,
+                'mid': top_msgid,
                 'midurl': linkurl,
             }
             if len(am_msgs) > 1:
