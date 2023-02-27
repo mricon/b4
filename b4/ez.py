@@ -826,7 +826,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if not msg:
             continue
         commit_map[commit] = msg
-        body = msg.get_payload(decode=True).decode()
+        body, charset = b4.LoreMessage.get_payload(msg)
         patchid = b4.LoreMessage.get_patch_id(body)
         ls = b4.LoreSubject(msg.get('subject'))
         by_subject[ls.subject] = commit
@@ -876,7 +876,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 logger.debug('No match for %s', lmsg.full_subject)
                 continue
 
-            parts = b4.LoreMessage.get_body_parts(commit_map[commit].get_payload(decode=True).decode())
+            mbody, mcharset = b4.LoreMessage.get_payload(commit_map[commit])
+            parts = b4.LoreMessage.get_body_parts(mbody)
             for fltr in addtrailers:
                 if fltr not in parts[2]:
                     if commit not in updates:
@@ -1045,7 +1046,7 @@ def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str,
 
 def mixin_cover(cbody: str, patches: List[Tuple[str, email.message.Message]]) -> None:
     msg = patches[0][1]
-    pbody = msg.get_payload(decode=True).decode()
+    pbody, pcharset = b4.LoreMessage.get_payload(msg)
     pheaders, pmessage, ptrailers, pbasement, psignature = b4.LoreMessage.get_body_parts(pbody)
     cheaders, cmessage, ctrailers, cbasement, csignature = b4.LoreMessage.get_body_parts(cbody)
     nbparts = list()
@@ -1311,7 +1312,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         for commit, msg in patches:
             if not msg:
                 continue
-            body = msg.get_payload(decode=True).decode()
+            body, charset = b4.LoreMessage.get_payload(msg)
             btrs, junk = b4.LoreMessage.find_trailers(body)
             for btr in btrs:
                 if btr.type != 'person':
@@ -1909,7 +1910,7 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
                 if b4.LoreMessage.get_clean_msgid(msg) == msgid:
                     # Prepare annotated tag body from the cover letter
                     lsubject = b4.LoreSubject(msg.get('subject'))
-                    cbody = msg.get_payload(decode=True).decode()
+                    cbody, charset = b4.LoreMessage.get_payload(msg)
                     prefixes = lsubject.get_extra_prefixes()
                     if prefixes:
                         subject = '[%s] %s' % (' '.join(prefixes), lsubject.subject)

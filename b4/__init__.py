@@ -1040,37 +1040,7 @@ class LoreMessage:
             self.date = self.date.replace(tzinfo=datetime.timezone.utc)
 
         # walk until we find the first text/plain part
-        mcharset = self.msg.get_content_charset()
-        if not mcharset:
-            mcharset = 'utf-8'
-        self.charset = mcharset
-
-        for part in msg.walk():
-            cte = part.get_content_type()
-            if cte.find('/plain') < 0 and cte.find('/x-patch') < 0:
-                continue
-            payload = part.get_payload(decode=True)
-            if payload is None:
-                continue
-            pcharset = part.get_content_charset()
-            if not pcharset:
-                pcharset = mcharset
-            try:
-                payload = payload.decode(pcharset, errors='replace')
-                self.charset = pcharset
-            except LookupError:
-                # what kind of encoding is that?
-                # Whatever, we'll use utf-8 and hope for the best
-                payload = payload.decode('utf-8', errors='replace')
-                part.set_param('charset', 'utf-8')
-                self.charset = 'utf-8'
-            if self.body is None:
-                self.body = payload
-                continue
-            # If we already found a body, but we now find something that contains a diff,
-            # then we prefer this part
-            if DIFF_RE.search(payload):
-                self.body = payload
+        self.body, self.charset = LoreMessage.get_payload(self.msg)
 
         if self.body is None:
             # Woah, we didn't find any usable parts
@@ -1395,6 +1365,43 @@ class LoreMessage:
         out.append('  --- end attestors ---')
 
         return '\n'.join(out)
+
+    @staticmethod
+    def get_payload(msg: email.message.Message) -> Tuple[str, str]:
+        # walk until we find the first text/plain part
+        mcharset = msg.get_content_charset()
+        if not mcharset:
+            mcharset = 'utf-8'
+
+        mbody = None
+        for part in msg.walk():
+            cte = part.get_content_type()
+            if cte.find('/plain') < 0 and cte.find('/x-patch') < 0:
+                continue
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                continue
+            pcharset = part.get_content_charset()
+            if not pcharset:
+                pcharset = mcharset
+            try:
+                payload = payload.decode(pcharset, errors='replace')
+                mcharset = pcharset
+            except LookupError:
+                # what kind of encoding is that?
+                # Whatever, we'll use utf-8 and hope for the best
+                payload = payload.decode('utf-8', errors='replace')
+                part.set_param('charset', 'utf-8')
+                mcharset = 'utf-8'
+            if mbody is None:
+                mbody = payload
+                continue
+            # If we already found a body, but we now find something that contains a diff,
+            # then we prefer this part
+            if DIFF_RE.search(payload):
+                mbody = payload
+
+        return mbody, mcharset
 
     @staticmethod
     def clean_header(hdrval):
