@@ -529,10 +529,10 @@ def make_magic_json(data: dict) -> str:
     return mj + json.dumps(data, indent=2)
 
 
-def load_cover(strip_comments: bool = False) -> Tuple[str, dict]:
-    strategy = get_cover_strategy()
+def load_cover(strip_comments: bool = False, usebranch: Optional[str] = None) -> Tuple[str, dict]:
+    strategy = get_cover_strategy(usebranch)
     if strategy in {'commit', 'tip-commit'}:
-        cover_commit = find_cover_commit()
+        cover_commit = find_cover_commit(usebranch=usebranch)
         if not cover_commit:
             cover = ''
             tracking = dict()
@@ -607,8 +607,10 @@ def store_cover(content: str, tracking: dict, new: bool = False) -> None:
 # 'tip-merge': in an empty merge commit at the tip of the branch : TODO
 #              (once/if git upstream properly supports it)
 
-def get_cover_strategy(branch: Optional[str] = None) -> str:
-    if branch is None:
+def get_cover_strategy(usebranch: Optional[str] = None) -> str:
+    if usebranch:
+        branch = usebranch
+    else:
         branch = b4.git_get_current_branch()
     # Check local branch config for the strategy
     bconfig = b4.get_config_from_git(rf'branch\.{branch}\..*')
@@ -626,9 +628,12 @@ def get_cover_strategy(branch: Optional[str] = None) -> str:
     sys.exit(1)
 
 
-def is_prep_branch(mustbe: bool = False) -> bool:
+def is_prep_branch(mustbe: bool = False, usebranch: Optional[str] = None) -> bool:
     mustmsg = 'CRITICAL: This is not a prep-managed branch.'
-    mybranch = b4.git_get_current_branch()
+    if usebranch:
+        mybranch = usebranch
+    else:
+        mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy(mybranch)
     if strategy in {'commit', 'tip-commit'}:
         if find_cover_commit() is None:
@@ -651,11 +656,14 @@ def is_prep_branch(mustbe: bool = False) -> bool:
     sys.exit(1)
 
 
-def find_cover_commit() -> Optional[str]:
+def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
     # Walk back commits until we find the cover letter
     # Our covers always contain the MAGIC_MARKER line
     logger.debug('Looking for the cover letter commit with magic marker "%s"', MAGIC_MARKER)
-    gitargs = ['log', '--grep', MAGIC_MARKER, '-F', '--pretty=oneline', '--max-count=1', '--since=1.year']
+    if not usebranch:
+        usebranch = b4.git_get_current_branch()
+    gitargs = ['log', '--grep', MAGIC_MARKER, '-F', '--pretty=oneline', '--max-count=1', '--since=1.year',
+               usebranch]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
         return None
@@ -714,14 +722,17 @@ def edit_cover() -> None:
     logger.info('Cover letter updated.')
 
 
-def get_series_start() -> str:
-    strategy = get_cover_strategy()
+def get_series_start(usebranch: Optional[str] = None) -> str:
+    if usebranch:
+        mybranch = usebranch
+    else:
+        mybranch = b4.git_get_current_branch()
+    strategy = get_cover_strategy(usebranch=mybranch)
     forkpoint = None
     if strategy == 'commit':
         # Easy, we start at the cover letter commit
-        return find_cover_commit()
+        return find_cover_commit(usebranch=mybranch)
     if strategy == 'branch-description':
-        mybranch = b4.git_get_current_branch()
         bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
         tracking = bcfg.get('b4-tracking')
         if not tracking:
@@ -736,7 +747,7 @@ def get_series_start() -> str:
             sys.exit(1)
         logger.debug('series_start: %s, commitcount=%s', forkpoint, commitcount)
     if strategy == 'tip-commit':
-        cover, tracking = load_cover()
+        cover, tracking = load_cover(usebranch=mybranch)
         basebranch = tracking['series']['base-branch']
         try:
             forkpoint = get_base_forkpoint(basebranch)
@@ -938,18 +949,23 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     return utils.getaddresses(addrs.split('\n'))
 
 
-def get_series_details(start_commit: Optional[str] = None) -> Tuple[str, str, str, List[str], str, str]:
+def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[str] = None
+                       ) -> Tuple[str, str, str, List[str], str, str]:
+    if usebranch:
+        mybranch = usebranch
+    else:
+        mybranch = b4.git_get_current_branch()
     if not start_commit:
-        start_commit = get_series_start()
+        start_commit = get_series_start(usebranch=mybranch)
     gitargs = ['rev-parse', f'{start_commit}~1']
     lines = b4.git_get_command_lines(None, gitargs)
     base_commit = lines[0]
-    strategy = get_cover_strategy()
+    strategy = get_cover_strategy(usebranch=mybranch)
     if strategy == 'tip-commit':
-        cover_commit = find_cover_commit()
+        cover_commit = find_cover_commit(usebranch=mybranch)
         endrange = b4.git_revparse_obj(f'{cover_commit}~1')
     else:
-        endrange = b4.git_revparse_obj('HEAD')
+        endrange = b4.git_revparse_obj(mybranch)
     gitargs = ['shortlog', f'{start_commit}..{endrange}']
     ecode, shortlog = b4.git_run_command(None, gitargs)
     gitargs = ['diff', '--stat', f'{start_commit}..{endrange}']
@@ -1721,11 +1737,34 @@ def show_revision() -> None:
 
 
 def show_info(param: str) -> None:
-    is_prep_branch(mustbe=True)
+    # is param a name of the branch?
+    if ':' in param:
+        chunks = param.split(':')
+        if len(chunks[0]):
+            if b4.git_branch_exists(None, chunks[0]):
+                mybranch = chunks[0]
+            elif b4.git_branch_exists(None, f'b4/{chunks[0]}'):
+                mybranch = f'b4/{chunks[0]}'
+            else:
+                logger.critical('No such branch: %s', chunks[0])
+                sys.exit(1)
+        else:
+            mybranch = b4.git_get_current_branch()
+        if not len(chunks[1]):
+            getval = '_all'
+        else:
+            getval = chunks[1]
+    elif b4.git_branch_exists(None, param):
+        mybranch = param
+        getval = '_all'
+    else:
+        mybranch = b4.git_get_current_branch()
+        getval = param
+
+    is_prep_branch(mustbe=True, usebranch=mybranch)
     info = dict()
-    mybranch = b4.git_get_current_branch(None)
     info['branch'] = mybranch
-    cover, tracking = load_cover()
+    cover, tracking = load_cover(usebranch=mybranch)
     csubject, cbody = get_cover_subject_body(cover)
     info['cover-subject'] = csubject.full_subject
     ts = tracking['series']
@@ -1734,11 +1773,11 @@ def show_info(param: str) -> None:
     info['change-id'] = ts.get('change-id')
     revision = ts.get('revision')
     info['revision'] = revision
-    strategy = get_cover_strategy()
+    strategy = get_cover_strategy(usebranch=mybranch)
     info['cover-strategy'] = strategy
     if ts.get('base-branch'):
         info['base-branch'] = ts['base-branch']
-    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details()
+    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=mybranch)
     info['base-commit'] = base_commit
     info['start-commit'] = start_commit
     info['end-commit'] = end_commit
@@ -1751,7 +1790,7 @@ def show_info(param: str) -> None:
             tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
             tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
-                logger.debug('No tag %s, trying with base branch name %s', mybranch)
+                logger.debug('No tag %s, trying with base branch name %s', tagname, mybranch)
                 tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
                 tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
@@ -1763,13 +1802,13 @@ def show_info(param: str) -> None:
                 except RuntimeError as ex:
                     logger.debug('Could not get base-commit info from %s: %s', tagname, ex)
 
-    if param == '_all':
+    if getval == '_all':
         for key, val in info.items():
             print('%s: %s' % (key, val))
-    elif param in info:
-        print(info[param])
+    elif getval in info:
+        print(info[getval])
     else:
-        logger.critical('No info about %s', param)
+        logger.critical('No info about %s', getval)
         sys.exit(1)
 
 

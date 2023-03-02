@@ -2968,6 +2968,12 @@ def git_commit_exists(gitdir: Optional[str], commit_id: str) -> bool:
     return ecode == 0
 
 
+def git_branch_exists(gitdir: Optional[str], branch_name: str):
+    gitargs = ['rev-parse', branch_name]
+    ecode, out = git_run_command(gitdir, gitargs)
+    return ecode == 0
+
+
 def git_revparse_tag(gitdir: Optional[str], tagname: str) -> Optional[str]:
     if not tagname.startswith('refs/tags/'):
         fulltag = f'refs/tags/{tagname}'

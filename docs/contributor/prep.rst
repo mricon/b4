@@ -270,9 +270,31 @@ or modifying defaults for some of these flags.
   When b4 sends the message, it will be expanded with the usual
   ``PATCH``, ``vN``, etc.
 
-``--show-info`` **(v0.11+)**
+``--show-info [PARAM]`` **(v0.13+)**
   Dumps information about the current series that can be parsed by other
-  tools.
+  tools. Starting with v0.13, he parameter can be one of the following:
+
+  - **keyname** to show just a specific value from the current branch
+  - **branchname** to show all info about a specific branch
+  - **branchname:keyname** to show a specific value from a specific
+    branch
+
+  For example, if you have a branch called ``b4/foodrv-bar`` and you
+  want to display the ``series-range`` value, run::
+
+      b4 prep --show-info b4/foodrv-bar:series-range
+
+  Or, to show all values for branch ``b4/foodrv-bar``::
+
+      b4 prep --show-info b4/foodrv-bar
+
+  Or, to show ``series-range`` for the current branch::
+
+      b4 prep --show-info series-range
+
+  And, to show all values for the current branch::
+
+      b4 prep --show-info
 
 ``-n NEW_SERIES_NAME, --new NEW_SERIES_NAME``
   Creates a new branch to start work on a new patch series.

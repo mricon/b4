@@ -277,8 +277,8 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Display a range-diff to previously sent revision N')
     spp_g.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
                        help='Mark current revision as sent and reroll (requires cover letter msgid)')
-    spp_g.add_argument('--show-info', metavar='PARAM', nargs='?', const='_all',
-                       help='Show current series info in a column-parseable format')
+    spp_g.add_argument('--show-info', metavar='PARAM', nargs='?', const=':_all',
+                       help='Show series info in a format that can be passed to other commands.')
 
     ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
     ag_prepn.add_argument('-n', '--new', dest='new_series_name',
