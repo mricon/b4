@@ -24,6 +24,7 @@ import base64
 import textwrap
 import gzip
 import io
+import tarfile
 
 from typing import Optional, Tuple, List, Union
 from email import utils
@@ -636,7 +637,7 @@ def is_prep_branch(mustbe: bool = False, usebranch: Optional[str] = None) -> boo
         mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy(mybranch)
     if strategy in {'commit', 'tip-commit'}:
-        if find_cover_commit() is None:
+        if find_cover_commit(usebranch=mybranch) is None:
             if mustbe:
                 logger.critical(mustmsg)
                 sys.exit(1)
@@ -1736,6 +1737,142 @@ def show_revision() -> None:
                 logger.info('  %s: %s', rn, config['linkmask'] % link)
 
 
+def write_to_tar(bio_tar: tarfile.TarFile, name, mtime, bio_file: io.BytesIO):
+    tifo = tarfile.TarInfo(name)
+    tuser = os.getlogin()
+    tuid = os.getuid()
+    tgid = os.getgid()
+    tifo.uid = tuid
+    tifo.gid = tgid
+    tifo.uname = tuser
+    tifo.gname = tuser
+    tifo.mtime = mtime
+    tifo.size = bio_file.tell()
+    bio_file.seek(0)
+    bio_tar.addfile(tifo, bio_file)
+
+
+def cleanup(param: str) -> None:
+    if param == '_show':
+        # Show all b4-tracked branches
+        lines = b4.git_get_command_lines(None, ['show-ref', '--heads'])
+        if not lines:
+            logger.critical('Git show-ref returned no heads')
+            sys.exit(1)
+        mybranches = list()
+        for line in lines:
+            parts = line.split(maxsplit=1)
+            if parts[1].startswith('refs/heads/b4/'):
+                mybranches.append(parts[1].replace('refs/heads/', ''))
+        if not len(mybranches):
+            logger.info('No b4-tracked branches found')
+            sys.exit(0)
+
+        logger.info('Please specify branch:')
+        for branch in mybranches:
+            logger.info(' %s', branch)
+        return
+
+    mybranch = param
+    if not b4.git_branch_exists(None, mybranch):
+        logger.critical('Not a known branch: %s', mybranch)
+        sys.exit(1)
+    is_prep_branch(mustbe=True, usebranch=mybranch)
+    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=mybranch)
+    # start commit and end commit can't be the same
+    if start_commit == end_commit:
+        logger.critical('%s appears to be an empty branch', mybranch)
+        sys.exit(1)
+    cover, tracking = load_cover(usebranch=mybranch)
+    # Find all tags
+    ts = tracking['series']
+    tags = list()
+    logger.info('Will archive and delete all of the following:')
+    logger.info('---')
+    logger.info('branch: %s', mybranch)
+    if 'history' in ts:
+        for rn, links in ts['history'].items():
+            tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
+            tag_commit = b4.git_revparse_tag(None, tagname)
+            if not tag_commit:
+                tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
+                tag_commit = b4.git_revparse_tag(None, tagname)
+            if not tag_commit:
+                logger.debug('No tag matching revision %s', revision)
+                continue
+            try:
+                cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+            except RuntimeError as ex:
+                logger.debug('Could not get base-commit info from %s: %s', tagname, ex)
+                continue
+
+            logger.info(' tag: %s', tagname)
+            tags.append((tagname, base_commit, tag_commit, revision, cover))
+    logger.info('---')
+    try:
+        input('Press Enter to confirm or Ctrl-C to abort')
+    except KeyboardInterrupt:
+        logger.info('')
+        sys.exit(130)
+
+    tio = io.BytesIO()
+    change_id = ts.get('change-id')
+    deletes = list()
+
+    with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
+        mnow = int(time.time())
+        # Add cover
+        ifh = io.BytesIO()
+        ifh.write(cover.encode())
+        write_to_tar(tfh, f'{change_id}/cover.txt', mnow, ifh)
+        ifh.close()
+        # Add tracking
+        ifh = io.BytesIO()
+        ifh.write(make_magic_json(tracking).encode())
+        write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
+        ifh.close()
+        # Add the current series
+        logger.info('Archiving branch %s', mybranch)
+        patches = b4.git_range_to_patches(None, start_commit, end_commit)
+        ifh = io.BytesIO()
+        b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
+        write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
+        ifh.close()
+        deletes.append(['branch', '--delete', '--force', mybranch])
+
+        for tagname, base_commit, tag_commit, revision, cover in tags:
+            logger.info('Archiving %s', tagname)
+            # use tag date as mtime
+            lines = b4.git_get_command_lines(None, ['log', '-1', '--format=%ct', tagname])
+            if not lines:
+                logger.critical('Could not get tag date for %s', tagname)
+                sys.exit(1)
+            mtime = int(lines[0])
+            ifh = io.BytesIO()
+            ifh.write(cover.encode())
+            write_to_tar(tfh, f'{change_id}/{SENT_TAG_PREFIX}patches-v{revision}.cover', mtime, ifh)
+            ifh.close()
+            patches = b4.git_range_to_patches(None, base_commit, tag_commit)
+            ifh = io.BytesIO()
+            b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
+            write_to_tar(tfh, f'{change_id}/{SENT_TAG_PREFIX}patches-v{revision}.mbx', mtime, ifh)
+            deletes.append(['tag', '--delete', tagname])
+
+    # Write in data_dir
+    datadir = b4.get_data_dir()
+    archpath = os.path.join(datadir, 'prep-archived')
+    pathlib.Path(archpath).mkdir(parents=True, exist_ok=True)
+    tarpath = os.path.join(archpath, f'{change_id}.tar.gz')
+    logger.info('Writing %s', tarpath)
+    with open(tarpath, mode='wb') as tout:
+        tout.write(tio.getvalue())
+    logger.info('Cleaning up git refs')
+    for gitargs in deletes:
+        b4.git_run_command(None, gitargs)
+    logger.info('---')
+    logger.info('Wrote: %s', tarpath)
+
+
 def show_info(param: str) -> None:
     # is param a name of the branch?
     if ':' in param:
@@ -1795,12 +1932,12 @@ def show_info(param: str) -> None:
                 tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
                 logger.debug('No tag matching revision %s', revision)
-            else:
-                try:
-                    cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
-                    info[f'series-{rn}'] = '%s..%s %s' % (base_commit[:12], tag_commit[:12], links[0])
-                except RuntimeError as ex:
-                    logger.debug('Could not get base-commit info from %s: %s', tagname, ex)
+                continue
+            try:
+                cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+                info[f'series-{rn}'] = '%s..%s %s' % (base_commit[:12], tag_commit[:12], links[0])
+            except RuntimeError as ex:
+                logger.debug('Could not get base-commit info from %s: %s', tagname, ex)
 
     if getval == '_all':
         for key, val in info.items():
@@ -1992,6 +2129,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.show_info:
         return show_info(cmdargs.show_info)
+
+    if cmdargs.cleanup:
+        return cleanup(cmdargs.cleanup)
 
     if cmdargs.format_patch:
         return format_patch(cmdargs.format_patch)
