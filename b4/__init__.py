@@ -2962,13 +2962,25 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
     return patches
 
 
-def git_commit_exists(gitdir, commit_id):
+def git_commit_exists(gitdir: Optional[str], commit_id: str) -> bool:
     gitargs = ['cat-file', '-e', commit_id]
     ecode, out = git_run_command(gitdir, gitargs)
     return ecode == 0
 
 
-def git_branch_contains(gitdir, commit_id):
+def git_revparse_tag(gitdir: Optional[str], tagname: str) -> Optional[str]:
+    if not tagname.startswith('refs/tags/'):
+        fulltag = f'refs/tags/{tagname}'
+    else:
+        fulltag = tagname
+    gitargs = ['rev-parse', fulltag]
+    ecode, out = git_run_command(gitdir, gitargs)
+    if ecode > 0:
+        return None
+    return out.strip()
+
+
+def git_branch_contains(gitdir: Optional[str], commit_id: str) -> List[str]:
     gitargs = ['branch', '--format=%(refname:short)', '--contains', commit_id]
     lines = git_get_command_lines(gitdir, gitargs)
     return lines

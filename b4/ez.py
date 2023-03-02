@@ -1268,12 +1268,17 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     tag_msg = None
     cl_msgid = None
+    cover, tracking = load_cover(strip_comments=True)
     if cmdargs.resend:
-        tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, cmdargs.resend)
-
+        # Start with full change-id based tag name
+        tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, cmdargs.resend)
         if revision is None:
             logger.critical('Could not figure out revision from %s', cmdargs.resend)
             sys.exit(1)
+
+        if not b4.git_revparse_tag(None, tagname):
+            # Try initial branch-name only based version
+            tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, cmdargs.resend)
 
         try:
             todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision)
@@ -1285,7 +1290,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     else:
         # Check if the cover letter has 'EDITME' in it
-        cover, tracking = load_cover(strip_comments=True)
         if 'EDITME' in cover:
             logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
             logger.info('---')
@@ -1570,7 +1574,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     reroll(mybranch, tag_msg, cl_msgid)
 
 
-def get_sent_tagname(branch: str, tagprefix: str, revstr: Union[str, int]) -> Tuple[str, Optional[int]]:
+def get_sent_tagname(tagbase: str, tagprefix: str, revstr: Union[str, int]) -> Tuple[str, Optional[int]]:
     revision = None
     try:
         revision = int(revstr)
@@ -1584,9 +1588,9 @@ def get_sent_tagname(branch: str, tagprefix: str, revstr: Union[str, int]) -> Tu
             return revstr.replace('refs/tags/', ''), revision
         revision = int(matches.groups()[0])
 
-    if branch.startswith('b4/'):
-        return f'{tagprefix}{branch[3:]}-v{revision}', revision
-    return f'{tagprefix}{branch}-v{revision}', revision
+    if tagbase.startswith('b4/'):
+        return f'{tagprefix}{tagbase[3:]}-v{revision}', revision
+    return f'{tagprefix}{tagbase}-v{revision}', revision
 
 
 def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PREFIX):
@@ -1597,11 +1601,11 @@ def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PR
 
     cover, tracking = load_cover(strip_comments=True)
     revision = tracking['series']['revision']
-    tagname, revision = get_sent_tagname(mybranch, tagprefix, revision)
+    change_id = tracking['series']['change-id']
+
+    tagname, revision = get_sent_tagname(change_id, tagprefix, revision)
     logger.debug('checking if we already have %s', tagname)
-    gitargs = ['rev-parse', f'refs/tags/{tagname}']
-    ecode, out = b4.git_run_command(None, gitargs)
-    if ecode > 0:
+    if not b4.git_revparse_tag(None, tagname):
         try:
             strategy = get_cover_strategy()
             if strategy == 'commit':
@@ -1744,12 +1748,21 @@ def show_info(param: str) -> None:
         info[f'commit-{short}'] = subject
     if 'history' in ts:
         for rn, links in reversed(ts['history'].items()):
-            tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
-            try:
-                cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
-                info[f'series-{rn}'] = '%s..%s %s' % (base_commit[:12], tagname, links[0])
-            except RuntimeError:
-                logger.debug('No tag matching %s', tagname)
+            tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
+            tag_commit = b4.git_revparse_tag(None, tagname)
+            if not tag_commit:
+                logger.debug('No tag %s, trying with base branch name %s', mybranch)
+                tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
+                tag_commit = b4.git_revparse_tag(None, tagname)
+            if not tag_commit:
+                logger.debug('No tag matching revision %s', revision)
+            else:
+                try:
+                    cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+                    info[f'series-{rn}'] = '%s..%s %s' % (base_commit[:12], tag_commit[:12], links[0])
+                except RuntimeError as ex:
+                    logger.debug('Could not get base-commit info from %s: %s', tagname, ex)
+
     if param == '_all':
         for key, val in info.items():
             print('%s: %s' % (key, val))
@@ -1768,14 +1781,17 @@ def force_revision(forceto: int) -> None:
 
 
 def compare(compareto: str) -> None:
-    mybranch = b4.git_get_current_branch(None)
-    tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, compareto)
-    gitargs = ['rev-parse', tagname]
-    lines = b4.git_get_command_lines(None, gitargs)
-    if not lines:
+    cover, tracking = load_cover()
+    # Try the new format first
+    tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, compareto)
+    prev_end = b4.git_revparse_tag(None, tagname)
+    if not prev_end:
+        mybranch = b4.git_get_current_branch(None)
+        tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, compareto)
+        prev_end = b4.git_revparse_tag(None, tagname)
+    if not prev_end:
         logger.critical('CRITICAL: Could not rev-parse %s', tagname)
         sys.exit(1)
-    prev_end = lines[0]
     try:
         cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
     except RuntimeError as ex:
