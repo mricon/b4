@@ -1781,7 +1781,12 @@ def cleanup(param: str) -> None:
     base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=mybranch)
     # start commit and end commit can't be the same
     if start_commit == end_commit:
-        logger.critical('%s appears to be an empty branch', mybranch)
+        logger.critical('CRITICAL: %s appears to be an empty branch', mybranch)
+        sys.exit(1)
+    # Refuse to clean up the currently checked out branch
+    curbranch = b4.git_get_current_branch()
+    if curbranch == mybranch:
+        logger.critical('CRITICAL: %s is currently checked out, cannot cleanup', mybranch)
         sys.exit(1)
     cover, tracking = load_cover(usebranch=mybranch)
     # Find all tags
