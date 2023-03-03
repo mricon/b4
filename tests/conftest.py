@@ -7,7 +7,7 @@ import sys
 @pytest.fixture(scope="function", autouse=True)
 def settestdefaults(tmp_path):
     topdir = b4.git_get_toplevel()
-    if topdir != os.getcwd():
+    if topdir and topdir != os.getcwd():
         os.chdir(topdir)
     b4.can_patatt = False
     b4.can_network = False
