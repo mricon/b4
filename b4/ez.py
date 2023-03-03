@@ -1290,15 +1290,21 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     cl_msgid = None
     cover, tracking = load_cover(strip_comments=True)
     if cmdargs.resend:
+        if cmdargs.resend == 'latest':
+            revstr = tracking['series']['revision'] - 1
+        else:
+            revstr = cmdargs.resend
+
         # Start with full change-id based tag name
-        tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, cmdargs.resend)
+        tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, revstr)
+
         if revision is None:
-            logger.critical('Could not figure out revision from %s', cmdargs.resend)
+            logger.critical('Could not figure out revision from %s', revstr)
             sys.exit(1)
 
         if not b4.git_revparse_tag(None, tagname):
             # Try initial branch-name only based version
-            tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, cmdargs.resend)
+            tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, revstr)
 
         try:
             todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision)

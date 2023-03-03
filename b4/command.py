@@ -321,7 +321,7 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_send.add_argument('--cc', nargs='+', help='Addresses to add to the Cc: list')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,
                          help='Remove yourself from the To: or Cc: list')
-    sp_send.add_argument('--resend', metavar='vN', default=None,
+    sp_send.add_argument('--resend', metavar='vN', nargs='?', const='latest',
                          help='Resend a previously sent version of the series')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
                          help='Do not add the cryptographic attestation signature header')
