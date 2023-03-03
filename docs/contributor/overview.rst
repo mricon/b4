@@ -78,5 +78,7 @@ know a lot about such git commands like ``git amend`` and ``git rebase
 
 9. Unless series is accepted upstream, GOTO 3.
 
+10. Clean up obsolete prep-managed branches using ``b4 prep --cleanup``
+
 Please read the rest of these docs for details on the ``prep``,
 ``send``, and ``trailers`` subcommands.

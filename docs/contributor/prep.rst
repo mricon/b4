@@ -208,6 +208,27 @@ repository's ``.git/config`` file as follows::
 This may also be already set by the project, if they have a
 ``.b4-config`` file in the root of their git repository.
 
+.. _prep_cleanup:
+
+Cleaning up old work
+--------------------
+
+Once your series is accepted upstream, you can archive and clean up the
+prep-managed branch and all its sent tags::
+
+    b4 prep --cleanup
+
+This will list all prep-managed branches in your repository. Pick a
+branch to clean up (make sure it's not currently checked out), and run
+the command again::
+
+    b4 prep --cleanup b4/my-topical-branch
+
+After you confirm your action, this will create a tarball with all the
+patches, cover letters, and tracking information from your series, after
+which the branch and related tags will be deleted from your local
+repository.
+
 .. _prep_flags:
 
 Prep command flags
@@ -295,6 +316,14 @@ or modifying defaults for some of these flags.
   And, to show all values for the current branch::
 
       b4 prep --show-info
+
+``--cleanup [BRANCHNAME]`` **(v0.13+)**
+  Archive and delete obsolete prep-managed branches and all git objects
+  related to them (such as sent tags). Run without parameters to list
+  all known prep-managed branches in the repository. Rerun with the
+  branch name to create an archival tarball with all patches, covers,
+  and tracking information, and then delete all git objects related to
+  that series from the local repository.
 
 ``-n NEW_SERIES_NAME, --new NEW_SERIES_NAME``
   Creates a new branch to start work on a new patch series.

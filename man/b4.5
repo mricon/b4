@@ -346,6 +346,9 @@ Attempt to merge series as if it were a pull request (execs git\-merge)
 .TP
 .BI \-\-guess\-lookback \ GUESSDAYS
 (use with \-H or \-M) When guessing base, go back this many days from the patch date (default: 3 weeks)
+.TP
+.BI \-\-merge\-base \ COMMIT
+(use with \-H or \-M) Force this base when merging
 .UNINDENT
 .UNINDENT
 .sp
@@ -538,7 +541,7 @@ Show all developer keys from the thread
 .INDENT 0.0
 .TP
 .B usage:
-b4 prep [\-h] [\-c | \-p OUTPUT_DIR | \-\-edit\-cover | \-\-show\-revision | \-\-force\-revision N | \-\-compare\-to vN | \-\-manual\-reroll COVER_MSGID | \-\-set\-prefixes PREFIX [PREFIX ...] | \-\-show\-info ] [\-n NEW_SERIES_NAME] [\-f FORK_POINT] [\-F MSGID] [\-e ENROLL_BASE]
+b4 prep [\-h] [\-c | \-p OUTPUT_DIR | \-\-edit\-cover | \-\-show\-revision | \-\-force\-revision N | \-\-compare\-to vN | \-\-manual\-reroll COVER_MSGID | \-\-set\-prefixes PREFIX [PREFIX ...] | \-\-show\-info [PARAM] ] | [ \-\-cleanup [BRANCHNAME] ] [\-n NEW_SERIES_NAME] [\-f FORK_POINT] [\-F MSGID] [\-e ENROLL_BASE]
 .TP
 .B options:
 .INDENT 7.0
@@ -571,11 +574,12 @@ Mark current revision as sent and reroll (requires cover letter msgid)
 .TP
 .B \-\-set\-prefixes PREFIX [PREFIX ...]
 Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)
-.UNINDENT
-.INDENT 7.0
 .TP
-.B  \-\-show\-info
-Show current series info in a column\-parseable format
+.B \-\-show\-info [PARAM]
+Show series info in a format that can be passed to other tools
+.TP
+.B \-\-cleanup [BRANCHNAME]
+Archive and delete obsolete prep\-managed branches
 .UNINDENT
 .TP
 .B Create new branch:

@@ -352,7 +352,7 @@ optional arguments:
 b4 prep
 ~~~~~~~
 usage:
-  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --compare-to vN | --manual-reroll COVER_MSGID | --set-prefixes PREFIX [PREFIX ...] | --show-info ] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
+  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --compare-to vN | --manual-reroll COVER_MSGID | --set-prefixes PREFIX [PREFIX ...] | --show-info [PARAM] ] | [ --cleanup [BRANCHNAME] ] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
 
 options:
   -h, --help            show this help message and exit
@@ -369,7 +369,10 @@ options:
   --set-prefixes PREFIX [PREFIX ...]
                         Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)
 
-  --show-info           Show current series info in a column-parseable format
+  --show-info [PARAM]
+                        Show series info in a format that can be passed to other tools
+  --cleanup [BRANCHNAME]
+                        Archive and delete obsolete prep-managed branches
 
 Create new branch:
   Create a new branch for working on patch series
