@@ -958,10 +958,13 @@ def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[s
         mybranch = b4.git_get_current_branch()
     if not start_commit:
         start_commit = get_series_start(usebranch=mybranch)
-    gitargs = ['rev-parse', f'{start_commit}~1']
-    lines = b4.git_get_command_lines(None, gitargs)
-    base_commit = lines[0]
     strategy = get_cover_strategy(usebranch=mybranch)
+    if strategy == 'commit':
+        gitargs = ['rev-parse', f'{start_commit}~1']
+        lines = b4.git_get_command_lines(None, gitargs)
+        base_commit = lines[0]
+    else:
+        base_commit = start_commit
     if strategy == 'tip-commit':
         cover_commit = find_cover_commit(usebranch=mybranch)
         endrange = b4.git_revparse_obj(f'{cover_commit}~1')
