@@ -390,7 +390,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                 raise RuntimeError('Object %s not found' % enroll_base)
             forkpoint = out.strip()
             # check branches where this object lives
-            heads = b4.git_branch_contains(None, forkpoint)
+            heads = b4.git_branch_contains(None, forkpoint, checkall=True)
             if mybranch not in heads:
                 logger.critical('CRITICAL: object %s does not exist on current branch', enroll_base)
                 sys.exit(1)
