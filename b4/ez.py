@@ -370,6 +370,11 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         seriesname = branchname
         slug = re.sub(r'\W+', '-', branchname).strip('-').lower()
         enroll_base = cmdargs.enroll_base
+        # Convert @{upstream}, @{push} to an abbreviated ref
+        gitargs = ['rev-parse', '--abbrev-ref', '--verify', enroll_base]
+        ecode, out = b4.git_run_command(None, gitargs)
+        if out:
+            enroll_base = out.strip()
         # Is it a branch?
         gitargs = ['show-ref', f'refs/heads/{enroll_base}', f'refs/remotes/{enroll_base}']
         lines = b4.git_get_command_lines(None, gitargs)
@@ -377,7 +382,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             try:
                 forkpoint = get_base_forkpoint(enroll_base, mybranch)
             except RuntimeError as ex:
-                logger.critical('CRITICAL: could not use %s as enrollment base:')
+                logger.critical('CRITICAL: could not use %s as enrollment base:', enroll_base)
                 logger.critical('          %s', ex)
                 sys.exit(1)
             basebranch = enroll_base
