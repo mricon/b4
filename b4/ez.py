@@ -371,7 +371,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         slug = re.sub(r'\W+', '-', branchname).strip('-').lower()
         enroll_base = cmdargs.enroll_base
         # Is it a branch?
-        gitargs = ['show-ref', '--heads', enroll_base]
+        gitargs = ['show-ref', f'refs/heads/{enroll_base}', f'refs/remotes/{enroll_base}']
         lines = b4.git_get_command_lines(None, gitargs)
         if lines:
             try:
