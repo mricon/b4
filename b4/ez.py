@@ -373,7 +373,11 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         # Convert @{upstream}, @{push} to an abbreviated ref
         gitargs = ['rev-parse', '--abbrev-ref', '--verify', enroll_base]
         ecode, out = b4.git_run_command(None, gitargs)
-        if out:
+        if ecode > 0:
+            if enroll_base == '@{upstream}' or enroll_base == '@{u}':
+                logger.critical('CRITICAL: current branch has no configured upstream')
+                sys.exit(1)
+        elif out:
             enroll_base = out.strip()
         # Is it a branch?
         gitargs = ['show-ref', f'refs/heads/{enroll_base}', f'refs/remotes/{enroll_base}']
