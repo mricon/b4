@@ -289,6 +289,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                 logger.debug('Unrecognized cover letter format, will use as-is')
                 cover = cmsg.body
 
+            # Escape lines starting with "#" so they don't get lost
+            cover = re.sub(r'^(#.*)$', r'>\1', cover, flags=re.M)
+
             cover = (f'{cmsg.subject}\n\n'
                      f'EDITME: Imported from f{msgid}\n'
                      f'        Please review before sending.\n\n') + cover
@@ -453,7 +456,8 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         cover = ('EDITME: cover title for %s' % seriesname,
                  '',
                  '# Lines starting with # will be removed from the cover letter. You can',
-                 '# use them to add notes or reminders to yourself.',
+                 '# use them to add notes or reminders to yourself. If you want to use',
+                 '# markdown headers in your cover letter, start the line with ">#".',
                  '',
                  'EDITME: describe the purpose of this series. The information you put',
                  'here will be used by the project maintainer to make a decision whether',
@@ -563,8 +567,11 @@ def load_cover(strip_comments: bool = False, usebranch: Optional[str] = None) ->
     logger.debug('tracking data: %s', tracking)
     if strip_comments:
         cover = re.sub(r'^#.*$', '', cover, flags=re.M)
+        # Unescape markdown headers
+        cover = re.sub(r'^>(#.*)$', r'\1', cover, flags=re.M)
         while '\n\n\n' in cover:
             cover = cover.replace('\n\n\n', '\n\n')
+
     return cover.strip(), tracking
 
 
