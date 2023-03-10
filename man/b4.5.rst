@@ -414,8 +414,10 @@ options:
 
   --not-me-too
                         Remove yourself from the To: or Cc: list
+
   --resend [RESEND]
                         Resend a previously sent version of the series
+
   --no-sign
                         Do not add the cryptographic attestation signature header
 
