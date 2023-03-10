@@ -271,6 +271,11 @@ These settings control the behaviour of ``b4 ty`` command.
 
   Default: ``None`` - falls back to user email.
 
+``b4.thanks-treename``
+  Name of the tree which can be used in thanks templates.
+
+  Default: ``None``
+
 ``b4.email-exclude`` (v0.9+)
   A comma-separated list of shell-style globbing patterns with addresses
   that should always be excluded from the recipient list.
