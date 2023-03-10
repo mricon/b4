@@ -627,7 +627,7 @@ def get_branch_info(gitdir, branch):
 
     BRANCH_INFO = dict()
 
-    remotecfg = b4.get_config_from_git('branch\\.%s\\.*' % branch)
+    remotecfg = b4.get_config_from_git('branch\\.%s\\..*' % branch)
     if remotecfg is None or 'remote' not in remotecfg:
         # Did not find a matching branch entry, so look at remotes
         gitargs = ['remote', 'show']
