@@ -404,13 +404,16 @@ def send_messages(listing, branch, cmdargs):
             os.mkdir(cmdargs.outdir)
 
     usercfg = b4.get_user_config()
+    config = b4.get_main_config()
+    user_name = config.get('thanks-from-name', usercfg['name'])
+    user_email = config.get('thanks-from-email', usercfg['email'])
     signature = b4.get_email_signature()
 
     outgoing = 0
     msgids = list()
     for jsondata in listing:
-        jsondata['myname'] = usercfg['name']
-        jsondata['myemail'] = usercfg['email']
+        jsondata['myname'] = user_name
+        jsondata['myemail'] = user_email
         jsondata['signature'] = signature
         if 'pr_commit_id' in jsondata:
             # This is a pull request
@@ -453,7 +456,6 @@ def send_messages(listing, branch, cmdargs):
         logger.info('No thanks necessary.')
         return
 
-    config = b4.get_main_config()
     pwstate = cmdargs.pw_set_state
     if not pwstate:
         pwstate = config.get('pw-accept-state')

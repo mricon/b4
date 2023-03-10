@@ -257,6 +257,20 @@ These settings control the behaviour of ``b4 ty`` command.
 
   Default: ``None``
 
+``b4.thanks-from-name`` (v0.13+)
+  An custom from name for sending thanks, eg::
+
+      thanks-from-name = Project Foo Thanks Bot
+
+  Default: ``None`` - falls back to user name.
+
+``b4.thanks-from-email`` (v0.13+)
+  An custom from email for sending thanks, eg::
+
+      thanks-from-email = thanks-bot@foo.org
+
+  Default: ``None`` - falls back to user email.
+
 ``b4.email-exclude`` (v0.9+)
   A comma-separated list of shell-style globbing patterns with addresses
   that should always be excluded from the recipient list.
