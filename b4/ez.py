@@ -373,14 +373,23 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         seriesname = branchname
         slug = re.sub(r'\W+', '-', branchname).strip('-').lower()
         enroll_base = cmdargs.enroll_base
+        # Convert @{upstream}, @{push} to an abbreviated ref
+        gitargs = ['rev-parse', '--abbrev-ref', '--verify', enroll_base]
+        ecode, out = b4.git_run_command(None, gitargs)
+        if ecode > 0:
+            if enroll_base == '@{upstream}' or enroll_base == '@{u}':
+                logger.critical('CRITICAL: current branch has no configured upstream')
+                sys.exit(1)
+        elif out:
+            enroll_base = out.strip()
         # Is it a branch?
-        gitargs = ['show-ref', '--heads', enroll_base]
+        gitargs = ['show-ref', f'refs/heads/{enroll_base}', f'refs/remotes/{enroll_base}']
         lines = b4.git_get_command_lines(None, gitargs)
         if lines:
             try:
                 forkpoint = get_base_forkpoint(enroll_base, mybranch)
             except RuntimeError as ex:
-                logger.critical('CRITICAL: could not use %s as enrollment base:')
+                logger.critical('CRITICAL: could not use %s as enrollment base:', enroll_base)
                 logger.critical('          %s', ex)
                 sys.exit(1)
             basebranch = enroll_base
@@ -393,7 +402,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                 raise RuntimeError('Object %s not found' % enroll_base)
             forkpoint = out.strip()
             # check branches where this object lives
-            heads = b4.git_branch_contains(None, forkpoint)
+            heads = b4.git_branch_contains(None, forkpoint, checkall=True)
             if mybranch not in heads:
                 logger.critical('CRITICAL: object %s does not exist on current branch', enroll_base)
                 sys.exit(1)

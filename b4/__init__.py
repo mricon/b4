@@ -2990,8 +2990,10 @@ def git_revparse_tag(gitdir: Optional[str], tagname: str) -> Optional[str]:
     return out.strip()
 
 
-def git_branch_contains(gitdir: Optional[str], commit_id: str) -> List[str]:
+def git_branch_contains(gitdir: Optional[str], commit_id: str, checkall: bool = False) -> List[str]:
     gitargs = ['branch', '--format=%(refname:short)', '--contains', commit_id]
+    if checkall:
+        gitargs.append('--all')
     lines = git_get_command_lines(gitdir, gitargs)
     return lines
 

@@ -290,8 +290,8 @@ def setup_parser() -> argparse.ArgumentParser:
     ag_prepn.add_argument('-F', '--from-thread', metavar='MSGID', dest='msgid',
                           help='When creating a new branch, use this thread')
     ag_prepe = sp_prep.add_argument_group('Enroll existing branch', 'Enroll existing branch for prep work')
-    ag_prepe.add_argument('-e', '--enroll', dest='enroll_base',
-                          help='Enroll current branch, using the passed tag, branch, or commit as fork base')
+    ag_prepe.add_argument('-e', '--enroll', dest='enroll_base', nargs='?', const='@{upstream}',
+                          help='Enroll current branch, using its configured upstream branch as fork base, or the passed tag, branch, or commit')
     sp_prep.set_defaults(func=cmd_prep)
 
     # b4 trailers
