@@ -1207,10 +1207,14 @@ class LoreMessage:
         if len(bb) > bl:
             self.body = bb[:bl].decode()
             # This may have potentially resulted in in-body From/Subject being removed,
-            # so make sure we account for this in the message headers
-            self.lsubject.subject = self.subject = i.get('Subject')
-            self.fromname = i.get('Author')
-            self.fromemail = i.get('Email')
+            # so make sure we put them back into the body if they are different
+            ibh = list()
+            if i.get('Subject') != self.subject:
+                ibh.append('Subject: ' + i.get('Subject'))
+            if i.get('Email') != self.fromemail or i.get('Author') != self.fromname:
+                ibh.append('From: ' + format_addrs([(i.get('Author'), i.get('Email'))]))
+            if len(ibh):
+                self.body = '\n'.join(ibh) + '\n\n' + self.body
 
     def _load_patatt_attestors(self) -> None:
         if not can_patatt:
