@@ -333,6 +333,9 @@ class LoreMailbox:
                     pmsg.followup_trailers += trailers
                     break
                 if pmsg.in_reply_to and pmsg.in_reply_to in self.msgid_map:
+                    # Avoid bad message id causing infinite loop
+                    if pmsg == self.msgid_map[pmsg.in_reply_to]:
+                        break
                     lvl += 1
                     for pltr in pmsg.trailers:
                         pltr.lmsg = pmsg
