@@ -2582,6 +2582,8 @@ def get_user_config():
         if 'name' not in USER_CONFIG:
             udata = pwd.getpwuid(os.getuid())
             USER_CONFIG['name'] = udata.pw_gecos
+        if 'email' not in USER_CONFIG:
+            USER_CONFIG['email'] = os.environ['EMAIL']
     return USER_CONFIG
 
 
