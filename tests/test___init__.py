@@ -93,6 +93,7 @@ def test_parse_trailers(sampledir, source, expected):
     ('single', {'sloppytrailers': True}, {'addmysob': True}, 'sloppy', {}),
     ('with-cover', {}, {'addmysob': True}, 'defaults', {}),
     ('with-cover', {}, {'covertrailers': True, 'addmysob': True}, 'covertrailers', {}),
+    ('with-cover', {}, {'addmysob': True, 'addlink': True}, 'addlink', {}),
     ('custody', {}, {'addmysob': True, 'copyccs': True}, 'unordered', {}),
     ('custody', {}, {'addmysob': True, 'copyccs': True}, 'ordered',
      {'trailer-order': 'Cc,Fixes*,Link*,Suggested*,Reviewed*,Tested*,*'}),

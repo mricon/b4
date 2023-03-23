@@ -526,8 +526,7 @@ class LoreSeries:
             self.add_extra_trailers(self.patches[0].followup_trailers)  # noqa
 
     def get_am_ready(self, noaddtrailers=False, covertrailers=False, addmysob=False, addlink=False,
-                     linktrailer=None, cherrypick=None, copyccs=False,
-                     allowbadchars=False) -> List[email.message.Message]:
+                     cherrypick=None, copyccs=False, allowbadchars=False) -> List[email.message.Message]:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -587,21 +586,21 @@ class LoreSeries:
             if lmsg is not None:
                 extras = list()
                 if addlink:
-                    if linktrailer is None:
-                        ltrmask = config.get('linktrailermask')
-                        if ltrmask:
-                            if ltrmask.find(':'):
-                                lparts = ltrmask.split(':', maxsplit=1)
-                                llname = lparts[0].strip()
-                                llval = lparts[1].strip() % lmsg.msgid
-                                linktrailer = LoreTrailer(name=llname, value=llval)
-                            else:
-                                logger.critical('linktrailermask does not look like a valid trailer')
+                    linktrailer = None
+                    ltrmask = config.get('linktrailermask')
+                    if ltrmask:
+                        if ltrmask.find(':'):
+                            lparts = ltrmask.split(':', maxsplit=1)
+                            llname = lparts[0].strip()
+                            llval = lparts[1].strip() % lmsg.msgid
+                            linktrailer = LoreTrailer(name=llname, value=llval)
                         else:
-                            llval = config.get('linkmask', LOREADDR + '/r/%s') % lmsg.msgid
-                            linktrailer = LoreTrailer(name='Link', value=llval)
-                    if linktrailer:
-                        extras.append(linktrailer)
+                            logger.critical('linktrailermask does not look like a valid trailer, using defaults')
+
+                    if not linktrailer:
+                        llval = config.get('linkmask', LOREADDR + '/r/%s') % lmsg.msgid
+                        linktrailer = LoreTrailer(name='Link', value=llval)
+                    extras.append(linktrailer)
 
                 if attsame and not attcrit:
                     if attmark:
