@@ -211,24 +211,22 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
         logger.critical(' Link: %s', linkurl)
 
     base_commit = None
-    if cmdargs.mergebase:
-        base_commit = cmdargs.mergebase
+
+    matches = re.search(r'base-commit: .*?([\da-f]+)', first_body, re.MULTILINE)
+    if matches:
+        base_commit = matches.groups()[0]
     else:
-        matches = re.search(r'base-commit: .*?([\da-f]+)', first_body, re.MULTILINE)
+        # Try a more relaxed search
+        matches = re.search(r'based on .*?([\da-f]{40})', first_body, re.MULTILINE)
         if matches:
             base_commit = matches.groups()[0]
-        else:
-            # Try a more relaxed search
-            matches = re.search(r'based on .*?([\da-f]{40})', first_body, re.MULTILINE)
-            if matches:
-                base_commit = matches.groups()[0]
 
     if base_commit and topdir:
         # Does it actually exist in this tree?
         if not b4.git_commit_exists(topdir, base_commit):
             logger.info(' Base: base-commit %s not known, ignoring', base_commit)
             base_commit = None
-        else:
+        elif not cmdargs.mergebase:
             logger.info(' Base: using specified base-commit %s', base_commit)
 
     if not base_commit and topdir and cmdargs.guessbase:
@@ -245,6 +243,12 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
                                 nblobs - mismatches, nblobs)
         except IndexError:
             logger.critical(' Base: failed to guess base')
+
+    if cmdargs.mergebase:
+        if (base_commit):
+            logger.warn(' Base: overriding submitter provided base-commit %s', base_commit)
+        base_commit = cmdargs.mergebase
+        logger.info(' Base: using CLI provided base-commit %s', base_commit)
 
     if cmdargs.subcmd == 'shazam':
         if not topdir:
