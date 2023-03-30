@@ -813,6 +813,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 break
             prevparent = parent
             prevcommit = commit
+        if prevcommit is None:
+            prevcommit = end
         start = f'{prevcommit}~1'
     else:
         logger.critical('CRITICAL: Please specify -F msgid to look up trailers from remote.')
