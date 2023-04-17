@@ -887,11 +887,14 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers)
         mismatches = list(lser.trailer_mismatches)
         for lmsg in lser.patches[1:]:
+            if not lmsg.followup_trailers:
+                logger.debug('No follow-up trailers found for: %s', lmsg.subject)
+                continue
             addtrailers = list(lmsg.followup_trailers)
             if lser.has_cover and len(lser.patches[0].followup_trailers):
                 addtrailers += list(lser.patches[0].followup_trailers)
             if not addtrailers:
-                logger.debug('No follow-up trailers received to: %s', lmsg.subject)
+                logger.debug('No new follow-up trailers to add to: %s', lmsg.subject)
                 continue
             commit = None
             if lmsg.subject in by_subject:
