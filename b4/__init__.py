@@ -1080,7 +1080,8 @@ class LoreMessage:
         if self.reply:
             for trailer in trailers:
                 # These are commonly part of patch/commit metadata
-                badtrailers = {'from', 'author', 'cc', 'to', 'date', 'subject'}
+                badtrailers = {'from', 'author', 'cc', 'to', 'date', 'subject',
+                               'subscribe', 'unsubscribe'}
                 if trailer.lname not in badtrailers:
                     self.trailers.append(trailer)
 
