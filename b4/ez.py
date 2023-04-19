@@ -1497,7 +1497,22 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.info('  - with envelope-from: %s', fromaddr)
 
             smtpserver = sconfig.get('smtpserver', 'localhost')
-            logger.info('  - via SMTP server %s', smtpserver)
+            if '/' in smtpserver:
+                logger.info('  - via local command %s', smtpserver)
+                if cmdargs.reflect and sconfig.get('b4-really-reflect-via') != smtpserver:
+                    logger.critical('---')
+                    logger.critical('CRITICAL: Cowardly refusing to reflect via %s.', smtpserver)
+                    logger.critical('          There is no guarantee that this command will do the right thing')
+                    logger.critical('          and will not send mail to actual addressees.')
+                    logger.critical('---')
+                    logger.critical('If you are ABSOLUTELY SURE that this command will do the right thing,')
+                    logger.critical('add the following to the [sendemail] section:')
+                    logger.critical('b4-really-reflect-via = %s', smtpserver)
+                    sys.exit(1)
+
+            else:
+                logger.info('  - via SMTP server %s', smtpserver)
+
         if not (cmdargs.reflect or cmdargs.resend):
             logger.info('  - tag and reroll the series to the next revision')
         logger.info('')
