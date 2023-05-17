@@ -1956,8 +1956,12 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
     if cmdargs.compare_to:
         return compare(cmdargs.compare_to)
 
+    if cmdargs.enroll_base and cmdargs.new_series_name:
+        logger.critical('CRITICAL: -n NEW_SERIES_NAME and -e [ENROLL_BASE] can not be used together.')
+        sys.exit(1)
+
     if cmdargs.enroll_base or cmdargs.new_series_name:
-        if is_prep_branch():
+        if is_prep_branch() and not cmdargs.fork_point:
             logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')
             sys.exit(1)
 
