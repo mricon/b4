@@ -130,7 +130,7 @@ servers will only need the following settings::
 
     [sendemail]
        smtpServer = smtp.example.org
-       smtpPort = 465
+       smtpServerPort = 465
        smtpEncryption = ssl
        smtpUser = alice.developer@example.org
        smtpPass = [omitted]
