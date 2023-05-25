@@ -868,7 +868,7 @@ class LoreTrailer:
     addr: Optional[Tuple[str, str]] = None
     lmsg = None
     # Small list of recognized utility trailers
-    _utility: Set[str] = {'fixes', 'link', 'buglink', 'obsoleted-by', 'message-id', 'change-id', 'base-commit'}
+    _utility: Set[str] = {'fixes', 'link', 'buglink', 'closes', 'obsoleted-by', 'message-id', 'change-id', 'base-commit'}
 
     def __init__(self, name: Optional[str] = None, value: Optional[str] = None, extinfo: Optional[str] = None,
                  msg: Optional[email.message.Message] = None):
@@ -1639,7 +1639,7 @@ class LoreMessage:
     def find_trailers(body: str, followup: bool = False) -> Tuple[List[LoreTrailer], List[str]]:
         ignores = {'phone', 'email'}
         headers = {'subject', 'date', 'from'}
-        links = {'link', 'buglink'}
+        links = {'link', 'buglink', 'closes'}
         nonperson = links | {'fixes', 'subject', 'date', 'obsoleted-by', 'change-id', 'base-commit'}
         # Ignore everything below standard email signature marker
         body = body.split('\n-- \n', 1)[0].strip() + '\n'

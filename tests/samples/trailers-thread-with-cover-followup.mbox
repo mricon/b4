@@ -226,6 +226,7 @@ To: list@example.org
 
 Tested-by: Follow Upper <follow.upper@example.org>
 Link: https://example.org
+Closes: https://example.org/bug/1234
 
 -- 
 Follow Upper
