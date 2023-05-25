@@ -225,6 +225,7 @@ To: list@example.org
 > Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
 
 Tested-by: Follow Upper <follow.upper@example.org>
+Link: https://example.org
 
 -- 
 Follow Upper

@@ -1639,7 +1639,8 @@ class LoreMessage:
     def find_trailers(body: str, followup: bool = False) -> Tuple[List[LoreTrailer], List[str]]:
         ignores = {'phone', 'email'}
         headers = {'subject', 'date', 'from'}
-        nonperson = {'fixes', 'subject', 'date', 'link', 'buglink', 'obsoleted-by', 'change-id', 'base-commit'}
+        links = {'link', 'buglink'}
+        nonperson = links | {'fixes', 'subject', 'date', 'obsoleted-by', 'change-id', 'base-commit'}
         # Ignore everything below standard email signature marker
         body = body.split('\n-- \n', 1)[0].strip() + '\n'
         # Fix some more common copypasta trailer wrapping
@@ -1678,7 +1679,8 @@ class LoreMessage:
                     if not mperson and lname not in nonperson:
                         logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
                         continue
-                    if re.search(r'https?://', ovalue):
+                    mlink = re.search(r'https?://', ovalue)
+                    if mlink and lname not in links:
                         logger.debug('Ignoring %s (not a recognized link trailer)', line)
                         continue
 

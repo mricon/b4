@@ -4,6 +4,7 @@ Life imitatus artem.
 
 Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
 Tested-by: Follow Upper <follow.upper@example.org>
+Link: https://example.org
 Reviewed-by: Cover Upper <cover.upper@example.org>
 Signed-off-by: Test Override <test-override@example.com>
 ---
