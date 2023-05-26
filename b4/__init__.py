@@ -2816,7 +2816,7 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False):
 
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
                            onlymsgids: Optional[set] = None) -> Optional[list]:
-    qmsgid = urllib.parse.quote_plus(msgid)
+    qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])
     # The public-inbox instance may provide a unified index at /all/.
