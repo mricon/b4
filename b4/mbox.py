@@ -57,11 +57,11 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
         reroll = False
 
     lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers, reroll=reroll)
-    if lser is None and wantver is None:
-        logger.critical('No patches found.')
-        return
-    if lser is None:
-        logger.critical('Unable to find revision %s', wantver)
+    if lser is None and cmdargs.cherrypick != '_':
+        if wantver is None:
+            logger.critical('No patches found.')
+        else:
+            logger.critical('Unable to find revision %s', wantver)
         return
     if len(lmbx.series) > 1 and not wantver:
         logger.info('Will use the latest revision: v%s', lser.revision)
@@ -70,6 +70,13 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     if cmdargs.cherrypick:
         cherrypick = list()
         if cmdargs.cherrypick == '_':
+            # We might want to pick a patch sent as a followup, so create a fake series
+            # and add followups with diffs
+            if lser is None:
+                lser = b4.LoreSeries(revision=1, expected=1)
+            for followup in lmbx.followups:
+                if followup.has_diff:
+                    lser.add_patch(followup)
             # Only grab the exact msgid provided
             at = 0
             for lmsg in lser.patches[1:]:
