@@ -3247,7 +3247,10 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
         # Do we have the envelopesender defined?
         env_sender = sconfig.get('envelopesender', '')
         if env_sender:
-            envpair = email.utils.parseaddr(env_sender)
+            if env_sender == "auto":
+                envpair = email.utils.parseaddr(fromaddr)
+            else:
+                envpair = email.utils.parseaddr(env_sender)
         else:
             envpair = email.utils.parseaddr(fromaddr)
         if envpair[1]:
