@@ -2013,9 +2013,9 @@ class LoreMessage:
 
         # Remove anything that's cut off by scissors
         mi_msg = email.message.EmailMessage()
-        mi_msg['From'] = self.msg['From']
-        mi_msg['Date'] = self.msg['Date']
-        mi_msg['Subject'] = self.msg['Subject']
+        mi_msg['From'] = LoreMessage.clean_header(self.msg['From'])
+        mi_msg['Date'] = LoreMessage.clean_header(self.msg['Date'])
+        mi_msg['Subject'] = LoreMessage.clean_header(self.msg['Subject'])
         mi_msg.set_payload(self.body, charset='utf-8')
         mi_msg.set_charset('utf-8')
 
