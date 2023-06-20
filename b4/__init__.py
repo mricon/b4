@@ -28,6 +28,7 @@ import shutil
 import mailbox
 # noinspection PyCompatibility
 import pwd
+import io
 
 import requests
 
@@ -1658,7 +1659,9 @@ class LoreMessage:
         trailers = list()
         others = list()
         was_trailer = False
+        at = 0
         for line in body.split('\n'):
+            at += 1
             line = line.strip('\r')
             matches = re.search(r'^\s*(\w\S+):\s+(\S.*)', line, flags=re.I)
             if matches:
@@ -1666,28 +1669,28 @@ class LoreMessage:
                 # We only accept headers if we haven't seen any non-trailer lines
                 lname = oname.lower()
                 if lname in ignores:
-                    logger.debug('Ignoring known non-trailer: %s', line)
+                    logger.debug('Ignoring %d: %s (known non-trailer)', at, line)
                     continue
                 if len(others) and lname in headers:
-                    logger.debug('Ignoring %s (header after other content)', line)
+                    logger.debug('Ignoring %d: %s (header after other content)', at, line)
                     continue
                 if followup:
                     if not lname.isascii():
-                        logger.debug('Ignoring known non-ascii follow-up trailer: %s', lname)
+                        logger.debug('Ignoring %d: %s (known non-ascii follow-up trailer)', at, lname)
                         continue
                     mperson = re.search(r'\S+@\S+\.\S+', ovalue)
                     if not mperson and lname not in nonperson:
-                        logger.debug('Ignoring %s (not a recognized non-person trailer)', line)
+                        logger.debug('Ignoring %d: %s (not a recognized non-person trailer)', at, line)
                         continue
                     mlink = re.search(r'https?://', ovalue)
                     if mlink and lname not in links:
-                        logger.debug('Ignoring %s (not a recognized link trailer)', line)
+                        logger.debug('Ignoring %d: %s (not a recognized link trailer)', at, line)
                         continue
 
                 extinfo = None
                 mextinfo = re.search(r'(.*\S+)(\s+#[^#]+)$', ovalue)
                 if mextinfo:
-                    logger.debug('Trailer contains hashtag extinfo: %s', line)
+                    logger.debug('Trailer contains hashtag extinfo: %d: %s', at, line)
                     # Found extinfo of the hashtag genre
                     egr = mextinfo.groups()
                     ovalue = egr[0]
@@ -2002,7 +2005,9 @@ class LoreMessage:
         mi_msg.set_payload(self.body, charset='utf-8')
         mi_msg.set_charset('utf-8')
 
-        i, m, p = get_mailinfo(mi_msg.as_bytes(policy=emlpolicy), scissors=True)
+        ifh = io.BytesIO()
+        save_mboxrd_mbox([mi_msg], ifh, mangle_from=True)
+        i, m, p = get_mailinfo(ifh.getvalue(), scissors=True)
         self.body = m.decode() + p.decode()
         if add_trailers:
             self.fix_trailers(copyccs=copyccs, addmysob=addmysob, extras=extras)
