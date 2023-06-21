@@ -506,12 +506,14 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             'series': {
                 'revision': revision,
                 'change-id': changeid,
-                'base-branch': basebranch,
                 'prefixes': prefixes,
             },
         }
         if thread_msgid:
             tracking['series']['from-thread'] = thread_msgid
+        if strategy != 'commit':
+            # We only need the base-branch info when using strategies other than 'commit'
+            tracking['series']['base-branch'] = basebranch
 
     store_cover(cover, tracking, new=True)
     if cherry_range:
