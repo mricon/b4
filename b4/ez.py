@@ -1011,12 +1011,17 @@ def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) 
         if myemail:
             domain = re.sub(r'^[^@]*@', '', myemail)
         else:
-            # Use the hostname of the system
-            import platform
-            domain = platform.node()
+            # Just use "b4" for the domain name (it doesn't need to be anything real)
+            domain = 'b4'
 
     chunks = change_id.rsplit('-', maxsplit=1)
     stablepart = chunks[0]
+    # Replace the change-id origin date with current date
+    chunks = stablepart.split('-', maxsplit=1)
+    if len(chunks) == 2 and len(chunks[0]) == 8:
+        # If someone uses b4 in year 10000, look me up.
+        stablepart = '%s-%s' % (datetime.date.today().strftime('%Y%m%d'), chunks[1])
+
     # Message-IDs must not be predictable to avoid stuffing attacks
     randompart = uuid.uuid4().hex[:12]
     msgid_tpt = f'<{stablepart}-v{revision}-%s-{randompart}@{domain}>'
