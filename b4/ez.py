@@ -464,17 +464,17 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         # create a default cover letter and store it where the strategy indicates
         cover = ('EDITME: cover title for %s' % seriesname,
                  '',
+                 '# Describe the purpose of this series. The information you put here',
+                 '# will be used by the project maintainer to make a decision whether',
+                 '# your patches should be reviewed, and in what priority order. Please be',
+                 '# very detailed and link to any relevant discussions or sites that the',
+                 '# maintainer can review to better understand your proposed changes. If you',
+                 '# only have a single patch in your series, the contents of the cover',
+                 '# letter will be appended to the "under-the-cut" portion of the patch.',
+                 '',
                  '# Lines starting with # will be removed from the cover letter. You can',
                  '# use them to add notes or reminders to yourself. If you want to use',
                  '# markdown headers in your cover letter, start the line with ">#".',
-                 '',
-                 'EDITME: describe the purpose of this series. The information you put',
-                 'here will be used by the project maintainer to make a decision whether',
-                 'your patches should be reviewed, and in what priority order. Please be',
-                 'very detailed and link to any relevant discussions or sites that the',
-                 'maintainer can review to better understand your proposed changes. If you',
-                 'only have a single patch in your series, the contents of the cover',
-                 'letter will be appended to the "under-the-cut" portion of the patch.',
                  '',
                  '# You can add trailers to the cover letter. Any email addresses found in',
                  '# these trailers will be added to the addresses specified/generated',
@@ -1342,14 +1342,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.info('Converted the tag to %s messages', len(patches))
 
     else:
-        # Check if the cover letter has 'EDITME' in it
-        if 'EDITME' in cover:
-            logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
-            logger.info('---')
-            logger.info(cover)
-            logger.info('---')
-            sys.exit(1)
-
         status = b4.git_get_repo_status()
         if len(status):
             logger.critical('CRITICAL: Repository contains uncommitted changes.')
@@ -1361,6 +1353,15 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
             sys.exit(1)
+
+        # Check if "EDITME" shows up in the first message
+        if b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]):
+            logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
+            logger.info('---')
+            logger.info(cover)
+            logger.info('---')
+            sys.exit(1)
+
         logger.info('Converted the branch to %s messages', len(patches))
 
     usercfg = b4.get_user_config()
