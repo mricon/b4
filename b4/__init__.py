@@ -2032,10 +2032,7 @@ class LoreMessage:
             self.fix_trailers(copyccs=copyccs, addmysob=addmysob, extras=extras)
 
         am_msg = email.message.EmailMessage()
-        if i.get('Author'):
-            hfrom = f'{i.get("Author")} <{i.get("Email")}>'
-        else:
-            hfrom = i.get('Email')
+        hfrom = format_addrs([(i.get('Author', ''), i.get('Email'))])
         am_msg.add_header('Subject', self.get_am_subject(indicate_reroll=False, use_subject=i.get('Subject')))
         am_msg.add_header('From', hfrom)
         am_msg.add_header('Date', i.get('Date'))
