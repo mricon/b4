@@ -1107,6 +1107,9 @@ def mixin_cover(cbody: str, patches: List[Tuple[str, email.message.Message]]) ->
 
     pbody = b4.LoreMessage.rebuild_message(pheaders, pmessage, ptrailers, newbasement, csignature)
     msg.set_payload(pbody, charset='utf-8')
+    # Check if the new body now has 8bit content and fix CTR
+    if msg.get('Content-Transfer-Encoding') != '8bit' and not pbody.isascii():
+        msg.replace_header('Content-Transfer-Encoding', '8bit')
 
 
 def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
