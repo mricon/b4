@@ -904,6 +904,8 @@ class LoreTrailer:
             elif re.search(r'\S+@\S+\.\S+', value):
                 self.type = 'person'
                 self.addr = email.utils.parseaddr(value)
+                # Normalize the value with parsed data
+                self.value = format_addrs([self.addr])
             else:
                 self.type = 'unknown'
         self.lname = self.name.lower()
