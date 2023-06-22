@@ -262,7 +262,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
             sp = shlex.shlex(amflags, posix=True)
             sp.whitespace_split = True
             amargs = list(sp)
-            ecode, out = b4.git_run_command(topdir, ['am'] + amargs, stdin=ambytes, logstderr=True)
+            ecode, out = b4.git_run_command(topdir, ['am'] + amargs, stdin=ambytes, logstderr=True, rundir=topdir)
             logger.info(out.strip())
             if ecode == 0:
                 thanks_record_am(lser, cherrypick=cherrypick)
