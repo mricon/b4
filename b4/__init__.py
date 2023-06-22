@@ -2322,7 +2322,8 @@ def gpg_run_command(args: List[str], stdin: Optional[bytes] = None) -> Tuple[int
 
 
 def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[bytes] = None,
-                    logstderr: bool = False, decode: bool = True) -> Tuple[int, Union[str, bytes]]:
+                    logstderr: bool = False, decode: bool = True,
+                    rundir: Optional[str] = None) -> Tuple[int, Union[str, bytes]]:
     cmdargs = ['git', '--no-pager']
     if gitdir:
         if os.path.exists(os.path.join(gitdir, '.git')):
@@ -2335,7 +2336,7 @@ def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[byte
 
     cmdargs += args
 
-    ecode, out, err = _run_command(cmdargs, stdin=stdin)
+    ecode, out, err = _run_command(cmdargs, stdin=stdin, rundir=rundir)
 
     if decode:
         out = out.decode(errors='replace')
