@@ -1253,7 +1253,10 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
         except (KeyError, IndexError):
             logger.debug('Could not find previous series msgid, skipping %s', voldrev)
 
-    tag_msg = f'{csubject.full_subject}\n\n{cover_letter}'
+    header = csubject.full_subject
+    if prefixes:
+        header = '[' + ', '.join(prefixes) + f'] {header}'
+    tag_msg = f'{header}\n\n{cover_letter}'
     return alltos, allccs, tag_msg, patches
 
 
