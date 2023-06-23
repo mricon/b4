@@ -1216,7 +1216,11 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     if addtracking:
         patches[0][1].add_header('X-B4-Tracking', thdata)
 
-    tag_msg = f'{csubject.full_subject}\n\n{cover_letter}'
+    header = csubject.full_subject
+    if prefixes:
+        header = '[' + ', '.join(prefixes) + f'] {header}'
+    tag_msg = f'{header}\n\n{cover_letter}'
+
     return alltos, allccs, tag_msg, patches
 
 
