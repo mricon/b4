@@ -964,9 +964,9 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes, rundir=topdir)  # noqa
     if ecode > 0:
         logger.critical('CRITICAL: Running %s failed:', ' '.join(cmdargs))
-        logger.critical(err.decode())
+        logger.critical(err.decode(errors='ignore'))
         raise RuntimeError('Running command failed: %s' % ' '.join(cmdargs))
-    addrs = out.strip().decode()
+    addrs = out.strip().decode(errors='ignore')
     if not addrs:
         return list()
     return utils.getaddresses(addrs.split('\n'))
