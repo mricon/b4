@@ -130,6 +130,8 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Do not perform any network queries')
     parser.add_argument('--no-stdin', action='store_true', default=False,
                         help='Disable TTY detection for stdin')
+    parser.add_argument('--use-web-endpoint', dest='send_web', action='store_true', default=False,
+                        help="Force going through the web endpoint")
 
     subparsers = parser.add_subparsers(help='sub-command help', dest='subcmd')
 

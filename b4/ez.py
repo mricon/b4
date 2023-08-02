@@ -1459,10 +1459,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         pathlib.Path(cmdargs.output_dir).mkdir(parents=True, exist_ok=True)
 
     sconfig = b4.get_sendemail_config()
-    # If we have an smtp server defined, always use that instead of the endpoint
-    # we may make this configurable in the future, but this almost always makes sense
     endpoint = None
-    if not sconfig.get('smtpserver'):
+    if not sconfig.get('smtpserver') or cmdargs.send_web:
         endpoint = config.get('send-endpoint-web', '')
         if not re.search(r'^https?://', endpoint):
             logger.debug('Endpoint does not start with https, ignoring: %s', endpoint)

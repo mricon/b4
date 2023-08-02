@@ -124,9 +124,10 @@ You should now be able to send patches via this web submission endpoint.
 
 Using your own SMTP server
 --------------------------
-B4 will use the ``sendemail`` section from your git configuration, but
-it only supports the most common subset of options. The vast majority of
-servers will only need the following settings::
+If there is a ``sendmail`` section in your git configuration, B4 will try use
+that by default instead of the web endpoint. Only the most common subset of
+options are supported. The vast majority of servers will only need the
+following settings::
 
     [sendemail]
        smtpServer = smtp.example.org
@@ -136,7 +137,8 @@ servers will only need the following settings::
        smtpPass = [omitted]
 
 You can also set up msmtp or a similar tool and specify the path to the
-``sendmail``-compliant binary as the value for ``smtpServer``.
+``sendmail``-compliant binary as the value for ``smtpServer``. You can force B4
+to use the web endpoint by using the ``--use-web-endpoint`` argument.
 
 Sending your patches
 --------------------
