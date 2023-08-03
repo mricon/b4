@@ -3213,14 +3213,13 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
         # Do we have the envelopesender defined?
         env_sender = sconfig.get('envelopesender', '')
         if env_sender:
-            if env_sender == "auto":
+            if env_sender == 'auto':
                 envpair = email.utils.parseaddr(fromaddr)
             else:
                 envpair = email.utils.parseaddr(env_sender)
-        else:
-            envpair = email.utils.parseaddr(fromaddr)
-        if envpair[1]:
-            smtp += ['-f', envpair[1]]
+            if envpair[1]:
+                smtp += ['-f', envpair[1]]
+        logger.debug('sendmail command: %s', ' '.join(smtp))
         return smtp, fromaddr
 
     encryption = sconfig.get('smtpencryption')
