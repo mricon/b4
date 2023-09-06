@@ -14,12 +14,11 @@ Reviewed-by: Original Reviewer <original-reviewer@example.com>
 Link: https://msgid.link/some@msgid.here
 Signed-off-by: Original Submitter <original-submitter@example.com>
 Signed-off-by: Test Override <test-override@example.com>
----
 
 diff --git a/b4/junk.py b/b4/junk.py
 index 12345678..23456789 100644
 --- a/b4/junk.py
---- b/b4/junk.py
++++ b/b4/junk.py
 @@@ -1,1 +1,1 @@ def junk():
  
  
@@ -47,12 +46,11 @@ Link: https://msgid.link/some@msgid.here
 Signed-off-by: Original Submitter <original-submitter@example.com>
 Reviewed-by: Followup Reviewer1 <followup-reviewer1@example.com>
 Signed-off-by: Test Override <test-override@example.com>
----
 
 diff --git a/b4/bupkes.py b/b4/bupkes.py
 index 12345678..23456789 100644
 --- a/b4/bupkes.py
---- b/b4/bupkes.py
++++ b/b4/bupkes.py
 @@@ -1,1 +1,1 @@ def bupkes():
  
  

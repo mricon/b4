@@ -17,12 +17,11 @@ Reviewed-by: Followup Reviewer1 <followup-reviewer1@example.com>
 Tested-by: Followup Reviewer2 <followup-reviewer2@example.com>
 Reviewed-by: Mismatched Reviewer1 <mismatched-reviewer1@example.net>
 Signed-off-by: Test Override <test-override@example.com>
----
 
 diff --git a/b4/junk.py b/b4/junk.py
 index 12345678..23456789 100644
 --- a/b4/junk.py
---- b/b4/junk.py
++++ b/b4/junk.py
 @@@ -1,1 +1,1 @@ def junk():
  
  

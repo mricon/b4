@@ -13,10 +13,7 @@ Fixes: abcdef01234567890
 Reviewed-by: Original Reviewer <original-reviewer@example.com>
 Link: https://msgid.link/some@msgid.here
 Signed-off-by: Original Submitter <original-submitter@example.com>
----
 
-diff --git a/b4/junk.py b/b4/junk.py
-index 12345678..23456789 100644
 --- a/b4/junk.py
 +++ b/b4/junk.py
 @@@ -1,1 +1,1 @@ def junk():
@@ -31,7 +28,7 @@ index 12345678..23456789 100644
 
 From foo@z Thu Jan  1 00:00:00 1970
 From: Followup Reviewer1 <followup-reviewer1@example.com>
-Subject: [PATCH] Simple test
+Subject: Re: [PATCH] Simple test
 Date: Tue, 30 Aug 2022 11:19:07 -0400
 Message-Id: <fwup-message-1@example.com>
 In-Reply-To: <orig-message@example.com>
