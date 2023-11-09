@@ -43,7 +43,7 @@ send mail via SMTP.
 What is the b4 contributor workflow?
 ------------------------------------
 The workflow is very much git-oriented, so you should expect to need to
-know a lot about such git commands like ``git amend`` and ``git rebase
+know a lot about such git commands like ``git commit --amend`` and ``git rebase
 -i``. In general, the process goes like this:
 
 1. Prepare your patch series by using ``b4 prep`` and queueing your
