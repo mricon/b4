@@ -16,6 +16,10 @@ To install from pypi::
 
     python3 -m pip install --user b4
 
+b4 is also packaged for Debian-derived systems::
+
+    sudo apt install b4
+
 Upgrading
 ---------
 If you previously installed from pypi::
