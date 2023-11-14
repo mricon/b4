@@ -61,7 +61,11 @@ def git_get_commit_id_from_repo_ref(repo: str, ref: str) -> Optional[str]:
             lines = b4.git_get_command_lines(None, ['ls-remote', repo, 'refs/tags/%s^{}' % ref])
 
     elif ref.find('tags/') == 0:
+        #try as an annotated tag first
         lines = b4.git_get_command_lines(None, ['ls-remote', repo, 'refs/%s^{}' % ref])
+        if not lines:
+            # try it as a non-annotated tag, then
+            lines = b4.git_get_command_lines(None, ['ls-remote', repo, 'refs/%s' % ref])
 
     else:
         # Grab it as a head and hope for the best
