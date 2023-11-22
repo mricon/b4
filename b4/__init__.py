@@ -590,16 +590,15 @@ class LoreSeries:
                 if lmsg is None:
                     continue
                 lmsg.load_ci_status()
-                if lmsg.pw_ci_status == 'pending':
+                if not lmsg.pw_ci_status or lmsg.pw_ci_status == 'pending':
                     lmsg.pw_ci_status = None
-                    logger.debug('CI status is "pending", skipping the rest of the checks')
+                    logger.debug('CI status not useful, skipping the rest of the checks')
                     break
                 if series_url is None:
                     pwdata = lmsg.get_patchwork_info()
-                    series = pwdata.get('series')
-                    if series:
-                        for serie in series:
-                            series_url = serie.get('web_url')
+                    if pwdata and pwdata.get('series'):
+                        for series in pwdata.get('series'):
+                            series_url = series.get('web_url')
                             break
                 if lmsg.pw_ci_status == 'warning':
                     ci_overall = 'warning'
