@@ -88,6 +88,19 @@ ATT_FAIL_SIMPLE = 'x'
 ATT_PASS_FANCY = '\033[32m\u2713\033[0m'
 ATT_FAIL_FANCY = '\033[31m\u2717\033[0m'
 
+CI_FLAGS_SIMPLE = {
+    'pending': '<?>',
+    'success': '<S>',
+    'warning': '<W>',
+    'failure': '<F>',
+}
+CI_FLAGS_FANCY = {
+    'pending': '\033[90m\u25cf\033[0m',
+    'success': '\033[32m\u25cf\033[0m',
+    'warning': '\033[31m\u25cf\033[0m',
+    'fail': '\033[31;5m\u25cf\033[0m',
+}
+
 DEVSIG_HDR = 'X-Developer-Signature'
 LOREADDR = 'https://lore.kernel.org'
 
@@ -568,6 +581,34 @@ class LoreSeries:
                 logger.debug('Attestation info is not the same')
                 break
 
+        if config.get('pw-url') and config.get('pw-project'):
+            # Use this to pre-load the CI status of each patch
+            logger.info('Retrieving CI status, may take a moment...')
+            ci_overall = 'success'
+            series_url = None
+            for lmsg in self.patches[1:]:
+                if lmsg is None:
+                    continue
+                lmsg.load_ci_status()
+                if lmsg.pw_ci_status == 'pending':
+                    lmsg.pw_ci_status = None
+                    logger.debug('CI status is "pending", skipping the rest of the checks')
+                    break
+                if series_url is None:
+                    pwdata = lmsg.get_patchwork_info()
+                    series = pwdata.get('series')
+                    if series:
+                        for serie in series:
+                            series_url = serie.get('web_url')
+                            break
+                if lmsg.pw_ci_status == 'warning':
+                    ci_overall = 'warning'
+                elif lmsg.pw_ci_status == 'fail':
+                    ci_overall = 'fail'
+            if ci_overall != 'success':
+                logger.info('Some CI checks failed, see patchwork for more info:')
+                logger.info('  %s', series_url)
+
         if covertrailers:
             self.add_cover_trailers()
 
@@ -1015,6 +1056,8 @@ class LoreMessage:
 
         # Patchwork hash
         self.pwhash = None
+        # Patchwork CI status
+        self.pw_ci_status = None
         # Blob indexes
         self.blob_indexes = None
 
@@ -1302,6 +1345,102 @@ class LoreMessage:
                 signdt = None
             attestor = LoreAttestorPatatt(result, identity, signdt, keysrc, keyalgo, errors)
             self._attestors.append(attestor)
+
+    def get_patchwork_info(self) -> Optional[dict]:
+        if not self.pwhash:
+            return None
+        config = get_main_config()
+        pwkey = config.get('pw-key')
+        pwurl = config.get('pw-url')
+        pwproj = config.get('pw-project')
+        if not (pwkey and pwurl and pwproj):
+            logger.debug('Patchwork support requires pw-key, pw-url and pw-project settings')
+            return None
+        cachedata = get_cache(pwurl + pwproj + self.pwhash, suffix='lookup')
+        if cachedata:
+            import json
+            pwdata = json.loads(cachedata)
+        else:
+            pses, url = get_patchwork_session(pwkey, pwurl)
+            patches_url = '/'.join((url, 'patches'))
+            params = [
+                ('project', pwproj),
+                ('archived', 'false'),
+                ('msgid', self.msgid),
+            ]
+            pwdata = None
+            try:
+                logger.debug('looking up patch_id of msgid=%s', self.msgid)
+                rsp = pses.get(patches_url, params=params, stream=False)
+                rsp.raise_for_status()
+                pdata = rsp.json()
+                for entry in pdata:
+                    patch_id = entry.get('id')
+                    if patch_id:
+                        # cache this one
+                        pwdata = entry
+                        break
+                rsp.close()
+            except requests.exceptions.RequestException as ex:
+                logger.debug('Patchwork REST error: %s', ex)
+                return None
+            if not pwdata:
+                logger.debug('Not able to look up patchwork data for %s', self.msgid)
+                return None
+            import json
+            save_cache(json.dumps(pwdata), pwurl + pwproj + self.pwhash, suffix='lookup')
+
+        return pwdata
+
+    def get_ci_checks(self) -> list:
+        checks = list()
+        if not self.pw_ci_status or self.pw_ci_status == 'pending':
+            return checks
+        config = get_main_config()
+        pwkey = config.get('pw-key')
+        pwurl = config.get('pw-url')
+        pwdata = self.get_patchwork_info()
+        pw_patch_id = pwdata.get('id')
+        cacheid = pwurl + str(pw_patch_id) + 'checks'
+        cachedata = get_cache(cacheid, suffix='lookup')
+        if cachedata:
+            import json
+            checks = json.loads(cachedata)
+        else:
+            pses, url = get_patchwork_session(pwkey, pwurl)
+            checks_url = '/'.join((url, 'patches', str(pw_patch_id), 'checks'))
+            try:
+                logger.debug('looking up checks for patch_id=%s', pw_patch_id)
+                rsp = pses.get(checks_url, stream=False)
+                rsp.raise_for_status()
+                pdata = rsp.json()
+                for entry in pdata:
+                    if entry.get('state') == 'success' or entry.get('state') not in CI_FLAGS_FANCY:
+                        # We don't care to see these ;)
+                        continue
+                    checks.append((entry.get('state'), entry.get('context'), entry.get('description')))
+                rsp.close()
+            except requests.exceptions.RequestException as ex:
+                logger.debug('Patchwork REST error: %s', ex)
+                return checks
+            if not pwdata:
+                logger.debug('Not able to look up patchwork checks data for %s', self.msgid)
+                return checks
+            import json
+            save_cache(json.dumps(checks), cacheid, suffix='lookup')
+
+        return checks
+
+    def load_ci_status(self) -> None:
+        logger.debug('Loading CI status for %s', self.msgid)
+        pwdata = self.get_patchwork_info()
+        if not pwdata:
+            return
+        ci_status = pwdata.get('check', 'pending')
+        if ci_status not in CI_FLAGS_FANCY:
+            logger.debug('  unknown CI status: ci_status')
+        logger.debug('ci_state for %s: %s', self.msgid, ci_status)
+        self.pw_ci_status = ci_status
 
     def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[str, list, bool]:
         trailers = list()
@@ -1975,7 +2114,8 @@ class LoreMessage:
 
         self.body = LoreMessage.rebuild_message(bheaders, message, fixtrailers, basement, signature)
 
-    def get_am_subject(self, indicate_reroll=True, use_subject=None):
+    def get_am_subject(self, indicate_reroll: bool = True, use_subject: Optional[str] = None,
+                       show_ci_status: bool = True):
         # Return a clean patch subject
         parts = ['PATCH']
         if self.lsubject.rfc:
@@ -1995,6 +2135,9 @@ class LoreMessage:
 
         if not use_subject:
             use_subject = self.lsubject.subject
+
+        if show_ci_status and self.pw_ci_status:
+            return '[%s %s] %s' % (CI_FLAGS_FANCY[self.pw_ci_status], ' '.join(parts), use_subject)
 
         return '[%s] %s' % (' '.join(parts), use_subject)
 
@@ -3327,6 +3470,7 @@ def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str
 
 
 def patchwork_set_state(msgids: List[str], state: str) -> bool:
+    # TODO: rewrite using shared code in LoreMessage
     # Do we have a pw-key defined in config?
     config = get_main_config()
     pwkey = config.get('pw-key')
