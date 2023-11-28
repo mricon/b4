@@ -11,10 +11,8 @@ import tempfile
 
 import b4
 import re
-import mailbox
 import json
 import email
-import gzip
 
 import urllib.parse
 import requests
@@ -22,10 +20,6 @@ import requests
 from datetime import datetime
 
 from email import utils, charset
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-
 from typing import Optional, List
 
 
@@ -264,8 +258,9 @@ def thanks_record_pr(lmsg):
         b4.patchwork_set_state(lmsg.msgid, pwstate)
 
 
-def explode(gitdir: Optional[str], lmsg: b4.LoreMessage, mailfrom: Optional[str] = None,
-            retrieve_links: bool = True) -> List[email.message.Message]:
+def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
+            mailfrom: Optional[str] = None) -> List[email.message.Message]:
+    import b4.ez
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
         raise RuntimeError('Fetching unsuccessful')
@@ -308,48 +303,24 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage, mailfrom: Optional[str]
             mailfrom = (f'{emlfrom[0]} via {vianame}', mailfrom[1])
 
     config = b4.get_main_config()
-    linked_ids = set()
-    if retrieve_links:
-        # Insert the pull request itself into linked_ids, so we preserve it as part
-        # of the archived threads.
-        linked_ids.add(lmsg.msgid)
-
-    # Build the cover message from the pull request body
-    body = '%s\n\nbase-commit: %s\nPR-Link: %s\n' % (
-        lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
-
-    # Make it a multipart if we're doing retrieve_links
-    if retrieve_links:
-        cmsg = MIMEMultipart()
-        cmsg.attach(MIMEText(body, 'plain'))
-    else:
-        cmsg = email.message.EmailMessage()
-        cmsg.set_payload(body)
-
-    msgid_tpt = f'<b4-exploded-%s-{lmsg.msgid}>'
-    cmsg.add_header('From', b4.format_addrs([mailfrom]))
-    cmsg.add_header('Subject', lmsg.full_subject)
-    cmsg.add_header('Date', lmsg.msg.get('Date'))
-    cmsg.set_charset('utf-8')
-    cmsg.replace_header('Content-Transfer-Encoding', '8bit')
+    msgid_tpt = f'<b4-pr-%s-{lmsg.msgid}>'
 
     pmsgs = b4.git_range_to_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD',
-                                    covermsg=cmsg, prefixes=prefixes, msgid_tpt=msgid_tpt,
-                                    seriests=lmsg.date.timestamp(), mailfrom=mailfrom, thread=True)
+                                    prefixes=prefixes, msgid_tpt=msgid_tpt,
+                                    seriests=lmsg.date.timestamp(), mailfrom=mailfrom)
 
     msgs = list()
+    # Build the cover message from the pull request body
+    cbody = '%s\n\nbase-commit: %s\npull-request: %s\n' % (
+        lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
+
+    if len(pmsgs) == 1:
+        b4.ez.mixin_cover(cbody, pmsgs)
+    else:
+        lmsg.lsubject.prefixes = prefixes
+        b4.ez.add_cover(lmsg.lsubject, msgid_tpt, pmsgs, cbody, lmsg.date.timestamp())
+
     for at, (commit, msg) in enumerate(pmsgs):
-        body = msg.get_payload(decode=True)
-
-        if isinstance(body, bytes) and retrieve_links:
-            body = body.decode()
-            matches = re.findall(r'^Link:\s+https?://.*/(\S+@\S+)[^/]', body, flags=re.M | re.I)
-            if matches:
-                linked_ids.update(matches)
-            matches = re.findall(r'^Message-ID:\s+(\S+@\S+)', body, flags=re.M | re.I)
-            if matches:
-                linked_ids.update(matches)
-
         msg.add_header('To', format_addrs(allto))
         if allcc:
             msg.add_header('Cc', format_addrs(allcc))
@@ -361,45 +332,6 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage, mailfrom: Optional[str]
         logger.info('  %s', re.sub(r'\n\s*', ' ', msg.get('Subject')))
 
     logger.info('Exploded %s messages', len(msgs))
-    if retrieve_links and linked_ids:
-        with tempfile.TemporaryDirectory() as tfd:
-            # Create a single mbox file with all linked conversations
-            mbf = os.path.join(tfd, 'linked.mbox')
-            tmbx = mailbox.mbox(mbf)
-            logger.info('---')
-            logger.info('Retrieving %s linked conversations', len(linked_ids))
-
-            seen_msgids = set()
-            for msgid in linked_ids:
-                # Did we already retrieve it as part of a previous tread?
-                if msgid in seen_msgids:
-                    continue
-                lmsgs = b4.get_pi_thread_by_msgid(msgid)
-                if lmsgs:
-                    # Append any messages we don't yet have
-                    for lmsg in lmsgs:
-                        amsgid = b4.LoreMessage.get_clean_msgid(lmsg)
-                        if amsgid not in seen_msgids:
-                            seen_msgids.add(amsgid)
-                            logger.debug('Added linked: %s', lmsg.get('Subject'))
-                            tmbx.add(lmsg.as_bytes(policy=b4.emlpolicy))
-
-            if len(tmbx):
-                tmbx.close()
-                # gzip the mailbox and attach it to the cover letter
-                with open(mbf, 'rb') as fh:
-                    mbz = gzip.compress(fh.read())
-                    fname = 'linked-threads.mbox.gz'
-                    att = MIMEApplication(mbz, 'x-gzip')
-                    att.add_header('Content-Disposition', f'attachment; filename={fname}')
-                    cmsg.attach(att)
-
-        logger.info('---')
-        if len(seen_msgids):
-            logger.info('Attached %s messages as linked-threads.mbox.gz', len(seen_msgids))
-        else:
-            logger.info('Could not retrieve any linked threads')
-
     return msgs
 
 
@@ -448,7 +380,6 @@ def get_pr_from_github(ghurl: str):
     msg['From'] = f'{uname} <{uemail}>'
     title = prdata.get('title', '')
     msg['Subject'] = f'[GIT PULL] {title}'
-    msg['To'] = fake_email
     msg['Message-Id'] = utils.make_msgid(idstring=f'{rproj}-{rrepo}-pr-{rpull}', domain='github.com')
     created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ'))
     msg['Date'] = created_at
@@ -500,7 +431,7 @@ def main(cmdargs):
         # Set up a temporary clone
         with b4.git_temp_clone(gitdir) as tc:
             try:
-                msgs = explode(tc, lmsg, mailfrom=cmdargs.mailfrom, retrieve_links=cmdargs.getlinks)
+                msgs = explode(tc, lmsg, mailfrom=cmdargs.mailfrom)
             except RuntimeError:
                 logger.critical('Nothing exploded.')
                 sys.exit(1)
