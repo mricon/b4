@@ -418,7 +418,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     if base_commit is not None:
         logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
     if cmdargs.outdir != '-':
-        logger.critical('       git am %s', am_filename)
+        logger.critical('       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename)
     thanks_record_am(lser, cherrypick=cherrypick)
 
 
