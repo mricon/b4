@@ -43,10 +43,6 @@ PULL_BODY_REMOTE_REF_RE = [
 ]
 
 
-def format_addrs(pairs):
-    return ', '.join([utils.formataddr(pair) for pair in pairs])
-
-
 def git_get_commit_id_from_repo_ref(repo, ref):
     # We only handle git and http/s URLs
     if not (repo.find('git://') == 0 or repo.find('http://') == 0 or repo.find('https://') == 0):
@@ -321,9 +317,9 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
         b4.ez.add_cover(lmsg.lsubject, msgid_tpt, pmsgs, cbody, lmsg.date.timestamp())
 
     for at, (commit, msg) in enumerate(pmsgs):
-        msg.add_header('To', format_addrs(allto))
+        msg.add_header('To', b4.format_addrs(allto))
         if allcc:
-            msg.add_header('Cc', format_addrs(allcc))
+            msg.add_header('Cc', b4.format_addrs(allcc))
 
         if lmsg.msg['List-Id']:
             msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
