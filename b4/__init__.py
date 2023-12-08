@@ -546,10 +546,20 @@ class LoreSeries:
         if self.patches[lmsg.counter] is not None:
             # Okay, weird, is the one in there a reply?
             omsg = self.patches[lmsg.counter]
+
+            logger.warn('WARNING: duplicate messages found at index %s', lmsg.counter)
+            logger.warn('   Subject 1: %s', lmsg.subject)
+            logger.warn('   Subject 2: %s', omsg.subject)
             if omsg.reply or (omsg.counters_inferred and not lmsg.counters_inferred):
                 # Replace that one with this one
-                logger.debug('  replacing existing: %s', omsg.subject)
+                logger.warn('  2 is a reply... replacing existing: %s', omsg.subject)
                 self.patches[lmsg.counter] = lmsg
+            else:
+                logger.warn('  2 is not a reply... assume additional patch')
+                self.patches.append(None)
+                self.expected = self.expected + 1
+                self.patches[lmsg.counter] = lmsg
+                self.patches[lmsg.counter + 1] = omsg
         else:
             self.patches[lmsg.counter] = lmsg
         self.complete = not (None in self.patches[1:])
