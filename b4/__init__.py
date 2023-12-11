@@ -587,29 +587,42 @@ class LoreSeries:
         if config.get('pw-url') and config.get('pw-project'):
             # Use this to pre-load the CI status of each patch
             logger.info('Retrieving CI status, may take a moment...')
-            ci_overall = 'success'
-            series_url = None
-            for lmsg in self.patches[1:]:
-                if lmsg is None:
-                    continue
-                lmsg.load_ci_status()
-                if not lmsg.pw_ci_status or lmsg.pw_ci_status == 'pending':
-                    lmsg.pw_ci_status = None
-                    logger.debug('CI status not useful, skipping the rest of the checks')
-                    break
-                if series_url is None:
-                    pwdata = lmsg.get_patchwork_info()
-                    if pwdata and pwdata.get('series'):
-                        for series in pwdata.get('series'):
-                            series_url = series.get('web_url')
-                            break
-                if lmsg.pw_ci_status == 'warning':
-                    ci_overall = 'warning'
-                elif lmsg.pw_ci_status == 'fail':
-                    ci_overall = 'fail'
-            if ci_overall != 'success':
-                logger.info('Some CI checks failed, see patchwork for more info:')
-                logger.info('  %s', series_url)
+            show_ci_checks = True
+            # If there is more than one patch in the series, check the last patch first
+            # and skip checking the rest of the patches if the last patch is still 'pending'
+            if self.expected > 1:
+                lastp = self.patches[-1]
+                if lastp:
+                    # This will be cached, so we don't worry about extra lookups
+                    lastp.load_ci_status()
+                    if not lastp.pw_ci_status or lastp.pw_ci_status == 'pending':
+                        logger.debug('No CI on the last patch, skipping the rest of the checks')
+                        lastp.pw_ci_status = None
+                        show_ci_checks = False
+
+            if show_ci_checks:
+                ci_overall = 'success'
+                series_url = None
+                for lmsg in self.patches[1:]:
+                    if lmsg is None:
+                        continue
+                    lmsg.load_ci_status()
+                    if not lmsg.pw_ci_status or lmsg.pw_ci_status == 'pending':
+                        lmsg.pw_ci_status = None
+                        break
+                    if series_url is None:
+                        pwdata = lmsg.get_patchwork_info()
+                        if pwdata and pwdata.get('series'):
+                            for series in pwdata.get('series'):
+                                series_url = series.get('web_url')
+                                break
+                    if lmsg.pw_ci_status == 'warning':
+                        ci_overall = 'warning'
+                    elif lmsg.pw_ci_status == 'fail':
+                        ci_overall = 'fail'
+                if ci_overall != 'success':
+                    logger.info('Some CI checks failed, see patchwork for more info:')
+                    logger.info('  %s', series_url)
 
         if covertrailers:
             self.add_cover_trailers()
