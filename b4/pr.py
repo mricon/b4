@@ -22,7 +22,6 @@ from datetime import datetime
 from email import utils, charset
 from typing import Optional, List
 
-
 charset.add_charset('utf-8', None)
 
 logger = b4.logger

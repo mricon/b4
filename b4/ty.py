@@ -317,10 +317,10 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
     patches = jsondata['patches']
     for at, cid in commits:
         try:
-            prefix = '[%s] ' % patches[at-1][3]
+            prefix = '[%s] ' % patches[at - 1][3]
         except IndexError:
             prefix = '[%s/%s] ' % (str(at).zfill(padlen), len(commits))
-        slines.append('%s%s' % (prefix, patches[at-1][0]))
+        slines.append('%s%s' % (prefix, str(patches[at - 1][0])))
         if cid is None:
             slines.append('%s(no commit info)' % (' ' * len(prefix)))
             nomatch += 1

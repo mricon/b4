@@ -291,7 +291,8 @@ def setup_parser() -> argparse.ArgumentParser:
                           help='When creating a new branch, use this thread')
     ag_prepe = sp_prep.add_argument_group('Enroll existing branch', 'Enroll existing branch for prep work')
     ag_prepe.add_argument('-e', '--enroll', dest='enroll_base', nargs='?', const='@{upstream}',
-                          help='Enroll current branch, using its configured upstream branch as fork base, or the passed tag, branch, or commit')
+                          help='Enroll current branch, using its configured upstream branch as fork base, '
+                               'or the passed tag, branch, or commit')
     sp_prep.set_defaults(func=cmd_prep)
 
     # b4 trailers
@@ -367,6 +368,7 @@ def cmd():
 if __name__ == '__main__':
     # We're running from a checkout, so reflect git commit in the version
     import os
+
     # noinspection PyBroadException
     try:
         if b4.__VERSION__.find('-dev') > 0:

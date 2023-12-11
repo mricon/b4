@@ -13,7 +13,6 @@ import re
 import b4
 import b4.mbox
 
-
 logger = b4.logger
 
 

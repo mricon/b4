@@ -99,7 +99,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
                 logger.critical('Could not match "%s" to any subjects in the series', cmdargs.cherrypick)
                 sys.exit(1)
         else:
-            cherrypick = list(b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches)-1))
+            cherrypick = list(b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches) - 1))
     else:
         cherrypick = None
 

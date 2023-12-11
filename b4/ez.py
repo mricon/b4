@@ -32,12 +32,14 @@ from string import Template
 
 try:
     import patatt
+
     can_patatt = True
 except ModuleNotFoundError:
     can_patatt = False
 
 try:
     import git_filter_repo as fr  # noqa
+
     can_gfr = True
 except ModuleNotFoundError:
     can_gfr = False
