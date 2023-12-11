@@ -37,6 +37,7 @@ from contextlib import contextmanager
 from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal
 
 from email import charset
+
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
@@ -47,12 +48,14 @@ qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 try:
     import dkim
+
     can_dkim = True
 except ModuleNotFoundError:
     can_dkim = False
 
 try:
     import patatt
+
     can_patatt = True
 except ModuleNotFoundError:
     can_patatt = False
@@ -199,7 +202,7 @@ class LoreMailbox:
         if revision <= 1 or revision - 1 not in self.series:
             return
         # Are existing patches replies to previous revisions with the same counter?
-        pser = self.get_series(revision-1, sloppytrailers=sloppytrailers)
+        pser = self.get_series(revision - 1, sloppytrailers=sloppytrailers)
         lser = self.series[revision]
         sane = True
         for patch in lser.patches:
@@ -329,7 +332,7 @@ class LoreMailbox:
                 logger.debug('%sParent: %s', ' ' * lvl, pmsg.full_subject)
                 logger.debug('%sTrailers:', ' ' * lvl)
                 for ltr in trailers:
-                    logger.debug('%s%s: %s', ' ' * (lvl+1), ltr.name, ltr.value)
+                    logger.debug('%s%s: %s', ' ' * (lvl + 1), ltr.name, ltr.value)
                 if pmsg.has_diff and not pmsg.reply:
                     # We found the patch for these trailers
                     if pmsg.revision != revision:
@@ -448,7 +451,7 @@ class LoreSeries:
     def __init__(self, revision: int, expected: int) -> None:
         self.revision = revision
         self.expected = expected
-        self.patches = [None] * (expected+1)
+        self.patches = [None] * (expected + 1)
         self.followups = list()
         self.trailer_mismatches = set()
         self.subject = '(untitled)'
@@ -926,7 +929,8 @@ class LoreTrailer:
     addr: Optional[Tuple[str, str]] = None
     lmsg = None
     # Small list of recognized utility trailers
-    _utility: Set[str] = {'fixes', 'link', 'buglink', 'closes', 'obsoleted-by', 'message-id', 'change-id', 'base-commit'}
+    _utility: Set[str] = {'fixes', 'link', 'buglink', 'closes', 'obsoleted-by', 'message-id', 'change-id',
+                          'base-commit'}
 
     def __init__(self, name: Optional[str] = None, value: Optional[str] = None, extinfo: Optional[str] = None,
                  msg: Optional[email.message.Message] = None):
@@ -991,7 +995,7 @@ class LoreTrailer:
         if olocal != tlocal:
             return False
 
-        if (abs(odomain.count('.')-tdomain.count('.')) == 1
+        if (abs(odomain.count('.') - tdomain.count('.')) == 1
                 and (odomain.endswith(f'.{tdomain}') or tdomain.endswith(f'.{odomain}'))):
             return True
 
@@ -1655,7 +1659,7 @@ class LoreMessage:
                     # Also allow for the ' ' at the front on continuation lines
                     wrapat -= 1
                 # Make sure we don't break on a =XX escape sequence
-                while '=' in qp[wrapat-2:wrapat]:
+                while '=' in qp[wrapat - 2:wrapat]:
                     wrapat -= 1
                 _parts.append(qp[:wrapat] + '?=')
                 qp = ('=?utf-8?q?' + qp[wrapat:])
@@ -2162,7 +2166,7 @@ class LoreMessage:
                             logger.critical('WARNING: Message contains suspicious unicode control characters!')
                             logger.critical('         Subject: %s', self.full_subject)
                             logger.critical('            Line: %s', line.rstrip('\r'))
-                            logger.critical('            ------%s^', '-'*at)
+                            logger.critical('            ------%s^', '-' * at)
                             logger.critical('            Char: %s (%s)', unicodedata.name(c), hex(ord(c)))
                             logger.critical('         If you are sure about this, rerun with the right flag to allow.')
                             sys.exit(1)
@@ -2387,9 +2391,9 @@ class LoreAttestor:
         return False
 
     @staticmethod
-    def parse_ts(ts: Optional[str]):
+    def parse_ts(ts: Optional[str]) -> Optional[datetime.datetime]:
         try:
-            return datetime.datetime.utcfromtimestamp(int(ts)).replace(tzinfo=datetime.timezone.utc)
+            return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc)
         except:  # noqa
             logger.debug('Failed parsing t=%s', ts)
         return None
@@ -3221,9 +3225,9 @@ def parse_int_range(intrange, upper=None):
         elif n.find('-') > 0:
             nr = n.split('-')
             if nr[0].isdigit() and nr[1].isdigit():
-                yield from range(int(nr[0]), int(nr[1])+1)
+                yield from range(int(nr[0]), int(nr[1]) + 1)
             elif not len(nr[1]) and nr[0].isdigit() and upper:
-                yield from range(int(nr[0]), upper+1)
+                yield from range(int(nr[0]), upper + 1)
         else:
             logger.critical('Unknown range value specified: %s', n)
 
@@ -3330,7 +3334,7 @@ def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[dict, bytes, byte
             line = line.strip()
             if not line:
                 continue
-            chunks = line.split(':',  1)
+            chunks = line.split(':', 1)
             i[chunks[0]] = chunks[1].strip()
 
             with open(m_out, 'rb') as mfh:
@@ -3531,7 +3535,6 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
               patatt_sign: bool = False, dryrun: bool = False,
               output_dir: Optional[str] = None, web_endpoint: Optional[str] = None,
               reflect: bool = False) -> Optional[int]:
-
     tosend = list()
     if output_dir is not None:
         dryrun = True
