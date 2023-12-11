@@ -1349,51 +1349,58 @@ class LoreMessage:
             attestor = LoreAttestorPatatt(result, identity, signdt, keysrc, keyalgo, errors)
             self._attestors.append(attestor)
 
-    def get_patchwork_info(self) -> Optional[dict]:
-        if not self.pwhash:
-            return None
+    @staticmethod
+    def get_patchwork_data_by_msgid(msgid: str) -> dict:
         config = get_main_config()
         pwkey = config.get('pw-key')
         pwurl = config.get('pw-url')
         pwproj = config.get('pw-project')
         if not (pwkey and pwurl and pwproj):
             logger.debug('Patchwork support requires pw-key, pw-url and pw-project settings')
-            return None
-        cachedata = get_cache(pwurl + pwproj + self.pwhash, suffix='lookup')
+            raise LookupError('Error looking up %s in patchwork' % msgid)
+
+        cachedata = get_cache(pwurl + pwproj + msgid, suffix='lookup')
         if cachedata:
             import json
-            pwdata = json.loads(cachedata)
-        else:
-            pses, url = get_patchwork_session(pwkey, pwurl)
-            patches_url = '/'.join((url, 'patches'))
-            params = [
-                ('project', pwproj),
-                ('archived', 'false'),
-                ('msgid', self.msgid),
-            ]
-            pwdata = None
-            try:
-                logger.debug('looking up patch_id of msgid=%s', self.msgid)
-                rsp = pses.get(patches_url, params=params, stream=False)
-                rsp.raise_for_status()
-                pdata = rsp.json()
-                for entry in pdata:
-                    patch_id = entry.get('id')
-                    if patch_id:
-                        # cache this one
-                        pwdata = entry
-                        break
-                rsp.close()
-            except requests.exceptions.RequestException as ex:
-                logger.debug('Patchwork REST error: %s', ex)
-                return None
-            if not pwdata:
-                logger.debug('Not able to look up patchwork data for %s', self.msgid)
-                return None
-            import json
-            save_cache(json.dumps(pwdata), pwurl + pwproj + self.pwhash, suffix='lookup')
+            return json.loads(cachedata)
 
+        pses, url = get_patchwork_session(pwkey, pwurl)
+        patches_url = '/'.join((url, 'patches'))
+        params = [
+            ('project', pwproj),
+            ('archived', 'false'),
+            ('msgid', msgid),
+        ]
+        pwdata = None
+        try:
+            logger.debug('looking up patch_id of msgid=%s', msgid)
+            rsp = pses.get(patches_url, params=params, stream=False)
+            rsp.raise_for_status()
+            pdata = rsp.json()
+            for entry in pdata:
+                patch_id = entry.get('id')
+                if patch_id:
+                    # cache this one
+                    pwdata = entry
+                    break
+            rsp.close()
+        except requests.exceptions.RequestException as ex:
+            logger.debug('Patchwork REST error: %s', ex)
+            raise LookupError('Error looking up %s in patchwork' % msgid)
+        if not pwdata:
+            logger.debug('Not able to look up patchwork data for %s', msgid)
+            raise LookupError('Error looking up %s in patchwork' % msgid)
+        import json
+        save_cache(json.dumps(pwdata), pwurl + pwproj + msgid, suffix='lookup')
         return pwdata
+
+    def get_patchwork_info(self) -> Optional[dict]:
+        if not self.pwhash:
+            return None
+        try:
+            return LoreMessage.get_patchwork_data_by_msgid(self.msgid)
+        except LookupError:
+            return None
 
     def get_ci_checks(self) -> list:
         checks = list()
@@ -3473,7 +3480,6 @@ def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str
 
 
 def patchwork_set_state(msgids: List[str], state: str) -> bool:
-    # TODO: rewrite using shared code in LoreMessage
     # Do we have a pw-key defined in config?
     config = get_main_config()
     pwkey = config.get('pw-key')
@@ -3489,26 +3495,18 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
     for msgid in msgids:
         if msgid in seen:
             continue
-        # Two calls, first to look up the patch-id, second to update its state
-        params = [
-            ('project', pwproj),
-            ('archived', 'false'),
-            ('msgid', msgid),
-        ]
         try:
-            logger.debug('looking up patch_id of msgid=%s', msgid)
-            rsp = pses.get(patches_url, params=params, stream=False)
-            rsp.raise_for_status()
-            pdata = rsp.json()
-            for entry in pdata:
-                patch_id = entry.get('id')
-                if patch_id:
-                    title = entry.get('name')
-                    if entry.get('state') != state:
-                        seen.add(msgid)
-                        tochange.append((patch_id, title))
-        except requests.exceptions.RequestException as ex:
-            logger.debug('Patchwork REST error: %s', ex)
+            pwdata = LoreMessage.get_patchwork_data_by_msgid(msgid)
+            patch_id = pwdata.get('id')
+            if patch_id:
+                title = pwdata.get('name')
+                if pwdata.get('state') != state:
+                    seen.add(msgid)
+                    tochange.append((patch_id, title))
+                    # invalidate the cache
+                    clear_cache(pwurl + pwproj + msgid, suffix='lookup')
+        except LookupError as ex:
+            logger.debug('Error retrieving patchwork data: %s', ex)
 
     if tochange:
         logger.info('---')
