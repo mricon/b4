@@ -712,7 +712,7 @@ class LoreSeries:
         self.indexes = list()
         seenfiles = set()
         for lmsg in self.patches[1:]:
-            if lmsg is None or lmsg.blob_indexes is None:
+            if lmsg is None or not lmsg.blob_indexes:
                 continue
             for ofn, obh, nfn in lmsg.blob_indexes:
                 if ofn in seenfiles:
@@ -1032,50 +1032,73 @@ class LoreTrailer:
 
 
 class LoreMessage:
+    msg: email.message.Message
+    msgid: str
+
+    # Subject-based info
+    lsubject: 'LoreSubject'
+    full_subject: str
+    subject: str
+    reply: bool
+    revision: int
+    reroll_from_revision: Optional[int]
+    counter: int
+    expected: int
+    revision_inferred: bool
+    counters_inferred: bool
+
+    # header-based info
+    in_reply_to: Optional[str]
+    fromname: str
+    fromemail: str
+    date: datetime.datetime
+
+    # body-based info
+    body: str
+    message: str
+    charset: str
+    has_diff: bool
+    has_diffstat: bool
+    trailers: List['LoreTrailer']
+    followup_trailers: List['LoreTrailer']
+
+    # populated by pr
+    pr_base_commit: Optional[str]
+    pr_repo: Optional[str]
+    pr_ref: Optional[str]
+    pr_tip_commit: Optional[str]
+    pr_remote_tip_commit: Optional[str]
+
+    # patch-related info
+    pwhash: Optional[str]
+    pw_ci_status: Optional[str]
+    blob_indexes: Set[Tuple[str, str, str]]
+    git_patch_id: Optional[str]
+
     def __init__(self, msg):
         self.msg = msg
-        self.msgid = None
 
-        # Subject-based info
-        self.lsubject = None
-        self.full_subject = None
-        self.subject = None
-        self.reply = False
+        # set some defaults
         self.revision = 1
         self.reroll_from_revision = None
         self.counter = 1
         self.expected = 1
         self.revision_inferred = True
         self.counters_inferred = True
-
-        # Header-based info
-        self.in_reply_to = None
-        self.fromname = None
-        self.fromemail = None
-        self.date = None
-
-        # Body and body-based info
-        self.body = None
-        self.message = None
         self.charset = 'utf-8'
         self.has_diff = False
         self.has_diffstat = False
         self.trailers = list()
         self.followup_trailers = list()
-
-        # These are populated by pr
         self.pr_base_commit = None
         self.pr_repo = None
         self.pr_ref = None
         self.pr_tip_commit = None
         self.pr_remote_tip_commit = None
-
-        # Patchwork hash
         self.pwhash = None
-        # Patchwork CI status
         self.pw_ci_status = None
-        # Blob indexes
-        self.blob_indexes = None
+        self.blob_indexes = set()
+        self.git_patch_id = None
 
         self.msgid = LoreMessage.get_clean_msgid(self.msg)
         self.lsubject = LoreSubject(msg['Subject'])
@@ -1189,7 +1212,7 @@ class LoreMessage:
         return trailers, mismatches
 
     @property
-    def attestors(self):
+    def attestors(self) -> List['LoreAttestor']:
         if self._attestors is not None:
             return self._attestors
 
@@ -1800,7 +1823,7 @@ class LoreMessage:
         return hashed.hexdigest()
 
     @staticmethod
-    def get_indexes(diff: str) -> Set[tuple]:
+    def get_indexes(diff: str) -> Set[Tuple[str, str, str]]:
         indexes = set()
         oldfile = None
         newfile = None

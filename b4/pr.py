@@ -302,7 +302,7 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
 
     pmsgs = b4.git_range_to_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD',
                                     prefixes=prefixes, msgid_tpt=msgid_tpt,
-                                    seriests=lmsg.date.timestamp(), mailfrom=mailfrom)
+                                    seriests=int(lmsg.date.timestamp()), mailfrom=mailfrom)
 
     msgs = list()
     # Build the cover message from the pull request body
@@ -313,7 +313,7 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
         b4.ez.mixin_cover(cbody, pmsgs)
     else:
         lmsg.lsubject.prefixes = prefixes
-        b4.ez.add_cover(lmsg.lsubject, msgid_tpt, pmsgs, cbody, lmsg.date.timestamp())
+        b4.ez.add_cover(lmsg.lsubject, msgid_tpt, pmsgs, cbody, int(lmsg.date.timestamp()))
 
     for at, (commit, msg) in enumerate(pmsgs):
         msg.add_header('To', b4.format_addrs(allto))
