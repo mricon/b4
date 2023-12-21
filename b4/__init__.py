@@ -2963,7 +2963,7 @@ def get_pi_search_results(query: str, nocache: bool = False) -> Optional[List[em
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
                 msgs.append(email.message_from_binary_file(fh, policy=emlpolicy))
-                return msgs
+        return msgs
 
     loc = urllib.parse.urlparse(query_url)
     logger.info('Grabbing search results from %s', loc.netloc)
