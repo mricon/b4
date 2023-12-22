@@ -310,16 +310,20 @@ def setup_parser() -> argparse.ArgumentParser:
 
     # b4 send
     sp_send = subparsers.add_parser('send', help='Submit your work for review on the mailing lists')
-    sp_send.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', default=False,
-                         help='Do not send, just dump out raw smtp messages to the stdout')
-    sp_send.add_argument('-o', '--output-dir',
-                         help='Do not send, write raw messages to this directory (forces --dry-run)')
-    sp_send.add_argument('--reflect', action='store_true', default=False,
-                         help='Send everything to yourself instead of the actual recipients')
+    sp_send_g = sp_send.add_mutually_exclusive_group()
+    sp_send_g.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', default=False,
+                           help='Do not send, just dump out raw smtp messages to the stdout')
+    sp_send_g.add_argument('-o', '--output-dir',
+                           help='Do not send, write raw messages to this directory (forces --dry-run)')
+    sp_send_g.add_argument('--dry-run-to', nargs='+', metavar='ADDR',
+                           help='Like --dry-run, but sends out via email to specified recipients')
+    sp_send_g.add_argument('--reflect', action='store_true', default=False,
+                           help='Send everything to yourself instead of the actual recipients')
+
     sp_send.add_argument('--no-trailer-to-cc', action='store_true', default=False,
                          help='Do not add any addresses found in the cover or patch trailers to To: or Cc:')
-    sp_send.add_argument('--to', nargs='+', help='Addresses to add to the To: list')
-    sp_send.add_argument('--cc', nargs='+', help='Addresses to add to the Cc: list')
+    sp_send.add_argument('--to', nargs='+', metavar='ADDR', help='Addresses to add to the To: list')
+    sp_send.add_argument('--cc', nargs='+', metavar='ADDR', help='Addresses to add to the Cc: list')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,
                          help='Remove yourself from the To: or Cc: list')
     sp_send.add_argument('--resend', metavar='vN', nargs='?', const='latest',

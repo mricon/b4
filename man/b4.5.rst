@@ -393,11 +393,15 @@ Enroll existing branch:
 b4 send
 ~~~~~~~
 usage:
-  b4 send [-h] [-d] [-o OUTPUT_DIR] [--reflect] [--no-trailer-to-cc] [--to TO [TO ...]] [--cc CC [CC ...]] [--not-me-too] [--resend [RESEND]] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
+  b4 send [-h] [-d | -o OUTPUT_DIR | --dry-run-to ADDR [ADDR ...] | --reflect] [--no-trailer-to-cc] [--to ADDR [ADDR ...]] [--cc ADDR [ADDR ...]] [--not-me-too] [--resend [vN]] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
 
 options:
   -h, --help            show this help message and exit
   -d, --dry-run         Do not send, just dump out raw smtp messages to the stdout
+
+  --dry-run-to ADDR [ADDR ...]
+                        Like --dry-run, but sends out via email to specified recipients
+
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Do not send, write raw messages to this directory (forces --dry-run)
 
@@ -407,15 +411,16 @@ options:
   --no-trailer-to-cc
                         Do not add any addresses found in the cover or patch trailers to To: or Cc:
 
-  --to TO [TO ...]
+  --to ADDR [ADDR ...]
                         Addresses to add to the To: list
-  --cc CC [CC ...]
+
+  --cc ADDR [ADDR ...]
                         Addresses to add to the Cc: list
 
   --not-me-too
                         Remove yourself from the To: or Cc: list
 
-  --resend [RESEND]
+  --resend [vN]
                         Resend a previously sent version of the series
 
   --no-sign

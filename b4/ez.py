@@ -1170,11 +1170,14 @@ def get_mailfrom() -> Tuple[str, str]:
     return usercfg.get('name'), usercfg.get('email')
 
 
-def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True
+def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True,
+                               prefixes: Optional[List[str]] = None
                                ) -> Tuple[List, List, str, List[Tuple[str, email.message.Message]]]:
     cover, tracking = load_cover(strip_comments=True)
 
-    prefixes = tracking['series'].get('prefixes', list())
+    if prefixes is None:
+        prefixes = list()
+    prefixes += tracking['series'].get('prefixes', list())
     start_commit = get_series_start()
     change_id = tracking['series'].get('change-id')
     revision = tracking['series'].get('revision')
@@ -1356,8 +1359,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.critical('          Stash or commit them first.')
             sys.exit(1)
 
+        if cmdargs.dry_run_to:
+            prefixes = ['DRYRUN']
+        else:
+            prefixes = None
+
         try:
-            todests, ccdests, tag_msg, patches = get_prep_branch_as_patches()
+            todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(prefixes=prefixes)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
             sys.exit(1)
@@ -1379,7 +1387,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     excludes = set()
     pccs = dict()
 
-    if cmdargs.no_trailer_to_cc:
+    if cmdargs.dry_run_to or cmdargs.no_trailer_to_cc:
         todests = list()
         ccdests = list()
     else:
@@ -1413,27 +1421,30 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             excludes.add(myemail)
 
     tos = set()
-    if cmdargs.to:
-        tos.update(cmdargs.to)
-    if config.get('send-series-to'):
-        tos.add(config.get('send-series-to'))
-    if tos:
-        for pair in utils.getaddresses(list(tos)):
-            if pair[1] in seen:
-                continue
-            seen.add(pair[1])
-            todests.append(pair)
     ccs = set()
-    if cmdargs.cc:
-        ccs.update(cmdargs.cc)
-    if config.get('send-series-cc'):
-        ccs.add(config.get('send-series-cc'))
+    if cmdargs.dry_run_to:
+        tos.update(cmdargs.dry_run_to)
+    else:
+        if cmdargs.to:
+            tos.update(cmdargs.to)
+        if config.get('send-series-to'):
+            tos.add(config.get('send-series-to'))
+        if cmdargs.cc:
+            ccs.update(cmdargs.cc)
+        if config.get('send-series-cc'):
+            ccs.add(config.get('send-series-cc'))
     if ccs:
         for pair in utils.getaddresses(list(ccs)):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
             ccdests.append(pair)
+    if tos:
+        for pair in utils.getaddresses(list(tos)):
+            if pair[1] in seen:
+                continue
+            seen.add(pair[1])
+            todests.append(pair)
 
     allto = list()
     allcc = list()
@@ -1447,7 +1458,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         alldests.update(set([x[1] for x in allcc]))
 
     if not len(alldests):
-        logger.critical('CRITICAL: Could not find any destination addresses (try: b4 prep --auto-to-cc).')
+        logger.critical('CRITICAL: Could not find any destination addresses')
+        logger.critical('          try b4 prep --auto-to-cc or b4 send --to addr')
         sys.exit(1)
 
     if not len(allto):
@@ -1473,6 +1485,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             if os.path.exists(os.path.join(topdir, 'Kconfig')):
                 logger.debug('No sendemail configs found, will use the default web endpoint')
                 endpoint = DEFAULT_ENDPOINT
+
+    # Cannot currently use endpoint with --dry-run-to
+    if endpoint and cmdargs.dry_run_to:
+        logger.critical('CRITICAL: cannot use the web endpoint with --dry-run-to')
+        sys.exit(1)
 
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
@@ -1507,6 +1524,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 fromaddr = sconfig.get('from')
             if cmdargs.reflect:
                 logger.info('  - send the above messages to just %s (REFLECT MODE)', fromaddr)
+            elif cmdargs.dry_run_to:
+                logger.info('  - send the above messages to the DRY-RUN recipients listed')
             else:
                 logger.info('  - send the above messages to actual listed recipients')
             logger.info('  - with envelope-from: %s', fromaddr)
@@ -1528,7 +1547,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             else:
                 logger.info('  - via SMTP server %s', smtpserver)
 
-        if not (cmdargs.reflect or cmdargs.resend):
+        if not (cmdargs.reflect or cmdargs.resend or cmdargs.dry_run_to):
             logger.info('  - tag and reroll the series to the next revision')
         logger.info('')
         if cmdargs.reflect:
@@ -1644,6 +1663,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.resend:
         logger.debug('Not updating cover/tracking on resend')
+        return
+    if cmdargs.dry_run_to:
+        logger.debug('Not updating cover/tracking on --dry-run-to')
         return
 
     reroll(mybranch, tag_msg, cl_msgid)
