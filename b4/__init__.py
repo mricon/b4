@@ -256,7 +256,64 @@ class LoreMailbox:
             lser.subject = pser.subject
             logger.debug('Reconstituted successfully')
 
-    def get_series(self, revision=None, sloppytrailers=False, reroll=True) -> Optional['LoreSeries']:
+    def load_codereview_trailers(self) -> None:
+        q = list()
+        for lver, lser in self.series.items():
+            for lmsg in lser.patches:
+                if lmsg is None:
+                    continue
+                if lmsg.git_patch_id:
+                    q.append(f'patchid:{lmsg.git_patch_id} OR nq:"for patch-id {lmsg.git_patch_id}"')
+
+        if not q:
+            return
+        query = ' OR '.join(q)
+        qmsgs = get_pi_search_results(query, message='Looking for additional code-review trailers on %s')
+        if not qmsgs:
+            logger.debug('No matching code-review messages')
+            return
+
+        logger.debug('Retrieved %s code-review messages', len(qmsgs))
+        # weed out known messages
+        qmid_map = dict()
+        for qmsg in qmsgs:
+            qmid = LoreMessage.get_clean_msgid(qmsg)
+            if qmid in self.msgid_map:
+                logger.debug('  skipping known message: %s', qmid)
+                continue
+            qmid_map[qmid] = LoreMessage(qmsg)
+
+        for qmid, qlmsg in qmid_map.items():
+            logger.debug('  new message: %s', qmid)
+            if not qlmsg.reply:
+                logger.debug('  skipping non-reply: %s', qmid)
+                continue
+            if not qlmsg.trailers:
+                logger.debug('  skipping reply without trailers: %s', qmid)
+                continue
+            # Find the patch-id to which this belongs
+            pfound = False
+            for refmid in qlmsg.references:
+                if refmid in qmid_map:
+                    # Is it a patch?
+                    if not qmid_map[refmid].has_diff:
+                        continue
+                    pqpid = qmid_map[refmid].git_patch_id
+                    if pqpid:
+                        # Found our parent patch
+                        if pqpid not in self.trailer_map:
+                            self.trailer_map[pqpid] = list()
+                        self.trailer_map[pqpid] += qlmsg.trailers
+                        pfound = True
+                        logger.debug('  found matching patch-id for %s', qlmsg.subject)
+                        break
+            if not pfound:
+                logger.debug('  no matching parents for %s', qlmsg.subject)
+                # Does it have 'patch-id: ' in the body?
+                # TODO: once we have that functionality in b4 cr
+
+    def get_series(self, revision: Optional[int] = None, sloppytrailers: bool = False,
+                   reroll: bool = True, codereview_trailers: bool = True) -> Optional['LoreSeries']:
         if revision is None:
             if not len(self.series):
                 return None
@@ -296,6 +353,9 @@ class LoreMailbox:
                         lser.has_cover = True
                         break
 
+        if codereview_trailers and can_network:
+            self.load_codereview_trailers()
+
         # Do we have any follow-ups?
         for fmsg in self.followups:
             logger.debug('Analyzing follow-up: %s (%s)', fmsg.full_subject, fmsg.fromemail)
@@ -308,10 +368,8 @@ class LoreMailbox:
             # one of our series
             if fmsg.in_reply_to is None:
                 # Check if there's something matching in References
-                refs = fmsg.msg.get('References', '')
                 pmsg = None
-                for ref in refs.split():
-                    refid = ref.strip('<>')
+                for refid in fmsg.references:
                     if refid in self.msgid_map and refid != fmsg.msgid:
                         pmsg = self.msgid_map[refid]
                         break
@@ -339,10 +397,10 @@ class LoreMailbox:
                         # add this into our trailer map to carry over trailers from
                         # previous revisions to current revision if patch id did
                         # not change
-                        if pmsg.pwhash:
-                            if pmsg.pwhash not in self.trailer_map:
-                                self.trailer_map[pmsg.pwhash] = list()
-                            self.trailer_map[pmsg.pwhash] += trailers
+                        if pmsg.git_patch_id:
+                            if pmsg.git_patch_id not in self.trailer_map:
+                                self.trailer_map[pmsg.git_patch_id] = list()
+                            self.trailer_map[pmsg.git_patch_id] += trailers
                     pmsg.followup_trailers += trailers
                     break
                 if not pmsg.reply:
@@ -363,10 +421,14 @@ class LoreMailbox:
 
         # Carry over trailers from previous series if patch/metadata did not change
         for lmsg in lser.patches:
-            if lmsg is None or lmsg.pwhash is None:
+            if lmsg is None or lmsg.git_patch_id is None:
                 continue
-            if lmsg.pwhash in self.trailer_map:
-                lmsg.followup_trailers += self.trailer_map[lmsg.pwhash]
+            if lmsg.git_patch_id in self.trailer_map:
+                for fltr in self.trailer_map[lmsg.git_patch_id]:
+                    if fltr not in lmsg.trailers and fltr not in lmsg.followup_trailers:
+                        # logger.info('  + %s', fltr.as_string())
+                        logger.debug('    adding "%s" from trailer_map to: %s', fltr.as_string(), lmsg.full_subject)
+                        lmsg.followup_trailers.append(fltr)
 
         return lser
 
@@ -542,8 +604,9 @@ class LoreSeries:
         if self.patches[0] and self.patches[0].followup_trailers:  # noqa
             self.add_extra_trailers(self.patches[0].followup_trailers)  # noqa
 
-    def get_am_ready(self, noaddtrailers=False, covertrailers=False, addmysob=False, addlink=False,
-                     cherrypick=None, copyccs=False, allowbadchars=False) -> List[email.message.Message]:
+    def get_am_ready(self, noaddtrailers: bool = False, covertrailers: bool = False, addmysob: bool = False,
+                     addlink: bool = False, cherrypick: Optional[List[int]] = None, copyccs: bool = False,
+                     allowbadchars: bool = False) -> List[email.message.Message]:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -584,7 +647,7 @@ class LoreSeries:
                 logger.debug('Attestation info is not the same')
                 break
 
-        if config.get('pw-url') and config.get('pw-project'):
+        if can_network and config.get('pw-url') and config.get('pw-project'):
             # Use this to pre-load the CI status of each patch
             logger.info('Retrieving CI status, may take a moment...')
             show_ci_checks = True
@@ -1049,6 +1112,7 @@ class LoreMessage:
 
     # header-based info
     in_reply_to: Optional[str]
+    references: Set[str]
     fromname: str
     fromemail: str
     date: datetime.datetime
@@ -1070,10 +1134,7 @@ class LoreMessage:
     pr_remote_tip_commit: Optional[str]
 
     # patch-related info
-    pwhash: Optional[str]
     pw_ci_status: Optional[str]
-    blob_indexes: Set[Tuple[str, str, str]]
-    git_patch_id: Optional[str]
 
     def __init__(self, msg):
         self.msg = msg
@@ -1095,10 +1156,7 @@ class LoreMessage:
         self.pr_ref = None
         self.pr_tip_commit = None
         self.pr_remote_tip_commit = None
-        self.pwhash = None
         self.pw_ci_status = None
-        self.blob_indexes = set()
-        self.git_patch_id = None
 
         self.msgid = LoreMessage.get_clean_msgid(self.msg)
         self.lsubject = LoreSubject(msg['Subject'])
@@ -1112,14 +1170,25 @@ class LoreMessage:
         self.revision_inferred = self.lsubject.revision_inferred
         self.counters_inferred = self.lsubject.counters_inferred
 
-        # Loaded when attestors property is called
+        # Loaded when properties are called
         self._attestors = None
+        self._git_patch_id = None
+        self._pwhash = None
+        self._blob_indexes = None
 
         # Handle [PATCH 6/5]
         if self.counter > self.expected:
             self.expected = self.counter
 
         self.in_reply_to = LoreMessage.get_clean_msgid(self.msg, header='In-Reply-To')
+        self.references = set()
+        if self.in_reply_to:
+            self.references.add(self.in_reply_to)
+
+        if self.msg.get('References'):
+            for pair in email.utils.getaddresses([str(x) for x in self.msg.get_all('references', [])]):
+                if pair:
+                    self.references.add(pair[1])
 
         try:
             fromdata = email.utils.getaddresses([LoreMessage.clean_header(str(x))
@@ -1154,12 +1223,10 @@ class LoreMessage:
             self.has_diffstat = True
         if DIFF_RE.search(self.body):
             self.has_diff = True
-            self.pwhash = LoreMessage.get_patchwork_hash(self.body)
-            self.blob_indexes = LoreMessage.get_indexes(self.body)
 
         trailers, others = LoreMessage.find_trailers(self.body, followup=True)
         # We only pay attention to trailers that are sent in reply
-        if trailers and self.in_reply_to and not self.has_diff:
+        if trailers and self.in_reply_to and not self.has_diff and not self.reply:
             logger.debug('A follow-up missing a Re: but containing a trailer with no patch diff')
             self.reply = True
         if self.reply:
@@ -1168,6 +1235,7 @@ class LoreMessage:
                 badtrailers = {'from', 'author', 'cc', 'to', 'date', 'subject',
                                'subscribe', 'unsubscribe'}
                 if trailer.lname not in badtrailers:
+                    trailer.lmsg = self
                     self.trailers.append(trailer)
 
     def get_trailers(self, sloppy: bool = False) -> Tuple[List[LoreTrailer], Set[LoreTrailer]]:
@@ -1210,6 +1278,27 @@ class LoreMessage:
             mismatches.add(ltr)
 
         return trailers, mismatches
+
+    @property
+    def git_patch_id(self) -> str:
+        if self._git_patch_id is None and self.has_diff:
+            self._git_patch_id = LoreMessage.get_patch_id(self.body)
+        return self._git_patch_id
+
+    @property
+    def pwhash(self) -> str:
+        if self._pwhash is None and self.has_diff:
+            self._pwhash = LoreMessage.get_patchwork_hash(self.body)
+        return self._pwhash
+
+    @property
+    def blob_indexes(self) -> Set[Tuple[str, str, str]]:
+        if self._blob_indexes is None:
+            if self.has_diff:
+                self._blob_indexes = LoreMessage.get_indexes(self.body)
+            else:
+                self._blob_indexes = set()
+        return self._blob_indexes
 
     @property
     def attestors(self) -> List['LoreAttestor']:
@@ -2187,7 +2276,9 @@ class LoreMessage:
 
         return '[%s] %s' % (' '.join(parts), use_subject)
 
-    def get_am_message(self, add_trailers=True, addmysob=False, extras=None, copyccs=False, allowbadchars=False):
+    def get_am_message(self, add_trailers: bool = True, addmysob: bool = False,
+                       extras: Optional[List['LoreTrailer']] = None, copyccs: bool = False,
+                       allowbadchars: bool = False):
         # Look through the body to make sure there aren't any suspicious unicode control flow chars
         # First, encode into ascii and compare for a quickie utf8 presence test
         if not allowbadchars and self.body.encode('ascii', errors='replace') != self.body.encode():
@@ -2948,7 +3039,8 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
     return msgs
 
 
-def get_pi_search_results(query: str, nocache: bool = False) -> Optional[List[email.message.Message]]:
+def get_pi_search_results(query: str, nocache: bool = False,
+                          message: Optional[str] = None) -> Optional[List[email.message.Message]]:
     config = get_main_config()
     searchmask = config.get('searchmask')
     if not searchmask:
@@ -2966,7 +3058,10 @@ def get_pi_search_results(query: str, nocache: bool = False) -> Optional[List[em
         return msgs
 
     loc = urllib.parse.urlparse(query_url)
-    logger.info('Grabbing search results from %s', loc.netloc)
+    if message is not None and len(message):
+        logger.info(message, loc.netloc)
+    else:
+        logger.info('Grabbing search results from %s', loc.netloc)
     session = get_requests_session()
     # For the query to retrieve a mbox file, we need to send a POST request
     resp = session.post(query_url, data='')
