@@ -100,6 +100,7 @@ def test_parse_trailers(sampledir, source, expected):
     ('partial-reroll', {}, {'addmysob': True}, 'defaults', {}),
     ('nore', {}, {}, 'defaults', {}),
     ('name-parens', {}, {}, 'defaults', {}),
+    ('bare-address', {}, {}, 'defaults', {}),
 ])
 def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg):
     b4.MAIN_CONFIG.update(b4cfg)
