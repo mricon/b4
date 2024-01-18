@@ -2719,6 +2719,16 @@ def in_directory(dirname):
         os.chdir(cdir)
 
 
+def setup_config(cmdargs: argparse.Namespace):
+    """Setup configuration options. Needs to be called before accessing any of
+    the config options."""
+    _setup_main_config(cmdargs)
+    _setup_user_config(cmdargs)
+
+    # Depends on main config!
+    _setup_sendemail_config(cmdargs)
+
+
 def git_set_config(fullpath: Optional[str], param: str, value: str, operation: str = '--replace-all'):
     args = ['config', operation, param, value]
     ecode, out = git_run_command(fullpath, args)
@@ -2759,39 +2769,41 @@ def get_config_from_git(regexp: str, defaults: Optional[dict] = None,
     return gitconfig
 
 
-def get_main_config() -> dict:
+def _setup_main_config(cmdargs: argparse.Namespace):
     global MAIN_CONFIG
-    if MAIN_CONFIG is None:
-        defcfg = copy.deepcopy(DEFAULT_CONFIG)
-        # some options can be provided via the toplevel .b4-config file,
-        # so load them up and use as defaults
-        topdir = git_get_toplevel()
-        wtglobs = ['send-*', '*mask', '*template*', 'trailer*', 'pw-*']
-        if topdir:
-            wtcfg = os.path.join(topdir, '.b4-config')
-            if os.access(wtcfg, os.R_OK):
-                logger.debug('Loading worktree configs from %s', wtcfg)
-                wtconfig = get_config_from_git(r'b4\..*', source=wtcfg)
-                logger.debug('wtcfg=%s', wtconfig)
-                for key, val in wtconfig.items():
-                    if val.startswith('./'):
-                        # replace it with full topdir path
-                        val = os.path.abspath(os.path.join(topdir, val))
-                    for wtglob in wtglobs:
-                        if fnmatch.fnmatch(key, wtglob):
-                            logger.debug('wtcfg: %s=%s', key, val)
-                            defcfg[key] = val
-                            break
-        config = get_config_from_git(r'b4\..*', defaults=defcfg, multivals=['keyringsrc'])
-        config['listid-preference'] = config['listid-preference'].split(',')
-        config['listid-preference'].remove('*')
-        config['listid-preference'].append('*')
-        if config['gpgbin'] is None:
-            gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
-            config['gpgbin'] = gpgcfg['program']
 
-        MAIN_CONFIG = config
+    defcfg = copy.deepcopy(DEFAULT_CONFIG)
+    # some options can be provided via the toplevel .b4-config file,
+    # so load them up and use as defaults
+    topdir = git_get_toplevel()
+    wtglobs = ['send-*', '*mask', '*template*', 'trailer*', 'pw-*']
+    if topdir:
+        wtcfg = os.path.join(topdir, '.b4-config')
+        if os.access(wtcfg, os.R_OK):
+            logger.debug('Loading worktree configs from %s', wtcfg)
+            wtconfig = get_config_from_git(r'b4\..*', source=wtcfg)
+            logger.debug('wtcfg=%s', wtconfig)
+            for key, val in wtconfig.items():
+                if val.startswith('./'):
+                    # replace it with full topdir path
+                    val = os.path.abspath(os.path.join(topdir, val))
+                for wtglob in wtglobs:
+                    if fnmatch.fnmatch(key, wtglob):
+                        logger.debug('wtcfg: %s=%s', key, val)
+                        defcfg[key] = val
+                        break
+    config = get_config_from_git(r'b4\..*', defaults=defcfg, multivals=['keyringsrc'])
+    config['listid-preference'] = config['listid-preference'].split(',')
+    config['listid-preference'].remove('*')
+    config['listid-preference'].append('*')
+    if config['gpgbin'] is None:
+        gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
+        config['gpgbin'] = gpgcfg['program']
 
+    MAIN_CONFIG = config
+
+
+def get_main_config() -> dict:
     return MAIN_CONFIG
 
 
@@ -2874,16 +2886,18 @@ def save_cache(contents: str, identifier: str, suffix: Optional[str] = None, mod
     except FileNotFoundError:
         logger.debug('Could not write cache %s for %s', fullpath, identifier)
 
-
-def get_user_config():
+def _setup_user_config(cmdargs: argparse.Namespace):
     global USER_CONFIG
-    if USER_CONFIG is None:
-        USER_CONFIG = get_config_from_git(r'user\..*')
-        if 'name' not in USER_CONFIG:
-            udata = pwd.getpwuid(os.getuid())
-            USER_CONFIG['name'] = udata.pw_gecos
-        if 'email' not in USER_CONFIG:
-            USER_CONFIG['email'] = os.environ['EMAIL']
+
+    USER_CONFIG = get_config_from_git(r'user\..*')
+    if 'name' not in USER_CONFIG:
+        udata = pwd.getpwuid(os.getuid())
+        USER_CONFIG['name'] = udata.pw_gecos
+    if 'email' not in USER_CONFIG:
+        USER_CONFIG['email'] = os.environ['EMAIL']
+
+
+def get_user_config() -> dict:
     return USER_CONFIG
 
 
@@ -3500,25 +3514,28 @@ def read_template(tptfile):
     return tpt
 
 
-def get_sendemail_config() -> dict:
+def _setup_sendemail_config(cmdargs: argparse.Namespace):
     global SENDEMAIL_CONFIG
-    if SENDEMAIL_CONFIG is None:
-        # Get the default settings first
-        config = get_main_config()
-        identity = config.get('sendemail-identity')
-        _basecfg = get_config_from_git(r'sendemail\.[^.]+$')
-        if identity:
-            # Use this identity to override what we got from the default one
-            sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', defaults=_basecfg)
-            sectname = f'sendemail.{identity}'
-            if not len(sconfig):
-                raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
-        else:
-            sconfig = _basecfg
-            sectname = 'sendemail'
-        logger.debug('Using values from %s', sectname)
-        SENDEMAIL_CONFIG = sconfig
 
+    # Get the default settings first
+    config = get_main_config()
+    identity = config.get('sendemail-identity')
+    _basecfg = get_config_from_git(r'sendemail\.[^.]+$')
+    if identity:
+        # Use this identity to override what we got from the default one
+        sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', defaults=_basecfg)
+        sectname = f'sendemail.{identity}'
+        if not len(sconfig):
+            raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
+    else:
+        sconfig = _basecfg
+        sectname = 'sendemail'
+    logger.debug('Using values from %s', sectname)
+
+    SENDEMAIL_CONFIG = sconfig
+
+
+def get_sendemail_config() -> dict:
     return SENDEMAIL_CONFIG
 
 

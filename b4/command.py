@@ -362,6 +362,8 @@ def cmd():
         parser.print_help()
         sys.exit(1)
 
+    b4.setup_config(cmdargs)
+
     if cmdargs.offline_mode:
         logger.info('Running in OFFLINE mode')
         b4.can_network = False
