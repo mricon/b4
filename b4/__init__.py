@@ -2729,6 +2729,22 @@ def setup_config(cmdargs: argparse.Namespace):
     _setup_sendemail_config(cmdargs)
 
 
+def _cmdline_config_override(cmdargs: argparse.Namespace, config: dict, section: str):
+    """Use cmdline.config to set and override config values for section."""
+    if not cmdargs.config:
+        return
+
+    section += '.'
+
+    config_override = {
+        key[len(section):]: val
+        for key, val in cmdargs.config.items()
+        if key.startswith(section)
+    }
+
+    config.update(config_override)
+
+
 def git_set_config(fullpath: Optional[str], param: str, value: str, operation: str = '--replace-all'):
     args = ['config', operation, param, value]
     ecode, out = git_run_command(fullpath, args)
@@ -2799,6 +2815,8 @@ def _setup_main_config(cmdargs: argparse.Namespace):
     if config['gpgbin'] is None:
         gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
         config['gpgbin'] = gpgcfg['program']
+
+    _cmdline_config_override(cmdargs, config, 'b4')
 
     MAIN_CONFIG = config
 
@@ -2895,6 +2913,8 @@ def _setup_user_config(cmdargs: argparse.Namespace):
         USER_CONFIG['name'] = udata.pw_gecos
     if 'email' not in USER_CONFIG:
         USER_CONFIG['email'] = os.environ['EMAIL']
+
+    _cmdline_config_override(cmdargs, USER_CONFIG, 'user')
 
 
 def get_user_config() -> dict:
@@ -3531,6 +3551,9 @@ def _setup_sendemail_config(cmdargs: argparse.Namespace):
         sconfig = _basecfg
         sectname = 'sendemail'
     logger.debug('Using values from %s', sectname)
+
+    # Note: This can't handle identity, need to use sendemail.key directly
+    _cmdline_config_override(cmdargs, sconfig, 'sendemail')
 
     SENDEMAIL_CONFIG = sconfig
 

@@ -111,6 +111,24 @@ def cmd_diff(cmdargs):
     b4.diff.main(cmdargs)
 
 
+class ConfigOption(argparse.Action):
+    """Action class for storing key=value arguments in a dict."""
+    def __call__(self, parser, namespace, keyval, option_string=None):
+        config = getattr(namespace, self.dest, None)
+
+        if config is None:
+            config = dict()
+            setattr(namespace, self.dest, config)
+
+        if '=' in keyval:
+            key, value = keyval.split('=', maxsplit=1)
+        else:
+            # mimic git -c option
+            key, value = keyval, 'true'
+
+        config[key] = value
+
+
 def setup_parser() -> argparse.ArgumentParser:
     # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
@@ -132,6 +150,12 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Disable TTY detection for stdin')
     parser.add_argument('--use-web-endpoint', dest='send_web', action='store_true', default=False,
                         help="Force going through the web endpoint")
+    parser.add_argument('-c', '--config', metavar='NAME=VALUE', action=ConfigOption,
+                        help='''Set config option NAME to VALUE. Override value
+                        from config files. NAME is in dotted section.key
+                        format. Using NAME= and omitting VALUE will set the
+                        value to the empty string. Using NAME and omitting
+                        =VALUE will set the value to "true".''')
 
     subparsers = parser.add_subparsers(help='sub-command help', dest='subcmd')
 
