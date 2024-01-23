@@ -12,6 +12,11 @@ Since the purpose of b4 is to work with git repositories, this allows
 the usual fall-through configuration that can be overridden by more
 local settings on the repository level.
 
+Additionally, you can set and override configuration options on the command-line
+using the ``--config`` (or ``-c``) option, for example::
+
+    b4 --config b4.midmask=https://some.host/%s
+
 Per-project defaults
 ~~~~~~~~~~~~~~~~~~~~
 .. note::
