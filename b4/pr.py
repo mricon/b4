@@ -13,6 +13,7 @@ import b4
 import re
 import json
 import email
+import argparse
 
 import urllib.parse
 import requests
@@ -42,7 +43,7 @@ PULL_BODY_REMOTE_REF_RE = [
 ]
 
 
-def git_get_commit_id_from_repo_ref(repo, ref):
+def git_get_commit_id_from_repo_ref(repo: str, ref: str) -> Optional[str]:
     # We only handle git and http/s URLs
     if not (repo.find('git://') == 0 or repo.find('http://') == 0 or repo.find('https://') == 0):
         logger.info('%s uses unsupported protocol', repo)
@@ -76,7 +77,7 @@ def git_get_commit_id_from_repo_ref(repo, ref):
     return commit_id
 
 
-def parse_pr_data(msg):
+def parse_pr_data(msg: email.message.Message) -> Optional[b4.LoreMessage]:
     lmsg = b4.LoreMessage(msg)
     if lmsg.body is None:
         logger.critical('Could not find a plain part in the message body')
@@ -113,7 +114,7 @@ def parse_pr_data(msg):
     return lmsg
 
 
-def attest_fetch_head(gitdir, lmsg):
+def attest_fetch_head(gitdir: Optional[str], lmsg: b4.LoreMessage) -> None:
     config = b4.get_main_config()
     attpolicy = config['attestation-policy']
     if config['attestation-checkmarks'] == 'fancy':
@@ -177,7 +178,8 @@ def attest_fetch_head(gitdir, lmsg):
             sys.exit(128)
 
 
-def fetch_remote(gitdir, lmsg, branch=None, check_sig=True, ty_track=True):
+def fetch_remote(gitdir: Optional[str], lmsg: b4.LoreMessage, branch: Optional[str] = None,
+                 check_sig: bool = True, ty_track: bool = True) -> int:
     # Do we know anything about this base commit?
     if lmsg.pr_base_commit and not b4.git_commit_exists(gitdir, lmsg.pr_base_commit):
         logger.critical('ERROR: git knows nothing about commit %s', lmsg.pr_base_commit)
@@ -220,7 +222,7 @@ def fetch_remote(gitdir, lmsg, branch=None, check_sig=True, ty_track=True):
     return 0
 
 
-def thanks_record_pr(lmsg):
+def thanks_record_pr(lmsg: b4.LoreMessage) -> None:
     datadir = b4.get_data_dir()
     # Check if we're tracking it already
     filename = '%s.pr' % lmsg.pr_remote_tip_commit
@@ -250,7 +252,7 @@ def thanks_record_pr(lmsg):
     config = b4.get_main_config()
     pwstate = config.get('pw-review-state')
     if pwstate:
-        b4.patchwork_set_state(lmsg.msgid, pwstate)
+        b4.patchwork_set_state([lmsg.msgid], pwstate)
 
 
 def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
@@ -330,7 +332,7 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
     return msgs
 
 
-def get_pr_from_github(ghurl: str):
+def get_pr_from_github(ghurl: str) -> Optional[b4.LoreMessage]:
     loc = urllib.parse.urlparse(ghurl)
     chunks = loc.path.strip('/').split('/')
     rproj = chunks[0]
@@ -389,7 +391,7 @@ def get_pr_from_github(ghurl: str):
     return lmsg
 
 
-def main(cmdargs):
+def main(cmdargs: argparse.Namespace) -> None:
     gitdir = cmdargs.gitdir
     lmsg = None
 

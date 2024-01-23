@@ -34,7 +34,7 @@ import requests
 
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal
+from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict
 
 from email import charset
 
@@ -162,11 +162,11 @@ MAILMAP_INFO = dict()
 
 
 class LoreMailbox:
-    msgid_map: dict
-    series: dict
-    covers: dict
-    followups: list
-    unknowns: list
+    msgid_map: Dict[str, 'LoreMessage']
+    series: Dict[int, 'LoreSeries']
+    covers: Dict[int, 'LoreMessage']
+    followups: List['LoreMessage']
+    unknowns: List['LoreMessage']
 
     def __init__(self):
         self.msgid_map = dict()
@@ -878,7 +878,7 @@ class LoreSeries:
 
         raise IndexError
 
-    def make_fake_am_range(self, gitdir):
+    def make_fake_am_range(self, gitdir: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
         start_commit = end_commit = None
         # Use the msgid of the first non-None patch in the series
         msgid = None
@@ -1080,14 +1080,14 @@ class LoreTrailer:
 
         return False
 
-    def __eq__(self, other):
+    def __eq__(self, other: 'LoreTrailer') -> bool:
         # We never compare extinfo, we just tack it if we find a match
         return self.lname == other.lname and self.value.lower() == other.value.lower()
 
-    def __hash__(self):
+    def __hash__(self) -> hash:
         return hash(f'{self.lname}: {self.value}')
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         out = list()
         out.append('  type: %s' % self.type)
         out.append('  name: %s' % self.name)
@@ -1706,7 +1706,7 @@ class LoreMessage:
         return mbody, mcharset
 
     @staticmethod
-    def clean_header(hdrval):
+    def clean_header(hdrval: Optional[str]) -> str:
         if hdrval is None:
             return ''
 
@@ -1825,7 +1825,7 @@ class LoreMessage:
         return hdata
 
     @staticmethod
-    def get_clean_msgid(msg: email.message.Message, header='Message-Id') -> str:
+    def get_clean_msgid(msg: email.message.Message, header: str = 'Message-Id') -> str:
         msgid = None
         raw = msg.get(header)
         if raw:
@@ -2253,7 +2253,7 @@ class LoreMessage:
         self.body = LoreMessage.rebuild_message(bheaders, message, fixtrailers, basement, signature)
 
     def get_am_subject(self, indicate_reroll: bool = True, use_subject: Optional[str] = None,
-                       show_ci_status: bool = True):
+                       show_ci_status: bool = True) -> str:
         # Return a clean patch subject
         parts = ['PATCH']
         if self.lsubject.rfc:
@@ -2281,7 +2281,7 @@ class LoreMessage:
 
     def get_am_message(self, add_trailers: bool = True, addmysob: bool = False,
                        extras: Optional[List['LoreTrailer']] = None, copyccs: bool = False,
-                       allowbadchars: bool = False):
+                       allowbadchars: bool = False) -> email.message.EmailMessage:
         # Look through the body to make sure there aren't any suspicious unicode control flow chars
         # First, encode into ascii and compare for a quickie utf8 presence test
         if not allowbadchars and self.body.encode('ascii', errors='replace') != self.body.encode():
@@ -2335,10 +2335,21 @@ class LoreMessage:
 
 
 class LoreSubject:
+    full_subject: str
+    subject: str
+    reply: bool
+    resend: bool
+    patch: bool
+    rfc: bool
+    revision: int
+    counter: int
+    expected: int
+    revision_inferred: bool
+    counters_inferred: bool
+    prefixes: List[str]
+
     def __init__(self, subject):
         # Subject-based info
-        self.full_subject = None
-        self.subject = None
         self.reply = False
         self.resend = False
         self.patch = False
@@ -2414,7 +2425,7 @@ class LoreSubject:
 
         return ret
 
-    def get_rebuilt_subject(self, eprefixes: Optional[List[str]] = None):
+    def get_rebuilt_subject(self, eprefixes: Optional[List[str]] = None) -> str:
         _pfx = self.get_extra_prefixes()
         if eprefixes:
             for _epfx in eprefixes:
@@ -2430,13 +2441,13 @@ class LoreSubject:
         else:
             return f'[PATCH] {self.subject}'
 
-    def get_slug(self, sep='_', with_counter: bool = True):
+    def get_slug(self, sep='_', with_counter: bool = True) -> str:
         unsafe = self.subject
         if with_counter:
             unsafe = '%04d%s%s' % (self.counter, sep, unsafe)
         return re.sub(r'\W+', sep, unsafe).strip(sep).lower()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         out = list()
         out.append('  full_subject: %s' % self.full_subject)
         out.append('  subject: %s' % self.subject)
@@ -2672,7 +2683,7 @@ def git_get_repo_status(gitdir: Optional[str] = None, untracked: bool = False) -
 
 
 @contextmanager
-def git_temp_worktree(gitdir=None, commitish=None):
+def git_temp_worktree(gitdir: Optional[str] = None, commitish: Optional[str] = None) -> Optional[Iterator[Path]]:
     """Context manager that creates a temporary work tree and chdirs into it. The
     worktree is deleted when the contex manager is closed. Taken from gj_tools."""
     dfn = None
@@ -2690,7 +2701,7 @@ def git_temp_worktree(gitdir=None, commitish=None):
 
 
 @contextmanager
-def git_temp_clone(gitdir=None):
+def git_temp_clone(gitdir: Optional[str] = None) -> Optional[Iterator[Path]]:
     """Context manager that creates a temporary shared clone."""
     if gitdir is None:
         topdir = git_get_toplevel()
@@ -2708,7 +2719,7 @@ def git_temp_clone(gitdir=None):
 
 
 @contextmanager
-def in_directory(dirname):
+def in_directory(dirname: str) -> Iterator[bool]:
     """Context manager that chdirs into a directory and restores the original
     directory when closed. Taken from gj_tools."""
     cdir = os.getcwd()
@@ -2839,7 +2850,7 @@ def get_cache_dir(appname: str = 'b4') -> str:
     return cachedir
 
 
-def get_cache_file(identifier: str, suffix: Optional[str] = None):
+def get_cache_file(identifier: str, suffix: Optional[str] = None) -> str:
     cachedir = get_cache_dir()
     cachefile = hashlib.sha1(identifier.encode()).hexdigest()
     if suffix:
@@ -2875,7 +2886,7 @@ def save_cache(contents: str, identifier: str, suffix: Optional[str] = None, mod
         logger.debug('Could not write cache %s for %s', fullpath, identifier)
 
 
-def get_user_config():
+def get_user_config() -> dict:
     global USER_CONFIG
     if USER_CONFIG is None:
         USER_CONFIG = get_config_from_git(r'user\..*')
@@ -2887,7 +2898,7 @@ def get_user_config():
     return USER_CONFIG
 
 
-def get_requests_session():
+def get_requests_session() -> requests.Session:
     global REQSESSION
     if REQSESSION is None:
         REQSESSION = requests.session()
@@ -2942,7 +2953,8 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
     return msgid
 
 
-def get_strict_thread(msgs, msgid, noparent=False):
+def get_strict_thread(msgs: Union[List[email.message.Message], mailbox.Mailbox, mailbox.Maildir],
+                      msgid: str, noparent: bool = False) -> Optional[List[email.message.Message]]:
     want = {msgid}
     ignore = set()
     got = set()
@@ -3109,7 +3121,7 @@ def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -
     return msgs
 
 
-def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False):
+def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List[email.message.Message]]:
     msgs = list()
     cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
     if os.path.exists(cachedir) and not nocache:
@@ -3138,7 +3150,7 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False):
 
 
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
-                           onlymsgids: Optional[set] = None) -> Optional[list]:
+                           onlymsgids: Optional[set] = None) -> Optional[List[email.message.Message]]:
     qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])
@@ -3281,7 +3293,7 @@ def git_commit_exists(gitdir: Optional[str], commit_id: str) -> bool:
     return ecode == 0
 
 
-def git_branch_exists(gitdir: Optional[str], branch_name: str):
+def git_branch_exists(gitdir: Optional[str], branch_name: str) -> bool:
     gitargs = ['rev-parse', branch_name]
     ecode, out = git_run_command(gitdir, gitargs)
     return ecode == 0
@@ -3317,7 +3329,7 @@ def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
     return topdir
 
 
-def format_addrs(pairs, clean=True):
+def format_addrs(pairs: List[Tuple[str, str]], clean: bool = True) -> str:
     addrs = list()
     for pair in pairs:
         if pair[0] == pair[1]:
@@ -3335,7 +3347,7 @@ def format_addrs(pairs, clean=True):
     return ', '.join(addrs)
 
 
-def make_quote(body, maxlines=5):
+def make_quote(body: str, maxlines: int = 5) -> str:
     headers, message, trailers, basement, signature = LoreMessage.get_body_parts(body)
     if not len(message):
         # Sometimes there is no message, just trailers
@@ -3355,7 +3367,7 @@ def make_quote(body, maxlines=5):
     return '\n'.join(quotelines)
 
 
-def parse_int_range(intrange, upper=None):
+def parse_int_range(intrange: str, upper: Optional[int] = None) -> Iterator[int]:
     # Remove all whitespace
     intrange = re.sub(r'\s', '', intrange)
     for n in intrange.split(','):
@@ -3401,7 +3413,7 @@ def check_gpg_status(status: str) -> Tuple[bool, bool, bool, Optional[str], Opti
     return good, valid, trusted, keyid, signtime
 
 
-def get_gpg_uids(keyid: str) -> list:
+def get_gpg_uids(keyid: str) -> List[str]:
     gpgargs = ['--with-colons', '--list-keys', keyid]
     ecode, out, err = gpg_run_command(gpgargs)
     if ecode > 0:
@@ -3421,7 +3433,7 @@ def get_gpg_uids(keyid: str) -> list:
     return uids
 
 
-def save_git_am_mbox(msgs: List[email.message.Message], dest: BinaryIO):
+def save_git_am_mbox(msgs: List[email.message.Message], dest: BinaryIO) -> None:
     # Git-am has its own understanding of what "mbox" format is that differs from Python's
     # mboxo implementation. Specifically, it never escapes the ">From " lines found in bodies
     # unless invoked with --patch-format=mboxrd (this is wrong, because ">From " escapes are also
@@ -3432,14 +3444,14 @@ def save_git_am_mbox(msgs: List[email.message.Message], dest: BinaryIO):
         dest.write(LoreMessage.get_msg_as_bytes(msg, headers='decode'))
 
 
-def save_mboxrd_mbox(msgs: List[email.message.Message], dest: BinaryIO, mangle_from: bool = False):
+def save_mboxrd_mbox(msgs: List[email.message.Message], dest: BinaryIO, mangle_from: bool = False) -> None:
     gen = email.generator.BytesGenerator(dest, mangle_from_=mangle_from, policy=emlpolicy)
     for msg in msgs:
         dest.write(b'From mboxrd@z Thu Jan  1 00:00:00 1970\n')
         gen.flatten(msg)
 
 
-def save_maildir(msgs: list, dest):
+def save_maildir(msgs: list, dest) -> None:
     d_new = os.path.join(dest, 'new')
     pathlib.Path(d_new).mkdir(parents=True)
     d_cur = os.path.join(dest, 'cur')
@@ -3485,7 +3497,7 @@ def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[dict, bytes, byte
     return i, m, p
 
 
-def read_template(tptfile):
+def read_template(tptfile: str) -> str:
     # bubbles up FileNotFound
     tpt = ''
     if tptfile.find('~') >= 0:

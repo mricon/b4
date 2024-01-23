@@ -13,11 +13,14 @@ import mailbox
 import email
 import shutil
 import pathlib
+import argparse
+
+from typing import Tuple, Optional, List
 
 logger = b4.logger
 
 
-def diff_same_thread_series(cmdargs):
+def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.LoreSeries], Optional[b4.LoreSeries]]:
     msgid = b4.get_msgid(cmdargs)
     wantvers = cmdargs.wantvers
     if wantvers and len(wantvers) > 2:
@@ -41,7 +44,7 @@ def diff_same_thread_series(cmdargs):
         msgs = b4.get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache)
         if not msgs:
             logger.critical('Unable to retrieve thread: %s', msgid)
-            return
+            return None, None
         msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=wantvers)
         if os.path.exists(cachedir):
             shutil.rmtree(cachedir)
@@ -89,12 +92,12 @@ def diff_same_thread_series(cmdargs):
     return lmbx.series[lower], lmbx.series[upper]
 
 
-def diff_mboxes(cmdargs):
+def diff_mboxes(cmdargs: argparse.Namespace) -> Optional[List[b4.LoreSeries]]:
     chunks = list()
     for mboxfile in cmdargs.ambox:
         if not os.path.exists(mboxfile):
             logger.critical('Cannot open %s', mboxfile)
-            return None, None
+            return None
 
         if os.path.isdir(mboxfile):
             mbx = mailbox.Maildir(mboxfile)
@@ -116,7 +119,7 @@ def diff_mboxes(cmdargs):
     return chunks
 
 
-def main(cmdargs):
+def main(cmdargs: argparse.Namespace) -> None:
     if cmdargs.ambox is not None:
         lser, user = diff_mboxes(cmdargs)
     else:

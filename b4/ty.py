@@ -14,10 +14,13 @@ import email
 import email.message
 import email.policy
 import json
+import argparse
 
 from string import Template
 from email import utils
 from pathlib import Path
+
+from typing import Optional, Tuple, Union, List, Dict
 
 logger = b4.logger
 
@@ -53,7 +56,7 @@ MY_COMMITS = None
 BRANCH_INFO = None
 
 
-def git_get_merge_id(gitdir, commit_id, branch=None):
+def git_get_merge_id(gitdir: Optional[str], commit_id: str, branch: Optional[str] = None) -> Optional[str]:
     # get merge commit id
     args = ['rev-list', '%s..' % commit_id, '--ancestry-path']
     if branch is not None:
@@ -64,17 +67,17 @@ def git_get_merge_id(gitdir, commit_id, branch=None):
     return lines[-1]
 
 
-def git_get_rev_diff(gitdir, rev):
+def git_get_rev_diff(gitdir: Optional[str], rev: str) -> Tuple[int, Union[str, bytes]]:
     args = ['diff', '%s~..%s' % (rev, rev)]
     return b4.git_run_command(gitdir, args)
 
 
-def git_get_commit_message(gitdir, rev):
+def git_get_commit_message(gitdir: Optional[str], rev: str) -> Tuple[int, Union[str, bytes]]:
     args = ['log', '--format=%B', '-1', rev]
     return b4.git_run_command(gitdir, args)
 
 
-def make_reply(reply_template, jsondata, gitdir):
+def make_reply(reply_template: str, jsondata: dict, gitdir: Optional[str]) -> email.message.EmailMessage:
     msg = email.message.EmailMessage()
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
     excludes = b4.get_excluded_addrs()
@@ -114,7 +117,7 @@ def make_reply(reply_template, jsondata, gitdir):
     return msg
 
 
-def auto_locate_pr(gitdir, jsondata, branch):
+def auto_locate_pr(gitdir: Optional[str], jsondata: dict, branch: str) -> Optional[str]:
     pr_commit_id = jsondata['pr_commit_id']
     logger.debug('Checking %s', jsondata['pr_commit_id'])
     if not b4.git_commit_exists(gitdir, pr_commit_id):
@@ -150,7 +153,8 @@ def auto_locate_pr(gitdir, jsondata, branch):
     return merge_commit_id
 
 
-def get_all_commits(gitdir, branch, since='1.week', committer=None):
+def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
+                    committer: Optional[str] = None) -> Dict[str, Tuple[str, str, List[str]]]:
     global MY_COMMITS
     if MY_COMMITS is not None:
         return MY_COMMITS
@@ -187,7 +191,8 @@ def get_all_commits(gitdir, branch, since='1.week', committer=None):
     return MY_COMMITS
 
 
-def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
+def auto_locate_series(gitdir: Optional[str], jsondata: dict, branch: str,
+                       since: str = '1.week') -> List[Tuple[int, Optional[str]]]:
     commits = get_all_commits(gitdir, branch, since)
 
     patchids = set(commits.keys())
@@ -230,7 +235,7 @@ def auto_locate_series(gitdir, jsondata, branch, since='1.week'):
     return found
 
 
-def set_branch_details(gitdir, branch, jsondata, config):
+def set_branch_details(gitdir: Optional[str], branch: str, jsondata: dict, config: dict) -> Tuple[dict, dict]:
     binfo = get_branch_info(gitdir, branch)
     jsondata['branch'] = branch
     for key, val in binfo.items():
@@ -262,7 +267,7 @@ def set_branch_details(gitdir, branch, jsondata, config):
     return jsondata, config
 
 
-def generate_pr_thanks(gitdir, jsondata, branch):
+def generate_pr_thanks(gitdir: Optional[str], jsondata: dict, branch: str) -> email.message.EmailMessage:
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_PR_TEMPLATE
@@ -291,7 +296,7 @@ def generate_pr_thanks(gitdir, jsondata, branch):
     return msg
 
 
-def generate_am_thanks(gitdir, jsondata, branch, since):
+def generate_am_thanks(gitdir: Optional[str], jsondata: dict, branch: str, since: str) -> email.message.EmailMessage:
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_AM_TEMPLATE
@@ -339,7 +344,7 @@ def generate_am_thanks(gitdir, jsondata, branch, since):
     return msg
 
 
-def auto_thankanator(cmdargs):
+def auto_thankanator(cmdargs: argparse.Namespace) -> None:
     gitdir = cmdargs.gitdir
     wantbranch = get_wanted_branch(cmdargs)
     logger.info('Auto-thankanating commits in %s', wantbranch)
@@ -380,7 +385,7 @@ def auto_thankanator(cmdargs):
     sys.exit(0)
 
 
-def send_messages(listing, branch, cmdargs):
+def send_messages(listing: List[Dict], branch: str, cmdargs: argparse.Namespace) -> None:
     logger.info('Generating %s thank-you letters', len(listing))
     gitdir = cmdargs.gitdir
     datadir = b4.get_data_dir()
@@ -476,7 +481,7 @@ def send_messages(listing, branch, cmdargs):
         logger.info('  git send-email %s/*.thanks', cmdargs.outdir)
 
 
-def list_tracked():
+def list_tracked() -> List[Dict]:
     # find all tracked bits
     tracked = list()
     datadir = b4.get_data_dir()
@@ -493,7 +498,7 @@ def list_tracked():
     return tracked
 
 
-def write_tracked(tracked):
+def write_tracked(tracked: List[Dict]) -> None:
     counter = 1
     config = b4.get_main_config()
     logger.info('Currently tracking:')
@@ -505,7 +510,7 @@ def write_tracked(tracked):
         counter += 1
 
 
-def thank_selected(cmdargs):
+def thank_selected(cmdargs: argparse.Namespace) -> None:
     tracked = list_tracked()
     if not len(tracked):
         logger.info('Nothing to do')
@@ -538,7 +543,7 @@ def thank_selected(cmdargs):
     sys.exit(0)
 
 
-def discard_selected(cmdargs):
+def discard_selected(cmdargs: argparse.Namespace) -> None:
     tracked = list_tracked()
     if not len(tracked):
         logger.info('Nothing to do')
@@ -588,7 +593,7 @@ def discard_selected(cmdargs):
     sys.exit(0)
 
 
-def check_stale_thanks(outdir):
+def check_stale_thanks(outdir: str) -> None:
     if os.path.exists(outdir):
         for entry in Path(outdir).iterdir():
             if entry.suffix == '.thanks':
@@ -598,7 +603,7 @@ def check_stale_thanks(outdir):
                 sys.exit(1)
 
 
-def get_wanted_branch(cmdargs):
+def get_wanted_branch(cmdargs: argparse.Namespace) -> str:
     global BRANCH_INFO
     gitdir = cmdargs.gitdir
     if not cmdargs.branch:
@@ -622,7 +627,7 @@ def get_wanted_branch(cmdargs):
     return wantbranch
 
 
-def get_branch_info(gitdir, branch):
+def get_branch_info(gitdir: Optional[str], branch: str) -> Dict:
     global BRANCH_INFO
     if BRANCH_INFO is not None:
         return BRANCH_INFO
@@ -663,7 +668,7 @@ def get_branch_info(gitdir, branch):
     return BRANCH_INFO
 
 
-def main(cmdargs):
+def main(cmdargs: argparse.Namespace) -> None:
     usercfg = b4.get_user_config()
     if 'email' not in usercfg:
         logger.critical('Please set user.email in gitconfig to use this feature.')
