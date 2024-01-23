@@ -1989,6 +1989,7 @@ def show_info(param: str) -> None:
     cover, tracking = load_cover(usebranch=mybranch)
     csubject, cbody = get_cover_subject_body(cover)
     info['cover-subject'] = csubject.full_subject
+    info['needs-editing'] = 'EDITME' in cover
     ts = tracking['series']
     if ts.get('prefixes'):
         info['prefixes'] = ' '.join(ts.get('prefixes'))
