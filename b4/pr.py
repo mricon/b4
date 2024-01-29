@@ -385,7 +385,10 @@ def get_pr_from_github(ghurl: str) -> Optional[b4.LoreMessage]:
     created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ'))
     msg['Date'] = created_at
     msg.set_charset('utf-8')
-    msg.set_payload(prdata.get('body', '(no body)'), charset='utf-8')
+    body = prdata.get('body')
+    if not body:
+        body = ''
+    msg.set_payload(body, charset='utf-8')
     lmsg = b4.LoreMessage(msg)
     lmsg.pr_base_commit = base.get('sha')
     lmsg.pr_repo = repo.get('clone_url')
