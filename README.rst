@@ -38,6 +38,5 @@ dependencies that are tracked via submodules::
 
 Support
 -------
-For support or with any other questions, please email
-tools@linux.kernel.org, or browse the list archive at
-https://lore.kernel.org/tools.
+For support or with any other questions, please email tools@kernel.org,
+or browse the list archive at https://lore.kernel.org/tools.

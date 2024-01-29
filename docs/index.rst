@@ -43,4 +43,4 @@ For developers
 Getting help
 ------------
 To report a problem or suggest a feature, please send plaintext email to
-tools@linux.kernel.org.
+tools@kernel.org.

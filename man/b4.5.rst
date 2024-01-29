@@ -470,5 +470,5 @@ https://docs.python-requests.org/en/latest/user/advanced/#proxies.
 
 SUPPORT
 -------
-Please email tools@linux.kernel.org with support requests,
-or browse the list archive at https://lore.kernel.org/tools.
+Please email tools@kernel.org with support requests, or browse the list
+archive at https://lore.kernel.org/tools.

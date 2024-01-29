@@ -7,4 +7,4 @@ The current b4 source code can be found at::
 
 patches can be sent to::
 
-  tools@linux.kernel.org
+  tools@kernel.org
