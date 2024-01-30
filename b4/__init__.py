@@ -1022,10 +1022,14 @@ class LoreTrailer:
                  msg: Optional[email.message.Message] = None):
         if name is None:
             self.name = 'Signed-off-by'
-            ucfg = get_user_config()
-            self.value = '%s <%s>' % (ucfg['name'], ucfg['email'])
             self.type = 'person'
-            self.addr = (ucfg['name'], ucfg['email'])
+            ucfg = get_user_config()
+            try:
+                self.value = '%s <%s>' % (ucfg['name'], ucfg['email'])
+                self.addr = (ucfg['name'], ucfg['email'])
+            except KeyError:
+                self.value = 'User Not Set <email@not.set>'
+                self.addr = ('User Not Set', 'email@not.set')
         else:
             self.name = name
             self.value = value
@@ -2931,10 +2935,20 @@ def _setup_user_config(cmdargs: argparse.Namespace):
 
     USER_CONFIG = get_config_from_git(r'user\..*')
     if 'name' not in USER_CONFIG:
-        udata = pwd.getpwuid(os.getuid())
-        USER_CONFIG['name'] = udata.pw_gecos
+        if 'GIT_COMMITTER_NAME' in os.environ:
+            USER_CONFIG['name'] = os.environ['GIT_COMMITTER_NAME']
+        elif 'GIT_AUTHOR_NAME' in os.environ:
+            USER_CONFIG['name'] = os.environ['GIT_AUTHOR_NAME']
+        else:
+            udata = pwd.getpwuid(os.getuid())
+            USER_CONFIG['name'] = udata.pw_gecos
     if 'email' not in USER_CONFIG:
-        USER_CONFIG['email'] = os.environ['EMAIL']
+        if 'GIT_COMMITTER_EMAIL' in os.environ:
+            USER_CONFIG['email'] = os.environ['GIT_COMMITTER_EMAIL']
+        elif 'GIT_AUTHOR_EMAIL' in os.environ:
+            USER_CONFIG['email'] = os.environ['GIT_AUTHOR_EMAIL']
+        elif 'EMAIL' in os.environ:
+            USER_CONFIG['email'] = os.environ['EMAIL']
 
     _cmdline_config_override(cmdargs, USER_CONFIG, 'user')
 
