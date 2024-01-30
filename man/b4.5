@@ -127,6 +127,9 @@ When accepting messages on stdin, split using this pipe separator string
 .B  \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
 .TP
+.B  \-\-single\-message
+Only retrieve the message matching the msgid and ignore the rest of the thread
+.TP
 .BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
@@ -202,6 +205,9 @@ When accepting messages on stdin, split using this pipe separator string
 .B  \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
 .TP
+.B  \-\-single\-message
+Only retrieve the message matching the msgid and ignore the rest of the thread
+.TP
 .BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
 Output into this directory (or use \- to output mailbox contents to stdout)
 .TP
@@ -213,6 +219,9 @@ Filename to name the mbox destination
 .TP
 .B  \-M\fP,\fB  \-\-save\-as\-maildir
 Save as maildir (avoids mbox format ambiguities)
+.TP
+.B  \-\-single\-message
+Only retrieve the message matching the msgid and ignore the rest of the thread
 .TP
 .BI \-v \ WANTVER\fR,\fB \ \-\-use\-version \ WANTVER
 Get a specific version of the patch/series
@@ -307,6 +316,9 @@ When accepting messages on stdin, split using this pipe separator string
 .TP
 .B  \-C\fP,\fB  \-\-no\-cache
 Do not use local cache
+.TP
+.B  \-\-single\-message
+Only retrieve the message matching the msgid and ignore the rest of the thread
 .TP
 .BI \-v \ WANTVER\fR,\fB \ \-\-use\-version \ WANTVER
 Get a specific version of the patch/series

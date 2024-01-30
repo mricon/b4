@@ -50,6 +50,12 @@ Option flags
   This lets you force b4 to ignore cache and retrieve the latest
   results.
 
+``--single-message`` **(0.13+)**
+  By default, b4 will retrieve the entire thread, but sometimes you
+  really just want a single message. This helps when someone posts a
+  patch in the middle of a long thread and you just want that patch and
+  ignore the rest of what is going on.
+
 ``-o OUTDIR, --outdir OUTDIR``
   Instead of writing the .mbox file to the current directory, write it
   to this location instead. You can also pass a path to an existing

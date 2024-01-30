@@ -81,6 +81,8 @@ options:
                         When accepting messages on stdin, split using this pipe separator string
   -C, --no-cache
                         Do not use local cache
+  --single-message
+                        Only retrieve the message matching the msgid and ignore the rest of the thread
   -o OUTDIR, --outdir OUTDIR
                         Output into this directory (or use - to output mailbox contents to stdout)
   -c, --check-newer-revisions
@@ -134,6 +136,8 @@ options:
                         When accepting messages on stdin, split using this pipe separator string
   -C, --no-cache
                         Do not use local cache
+  --single-message
+                        Only retrieve the message matching the msgid and ignore the rest of the thread
   -o OUTDIR, --outdir OUTDIR
                         Output into this directory (or use - to output mailbox contents to stdout)
   -c, --check-newer-revisions
@@ -142,6 +146,8 @@ options:
                         Filename to name the mbox destination
   -M, --save-as-maildir
                         Save as maildir (avoids mbox format ambiguities)
+  --single-message
+                        Only retrieve the message matching the msgid and ignore the rest of the thread
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
   -t, --apply-cover-trailers
@@ -208,6 +214,8 @@ options:
   --stdin-pipe-sep STDIN_PIPE_SEP
                         When accepting messages on stdin, split using this pipe separator string
   -C, --no-cache        Do not use local cache
+  --single-message
+                        Only retrieve the message matching the msgid and ignore the rest of the thread
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
   -t, --apply-cover-trailers
