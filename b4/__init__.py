@@ -1679,7 +1679,7 @@ class LoreMessage:
         return '\n'.join(out)
 
     @staticmethod
-    def get_payload(msg: email.message.Message) -> Tuple[str, str]:
+    def get_payload(msg: email.message.Message, use_patch: bool = True) -> Tuple[str, str]:
         # walk until we find the first text/plain part
         mcharset = msg.get_content_charset()
         if not mcharset:
@@ -1710,7 +1710,7 @@ class LoreMessage:
                 continue
             # If we already found a body, but we now find something that contains a diff,
             # then we prefer this part
-            if DIFF_RE.search(payload):
+            if use_patch and DIFF_RE.search(payload):
                 mbody = payload
 
         return mbody, mcharset
@@ -3195,7 +3195,8 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List
 
 
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
-                           onlymsgids: Optional[set] = None) -> Optional[List[email.message.Message]]:
+                           onlymsgids: Optional[set] = None,
+                           with_thread: bool = True) -> Optional[List[email.message.Message]]:
     qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])
@@ -3231,9 +3232,10 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
             if LoreMessage.get_clean_msgid(msg) in onlymsgids:
                 strict.append(msg)
             # also grab any messages where this msgid is in the references header
-            for onlymsgid in onlymsgids:
-                if msg.get('references', '').find(onlymsgid) >= 0:
-                    strict.append(msg)
+            if with_thread:
+                for onlymsgid in onlymsgids:
+                    if msg.get('references', '').find(onlymsgid) >= 0:
+                        strict.append(msg)
     else:
         strict = get_strict_thread(msgs, msgid)
 
@@ -3924,6 +3926,12 @@ def get_email_signature() -> str:
 
 def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[list]]:
     msgid = None
+    with_thread = True
+    pickings = set()
+    if 'singlemsg' in cmdargs and cmdargs.singlemsg:
+        logger.info('Single-message mode, ignoring any follow-ups')
+        with_thread = False
+
     if not cmdargs.localmbox:
         if not can_network:
             raise LookupError('Cannot retrieve threads from remote in offline mode')
@@ -3931,12 +3939,12 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
         if not msgid:
             raise LookupError('Pipe a message or pass msgid as parameter')
 
-        pickings = set()
-        if 'cherrypick' in cmdargs and cmdargs.cherrypick == '_':
+        if ('cherrypick' in cmdargs and cmdargs.cherrypick == '_') or not with_thread:
             # Just that msgid, please
-            pickings = {msgid}
-        msgs = get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache, onlymsgids=pickings)
+            pickings.add(msgid)
+        msgs = get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache, onlymsgids=pickings, with_thread=with_thread)
         if not msgs:
+            logger.debug('No messages from the query')
             return None, msgs
     else:
         if cmdargs.localmbox == '-':
@@ -3954,9 +3962,16 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
                 in_mbx = mailbox.mbox(cmdargs.localmbox)
 
             if msgid:
-                msgs = get_strict_thread(in_mbx, msgid)
-                if not msgs:
-                    raise LookupError('Could not find %s in %s' % (msgid, cmdargs.localmbox))
+                if with_thread:
+                    msgs = get_strict_thread(in_mbx, msgid)
+                    if not msgs:
+                        raise LookupError('Could not find %s in %s' % (msgid, cmdargs.localmbox))
+                else:
+                    msgs = list()
+                    for msg in in_mbx:
+                        if LoreMessage.get_clean_msgid(msg) == msgid:
+                            msgs = [msg]
+                            break
             else:
                 msgs = in_mbx
         else:

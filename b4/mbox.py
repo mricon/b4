@@ -49,14 +49,64 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     logger.info('Analyzing %s messages in the thread', count)
     lmbx = b4.LoreMailbox()
     # Go through the mbox once to populate base series
+    load_codereview = True
     for msg in msgs:
-        lmbx.add_message(msg)
+        # Is it a collection of patches attached to the same message?
+        # We only trigger this mode with --single-msg
+        if msg.is_multipart() and ('singlemsg' in cmdargs and cmdargs.singlemsg):
+            xpatches = list()
+            xmsgid = b4.LoreMessage.get_clean_msgid(msg)
+            for part in msg.walk():
+                cte = part.get_content_type()
+                if cte.find('/x-patch') < 0:
+                    continue
+                payload = part.get_payload(decode=True)
+                if payload is None:
+                    continue
+                pcharset = part.get_content_charset()
+                if not pcharset:
+                    pcharset = 'utf-8'
+                try:
+                    payload = payload.decode(pcharset, errors='replace')
+                except LookupError:
+                    # what kind of encoding is that?
+                    # Whatever, we'll use utf-8 and hope for the best
+                    payload = payload.decode('utf-8', errors='replace')
+                    part.set_param('charset', 'utf-8')
+                if payload and b4.DIFF_RE.search(payload):
+                    xmsg = email.message_from_string(payload, policy=b4.emlpolicy)
+                    # Needs to have Subject, From, Date for us to consider it
+                    if xmsg.get('Subject') and xmsg.get('From') and xmsg.get('Date'):
+                        logger.debug('Found attached patch: %s', xmsg.get('Subject'))
+                        xmsg['Message-ID'] = f'<att{len(xpatches)}-{xmsgid}>'
+                        xpatches.append(xmsg)
+            if len(xpatches):
+                logger.info('Warning: Found %s patches attached to the requested message', len(xpatches))
+                logger.info('         This mode ignores any follow-up trailers, use with caution')
+                # Throw out lmbx and only use these
+                lmbx = b4.LoreMailbox()
+                load_codereview = False
+                for xmsg in xpatches:
+                    lmbx.add_message(xmsg)
+                # Make a cover letter out of the original message
+                cmsg = email.message.EmailMessage()
+                cbody, ccharset = b4.LoreMessage.get_payload(msg, use_patch=False)
+                cmsg['From'] = msg.get('From')
+                cmsg['Date'] = msg.get('Date')
+                cmsg['Message-ID'] = msg.get('Message-ID')
+                cmsg['Subject'] = '[PATCH 0/0] ' + msg.get('Subject')
+                cmsg.set_payload(cbody, ccharset)
+                lmbx.add_message(cmsg)
+                break
+        else:
+            lmbx.add_message(msg)
 
     reroll = True
     if cmdargs.nopartialreroll:
         reroll = False
 
-    lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers, reroll=reroll)
+    lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers, reroll=reroll,
+                           codereview_trailers=load_codereview)
     if lser is None and cmdargs.cherrypick != '_':
         if wantver is None:
             logger.critical('No patches found.')

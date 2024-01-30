@@ -34,6 +34,8 @@ def cmd_mbox_common_opts(sp):
                     help='Filename to name the mbox destination')
     sp.add_argument('-M', '--save-as-maildir', dest='maildir', action='store_true', default=False,
                     help='Save as maildir (avoids mbox format ambiguities)')
+    sp.add_argument('--single-message', dest='singlemsg', action='store_true', default=False,
+                    help='Only retrieve the message matching the msgid and ignore the rest of the thread')
 
 
 def cmd_am_common_opts(sp):
