@@ -164,7 +164,7 @@ def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
         usercfg = b4.get_user_config()
         committer = usercfg['email']
 
-    gitargs = ['log', '--committer', committer, '--no-abbrev', '--oneline', '--since', since, branch]
+    gitargs = ['log', '--committer', committer, '--no-abbrev', '--no-decorate', '--oneline', '--since', since, branch]
     lines = b4.git_get_command_lines(gitdir, gitargs)
     if not len(lines):
         logger.debug('No new commits from the current user --since=%s', since)
