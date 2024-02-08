@@ -1359,8 +1359,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.critical('          Stash or commit them first.')
             sys.exit(1)
 
-        if cmdargs.dry_run_to:
-            prefixes = ['DRYRUN']
+        if cmdargs.preview_to:
+            prefixes = ['PREVIEW']
         else:
             prefixes = None
 
@@ -1387,7 +1387,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     excludes = set()
     pccs = dict()
 
-    if cmdargs.dry_run_to or cmdargs.no_trailer_to_cc:
+    if cmdargs.preview_to or cmdargs.no_trailer_to_cc:
         todests = list()
         ccdests = list()
     else:
@@ -1422,8 +1422,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     tos = set()
     ccs = set()
-    if cmdargs.dry_run_to:
-        tos.update(cmdargs.dry_run_to)
+    if cmdargs.preview_to:
+        tos.update(cmdargs.preview_to)
     else:
         if cmdargs.to:
             tos.update(cmdargs.to)
@@ -1486,9 +1486,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 logger.debug('No sendemail configs found, will use the default web endpoint')
                 endpoint = DEFAULT_ENDPOINT
 
-    # Cannot currently use endpoint with --dry-run-to
-    if endpoint and cmdargs.dry_run_to:
-        logger.critical('CRITICAL: cannot use the web endpoint with --dry-run-to')
+    # Cannot currently use endpoint with --preview-to
+    if endpoint and cmdargs.preview_to:
+        logger.critical('CRITICAL: cannot use the web endpoint with --preview-to')
         sys.exit(1)
 
     # Give the user the last opportunity to bail out
@@ -1524,8 +1524,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 fromaddr = sconfig.get('from')
             if cmdargs.reflect:
                 logger.info('  - send the above messages to just %s (REFLECT MODE)', fromaddr)
-            elif cmdargs.dry_run_to:
-                logger.info('  - send the above messages to the DRY-RUN recipients listed')
+            elif cmdargs.preview_to:
+                logger.info('  - send the above messages to the recipients listed (PREVIEW MODE)')
             else:
                 logger.info('  - send the above messages to actual listed recipients')
             logger.info('  - with envelope-from: %s', fromaddr)
@@ -1547,7 +1547,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             else:
                 logger.info('  - via SMTP server %s', smtpserver)
 
-        if not (cmdargs.reflect or cmdargs.resend or cmdargs.dry_run_to):
+        if not (cmdargs.reflect or cmdargs.resend or cmdargs.preview_to):
             logger.info('  - tag and reroll the series to the next revision')
         logger.info('')
         if cmdargs.reflect:
@@ -1664,8 +1664,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if cmdargs.resend:
         logger.debug('Not updating cover/tracking on resend')
         return
-    if cmdargs.dry_run_to:
-        logger.debug('Not updating cover/tracking on --dry-run-to')
+    if cmdargs.preview_to:
+        logger.debug('Not updating cover/tracking on --preview-to')
         return
 
     reroll(mybranch, tag_msg, cl_msgid)

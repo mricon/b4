@@ -341,8 +341,8 @@ def setup_parser() -> argparse.ArgumentParser:
                            help='Do not send, just dump out raw smtp messages to the stdout')
     sp_send_g.add_argument('-o', '--output-dir',
                            help='Do not send, write raw messages to this directory (forces --dry-run)')
-    sp_send_g.add_argument('--dry-run-to', nargs='+', metavar='ADDR',
-                           help='Like --dry-run, but sends out via email to specified recipients')
+    sp_send_g.add_argument('--preview-to', nargs='+', metavar='ADDR',
+                           help='Send everything for a pre-review to specified addresses instead of actual recipients')
     sp_send_g.add_argument('--reflect', action='store_true', default=False,
                            help='Send everything to yourself instead of the actual recipients')
 

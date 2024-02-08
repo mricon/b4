@@ -401,14 +401,14 @@ Enroll existing branch:
 b4 send
 ~~~~~~~
 usage:
-  b4 send [-h] [-d | -o OUTPUT_DIR | --dry-run-to ADDR [ADDR ...] | --reflect] [--no-trailer-to-cc] [--to ADDR [ADDR ...]] [--cc ADDR [ADDR ...]] [--not-me-too] [--resend [vN]] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
+  b4 send [-h] [-d | -o OUTPUT_DIR | --preview-to ADDR [ADDR ...] | --reflect] [--no-trailer-to-cc] [--to ADDR [ADDR ...]] [--cc ADDR [ADDR ...]] [--not-me-too] [--resend [vN]] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
 
 options:
   -h, --help            show this help message and exit
   -d, --dry-run         Do not send, just dump out raw smtp messages to the stdout
 
-  --dry-run-to ADDR [ADDR ...]
-                        Like --dry-run, but sends out via email to specified recipients
+  --preview-to ADDR [ADDR ...]
+                        Send everything for a pre-review to specified addresses instead of actual recipients
 
   -o OUTPUT_DIR, --output-dir OUTPUT_DIR
                         Do not send, write raw messages to this directory (forces --dry-run)

@@ -178,6 +178,22 @@ When ``--reflect`` is on:
 * your branch will **not** be automatically rerolled to the next
   revision
 
+Checking things over with ``--preview-to`` **(v0.13+)**
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Sometimes you want to ask your friend, colleague, boss, or mentor to
+give your submission a quick review. You can send them your series using
+``--preview-to boss@example.com`` before you send things out to the
+actual maintainers.
+
+When ``--preview-to`` is on:
+
+* b4 will **only send to the addresses you specify on the command line**
+* your branch will **not** be automatically rerolled to the next
+  revision
+
+(NB: the web submission endpoint cannot currently be used for this
+feature.)
+
 What happens after you send
 ---------------------------
 The following happens after you send your patches:
@@ -210,6 +226,13 @@ Command line flags
   folder specified instead. This is usually a good last check before
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
+
+``--preview-to`` **(v0.13+)**
+  Sometimes it is useful to send your series for a pre-review to a
+  colleague, mentor, boss, etc. Using this option will send out the
+  series to the addresses specified on the command line, but will not
+  reroll your series, allowing you to send the actual submission at some
+  later point.
 
 ``--reflect`` **(v0.11+)**
   Prepares everything for sending, but only emails yourself (the address

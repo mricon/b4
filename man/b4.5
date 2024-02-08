@@ -620,7 +620,7 @@ Enroll current branch, using the passed tag, branch, or commit as fork base
 .INDENT 0.0
 .TP
 .B usage:
-b4 send [\-h] [\-d | \-o OUTPUT_DIR | \-\-dry\-run\-to ADDR [ADDR ...] | \-\-reflect] [\-\-no\-trailer\-to\-cc] [\-\-to ADDR [ADDR ...]] [\-\-cc ADDR [ADDR ...]] [\-\-not\-me\-too] [\-\-resend [vN]] [\-\-no\-sign] [\-\-web\-auth\-new] [\-\-web\-auth\-verify VERIFY_TOKEN]
+b4 send [\-h] [\-d | \-o OUTPUT_DIR | \-\-preview\-to ADDR [ADDR ...] | \-\-reflect] [\-\-no\-trailer\-to\-cc] [\-\-to ADDR [ADDR ...]] [\-\-cc ADDR [ADDR ...]] [\-\-not\-me\-too] [\-\-resend [vN]] [\-\-no\-sign] [\-\-web\-auth\-new] [\-\-web\-auth\-verify VERIFY_TOKEN]
 .TP
 .B options:
 .INDENT 7.0
@@ -633,8 +633,8 @@ Do not send, just dump out raw smtp messages to the stdout
 .UNINDENT
 .INDENT 7.0
 .TP
-.B \-\-dry\-run\-to ADDR [ADDR ...]
-Like \-\-dry\-run, but sends out via email to specified recipients
+.B \-\-preview\-to ADDR [ADDR ...]
+Send everything for a pre\-review to specified addresses instead of actual recipients
 .UNINDENT
 .INDENT 7.0
 .TP
