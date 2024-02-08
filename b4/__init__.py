@@ -2209,7 +2209,7 @@ class LoreMessage:
             if ltr in fixtrailers or ltr in ignored:
                 continue
 
-            if ltr.addr and ltr.addr[1].lower() in ignores:
+            if (ltr.addr and ltr.addr[1].lower() in ignores) or (ltr.lmsg and ltr.lmsg.fromemail.lower() in ignores):
                 logger.info('    x %s', ltr.as_string(omit_extinfo=True))
                 ignored.add(ltr)
                 continue
