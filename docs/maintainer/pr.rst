@@ -63,11 +63,6 @@ possible to save pull requests, which are transient by nature, into an
 archival public-inbox so they can be analyzed by archivists at a later
 date if necessary.
 
-``-l, --retrieve-links``
-  Will attempt to retrieve URLs specified in Link: trailers, in case
-  they are discussion threads. If successful, they will be compressed
-  and attached to the cover letter as .mbx.gz files.
-
 ``-f MAILFROM, --from-addr MAILFROM``
   **(DEPRECATED)** When exploding pull requests, use this email address
   in the From header, instead of reusing the same From as in the pull

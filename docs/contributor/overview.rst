@@ -20,11 +20,11 @@ easier for contributors to submit patch series:
 
 .. warning::
 
-  This is a very new set of features and should be considered
-  experimental. While a lot of work has gone into making sure that your
-  git tree is not harmed in any way, it is best to always have backups
-  and to always check things with ``--dry-run`` when that option is
-  available.
+  This is a fairly new set of features and can still be buggy or do
+  something unexpected. While a lot of work has gone into making sure
+  that your git tree is not harmed in any way, it is best to have
+  backups and to always check things with ``--dry-run`` when that option
+  is available.
 
   If you come across a bug or unexpected behaviour, please report the
   problem to the Tools mailing list.
