@@ -614,7 +614,7 @@ class LoreSeries:
         if self.patches[0] and self.patches[0].followup_trailers:  # noqa
             self.add_extra_trailers(self.patches[0].followup_trailers)  # noqa
 
-    def get_am_ready(self, noaddtrailers: bool = False, covertrailers: bool = False, addmysob: bool = False,
+    def get_am_ready(self, noaddtrailers: bool = False, addmysob: bool = False,
                      addlink: bool = False, cherrypick: Optional[List[int]] = None, copyccs: bool = False,
                      allowbadchars: bool = False) -> List[email.message.Message]:
 
@@ -697,8 +697,7 @@ class LoreSeries:
                     logger.info('Some CI checks failed, see patchwork for more info:')
                     logger.info('  %s', series_url)
 
-        if covertrailers:
-            self.add_cover_trailers()
+        self.add_cover_trailers()
 
         at = 1
         msgs = list()

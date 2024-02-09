@@ -44,7 +44,6 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     if outdir == '-':
         cmdargs.nocover = True
     wantver = cmdargs.wantver
-    covertrailers = cmdargs.covertrailers
     count = len(msgs)
     logger.info('Analyzing %s messages in the thread', count)
     lmbx = b4.LoreMailbox()
@@ -153,10 +152,8 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     else:
         cherrypick = None
 
-    am_msgs = lser.get_am_ready(noaddtrailers=cmdargs.noaddtrailers,
-                                covertrailers=covertrailers, addmysob=cmdargs.addmysob,
-                                addlink=cmdargs.addlink, cherrypick=cherrypick,
-                                copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars)
+    am_msgs = lser.get_am_ready(noaddtrailers=cmdargs.noaddtrailers, addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
+                                cherrypick=cherrypick, copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars)
     logger.info('---')
 
     if cherrypick is None:
@@ -164,16 +161,6 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     else:
         logger.info('Total patches: %s (cherrypicked: %s)', len(am_msgs), cmdargs.cherrypick)
 
-    if lser.has_cover and lser.patches[0].followup_trailers and not covertrailers:
-        # Warn that some trailers were sent to the cover letter
-        logger.critical('---')
-        logger.critical('NOTE: Some trailers were sent to the cover letter:')
-        tseen = set()
-        for ltr in lser.patches[0].followup_trailers:
-            if ltr not in tseen:
-                logger.critical('      %s', ltr.as_string(omit_extinfo=True))
-                tseen.add(ltr)
-        logger.critical('NOTE: Rerun with -t to apply them to all patches')
     if len(lser.trailer_mismatches):
         logger.critical('---')
         logger.critical('NOTE: some trailers ignored due to from/email mismatches:')

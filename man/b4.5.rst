@@ -150,8 +150,6 @@ options:
                         Only retrieve the message matching the msgid and ignore the rest of the thread
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
-  -t, --apply-cover-trailers
-                        Apply trailers sent to the cover letter to all patches
   -S, --sloppy-trailers
                         Apply trailers without email address match checking
   -T, --no-add-trailers
@@ -218,8 +216,6 @@ options:
                         Only retrieve the message matching the msgid and ignore the rest of the thread
   -v WANTVER, --use-version WANTVER
                         Get a specific version of the patch/series
-  -t, --apply-cover-trailers
-                        Apply trailers sent to the cover letter to all patches
   -S, --sloppy-trailers
                         Apply trailers without email address match checking
   -T, --no-add-trailers

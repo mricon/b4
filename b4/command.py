@@ -42,7 +42,7 @@ def cmd_am_common_opts(sp):
     sp.add_argument('-v', '--use-version', dest='wantver', type=int, default=None,
                     help='Get a specific version of the patch/series')
     sp.add_argument('-t', '--apply-cover-trailers', dest='covertrailers', action='store_true', default=False,
-                    help='Apply trailers sent to the cover letter to all patches')
+                    help='(This is now the default behavior; this option will be removed in the future.)')
     sp.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
                     help='Apply trailers without email address match checking')
     sp.add_argument('-T', '--no-add-trailers', dest='noaddtrailers', action='store_true', default=False,

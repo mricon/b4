@@ -90,12 +90,6 @@ The following flags are common to both commands:
   patch series revisions, b4 will automatically pick the highest
   numbered version. This switch lets you pick a different revision.
 
-``-t, --apply-cover-trailers``
-  By default, b4 will not apply any code review trailers sent to the
-  cover letter (but will let you know when it finds those). This lets
-  you automatically apply these trailers to all commits in the series.
-  **This will become the default in a future version of b4.**
-
 ``-S, --sloppy-trailers``
   B4 tries to be careful when collecting code review trailers and will
   refuse to consider the trailers where the email address in the From:
