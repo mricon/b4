@@ -233,8 +233,11 @@ def get_base_forkpoint(basebranch: str, mybranch: Optional[str] = None) -> str:
     gitargs = ['merge-base', '--fork-point', basebranch]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
-        logger.critical('CRITICAL: Could not find common ancestor with %s', basebranch)
-        raise RuntimeError('Branches %s and %s have no common ancestors' % (basebranch, mybranch))
+        gitargs = ['merge-base', mybranch, basebranch]
+        lines = b4.git_get_command_lines(None, gitargs)
+        if not lines:
+            logger.critical('CRITICAL: Could not find common ancestor with %s', basebranch)
+            raise RuntimeError('Branches %s and %s have no common ancestors' % (basebranch, mybranch))
     forkpoint = lines[0]
     logger.debug('Fork-point between %s and %s is %s', mybranch, basebranch, forkpoint)
 
