@@ -786,7 +786,9 @@ class LoreSeries:
         for lmsg in self.patches[1:]:
             if lmsg is None or not lmsg.blob_indexes:
                 continue
-            for ofn, obh, nfn in lmsg.blob_indexes:
+            for ofn, obh, nfn, fmod in lmsg.blob_indexes:
+                logger.debug('%s/%s: ofn=%s, obh=%s, nfn=%s, fmod=%s',
+                             lmsg.counter, lmsg.expected, ofn, obh, nfn, fmod)
                 if ofn in seenfiles:
                     # if we have seen this file once already, then it's a repeat patch
                     # it's no longer going to match current hash
@@ -797,7 +799,7 @@ class LoreSeries:
                     continue
                 self.indexes.append((ofn, obh))
 
-    def check_applies_clean(self, gitdir: str, at: Optional[str] = None) -> Tuple[int, list]:
+    def check_applies_clean(self, gitdir: Optional[str] = None, at: Optional[str] = None) -> Tuple[int, list]:
         if self.indexes is None:
             self.populate_indexes()
 
@@ -887,7 +889,8 @@ class LoreSeries:
 
         raise IndexError
 
-    def make_fake_am_range(self, gitdir: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    def make_fake_am_range(self, gitdir: Optional[str],
+                           at_base: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         start_commit = end_commit = None
         # Use the msgid of the first non-None patch in the series
         msgid = None
@@ -908,39 +911,45 @@ class LoreSeries:
                 stalecache = True
             if start_commit is not None and end_commit is not None:
                 # Make sure they are still there
-                ecode, out = git_run_command(gitdir, ['cat-file', '-e', start_commit])
-                if ecode > 0:
-                    stalecache = True
-                else:
-                    ecode, out = git_run_command(gitdir, ['cat-file', '-e', end_commit])
-                    if ecode > 0:
-                        stalecache = True
-                    else:
-                        logger.debug('Using previously generated range')
-                        return start_commit, end_commit
+                if git_commit_exists(gitdir, start_commit) and git_commit_exists(gitdir, end_commit):
+                    logger.debug('Using previously generated range')
+                    return start_commit, end_commit
+                stalecache = True
 
             if stalecache:
                 logger.debug('Stale cache for [v%s] %s', self.revision, self.subject)
                 clear_cache(msgid, suffix='fakeam')
 
         logger.info('Preparing fake-am for v%s: %s', self.revision, self.subject)
-        with git_temp_worktree(gitdir):
-            # We are in a temporary chdir at this time, so writing to a known file should be safe
-            mbxf = '.__git-am__'
-            mbx = mailbox.mbox(mbxf)
+        if not at_base:
+            if self.base_commit and git_commit_exists(gitdir, self.base_commit):
+                at_base = self.base_commit
+            else:
+                try:
+                    at_base = self.find_base(gitdir)[0]
+                except IndexError:
+                    pass
+
+        topdir = git_get_toplevel(gitdir)
+        with git_temp_worktree(topdir, at_base):
             # Logic largely borrowed from gj_tools
+            msgs = list()
             seenfiles = set()
             for lmsg in self.patches[1:]:
                 if lmsg is None:
                     logger.critical('ERROR: v%s series incomplete; unable to create a fake-am range', self.revision)
                     return None, None
+
                 logger.debug('Looking at %s', lmsg.full_subject)
                 if not lmsg.blob_indexes:
                     logger.critical('ERROR: some patches do not have indexes')
                     logger.critical('       unable to create a fake-am range')
                     return None, None
-                for ofn, ofi, nfn in lmsg.blob_indexes:
+
+                for ofn, ofi, nfn, fmod in lmsg.blob_indexes:
+                    logger.debug('ofn=%s, ofi=%s, nfn=%s, fmod=%s', ofn, ofi, nfn, fmod)
                     if ofn in seenfiles:
+                        logger.debug('ofn=%s already seen, skipping', ofn)
                         # We already processed this file, so this blob won't match
                         continue
                     seenfiles.add(ofn)
@@ -953,39 +962,48 @@ class LoreSeries:
                         logger.debug('  Renamed file: %s -> %s', ofn, nfn)
                         seenfiles.add(nfn)
                     # Try to grab full ref_id of this hash
-                    ecode, out = git_run_command(gitdir, ['rev-parse', ofi])
-                    if ecode > 0:
-                        logger.critical('  ERROR: Could not find matching blob for %s (%s)', ofn, ofi)
-                        logger.critical('         If you know on which tree this patchset is based,')
-                        logger.critical('         add it as a remote and perform "git remote update"')
-                        logger.critical('         in order to fetch the missing objects.')
-                        return None, None
-                    logger.debug('  Found matching blob for: %s', ofn)
-                    fullref = out.strip()
-                    gitargs = ['update-index', '--add', '--cacheinfo', f'0644,{fullref},{ofn}']
+                    try:
+                        ohash = git_revparse_obj(ofi)
+                        logger.debug('  Found matching blob for: %s', ofn)
+                        gitargs = ['update-index', '--add', '--cacheinfo', f'{fmod},{ohash},{ofn}']
+                    except RuntimeError:
+                        logger.debug('Could not find matching blob for %s (%s)', ofn, ofi)
+                        try:
+                            chash = git_revparse_obj(f':{ofn}', topdir)
+                            gitargs = ['update-index', '--add', '--cacheinfo', f'{fmod},{chash},{ofn}']
+                        except RuntimeError:
+                            logger.critical('  ERROR: Could not find anything matching %s', ofn)
+                            return None, None
+
                     ecode, out = git_run_command(None, gitargs)
                     if ecode > 0:
-                        logger.critical('  ERROR: Could not run update-index for %s (%s)', ofn, fullref)
+                        logger.critical('  ERROR: Could not run update-index for %s (%s)', ofn, ohash)
                         return None, None
-                mbx.add(lmsg.msg.as_string(policy=emlpolicy).encode('utf-8'))
 
-            mbx.close()
+                msgs.append(lmsg.get_am_message(add_trailers=False))
+
             ecode, out = git_run_command(None, ['write-tree'])
             if ecode > 0:
                 logger.critical('ERROR: Could not write fake-am tree')
                 return None, None
             treeid = out.strip()
-            # At this point we have a worktree with files that should cleanly receive a git am
+            # At this point we have a worktree with files that should (hopefully) cleanly receive a git am
             gitargs = ['commit-tree', treeid + '^{tree}', '-F', '-']
             ecode, out = git_run_command(None, gitargs, stdin='Initial fake commit'.encode('utf-8'))
             if ecode > 0:
                 logger.critical('ERROR: Could not commit-tree')
                 return None, None
             start_commit = out.strip()
+            logger.debug('start_commit=%s', start_commit)
             git_run_command(None, ['reset', '--hard', start_commit])
-            ecode, out = git_run_command(None, ['am', mbxf])
+
+            ifh = io.BytesIO()
+            save_git_am_mbox(msgs, ifh)
+            ambytes = ifh.getvalue()
+
+            ecode, out = git_run_command(None, ['am'], stdin=ambytes, logstderr=True)
             if ecode > 0:
-                logger.critical('ERROR: Could not fake-am version %s', self.revision)
+                logger.critical('ERROR: Could not fake-am version v%s', self.revision)
                 return None, None
             ecode, out = git_run_command(None, ['rev-parse', 'HEAD'])
             end_commit = out.strip()
@@ -1308,7 +1326,7 @@ class LoreMessage:
         return self._pwhash
 
     @property
-    def blob_indexes(self) -> Set[Tuple[str, str, str]]:
+    def blob_indexes(self) -> Set[Tuple[str, str, str, str]]:
         if self._blob_indexes is None:
             if self.has_diff:
                 self._blob_indexes = LoreMessage.get_indexes(self.body)
@@ -1928,21 +1946,33 @@ class LoreMessage:
         return hashed.hexdigest()
 
     @staticmethod
-    def get_indexes(diff: str) -> Set[Tuple[str, str, str]]:
+    def get_indexes(diff: str) -> Set[Tuple[str, str, str, str]]:
         indexes = set()
         oldfile = None
         newfile = None
+        fmod = None
         for line in diff.split('\n'):
-            if line.find('diff ') != 0 and line.find('index ') != 0:
+            if not (line.startswith('diff ') or line.startswith('index ') or line.startswith('new file mode ')):
                 continue
             matches = re.search(r'^diff\s+--git\s+\w/(.*)\s+\w/(.*)$', line)
             if matches:
                 oldfile = matches.groups()[0]
                 newfile = matches.groups()[1]
                 continue
+            matches = re.search(r'^new file mode (\d+)', line)
+            if matches:
+                fmod = matches.groups()[0]
             matches = re.search(r'^index\s+([\da-f]+)\.\.[\da-f]+.*$', line)
             if matches and oldfile is not None and newfile is not None:
-                indexes.add((oldfile, matches.groups()[0], newfile))
+                ohash = matches.groups()[0]
+                if not fmod:
+                    matches = re.search(r'^index\s+[\da-f]+\.\.[\da-f]+\s+(\d+)$', line)
+                    if matches:
+                        fmod = matches.groups()[0]
+                if not fmod:
+                    # fall back if we can't figure it out
+                    fmod = '10644'
+                indexes.add((oldfile, ohash, newfile, fmod))
         return indexes
 
     @staticmethod
@@ -2635,7 +2665,7 @@ def gpg_run_command(args: List[str], stdin: Optional[bytes] = None) -> Tuple[int
     return _run_command(cmdargs, stdin=stdin)
 
 
-def git_run_command(gitdir: Optional[str], args: List[str], stdin: Optional[bytes] = None,
+def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: Optional[bytes] = None,
                     logstderr: bool = False, decode: bool = True,
                     rundir: Optional[str] = None) -> Tuple[int, Union[str, bytes]]:
     cmdargs = ['git', '--no-pager']
@@ -4003,8 +4033,70 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
     return msgid, msgs
 
 
-def git_revparse_obj(gitobj: str) -> str:
-    ecode, out = git_run_command(None, ['rev-parse', gitobj])
+def git_revparse_obj(gitobj: str, gitdir: Optional[str] = None) -> str:
+    ecode, out = git_run_command(gitdir, ['rev-parse', gitobj])
     if ecode > 0:
         raise RuntimeError('No such object: %s' % gitobj)
     return out.strip()
+
+
+def git_fetch_am_into_repo(gitdir: Optional[str], am_msgs: List[email.message.Message], at_base: str = 'HEAD',
+                           origin: str = None):
+    ifh = io.BytesIO()
+    save_git_am_mbox(am_msgs, ifh)
+    ambytes = ifh.getvalue()
+    if gitdir is None:
+        gitdir = os.getcwd()
+    topdir = git_get_toplevel(gitdir)
+
+    with git_temp_worktree(topdir, at_base) as gwt:
+        logger.info('Magic: Preparing a sparse worktree')
+        ecode, out = git_run_command(gwt, ['sparse-checkout', 'init'], logstderr=True)
+        if ecode > 0:
+            logger.critical('Error running sparse-checkout init')
+            logger.critical(out)
+            raise RuntimeError
+        ecode, out = git_run_command(gwt, ['checkout'], logstderr=True)
+        if ecode > 0:
+            logger.critical('Error running checkout into sparse workdir')
+            logger.critical(out)
+            raise RuntimeError
+        ecode, out = git_run_command(gwt, ['am'], stdin=ambytes, logstderr=True)
+        if ecode > 0:
+            logger.critical('Unable to cleanly apply series, see failure log below')
+            logger.critical('---')
+            logger.critical(out.strip())
+            logger.critical('---')
+            logger.critical('Not fetching into FETCH_HEAD')
+            raise RuntimeError
+        logger.info('---')
+        logger.info(out.strip())
+        logger.info('---')
+        logger.info('Fetching into FETCH_HEAD')
+        gitargs = ['fetch', gwt]
+        ecode, out = git_run_command(topdir, gitargs, logstderr=True)
+        if ecode > 0:
+            logger.critical('Unable to fetch from the worktree')
+            logger.critical(out.strip())
+            raise RuntimeError
+
+    if not origin:
+        return
+
+    # Update the FETCH_HEAD to point where we actually fetched from
+    gitargs = ['rev-parse', '--git-path', 'FETCH_HEAD']
+    ecode, fhf = git_run_command(topdir, gitargs, logstderr=True)
+    if ecode > 0:
+        logger.critical('Unable to find FETCH_HEAD')
+        logger.critical(out.strip())
+        raise RuntimeError
+    with open(fhf.rstrip(), 'r') as fhh:
+        contents = fhh.read()
+    if len(am_msgs) > 1:
+        mmsg = 'patches from %s' % origin
+    else:
+        mmsg = 'patch from %s' % origin
+    new_contents = contents.replace(str(gwt), mmsg)
+    if new_contents != contents:
+        with open(fhf.rstrip(), 'w') as fhh:
+            fhh.write(new_contents)

@@ -22,6 +22,9 @@ logger = b4.logger
 
 def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.LoreSeries], Optional[b4.LoreSeries]]:
     msgid = b4.get_msgid(cmdargs)
+    if not msgid:
+        logger.critical('Please pass msgid on the command-line')
+        sys.exit(1)
     wantvers = cmdargs.wantvers
     if wantvers and len(wantvers) > 2:
         logger.critical('Can only compare two versions at a time')
@@ -70,7 +73,14 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
         lower = min(wantvers)
     else:
         upper = max(lmbx.series.keys())
-        lower = min(lmbx.series.keys())
+        lower = upper
+        while True:
+            lower -= 1
+            if lower in lmbx.series:
+                break
+            if lower < 1:
+                logger.critical('Could not find lower series to compare against.')
+                sys.exit(1)
 
     if upper == lower:
         logger.critical('ERROR: Could not auto-find previous revision')
@@ -145,6 +155,7 @@ def main(cmdargs: argparse.Namespace) -> None:
         logger.info('Success, to compare v%s and v%s:', lser.revision, user.revision)
         logger.info(f'    {grdcmd}')
         sys.exit(0)
+    logger.info('---')
     logger.info('Diffing v%s and v%s', lser.revision, user.revision)
     logger.info('    Running: %s', grdcmd)
     gitargs = ['range-diff', f'{lsc}..{lec}', f'{usc}..{uec}']

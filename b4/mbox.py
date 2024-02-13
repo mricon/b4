@@ -190,7 +190,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
         else:
             rstart, rend = lser.make_fake_am_range(gitdir=None)
             if rstart and rend:
-                logger.info('Prepared a fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+                logger.info('Preared a fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
 
     logger.critical('---')
     if lser.partial_reroll:
@@ -312,100 +312,59 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
             # Try our best with HEAD, I guess
             base_commit = 'HEAD'
 
-        with b4.git_temp_worktree(topdir, base_commit) as gwt:
-            logger.info('Magic: Preparing a sparse worktree')
-            ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'init'], logstderr=True)
-            if ecode > 0:
-                logger.critical('Error running sparse-checkout init')
-                logger.critical(out)
-                sys.exit(ecode)
-            ecode, out = b4.git_run_command(gwt, ['checkout'], logstderr=True)
-            if ecode > 0:
-                logger.critical('Error running checkout into sparse workdir')
-                logger.critical(out)
-                sys.exit(ecode)
-            ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes, logstderr=True)
-            if ecode > 0:
-                logger.critical('Unable to cleanly apply series, see failure log below')
-                logger.critical('---')
-                logger.critical(out.strip())
-                logger.critical('---')
-                logger.critical('Not fetching into FETCH_HEAD')
-                sys.exit(ecode)
-            logger.info('---')
-            logger.info(out.strip())
-            logger.info('---')
-            logger.info('Fetching into FETCH_HEAD')
-            gitargs = ['fetch', gwt]
-            ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
-            if ecode > 0:
-                logger.critical('Unable to fetch from the worktree')
-                logger.critical(out.strip())
-                sys.exit(ecode)
-            gitargs = ['rev-parse', '--git-path', 'FETCH_HEAD']
-            ecode, fhf = b4.git_run_command(topdir, gitargs, logstderr=True)
-            if ecode > 0:
-                logger.critical('Unable to find FETCH_HEAD')
-                logger.critical(out.strip())
-                sys.exit(ecode)
-            with open(fhf.rstrip(), 'r') as fhh:
-                contents = fhh.read()
-            linkurl = config['linkmask'] % top_msgid
-            if len(am_msgs) > 1:
-                mmsg = 'patches from %s' % linkurl
-            else:
-                mmsg = 'patch from %s' % linkurl
-            new_contents = contents.replace(gwt, mmsg)
-            if new_contents != contents:
-                with open(fhf, 'w') as fhh:
-                    fhh.write(new_contents)
+        linkurl = config['linkmask'] % top_msgid
+        try:
+            b4.git_fetch_am_into_repo(topdir, am_msgs=am_msgs, at_base=base_commit, origin=linkurl)
+        except RuntimeError:
+            sys.exit(1)
 
-            gitargs = ['rev-parse', '--git-dir']
-            ecode, fhf = b4.git_run_command(topdir, gitargs, logstderr=True)
-            if ecode > 0:
-                logger.critical('Unable to find git directory')
-                logger.critical(out.strip())
-                sys.exit(ecode)
-            mmf = os.path.join(fhf.rstrip(), 'b4-cover')
-            merge_template = DEFAULT_MERGE_TEMPLATE
-            if config.get('shazam-merge-template'):
-                # Try to load this template instead
-                try:
-                    merge_template = b4.read_template(config['shazam-merge-template'])
-                except FileNotFoundError:
-                    logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
-                                    config['shazam-merge-template'])
-                    sys.exit(2)
+        gitargs = ['rev-parse', '--git-dir']
+        ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
+        if ecode > 0:
+            logger.critical('Unable to find git directory')
+            logger.critical(out.strip())
+            sys.exit(ecode)
+        mmf = os.path.join(out.rstrip(), 'b4-cover')
+        merge_template = DEFAULT_MERGE_TEMPLATE
+        if config.get('shazam-merge-template'):
+            # Try to load this template instead
+            try:
+                merge_template = b4.read_template(config['shazam-merge-template'])
+            except FileNotFoundError:
+                logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
+                                config['shazam-merge-template'])
+                sys.exit(2)
 
-            # Write out a sample merge message using the cover letter
-            if os.path.exists(mmf):
-                # Make sure any old cover letters don't confuse anyone
-                os.unlink(mmf)
+        # Write out a sample merge message using the cover letter
+        if os.path.exists(mmf):
+            # Make sure any old cover letters don't confuse anyone
+            os.unlink(mmf)
 
-            if lser.has_cover:
-                cmsg = lser.patches[0]
-                parts = b4.LoreMessage.get_body_parts(cmsg.body)
-                covermessage = parts[1]
-            else:
-                cmsg = lser.patches[1]
-                covermessage = ('NOTE: No cover letter provided by the author.\n'
-                                '      Add merge commit message here.')
-            tptvals = {
-                'seriestitle': cmsg.subject,
-                'authorname': cmsg.fromname,
-                'authoremail': cmsg.fromemail,
-                'covermessage': covermessage,
-                'mid': top_msgid,
-                'midurl': linkurl,
-            }
-            if len(am_msgs) > 1:
-                tptvals['patch_or_series'] = 'patch series'
-            else:
-                tptvals['patch_or_series'] = 'patch'
+        if lser.has_cover:
+            cmsg = lser.patches[0]
+            parts = b4.LoreMessage.get_body_parts(cmsg.body)
+            covermessage = parts[1]
+        else:
+            cmsg = lser.patches[1]
+            covermessage = ('NOTE: No cover letter provided by the author.\n'
+                            '      Add merge commit message here.')
 
-            body = Template(merge_template).safe_substitute(tptvals)
-            with open(mmf, 'w') as mmh:
-                mmh.write(body)
+        tptvals = {
+            'seriestitle': cmsg.subject,
+            'authorname': cmsg.fromname,
+            'authoremail': cmsg.fromemail,
+            'covermessage': covermessage,
+            'mid': top_msgid,
+            'midurl': linkurl,
+        }
+        if len(am_msgs) > 1:
+            tptvals['patch_or_series'] = 'patch series'
+        else:
+            tptvals['patch_or_series'] = 'patch'
+
+        body = Template(merge_template).safe_substitute(tptvals)
+        with open(mmf, 'w') as mmh:
+            mmh.write(body)
 
         mergeflags = config.get('shazam-merge-flags', '--signoff')
         sp = shlex.shlex(mergeflags, posix=True)
