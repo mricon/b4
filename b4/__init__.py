@@ -3892,7 +3892,7 @@ def git_get_current_branch(gitdir: Optional[str] = None, short: bool = True) -> 
     gitargs = ['symbolic-ref', '-q', 'HEAD']
     ecode, out = git_run_command(gitdir, gitargs)
     if ecode > 0:
-        logger.critical('Not able to get current branch (git symbolic-ref HEAD)')
+        logger.debug('Not able to get current branch (git symbolic-ref HEAD)')
         return None
     mybranch = out.strip()
     if short:

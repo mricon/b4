@@ -332,7 +332,10 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         basebranch = None
         if not cmdargs.fork_point:
             cmdargs.fork_point = 'HEAD'
-            basebranch = mybranch
+            if mybranch:
+                basebranch = mybranch
+            else:
+                basebranch = 'HEAD'
         else:
             # if our strategy is not "commit", then we need to know which branch we're using as base
             if strategy != 'commit':
@@ -655,6 +658,13 @@ def is_prep_branch(mustbe: bool = False, usebranch: Optional[str] = None) -> boo
         mybranch = usebranch
     else:
         mybranch = b4.git_get_current_branch()
+    if mybranch is None:
+        # Not on any branch?
+        if mustbe:
+            logger.critical(mustmsg)
+            sys.exit(1)
+        return False
+
     strategy = get_cover_strategy(mybranch)
     if strategy in {'commit', 'tip-commit'}:
         if find_cover_commit(usebranch=mybranch) is None:
