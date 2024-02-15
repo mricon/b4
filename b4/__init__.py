@@ -1267,7 +1267,7 @@ class LoreMessage:
             for trailer in trailers:
                 # These are commonly part of patch/commit metadata
                 badtrailers = {'from', 'author', 'cc', 'to', 'date', 'subject',
-                               'subscribe', 'unsubscribe'}
+                               'subscribe', 'unsubscribe', 'base-commit', 'change-id'}
                 if trailer.lname not in badtrailers:
                     trailer.lmsg = self
                     self.trailers.append(trailer)
