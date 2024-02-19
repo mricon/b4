@@ -13,8 +13,8 @@ import io
     ('badsig', (False, False, False, 'B6C41CE35664996C', None)),
     ('no-pubkey', (False, False, False, None, None)),
 ])
-def test_check_gpg_status(source, expected):
-    with open(f'tests/samples/gpg-{source}.txt', 'r') as fh:
+def test_check_gpg_status(sampledir, source, expected):
+    with open(f'{sampledir}/gpg-{source}.txt', 'r') as fh:
         status = fh.read()
     assert b4.check_gpg_status(status) == expected
 

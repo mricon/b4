@@ -1,3 +1,52 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "b4"
+version = "0.14-dev"
+description = "A tool to work with public-inbox and patch archives"
+readme = "README.rst"
+keywords = ["git", "public-inbox", "lore.kernel.org", "patch", "email", "workflow"]
+license = {file = "COPYING"}
+authors = [
+    {name = "Konstantin Ryabitsev", email="konstantin@linuxfoundation.org"},
+]
+requires-python = ">=3.8"
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Topic :: Communications :: Email",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "requests>=2.24,<3.0",
+    "git-filter-repo>=2.30,<3.0",
+    "dkimpy>=1.0,<2.0",
+    "patatt>=0.6,<2.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://git.kernel.org/pub/scm/utils/b4/b4.git/"
+Repository = "https://git.kernel.org/pub/scm/utils/b4/b4.git"
+Documentation = "https://b4.docs.kernel.org/"
+
+[project.scripts]
+b4 = "b4.command:cmd"
+
 [tool.pytest.ini_options]
 filterwarnings = "ignore:.*(pyopenssl|invalid escape sequence).*:DeprecationWarning"
 norecursedirs = "tests/helpers"
+
+[tool.bumpversion]
+current_version = "0.14-dev"
+files = [
+    {filename = "src/b4/__init__.py"},
+    {filename = "src/man/b4.5.rst"},
+]

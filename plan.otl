@@ -1,0 +1,16 @@
+v0.14
+-----
+[_] Switch to using pyproject.toml
+[_] Use hashed requirements for added security and reproducible installs
+[_] Automatic interdependency resolution
+	[_] Retrieve dependencies using the standard prerequisite-patch-id
+	[_] Define the prerequisite-change-id trailer
+	[_] Dependency chaining (within reason)
+
+v0.15
+-----
+[_] `b4 review` similar to `b4 prep`:
+	[_] Retrieve series and apply to a branch
+	[_] Use empty commit for cover letter and review state tracking
+	[_] Simple edit mode a-la "git rebase -i" that lets you apply trailers to patches
+
