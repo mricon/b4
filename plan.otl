@@ -1,7 +1,7 @@
 v0.14
 -----
-[_] Switch to using pyproject.toml
-[_] Use hashed requirements for added security and reproducible installs
+[X] Switch to using pyproject.toml
+[X] Use hashed requirements for added security and reproducible installs
 [_] Automatic interdependency resolution
 	[_] Retrieve dependencies using the standard prerequisite-patch-id
 	[_] Define the prerequisite-change-id trailer

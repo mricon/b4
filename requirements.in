@@ -1,0 +1,4 @@
+requests>=2.24,<3.0
+git-filter-repo>=2.30,<3.0
+dkimpy>=1.0,<2.0
+patatt>=0.6,<2.0

@@ -12,15 +12,23 @@ See https://b4.docs.kernel.org/ for online documentation.
 
 Installing
 ----------
-To install from pypi::
+To install the latest released version with pip::
 
-    python3 -m pip install --user b4
+    python3 -m pip install b4
+
+Or to install the latest master (warning, maybe broken!)::
+
+    python3 -m pip install git+https://git.kernel.org/pub/scm/utils/b4/b4.git@master
 
 Upgrading
 ---------
 If you previously installed from pypi::
 
-    python3 -m pip install --user --upgrade b4
+    python3 -m pip install --upgrade b4
+
+Or to get the latest stuff from git::
+
+    python3 -m pip install --upgrade git+https://git.kernel.org/pub/scm/utils/b4/b4.git@master
 
 Running from the checkout dir
 -----------------------------
@@ -31,10 +39,10 @@ an alias in your .bash_profile::
     alias b4="$HOME/path/to/b4/b4.sh"
 
 Setting up a symlink should also be possible. Remember to run the
-following command after the initial clone in order to pull in the
-dependencies that are tracked via submodules::
+following commands after the initial clone::
 
     git submodule update --init
+    python3 -m pip install -r requirements.txt
 
 Support
 -------
