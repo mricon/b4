@@ -406,6 +406,7 @@ Contributor-oriented settings
   * ``${cover}``: the content of the cover letter itself
   * ``${shortlog}``: the ``git shortlog`` output for the series
   * ``${diffstat}``: the ``git diff --stat`` output for the series
+  * ``${range_diff}``: the ``git range-diff`` output against the previous revision of the series
   * ``${base_commit}``: the base commit of the series
   * ``${change_id}``: the change-id of the series
   * ``${signature}``: your signature, either from ``~/.signature`` if found, or from your Git config

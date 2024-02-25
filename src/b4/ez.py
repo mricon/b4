@@ -76,6 +76,11 @@ Changes in v${newrev}:
 
 """
 
+DEFAULT_RANGEDIFF_TEMPLATE = """
+Range-diff versus v${oldrev}:
+
+"""
+
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     config = b4.get_main_config()
@@ -1242,6 +1247,18 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
         'base_commit': base_commit,
         'signature': b4.get_email_signature(),
     }
+    if cover_template.find('${range_diff}') >= 0:
+        if revision > 1:
+            oldrev = revision - 1
+            rangediff_template = DEFAULT_RANGEDIFF_TEMPLATE
+            rd_tptvals = {
+                'oldrev': oldrev,
+            }
+            range_diff = Template(rangediff_template.lstrip()).safe_substitute(rd_tptvals)
+            range_diff += compare(oldrev, execvp=False)
+            tptvals['range_diff'] = range_diff
+        else:
+            tptvals['range_diff'] = ""
     cover_letter = Template(cover_template.lstrip()).safe_substitute(tptvals)
     # Store tracking info in the header in a safe format, which should allow us to
     # fully restore our work from the already sent series.
@@ -2055,7 +2072,7 @@ def force_revision(forceto: int) -> None:
     store_cover(cover, tracking)
 
 
-def compare(compareto: str) -> None:
+def compare(compareto: str, execvp: bool = True) -> Union[List[str], None]:
     cover, tracking = load_cover()
     # Try the new format first
     tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, compareto)
@@ -2085,10 +2102,17 @@ def compare(compareto: str) -> None:
     lines = b4.git_get_command_lines(None, gitargs)
     curr_end = lines[0]
     grdcmd = ['git', 'range-diff', '%.12s..%.12s' % (prev_start, prev_end), '%.12s..%.12s' % (curr_start, curr_end)]
-    # We exec range-diff and let it take over
     logger.debug('Running %s', ' '.join(grdcmd))
-    os.execvp(grdcmd[0], grdcmd)
-
+    if (execvp):
+        # We exec range-diff and let it take over
+        os.execvp(grdcmd[0], grdcmd)
+    else:
+        ecode, out = b4.git_run_command(None, grdcmd[1:])
+        if ecode:
+            logger.critical('CRITICAL: Could not execute range-diff')
+            sys.exit(1)
+        else:
+            return out
 
 def auto_to_cc() -> None:
     tocmdstr = None
