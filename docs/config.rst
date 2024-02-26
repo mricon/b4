@@ -400,7 +400,16 @@ Contributor-oriented settings
   Default: ``commit``
 
 ``b4.prep-cover-template`` (v0.10+)
-  Path to the template to use for the cover letter.
+  Path to the template to use for the cover letter. The following tokens
+  are recognized:
+
+  * ``${cover}``: the content of the cover letter itself
+  * ``${shortlog}``: the ``git shortlog`` output for the series
+  * ``${diffstat}``: the ``git diff --stat`` output for the series
+  * ``${range_diff}``: the ``git range-diff`` output against the previous revision of the series
+  * ``${base_commit}``: the base commit of the series
+  * ``${change_id}``: the change-id of the series
+  * ``${signature}``: your signature, either from ``~/.signature`` if found, or from your Git config
 
   Default: ``None``
 
