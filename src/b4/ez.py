@@ -2072,7 +2072,7 @@ def force_revision(forceto: int) -> None:
     store_cover(cover, tracking)
 
 
-def compare(compareto: str, execvp: bool = True) -> Union[List[str], None]:
+def compare(compareto: str, execvp: bool = True) -> Union[str, None]:
     cover, tracking = load_cover()
     # Try the new format first
     tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, compareto)
@@ -2103,7 +2103,7 @@ def compare(compareto: str, execvp: bool = True) -> Union[List[str], None]:
     curr_end = lines[0]
     grdcmd = ['git', 'range-diff', '%.12s..%.12s' % (prev_start, prev_end), '%.12s..%.12s' % (curr_start, curr_end)]
     logger.debug('Running %s', ' '.join(grdcmd))
-    if (execvp):
+    if execvp:
         # We exec range-diff and let it take over
         os.execvp(grdcmd[0], grdcmd)
     else:
@@ -2113,6 +2113,7 @@ def compare(compareto: str, execvp: bool = True) -> Union[List[str], None]:
             sys.exit(1)
         else:
             return out
+
 
 def auto_to_cc() -> None:
     tocmdstr = None
