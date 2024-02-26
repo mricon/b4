@@ -294,7 +294,29 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
         if not topdir:
             logger.critical('Could not figure out where your git dir is, cannot shazam.')
             sys.exit(1)
+
         ifh = io.BytesIO()
+        if lser.prereq_patch_ids:
+            logger.info(' Deps: looking for dependencies matching %s patch-ids', len(lser.prereq_patch_ids))
+            query = ' OR '.join([f'patchid:{x}' for x in lser.prereq_patch_ids])
+            logger.debug('query=%s', query)
+            dmsgs = b4.get_pi_search_results(query)
+            pmap = dict()
+            if dmsgs:
+                for dmsg in dmsgs:
+                    dbody, dcharset = b4.LoreMessage.get_payload(dmsg)
+                    if not b4.DIFF_RE.search(dbody):
+                        continue
+                    dlmsg = b4.LoreMessage(dmsg)
+                    if dlmsg.git_patch_id in lser.prereq_patch_ids:
+                        logger.debug('%s => %s', dlmsg.git_patch_id, dlmsg.subject)
+                        pmap[dlmsg.git_patch_id] = dlmsg
+            for ppid in lser.prereq_patch_ids:
+                if ppid in pmap:
+                    logger.info(' Deps: Applying prerequisite patch: %s', pmap[ppid].full_subject)
+                    pam_msg = pmap[ppid].get_am_message(add_trailers=False)
+                    b4.save_mboxrd_mbox([pam_msg], ifh)
+
         b4.save_git_am_mbox(am_msgs, ifh)
         ambytes = ifh.getvalue()
         if not cmdargs.makefetchhead:
@@ -314,7 +336,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
 
         linkurl = config['linkmask'] % top_msgid
         try:
-            b4.git_fetch_am_into_repo(topdir, am_msgs=am_msgs, at_base=base_commit, origin=linkurl)
+            b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit, origin=linkurl)
         except RuntimeError:
             sys.exit(1)
 

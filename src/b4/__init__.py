@@ -509,6 +509,7 @@ class LoreSeries:
     indexes: Optional[List[Tuple[str, str]]] = None
     base_commit: Optional[str] = None
     change_id: Optional[str] = None
+    prereq_patch_ids: Optional[List[str]] = None
 
     def __init__(self, revision: int, expected: int) -> None:
         self.revision = revision
@@ -563,21 +564,25 @@ class LoreSeries:
         else:
             self.patches[lmsg.counter] = lmsg
         self.complete = not (None in self.patches[1:])
-        if lmsg.counter == 0:
-            # This is a cover letter
-            if '\nbase-commit:' in lmsg.body:
+
+        if lmsg.counter < 2:
+            # Cover letter or first patch
+            if not self.base_commit and '\nbase-commit:' in lmsg.body:
                 matches = re.search(r'^base-commit: .*?([\da-f]+)', lmsg.body, flags=re.I | re.M)
                 if matches:
                     self.base_commit = matches.groups()[0]
-            if '\nchange-id:' in lmsg.body:
+            if not self.change_id and '\nchange-id:' in lmsg.body:
                 matches = re.search(r'^change-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
                 if matches:
                     self.change_id = matches.groups()[0]
+            if not self.prereq_patch_ids and '\nprerequisite-patch-id:' in lmsg.body:
+                matches = re.findall(r'^prerequisite-patch-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
+                self.prereq_patch_ids = matches
 
-        if self.patches[0] is not None:
-            self.subject = self.patches[0].subject
-        elif self.patches[1] is not None:
-            self.subject = self.patches[1].subject
+            if self.patches[0] is not None:
+                self.subject = self.patches[0].subject
+            elif self.patches[1] is not None:
+                self.subject = self.patches[1].subject
 
     def get_slug(self, extended: bool = False) -> str:
         # Find the first non-None entry
@@ -1701,6 +1706,9 @@ class LoreMessage:
 
     @staticmethod
     def get_payload(msg: email.message.Message, use_patch: bool = True) -> Tuple[str, str]:
+        """
+        :returns: Tuple[decoded body, original charset]
+        """
         # walk until we find the first text/plain part
         mcharset = msg.get_content_charset()
         if not mcharset:
@@ -4040,11 +4048,8 @@ def git_revparse_obj(gitobj: str, gitdir: Optional[str] = None) -> str:
     return out.strip()
 
 
-def git_fetch_am_into_repo(gitdir: Optional[str], am_msgs: List[email.message.Message], at_base: str = 'HEAD',
-                           origin: str = None):
-    ifh = io.BytesIO()
-    save_git_am_mbox(am_msgs, ifh)
-    ambytes = ifh.getvalue()
+def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str = 'HEAD',
+                           origin: str = None) -> None:
     if gitdir is None:
         gitdir = os.getcwd()
     topdir = git_get_toplevel(gitdir)
@@ -4092,10 +4097,7 @@ def git_fetch_am_into_repo(gitdir: Optional[str], am_msgs: List[email.message.Me
         raise RuntimeError
     with open(fhf.rstrip(), 'r') as fhh:
         contents = fhh.read()
-    if len(am_msgs) > 1:
-        mmsg = 'patches from %s' % origin
-    else:
-        mmsg = 'patch from %s' % origin
+    mmsg = 'patches from %s' % origin
     new_contents = contents.replace(str(gwt), mmsg)
     if new_contents != contents:
         with open(fhf.rstrip(), 'w') as fhh:
