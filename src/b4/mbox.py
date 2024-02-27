@@ -697,6 +697,72 @@ def refetch(dest: str) -> None:
     mbox.close()
 
 
+def minimize_thread(msgs: List[email.message.EmailMessage]) -> List[email.message.EmailMessage]:
+    # We go through each message and minimize headers and body content
+    wanthdrs = {
+                'From',
+                'Subject',
+                'Date',
+                'Message-ID',
+                'Reply-To',
+                'In-Reply-To',
+                }
+    mmsgs = list()
+    for msg in msgs:
+        mmsg = email.message.EmailMessage()
+        for wanthdr in wanthdrs:
+            cleanhdr = b4.LoreMessage.clean_header(msg[wanthdr])
+            if cleanhdr:
+                mmsg[wanthdr] = cleanhdr
+
+        body, charset = b4.LoreMessage.get_payload(msg)
+        if not (b4.DIFF_RE.search(body) or b4.DIFFSTAT_RE.search(body)):
+            htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(body)
+            # split the message into quoted and unquoted chunks
+            chunks = list()
+            chunk = list()
+            current = None
+            for line in (cmsg.rstrip().splitlines()):
+                quoted = line.startswith('>') and True or False
+                if current is None:
+                    current = quoted
+                if current == quoted:
+                    if quoted and re.search(r'^>\s*>', line):
+                        # trim multiple levels of quoting
+                        continue
+                    if quoted and not chunk and line.strip() == '>':
+                        # Trim empty lines with just > in them
+                        continue
+                    chunk.append(line)
+                    continue
+
+                if current:
+                    while len(chunk) and chunk[-1].strip() == '>':
+                        chunk.pop(-1)
+                if chunk:
+                    chunks.append((quoted, chunk))
+                chunk = list()
+                chunk.append(line)
+                current = quoted
+
+            # Don't append bottom quotes
+            if chunk and not current:
+                chunks.append((current, chunk))
+
+            body = ''
+            for quoted, chunk in chunks:
+                # Should we offer a way to trim the quote in some fashion?
+                body += '\n'.join(chunk).strip() + '\n\n'
+            if not body.strip():
+                continue
+
+        mmsg.set_payload(body, charset='utf-8')
+        # mmsg.set_charset('utf-8')
+        mmsgs.append(mmsg)
+
+    return mmsgs
+
+
 def main(cmdargs: argparse.Namespace) -> None:
     # We force some settings
     if cmdargs.subcmd == 'shazam':
@@ -738,6 +804,9 @@ def main(cmdargs: argparse.Namespace) -> None:
         return
 
     logger.info('%s messages in the thread', len(msgs))
+    if cmdargs.subcmd == 'mbox' and cmdargs.minimize:
+        msgs = minimize_thread(msgs)
+
     if cmdargs.outdir == '-':
         logger.info('---')
         b4.save_mboxrd_mbox(msgs, sys.stdout.buffer, mangle_from=False)

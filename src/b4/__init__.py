@@ -2847,7 +2847,7 @@ def get_config_from_git(regexp: str, defaults: Optional[dict] = None,
     return gitconfig
 
 
-def _setup_main_config(cmdargs: argparse.Namespace) -> None:
+def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
     global MAIN_CONFIG
 
     defcfg = copy.deepcopy(DEFAULT_CONFIG)
@@ -2878,7 +2878,8 @@ def _setup_main_config(cmdargs: argparse.Namespace) -> None:
         gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
         config['gpgbin'] = gpgcfg['program']
 
-    _cmdline_config_override(cmdargs, config, 'b4')
+    if cmdargs:
+        _cmdline_config_override(cmdargs, config, 'b4')
 
     MAIN_CONFIG = config
 
