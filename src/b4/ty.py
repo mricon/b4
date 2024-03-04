@@ -198,7 +198,6 @@ def auto_locate_series(gitdir: Optional[str], jsondata: dict, branch: str,
     patchids = set(commits.keys())
     # We need to find all of them in the commits
     found = list()
-    matches = 0
     at = 0
     for patch in jsondata['patches']:
         at += 1
@@ -206,7 +205,6 @@ def auto_locate_series(gitdir: Optional[str], jsondata: dict, branch: str,
         if patch[1] in patchids:
             logger.debug('Found: %s', patch[0])
             found.append((at, commits[patch[1]][0]))
-            matches += 1
         else:
             # try to locate by subject
             success = False
@@ -215,7 +213,6 @@ def auto_locate_series(gitdir: Optional[str], jsondata: dict, branch: str,
                     logger.debug('Matched using subject')
                     found.append((at, commit[0]))
                     success = True
-                    matches += 1
                     break
 
             if success:
@@ -229,7 +226,6 @@ def auto_locate_series(gitdir: Optional[str], jsondata: dict, branch: str,
                             logger.debug('Matched using recorded message-id')
                             found.append((at, commit[0]))
                             success = True
-                            matches += 1
                             break
                 if success:
                     break
