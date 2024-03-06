@@ -201,6 +201,16 @@ Attestation settings
 
   Default: ``yes``
 
+ ``b4.attestation-dns-resolvers`` **(v0.14+)**
+  If you are on a company network and your OS-provided resolvers are not
+  able to perform domainkey lookups, you can specify alternative DNS servers
+  here (but check that you are actually able to query them). E.g.::
+
+      [b4]
+        attestation-dns-resolvers = 8.8.8.8, 8.8.4.4
+
+  Default: ``None``
+
 ``b4.attestation-staleness-days``
   This setting controls how long in the past attestation signatures can
   be made before we stop considering them valid. This helps avoid an

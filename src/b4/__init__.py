@@ -126,6 +126,9 @@ DEFAULT_CONFIG = {
     'attestation-staleness-days': '30',
     # Should we check DKIM signatures if we don't find any other attestation?
     'attestation-check-dkim': 'yes',
+    # You can specify your own resolvers instead of using the ones provided by your OS
+    # This can be handy if you're on an internal network that interferes with DNS lookups
+    'attestation-dns-resolvers': None,
     # We'll use the default gnupg homedir, unless you set it here
     'attestation-gnupghome': None,
     # Do you like simple or fancy checkmarks?
@@ -2877,6 +2880,19 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
     if config['gpgbin'] is None:
         gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
         config['gpgbin'] = gpgcfg['program']
+
+    # If we specify DNS resolvers, configure them now
+    if config['attestation-dns-resolvers'] is not None:
+        try:
+            resolvers = [x.strip() for x in config['attestation-dns-resolvers'].split(',')]
+            if resolvers:
+                # Don't force this as an automatically discovered dependency
+                import dns.resolver  # noqa
+                dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+                dns.resolver.default_resolver.nameservers = resolvers
+        except ImportError:
+            logger.debug('Unable to load dns.resolver')
+            pass
 
     if cmdargs:
         _cmdline_config_override(cmdargs, config, 'b4')
