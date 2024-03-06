@@ -201,7 +201,7 @@ Attestation settings
 
   Default: ``yes``
 
- ``b4.attestation-dns-resolvers`` **(v0.14+)**
+``b4.attestation-dns-resolvers`` **(v0.14+)**
   If you are on a company network and your OS-provided resolvers are not
   able to perform domainkey lookups, you can specify alternative DNS servers
   here (but check that you are actually able to query them). E.g.::
