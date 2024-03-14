@@ -62,7 +62,7 @@ ${diffstat}
 ---
 base-commit: ${base_commit}
 change-id: ${change_id}
-
+${prerequisites}
 Best regards,
 -- 
 ${signature}
@@ -336,9 +336,15 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
     mybranch = b4.git_get_current_branch()
     strategy = get_cover_strategy()
     cherry_range = None
+    depends_on = None
     if cmdargs.new_series_name:
         basebranch = None
         if not cmdargs.fork_point:
+            if is_prep_branch():
+                logger.debug('Will use current branch as dependency.')
+                pcover, ptracking = load_cover(strip_comments=True)
+                depends_on = f"change-id: {ptracking['series']['change-id']}:v{ptracking['series']['revision']}"
+
             cmdargs.fork_point = 'HEAD'
             if mybranch:
                 basebranch = mybranch
@@ -524,6 +530,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         }
         if thread_msgid:
             tracking['series']['from-thread'] = thread_msgid
+        if depends_on:
+            logger.info('Marking series as depending on %s', depends_on)
+            tracking['series']['prerequisites'] = [depends_on]
         if strategy != 'commit':
             # We only need the base-branch info when using strategies other than 'commit'
             tracking['series']['base-branch'] = basebranch
@@ -769,7 +778,7 @@ def get_series_start(usebranch: Optional[str] = None) -> str:
     strategy = get_cover_strategy(usebranch=mybranch)
     forkpoint = None
     if strategy == 'commit':
-        # Easy, we start at the cover letter commit
+        # Start at the cover letter commit
         return find_cover_commit(usebranch=mybranch)
     if strategy == 'branch-description':
         bcfg = b4.get_config_from_git(rf'branch\.{mybranch}\..*')
@@ -1189,9 +1198,9 @@ def get_mailfrom() -> Tuple[str, str]:
 
 
 def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True,
-                               prefixes: Optional[List[str]] = None
+                               prefixes: Optional[List[str]] = None, usebranch: Optional[str] = None
                                ) -> Tuple[List, List, str, List[Tuple[str, email.message.Message]]]:
-    cover, tracking = load_cover(strip_comments=True)
+    cover, tracking = load_cover(strip_comments=True, usebranch=usebranch)
 
     if prefixes is None:
         prefixes = list()
@@ -1237,6 +1246,31 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
             logger.critical('ERROR: prep-cover-template says to use %s, but it does not exist',
                             config['prep-cover-template'])
             sys.exit(2)
+    prereqs = tracking['series'].get('prerequisites', list())
+    prerequisites = ''
+    for prereq in prereqs:
+        if prereq.startswith('change-id:'):
+            prerequisites += f'prerequisite-{prereq}\n'
+            chunks = prereq.split(':')
+            pcid = None
+            if len(chunks) > 1:
+                pcid = chunks[1].strip()
+            pver = chunks[-1]
+            if pcid and pver:
+                tagname, revision = get_sent_tagname(pcid, SENT_TAG_PREFIX, pver)
+                logger.debug('Checking if we have a sent version')
+                try:
+                    todests, ccdests, ppatches = get_sent_tag_as_patches(tagname, revision=revision)
+                    for pcid, ppatch in ppatches:
+                        diff = ppatch.as_string(policy=b4.emlpolicy)
+                        ppid = b4.LoreMessage.get_patch_id(diff)
+                        if ppid:
+                            logger.debug('Adding prerequisite-patch-id %s from prerequisite-change-id %s',
+                                         ppid, prereq)
+                            prerequisites += f'prerequisite-patch-id: {ppid}\n'
+                except RuntimeError:
+                    # We don't bother including patch-id's of an unsent series
+                    logger.debug('Nothing matched tagname=%s, assuming it was not sent yet', tagname)
 
     # Put together the cover letter
     tptvals = {
@@ -1245,6 +1279,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
         'diffstat': diffstat,
         'change_id': change_id,
         'base_commit': base_commit,
+        'prerequisites': prerequisites,
         'signature': b4.get_email_signature(),
     }
     if cover_template.find('${range_diff}') >= 0:
@@ -1772,7 +1807,7 @@ def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PR
             gitargs = ['tag', '-a', '-F', '-', tagname, tagcommit]
             ecode, out = b4.git_run_command(None, gitargs, stdin=tag_msg.encode())
             if ecode > 0:
-                # Not a fatal error, just complain about it
+                # Not a fatal error, complain about it and move on
                 logger.info('Could not tag %s as %s:', tagcommit, tagname)
                 logger.info(out)
 
@@ -1862,18 +1897,23 @@ def write_to_tar(bio_tar: tarfile.TarFile, name, mtime, bio_file: io.BytesIO):
     bio_tar.addfile(tifo, bio_file)
 
 
+def get_prep_managed_branches(gitdir: Optional[str] = None) -> List[str]:
+    lines = b4.git_get_command_lines(gitdir, ['show-ref', '--heads'])
+    mybranches = list()
+    if not lines:
+        logger.debug('Git show-ref returned no heads')
+        return mybranches
+    for line in lines:
+        parts = line.split(maxsplit=1)
+        if parts[1].startswith('refs/heads/b4/'):
+            mybranches.append(parts[1].replace('refs/heads/', ''))
+    return mybranches
+
+
 def cleanup(param: str) -> None:
     if param == '_show':
         # Show all b4-tracked branches
-        lines = b4.git_get_command_lines(None, ['show-ref', '--heads'])
-        if not lines:
-            logger.critical('Git show-ref returned no heads')
-            sys.exit(1)
-        mybranches = list()
-        for line in lines:
-            parts = line.split(maxsplit=1)
-            if parts[1].startswith('refs/heads/b4/'):
-                mybranches.append(parts[1].replace('refs/heads/', ''))
+        mybranches = get_prep_managed_branches(None)
         if not len(mybranches):
             logger.info('No b4-tracked branches found')
             sys.exit(0)
@@ -2119,7 +2159,7 @@ def auto_to_cc() -> None:
     tocmdstr = None
     cccmdstr = None
     topdir = b4.git_get_toplevel()
-    # Use sane tocmd and cccmd defaults if we find a get_maintainer.pl
+    # Use recommended tocmd and cccmd defaults if we find a get_maintainer.pl
     getm = os.path.join(topdir, 'scripts', 'get_maintainer.pl')
     config = b4.get_main_config()
     if config.get('send-auto-to-cmd'):
@@ -2269,8 +2309,23 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.enroll_base or cmdargs.new_series_name:
         if is_prep_branch() and not cmdargs.fork_point:
-            logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')
-            sys.exit(1)
+            # We only support this with the commit strategy
+            strategy = get_cover_strategy()
+            if strategy != 'commit':
+                logger.critical('CRITICAL: This appears to already be a b4-prep managed branch.')
+                logger.critical('          Chaining series is only supported with the "commit" strategy.')
+                logger.critical('          Switch to a different branch or use the -f flag to continue.')
+                sys.exit(1)
+
+            logger.critical('IMPORTANT: This appears to already be a b4-prep managed branch.')
+            logger.critical('           The new branch will be marked as depending on this series.')
+            logger.critical('           Alternatively, switch to a different branch or use the -f flag.')
+            try:
+                input('Press Enter to confirm or Ctrl-C to abort')
+                logger.info('---')
+            except KeyboardInterrupt:
+                logger.info('')
+                sys.exit(130)
 
         start_new_series(cmdargs)
 
