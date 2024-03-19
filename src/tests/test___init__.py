@@ -169,9 +169,20 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
     ('foo@example.com, Foo Bar <bar@example.com>, =?utf-8?q?Qu=C3=BBx=2C_Foo?= <quux@example.com>',
      'foo@example.com, Foo Bar <bar@example.com>, \n "Quûx, Foo" <quux@example.com>',
      'decode'),
+    # Test short message-id
+    ('Message-ID: <20240319-short-message-id@example.com>', '<20240319-short-message-id@example.com>', 'encode'),
+    # Test long message-id
+    ('Message-ID: <20240319-very-long-message-id-that-spans-multiple-lines-for-sure-because-longer-than-75-characters-abcde123456@longdomain.example.com>',  # noqa
+     '<20240319-very-long-message-id-that-spans-multiple-lines-for-sure-because-longer-than-75-characters-abcde123456@longdomain.example.com>',  # noqa
+     'encode'),
 ])
 def test_header_wrapping(sampledir, hval, verify, tr):
-    hname = 'To' if '@' in hval else "X-Header"
+    if ':' in hval:
+        chunks = hval.split(':', maxsplit=1)
+        hname = chunks[0].strip()
+        hval = chunks[1].strip()
+    else:
+        hname = 'To' if '@' in hval else "X-Header"
     wrapped = b4.LoreMessage.wrap_header((hname, hval), transform=tr)
     assert wrapped.decode() == f'{hname}: {verify}'
     wname, wval = wrapped.split(b':', maxsplit=1)

@@ -431,7 +431,7 @@ class SendReceiveListener(object):
                 self.send_error(resp, message='We only support a single signing identity across patch series.')
                 return
 
-            msg = email.message_from_bytes(bdata, policy=email.policy.SMTP)
+            msg = email.message_from_bytes(bdata, policy=emlpolicy)
             logger.debug('Checking sanity on message: %s', msg.get('Subject'))
             # Some quick sanity checking:
             # - Subject has to start with [PATCH
