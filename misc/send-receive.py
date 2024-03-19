@@ -12,18 +12,22 @@ import smtplib
 import email
 import email.header
 import email.policy
+import email.quoprimime
 import re
 import ezpi
 import copy
+import textwrap
 
 from configparser import ConfigParser, ExtendedInterpolation
 from string import Template
 from email import utils
-from typing import Tuple, Union
+from typing import Tuple, Union, List
 
 from email import charset
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
+
+qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 DB_VERSION = 1
 
@@ -185,7 +189,7 @@ class SendReceiveListener(object):
         body += '\n'
         cmsg.set_payload(body, charset='utf-8')
         cmsg.set_charset('utf-8')
-        bdata = cmsg.as_bytes(policy=email.policy.SMTP)
+        bdata = self.get_msg_as_bytes(cmsg, headers='encode')
         destaddrs = [identity]
         alwaysbcc = self._config['main'].get('alwayscc')
         if alwaysbcc:
@@ -298,6 +302,96 @@ class SendReceiveListener(object):
                 decoded += hstr
         new_hdrval = re.sub(r'\n?\s+', ' ', decoded)
         return new_hdrval.strip()
+
+    def format_addrs(self, pairs: List[Tuple[str, str]], clean: bool = True) -> str:
+        addrs = list()
+        for pair in pairs:
+            if pair[0] == pair[1]:
+                addrs.append(pair[1])
+                continue
+            if clean:
+                # Remove any quoted-printable header junk from the name
+                pair = (self.clean_header(pair[0]), pair[1])
+            # Work around https://github.com/python/cpython/issues/100900
+            if not pair[0].startswith('=?') and not pair[0].startswith('"') and qspecials.search(pair[0]):
+                quoted = email.utils.quote(pair[0])
+                addrs.append(f'"{quoted}" <{pair[1]}>')
+                continue
+            addrs.append(email.utils.formataddr(pair))
+        return ', '.join(addrs)
+
+    def isascii(self, strval: str) -> bool:
+        try:
+            return strval.isascii()
+        except AttributeError:
+            return all([ord(c) < 128 for c in strval])
+
+    def wrap_header(self, hdr, width: int = 75, nl: str = '\r\n', transform: str = 'preserve') -> bytes:
+        hname, hval = hdr
+        if hname.lower() in ('to', 'cc', 'from', 'x-original-from'):
+            _parts = [f'{hname}: ']
+            first = True
+            for addr in email.utils.getaddresses([hval]):
+                if transform == 'encode' and not self.isascii(addr[0]):
+                    addr = (email.quoprimime.header_encode(addr[0].encode(), charset='utf-8'), addr[1])
+                    qp = self.format_addrs([addr], clean=False)
+                elif transform == 'decode':
+                    qp = self.format_addrs([addr], clean=True)
+                else:
+                    qp = self.format_addrs([addr], clean=False)
+                # See if there is enough room on the existing line
+                if first:
+                    _parts[-1] += qp
+                    first = False
+                    continue
+                if len(_parts[-1] + ', ' + qp) > width:
+                    _parts[-1] += ', '
+                    _parts.append(qp)
+                    continue
+                _parts[-1] += ', ' + qp
+        else:
+            if transform == 'decode' and hval.find('?=') >= 0:
+                hdata = f'{hname}: ' + self.clean_header(hval)
+            else:
+                hdata = f'{hname}: {hval}'
+            if transform != 'encode' or self.isascii(hval):
+                if len(hdata) <= width:
+                    return hdata.encode()
+                # Use simple textwrap, with a small trick that ensures that long non-breakable
+                # strings don't show up on the next line from the bare header
+                hdata = hdata.replace(': ', ':_', 1)
+                wrapped = textwrap.wrap(hdata, break_long_words=False, break_on_hyphens=False,
+                                        subsequent_indent=' ', width=width)
+                return nl.join(wrapped).replace(':_', ': ', 1).encode()
+
+            qp = f'{hname}: ' + email.quoprimime.header_encode(hval.encode(), charset='utf-8')
+            # is it longer than width?
+            if len(qp) <= width:
+                return qp.encode()
+
+            _parts = list()
+            while len(qp) > width:
+                wrapat = width - 2
+                if len(_parts):
+                    # Also allow for the ' ' at the front on continuation lines
+                    wrapat -= 1
+                # Make sure we don't break on a =XX escape sequence
+                while '=' in qp[wrapat - 2:wrapat]:
+                    wrapat -= 1
+                _parts.append(qp[:wrapat] + '?=')
+                qp = ('=?utf-8?q?' + qp[wrapat:])
+            _parts.append(qp)
+        return f'{nl} '.join(_parts).encode()
+
+    def get_msg_as_bytes(self, msg: email.message.Message, nl: str = '\r\n', headers: str = 'preserve') -> bytes:
+        bdata = b''
+        for hname, hval in msg.items():
+            bdata += self.wrap_header((hname, str(hval)), nl=nl, transform=headers) + nl.encode()
+        bdata += nl.encode()
+        payload = msg.get_payload(decode=True)
+        for bline in payload.split(b'\n'):
+            bdata += re.sub(rb'[\r\n]*$', b'', bline) + nl.encode()
+        return bdata
 
     def receive(self, jdata, resp, reflect: bool = False) -> None:
         servicename = self._config['main'].get('myname')
@@ -426,7 +520,7 @@ class SendReceiveListener(object):
                 repo = None
 
         if reflect:
-            logger.info('Reflecting %s messages back to %s', len(msgs), identity, selector)
+            logger.info('Reflecting %s messages back to %s', len(msgs), identity)
             sentaction = 'Reflected'
         else:
             logger.info('Sending %s messages for %s/%s', len(msgs), identity, selector)
@@ -501,7 +595,7 @@ class SendReceiveListener(object):
                 destaddrs.update(bccaddrs)
 
             if not self._config['main'].getboolean('dryrun'):
-                bdata = msg.as_bytes(policy=email.policy.SMTP)
+                bdata = self.get_msg_as_bytes(msg, headers='encode')
                 if reflect:
                     smtp.sendmail(fromaddr, [identity], bdata)
                 else:
