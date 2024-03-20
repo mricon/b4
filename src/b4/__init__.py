@@ -4119,3 +4119,26 @@ def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str =
     if new_contents != contents:
         with open(fhf.rstrip(), 'w') as fhh:
             fhh.write(new_contents)
+
+
+def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    corecfg = get_config_from_git(r'core\..*', {'editor': os.environ.get('EDITOR', 'vi')})
+    editor = corecfg.get('editor')
+    logger.debug('editor=%s', editor)
+    # Use filehint name in hopes that editors autoload necessary highlight rules
+    with tempfile.TemporaryDirectory(prefix='b4-editor') as temp_dir:
+        temp_fpath = os.path.join(temp_dir, filehint)
+        with open(temp_fpath, 'xb') as edit_file:
+            edit_file.write(bdata)
+
+        sp = shlex.shlex(editor, posix=True)
+        sp.whitespace_split = True
+        cmdargs = list(sp) + [temp_fpath]
+        logger.debug('Running %s' % ' '.join(cmdargs))
+        sp = subprocess.Popen(cmdargs)
+        sp.wait()
+
+        with open(temp_fpath, 'rb') as edited_file:
+            bdata = edited_file.read()
+
+    return bdata

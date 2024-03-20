@@ -15,8 +15,6 @@ import uuid
 import time
 import datetime
 import json
-import tempfile
-import subprocess
 import shlex
 import email
 import pathlib
@@ -739,30 +737,13 @@ class FRCommitMessageEditor:
 
 def edit_cover() -> None:
     cover, tracking = load_cover()
-    # What's our editor? And yes, the default is vi, bite me.
-    corecfg = b4.get_config_from_git(r'core\..*', {'editor': os.environ.get('EDITOR', 'vi')})
-    editor = corecfg.get('editor')
-    logger.debug('editor=%s', editor)
-    # Use COMMIT_EDITMSG name in hopes that editors autoload git commit rules
-    with tempfile.TemporaryDirectory(prefix='b4-') as temp_dir:
-        temp_fpath = os.path.join(temp_dir, 'COMMIT_EDITMSG')
-        with open(temp_fpath, 'xb') as temp_cover:
-            temp_cover.write(cover.encode())
-
-        sp = shlex.shlex(editor, posix=True)
-        sp.whitespace_split = True
-        cmdargs = list(sp) + [temp_fpath]
-        logger.debug('Running %s' % ' '.join(cmdargs))
-        sp = subprocess.Popen(cmdargs)
-        sp.wait()
-
-        with open(temp_fpath, 'rb') as temp_cover:
-            new_cover = temp_cover.read().decode(errors='replace').strip()
-
-    if new_cover == cover:
+    bcover = cover.encode()
+    new_bcover = b4.edit_in_editor(bcover, filehint='COMMIT_EDITMSG')
+    if new_bcover == bcover:
         logger.info('Cover letter unchanged.')
         return
-    if not len(new_cover.strip()):
+    new_cover = new_bcover.decode(errors='replace').strip()
+    if not len(new_cover):
         logger.info('New cover letter blank, leaving current one unchanged.')
         return
 
