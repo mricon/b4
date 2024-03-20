@@ -79,6 +79,28 @@ Range-diff versus v${oldrev}:
 
 """
 
+DEPS_HELP = """
+# All lines starting with # will be removed
+#
+# You can define series prerequisites using the following formats:
+#
+# patch-id: [patch-id as returned by git-patch-id --stable]
+# change-id: [the change-id of a series, followed by a colon and series version]
+# message-id: <[the message-id of a series]>
+#
+# IMPORTANT: specify all dependencies in the order they must be applied
+#
+# For example:
+# ------------
+# patch-id: 7709c0eec24c2c0c973d6af92c7915b8d0a2e52c
+# change-id: 20240320-example-change-id:v1
+# change-id: 20240320-some-other-example-change-id:v5
+# message-id: <20240320-some-prereq-series-v1-0@example.com>
+#
+# All dependencies will be checked and converted into prerequisite-patch-id: entries
+# during "b4 send".
+"""
+
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     config = b4.get_main_config()
@@ -749,6 +771,32 @@ def edit_cover() -> None:
 
     store_cover(new_cover, tracking)
     logger.info('Cover letter updated.')
+
+
+def edit_deps() -> None:
+    cover, tracking = load_cover()
+    prereqs = tracking['series'].get('prerequisites', list())
+    deps = '\n'.join(prereqs)
+    toedit = f'{deps}\n{DEPS_HELP}'
+    bdata = toedit.encode()
+    new_bdata = b4.edit_in_editor(bdata, filehint='prereqs.yaml')
+    if new_bdata == bdata:
+        logger.info('Dependencies unchanged.')
+        return
+    new_data = new_bdata.decode(errors='replace').strip()
+    prereqs = list()
+    if len(new_data):
+        for entry in new_data.split('\n'):
+            if entry.startswith('patch-id:') or entry.startswith('change-id:') or entry.startswith('message-id:'):
+                prereqs.append(entry)
+            elif entry.startswith('#'):
+                logger.debug('Ignoring comment: %s', entry)
+            else:
+                logger.critical('Unknown dependency format, ignored:')
+                logger.critical(entry)
+
+    tracking['series']['prerequisites'] = prereqs
+    store_cover(cover, tracking)
 
 
 def get_series_start(usebranch: Optional[str] = None) -> str:
@@ -2321,6 +2369,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.edit_cover:
         return edit_cover()
+
+    if cmdargs.edit_deps:
+        return edit_deps()
 
 
 def cmd_trailers(cmdargs: argparse.Namespace) -> None:

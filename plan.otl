@@ -6,8 +6,8 @@ v0.14
 	[X] Retrieve dependencies using the standard prerequisite-patch-id
 	[X] Define the prerequisite-change-id trailer
 	[X] Expand prerequisite-change-id into prerequisite-patch-id for locally sent series
-	[_] Add b4 prep --edit-dependencies to open an editor with dependencies
-	[_] Add b4 prep --check-dependencies to report if there are updates to prerequisite series
+	[X] Add b4 prep --edit-deps to open an editor with dependencies
+	[_] Add b4 prep --check-deps to report if there are problems or updates available
 	[_] Retrieve dependencies using preprequisite-change-id
 	[_] Dependency chaining (within reason)
 

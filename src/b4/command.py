@@ -300,6 +300,8 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Output prep-tracked commits as patches')
     spp_g.add_argument('--edit-cover', action='store_true', default=False,
                        help='Edit the cover letter in your defined $EDITOR (or core.editor)')
+    spp_g.add_argument('--edit-deps', action='store_true', default=False,
+                       help='Edit the series dependencies in your defined $EDITOR (or core.editor)')
     spp_g.add_argument('--show-revision', action='store_true', default=False,
                        help='Show current series revision number')
     spp_g.add_argument('--compare-to', metavar='vN',
