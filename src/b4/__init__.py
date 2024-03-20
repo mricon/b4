@@ -548,7 +548,7 @@ class LoreSeries:
             self.patches.append(None)
         self.expected = lmsg.expected
         if self.patches[lmsg.counter] is not None:
-            # Okay, weird, is the one in there a reply?
+            # Okay, strange, is the one in there a reply?
             omsg = self.patches[lmsg.counter]
 
             logger.warning('WARNING: duplicate messages found at index %s', lmsg.counter)
@@ -1370,7 +1370,7 @@ class LoreMessage:
             logger.debug('Message has DKIM signatures, but can_dkim is off')
             return
 
-        # Yank out all DKIM-Signature headers and try them in reverse order
+        # Identify all DKIM-Signature headers and try them in reverse order
         # until we come to a passing one
         dkhdrs = list()
         for header in list(self.msg._headers):  # noqa
@@ -1928,7 +1928,7 @@ class LoreMessage:
             filename_match = FILENAME_RE.match(line)
 
             if filename_match:
-                # normalise -p1 top-directories
+                # normalize -p1 top-directories
                 if filename_match.group(1) == '---':
                     filename = 'a/'
                 else:
@@ -2337,7 +2337,7 @@ class LoreMessage:
                        extras: Optional[List['LoreTrailer']] = None, copyccs: bool = False,
                        allowbadchars: bool = False) -> email.message.EmailMessage:
         # Look through the body to make sure there aren't any suspicious unicode control flow chars
-        # First, encode into ascii and compare for a quickie utf8 presence test
+        # First, encode into ascii and compare for a quick utf8 presence test
         if not allowbadchars and self.body.encode('ascii', errors='replace') != self.body.encode():
             import unicodedata
             logger.debug('Body contains non-ascii characters. Running Unicode Cf char tests.')
@@ -2363,7 +2363,7 @@ class LoreMessage:
                             sys.exit(1)
                         at += 1
 
-        # Remove anything that's cut off by scissors
+        # Remove anything cut off by scissors
         mi_msg = email.message.EmailMessage()
         mi_msg['From'] = LoreMessage.clean_header(self.msg['From'])
         mi_msg['Date'] = LoreMessage.clean_header(self.msg['Date'])
