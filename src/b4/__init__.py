@@ -110,7 +110,7 @@ LOREADDR = 'https://lore.kernel.org'
 DEFAULT_CONFIG = {
     'midmask': LOREADDR + '/all/%s',
     'linkmask': LOREADDR + '/r/%s',
-    'searchmask': LOREADDR + '/all/?x=m&t=1&q=%s',
+    'searchmask': LOREADDR + '/all/?x=m&q=%s',
     # You can override the format for the Link: trailer, e.g.
     # if you would rather use the Message-Id trailer. It takes the
     # message-id as the expansion for %s
@@ -3167,13 +3167,16 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
     return msgs
 
 
-def get_pi_search_results(query: str, nocache: bool = False,
-                          message: Optional[str] = None) -> Optional[List[email.message.Message]]:
+def get_pi_search_results(query: str, nocache: bool = False, message: Optional[str] = None,
+                          full_threads: bool = True) -> Optional[List[email.message.Message]]:
     config = get_main_config()
     searchmask = config.get('searchmask')
     if not searchmask:
         logger.critical('b4.searchmask is not defined')
         return None
+    if full_threads and 't=1' not in searchmask:
+        logger.debug('full_threads specified, adding t=1')
+        searchmask = f'{searchmask}&t=1'
     msgs = list()
     query = urllib.parse.quote_plus(query)
     query_url = searchmask % query
@@ -3202,7 +3205,7 @@ def get_pi_search_results(query: str, nocache: bool = False,
     t_mbox = gzip.decompress(resp.content)
     resp.close()
     if not len(t_mbox):
-        logger.critical('No messages found for that query')
+        logger.info('No messages found for that query')
         return None
 
     return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
@@ -3232,6 +3235,38 @@ def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -
                 fh.write(msg.as_bytes(policy=emlpolicy))
 
     return msgs
+
+
+def get_series_by_change_id(change_id: str, nocache: bool = False) -> Optional['LoreMailbox']:
+    q = f'nq:"change-id:{change_id}"'
+    q_msgs = get_pi_search_results(q, nocache=nocache, full_threads=False)
+    if not q_msgs:
+        return None
+    lmbx = LoreMailbox()
+    for q_msg in q_msgs:
+        body, bcharset = LoreMessage.get_payload(q_msg)
+        if not re.search(rf'^\s*change-id:\s*{change_id}$', body, flags=re.M | re.I):
+            logger.debug('No change-id match for %s', q_msg.get('Subject', '(no subject)'))
+            continue
+        q_msgid = LoreMessage.get_clean_msgid(q_msg)
+        t_msgs = get_pi_thread_by_msgid(q_msgid, nocache=nocache)
+        if t_msgs:
+            for t_msg in t_msgs:
+                lmbx.add_message(t_msg)
+
+    return lmbx
+
+
+def get_series_by_patch_id(patch_id: str, nocache: bool = False) -> Optional['LoreMailbox']:
+    q = f'patchid:{patch_id}'
+    q_msgs = get_pi_search_results(q, nocache=nocache)
+    if not q_msgs:
+        return None
+    lmbx = LoreMailbox()
+    for q_msg in q_msgs:
+        lmbx.add_message(q_msg)
+
+    return lmbx
 
 
 def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List[email.message.Message]]:

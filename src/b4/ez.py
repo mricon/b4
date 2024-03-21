@@ -786,17 +786,96 @@ def edit_deps() -> None:
     new_data = new_bdata.decode(errors='replace').strip()
     prereqs = list()
     if len(new_data):
-        for entry in new_data.split('\n'):
+        for line in new_data.split('\n'):
+            entry = line.strip()
             if entry.startswith('patch-id:') or entry.startswith('change-id:') or entry.startswith('message-id:'):
                 prereqs.append(entry)
-            elif entry.startswith('#'):
-                logger.debug('Ignoring comment: %s', entry)
+            elif not entry or entry.startswith('#'):
+                logger.debug('Ignoring: %s', entry)
             else:
                 logger.critical('Unknown dependency format, ignored:')
                 logger.critical(entry)
 
     tracking['series']['prerequisites'] = prereqs
     store_cover(cover, tracking)
+
+
+def check_deps(cmdargs: argparse.Namespace) -> None:
+    cover, tracking = load_cover()
+    prereqs = tracking['series'].get('prerequisites', list())
+    res = dict()
+    known_patch_ids = set()
+    for prereq in prereqs:
+        logger.info('Checking %s', prereq)
+        chunks = prereq.split(':')
+        parts = [x.strip() for x in chunks]
+
+        if parts[0] == 'change-id':
+            change_id = parts[1]
+            lmbx = b4.get_series_by_change_id(change_id, nocache=cmdargs.nocache)
+            if not lmbx:
+                logger.debug('FAIL: No such change-id found: %s', change_id)
+                res[prereq] = (False, 'No matching change-id found on the server')
+                continue
+            if len(parts) > 2:
+                logger.debug('Checking if %s is the latest series', parts[2])
+                matches = re.search(r'^v?(\d+)', parts[2])
+                if matches:
+                    wantser = int(matches.groups()[0])
+                    if wantser not in lmbx.series:
+                        logger.debug('FAIL: No matching series %s for change-id %s', wantser, change_id)
+                        res[prereq] = (False, f'No version {wantser} found for change-id {change_id}')
+                        continue
+                    # Is it the latest version?
+                    maxser = max(lmbx.series.keys())
+                    if wantser < maxser:
+                        logger.debug('Fail: Newer version v%s available for change-id %s', maxser, change_id)
+                        res[prereq] = (False, f'v{maxser} available for change-id {change_id} (you have: v{wantser})')
+                        continue
+                    logger.debug('Pass: change-id %s found and is the latest posted series', change_id)
+                    res[prereq] = (True, f'Change-id {change_id} found and is the latest available version')
+            else:
+                maxser = max(lmbx.series.keys())
+                res[prereq] = (False, f'change-id should include the revision, e.g.: {change_id}:v{maxser}')
+                continue
+
+        elif parts[0] == 'patch-id':
+            patch_id = parts[1]
+            if patch_id not in known_patch_ids:
+                lmbx = b4.get_series_by_patch_id(patch_id, nocache=cmdargs.nocache)
+                if lmbx:
+                    for rev, lser in lmbx.series.items():
+                        for lmsg in lser.patches:
+                            if not lmsg:
+                                continue
+                            ppid = lmsg.git_patch_id
+                            if ppid:
+                                known_patch_ids.add(ppid)
+            if patch_id not in known_patch_ids:
+                logger.debug('FAIL: No such patch-id found: %s', patch_id)
+                res[prereq] = (False, 'No matching patch-id found on the server')
+                continue
+            logger.debug('PASS: patch-id found: %s', patch_id)
+            res[prereq] = (True, 'Matching patch-id found on the server')
+
+        elif parts[0] == 'message-id':
+            msgid = parts[1].strip('<>')
+            q_msgs = b4.get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache)
+            if not q_msgs:
+                logger.debug('FAIL: No such message-id found: %s', msgid)
+                res[prereq] = (False, 'No matching message-id found on the server')
+                continue
+            logger.debug('PASS: message-id found: %s', msgid)
+            res[prereq] = (True, 'Matching message-id found on the server')
+
+    if res:
+        logger.info('---')
+        for prereq, info in res.items():
+            if info[0]:
+                logger.info('%s %s', b4.ATT_PASS_FANCY, prereq)
+            else:
+                logger.info('%s %s', b4.ATT_FAIL_FANCY, prereq)
+                logger.info('   - %s', info[1])
 
 
 def get_series_start(usebranch: Optional[str] = None) -> str:
@@ -2372,6 +2451,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.edit_deps:
         return edit_deps()
+
+    if cmdargs.check_deps:
+        return check_deps(cmdargs)
 
 
 def cmd_trailers(cmdargs: argparse.Namespace) -> None:
