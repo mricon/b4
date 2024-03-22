@@ -1356,7 +1356,23 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
             sys.exit(2)
     prereqs = tracking['series'].get('prerequisites', list())
     prerequisites = ''
+    seen_patch_ids = set()
     for prereq in prereqs:
+        if prereq.startswith('patch-id:'):
+            prerequisites += f'prerequisite-{prereq}\n'
+            continue
+
+        spatches = list()
+        if prereq.startswith('message-id'):
+            prerequisites += f'prerequisite-{prereq}\n'
+            parts = prereq.split(':')
+            msgid = parts[1].strip().strip('<>')
+            spatches = b4.get_pi_thread_by_msgid(msgid)
+            if not spatches:
+                logger.info('Nothing known about message-id: %s', msgid)
+                logger.info('Consider running --check-deps')
+                continue
+
         if prereq.startswith('change-id:'):
             prerequisites += f'prerequisite-{prereq}\n'
             chunks = prereq.split(':')
@@ -1369,16 +1385,34 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
                 logger.debug('Checking if we have a sent version')
                 try:
                     todests, ccdests, ppatches = get_sent_tag_as_patches(tagname, revision=revision)
-                    for pcid, ppatch in ppatches:
-                        diff = ppatch.as_string(policy=b4.emlpolicy)
-                        ppid = b4.LoreMessage.get_patch_id(diff)
-                        if ppid:
-                            logger.debug('Adding prerequisite-patch-id %s from prerequisite-change-id %s',
-                                         ppid, prereq)
-                            prerequisites += f'prerequisite-patch-id: {ppid}\n'
+                    for psha, ppatch in ppatches:
+                        spatches.append(ppatch)
                 except RuntimeError:
-                    # We don't bother including patch-id's of an unsent series
-                    logger.debug('Nothing matched tagname=%s, assuming it was not sent yet', tagname)
+                    logger.debug('Nothing matched tagname=%s, checking remotely', tagname)
+                    lmbx = b4.get_series_by_change_id(pcid)
+                    if not lmbx:
+                        logger.info('Nothing known about change-id: %s', pcid)
+                        logger.info('Consider running --check-deps')
+                        continue
+                    matches = re.search(r'^v?(\d+)', pver)
+                    if matches:
+                        wantver = int(matches.groups()[0])
+                    else:
+                        wantver = max(lmbx.series.keys())
+                    for lmsg in lmbx.series[wantver].patches:
+                        if not lmsg:
+                            continue
+                        spatches.append(lmsg.get_am_message(add_trailers=False))
+
+        for spatch in spatches:
+            diff = spatch.as_string(policy=b4.emlpolicy)
+            ppid = b4.LoreMessage.get_patch_id(diff)
+            if ppid:
+                if ppid in seen_patch_ids:
+                    logger.debug('Already included patchid: %s', ppid)
+                logger.debug('Adding prerequisite-patch-id %s from %s', ppid, prereq)
+                prerequisites += f'prerequisite-patch-id: {ppid}\n'
+                seen_patch_ids.add(ppid)
 
     # Put together the cover letter
     tptvals = {
