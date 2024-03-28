@@ -20,6 +20,10 @@ Or to install the latest master (warning, maybe broken!)::
 
     python3 -m pip install git+https://git.kernel.org/pub/scm/utils/b4/b4.git@master
 
+b4 is also packaged for Debian-derived systems::
+
+    sudo apt install b4
+
 Upgrading
 ---------
 If you previously installed from pypi::
