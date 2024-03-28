@@ -513,6 +513,7 @@ class LoreSeries:
     base_commit: Optional[str] = None
     change_id: Optional[str] = None
     prereq_patch_ids: Optional[List[str]] = None
+    prereq_base_commit: Optional[str] = None
 
     def __init__(self, revision: int, expected: int) -> None:
         self.revision = revision
@@ -581,6 +582,10 @@ class LoreSeries:
             if not self.prereq_patch_ids and '\nprerequisite-patch-id:' in lmsg.body:
                 matches = re.findall(r'^prerequisite-patch-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
                 self.prereq_patch_ids = matches
+            if not self.prereq_base_commit and '\nprerequisite-base-commit:' in lmsg.body:
+                matches = re.search(r'^prerequisite-base-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
+                if matches:
+                    self.prereq_base_commit = matches.groups()[0]
 
             if self.patches[0] is not None:
                 self.subject = self.patches[0].subject
@@ -4101,7 +4106,7 @@ def git_revparse_obj(gitobj: str, gitdir: Optional[str] = None) -> str:
 
 
 def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str = 'HEAD',
-                           origin: str = None) -> None:
+                           origin: str = None, check_only: bool = False) -> None:
     if gitdir is None:
         gitdir = os.getcwd()
     topdir = git_get_toplevel(gitdir)
@@ -4126,6 +4131,8 @@ def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str =
             logger.critical('---')
             logger.critical('Not fetching into FETCH_HEAD')
             raise RuntimeError
+        if check_only:
+            return
         logger.info('---')
         logger.info(out.strip())
         logger.info('---')

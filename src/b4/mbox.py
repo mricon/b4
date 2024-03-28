@@ -297,6 +297,9 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
 
         ifh = io.BytesIO()
         if lser.prereq_patch_ids:
+            if lser.prereq_base_commit:
+                logger.debug('Setting base-commit to prereq-base-commit: %s', lser.prereq_base_commit)
+                base_commit = lser.prereq_base_commit
             logger.info(' Deps: looking for dependencies matching %s patch-ids', len(lser.prereq_patch_ids))
             query = ' OR '.join([f'patchid:{x}' for x in lser.prereq_patch_ids])
             logger.debug('query=%s', query)

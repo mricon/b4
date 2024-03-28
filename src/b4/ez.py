@@ -87,6 +87,7 @@ DEPS_HELP = """
 # patch-id: [patch-id as returned by git-patch-id --stable]
 # change-id: [the change-id of a series, followed by a colon and series version]
 # message-id: <[the message-id of a series]>
+# base-commit: [commit-ish where to apply all prerequisites and your series]
 #
 # IMPORTANT: specify all dependencies in the order they must be applied
 #
@@ -96,6 +97,7 @@ DEPS_HELP = """
 # change-id: 20240320-example-change-id:v1
 # change-id: 20240320-some-other-example-change-id:v5
 # message-id: <20240320-some-prereq-series-v1-0@example.com>
+# base-commit: v6.9-rc1
 #
 # All dependencies will be checked and converted into prerequisite-patch-id: entries
 # during "b4 send".
@@ -785,13 +787,16 @@ def edit_deps() -> None:
         return
     new_data = new_bdata.decode(errors='replace').strip()
     prereqs = list()
+    recognized = {'patch-id', 'change-id', 'message-id', 'base-commit'}
     if len(new_data):
         for line in new_data.split('\n'):
             entry = line.strip()
-            if entry.startswith('patch-id:') or entry.startswith('change-id:') or entry.startswith('message-id:'):
-                prereqs.append(entry)
-            elif not entry or entry.startswith('#'):
+            if not entry or entry.startswith('#'):
                 logger.debug('Ignoring: %s', entry)
+                continue
+            chunks = [x.strip() for x in entry.split(':')]
+            if chunks[0] in recognized:
+                prereqs.append(entry)
             else:
                 logger.critical('Unknown dependency format, ignored:')
                 logger.critical(entry)
@@ -804,7 +809,9 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
     cover, tracking = load_cover()
     prereqs = tracking['series'].get('prerequisites', list())
     res = dict()
-    known_patch_ids = set()
+    prereq_patches = list()
+    known_patches = dict()
+    base_commit = None
     for prereq in prereqs:
         logger.info('Checking %s', prereq)
         chunks = prereq.split(':')
@@ -834,6 +841,10 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
                         continue
                     logger.debug('Pass: change-id %s found and is the latest posted series', change_id)
                     res[prereq] = (True, f'Change-id {change_id} found and is the latest available version')
+                    lser = lmbx.get_series(wantser, codereview_trailers=False)
+                    for lmsg in lser.patches[1:]:
+                        prereq_patches.append(lmsg.get_am_message(add_trailers=False))
+                        known_patches[lmsg.git_patch_id] = lmsg
             else:
                 maxser = max(lmbx.series.keys())
                 res[prereq] = (False, f'change-id should include the revision, e.g.: {change_id}:v{maxser}')
@@ -841,20 +852,22 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
 
         elif parts[0] == 'patch-id':
             patch_id = parts[1]
-            if patch_id not in known_patch_ids:
+            if patch_id not in known_patches:
                 lmbx = b4.get_series_by_patch_id(patch_id, nocache=cmdargs.nocache)
                 if lmbx:
                     for rev, lser in lmbx.series.items():
-                        for lmsg in lser.patches:
+                        for lmsg in lser.patches[1:]:
                             if not lmsg:
                                 continue
                             ppid = lmsg.git_patch_id
                             if ppid:
-                                known_patch_ids.add(ppid)
-            if patch_id not in known_patch_ids:
+                                known_patches[ppid] = lmsg
+            if patch_id not in known_patches:
                 logger.debug('FAIL: No such patch-id found: %s', patch_id)
                 res[prereq] = (False, 'No matching patch-id found on the server')
                 continue
+            lmsg = known_patches[patch_id]
+            prereq_patches.append(lmsg.get_am_message(add_trailers=False))
             logger.debug('PASS: patch-id found: %s', patch_id)
             res[prereq] = (True, 'Matching patch-id found on the server')
 
@@ -865,8 +878,55 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
                 logger.debug('FAIL: No such message-id found: %s', msgid)
                 res[prereq] = (False, 'No matching message-id found on the server')
                 continue
+            # Always do no-parent for these
+            s_msgs = b4.get_strict_thread(q_msgs, msgid, noparent=True)
+            lmbx = b4.LoreMailbox()
+            for s_msg in s_msgs:
+                lmbx.add_message(s_msg)
+            if len(lmbx.series) > 1:
+                logger.debug('FAIL: msgid=%s is a thread with multiple series', msgid)
+                res[prereq] = (False, f'Message-id <%s> has multiple posted series', msgid)
+                continue
+
+            maxser = max(lmbx.series.keys())
+            lser = lmbx.get_series(maxser, codereview_trailers=False)
+            for lmsg in lser.patches[1:]:
+                prereq_patches.append(lmsg.get_am_message(add_trailers=False))
+                known_patches[lmsg.git_patch_id] = lmsg
             logger.debug('PASS: message-id found: %s', msgid)
             res[prereq] = (True, 'Matching message-id found on the server')
+
+        if parts[0] == 'base-commit':
+            base_commit = parts[1]
+
+    allgood = all([x[0] for x in res.values()])
+    if not base_commit:
+        logger.debug('FAIL: base-commit not specified')
+        res['base-commit: MISSING'] = (False, 'Series with dependencies require a base-commit')
+    elif allgood:
+        logger.info('Testing if all patches can be applied to %s', base_commit)
+        tos, ccs, tstr, mypatches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
+        prereq_patches += [x[1] for x in mypatches]
+        gitdir = os.getcwd()
+        topdir = b4.git_get_toplevel(gitdir)
+        if b4.git_commit_exists(topdir, base_commit):
+            for ppatch in prereq_patches:
+                logger.info('  %s', ppatch.get('subject', ''))
+            ifh = io.BytesIO()
+            b4.save_git_am_mbox(prereq_patches, ifh)
+            ambytes = ifh.getvalue()
+            try:
+                b4.git_fetch_am_into_repo(topdir, ambytes, at_base=base_commit, check_only=True)
+                logger.debug('PASS: Prereqs cleanly apply to %s', base_commit)
+                res[f'base-commit: {base_commit}'] = (True, 'All patches cleanly apply')
+            except RuntimeError:
+                logger.debug('FAIL: Could not cleanly apply patches to %s', base_commit)
+                res[f'base-commit: {base_commit}'] = (False, 'Could not cleanly apply patches')
+        else:
+            logger.debug('FAIL: %s does not exist in current tree', base_commit)
+            res[f'base-commit: {base_commit}'] = (False, 'Base commit not found in the current tree')
+    else:
+        logger.info('Not checking applicability of the series due to other errors')
 
     if res:
         logger.info('---')
@@ -1358,7 +1418,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     prerequisites = ''
     seen_patch_ids = set()
     for prereq in prereqs:
-        if prereq.startswith('patch-id:'):
+        if prereq.startswith('patch-id:') or prereq.startswith('base-commit:'):
             prerequisites += f'prerequisite-{prereq}\n'
             continue
 
