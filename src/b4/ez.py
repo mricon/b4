@@ -732,6 +732,10 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
     logger.debug('Looking for the cover letter commit with magic marker "%s"', MAGIC_MARKER)
     if not usebranch:
         usebranch = b4.git_get_current_branch()
+    if usebranch is None:
+        logger.critical("The current repository is not tracking a branch. To use b4, please checkout a branch.")
+        logger.critical("Maybe a rebase is running?")
+        raise RuntimeError("Not currently on a branch, please checkout a b4-tracked branch")
     gitargs = ['log', '--grep', MAGIC_MARKER, '-F', '--pretty=oneline', '--max-count=1', '--since=1.year',
                usebranch]
     lines = b4.git_get_command_lines(None, gitargs)
