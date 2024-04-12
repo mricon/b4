@@ -811,6 +811,10 @@ def edit_deps() -> None:
 def check_deps(cmdargs: argparse.Namespace) -> None:
     cover, tracking = load_cover()
     prereqs = tracking['series'].get('prerequisites', list())
+    if not prereqs:
+        logger.info('This series has no defined dependencies.')
+        logger.info('To add dependencies, use --edit-deps.')
+        return
     res = dict()
     prereq_patches = list()
     known_patches = dict()
@@ -1172,6 +1176,18 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     return utils.getaddresses(addrs.split('\n'))
 
 
+def get_check_results_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[str]:
+    if not cmdargs:
+        return list()
+    # Run this command from git toplevel
+    topdir = b4.git_get_toplevel()
+    ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes, rundir=topdir)  # noqa
+    check_report = out.strip().decode(errors='ignore')
+    if not check_report:
+        return list()
+    return check_report.split('\n')
+
+
 def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[str] = None
                        ) -> Tuple[str, str, str, List[str], str, str]:
     if usebranch:
@@ -1369,7 +1385,8 @@ def get_mailfrom() -> Tuple[str, str]:
 
 
 def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True,
-                               prefixes: Optional[List[str]] = None, usebranch: Optional[str] = None
+                               prefixes: Optional[List[str]] = None, usebranch: Optional[str] = None,
+                               expandprereqs: bool = True,
                                ) -> Tuple[List, List, str, List[Tuple[str, email.message.Message]]]:
     cover, tracking = load_cover(strip_comments=True, usebranch=usebranch)
 
@@ -1438,12 +1455,13 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
         spatches = list()
         if prereq.startswith('message-id'):
             prerequisites += f'prerequisite-{prereq}\n'
-            msgid = chunks[1].strip('<>')
-            spatches = b4.get_pi_thread_by_msgid(msgid)
-            if not spatches:
-                logger.info('Nothing known about message-id: %s', msgid)
-                logger.info('Consider running --check-deps')
-                continue
+            if expandprereqs:
+                msgid = chunks[1].strip('<>')
+                spatches = b4.get_pi_thread_by_msgid(msgid)
+                if not spatches:
+                    logger.info('Nothing known about message-id: %s', msgid)
+                    logger.info('Consider running --check-deps')
+                    continue
 
         if prereq.startswith('change-id:'):
             prerequisites += f'prerequisite-{prereq}\n'
@@ -1451,7 +1469,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
             if len(chunks) > 1:
                 pcid = chunks[1]
             pver = chunks[-1]
-            if pcid and pver:
+            if expandprereqs and pcid and pver:
                 tagname, revision = get_sent_tagname(pcid, SENT_TAG_PREFIX, pver)
                 logger.debug('Checking if we have a sent version')
                 try:
@@ -1588,6 +1606,89 @@ def format_patch(output_dir: str) -> None:
         with open(os.path.join(output_dir, filen), 'wb') as fh:
             fh.write(msg.as_bytes(unixfrom=True, policy=b4.emlpolicy))
             logger.info('  %s', filen)
+
+
+def check(cmdargs: argparse.Namespace) -> None:
+    # Use recommended checkpatch defaults if we find checkpatch
+    topdir = b4.git_get_toplevel()
+    checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
+    config = b4.get_main_config()
+    ppcmdstr = None
+    if config.get('prep-perpatch-check-cmd'):
+        ppcmdstr = config.get('prep-perpatch-check-cmd')
+    elif os.access(checkpatch, os.X_OK):
+        ppcmdstr = f'{checkpatch} -q --terse --no-summary --mailback --showfile'
+    ppcmd = list()
+    if ppcmdstr:
+        sp = shlex.shlex(ppcmdstr, posix=True)
+        sp.whitespace_split = True
+        ppcmd = list(sp)
+        logger.info('Will run per-patch checks using %s', os.path.basename(ppcmd[0]))
+    # TODO: support for a whole-series check command, (pytest, etc)
+
+    try:
+        todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(expandprereqs=False)
+    except RuntimeError as ex:
+        logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
+        sys.exit(1)
+
+    cover, tracking = load_cover()
+    if cmdargs.nocache:
+        checks_cache = dict()
+    else:
+        cached = b4.get_cache(tracking['series']['change-id'], suffix='checks')
+        checks_cache = json.loads(cached) if cached else dict()
+        if checks_cache.get('prep-perpatch-check-cmd', '') != ppcmdstr:
+            logger.debug('Ignoring cached checks info because the check command has changed')
+            b4.clear_cache(tracking['series']['change-id'], suffix='checks')
+            checks_cache = dict()
+    checks_cache['prep-perpatch-check-cmd'] = ppcmdstr
+
+    logger.info('---')
+    seen = set()
+    summary = {
+        'warning': 0,
+        'fail': 0,
+        'success': 0
+    }
+    for commit, msg in patches:
+        if not msg or not commit:
+            continue
+        seen.add(commit)
+        lsubject = b4.LoreSubject(msg.get('Subject', ''))
+        csubject = f'{commit[:12]}: {lsubject.subject}'
+        if 'commits' not in checks_cache:
+            checks_cache['commits'] = dict()
+        if commit not in checks_cache['commits']:
+            logger.debug('Checking: %s', lsubject.subject)
+            bdata = b4.LoreMessage.get_msg_as_bytes(msg)
+            report = get_check_results_from_cmd(ppcmd, bdata)
+            checks_cache['commits'][commit] = report
+        else:
+            logger.debug('Using cached checks for %s', commit)
+            report = checks_cache['commits'][commit]
+        if not report:
+            logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], csubject)
+            summary['success'] += 1
+            continue
+        worst = 'warning'
+        for line in report:
+            if 'ERROR:' in line:
+                worst = 'fail'
+                break
+        logger.info('%s %s', b4.CI_FLAGS_FANCY[worst], csubject)
+        for line in report:
+            flag = 'fail' if 'ERROR:' in line else 'warning'
+            summary[flag] += 1
+            logger.info('  %s %s', b4.CI_FLAGS_FANCY[flag], line)
+    # Throw out any stale checks
+    for commit in list(checks_cache['commits'].keys()):
+        if commit not in seen:
+            logger.debug('Removing stale check cache for non-existent commit %s', commit)
+            del(checks_cache['commits'][commit])
+    b4.save_cache(json.dumps(checks_cache), tracking['series']['change-id'], suffix='checks')
+    logger.info('---')
+    logger.info('Success: %s, Warning: %s, Error: %s', summary['success'], summary['warning'], summary['fail'])
 
 
 def cmd_send(cmdargs: argparse.Namespace) -> None:
@@ -2559,6 +2660,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.check_deps:
         return check_deps(cmdargs)
+
+    if cmdargs.check:
+        return check(cmdargs)
 
 
 def cmd_trailers(cmdargs: argparse.Namespace) -> None:

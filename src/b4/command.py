@@ -306,6 +306,8 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Edit the series dependencies in your defined $EDITOR (or core.editor)')
     spp_g.add_argument('--check-deps', action='store_true', default=False,
                        help='Run checks for any defined series dependencies')
+    spp_g.add_argument('--check', action='store_true', default=False,
+                       help='Run checks on the series')
     spp_g.add_argument('--show-revision', action='store_true', default=False,
                        help='Show current series revision number')
     spp_g.add_argument('--compare-to', metavar='vN',

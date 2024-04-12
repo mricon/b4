@@ -2,15 +2,21 @@ v0.14
 -----
 [X] Switch to using pyproject.toml
 [X] Use hashed requirements for added security and reproducible installs
-[_] Automatic interdependency resolution
+[X] Automatic dependency resolution
 	[X] Retrieve dependencies using the standard prerequisite-patch-id
 	[X] Define the prerequisite-change-id trailer
 	[X] Expand prerequisite-change-id into prerequisite-patch-id for locally sent series
 	[X] Add b4 prep --edit-deps to open an editor with dependencies
 	[X] Add b4 prep --check-deps to report if there are problems or updates available
 	[X] Expand non-local change-id and message-id deps into prerequisite-patch-id
-	[_] --check-deps should check if everything can be cleanly applied
-	[_] Dependency chaining (within reason)
+	[X] --check-deps should check if everything can be cleanly applied
+[_] Checkpatch and other pre-submit checks
+	[X] Configurable checks to run on each patch
+	[X] When checks are not defined, use Linux kernel defaults
+	[X] Display checkpatch checks using output similar to CI checks
+	[X] Cache checks for commits that haven't changed if the check command is the same
+	[_] Run b4-specific checks automatically (needs-editing, needs-auto-to-cc)
+	[_] Refuse to send if checks haven't been run
 
 v0.15
 -----
