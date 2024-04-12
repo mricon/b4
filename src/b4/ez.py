@@ -799,13 +799,12 @@ def edit_deps() -> None:
                 logger.debug('Ignoring: %s', entry)
                 continue
             chunks = [x.strip() for x in entry.split(':')]
-            if chunks[0] in recognized:
-                prereqs.append(entry)
-            else:
-                logger.critical('Unknown dependency format, ignored:')
-                logger.critical(entry)
+            if not chunks[0] in recognized:
+                logger.warning('WARNING: Unrecognized entry: %s', entry)
+            prereqs.append(entry)
 
     tracking['series']['prerequisites'] = prereqs
+    logger.info('---')
     store_cover(cover, tracking)
 
 
@@ -936,9 +935,9 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
         logger.info('---')
         for prereq, info in res.items():
             if info[0]:
-                logger.info('%s %s', b4.ATT_PASS_FANCY, prereq)
+                logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], prereq)
             else:
-                logger.info('%s %s', b4.ATT_FAIL_FANCY, prereq)
+                logger.info('%s %s', b4.CI_FLAGS_FANCY['fail'], prereq)
                 logger.info('   - %s', info[1])
 
 
@@ -1422,15 +1421,24 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     prerequisites = ''
     seen_patch_ids = set()
     for prereq in prereqs:
-        if prereq.startswith('patch-id:') or prereq.startswith('base-commit:'):
+        if prereq.startswith('patch-id:'):
             prerequisites += f'prerequisite-{prereq}\n'
+            continue
+
+        chunks = [x.strip() for x in prereq.split(':')]
+        if prereq.startswith('base-commit:'):
+            base_commit = b4.git_revparse_obj(chunks[1])
+            if not base_commit:
+                logger.warning('WARNING: unable to resolve prerequisite-base-commit %s', chunks[1])
+                base_commit = chunks[1]
+            else:
+                logger.debug('Overriding base-commit with: %s', base_commit)
             continue
 
         spatches = list()
         if prereq.startswith('message-id'):
             prerequisites += f'prerequisite-{prereq}\n'
-            parts = prereq.split(':')
-            msgid = parts[1].strip().strip('<>')
+            msgid = chunks[1].strip('<>')
             spatches = b4.get_pi_thread_by_msgid(msgid)
             if not spatches:
                 logger.info('Nothing known about message-id: %s', msgid)
@@ -1439,10 +1447,9 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
 
         if prereq.startswith('change-id:'):
             prerequisites += f'prerequisite-{prereq}\n'
-            chunks = prereq.split(':')
             pcid = None
             if len(chunks) > 1:
-                pcid = chunks[1].strip()
+                pcid = chunks[1]
             pver = chunks[-1]
             if pcid and pver:
                 tagname, revision = get_sent_tagname(pcid, SENT_TAG_PREFIX, pver)
