@@ -4164,7 +4164,8 @@ def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str =
 
 
 def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
-    # To avoid losing the cover letter, ensure that we are still on the same branch as when the cover-letter was originally opened.
+    # To avoid losing the cover letter, ensure that we are still on the same
+    # branch as when the cover-letter was originally opened.
     read_branch = git_get_current_branch()
 
     corecfg = get_config_from_git(r'core\..*', {'editor': os.environ.get('EDITOR', 'vi')})
@@ -4188,10 +4189,12 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
 
     write_branch = git_get_current_branch()
     if write_branch != read_branch:
-        with tempfile.NamedTemporaryFile(mode="wb", prefix=f"old-{read_branch}".replace("/", "-"), delete=False) as save_file:
+        with tempfile.NamedTemporaryFile(mode="wb", prefix=f"old-{read_branch}".replace("/", "-"),
+                                         delete=False) as save_file:
             save_file.write(bdata)
-            logger.critical('The edition started on the branch %s but the current branch is now %s.', read_branch, write_branch)
-            logger.critical('To avoid overwriting an unrelated text, the operation is canceled now and your text is stored at %s', save_file.name)
-        raise RuntimeError(f"Branch changed during file edition, the temporary file was saved at {save_file.name}")
+            logger.critical('Editing started on branch %s, but current branch is %s.',
+                            read_branch, write_branch)
+            logger.critical('To avoid a collision, your text was saved in %s', save_file.name)
+        raise RuntimeError(f"Branch changed during file editing, the temporary file was saved at {save_file.name}")
     else:
         return bdata
