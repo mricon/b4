@@ -55,6 +55,8 @@ def cmd_am_common_opts(sp):
                     help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
                          '"-P _" to use just the msgid specified, or '
                          '"-P *globbing*" to match on commit subject)')
+    sp.add_argument('-k', '--check', action='store_true', default=False,
+                    help='Run local checks for every patch (e.g. checkpatch)')
     sp.add_argument('--cc-trailers', dest='copyccs', action='store_true', default=False,
                     help='Copy all Cc\'d addresses into Cc: trailers')
     sp.add_argument('--no-parent', dest='noparent', action='store_true', default=False,

@@ -153,7 +153,8 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
         cherrypick = None
 
     am_msgs = lser.get_am_ready(noaddtrailers=cmdargs.noaddtrailers, addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
-                                cherrypick=cherrypick, copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars)
+                                cherrypick=cherrypick, copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars,
+                                showchecks=cmdargs.check)
     logger.info('---')
 
     if cherrypick is None:

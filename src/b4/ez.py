@@ -1176,18 +1176,6 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     return utils.getaddresses(addrs.split('\n'))
 
 
-def get_check_results_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[str]:
-    if not cmdargs:
-        return list()
-    # Run this command from git toplevel
-    topdir = b4.git_get_toplevel()
-    ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes, rundir=topdir)  # noqa
-    check_report = out.strip().decode(errors='ignore')
-    if not check_report:
-        return list()
-    return check_report.split('\n')
-
-
 def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[str] = None
                        ) -> Tuple[str, str, str, List[str], str, str]:
     if usebranch:
@@ -1609,21 +1597,19 @@ def format_patch(output_dir: str) -> None:
 
 
 def check(cmdargs: argparse.Namespace) -> None:
-    # Use recommended checkpatch defaults if we find checkpatch
-    topdir = b4.git_get_toplevel()
-    checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
     config = b4.get_main_config()
     ppcmdstr = None
     if config.get('prep-perpatch-check-cmd'):
         ppcmdstr = config.get('prep-perpatch-check-cmd')
-    elif os.access(checkpatch, os.X_OK):
-        ppcmdstr = f'{checkpatch} -q --terse --no-summary --mailback --showfile'
-    ppcmd = list()
-    if ppcmdstr:
-        sp = shlex.shlex(ppcmdstr, posix=True)
-        sp.whitespace_split = True
-        ppcmd = list(sp)
-        logger.info('Will run per-patch checks using %s', os.path.basename(ppcmd[0]))
+    else:
+        # Use recommended checkpatch defaults if we find checkpatch
+        topdir = b4.git_get_toplevel()
+        checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
+        if os.access(checkpatch, os.X_OK):
+            ppcmdstr = f'{checkpatch} -q --terse --no-summary --mailback --showfile'
+    if not ppcmdstr:
+        logger.critical('Not able to find checkpatch and no custom command defined.')
+        sys.exit(1)
     # TODO: support for a whole-series check command, (pytest, etc)
 
     try:
@@ -1632,61 +1618,37 @@ def check(cmdargs: argparse.Namespace) -> None:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
 
-    cover, tracking = load_cover()
-    if cmdargs.nocache:
-        checks_cache = dict()
-    else:
-        cached = b4.get_cache(tracking['series']['change-id'], suffix='checks')
-        checks_cache = json.loads(cached) if cached else dict()
-        if checks_cache.get('prep-perpatch-check-cmd', '') != ppcmdstr:
-            logger.debug('Ignoring cached checks info because the check command has changed')
-            b4.clear_cache(tracking['series']['change-id'], suffix='checks')
-            checks_cache = dict()
-    checks_cache['prep-perpatch-check-cmd'] = ppcmdstr
+    logger.info('Checking patches using:')
+    logger.info(f'  {ppcmdstr}')
+    sp = shlex.shlex(ppcmdstr, posix=True)
+    sp.whitespace_split = True
+    ppcmdargs = list(sp)
 
-    logger.info('---')
-    seen = set()
     summary = {
+        'success': 0,
         'warning': 0,
         'fail': 0,
-        'success': 0
     }
+    logger.info('---')
     for commit, msg in patches:
         if not msg or not commit:
             continue
-        seen.add(commit)
+        report = b4.LoreMessage.run_local_check(ppcmdargs, commit, msg, nocache=cmdargs.nocache)
         lsubject = b4.LoreSubject(msg.get('Subject', ''))
         csubject = f'{commit[:12]}: {lsubject.subject}'
-        if 'commits' not in checks_cache:
-            checks_cache['commits'] = dict()
-        if commit not in checks_cache['commits']:
-            logger.debug('Checking: %s', lsubject.subject)
-            bdata = b4.LoreMessage.get_msg_as_bytes(msg)
-            report = get_check_results_from_cmd(ppcmd, bdata)
-            checks_cache['commits'][commit] = report
-        else:
-            logger.debug('Using cached checks for %s', commit)
-            report = checks_cache['commits'][commit]
         if not report:
             logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], csubject)
             summary['success'] += 1
             continue
         worst = 'warning'
-        for line in report:
-            if 'ERROR:' in line:
+        for flag, status in report:
+            if flag == 'fail':
                 worst = 'fail'
                 break
         logger.info('%s %s', b4.CI_FLAGS_FANCY[worst], csubject)
-        for line in report:
-            flag = 'fail' if 'ERROR:' in line else 'warning'
+        for flag, status in report:
             summary[flag] += 1
-            logger.info('  %s %s', b4.CI_FLAGS_FANCY[flag], line)
-    # Throw out any stale checks
-    for commit in list(checks_cache['commits'].keys()):
-        if commit not in seen:
-            logger.debug('Removing stale check cache for non-existent commit %s', commit)
-            del(checks_cache['commits'][commit])
-    b4.save_cache(json.dumps(checks_cache), tracking['series']['change-id'], suffix='checks')
+            logger.info('  %s %s', b4.CI_FLAGS_FANCY[flag], status)
     logger.info('---')
     logger.info('Success: %s, Warning: %s, Error: %s', summary['success'], summary['warning'], summary['fail'])
 

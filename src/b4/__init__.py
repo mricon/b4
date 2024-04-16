@@ -19,6 +19,7 @@ import argparse
 import smtplib
 import shlex
 import textwrap
+import json
 
 import urllib.parse
 import datetime
@@ -629,7 +630,7 @@ class LoreSeries:
 
     def get_am_ready(self, noaddtrailers: bool = False, addmysob: bool = False,
                      addlink: bool = False, cherrypick: Optional[List[int]] = None, copyccs: bool = False,
-                     allowbadchars: bool = False) -> List[email.message.Message]:
+                     allowbadchars: bool = False, showchecks: bool = False) -> List[email.message.Message]:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -670,45 +671,45 @@ class LoreSeries:
                 logger.debug('Attestation info is not the same')
                 break
 
-        if can_network and config.get('pw-url') and config.get('pw-project'):
-            # Use this to pre-load the CI status of each patch
-            logger.info('Retrieving CI status, may take a moment...')
-            show_ci_checks = True
-            # If there is more than one patch in the series, check the last patch first
-            # and skip checking the rest of the patches if the last patch is still 'pending'
-            if self.expected > 1:
-                lastp = self.patches[-1]
-                if lastp:
-                    # This will be cached, so we don't worry about extra lookups
-                    lastp.load_ci_status()
-                    if not lastp.pw_ci_status or lastp.pw_ci_status == 'pending':
-                        logger.debug('No CI on the last patch, skipping the rest of the checks')
-                        lastp.pw_ci_status = None
-                        show_ci_checks = False
+        if showchecks:
+            # Local checks
+            cmdstr = None
+            if config.get('am-perpatch-check-cmd'):
+                cmdstr = config.get('am-perpatch-check-cmd')
+            else:
+                # Use recommended checkpatch defaults if we find checkpatch
+                topdir = git_get_toplevel()
+                checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
+                if os.access(checkpatch, os.X_OK):
+                    cmdstr = f'{checkpatch} -q --terse --no-summary --mailback'
+            cmdargs = None
+            if cmdstr:
+                sp = shlex.shlex(cmdstr, posix=True)
+                sp.whitespace_split = True
+                cmdargs = list(sp)
 
-            if show_ci_checks:
-                ci_overall = 'success'
-                series_url = None
+            if cmdargs:
+                logger.info('Running local checks using %s, may take a moment...',
+                            os.path.basename(cmdargs[0]))
                 for lmsg in self.patches[1:]:
                     if lmsg is None:
                         continue
-                    lmsg.load_ci_status()
+                    # TODO: Progress bar?
+                    lmsg.load_local_ci_status(cmdargs)
+
+            # Patchwork CI status
+            if can_network and config.get('pw-url') and config.get('pw-project'):
+                # Use this to pre-load the CI status of each patch
+                logger.info('Retrieving patchwork CI status, may take a moment...')
+                # Go in reverse order and skip the rest if any patch still shows "pending"
+                for lmsg in reversed(self.patches[1:]):
+                    if lmsg is None:
+                        continue
+                    # TODO: Progress bar?
+                    lmsg.load_pw_ci_status()
                     if not lmsg.pw_ci_status or lmsg.pw_ci_status == 'pending':
+                        logger.debug('No CI on patch %s, skipping the rest of the checks', lmsg.counter)
                         lmsg.pw_ci_status = None
-                        break
-                    if series_url is None:
-                        pwdata = lmsg.get_patchwork_info()
-                        if pwdata and pwdata.get('series'):
-                            for series in pwdata.get('series'):
-                                series_url = series.get('web_url')
-                                break
-                    if lmsg.pw_ci_status == 'warning':
-                        ci_overall = 'warning'
-                    elif lmsg.pw_ci_status == 'fail':
-                        ci_overall = 'fail'
-                if ci_overall != 'success':
-                    logger.info('Some CI checks failed, see patchwork for more info:')
-                    logger.info('  %s', series_url)
 
         self.add_cover_trailers()
 
@@ -771,6 +772,16 @@ class LoreSeries:
                     add_trailers = False
                 msg = lmsg.get_am_message(add_trailers=add_trailers, extras=extras, copyccs=copyccs,
                                           addmysob=addmysob, allowbadchars=allowbadchars)
+                if lmsg.local_ci_status or lmsg.pw_ci_status in {'fail', 'warning'}:
+                    if lmsg.local_ci_status:
+                        for flag, status in lmsg.local_ci_status:
+                            logger.info('    %s %s', CI_FLAGS_FANCY[flag], status)
+                    pwurl = config.get('pw-url')
+                    pwproj = config.get('pw-project')
+                    if lmsg.pw_ci_status in {'fail', 'warning'}:
+                        pwlink = f'{pwurl}/project/{pwproj}/patch/{lmsg.msgid}'
+                        logger.info('    %s patchwork: %s: %s', CI_FLAGS_FANCY[lmsg.pw_ci_status],
+                                    str(lmsg.pw_ci_status).upper(), pwlink)
                 msgs.append(msg)
             else:
                 logger.error('  ERROR: missing [%s/%s]!', at, self.expected)
@@ -1180,8 +1191,9 @@ class LoreMessage:
     pr_tip_commit: Optional[str]
     pr_remote_tip_commit: Optional[str]
 
-    # patch-related info
+    # patch CI info
     pw_ci_status: Optional[str]
+    local_ci_status: Optional[List[Tuple[str, str]]]
 
     def __init__(self, msg):
         self.msg = msg
@@ -1204,6 +1216,7 @@ class LoreMessage:
         self.pr_tip_commit = None
         self.pr_remote_tip_commit = None
         self.pw_ci_status = None
+        self.local_ci_status = None
 
         self.msgid = LoreMessage.get_clean_msgid(self.msg)
         self.lsubject = LoreSubject(msg['Subject'])
@@ -1522,6 +1535,42 @@ class LoreMessage:
             self._attestors.append(attestor)
 
     @staticmethod
+    def run_local_check(cmdargs: List[str], ident: str, msg: email.message.Message,
+                        nocache: bool = False) -> List[Tuple[str, str]]:
+        cacheid = ' '.join(cmdargs) + ident
+        cachedata = get_cache(cacheid, suffix='checks')
+        if cachedata and not nocache:
+            return json.loads(cachedata)
+
+        logger.debug('Checking ident=%s using %s', ident, cmdargs[0])
+        bdata = LoreMessage.get_msg_as_bytes(msg)
+        topdir = git_get_toplevel()
+        mycmd = os.path.basename(cmdargs[0])
+        ecode, out, err = _run_command(cmdargs, stdin=bdata, rundir=topdir)
+        out = out.strip()
+        out_lines = out.decode(errors='replace').split('\n') if out else list()
+        report = list()
+        if out_lines:
+            for line in out_lines:
+                if 'ERROR:' in line:
+                    flag = 'fail'
+                elif 'WARNING:' in line:
+                    flag = 'warning'
+                else:
+                    flag = 'success'
+                # Remove '-:' from the start of the line, because it's never useful
+                if line.startswith('-:'):
+                    line = line[2:]
+                report.append((flag, f'{mycmd}: {line}'))
+        save_cache(json.dumps(report), cacheid, suffix='checks')
+        return report
+
+    def load_local_ci_status(self, cmdargs: List[str]) -> None:
+        # TODO: currently ignoring --no-cache
+        if self.local_ci_status is None:
+            self.local_ci_status = LoreMessage.run_local_check(cmdargs, self.msgid, self.msg)
+
+    @staticmethod
     def get_patchwork_data_by_msgid(msgid: str) -> dict:
         config = get_main_config()
         pwkey = config.get('pw-key')
@@ -1533,7 +1582,6 @@ class LoreMessage:
 
         cachedata = get_cache(pwurl + pwproj + msgid, suffix='lookup')
         if cachedata:
-            import json
             return json.loads(cachedata)
 
         pses, url = get_patchwork_session(pwkey, pwurl)
@@ -1562,7 +1610,6 @@ class LoreMessage:
         if not pwdata:
             logger.debug('Not able to look up patchwork data for %s', msgid)
             raise LookupError('Error looking up %s in patchwork' % msgid)
-        import json
         save_cache(json.dumps(pwdata), pwurl + pwproj + msgid, suffix='lookup')
         return pwdata
 
@@ -1574,46 +1621,7 @@ class LoreMessage:
         except LookupError:
             return None
 
-    def get_ci_checks(self) -> list:
-        checks = list()
-        if not self.pw_ci_status or self.pw_ci_status == 'pending':
-            return checks
-        config = get_main_config()
-        pwkey = config.get('pw-key')
-        pwurl = config.get('pw-url')
-        pwdata = self.get_patchwork_info()
-        pw_patch_id = pwdata.get('id')
-        cacheid = pwurl + str(pw_patch_id) + 'checks'
-        cachedata = get_cache(cacheid, suffix='lookup')
-        if cachedata:
-            import json
-            checks = json.loads(cachedata)
-        else:
-            pses, url = get_patchwork_session(pwkey, pwurl)
-            checks_url = '/'.join((url, 'patches', str(pw_patch_id), 'checks'))
-            try:
-                logger.debug('looking up checks for patch_id=%s', pw_patch_id)
-                rsp = pses.get(checks_url, stream=False)
-                rsp.raise_for_status()
-                pdata = rsp.json()
-                for entry in pdata:
-                    if entry.get('state') == 'success' or entry.get('state') not in CI_FLAGS_FANCY:
-                        # We don't care to see these ;)
-                        continue
-                    checks.append((entry.get('state'), entry.get('context'), entry.get('description')))
-                rsp.close()
-            except requests.exceptions.RequestException as ex:
-                logger.debug('Patchwork REST error: %s', ex)
-                return checks
-            if not pwdata:
-                logger.debug('Not able to look up patchwork checks data for %s', self.msgid)
-                return checks
-            import json
-            save_cache(json.dumps(checks), cacheid, suffix='lookup')
-
-        return checks
-
-    def load_ci_status(self) -> None:
+    def load_pw_ci_status(self) -> None:
         logger.debug('Loading CI status for %s', self.msgid)
         pwdata = self.get_patchwork_info()
         if not pwdata:
@@ -2311,8 +2319,7 @@ class LoreMessage:
 
         self.body = LoreMessage.rebuild_message(bheaders, message, fixtrailers, basement, signature)
 
-    def get_am_subject(self, indicate_reroll: bool = True, use_subject: Optional[str] = None,
-                       show_ci_status: bool = True) -> str:
+    def get_am_subject(self, indicate_reroll: bool = True, use_subject: Optional[str] = None) -> str:
         # Return a clean patch subject
         parts = ['PATCH']
         if self.lsubject.rfc:
@@ -2332,9 +2339,6 @@ class LoreMessage:
 
         if not use_subject:
             use_subject = self.lsubject.subject
-
-        if show_ci_status and self.pw_ci_status:
-            return '[%s %s] %s' % (CI_FLAGS_FANCY[self.pw_ci_status], ' '.join(parts), use_subject)
 
         return '[%s] %s' % (' '.join(parts), use_subject)
 
@@ -2938,12 +2942,17 @@ def get_cache_dir(appname: str = 'b4') -> str:
         logger.critical('ERROR: cache-expire must be an integer (minutes): %s', config['cache-expire'])
         expmin = 600
     expage = time.time() - expmin
+    # Expire anything else that is older than 30 days
+    expall = time.time() - 2592000
     for entry in os.listdir(cachedir):
-        if entry.find('.mbx') <= 0 and entry.find('.lookup') <= 0 and entry.find('.msgs') <= 0:
-            continue
+        suffix = entry.split('.')[-1]
+        if suffix in {'mbx', 'lookup', 'msgs'}:
+            explim = expage
+        else:
+            explim = expall
         fullpath = os.path.join(cachedir, entry)
         st = os.stat(fullpath)
-        if st.st_mtime < expage:
+        if st.st_mtime < explim:
             logger.debug('Cleaning up cache: %s', entry)
             if os.path.isdir(fullpath):
                 shutil.rmtree(fullpath)
