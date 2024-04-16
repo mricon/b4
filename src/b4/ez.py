@@ -1636,7 +1636,7 @@ def check(cmdargs: argparse.Namespace) -> None:
         report = b4.LoreMessage.run_local_check(ppcmdargs, commit, msg, nocache=cmdargs.nocache)
         lsubject = b4.LoreSubject(msg.get('Subject', ''))
         csubject = f'{commit[:12]}: {lsubject.subject}'
-        if not report:
+        if not report or (len(report) ==1 and report[0][0] == 'success'):
             logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], csubject)
             summary['success'] += 1
             continue
