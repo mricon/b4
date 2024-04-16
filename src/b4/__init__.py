@@ -671,6 +671,7 @@ class LoreSeries:
                 logger.debug('Attestation info is not the same')
                 break
 
+        local_check_cmd = None
         if showchecks:
             # Local checks
             cmdstr = None
@@ -682,20 +683,10 @@ class LoreSeries:
                 checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
                 if os.access(checkpatch, os.X_OK):
                     cmdstr = f'{checkpatch} -q --terse --no-summary --mailback'
-            cmdargs = None
             if cmdstr:
                 sp = shlex.shlex(cmdstr, posix=True)
                 sp.whitespace_split = True
-                cmdargs = list(sp)
-
-            if cmdargs:
-                logger.info('Running local checks using %s, may take a moment...',
-                            os.path.basename(cmdargs[0]))
-                for lmsg in self.patches[1:]:
-                    if lmsg is None:
-                        continue
-                    # TODO: Progress bar?
-                    lmsg.load_local_ci_status(cmdargs)
+                local_check_cmd = list(sp)
 
             # Patchwork CI status
             if can_network and config.get('pw-url') and config.get('pw-project'):
@@ -772,7 +763,9 @@ class LoreSeries:
                     add_trailers = False
                 msg = lmsg.get_am_message(add_trailers=add_trailers, extras=extras, copyccs=copyccs,
                                           addmysob=addmysob, allowbadchars=allowbadchars)
-                if lmsg.local_ci_status or lmsg.pw_ci_status in {'fail', 'warning'}:
+                if local_check_cmd:
+                    lmsg.load_local_ci_status(local_check_cmd)
+                if lmsg.local_ci_status or lmsg.pw_ci_status in {'success', 'fail', 'warning'}:
                     if lmsg.local_ci_status:
                         for flag, status in lmsg.local_ci_status:
                             logger.info('    %s %s', CI_FLAGS_FANCY[flag], status)
@@ -1552,16 +1545,14 @@ class LoreMessage:
         report = list()
         if out_lines:
             for line in out_lines:
-                if 'ERROR:' in line:
-                    flag = 'fail'
-                elif 'WARNING:' in line:
-                    flag = 'warning'
-                else:
-                    flag = 'success'
+                flag = 'fail' if 'ERROR:' in line else 'warning'
                 # Remove '-:' from the start of the line, because it's never useful
                 if line.startswith('-:'):
                     line = line[2:]
                 report.append((flag, f'{mycmd}: {line}'))
+        else:
+            report.append(('success', f'{mycmd}: passed all checks'))
+
         save_cache(json.dumps(report), cacheid, suffix='checks')
         return report
 

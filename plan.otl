@@ -15,6 +15,7 @@ v0.14
 	[X] When checks are not defined, use Linux kernel defaults
 	[X] Display checkpatch checks using output similar to CI checks
 	[X] Cache checks for commits that haven't changed if the check command is the same
+	[X] Add --check to am/shazam and display checkpatch report
 	[_] Run b4-specific checks automatically (needs-editing, needs-auto-to-cc)
 	[_] Refuse to send if checks haven't been run
 
