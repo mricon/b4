@@ -671,22 +671,23 @@ class LoreSeries:
                 logger.debug('Attestation info is not the same')
                 break
 
-        local_check_cmd = None
+        local_check_cmds = list()
         if showchecks:
             # Local checks
-            cmdstr = None
+            checkcmds = list()
             if config.get('am-perpatch-check-cmd'):
-                cmdstr = config.get('am-perpatch-check-cmd')
+                checkcmds = config.get('am-perpatch-check-cmd')
             else:
                 # Use recommended checkpatch defaults if we find checkpatch
                 topdir = git_get_toplevel()
                 checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
                 if os.access(checkpatch, os.X_OK):
-                    cmdstr = f'{checkpatch} -q --terse --no-summary --mailback'
-            if cmdstr:
-                sp = shlex.shlex(cmdstr, posix=True)
-                sp.whitespace_split = True
-                local_check_cmd = list(sp)
+                    checkcmds = [f'{checkpatch} -q --terse --no-summary --mailback']
+            if checkcmds:
+                for cmdstr in checkcmds:
+                    sp = shlex.shlex(cmdstr, posix=True)
+                    sp.whitespace_split = True
+                    local_check_cmds.append(list(sp))
 
             # Patchwork CI status
             if can_network and config.get('pw-url') and config.get('pw-project'):
@@ -763,8 +764,8 @@ class LoreSeries:
                     add_trailers = False
                 msg = lmsg.get_am_message(add_trailers=add_trailers, extras=extras, copyccs=copyccs,
                                           addmysob=addmysob, allowbadchars=allowbadchars)
-                if local_check_cmd:
-                    lmsg.load_local_ci_status(local_check_cmd)
+                if local_check_cmds:
+                    lmsg.load_local_ci_status(local_check_cmds)
                 if lmsg.local_ci_status or lmsg.pw_ci_status in {'success', 'fail', 'warning'}:
                     if lmsg.local_ci_status:
                         for flag, status in lmsg.local_ci_status:
@@ -1556,10 +1557,14 @@ class LoreMessage:
         save_cache(json.dumps(report), cacheid, suffix='checks')
         return report
 
-    def load_local_ci_status(self, cmdargs: List[str]) -> None:
+    def load_local_ci_status(self, checkcmds: List[List[str]]) -> None:
         # TODO: currently ignoring --no-cache
         if self.local_ci_status is None:
-            self.local_ci_status = LoreMessage.run_local_check(cmdargs, self.msgid, self.msg)
+            self.local_ci_status = list()
+            for cmdargs in checkcmds:
+                status = LoreMessage.run_local_check(cmdargs, self.msgid, self.msg)
+                if status:
+                    self.local_ci_status.extend(status)
 
     @staticmethod
     def get_patchwork_data_by_msgid(msgid: str) -> dict:
@@ -2873,7 +2878,8 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
                         logger.debug('wtcfg: %s=%s', key, val)
                         defcfg[key] = val
                         break
-    config = get_config_from_git(r'b4\..*', defaults=defcfg, multivals=['keyringsrc'])
+    config = get_config_from_git(r'b4\..*', defaults=defcfg,
+                                 multivals=['keyringsrc', 'am-perpatch-check-cmd', 'prep-perpatch-check-cmd'])
     config['listid-preference'] = config['listid-preference'].split(',')
     config['listid-preference'].remove('*')
     config['listid-preference'].append('*')

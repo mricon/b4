@@ -1598,16 +1598,16 @@ def format_patch(output_dir: str) -> None:
 
 def check(cmdargs: argparse.Namespace) -> None:
     config = b4.get_main_config()
-    ppcmdstr = None
+    ppcmds = list()
     if config.get('prep-perpatch-check-cmd'):
-        ppcmdstr = config.get('prep-perpatch-check-cmd')
+        ppcmds = config.get('prep-perpatch-check-cmd')
     else:
         # Use recommended checkpatch defaults if we find checkpatch
         topdir = b4.git_get_toplevel()
         checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
         if os.access(checkpatch, os.X_OK):
-            ppcmdstr = f'{checkpatch} -q --terse --no-summary --mailback --showfile'
-    if not ppcmdstr:
+            ppcmds = [f'{checkpatch} -q --terse --no-summary --mailback --showfile']
+    if not ppcmds:
         logger.critical('Not able to find checkpatch and no custom command defined.')
         sys.exit(1)
     # TODO: support for a whole-series check command, (pytest, etc)
@@ -1619,10 +1619,12 @@ def check(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     logger.info('Checking patches using:')
-    logger.info(f'  {ppcmdstr}')
-    sp = shlex.shlex(ppcmdstr, posix=True)
-    sp.whitespace_split = True
-    ppcmdargs = list(sp)
+    local_check_cmds = list()
+    for ppcmdstr in ppcmds:
+        logger.info(f'  {ppcmdstr}')
+        sp = shlex.shlex(ppcmdstr, posix=True)
+        sp.whitespace_split = True
+        local_check_cmds.append(list(sp))
 
     summary = {
         'success': 0,
@@ -1633,18 +1635,26 @@ def check(cmdargs: argparse.Namespace) -> None:
     for commit, msg in patches:
         if not msg or not commit:
             continue
-        report = b4.LoreMessage.run_local_check(ppcmdargs, commit, msg, nocache=cmdargs.nocache)
+        report = list()
+        for ppcmdargs in local_check_cmds:
+            ckrep = b4.LoreMessage.run_local_check(ppcmdargs, commit, msg, nocache=cmdargs.nocache)
+            if ckrep:
+                report.extend(ckrep)
+
         lsubject = b4.LoreSubject(msg.get('Subject', ''))
         csubject = f'{commit[:12]}: {lsubject.subject}'
-        if not report or (len(report) == 1 and report[0][0] == 'success'):
-            logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], csubject)
-            summary['success'] += 1
-            continue
-        worst = 'warning'
+        worst = 'success'
         for flag, status in report:
+            if flag == 'warning':
+                worst = 'warning'
+                continue
             if flag == 'fail':
                 worst = 'fail'
                 break
+        if worst == 'success':
+            logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], csubject)
+            summary['success'] += 1
+            continue
         logger.info('%s %s', b4.CI_FLAGS_FANCY[worst], csubject)
         for flag, status in report:
             summary[flag] += 1
