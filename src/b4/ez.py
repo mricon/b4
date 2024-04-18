@@ -2345,7 +2345,6 @@ def show_info(param: str) -> None:
     cover, tracking = load_cover(usebranch=mybranch)
     csubject, cbody = get_cover_subject_body(cover)
     info['cover-subject'] = csubject.full_subject
-    info['needs-editing'] = 'EDITME' in cover
     ts = tracking['series']
     if ts.get('prefixes'):
         info['prefixes'] = ' '.join(ts.get('prefixes'))
@@ -2357,6 +2356,13 @@ def show_info(param: str) -> None:
     if ts.get('base-branch'):
         info['base-branch'] = ts['base-branch']
     base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=mybranch)
+    info['needs-editing'] = False
+    if len(oneline) == 1:
+        todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(usebranch=mybranch)
+        if b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]):
+            info['needs-editing'] = True
+    elif 'EDITME' in cover:
+        info['needs-editing'] = True
     info['base-commit'] = base_commit
     info['start-commit'] = start_commit
     info['end-commit'] = end_commit
