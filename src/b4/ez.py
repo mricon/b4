@@ -764,6 +764,7 @@ class FRCommitMessageEditor:
 
 
 def edit_cover() -> None:
+    is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     bcover = cover.encode()
     new_bcover = b4.edit_in_editor(bcover, filehint='COMMIT_EDITMSG')
@@ -780,6 +781,7 @@ def edit_cover() -> None:
 
 
 def edit_deps() -> None:
+    is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     prereqs = tracking['series'].get('prerequisites', list())
     deps = '\n'.join(prereqs)
@@ -809,6 +811,7 @@ def edit_deps() -> None:
 
 
 def check_deps(cmdargs: argparse.Namespace) -> None:
+    is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     prereqs = tracking['series'].get('prerequisites', list())
     if not prereqs:
@@ -1597,6 +1600,7 @@ def format_patch(output_dir: str) -> None:
 
 
 def check(cmdargs: argparse.Namespace) -> None:
+    is_prep_branch(mustbe=True)
     config = b4.get_main_config()
     ppcmds = list()
     if config.get('prep-perpatch-check-cmd'):
