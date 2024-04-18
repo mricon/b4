@@ -24,7 +24,7 @@ import gzip
 import io
 import tarfile
 
-from typing import Optional, Tuple, List, Union
+from typing import Optional, Tuple, List, Union, Dict
 from email import utils
 from string import Template
 
@@ -1179,8 +1179,7 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     return utils.getaddresses(addrs.split('\n'))
 
 
-def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[str] = None
-                       ) -> Tuple[str, str, str, List[str], str, str]:
+def get_series_range(start_commit: Optional[str] = None, usebranch: Optional[str] = None) -> Tuple[str, str, str]:
     if usebranch:
         mybranch = usebranch
     else:
@@ -1196,17 +1195,24 @@ def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[s
         base_commit = start_commit
     if strategy == 'tip-commit':
         cover_commit = find_cover_commit(usebranch=mybranch)
-        endrange = b4.git_revparse_obj(f'{cover_commit}~1')
+        end_commit = b4.git_revparse_obj(f'{cover_commit}~1')
     else:
-        endrange = b4.git_revparse_obj(mybranch)
-    gitargs = ['shortlog', f'{start_commit}..{endrange}']
+        end_commit = b4.git_revparse_obj(mybranch)
+
+    return base_commit, start_commit, end_commit
+
+
+def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[str] = None
+                       ) -> Tuple[str, str, str, List[str], str, str]:
+    base_commit, start_commit, end_commit = get_series_range(start_commit, usebranch)
+    gitargs = ['shortlog', f'{start_commit}..{end_commit}']
     ecode, shortlog = b4.git_run_command(None, gitargs)
-    gitargs = ['diff', '--stat', f'{start_commit}..{endrange}']
+    gitargs = ['diff', '--stat', f'{start_commit}..{end_commit}']
     ecode, diffstat = b4.git_run_command(None, gitargs)
-    gitargs = ['log', '--oneline', f'{start_commit}..{endrange}']
+    gitargs = ['log', '--oneline', f'{start_commit}..{end_commit}']
     ecode, oneline = b4.git_run_command(None, gitargs)
     oneline = oneline.rstrip().splitlines()
-    return base_commit, start_commit, endrange, oneline, shortlog.rstrip(), diffstat.rstrip()
+    return base_commit, start_commit, end_commit, oneline, shortlog.rstrip(), diffstat.rstrip()
 
 
 def print_pretty_addrs(addrs: list, hdrname: str) -> None:
@@ -2218,7 +2224,7 @@ def cleanup(param: str) -> None:
         logger.critical('Not a known branch: %s', mybranch)
         sys.exit(1)
     is_prep_branch(mustbe=True, usebranch=mybranch)
-    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=mybranch)
+    base_commit, start_commit, end_commit = get_series_range(usebranch=mybranch)
     # start commit and end commit can't be the same
     if start_commit == end_commit:
         logger.critical('CRITICAL: %s appears to be an empty branch', mybranch)
@@ -2343,10 +2349,22 @@ def show_info(param: str) -> None:
         mybranch = b4.git_get_current_branch()
         getval = param
 
-    is_prep_branch(mustbe=True, usebranch=mybranch)
+    prep_info = get_info(usebranch=mybranch)
+    if getval == '_all':
+        for key, val in prep_info.items():
+            print('%s: %s' % (key, val))
+    elif getval in prep_info:
+        print(prep_info[getval])
+    else:
+        logger.critical('No info about %s', getval)
+        sys.exit(1)
+
+
+def get_info(usebranch: Optional[str] = None) -> Dict[str, str]:
+    is_prep_branch(mustbe=True, usebranch=usebranch)
     info = dict()
-    info['branch'] = mybranch
-    cover, tracking = load_cover(usebranch=mybranch)
+    info['branch'] = usebranch
+    cover, tracking = load_cover(usebranch=usebranch)
     csubject, cbody = get_cover_subject_body(cover)
     info['cover-subject'] = csubject.full_subject
     ts = tracking['series']
@@ -2355,18 +2373,28 @@ def show_info(param: str) -> None:
     info['change-id'] = ts.get('change-id')
     revision = ts.get('revision')
     info['revision'] = revision
-    strategy = get_cover_strategy(usebranch=mybranch)
+    strategy = get_cover_strategy(usebranch=usebranch)
     info['cover-strategy'] = strategy
     if ts.get('base-branch'):
         info['base-branch'] = ts['base-branch']
-    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=mybranch)
+    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=usebranch)
     info['needs-editing'] = False
     if len(oneline) == 1:
-        todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(usebranch=mybranch)
+        todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(usebranch=usebranch, expandprereqs=False)
         if b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]):
             info['needs-editing'] = True
     elif 'EDITME' in cover:
         info['needs-editing'] = True
+    prereqs = tracking['series'].get('prerequisites', list())
+    info['has-prerequisites'] = len(prereqs) > 0
+    tocmd, cccmd = get_auto_to_cc_cmds()
+    if tocmd or cccmd:
+        info['needs-auto-to-cc'] = True
+    pf_checks = get_preflight_checks(usebranch=usebranch)
+    if pf_checks is not None:
+        if (tocmd or cccmd) and 'auto-to-cc' in pf_checks:
+            info['needs-auto-to-cc'] = False
+
     info['base-commit'] = base_commit
     info['start-commit'] = start_commit
     info['end-commit'] = end_commit
@@ -2379,8 +2407,8 @@ def show_info(param: str) -> None:
             tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
             tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
-                logger.debug('No tag %s, trying with base branch name %s', tagname, mybranch)
-                tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
+                logger.debug('No tag %s, trying with base branch name %s', tagname, usebranch)
+                tagname, revision = get_sent_tagname(usebranch, SENT_TAG_PREFIX, rn)
                 tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
                 logger.debug('No tag matching revision %s', revision)
@@ -2390,15 +2418,7 @@ def show_info(param: str) -> None:
                 info[f'series-{rn}'] = '%s..%s %s' % (base_commit[:12], tag_commit[:12], links[0])
             except RuntimeError as ex:
                 logger.debug('Could not get base-commit info from %s: %s', tagname, ex)
-
-    if getval == '_all':
-        for key, val in info.items():
-            print('%s: %s' % (key, val))
-    elif getval in info:
-        print(info[getval])
-    else:
-        logger.critical('No info about %s', getval)
-        sys.exit(1)
+    return info
 
 
 def force_revision(forceto: int) -> None:
@@ -2451,7 +2471,7 @@ def compare(compareto: str, execvp: bool = True) -> Union[str, None]:
             return out
 
 
-def auto_to_cc() -> None:
+def get_auto_to_cc_cmds() -> Tuple[List, List]:
     tocmdstr = None
     cccmdstr = None
     topdir = b4.git_get_toplevel()
@@ -2473,11 +2493,20 @@ def auto_to_cc() -> None:
         sp = shlex.shlex(tocmdstr, posix=True)
         sp.whitespace_split = True
         tocmd = list(sp)
-        logger.info('Will collect To: addresses using %s', os.path.basename(tocmd[0]))
     if cccmdstr:
         sp = shlex.shlex(cccmdstr, posix=True)
         sp.whitespace_split = True
         cccmd = list(sp)
+
+    return tocmd, cccmd
+
+
+def auto_to_cc() -> None:
+    config = b4.get_main_config()
+    tocmd, cccmd = get_auto_to_cc_cmds()
+    if tocmd:
+        logger.info('Will collect To: addresses using %s', os.path.basename(tocmd[0]))
+    if cccmd:
         logger.info('Will collect Cc: addresses using %s', os.path.basename(cccmd[0]))
 
     logger.debug('Getting addresses from cover letter')
@@ -2525,19 +2554,37 @@ def auto_to_cc() -> None:
                     logger.debug('  => %s', ltr.as_string())
                     extras.append(ltr)
 
-    if not extras:
+    if extras:
+        # Make it a LoreMessage, so we can run a fix_trailers on it
+        cmsg = email.message.EmailMessage()
+        cmsg.set_payload(cover, charset='utf-8')
+        clm = b4.LoreMessage(cmsg)
+        fallback_order = config.get('send-trailer-order', 'To,Cc,*')
+        clm.fix_trailers(extras=extras, fallback_order=fallback_order)
+        logger.info('---')
+        logger.info('You can trim/expand this list with: b4 prep --edit-cover')
+        store_cover(clm.body, tracking)
+    else:
         logger.info('No new addresses to add.')
-        return
 
-    # Make it a LoreMessage, so we can run a fix_trailers on it
-    cmsg = email.message.EmailMessage()
-    cmsg.set_payload(cover, charset='utf-8')
-    clm = b4.LoreMessage(cmsg)
-    fallback_order = config.get('send-trailer-order', 'To,Cc,*')
-    clm.fix_trailers(extras=extras, fallback_order=fallback_order)
-    logger.info('---')
-    logger.info('You can trim/expand this list with: b4 prep --edit-cover')
-    store_cover(clm.body, tracking)
+    store_preflight_check('auto-to-cc')
+
+
+def get_preflight_checks(usebranch: Optional[str] = None) -> Dict[str, str]:
+    base_commit, start_commit, end_commit = get_series_range(usebranch=usebranch)
+    cacheid = f'{end_commit}-pre-flight-checks'
+    pf_checks = b4.get_cache(cacheid, suffix='checks', as_json=True)
+    if pf_checks is None:
+        pf_checks = dict()
+    return pf_checks
+
+
+def store_preflight_check(identity: str) -> None:
+    pf_checks = get_preflight_checks()
+    base_commit, start_commit, end_commit = get_series_range()
+    pf_checks[identity] = datetime.date.today().isoformat()
+    cacheid = f'{end_commit}-pre-flight-checks'
+    b4.save_cache(pf_checks, cacheid, suffix='checks', is_json=True)
 
 
 def set_prefixes(prefixes: list) -> None:

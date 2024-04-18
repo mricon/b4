@@ -1532,9 +1532,10 @@ class LoreMessage:
     def run_local_check(cmdargs: List[str], ident: str, msg: email.message.Message,
                         nocache: bool = False) -> List[Tuple[str, str]]:
         cacheid = ' '.join(cmdargs) + ident
-        cachedata = get_cache(cacheid, suffix='checks')
-        if cachedata and not nocache:
-            return json.loads(cachedata)
+        if not nocache:
+            cachedata = get_cache(cacheid, suffix='checks', as_json=True)
+            if cachedata is not None:
+                return cachedata
 
         logger.debug('Checking ident=%s using %s', ident, cmdargs[0])
         bdata = LoreMessage.get_msg_as_bytes(msg)
@@ -1554,7 +1555,7 @@ class LoreMessage:
         else:
             report.append(('success', f'{mycmd}: passed all checks'))
 
-        save_cache(json.dumps(report), cacheid, suffix='checks')
+        save_cache(report, cacheid, suffix='checks', is_json=True)
         return report
 
     def load_local_ci_status(self, checkcmds: List[List[str]]) -> None:
@@ -1576,9 +1577,9 @@ class LoreMessage:
             logger.debug('Patchwork support requires pw-key, pw-url and pw-project settings')
             raise LookupError('Error looking up %s in patchwork' % msgid)
 
-        cachedata = get_cache(pwurl + pwproj + msgid, suffix='lookup')
-        if cachedata:
-            return json.loads(cachedata)
+        cachedata = get_cache(pwurl + pwproj + msgid, suffix='lookup', as_json=True)
+        if cachedata is not None:
+            return cachedata
 
         pses, url = get_patchwork_session(pwkey, pwurl)
         patches_url = '/'.join((url, 'patches'))
@@ -1606,7 +1607,7 @@ class LoreMessage:
         if not pwdata:
             logger.debug('Not able to look up patchwork data for %s', msgid)
             raise LookupError('Error looking up %s in patchwork' % msgid)
-        save_cache(json.dumps(pwdata), pwurl + pwproj + msgid, suffix='lookup')
+        save_cache(pwdata, pwurl + pwproj + msgid, suffix='lookup', is_json=True)
         return pwdata
 
     def get_patchwork_info(self) -> Optional[dict]:
@@ -2967,15 +2968,24 @@ def get_cache_file(identifier: str, suffix: Optional[str] = None) -> str:
     return os.path.join(cachedir, cachefile)
 
 
-def get_cache(identifier: str, suffix: Optional[str] = None) -> Optional[str]:
+def get_cache(identifier: str, suffix: Optional[str] = None, as_json: bool = False) -> Optional[any]:
     fullpath = get_cache_file(identifier, suffix=suffix)
+    cachedata = None
     try:
         with open(fullpath) as fh:
             logger.debug('Using cache %s for %s', fullpath, identifier)
-            return fh.read()
+            cachedata = fh.read()
     except FileNotFoundError:
         logger.debug('Cache miss for %s', identifier)
-    return None
+
+    if cachedata and as_json:
+        try:
+            return json.loads(cachedata)
+        except json.JSONDecodeError:
+            logger.debug('Error decoding cache data in %s', fullpath)
+            return None
+
+    return cachedata
 
 
 def clear_cache(identifier: str, suffix: Optional[str] = None) -> None:
@@ -2985,11 +2995,14 @@ def clear_cache(identifier: str, suffix: Optional[str] = None) -> None:
         logger.debug('Removed cache %s for %s', fullpath, identifier)
 
 
-def save_cache(contents: str, identifier: str, suffix: Optional[str] = None, mode: str = 'w') -> None:
+def save_cache(contents: any, identifier: str, suffix: Optional[str] = None, is_json: bool = False) -> None:
     fullpath = get_cache_file(identifier, suffix=suffix)
     try:
-        with open(fullpath, mode) as fh:
-            fh.write(contents)
+        with open(fullpath, 'w') as fh:
+            if is_json:
+                fh.write(json.dumps(contents))
+            else:
+                fh.write(contents)
             logger.debug('Saved cache %s for %s', fullpath, identifier)
     except FileNotFoundError:
         logger.debug('Could not write cache %s for %s', fullpath, identifier)
