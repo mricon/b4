@@ -1605,10 +1605,10 @@ def format_patch(output_dir: str) -> None:
             logger.info('  %s', filen)
 
 
-def check(cmdargs: argparse.Namespace) -> None:
-    is_prep_branch(mustbe=True)
+def get_check_cmds() -> Tuple[List[str], List[str]]:
     config = b4.get_main_config()
     ppcmds = list()
+    scmds = list()
     if config.get('prep-perpatch-check-cmd'):
         ppcmds = config.get('prep-perpatch-check-cmd')
     else:
@@ -1617,10 +1617,18 @@ def check(cmdargs: argparse.Namespace) -> None:
         checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
         if os.access(checkpatch, os.X_OK):
             ppcmds = [f'{checkpatch} -q --terse --no-summary --mailback --showfile']
+
+    # TODO: support for a whole-series check command, (pytest, etc)
+    return ppcmds, scmds
+
+
+def check(cmdargs: argparse.Namespace) -> None:
+    is_prep_branch(mustbe=True)
+    ppcmds, scmds = get_check_cmds()
+
     if not ppcmds:
         logger.critical('Not able to find checkpatch and no custom command defined.')
         sys.exit(1)
-    # TODO: support for a whole-series check command, (pytest, etc)
 
     try:
         todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(expandprereqs=False)
@@ -1671,6 +1679,7 @@ def check(cmdargs: argparse.Namespace) -> None:
             logger.info('  %s %s', b4.CI_FLAGS_FANCY[flag], status)
     logger.info('---')
     logger.info('Success: %s, Warning: %s, Error: %s', summary['success'], summary['warning'], summary['fail'])
+    store_preflight_check('check')
 
 
 def cmd_send(cmdargs: argparse.Namespace) -> None:
@@ -1729,14 +1738,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(prefixes=prefixes)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
-            sys.exit(1)
-
-        # Check if "EDITME" shows up in the first message
-        if b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]):
-            logger.critical('CRITICAL: Looks like the cover letter needs to be edited first.')
-            logger.info('---')
-            logger.info(cover)
-            logger.info('---')
             sys.exit(1)
 
         logger.info('Converted the branch to %s messages', len(patches))
@@ -1818,11 +1819,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         allcc = b4.cleanup_email_addrs(ccdests, excludes, None)
         alldests.update(set([x[1] for x in allcc]))
 
-    if not len(alldests):
-        logger.critical('CRITICAL: Could not find any destination addresses')
-        logger.critical('          try b4 prep --auto-to-cc or b4 send --to addr')
-        sys.exit(1)
-
     if not len(allto):
         # Move all cc's into the To field if there's nothing in "To"
         allto = list(allcc)
@@ -1854,6 +1850,30 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
+        if not len(alldests):
+            logger.critical('CRITICAL: Could not find any destination addresses')
+            logger.critical('          try b4 prep --auto-to-cc or b4 send --to addr')
+            sys.exit(1)
+
+        if not cmdargs.resend:
+            logger.debug('Running pre-flight checks')
+            sinfo = get_info()
+            if sinfo['needs-editing'] or sinfo['needs-checking'] or sinfo['needs-auto-to-cc']:
+                logger.critical('---')
+                logger.critical('Some pre-flight checks are alerting:')
+                if sinfo['needs-editing']:
+                    logger.critical('  - Edit the cover   : b4 prep --edit-cover')
+                if sinfo['needs-checking']:
+                    logger.critical('  - Run local checks : b4 prep --check')
+                if sinfo['needs-auto-to-cc']:
+                    logger.critical('  - Run auto-to-cc   : b4 prep --auto-to-cc')
+                try:
+                    logger.critical('---')
+                    input('Press Enter to ignore and send anyway or Ctrl-C to abort and fix')
+                except KeyboardInterrupt:
+                    logger.info('')
+                    sys.exit(130)
+
         logger.info('---')
         print_pretty_addrs(allto, 'To')
         print_pretty_addrs(allcc, 'Cc')
@@ -2390,10 +2410,15 @@ def get_info(usebranch: Optional[str] = None) -> Dict[str, str]:
     tocmd, cccmd = get_auto_to_cc_cmds()
     if tocmd or cccmd:
         info['needs-auto-to-cc'] = True
+    ppcmds, scmds = get_check_cmds()
+    if ppcmds or scmds:
+        info['needs-checking'] = True
     pf_checks = get_preflight_checks(usebranch=usebranch)
     if pf_checks is not None:
         if (tocmd or cccmd) and 'auto-to-cc' in pf_checks:
             info['needs-auto-to-cc'] = False
+        if (ppcmds or scmds) and 'check' in pf_checks:
+            info['needs-checking'] = False
 
     info['base-commit'] = base_commit
     info['start-commit'] = start_commit
