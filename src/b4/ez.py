@@ -947,6 +947,8 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
                 logger.info('%s %s', b4.CI_FLAGS_FANCY['fail'], prereq)
                 logger.info('   - %s', info[1])
 
+    store_preflight_check('check-deps')
+
 
 def get_series_start(usebranch: Optional[str] = None) -> str:
     if usebranch:
@@ -1858,13 +1860,15 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if not cmdargs.resend:
             logger.debug('Running pre-flight checks')
             sinfo = get_info()
-            if sinfo['needs-editing'] or sinfo['needs-checking'] or sinfo['needs-auto-to-cc']:
+            if sinfo['preflight-checks-failing']:
                 logger.critical('---')
                 logger.critical('Some pre-flight checks are alerting:')
                 if sinfo['needs-editing']:
                     logger.critical('  - Edit the cover   : b4 prep --edit-cover')
                 if sinfo['needs-checking']:
                     logger.critical('  - Run local checks : b4 prep --check')
+                if sinfo['needs-checking-deps']:
+                    logger.critical('  - Run deps checks  : b4 prep --check-deps')
                 if sinfo['needs-auto-to-cc']:
                     logger.critical('  - Run auto-to-cc   : b4 prep --auto-to-cc')
                 try:
@@ -2419,6 +2423,14 @@ def get_info(usebranch: Optional[str] = None) -> Dict[str, str]:
             info['needs-auto-to-cc'] = False
         if (ppcmds or scmds) and 'check' in pf_checks:
             info['needs-checking'] = False
+        if info['has-prerequisites']:
+            info['needs-checking-deps'] = 'check-deps' not in pf_checks
+        else:
+            info['needs-checking-deps'] = False
+    if info['needs-editing'] or info['needs-auto-to-cc'] or info['needs-checking'] or info['needs-checking-deps']:
+        info['preflight-checks-failing'] = True
+    else:
+        info['preflight-checks-failing'] = False
 
     info['base-commit'] = base_commit
     info['start-commit'] = start_commit
