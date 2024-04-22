@@ -23,6 +23,7 @@ import textwrap
 import gzip
 import io
 import tarfile
+import hashlib
 
 from typing import Optional, Tuple, List, Union, Dict
 from email import utils
@@ -102,6 +103,8 @@ DEPS_HELP = """
 # All dependencies will be checked and converted into prerequisite-patch-id: entries
 # during "b4 send".
 """
+
+PFHASH_CACHE = dict()
 
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
@@ -2403,11 +2406,12 @@ def get_info(usebranch: Optional[str] = None) -> Dict[str, str]:
         info['base-branch'] = ts['base-branch']
     base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=usebranch)
     info['needs-editing'] = False
-    if len(oneline) == 1:
-        todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(usebranch=usebranch, expandprereqs=False)
-        if b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]):
-            info['needs-editing'] = True
-    elif 'EDITME' in cover:
+    todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(usebranch=usebranch, expandprereqs=False)
+    if not todests and not ccdests:
+        info['needs-recipients'] = True
+    else:
+        info['needs-recipients'] = False
+    if b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]):
         info['needs-editing'] = True
     prereqs = tracking['series'].get('prerequisites', list())
     info['has-prerequisites'] = len(prereqs) > 0
@@ -2419,7 +2423,7 @@ def get_info(usebranch: Optional[str] = None) -> Dict[str, str]:
         info['needs-checking'] = True
     pf_checks = get_preflight_checks(usebranch=usebranch)
     if pf_checks is not None:
-        if (tocmd or cccmd) and 'auto-to-cc' in pf_checks:
+        if (tocmd or cccmd) and 'auto-to-cc' in pf_checks and not info['needs-recipients']:
             info['needs-auto-to-cc'] = False
         if (ppcmds or scmds) and 'check' in pf_checks:
             info['needs-checking'] = False
@@ -2607,9 +2611,26 @@ def auto_to_cc() -> None:
     store_preflight_check('auto-to-cc')
 
 
+def get_preflight_hash(usebranch: Optional[str] = None) -> str:
+    global PFHASH_CACHE
+    cachebranch = usebranch if usebranch is not None else '_current_'
+    if cachebranch not in PFHASH_CACHE:
+        tos, ccs, tstr, patches = get_prep_branch_as_patches(movefrom=False, thread=False, addtracking=False,
+                                                             usebranch=usebranch, expandprereqs=False)
+        hashed = hashlib.sha1()
+        for commit, msg in patches:
+            body, charset = b4.LoreMessage.get_payload(msg)
+            patchid = b4.LoreMessage.get_patch_id(body)
+            hashed.update(f'{patchid}\n'.encode('utf-8'))
+
+        PFHASH_CACHE[cachebranch] = hashed.hexdigest()
+
+    return PFHASH_CACHE[cachebranch]
+
+
 def get_preflight_checks(usebranch: Optional[str] = None) -> Dict[str, str]:
-    base_commit, start_commit, end_commit = get_series_range(usebranch=usebranch)
-    cacheid = f'{end_commit}-pre-flight-checks'
+    pfhash = get_preflight_hash(usebranch=usebranch)
+    cacheid = f'{pfhash}-pre-flight-checks'
     pf_checks = b4.get_cache(cacheid, suffix='checks', as_json=True)
     if pf_checks is None:
         pf_checks = dict()
@@ -2618,9 +2639,9 @@ def get_preflight_checks(usebranch: Optional[str] = None) -> Dict[str, str]:
 
 def store_preflight_check(identity: str) -> None:
     pf_checks = get_preflight_checks()
-    base_commit, start_commit, end_commit = get_series_range()
     pf_checks[identity] = datetime.date.today().isoformat()
-    cacheid = f'{end_commit}-pre-flight-checks'
+    pfhash = get_preflight_hash()
+    cacheid = f'{pfhash}-pre-flight-checks'
     b4.save_cache(pf_checks, cacheid, suffix='checks', is_json=True)
 
 
