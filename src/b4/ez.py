@@ -1863,17 +1863,39 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if not cmdargs.resend:
             logger.debug('Running pre-flight checks')
             sinfo = get_info()
-            if sinfo['preflight-checks-failing']:
+            pfchecks = {'needs-editing': True,
+                        'needs-checking': True,
+                        'needs-checking-deps': True,
+                        'needs-auto-to-cc': True,
+                        }
+            cfg_checks = config.get('prep-pre-flight-checks', 'enable-all')
+            if 'disable-all' in cfg_checks:
+                logger.debug('Disabling all preflight checks')
+                pfchecks = dict()
+            else:
+                for pfcheck in list(pfchecks.keys()):
+                    if f'disable-{pfcheck}' in cfg_checks:
+                        logger.debug('Disabling pre-flight check %s', pfcheck)
+                        del pfchecks[pfcheck]
+            failing = False
+            for pfcheck in pfchecks.keys():
+                pfchecks[pfcheck] = sinfo[pfcheck]
+                if sinfo[pfcheck] and not failing:
+                    failing = True
+            if failing:
                 logger.critical('---')
-                logger.critical('Some pre-flight checks are alerting:')
-                if sinfo['needs-editing']:
-                    logger.critical('  - Edit the cover   : b4 prep --edit-cover')
-                if sinfo['needs-checking']:
-                    logger.critical('  - Run local checks : b4 prep --check')
-                if sinfo['needs-checking-deps']:
-                    logger.critical('  - Run deps checks  : b4 prep --check-deps')
-                if sinfo['needs-auto-to-cc']:
-                    logger.critical('  - Run auto-to-cc   : b4 prep --auto-to-cc')
+                logger.critical('Some pre-flight checks are failing:')
+                for pfcheck, pffailing in pfchecks.items():
+                    if not pffailing:
+                        continue
+                    if pfcheck == 'needs-editing':
+                        logger.critical('  - Edit the cover   : b4 prep --edit-cover')
+                    elif pfcheck == 'needs-checking':
+                        logger.critical('  - Run local checks : b4 prep --check')
+                    elif pfcheck == 'needs-checking-deps':
+                        logger.critical('  - Run deps checks  : b4 prep --check-deps')
+                    elif pfcheck == 'needs-auto-to-cc':
+                        logger.critical('  - Run auto-to-cc   : b4 prep --auto-to-cc')
                 try:
                     logger.critical('---')
                     input('Press Enter to ignore and send anyway or Ctrl-C to abort and fix')

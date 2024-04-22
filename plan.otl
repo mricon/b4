@@ -18,6 +18,7 @@ v0.14
 	[X] Add --check to am/shazam and display checkpatch report
 	[X] Run b4-specific checks automatically (needs-editing, needs-auto-to-cc)
 	[X] Refuse to send if checks haven't been run
+	[X] Allow turning off pre-flight check all together, or by individual check
 [_] Document new features
 	[_] How to work with series dependencies
 	[_] How to run pre-flight checks
