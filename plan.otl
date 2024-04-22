@@ -20,8 +20,12 @@ v0.14
 	[X] Refuse to send if checks haven't been run
 	[X] Allow turning off pre-flight check all together, or by individual check
 [_] Document new features
-	[_] How to work with series dependencies
-	[_] How to run pre-flight checks
+	[_] prep --check
+	[_] Series dependencies overview
+	[_] prep --edit-deps
+	[_] prep --check-deps
+	[_] Pre-flight checks overview
+	[_] How to turn off pre-flight checks
 
 v0.15
 -----
