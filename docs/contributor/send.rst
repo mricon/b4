@@ -1,55 +1,55 @@
 send: sending in your work
 ==========================
-B4 supports sending your series either via your own SMTP server, or via
-a web submission endpoint.
+B4 supports sending your series either via your own SMTP-compliant mail
+server, or via a web submission endpoint.
 
-Upsides of using your own SMTP server:
+Upsides of using your own mail server:
 
-* it is part of decentralized infrastructure not dependent on a single
+* it's part of decentralized infrastructure not dependent on a single
   point of failure
 * it adds domain-level attestation to your messages via DKIM signatures
-* it avoids the need to munge the From: headers in patches, which is
+* it avoids the need to rewrite the From: headers in patches, which is
   required for email delivery that originates at a different domain
 
-However, using your own SMTP server may not always be a valid option:
+However, using your own mail server may not always be a valid option:
 
-* your mail provider may not offer an SMTP compliant server for sending
-  mail (e.g. if it only uses a webmail/exchange client)
+* your provider may not offer an SMTP-compliant endpoint for sending
+  mail; for example it may only provide a webmail/exchange interface
 * there may be limits on the number of messages you can send through
-  your SMTP server in a short period of time (which is normal for large
-  patch series)
-* your company SMTP server may modify the message bodies by adding huge
+  your mail server in a short period of time, which makes it hard to
+  send large patch series
+* your company mail server may modify the message bodies by adding huge
   legal disclaimers to all outgoing mail
 
 The web submission endpoint helps with such cases, plus offers several
 other upsides:
 
-* the messages are written to a public-inbox feed, which is then
+* the endpoint writes all messages to a public-inbox feed and makes them
   immediately available for others to follow and query
 * all patches are end-to-end attested with the developer signature
-* messages are less likely to get lost or delayed
+* messages are less likely to get lost or delayed by mail relays
 
 .. note::
 
    Even if you opt to use the web submission endpoint, you still need a
    valid email account for participating in decentralized development --
-   you will need it to take part in discussions and for sending and
+   it's required for taking part in discussions and for sending and
    receiving code review feedback.
 
 .. _web_endpoint:
 
 Authenticating with the web submission endpoint
 -----------------------------------------------
-Before you start, you will need to configure your attestation mechanism.
-If you already have a PGP key configured for use with git, you can just
-use that and skip the next section. If you don't already have a PGP key,
-you can create a separate ed25519 key just for web submission purposes.
+Before you start, you need to configure your attestation mechanism. If
+you already have a PGP key configured for use with git, you can just use
+that and skip the next section. If you don't already have a PGP key, you
+can create a separate ed25519 key just for web submission purposes.
 
 Creating a new ed25519 key
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. note::
 
-   Creating a new ed25519 key is not required if you already have a PGP
+   Creating a new ed25519 key isn't required if you already have a PGP
    key configured with git using the ``user.signingKey`` git-config
    setting.
 
@@ -77,9 +77,9 @@ send``.
 
 Configuring the web endpoint
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-The web endpoint you will use is going to be dependent on the project.
-For the Linux kernel and associated tools (like Git, B4, patatt, etc),
-the kernel.org endpoint can be enabled by adding the following to your
+Which web endpoint to use is going to be dependent on the project. For
+the Linux kernel and associated tools (like Git, B4, patatt, etc), you
+can use the kernel.org endpoint by adding the following to your
 ``~/.gitconfig``::
 
     [b4]
@@ -87,12 +87,12 @@ the kernel.org endpoint can be enabled by adding the following to your
 
 .. note::
 
-   The kernel.org endpoint can only be used for kernel.org-hosted
+   You can only use the kernel.org endpoint for kernel.org-hosted
    projects. If there are no recognized mailing lists in the to/cc
-   headers, then the submission will be rejected.
+   headers, the endpoint refuses to accept the submission.
 
-Once that is added, you can request authentication, as in the example
-below::
+After updating your git configuration file, you can request
+authentication, as in the example below::
 
     $ b4 send --web-auth-new
     Will submit a new email authorization request to:
@@ -110,8 +110,8 @@ below::
 
 As the instructions say, you should receive a verification email to the
 address you specified in your ``user.email``. Once you have received it,
-run the verification command by copy-pasting the UUID from the
-confirmation message::
+run the verification command by copy-pasting the confirmation string
+from the message::
 
     $ b4 send --web-auth-verify abcd9b34-2ecf-4d25-946a-0631c414227e
     Signing challenge
@@ -124,10 +124,11 @@ You should now be able to send patches via this web submission endpoint.
 
 Using your own SMTP server
 --------------------------
-If there is a ``sendmail`` section in your git configuration, B4 will try use
-that by default instead of the web endpoint. Only the most common subset of
-options are supported. The vast majority of servers will only need the
-following settings::
+If there is a ``sendmail`` section in your git configuration, B4 tries
+to use that by default instead of going via the web endpoint. At this
+time, b4 only recognizes a subset of ``sendmail`` options supported by
+git itself. The vast majority of servers should only need the following
+settings::
 
     [sendemail]
        smtpServer = smtp.example.org
@@ -136,47 +137,81 @@ following settings::
        smtpUser = alice.developer@example.org
        smtpPass = [omitted]
 
-You can also set up msmtp or a similar tool and specify the path to the
-``sendmail``-compliant binary as the value for ``smtpServer``. You can force B4
-to use the web endpoint by using the ``--use-web-endpoint`` argument.
+You can also set up ``msmtp`` or a similar tool and specify the path to
+the ``sendmail``-compliant binary as the value for ``smtpServer``. To
+force B4 to use the web endpoint even when a ``sendmail`` option is
+present, use the ``--use-web-endpoint`` switch.
 
 Sending your patches
 --------------------
-Once your web endpoint or SMTP server are configured, you can start
+Once your web endpoint or SMTP server is configured, you can start
 sending your work.
 
 .. note::
 
-  At this time, only series prepared with ``b4 prep`` are supported, but
-  future versions may support sending arbitrary patches generated with
-  ``git format-patch``.
+  At this time, the endpoint only accepts the series prepared with ``b4
+  prep``, but future versions may support sending arbitrary patches
+  generated with ``git format-patch``.
+
+Passing pre-flight checks **(v0.14+)**
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+B4 defines some pre-flight checks that should be passing, or the command
+generates a warning:
+
+- ``needs-editing``: there is an "EDITME" string in the patches
+  generated, which usually indicates that the cover letter needs to be
+  edited with ``b4 prep --edit-cover``
+- ``needs-checking``: you need to run ``b4 prep --check`` to make sure
+  that there are no common errors in your submission
+- ``needs-checking-deps``: your series defines dependencies, and you
+  need to run ``b4 prep --check-deps`` to verify that they are valid;
+  see more in the series-dependencies section
+- ``needs-auto-to-cc``: you need to run ``b4 prep --auto-to-cc`` to
+  populate the list of addresses that should receive your patch series
+
+If you find that some of these pre-flight checks aren't relevant to you,
+you can either turn them all off, or only the ones that you don't like.
+To do so, use the ``prep-pre-flight-checks`` configuration option, for
+example::
+
+    [b4]
+    prep-pre-flight-checks = disable-all
+
+or::
+
+    [b4]
+    prep-pre-flight-checks = disable-needs-auto-to-cc, disable-needs-checking
+
+B4 automatically recognizes when your commits have changed and triggers
+the pre-flight checks warning when it thinks that you should re-run
+them.
 
 Checking things over with ``-o``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-It is a good idea to first check that everything is looking good by
-running the send command with ``-o somedir``, e.g.::
+Before you send things out, it's a good idea to verify that everything
+is looking good by running the send command with ``-o somedir``, e.g.::
 
     b4 send -o /tmp/presend
 
-This will write out the messages just as they would be sent out, giving
-you a way to check that everything is looking as it should.
+This generates the messages and writes them out into the directory
+provided, giving you a way to verify that everything is looking as it
+should before sending.
 
 Checking things over with ``--reflect``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 One final test you can do before you submit your series is to send
 everything to yourself. This is especially useful when using the web
-endpoint, because this allows you to see what the messages will look
-like after being potentially post-processed on the remote end.
+endpoint, because this allows you to see what the messages are going to
+look like after being potentially post-processed on the remote end.
 
 When ``--reflect`` is on:
 
-* b4 will still populate the To:/Cc: headers with all the addresses,
-  because this allows to check for any encoding problems
-* b4 will **only send the series to the address in the From: field**
-* when using the web endpoint, the messages will not be added to the
+* b4 still populates the To:/Cc: headers with all the addresses, because
+  this allows to identify any encoding problems
+* b4 **only sends the series to the address in the From: field**
+* when using the web endpoint, the messages aren't added to the
   public-inbox feed
-* your branch will **not** be automatically rerolled to the next
-  revision
+* your branch is **not** automatically rerolled to the next revision
 
 Checking things over with ``--preview-to`` **(v0.13+)**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -187,84 +222,88 @@ actual maintainers.
 
 When ``--preview-to`` is on:
 
-* b4 will **only send to the addresses you specify on the command line**
-* your branch will **not** be automatically rerolled to the next
-  revision
+* b4 **only sends to the addresses you specify on the command line**
+* your branch is **not** automatically rerolled to the next revision
 
-(NB: the web submission endpoint cannot currently be used for this
+(NB: the web submission endpoint can't currently be used with this
 feature.)
 
 What happens after you send
 ---------------------------
 The following happens after you send your patches:
 
-* b4 will automatically create a detached head containing the commits
-  from your sent series and tag it with the contents of the cover
-  letter; this creates a historical record of your submission, as well
-  as adds a way to easily resend a previously sent series
-* b4 will reroll your series to the next version, so that if you just
-  sent off a ``v1`` of the series, the working version will be marked as
-  ``v2``
-* b4 will automatically edit the cover letter to add templated changelog
-  entries containing a pre-populated link to the just-sent series
+* b4 automatically creates a detached head containing the commits from
+  your sent series and tags it with the contents of the cover letter;
+  this creates a historical record of your submission, as well as adds a
+  way to easily resend a previously sent series, should you decide to do
+  so in the future
+* b4 rerolls your series to the next version, so that a ``v1`` of the
+  series becomes ``v2``, etc
+* b4 automatically edits the cover letter to add changelog entries
+  containing a pre-populated link to the just-sent series
 
 Resending your series
 ~~~~~~~~~~~~~~~~~~~~~
 If something went wrong, or if you need to resend the series because
-nobody paid attention to it the first time, it is easy to do this with
-``--resend vN``. B4 will automatically generate the series from the
-tagged historical version created during the previous sending attempt.
+nobody paid attention to it the first time, it's easy to do this with
+``--resend vN``. B4 automatically generates the series from the tagged
+historical version created during the previous sending attempt and sends
+it out.
 
 Command line flags
 ------------------
 ``-d, --dry-run``
-  Don't send any mail, just output the raw messages that would be sent.
+  Don't send any mail, just output the raw pre-rendered messages.
   Normally, this is a wall of text, so you'd want to use ``-o`` instead.
 
 ``-o OUTPUT_DIR, --output-dir OUTPUT_DIR``
   Prepares everything for sending, but writes out the messages into the
-  folder specified instead. This is usually a good last check before
+  folder specified instead. This is usually a good last step before
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
 
 ``--preview-to`` **(v0.13+)**
-  Sometimes it is useful to send your series for a pre-review to a
-  colleague, mentor, boss, etc. Using this option will send out the
-  series to the addresses specified on the command line, but will not
+  Sometimes it's useful to send your series for a pre-review to a
+  colleague, mentor, boss, etc. Using this option sends out the prepared
+  patches to the addresses specified on the command line, but doesn't
   reroll your series, allowing you to send the actual submission at some
   later point.
 
 ``--reflect`` **(v0.11+)**
   Prepares everything for sending, but only emails yourself (the address
-  in the ``From:`` header). Useful as a last check to make sure that
+  in the ``From:`` header). Useful as a last step to make sure that
   everything is looking good, and especially useful when using the web
   endpoint, because it may rewrite your From: header for DMARC reasons.
 
 ``--no-trailer-to-cc``
-  Do not add any addresses found in the cover or patch trailers to To:
-  or Cc:. This is usually handy for testing purposes, in case you want
-  to send a set of patches to a test address (also see ``--reflect``).
+  Tells b4 not to add any addresses found in the cover or patch trailers
+  to To: or Cc:. This is usually handy for testing purposes, in case you
+  want to send a set of patches to a test address (also see
+  ``--reflect``).
 
 ``--to``
-  Add any more email addresses to include into the To: header here
-  (comma-separated). Can be set in the configuration file using the
-  ``b4.send-series-to`` option (see :ref:`contributor_settings`).
+  Additional email addresses to include into the To: header. Separate
+  multiple entries with a comma. You can also set this in the
+  configuration file using the ``b4.send-series-to`` option (see
+  :ref:`contributor_settings`).
 
 ``--cc``
-  Add any more email addresses to include into the Cc: header here
-  (comma-separated). Can be set in the configuration file using the
-  ``b4.send-series-cc`` option (see :ref:`contributor_settings`).
+  Additional email addresses to include into the Cc: header. Separate
+  multiple entries with a comma. You can also set this in the
+  configuration file using the ``b4.send-series-cc`` option (see
+  :ref:`contributor_settings`).
 
 ``--not-me-too``
   Removes your own email address from the recipients.
 
 ``--no-sign``
   Don't sign your patches with your configured attestation mechanism.
-  Note, that patch signing is required for the web submission endpoint,
-  so this is only a valid option to use with ``-o`` or when using your
-  own SMTP server. This can be set in the configuration using the
-  ``b4.send-no-patatt-sign`` (see :ref:`contributor_settings`).
+  Note, that sending via the web submission endpoint requires
+  cryptographic signatures at all times, so this is only a valid option
+  to use with ``-o`` or when using your own SMTP server. This can be set
+  in the configuration using the ``b4.send-no-patatt-sign`` (see
+  :ref:`contributor_settings`).
 
 ``--resend V``
-  Resend a previously sent version (see above for more info).
+  Resend the specified previously sent version.
 
