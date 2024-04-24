@@ -417,7 +417,7 @@ if __name__ == '__main__':
     # noinspection PyBroadException
     try:
         if b4.__VERSION__.find('-dev') > 0:
-            base = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
             dotgit = os.path.join(base, '.git')
             ecode, short = b4.git_run_command(dotgit, ['rev-parse', '--short', 'HEAD'])
             if ecode == 0:
