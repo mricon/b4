@@ -164,8 +164,8 @@ generates a warning:
 - ``needs-checking``: you need to run ``b4 prep --check`` to make sure
   that there are no common errors in your submission
 - ``needs-checking-deps``: your series defines dependencies, and you
-  need to run ``b4 prep --check-deps`` to verify that they are valid;
-  see more in the series-dependencies section
+  need to run ``b4 prep --check-deps`` to verify that they are valid
+  (see :doc:`prep`)
 - ``needs-auto-to-cc``: you need to run ``b4 prep --auto-to-cc`` to
   populate the list of addresses that should receive your patch series
 

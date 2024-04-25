@@ -182,6 +182,102 @@ entries as your patch goes through revisions. If you add more commits at
 some point in the future, you can fill in the cover letter content with
 additional information about the intent of your entire series.
 
+.. _prep_deps:
+
+Working with series dependencies
+--------------------------------
+
+.. warning:: new in **(v0.14+)**
+
+   This is an experimental set of features introduced in v0.14. It may
+   have rough edges or unexpected bugs.
+
+If your series depends on another set of patches that aren't yet merged
+into the repository, you can specify these patches as *prerequisites*.
+
+There are multiple ways to indicate a dependency:
+
+- by the ``change-id`` of the series
+- by the ``message-id`` of its first patch or cover letter
+- by the ``patch-id`` of individual patches
+
+Using ``change-id`` is easiest, because this allows an easy way to
+identify when a newer version of the prerequisite series is available.
+The ``change-id`` is usually included in series created and sent with b4
+itself.
+
+To find the ``change-id`` of a series, look at the first patch or the
+cover letter and see if it has a ``change-id:`` entry at the bottom.
+
+Here is one such example:
+
+- https://lore.kernel.org/lkml/20240425-b4-dts_dxl_audio-v5-0-46397f23ce35@nxp.com/
+
+To specify this series as a dependency, run ``b4 prep --edit-deps`` and
+add the following line in the editor that opens::
+
+    change-id: 20240402-b4-dts_dxl_audio-74ba02030a72:v5
+
+In addition to the change-id itself, it's also necessary to add ``:v5``
+to the end of that line, to indicate the specific revision of that
+series. This allows checking if a newer version of the series is
+available when running ``b4 prep --check-deps`` during the next step.
+
+In addition to the ``change-id``, you must also specify the
+``base-commit`` to use for your combined series. Most of the time it is
+sufficient to copy-paste the ``base-commit:`` line from the same series
+where you copy-pasted the ``change-id`` line, but you can also use a
+specific tag.
+
+Using the message-id
+~~~~~~~~~~~~~~~~~~~~
+If a series doesn't specify a ``change-id``, you can also refer to it
+using the ``message-id`` of the cover letter or the first patch in the
+series. Enclose the message-id in the brackets, e.g. you can refer to
+the same series mentioned above by its ``message-id``::
+
+    message-id: <20240425-b4-dts_dxl_audio-v5-0-46397f23ce35@nxp.com>
+
+If you specify a series by its message-id, running ``--check-deps``
+won't show if there is a newer version of the series available. For this
+reason, it is better to always use the series ``change-id``, if it's
+available.
+
+.. note::
+
+   Specifying the message-id always pulls in the entire series, not
+   individual patches. To specify individual patches, use the patch-id
+   mechanism described below.
+
+Using the patch-id
+~~~~~~~~~~~~~~~~~~
+If you really want to, you can specify individual patches using their
+patch-ids, generated with ``git patch-id --stable``. For example, to
+obtain the patch-id of just the 3rd patch in the example series above,
+run::
+
+    $ curl -sL https://lore.kernel.org/lkml/20240425-b4-dts_dxl_audio-v5-3-46397f23ce35@nxp.com/raw \
+    > | git patch-id --stable
+    29e16de21ac5396e1475bbfe2798ac1ab2c7b7a1 0000000000000000000000000000000000000000
+
+You can now specify the dependency using that patch-id hash::
+
+    patch-id: 29e16de21ac5396e1475bbfe2798ac1ab2c7b7a1
+
+Running ``--check-deps``
+~~~~~~~~~~~~~~~~~~~~~~~~
+After you have finished specifying dependencies using ``b4 prep
+--edit-deps``, you should run ``--check-deps``, which does the following
+verifications:
+
+- ensures that it can find all specified series on the server
+- checks if newer versions of the series are available
+- checks that the specified base-commit is present in the tree
+- checks if prerequisite series plus your patches cleanly apply
+
+You should run ``--check-deps`` right after editing them, and right
+before submitting your series for review.
+
 .. _prep_recipients:
 
 Prepare the list of recipients
@@ -213,11 +309,12 @@ repository's ``.git/config`` file as follows::
 This may also be already set by the project, if they have a
 ``.b4-config`` file in the root of their git repository.
 
+
 .. _prep_check:
 
 Checking your work
 ------------------
-.. note::
+.. warning:: new in **(v0.14+)**
 
    This is a new feature in version 0.14 and you should consider it
    experimental.
@@ -274,6 +371,15 @@ modifying defaults for some of these flags.
   isn't found, or ``vim`` -- because it's safe to assume that if you
   don't like vim, you would have already set your ``$EDITOR`` to use
   some other command.
+
+``--edit-deps`` **(v0.14+)**
+  Lets you edit the series dependencies using the editor command defined
+  in git-config as ``core.editor``, the ``$EDITOR`` environment var if
+  that isn't found, or ``vim``.
+
+``--check-deps`` **(v0.14+)**
+  Verifies that b4 can resolve all specified dependencies and that
+  everything cleanly applies to the base-commit specified.
 
 ``--check`` **(v0.14+)**
   Runs a set of checks on your series to identify some of the more

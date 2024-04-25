@@ -21,11 +21,12 @@ v0.14
 	[X] Allow turning off pre-flight check all together, or by individual check
 [_] Document new features
 	[X] prep --check
-	[_] Series dependencies overview
-	[_] prep --edit-deps
-	[_] prep --check-deps
+	[X] Series dependencies overview
+	[X] prep --edit-deps
+	[X] prep --check-deps
 	[X] Pre-flight checks overview
 	[X] How to turn off pre-flight checks
+	[_] Document config file changes (am-perpatch-check-cmd, prep-perpatch-check-cmd, etc)
 	[_] Update manpages
 
 v0.15
