@@ -135,9 +135,9 @@ These options control many of the core features of b4.
 
 .. _shazam_settings:
 
-``shazam`` settings
-~~~~~~~~~~~~~~~~~~~
-These settings control how ``b4 shazam`` applies patches to your tree.
+``am`` and ``shazam`` settings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+These settings control ``b4 am`` and ``b4 shazam`` behavior.
 
 ``b4.shazam-am-flags``
   Additional flags to pass to ``git am`` when applying patches.
@@ -155,6 +155,13 @@ These settings control how ``b4 shazam`` applies patches to your tree.
   ``shazam-merge-template.example`` for an example.
 
   Default: ``None``
+
+``b4.am-perpatch-check-cmd`` (v0.14+)
+  The command to use when running with ``--check``. If b4 finds
+  ``scripts/checkpatch.pl`` at the top of your git tree, it uses the
+  command shown below by default.
+
+  Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback``
 
 .. _attestation_settings:
 
@@ -406,6 +413,26 @@ Contributor-oriented settings
   * ``${signature}``: your signature, either from ``~/.signature`` if found, or from your Git config
 
   Default: ``None``
+
+``b4.prep-perpatch-check-cmd`` (v0.14+)
+  The command to use when running ``--check``. If b4 finds
+  ``scripts/checkpatch.pl`` at the top of your git tree, it uses the
+  command shown below by default.
+
+  Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback --showfile```
+
+``b4.prep-pre-flight-checks`` (v0.14+)
+  You can use this to turn off some or all pre-flight checks that b4 runs
+  prior to sending out patches. To cancel all checks::
+
+      [b4]
+      prep-pre-flight-checks = disable-all
+
+  To turn off specific checks, list each one of them, separated by
+  comma::
+
+      [b4]
+      prep-pre-flight-checks = disable-needs-auto-to-cc, needs-checking
 
 
 To document

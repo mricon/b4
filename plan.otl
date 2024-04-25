@@ -26,7 +26,7 @@ v0.14
 	[X] prep --check-deps
 	[X] Pre-flight checks overview
 	[X] How to turn off pre-flight checks
-	[_] Document config file changes (am-perpatch-check-cmd, prep-perpatch-check-cmd, etc)
+	[X] Document config file changes (am-perpatch-check-cmd, prep-perpatch-check-cmd, etc)
 	[_] Update manpages
 
 v0.15
