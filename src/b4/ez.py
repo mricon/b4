@@ -1862,7 +1862,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
         if not cmdargs.resend:
             logger.debug('Running pre-flight checks')
-            sinfo = get_info()
+            sinfo = get_info(usebranch=mybranch)
             pfchecks = {'needs-editing': True,
                         'needs-checking': True,
                         'needs-checking-deps': True,
@@ -2409,7 +2409,7 @@ def show_info(param: str) -> None:
         sys.exit(1)
 
 
-def get_info(usebranch: Optional[str] = None) -> Dict[str, str]:
+def get_info(usebranch: str) -> Dict[str, str]:
     is_prep_branch(mustbe=True, usebranch=usebranch)
     info = dict()
     info['branch'] = usebranch
