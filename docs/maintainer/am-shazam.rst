@@ -128,6 +128,10 @@ The following flags are common to both commands:
 
       b4 am -P _ <msgid>
 
+  This picks just the last patch from a series::
+
+      b4 am -P -1 <msgid>
+
   This picks all patches where the subject matches "iscsi"::
 
       b4 am -P *iscsi*
