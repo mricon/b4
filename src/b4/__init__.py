@@ -3541,7 +3541,7 @@ def make_quote(body: str, maxlines: int = 5) -> str:
     return '\n'.join(quotelines)
 
 
-def parse_int_range(intrange: str, upper: Optional[int] = None) -> Iterator[int]:
+def parse_int_range(intrange: str, upper: int) -> Iterator[int]:
     # Remove all whitespace
     intrange = re.sub(r'\s', '', intrange)
     for n in intrange.split(','):
