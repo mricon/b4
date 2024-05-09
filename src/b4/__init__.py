@@ -2093,10 +2093,11 @@ class LoreMessage:
         if len(basement):
             if not len(trailers):
                 body += '\n'
-            if DIFFSTAT_RE.search(basement):
+            if (DIFFSTAT_RE.search(basement)
+                    or not (basement.strip().startswith('diff --git') or basement.lstrip().startswith('--- '))):
                 body += '---\n'
             else:
-                # If we don't have a diffstat, then we don't need to add a ---
+                # We don't need to add a ---
                 body += '\n'
             body += basement.strip('\r\n') + '\n'
 

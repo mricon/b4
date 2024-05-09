@@ -101,6 +101,7 @@ def test_parse_trailers(sampledir, source, expected):
     ('partial-reroll', {}, {'addmysob': True}, 'defaults', {}),
     ('nore', {}, {}, 'defaults', {}),
     ('non-git-patch', {}, {}, 'defaults', {}),
+    ('non-git-patch-with-comments', {}, {}, 'defaults', {}),
     ('with-diffstat', {}, {}, 'defaults', {}),
     ('name-parens', {}, {}, 'defaults', {}),
     ('bare-address', {}, {}, 'defaults', {}),
