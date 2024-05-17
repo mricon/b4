@@ -152,8 +152,6 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Do not perform any network queries')
     parser.add_argument('--no-stdin', action='store_true', default=False,
                         help='Disable TTY detection for stdin')
-    parser.add_argument('--use-web-endpoint', dest='send_web', action='store_true', default=False,
-                        help="Force going through the web endpoint")
     parser.add_argument('-c', '--config', metavar='NAME=VALUE', action=ConfigOption,
                         help='''Set config option NAME to VALUE. Override value
                         from config files. NAME is in dotted section.key
@@ -369,6 +367,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Resend a previously sent version of the series')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
                          help='Do not add the cryptographic attestation signature header')
+    sp_send.add_argument('--use-web-endpoint', dest='send_web', action='store_true', default=False,
+                         help="Force going through the web endpoint")
     ag_sendh = sp_send.add_argument_group('Web submission', 'Authenticate with the web submission endpoint')
     ag_sendh.add_argument('--web-auth-new', dest='auth_new', action='store_true', default=False,
                           help='Initiate a new web authentication request')
