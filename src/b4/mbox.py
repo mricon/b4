@@ -223,6 +223,9 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
             slug = lser.get_slug(extended=True)
 
         if outdir != '-':
+            if not os.path.exists(outdir):
+                os.makedirs(outdir)
+
             am_filename = os.path.join(outdir, f'{slug}.{dftext}')
             am_cover = os.path.join(outdir, f'{slug}.cover')
 
