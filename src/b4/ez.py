@@ -919,7 +919,11 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
     elif allgood:
         logger.info('Testing if all patches can be applied to %s', base_commit)
         tos, ccs, tstr, mypatches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
-        prereq_patches += [x[1] for x in mypatches]
+        if get_cover_strategy() == "commit":
+            # If the cover letter is stored as a commit, skip it to avoid empty patches
+            prereq_patches += [x[1] for x in mypatches[1:]]
+        else:
+            prereq_patches += [x[1] for x in mypatches]
         gitdir = os.getcwd()
         topdir = b4.git_get_toplevel(gitdir)
         if b4.git_commit_exists(topdir, base_commit):
@@ -2451,7 +2455,9 @@ def get_info(usebranch: str) -> Dict[str, str]:
     info['preflight-checks-failing'] = bool(info['needs-editing'] or info['needs-auto-to-cc'] or
                                             info['needs-checking'] or info['needs-checking-deps'])
 
-    # Add commits information
+    # Add informations about the commits in this series
+    #   `commit-<hash>`: stores the subject of each commit
+    #   `series-<rev>`: stores the commit range for a particular revision
     for line in oneline:
         short, subject = line.split(maxsplit=1)
         info[f'commit-{short}'] = subject
