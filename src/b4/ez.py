@@ -919,7 +919,11 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
     elif allgood:
         logger.info('Testing if all patches can be applied to %s', base_commit)
         tos, ccs, tstr, mypatches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
-        prereq_patches += [x[1] for x in mypatches]
+        if get_cover_strategy() == "commit":
+            # If the cover letter is stored as a commit, skip it to avoid empty patches
+            prereq_patches += [x[1] for x in mypatches[1:]]
+        else:
+            prereq_patches += [x[1] for x in mypatches]
         gitdir = os.getcwd()
         topdir = b4.git_get_toplevel(gitdir)
         if b4.git_commit_exists(topdir, base_commit):
@@ -2401,7 +2405,8 @@ def show_info(param: str) -> None:
     prep_info = get_info(usebranch=mybranch)
     if getval == '_all':
         for key, val in prep_info.items():
-            print('%s: %s' % (key, val))
+            if val is not None:
+                print('%s: %s' % (key, val))
     elif getval in prep_info:
         print(prep_info[getval])
     else:
@@ -2411,57 +2416,48 @@ def show_info(param: str) -> None:
 
 def get_info(usebranch: str) -> Dict[str, str]:
     is_prep_branch(mustbe=True, usebranch=usebranch)
-    info = dict()
-    info['branch'] = usebranch
     cover, tracking = load_cover(usebranch=usebranch)
     csubject, cbody = get_cover_subject_body(cover)
-    info['cover-subject'] = csubject.full_subject
     ts = tracking['series']
-    if ts.get('prefixes'):
-        info['prefixes'] = ' '.join(ts.get('prefixes'))
-    info['change-id'] = ts.get('change-id')
-    revision = ts.get('revision')
-    info['revision'] = revision
-    strategy = get_cover_strategy(usebranch=usebranch)
-    info['cover-strategy'] = strategy
-    if ts.get('base-branch'):
-        info['base-branch'] = ts['base-branch']
     base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=usebranch)
-    info['needs-editing'] = False
     todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(usebranch=usebranch, expandprereqs=False)
-    if not todests and not ccdests:
-        info['needs-recipients'] = True
-    else:
-        info['needs-recipients'] = False
-    if b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]):
-        info['needs-editing'] = True
     prereqs = tracking['series'].get('prerequisites', list())
-    info['has-prerequisites'] = len(prereqs) > 0
     tocmd, cccmd = get_auto_to_cc_cmds()
-    if tocmd or cccmd:
-        info['needs-auto-to-cc'] = True
     ppcmds, scmds = get_check_cmds()
-    if ppcmds or scmds:
-        info['needs-checking'] = True
     pf_checks = get_preflight_checks(usebranch=usebranch)
-    if pf_checks is not None:
-        if (tocmd or cccmd) and 'auto-to-cc' in pf_checks and not info['needs-recipients']:
-            info['needs-auto-to-cc'] = False
-        if (ppcmds or scmds) and 'check' in pf_checks:
-            info['needs-checking'] = False
-        if info['has-prerequisites']:
-            info['needs-checking-deps'] = 'check-deps' not in pf_checks
-        else:
-            info['needs-checking-deps'] = False
-    if info['needs-editing'] or info['needs-auto-to-cc'] or info['needs-checking'] or info['needs-checking-deps']:
-        info['preflight-checks-failing'] = True
-    else:
-        info['preflight-checks-failing'] = False
 
-    info['base-commit'] = base_commit
-    info['start-commit'] = start_commit
-    info['end-commit'] = end_commit
-    info['series-range'] = f'{start_commit}..{end_commit}'
+    info = {
+        # General information about this branch
+        'branch': usebranch,
+        'cover-subject': csubject.full_subject,
+        'base-branch': ts.get('base-branch'),
+        'base-commit': base_commit,
+        'start-commit': start_commit,
+        'end-commit': end_commit,
+        'series-range': f'{start_commit}..{end_commit}',
+
+        # General information about this branch status
+        'prefixes': ' '.join(ts.get('prefixes', [])) or None,
+        'change-id': ts.get('change-id'),
+        'revision': ts.get('revision'),
+        'cover-strategy': get_cover_strategy(usebranch=usebranch),
+
+        # General information about this branch checks
+        'needs-editing': b'EDITME' in b4.LoreMessage.get_msg_as_bytes(patches[0][1]),
+        'needs-recipients': bool(not todests and not ccdests),
+        'has-prerequisites': len(prereqs) > 0,
+        'needs-auto-to-cc': None,
+        'needs-checking': bool(ppcmds or scmds) and 'check' not in pf_checks,
+        'needs-checking-deps': len(prereqs) > 0 and 'check-deps' not in pf_checks,
+        'preflight-checks-failing': None,
+    }
+    info['needs-auto-to-cc'] = info["needs-recipients"] or (bool(tocmd or cccmd) and 'auto-to-cc' not in pf_checks)
+    info['preflight-checks-failing'] = bool(info['needs-editing'] or info['needs-auto-to-cc'] or
+                                            info['needs-checking'] or info['needs-checking-deps'])
+
+    # Add informations about the commits in this series
+    #   `commit-<hash>`: stores the subject of each commit
+    #   `series-<rev>`: stores the commit range for a particular revision
     for line in oneline:
         short, subject = line.split(maxsplit=1)
         info[f'commit-{short}'] = subject
