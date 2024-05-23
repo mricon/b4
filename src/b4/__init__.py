@@ -3542,13 +3542,19 @@ def make_quote(body: str, maxlines: int = 5) -> str:
     return '\n'.join(quotelines)
 
 
-def parse_int_range(intrange: str, upper: Optional[int] = None) -> Iterator[int]:
+def parse_int_range(intrange: str, upper: int) -> Iterator[int]:
     # Remove all whitespace
     intrange = re.sub(r'\s', '', intrange)
     for n in intrange.split(','):
-        if n.isdigit():
-            yield int(n)
-        elif n.find('<') == 0 and len(n) > 1 and n[1:].isdigit():
+        # Allow single numbers to be negative
+        try:
+            i = int(n)
+            if i < 0 and abs(i) <= upper:
+                yield upper + i + 1
+        except ValueError:
+            pass
+
+        if n.find('<') == 0 and len(n) > 1 and n[1:].isdigit():
             yield from range(1, int(n[1:]))
         elif n.find('-') > 0:
             nr = n.split('-')
