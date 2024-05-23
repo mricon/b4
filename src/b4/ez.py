@@ -1107,6 +1107,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers)
         mismatches = list(lser.trailer_mismatches)
         for lmsg in lser.patches[1:]:
+            if not lmsg:
+                continue
             addtrailers = list()
             if lmsg.followup_trailers:
                 addtrailers += list(lmsg.followup_trailers)
