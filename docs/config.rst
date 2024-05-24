@@ -414,6 +414,13 @@ Contributor-oriented settings
 
   Default: ``None``
 
+``b4.send-prefixes`` (v0.11+)
+  Extra prefixes to add to ``[PATCH]`` (e.g. ``RFC mydrv``).
+
+  This setting can be replaced for a series with ``b4 prep --set-prefixes``.
+
+  Default: ``None``
+
 ``b4.prep-perpatch-check-cmd`` (v0.14+)
   The command to use when running ``--check``. If b4 finds
   ``scripts/checkpatch.pl`` at the top of your git tree, it uses the
