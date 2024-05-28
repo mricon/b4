@@ -3551,6 +3551,11 @@ def parse_int_range(intrange: str, upper: int) -> Iterator[int]:
             i = int(n)
             if i < 0 and abs(i) <= upper:
                 yield upper + i + 1
+            elif 0 < i <= upper:
+                yield i
+            else:
+                logger.critical('Unknown range value specified: %s', n)
+                continue
         except ValueError:
             pass
 
@@ -3559,7 +3564,11 @@ def parse_int_range(intrange: str, upper: int) -> Iterator[int]:
         elif n.find('-') > 0:
             nr = n.split('-')
             if nr[0].isdigit() and nr[1].isdigit():
-                yield from range(int(nr[0]), int(nr[1]) + 1)
+                rmax = int(nr[1])
+                if rmax > upper:
+                    logger.debug('Range %s is outside the upper value %s', rmax, upper)
+                    rmax = upper
+                yield from range(int(nr[0]), rmax + 1)
             elif not len(nr[1]) and nr[0].isdigit() and upper:
                 yield from range(int(nr[0]), upper + 1)
         else:

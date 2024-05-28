@@ -194,18 +194,34 @@ def test_header_wrapping(sampledir, hval, verify, tr):
 
 @pytest.mark.parametrize('pairs,verify,clean', [
     ([('', 'foo@example.com'), ('Foo Bar', 'bar@example.com')],
-        'foo@example.com, Foo Bar <bar@example.com>', True),
+     'foo@example.com, Foo Bar <bar@example.com>', True),
     ([('', 'foo@example.com'), ('Foo, Bar', 'bar@example.com')],
-        'foo@example.com, "Foo, Bar" <bar@example.com>', True),
+     'foo@example.com, "Foo, Bar" <bar@example.com>', True),
     ([('', 'foo@example.com'), ('Fôo, Bar', 'bar@example.com')],
-        'foo@example.com, "Fôo, Bar" <bar@example.com>', True),
+     'foo@example.com, "Fôo, Bar" <bar@example.com>', True),
     ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx_Foo?=', 'quux@example.com')],
      'foo@example.com, Quûx Foo <quux@example.com>', True),
     ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx=2C_Foo?=', 'quux@example.com')],
-        'foo@example.com, "Quûx, Foo" <quux@example.com>', True),
+     'foo@example.com, "Quûx, Foo" <quux@example.com>', True),
     ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx=2C_Foo?=', 'quux@example.com')],
      'foo@example.com, =?utf-8?q?Qu=C3=BBx=2C_Foo?= <quux@example.com>', False),
 ])
 def test_format_addrs(pairs, verify, clean):
     formatted = b4.format_addrs(pairs, clean)
     assert formatted == verify
+
+
+@pytest.mark.parametrize('intrange,upper,expected', [
+    ('1-3', 5, [1, 2, 3]),
+    ('-1', 5, [5]),
+    ('1,3-5', 5, [1, 3, 4, 5]),
+    ('1', 5, [1]),
+    ('3', 5, [3]),
+    ('5', 5, [5]),
+    ('1,3,4-', 6, [1, 3, 4, 5, 6]),
+    ('1-3,5,-1', 7, [1, 2, 3, 5, 7]),
+    ('-7', 5, []),
+    ('1-8', 3, [1, 2, 3]),
+])
+def test_parse_int_range(intrange, upper, expected):
+    assert list(b4.parse_int_range(intrange, upper)) == expected
