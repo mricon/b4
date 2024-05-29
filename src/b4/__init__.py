@@ -1395,11 +1395,11 @@ class LoreMessage:
         for hn, hval in dkhdrs:
             # Handle MIME encoded-word syntax or other types of header encoding if
             # present.
-            if '?q?' in hval:
+            if '?q?' in hval.lower():
                 hval = str(email.header.make_header(email.header.decode_header(hval)))
             errors = list()
             hdata = LoreMessage.get_parts_from_header(hval)
-            logger.debug('Loading DKIM attestation for d=%s, s=%s', hdata['d'], hdata['s'])
+            logger.debug('Loading DKIM attestation for d=%s, s=%s', hdata.get('d'), hdata.get('s'))
 
             identity = hdata.get('i')
             if not identity:
