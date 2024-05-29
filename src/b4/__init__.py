@@ -2421,6 +2421,7 @@ class LoreSubject:
         self.revision_inferred = True
         self.counters_inferred = True
         self.prefixes = list()
+        self.ignore_list = {'patch', 'cover'}
 
         subject = re.sub(r'\s+', ' ', LoreMessage.clean_header(subject)).strip()
         self.full_subject = subject
@@ -2476,7 +2477,7 @@ class LoreSubject:
         for _prf in self.prefixes:
             if exclude and _prf in exclude:
                 continue
-            if _prf.lower() == 'patch':
+            if _prf.lower() in self.ignore_list:
                 continue
             elif re.search(r'v\d+', _prf, flags=re.I):
                 continue
@@ -2490,7 +2491,9 @@ class LoreSubject:
         _pfx = self.get_extra_prefixes()
         if eprefixes:
             for _epfx in eprefixes:
-                if _epfx not in _pfx:
+                if _epfx.lower() in self.ignore_list:
+                    continue
+                if _epfx.lower() not in [x.lower() for x in _pfx]:
                     _pfx.append(_epfx)
         if self.revision > 1:
             _pfx.append(f'v{self.revision}')
