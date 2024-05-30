@@ -1877,7 +1877,7 @@ class LoreMessage:
         return hdata
 
     @staticmethod
-    def get_clean_msgid(msg: email.message.Message, header: str = 'Message-Id') -> str:
+    def get_clean_msgid(msg: email.message.Message, header: str = 'Message-Id') -> Optional[str]:
         msgid = None
         raw = msg.get(header)
         if raw:
@@ -3096,6 +3096,33 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
 
 def get_strict_thread(msgs: Union[List[email.message.Message], mailbox.Mailbox, mailbox.Maildir],
                       msgid: str, noparent: bool = False) -> Optional[List[email.message.Message]]:
+    # Attempt to automatically recognize the situation when someone posts
+    # a standalone patch or series in the middle of a large discussion for another series.
+    # We recommend dealing with this using --no-parent, but we can also catch this
+    # automatically in certain situations.
+    msgid_map = dict()
+    for msg in msgs:
+        c_msgid = LoreMessage.get_clean_msgid(msg)
+        msgid_map[c_msgid] = msg
+
+    if not noparent:
+        # If it's a single standalone patch with no versioning info, we automatically no-parent it
+        my_msg = msgid_map[msgid]
+        my_subj = LoreSubject(my_msg.get('subject', ''))
+        if my_subj.revision == 1 and my_msg.get('References'):
+            if my_subj.counter == 1 and my_subj.expected == 1:
+                logger.debug('Auto-noparenting the standadlone patch')
+                noparent = True
+            else:
+                # Look at the in-reply-to message and see if it's the cover letter
+                irt_msgid = LoreMessage.get_clean_msgid(my_msg, 'In-Reply-To')
+                if irt_msgid and irt_msgid in msgid_map:
+                    irt_msg = msgid_map[irt_msgid]
+                    irt_subj = LoreSubject(irt_msg.get('subject', ''))
+                    if irt_subj.counter == 0:
+                        msgid = irt_msgid
+                        noparent = True
+
     want = {msgid}
     ignore = set()
     got = set()
@@ -3103,8 +3130,7 @@ def get_strict_thread(msgs: Union[List[email.message.Message], mailbox.Mailbox, 
     maybe = dict()
     strict = list()
     while True:
-        for msg in msgs:
-            c_msgid = LoreMessage.get_clean_msgid(msg)
+        for c_msgid, msg in msgid_map.items():
             if c_msgid in ignore:
                 continue
             seen.add(c_msgid)
