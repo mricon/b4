@@ -680,9 +680,10 @@ class LoreSeries:
             else:
                 # Use recommended checkpatch defaults if we find checkpatch
                 topdir = git_get_toplevel()
-                checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
-                if os.access(checkpatch, os.X_OK):
-                    checkcmds = [f'{checkpatch} -q --terse --no-summary --mailback']
+                if topdir:
+                    checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
+                    if os.access(checkpatch, os.X_OK):
+                        checkcmds = [f'{checkpatch} -q --terse --no-summary --mailback']
             if checkcmds:
                 for cmdstr in checkcmds:
                     sp = shlex.shlex(cmdstr, posix=True)
