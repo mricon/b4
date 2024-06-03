@@ -3110,10 +3110,13 @@ def get_strict_thread(msgs: Union[List[email.message.Message], mailbox.Mailbox, 
         # If it's a single standalone patch with no versioning info, we automatically no-parent it
         my_msg = msgid_map[msgid]
         my_subj = LoreSubject(my_msg.get('subject', ''))
-        if my_subj.revision == 1 and my_msg.get('References'):
+        if not my_subj.reply and my_subj.revision == 1 and my_msg.get('References'):
             if my_subj.counter == 1 and my_subj.expected == 1:
-                logger.debug('Auto-noparenting the standadlone patch')
-                noparent = True
+                # Does it have a diff or a diffstat?
+                my_lmsg = LoreMessage(my_msg)
+                if my_lmsg.has_diff or my_lmsg.has_diffstat:
+                    logger.debug('Auto-noparenting the standadlone patch')
+                    noparent = True
             else:
                 # Look at the in-reply-to message and see if it's the cover letter
                 irt_msgid = LoreMessage.get_clean_msgid(my_msg, 'In-Reply-To')
