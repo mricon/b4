@@ -341,7 +341,9 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_trl.add_argument('-F', '--trailers-from', dest='trailers_from',
                         help='Look for trailers in the thread with this msgid instead of using the series change-id')
     sp_trl.add_argument('--since', default='1.month',
-                        help='The --since option to use with -F when auto-matching patches (default=1.month)')
+                        help='The --since option to use with git-log when auto-matching patches (default=1.month)')
+    sp_trl.add_argument('--since-commit',
+                        help='Look for any new trailers for commits starting with this one')
     cmd_retrieval_common_opts(sp_trl)
     sp_trl.set_defaults(func=cmd_trailers)
 

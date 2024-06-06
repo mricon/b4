@@ -24,6 +24,7 @@ import gzip
 import io
 import tarfile
 import hashlib
+import urllib.parse
 
 from typing import Optional, Tuple, List, Union, Dict
 from email import utils
@@ -1005,10 +1006,13 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     ignore_commits = None
+    changeid = None
+    msgid = None
+    end = 'HEAD'
+    limit_committer = usercfg['email']
     # If we are in an b4-prep branch, we start from the beginning of the series
     if is_prep_branch():
         start = get_series_start()
-        end = 'HEAD'
         cover, tracking = load_cover(strip_comments=True)
         changeid = tracking['series'].get('change-id')
         if cmdargs.trailers_from:
@@ -1022,63 +1026,57 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             if cover_commit:
                 ignore_commits = {cover_commit}
 
-    elif cmdargs.msgid or cmdargs.trailers_from:
+    elif cmdargs.since_commit:
+        since_commit = b4.git_revparse_obj(cmdargs.since_commit)
+        if since_commit:
+            start = f'{since_commit}~1'
+        else:
+            logger.critical('CRITICAL: Could not resolve %s to a git commit', cmdargs.since_commit)
+            sys.exit(1)
+
+    else:
+        # There doesn't appear to be a great way to find the first commit
+        # where we're NOT the committer, so we get all commits since range specified where
+        # we're the committer and pick the earliest commit
+        gitargs = ['log', '-F', '--no-merges', f'--committer={limit_committer}', '--format=%H', '--reverse',
+                   '--since', cmdargs.since]
+        lines = b4.git_get_command_lines(None, gitargs)
+        if not lines:
+            logger.critical('CRITICAL: could not find any commits where committer=%s', limit_committer)
+            sys.exit(1)
+        first_commit = lines[0]
+        start = f'{first_commit}~1'
+
+    if cmdargs.msgid or cmdargs.trailers_from:
         if cmdargs.trailers_from:
             # Compatibility with b4 overall retrieval tools
             cmdargs.msgid = cmdargs.trailers_from
         msgid = b4.get_msgid(cmdargs)
-        changeid = None
-        myemail = usercfg['email']
-        # There doesn't appear to be a great way to find the first commit
-        # where we're NOT the committer, so we get all commits since range specified where
-        # we're the committer and stop at the first non-contiguous parent
-        gitargs = ['log', '-F', '--no-merges', f'--committer={myemail}', '--since', cmdargs.since, '--format=%H %P']
-        lines = b4.git_get_command_lines(None, gitargs)
-        if not lines:
-            logger.critical('CRITICAL: could not find any commits where committer=%s', myemail)
-            sys.exit(1)
-
-        prevparent = prevcommit = end = None
-        for line in lines:
-            commit, parent = line.split()
-            if end is None:
-                end = commit
-            if prevparent is None:
-                prevparent = parent
-                continue
-            if prevcommit is None:
-                prevcommit = commit
-            if prevparent != commit:
-                break
-            prevparent = parent
-            prevcommit = commit
-        if prevcommit is None:
-            prevcommit = end
-        start = f'{prevcommit}~1'
-    else:
-        logger.critical('CRITICAL: Please specify -F msgid to look up trailers from remote.')
-        sys.exit(1)
 
     try:
-        patches = b4.git_range_to_patches(None, start, end, ignore_commits=ignore_commits)
+        patches = b4.git_range_to_patches(None, start, end, ignore_commits=ignore_commits,
+                                          limit_committer=limit_committer)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
 
-    logger.info('Calculating patch-ids from commits, this may take a moment...')
+    logger.info('Finding code-review trailers for %s commits...', len(patches))
     commit_map = dict()
-    by_patchid = dict()
     by_subject = dict()
     updates = dict()
+    bbox = b4.LoreMailbox()
     for commit, msg in patches:
         if not msg:
             continue
-        commit_map[commit] = msg
-        body, charset = b4.LoreMessage.get_payload(msg)
-        patchid = b4.LoreMessage.get_patch_id(body)
-        ls = b4.LoreSubject(msg.get('subject'))
-        by_subject[ls.subject] = commit
-        by_patchid[patchid] = commit
+        msg['Message-Id'] = f'<{commit}>'
+        bbox.add_message(msg)
+
+    at = 0
+    for commit, msg in patches:
+        at += 1
+        lmsg = bbox.series[1].patches[at]
+        by_subject[lmsg.subject] = commit
+        commit_map[commit] = lmsg
 
     list_msgs = list()
     if changeid and b4.can_network:
@@ -1099,67 +1097,81 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if tmsgs is not None:
             list_msgs += tmsgs
 
-    if list_msgs:
-        bbox = b4.LoreMailbox()
-        for list_msg in list_msgs:
-            bbox.add_message(list_msg)
+    for list_msg in list_msgs:
+        llmsg = b4.LoreMessage(list_msg)
+        if not llmsg.trailers:
+            continue
+        if llmsg.subject in by_subject:
+            # Reparent to the commit and add to followups
+            commit = by_subject[llmsg.subject]
+            logger.debug('Mapped "%s" to commit %s', llmsg.subject, commit)
+            plmsg = commit_map[commit]
+            llmsg.in_reply_to = plmsg.msgid
+            bbox.followups.append(llmsg)
 
-        lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers)
-        mismatches = list(lser.trailer_mismatches)
-        for lmsg in lser.patches[1:]:
-            if not lmsg:
-                continue
-            addtrailers = list()
-            if lmsg.followup_trailers:
-                addtrailers += list(lmsg.followup_trailers)
-            if lser.has_cover and lser.patches[0].followup_trailers:
-                addtrailers += list(lser.patches[0].followup_trailers)
-            if not addtrailers:
-                logger.debug('No new follow-up trailers to add to: %s', lmsg.subject)
-                continue
-            commit = None
-            if lmsg.subject in by_subject:
-                commit = by_subject[lmsg.subject]
-            else:
-                patchid = b4.LoreMessage.get_patch_id(lmsg.body)
-                if patchid in by_patchid:
-                    commit = by_patchid[patchid]
-            if not commit:
-                logger.debug('No match for %s', lmsg.full_subject)
-                continue
+    if msgid or changeid:
+        codereview_trailers = False
+    else:
+        logger.debug('Will query by change-id')
+        codereview_trailers = True
 
-            mbody, mcharset = b4.LoreMessage.get_payload(commit_map[commit])
-            parts = b4.LoreMessage.get_body_parts(mbody)
-            for fltr in addtrailers:
-                if fltr not in parts[2]:
-                    if commit not in updates:
-                        updates[commit] = list()
-                    updates[commit].append(fltr)
-            # Check if we've applied mismatched trailers already
-            if not cmdargs.sloppytrailers and mismatches:
-                for mismatch in list(mismatches):
-                    if b4.LoreTrailer(name=mismatch[0], value=mismatch[1]) in parts[2]:
-                        logger.debug('Removing already-applied mismatch %s', mismatch[0])
-                        mismatches.remove(mismatch)
+    lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers, codereview_trailers=codereview_trailers)
+    mismatches = list(lser.trailer_mismatches)
+    config = b4.get_main_config()
+    seen_froms = set()
+    logger.info('---')
+    for lmsg in lser.patches[1:]:
+        if not lmsg:
+            continue
+        if not lmsg.followup_trailers:
+            logger.debug('No new follow-up trailers to add to: %s', lmsg.subject)
+            continue
 
-        if len(mismatches):
-            logger.critical('---')
-            logger.critical('NOTE: some trailers ignored due to from/email mismatches:')
-            for tname, tvalue, fname, femail in lser.trailer_mismatches:
-                logger.critical('    ! Trailer: %s: %s', tname, tvalue)
-                logger.critical('     Msg From: %s <%s>', fname, femail)
-            logger.critical('NOTE: Rerun with -S to apply them anyway')
+        commit = lmsg.msgid
+        parts = b4.LoreMessage.get_body_parts(lmsg.body)
+        for fltr in lmsg.followup_trailers:
+            if fltr not in parts[2]:
+                if commit not in updates:
+                    updates[commit] = list()
+                rendered = fltr.as_string(omit_extinfo=True)
+                if rendered in seen_froms:
+                    continue
+                seen_froms.add(rendered)
+                source = config['midmask'] % urllib.parse.quote_plus(fltr.lmsg.msgid, safe='@')
+                logger.info('  + %s', rendered)
+                logger.info('    %s', source)
+                updates[commit].append(fltr)
+
+        # Check if we've applied mismatched trailers already
+        if not cmdargs.sloppytrailers and mismatches:
+            for mismatch in list(mismatches):
+                if b4.LoreTrailer(name=mismatch[0], value=mismatch[1]) in parts[2]:
+                    logger.debug('Removing already-applied mismatch %s', mismatch[0])
+                    mismatches.remove(mismatch)
+
+    if len(mismatches):
+        logger.critical('---')
+        logger.critical('NOTE: some trailers ignored due to from/email mismatches:')
+        for tname, tvalue, fname, femail in lser.trailer_mismatches:
+            logger.critical('    ! Trailer: %s: %s', tname, tvalue)
+            logger.critical('     Msg From: %s <%s>', fname, femail)
+        logger.critical('NOTE: Rerun with -S to apply them anyway')
 
     if not updates:
         logger.info('No trailer updates found.')
         return
 
-    logger.info('---')
+    try:
+        logger.critical('---')
+        input('Press Enter to apply these trailers or Ctrl-C to abort')
+    except KeyboardInterrupt:
+        logger.info('')
+        sys.exit(130)
+
     # Create the map of new messages
     fred = FRCommitMessageEditor()
     for commit, newtrailers in updates.items():
-        # Make it a LoreMessage, so we can run attestation on received trailers
-        cmsg = b4.LoreMessage(commit_map[commit])
+        cmsg = commit_map[commit]
         logger.info('  %s', cmsg.subject)
         if len(newtrailers):
             cmsg.followup_trailers = newtrailers

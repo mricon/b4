@@ -267,7 +267,7 @@ class LoreMailbox:
                 if lmsg is None:
                     continue
                 if lmsg.git_patch_id:
-                    q.append(f'patchid:{lmsg.git_patch_id} OR nq:"for patch-id {lmsg.git_patch_id}"')
+                    q.append(f'patchid:{lmsg.git_patch_id}')
 
         if not q:
             return
@@ -277,44 +277,12 @@ class LoreMailbox:
             logger.debug('No matching code-review messages')
             return
 
-        logger.debug('Retrieved %s code-review messages', len(qmsgs))
-        # weed out known messages
-        qmid_map = dict()
-        for qmsg in qmsgs:
-            qmid = LoreMessage.get_clean_msgid(qmsg)
-            if qmid in self.msgid_map:
-                logger.debug('  skipping known message: %s', qmid)
-                continue
-            qmid_map[qmid] = LoreMessage(qmsg)
-
-        for qmid, qlmsg in qmid_map.items():
-            logger.debug('  new message: %s', qmid)
-            if not qlmsg.reply:
-                logger.debug('  skipping non-reply: %s', qmid)
-                continue
-            if not qlmsg.trailers:
-                logger.debug('  skipping reply without trailers: %s', qmid)
-                continue
-            # Find the patch-id to which this belongs
-            pfound = False
-            for refmid in qlmsg.references:
-                if refmid in qmid_map:
-                    # Is it a patch?
-                    if not qmid_map[refmid].has_diff:
-                        continue
-                    pqpid = qmid_map[refmid].git_patch_id
-                    if pqpid:
-                        # Found our parent patch
-                        if pqpid not in self.trailer_map:
-                            self.trailer_map[pqpid] = list()
-                        self.trailer_map[pqpid] += qlmsg.trailers
-                        pfound = True
-                        logger.debug('  found matching patch-id for %s', qlmsg.subject)
-                        break
-            if not pfound:
-                logger.debug('  no matching parents for %s', qlmsg.subject)
-                # Does it have 'patch-id: ' in the body?
-                # TODO: once we have that functionality in b4 cr
+        logger.debug('Retrieved %s matching code-review messages', len(qmsgs))
+        patchid_map = map_codereview_trailers(qmsgs, ignore_msgids=set(self.msgid_map.keys()))
+        for patchid, fmsgs in patchid_map.items():
+            if patchid not in self.trailer_map:
+                self.trailer_map[patchid] = list()
+            self.trailer_map[patchid] += fmsgs
 
     def get_series(self, revision: Optional[int] = None, sloppytrailers: bool = False,
                    reroll: bool = True, codereview_trailers: bool = True) -> Optional['LoreSeries']:
@@ -370,6 +338,7 @@ class LoreMailbox:
             # Go up through the follow-ups and tally up trailers until
             # we either run out of in-reply-tos, or we find a patch in
             # one of our series
+            logger.debug('fmsg.in_reply_to=%s', fmsg.in_reply_to)
             if fmsg.in_reply_to is None:
                 # Check if there's something matching in References
                 pmsg = None
@@ -381,6 +350,7 @@ class LoreMailbox:
                     # Can't find the message we're replying to here
                     continue
             elif fmsg.in_reply_to in self.msgid_map:
+                logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
                 pmsg = self.msgid_map[fmsg.in_reply_to]
             else:
                 logger.debug('  missing message, skipping: %s', fmsg.in_reply_to)
@@ -404,7 +374,7 @@ class LoreMailbox:
                         if pmsg.git_patch_id:
                             if pmsg.git_patch_id not in self.trailer_map:
                                 self.trailer_map[pmsg.git_patch_id] = list()
-                            self.trailer_map[pmsg.git_patch_id] += trailers
+                            self.trailer_map[pmsg.git_patch_id].append(fmsg)
                     pmsg.followup_trailers += trailers
                     break
                 if not pmsg.reply:
@@ -428,11 +398,15 @@ class LoreMailbox:
             if lmsg is None or lmsg.git_patch_id is None:
                 continue
             if lmsg.git_patch_id in self.trailer_map:
-                for fltr in self.trailer_map[lmsg.git_patch_id]:
-                    if fltr not in lmsg.trailers and fltr not in lmsg.followup_trailers:
-                        # logger.info('  + %s', fltr.as_string())
-                        logger.debug('    adding "%s" from trailer_map to: %s', fltr.as_string(), lmsg.full_subject)
-                        lmsg.followup_trailers.append(fltr)
+                for fmsg in self.trailer_map[lmsg.git_patch_id]:
+                    fltrs, fmis = fmsg.get_trailers(sloppy=sloppytrailers)
+                    for fltr in fltrs:
+                        if fltr not in lmsg.trailers and fltr not in lmsg.followup_trailers:
+                            logger.debug('    adding "%s" from trailer_map to: %s',
+                                         fltr.as_string(), lmsg.full_subject)
+                            lmsg.followup_trailers.append(fltr)
+                    for fltr in fmis:
+                        lser.trailer_mismatches.add((fltr.name, fltr.value, fmsg.fromname, fmsg.fromemail))
 
         return lser
 
@@ -1143,6 +1117,9 @@ class LoreTrailer:
         out.append('  name: %s' % self.name)
         out.append('  value: %s' % self.value)
         out.append('  extinfo: %s' % self.extinfo)
+        if self.lmsg:
+            out.append('  lmsg.subject: %s' % self.lmsg.subject)
+            out.append('  lmsg.msgid: %s' % self.lmsg.msgid)
 
         return '\n'.join(out)
 
@@ -3410,8 +3387,13 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                          seriests: Optional[int] = None,
                          mailfrom: Optional[Tuple[str, str]] = None,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
-                         ignore_commits: Optional[Set[str]] = None) -> List[Tuple[str, email.message.Message]]:
-    commits = git_get_command_lines(gitdir, ['rev-list', '--reverse', f'{start}..{end}'])
+                         ignore_commits: Optional[Set[str]] = None,
+                         limit_committer: Optional[str] = None) -> List[Tuple[str, email.message.Message]]:
+    gitargs = ['rev-list', '--no-merges', '--reverse']
+    if limit_committer:
+        gitargs += ['-F', f'--committer={limit_committer}']
+    gitargs.append(f'{start}..{end}')
+    commits = git_get_command_lines(gitdir, gitargs)
     if not commits:
         raise RuntimeError(f'Could not run rev-list {start}..{end}')
     if ignore_commits is None:
@@ -4266,3 +4248,79 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
         raise RuntimeError(f"Branch changed during file editing, the temporary file was saved at {save_file.name}")
     else:
         return bdata
+
+
+def map_codereview_trailers(qmsgs: List[email.message.Message],
+                            ignore_msgids: Optional[Set[str]] = None) -> Dict[str, List['LoreMessage']]:
+    """
+    Map messages containing code-review trailers to patch-ids they were sent for.
+    :param qmsgs: list of messages to process
+    :param ignore_msgids: list of message-id's to ignore
+    :return: mapping of patch-ids to LoreMessage objects containing follow-up trailers
+    """
+    qmid_map = dict()
+    ref_map = dict()
+    patchid_map = dict()
+    seen_msgids = set(ignore_msgids)
+    for qmsg in qmsgs:
+        qmsgid = LoreMessage.get_clean_msgid(qmsg)
+        if qmsgid in seen_msgids:
+            continue
+        seen_msgids.add(qmsgid)
+        qlmsg = LoreMessage(qmsg)
+        qmid_map[qlmsg.msgid] = qlmsg
+        for qref in qlmsg.references:
+            if qref not in ref_map:
+                ref_map[qref] = list()
+            ref_map[qref].append(qlmsg.msgid)
+
+    logger.info('Analyzing %s code-review messages', len(qmid_map))
+    for qmid, qlmsg in qmid_map.items():
+        logger.debug('  new message: %s', qmid)
+        if not qlmsg.reply:
+            logger.debug('  skipping non-reply: %s', qmid)
+            continue
+        if not qlmsg.trailers:
+            logger.debug('  skipping reply without trailers: %s', qmid)
+            continue
+        # Find the patch-id to which this belongs
+        pfound = False
+        for refmid in qlmsg.references:
+            if refmid in qmid_map:
+                # Is it a patch?
+                _qmsg = qmid_map[refmid]
+                if _qmsg.has_diff:
+                    pqpid = _qmsg.git_patch_id
+                    if pqpid:
+                        # Found our parent patch
+                        if pqpid not in patchid_map:
+                            patchid_map[pqpid] = list()
+                        if qlmsg not in patchid_map[pqpid]:
+                            patchid_map[pqpid].append(qlmsg)
+                        pfound = True
+                        logger.debug('  found matching patch-id for %s', qlmsg.subject)
+                        break
+                # Is it a cover letter?
+                elif (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
+                      and _qmsg.msgid in ref_map):
+                    logger.debug('  found a cover letter for %s', qlmsg.subject)
+                    # Now we find all descendant patches of the same series
+                    for _child_msgid in ref_map[_qmsg.msgid]:
+                        if _child_msgid == refmid:
+                            continue
+                        if qmid_map[_child_msgid].has_diff:
+                            cqpid = qmid_map[_child_msgid].git_patch_id
+                            if cqpid:
+                                # Found our parent patch
+                                if cqpid not in patchid_map:
+                                    patchid_map[cqpid] = list()
+                                if qlmsg not in patchid_map[cqpid]:
+                                    patchid_map[cqpid].append(qlmsg)
+                else:
+                    logger.debug('  skipping parent without a diff or diffstat')
+        if not pfound:
+            logger.debug('  no matching parents for %s', qlmsg.subject)
+            # Does it have 'patch-id: ' in the body?
+            # TODO: once we have that functionality in b4 cr
+
+    return patchid_map
