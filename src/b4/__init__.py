@@ -2406,10 +2406,8 @@ class LoreSubject:
 
         # Is it a reply?
         if re.search(r'^(Re|Aw|Fwd):', subject, re.I) or re.search(r'^\w{2,3}:\s*\[', subject):
+            subject = re.sub(r'^\w{2,3}:\s*\[', '[', subject)
             self.reply = True
-            self.subject = subject
-            # We don't care to parse the rest
-            return
 
         # Remove any brackets inside brackets
         while True:
