@@ -65,6 +65,10 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
     for msg in msgs:
         lmbx.add_message(msg)
 
+    if not len(lmbx.series):
+        logger.critical('Could not find any patches in the series.')
+        sys.exit(1)
+
     if wantvers and len(wantvers) == 1:
         upper = max(lmbx.series.keys())
         lower = wantvers[0]
