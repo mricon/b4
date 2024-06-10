@@ -233,12 +233,11 @@ def test_parse_int_range(intrange, upper, expected):
     ('[PATCH RFC v3] This is a patch', None, '[PATCH RFC v3] This is a patch'),
     # At the moment, we force RFC to go after PATCH, but some projects don't like that
     # TODO: make it possible to preserve the specified prefix order for RFC and RESEND prefixes
-    ('[RFC PATCH v3 1/3] This is a patch', None, '[PATCH RFC v3 1/3] This is a patch'),
+    ('[RFC PATCH v3 1/3] This is a patch', None, '[RFC PATCH v3 1/3] This is a patch'),
+    ('[RESEND PATCH v3 1/3] This is a patch', None, '[RESEND PATCH v3 1/3] This is a patch'),
     ('[PATCH RFC v3 2/3] This is a patch', ['RFC'], '[PATCH RFC v3 2/3] This is a patch'),
-    ('[PATCH RFC v3 3/12] This is a patch', ['PATCH', 'RFC'], '[PATCH RFC v3 03/12] This is a patch'),
-    ('[PATCH RFC v3] This is a patch', ['COVER', 'RFC'], '[PATCH RFC v3] This is a patch'),
-    ('[PATCH RFC v3] This is a [patch]', ['COVER', 'RFC'], '[PATCH RFC v3] This is a [patch]'),
-    ('[PATCH RFC v3] This is a [patch]', ['COVER', 'RFC'], '[PATCH RFC v3] This is a [patch]'),
+    ('[PATCH RFC v3 3/12] This is a patch', None, '[PATCH RFC v3 03/12] This is a patch'),
+    ('[PATCH RFC v3] This is a [patch]', ['RFC'], '[PATCH RFC v3] This is a [patch]'),
     ('[PATCH RFC v3 2/3] This is a patch', ['netdev', 'bpf'], '[PATCH RFC netdev bpf v3 2/3] This is a patch'),
 ])
 def test_lore_subject_prefixes(subject, extras, expected):

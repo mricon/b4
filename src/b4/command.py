@@ -293,7 +293,9 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_prep.add_argument('--force-revision', metavar='N', type=int,
                          help='Force revision to be this number instead')
     sp_prep.add_argument('--set-prefixes', metavar='PREFIX', nargs='+',
-                         help='Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)')
+                         help='Prefixes to include after [PATCH] (e.g.: RFC mydrv)')
+    sp_prep.add_argument('--add-prefixes', metavar='PREFIX', nargs='+',
+                         help='Additional prefixes to add to those already defined')
     sp_prep.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                          help='Do not use local cache when performing remote queries')
 

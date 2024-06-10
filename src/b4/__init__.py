@@ -2399,7 +2399,6 @@ class LoreSubject:
         self.revision_inferred = True
         self.counters_inferred = True
         self.prefixes = list()
-        self.ignore_list = {'patch', 'cover'}
 
         subject = re.sub(r'\s+', ' ', LoreMessage.clean_header(subject)).strip()
         self.full_subject = subject
@@ -2450,10 +2449,12 @@ class LoreSubject:
 
     def get_extra_prefixes(self, exclude: Optional[List[str]] = None) -> List[str]:
         ret = list()
+        if exclude:
+            _exclude = set([x.lower() for x in exclude])
+        else:
+            _exclude = set()
         for _prf in self.prefixes:
-            if exclude and _prf in exclude:
-                continue
-            if _prf.lower() in self.ignore_list:
+            if _exclude and _prf.lower() in _exclude:
                 continue
             elif re.search(r'v\d+', _prf, flags=re.I):
                 continue
@@ -2464,20 +2465,23 @@ class LoreSubject:
         return ret
 
     def get_rebuilt_subject(self, eprefixes: Optional[List[str]] = None) -> str:
-        _pfx = self.get_extra_prefixes()
+        exclude = None
+        if eprefixes and 'PATCH' in eprefixes:
+            exclude = ['patch']
+        _pfx = self.get_extra_prefixes(exclude=exclude)
         if eprefixes:
             for _epfx in eprefixes:
-                if _epfx.lower() in self.ignore_list:
-                    continue
                 if _epfx.lower() not in [x.lower() for x in _pfx]:
                     _pfx.append(_epfx)
+        if 'patch' not in [x.lower() for x in _pfx]:
+            _pfx.insert(0, 'PATCH')
         if self.revision > 1:
             _pfx.append(f'v{self.revision}')
         if self.expected > 1:
             _pfx.append('%s/%s' % (str(self.counter).zfill(len(str(self.expected))), self.expected))
 
         if len(_pfx):
-            return '[PATCH ' + ' '.join(_pfx) + '] ' + self.subject
+            return '[' + ' '.join(_pfx) + '] ' + self.subject
         else:
             return f'[PATCH] {self.subject}'
 

@@ -2703,16 +2703,25 @@ def store_preflight_check(identity: str) -> None:
     b4.save_cache(pf_checks, cacheid, suffix='checks', is_json=True)
 
 
-def set_prefixes(prefixes: list) -> None:
+def set_prefixes(prefixes: list, additive: bool = False) -> None:
     cover, tracking = load_cover()
     old_prefixes = tracking['series'].get('prefixes', list())
     if len(prefixes) == 1 and not prefixes[0].strip():
         prefixes = list()
-    tracking['series']['prefixes'] = prefixes
+    if additive:
+        new_prefixes = list(old_prefixes)
+        for prefix in prefixes:
+            if prefix.lower() not in [x.lower() for x in new_prefixes]:
+                new_prefixes.append(prefix)
+        tracking['series']['prefixes'] = new_prefixes
+    else:
+        new_prefixes = list(prefixes)
+
+    tracking['series']['prefixes'] = new_prefixes
     if tracking['series']['prefixes'] != old_prefixes:
         store_cover(cover, tracking)
         if tracking['series']['prefixes']:
-            logger.info('Updated extra prefixes to: %s', ' '.join(prefixes))
+            logger.info('Updated extra prefixes to: %s', ' '.join(new_prefixes))
         else:
             logger.info('Removed all extra prefixes.')
     else:
@@ -2793,6 +2802,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.set_prefixes:
         set_prefixes(cmdargs.set_prefixes)
+
+    if cmdargs.add_prefixes:
+        set_prefixes(cmdargs.add_prefixes, additive=True)
 
     if cmdargs.auto_to_cc:
         auto_to_cc()
