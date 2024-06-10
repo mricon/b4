@@ -27,7 +27,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "B4" 5 "2023-01-19" "0.12.0" ""
+.TH "B4" 5 "2024-06-10" "0.14-dev"
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .SH SYNOPSIS
@@ -36,8 +36,8 @@ b4 {mbox,am,shazam,pr,diff,ty,kr,prep,send,trailers} [options]
 .SH DESCRIPTION
 .sp
 This is a helper utility to work with patches and pull requests made
-available via a public\-inbox archive like lore.kernel.org. It is
-written to make it easier to participate in a patch\-based workflows,
+available via a public\-inbox archive like lore.kernel.org. It\(aqs
+written to make it simpler to participate in patch\-based workflows,
 like those used in the Linux kernel development.
 .sp
 The name \(dqb4\(dq was chosen for ease of typing and because B\-4 was the
@@ -57,100 +57,53 @@ Maintainer\-oriented:
 .IP \(bu 2
 \fIpr\fP: Work with pull requests
 .IP \(bu 2
-\fIdiff\fP: Show range\-diff style diffs between patch versions
-.IP \(bu 2
 \fIty\fP: Create templated replies for processed patches and pull requests
 .IP \(bu 2
-\fIkr\fP: (EXPERIMENTAL) Operate on patatt\-compatible keyrings
+\fIdiff\fP: Show range\-diff style diffs between patch versions
+.IP \(bu 2
+\fIkr\fP: (STUB) Operate on patatt\-compatible keyrings
 .UNINDENT
 .sp
 Contributor\-oriented:
 .INDENT 0.0
 .IP \(bu 2
-\fIprep\fP: (EXPERIMENTAL) prepare your series for submission
+\fIprep\fP: prepare your series for submission
 .IP \(bu 2
-\fIsend\fP: (EXPERIMENTAL) send your series for review on distribution lists
+\fItrailers\fP: retrieve and apply code\-review trailers
 .IP \(bu 2
-\fItrailers\fP: (EXPERIMENTAL) retrieve and apply code\-review trailers
+\fIsend\fP: send your series for review on distribution lists
 .UNINDENT
-.SH OPTIONS
-.INDENT 0.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.B  \-d\fP,\fB  \-\-debug
-Add more debugging info to the output (default: False)
-.TP
-.B  \-q\fP,\fB  \-\-quiet
-Output critical information only (default: False)
-.TP
-.B  \-n\fP,\fB  \-\-no\-interactive
-Do not ask any interactive questions (default: False)
-.TP
-.B  \-\-offline\-mode
-Do not perform any network queries (default: False)
-.TP
-.B  \-\-no\-stdin
-Disable TTY detection for stdin (default: False)
-.UNINDENT
-.SH SUBCOMMAND OPTIONS
+.sp
+For full options and what they do, please see \fBb4 \-\-help\fP and \fBb4
+subcommand \-\-help\fP\&.
 .SS b4 mbox
 .sp
 This command allows retrieving entire threads from a remote public\-inbox
-instance. The resulting mbox file can then be opened with most MUA
-clients for actions like replying to conversations or reviewing patch
+instance. You can open the resulting mbox file with most mail clients
+for actions like replying to conversations or reviewing patch
 submissions.
+.sp
+You can provide the message either as a msgid, as full URL to a
+public\-inbox archive, or you can pipe it on stdin.
+.sp
+For options and their descriptions, see \fBb4 mbox \-\-help\fP\&.
+.sp
+\fIExamples\fP
 .INDENT 0.0
 .TP
-.B usage:
-b4 mbox [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-o OUTDIR] [\-c] [\-n WANTNAME] [\-M] [\-f] [msgid]
+.B \fBb4 mbox [msgid]\fP
+Download a thread from the default public\-inbox server and save it in
+the current directory as a .mbox file.
 .TP
-.B positional arguments:
-msgid                 Message ID to process, or pipe a raw message
+.B \fBb4 mbox \-m ~/Mail [msgid]\fP
+Download a thread from your ~/Mail folder and save it in the current
+directlry as a .mbox file.
 .TP
-.B options:
-.INDENT 7.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of default (linux\-mm, linux\-hardening, etc)
-.TP
-.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
-.TP
-.BI \-\-stdin\-pipe\-sep \ STDIN_PIPE_SEP
-When accepting messages on stdin, split using this pipe separator string
-.TP
-.B  \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
-.TP
-.B  \-\-single\-message
-Only retrieve the message matching the msgid and ignore the rest of the thread
-.TP
-.BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
-Output into this directory (or use \- to output mailbox contents to stdout)
-.TP
-.B  \-c\fP,\fB  \-\-check\-newer\-revisions
-Check if newer patch revisions exist
-.TP
-.BI \-n \ WANTNAME\fR,\fB \ \-\-mbox\-name \ WANTNAME
-Filename to name the mbox destination
-.TP
-.B  \-M\fP,\fB  \-\-save\-as\-maildir
-Save as maildir (avoids mbox format ambiguities)
-.TP
-.B  \-f\fP,\fB  \-\-filter\-dupes
-When adding messages to existing maildir, filter out duplicates
-.TP
-.BI \-r \ MBOX\fR,\fB \ \-\-refetch \ MBOX
-Refetch all messages in specified mbox with their original headers
+.B \fBb4 mbox \-fo ~/Mail [public\-inbox\-url]\fP
+Download the thread from this public\-inbox server, and add it to your
+existing mailbox, filtering out any dupes already in your mailbox
+folder.
 .UNINDENT
-.UNINDENT
-.sp
-\fIExample\fP: b4 mbox \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 am
 .sp
 This command allows retrieving threads from a public\-inbox instance and
@@ -179,538 +132,201 @@ prepare the tree for a 3\-way merge (with \fB\-3\fP)
 .IP \(bu 2
 cherry\-pick a subset of patches from a large series (with \fB\-P\fP)
 .UNINDENT
+.sp
+Note: Unless you intend to do some preparatory work on the series before
+applying it to the git repository (e.g. a 3\-way merge), you should
+consider using \fBb4 shazam\fP to apply the retrieved series.
+.sp
+For options and their descriptions, see \fBb4 am \-\-help\fP\&.
+.sp
+\fIExamples\fP
 .INDENT 0.0
 .TP
-.B usage:
-b4 am [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-o OUTDIR] [\-c] [\-n WANTNAME] [\-M] [\-v WANTVER] [\-t] [\-S] [\-T] [\-s] [\-l] [\-P CHERRYPICK] [\-\-cc\-trailers] [\-\-no\-parent] [\-\-allow\-unicode\-control\-chars] [\-Q] [\-g] [\-b GUESSBRANCH [GUESSBRANCH ...]] [\-\-guess\-lookback GUESSDAYS] [\-3] [\-\-no\-cover] [\-\-no\-partial\-reroll] [msgid]
+.B \fBb4 am \-sl [msgid]\fP
+Download a thread from the default public\-inbox server, apply any
+follow\-up trailers, add your own Signed\-Off\-By trailer plus a Link:
+trailer indicating the origin of the patch, then save the resulting
+\&.mbox file in the current directory ready to be applied by \(dqgit am\(dq.
 .TP
-.B positional arguments:
-msgid                 Message ID to process, or pipe a raw message
+.B \fBb4 am \-sl \-P 1\-3 [msgid]\fP
+Same as the previous example, but pick only patches 1,2,3 from the
+entire series.
 .TP
-.B options:
-.INDENT 7.0
+.B \fBb4 am \-3 [msgid]\fP
+Download the series and prepare the local git tree for a 3\-way merge
+by ensuring that all index blobs exist.
 .TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of default (linux\-mm, linux\-hardening, etc)
-.TP
-.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
-.TP
-.BI \-\-stdin\-pipe\-sep \ STDIN_PIPE_SEP
-When accepting messages on stdin, split using this pipe separator string
-.TP
-.B  \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
-.TP
-.B  \-\-single\-message
-Only retrieve the message matching the msgid and ignore the rest of the thread
-.TP
-.BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
-Output into this directory (or use \- to output mailbox contents to stdout)
-.TP
-.B  \-c\fP,\fB  \-\-check\-newer\-revisions
-Check if newer patch revisions exist
-.TP
-.BI \-n \ WANTNAME\fR,\fB \ \-\-mbox\-name \ WANTNAME
-Filename to name the mbox destination
-.TP
-.B  \-M\fP,\fB  \-\-save\-as\-maildir
-Save as maildir (avoids mbox format ambiguities)
-.TP
-.B  \-\-single\-message
-Only retrieve the message matching the msgid and ignore the rest of the thread
-.TP
-.BI \-v \ WANTVER\fR,\fB \ \-\-use\-version \ WANTVER
-Get a specific version of the patch/series
-.TP
-.B  \-S\fP,\fB  \-\-sloppy\-trailers
-Apply trailers without email address match checking
-.TP
-.B  \-T\fP,\fB  \-\-no\-add\-trailers
-Do not add or sort any trailers
-.TP
-.B  \-s\fP,\fB  \-\-add\-my\-sob
-Add your own signed\-off\-by to every patch
-.TP
-.B  \-l\fP,\fB  \-\-add\-link
-Add a Link: with message\-id lookup URL to every patch
-.TP
-.BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
-Cherry\-pick a subset of patches (e.g. \(dq\-P 1\-2,4,6\-\(dq, \(dq\-P _\(dq to use just the msgid specified, or \(dq\-P \fIglobbing\fP\(dq to match on commit subject)
-.TP
-.B  \-\-cc\-trailers
-Copy all Cc\(aqd addresses into Cc: trailers
-.TP
-.B  \-\-no\-parent
-Break thread at the msgid specified and ignore any parent messages
-.TP
-.B  \-\-allow\-unicode\-control\-chars
-Allow unicode control characters (very rarely legitimate)
-.TP
-.B  \-Q\fP,\fB  \-\-quilt\-ready
-Save patches in a quilt\-ready folder
-.TP
-.B  \-g\fP,\fB  \-\-guess\-base
-Try to guess the base of the series (if not specified)
+.B \fBb4 am \-\-check [msgid]\fP
+Download the series and show if it passes the checks. You can specify
+the command using the \fBb4.am\-perpatch\-check\-cmd\fP configuration
+option. For the Linux kernel, the default will be the most common
+\fBcheckpatch.pl\fP set of options.
 .UNINDENT
-.INDENT 7.0
-.TP
-.B \-b GUESSBRANCH [GUESSBRANCH ...], \-\-guess\-branch GUESSBRANCH [GUESSBRANCH ...]
-When guessing base, restrict to this branch (use with \-g)
-.UNINDENT
-.INDENT 7.0
-.TP
-.BI \-\-guess\-lookback \ GUESSDAYS
-When guessing base, go back this many days from the patch date (default: 2 weeks)
-.TP
-.B  \-3\fP,\fB  \-\-prep\-3way
-Prepare for a 3\-way merge (tries to ensure that all index blobs exist by making a fake commit range)
-.TP
-.B  \-\-no\-cover
-Do not save the cover letter (on by default when using \-o \-)
-.TP
-.B  \-\-no\-partial\-reroll
-Do not reroll partial series when detected
-.UNINDENT
-.UNINDENT
-.sp
-\fIExample\fP: b4 am \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 shazam
 .sp
 This is very similar to \fBb4 am\fP, but will also apply patches
 directly to the current git tree using \fBgit am\fP\&. Alternatively, when
 used with \fB\-H\fP, it can fetch the patch series into \fBFETCH_HEAD\fP as
-if it were a pull request, so it can be reviewed and merged. In this
-case, the cover letter is used as a template for the merge commit.
+if it were a pull request, ready to review and merge. B4 uses the cover
+letter as a template for the merge commit.
 .sp
 If you want to automatically invoke git\-merge, you can use \fB\-M\fP
-instead of \fB\-H\fP\&.
+instead of \fB\-H\fP\&. B4 automatically opens up the editor allowing you to
+edit the merge commit message.
+.sp
+Note: the \fB\-M\fP and \fB\-H\fP options work best for series that have the
+\fBbase\-commit\fP info matching an object in your local tree.
+.sp
+For options and their descriptions, see \fBb4 shazam \-\-help\fP\&.
+.sp
+\fIExamples\fP
 .INDENT 0.0
 .TP
-.B usage:
-b4 shazam [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-v WANTVER] [\-t] [\-S] [\-T] [\-s] [\-l] [\-P CHERRYPICK] [\-\-cc\-trailers] [\-\-no\-parent] [\-\-allow\-unicode\-control\-chars] [\-H | \-M] [\-\-guess\-lookback GUESSDAYS] [msgid]
+.B \fBb4 shazam \-sl \-M [msgid]\fP
+Download a thread from the default public\-inbox server, apply any
+follow\-up trailers, add your own Signed\-Off\-By trailer plus a Link:
+trailer with the origin of the patch, then merge this commit
+to the current git repository using the cover letter as the merge
+commit template.
 .TP
-.B positional arguments:
-msgid                 Message ID to process, or pipe a raw message
-.TP
-.B options:
-.INDENT 7.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of default (linux\-mm, linux\-hardening, etc)
-.TP
-.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
-.TP
-.BI \-\-stdin\-pipe\-sep \ STDIN_PIPE_SEP
-When accepting messages on stdin, split using this pipe separator string
-.TP
-.B  \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
-.TP
-.B  \-\-single\-message
-Only retrieve the message matching the msgid and ignore the rest of the thread
-.TP
-.BI \-v \ WANTVER\fR,\fB \ \-\-use\-version \ WANTVER
-Get a specific version of the patch/series
-.TP
-.B  \-S\fP,\fB  \-\-sloppy\-trailers
-Apply trailers without email address match checking
-.TP
-.B  \-T\fP,\fB  \-\-no\-add\-trailers
-Do not add or sort any trailers
-.TP
-.B  \-s\fP,\fB  \-\-add\-my\-sob
-Add your own signed\-off\-by to every patch
-.TP
-.B  \-l\fP,\fB  \-\-add\-link
-Add a Link: with message\-id lookup URL to every patch
-.TP
-.BI \-P \ CHERRYPICK\fR,\fB \ \-\-cherry\-pick \ CHERRYPICK
-Cherry\-pick a subset of patches (e.g. \(dq\-P 1\-2,4,6\-\(dq, \(dq\-P _\(dq to use just the msgid specified, or \(dq\-P \fIglobbing\fP\(dq to match on commit subject)
-.TP
-.B  \-\-cc\-trailers
-Copy all Cc\(aqd addresses into Cc: trailers
-.TP
-.B  \-\-no\-parent
-Break thread at the msgid specified and ignore any parent messages
-.TP
-.B  \-\-allow\-unicode\-control\-chars
-Allow unicode control characters (very rarely legitimate)
-.TP
-.B  \-H\fP,\fB  \-\-make\-fetch\-head
-Attempt to treat series as a pull request and fetch it into FETCH_HEAD
-.TP
-.B  \-M\fP,\fB  \-\-merge
-Attempt to merge series as if it were a pull request (execs git\-merge)
-.TP
-.BI \-\-guess\-lookback \ GUESSDAYS
-(use with \-H or \-M) When guessing base, go back this many days from the patch date (default: 3 weeks)
-.TP
-.BI \-\-merge\-base \ COMMIT
-(use with \-H or \-M) Force this base when merging
+.B \fBb4 shazam \-sl \-M \-\-merge\-base v6.4\-rc4 [msgid]\fP
+Same as the previous example, but forces the merge\-base to be the
+commit\-ish object provided instead of the one listed in the patch
+series itself.
 .UNINDENT
-.UNINDENT
-.sp
-\fIExample\fP: b4 shazam \-H \fI\%20200313231252.64999\-1\-keescook@chromium.org\fP
 .SS b4 pr
 .sp
 This command is for working with pull requests submitted using
-\fBgit\-request\-pull\fP\&.
+\fBgit\-request\-pull\fP\&. It provides the following benefits as opposed to using git directly:
 .INDENT 0.0
-.TP
-.B usage:
-b4 pr [\-h] [\-g GITDIR] [\-b BRANCH] [\-c] [\-e] [\-o OUTMBOX] [msgid]
-.TP
-.B positional arguments:
-msgid                 Message ID to process, or pipe a raw message
-.TP
-.B optional arguments:
-.INDENT 7.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
-Operate on this git tree instead of current dir
-.TP
-.BI \-b \ BRANCH\fR,\fB \ \-\-branch \ BRANCH
-Check out FETCH_HEAD into this branch after fetching
-.TP
-.B  \-c\fP,\fB  \-\-check
-Check if pull request has already been applied
-.TP
-.B  \-e\fP,\fB  \-\-explode
-Convert a pull request into an mbox full of patches
-.TP
-.BI \-o \ OUTMBOX\fR,\fB \ \-\-output\-mbox \ OUTMBOX
-Save exploded messages into this mailbox (default: msgid.mbx)
-.TP
-.BI \-f \ MAILFROM\fR,\fB \ \-\-from\-addr \ MAILFROM
-Use this From: in exploded messages (use with \-e)
-.UNINDENT
+.IP \(bu 2
+it can check if the pull is already applied before performing a git
+fetch
+.IP \(bu 2
+it checks the signature on the tag or tip commit specified in the pull
+request
+.IP \(bu 2
+it can track applied pull requests and send replies to submitters
+using \fBb4 ty\fP
 .UNINDENT
 .sp
-\fIExample\fP: b4 pr \fI\%202003292120.2BDCB41@keescook\fP
+For options and their descriptions, see \fBb4 pr \-\-help\fP\&.
+.sp
+\fIExamples\fP
+.INDENT 0.0
+.TP
+.B \fBb4 pr [msgid]\fP
+Download the message with the pull\-request and apply it to the current
+git tree.
+.UNINDENT
 .SS b4 ty
+.sp
+If you\(aqve retrieved and applied some patches to your tree, you should be
+able to fire up the “auto\-thankanator”, which uses patch\-id and commit
+subject tracking to figure out which series from those you have
+retrieved you already applied to your tree. The process is usually
+pretty fast and fairly accurate.
+.sp
+To send mails directly using \fB\-S\fP, you should have a configured
+\fB[sendemail]\fP section somewhere in your applicable git configuration
+files. By default, \fBb4 ty\fP writes out .thanks files in the current
+directly that you can edit and sent out using a command like \fBmutt \-f
+thanks.file\fP\&.
+.sp
+For options and their descriptions, see \fBb4 ty \-\-help\fP\&.
+.sp
+\fIExamples\fP
 .INDENT 0.0
 .TP
-.B usage:
-b4 ty [\-h] [\-g GITDIR] [\-o OUTDIR] [\-l] [\-t THANK_FOR [THANK_FOR ...]] [\-d DISCARD [DISCARD ...]] [\-a] [\-b BRANCH] [\-\-since SINCE] [\-S] [\-\-dry\-run]
+.B \fBb4 ty \-a \-S\fP
+Locate any retrieved series that you have applied to the current git
+repository and send out thanks to all members of the conversation.
 .TP
-.B optional arguments:
-.INDENT 7.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
-Operate on this git tree instead of current dir
-.TP
-.BI \-o \ OUTDIR\fR,\fB \ \-\-outdir \ OUTDIR
-Write thanks files into this dir (default=.)
-.TP
-.B  \-l\fP,\fB  \-\-list
-List pull requests and patch series you have retrieved
-.TP
-.BI \-t \ THANK_FOR\fR,\fB \ \-\-thank\-for \ THANK_FOR
-Generate thankyous for specific entries from \-l (e.g.: 1,3\-5,7\-; or \(dqall\(dq)
-.TP
-.BI \-d \ DISCARD\fR,\fB \ \-\-discard \ DISCARD
-Discard specific messages from \-l (e.g.: 1,3\-5,7\-; or \(dqall\(dq)
-.TP
-.B  \-a\fP,\fB  \-\-auto
-Use the Auto\-Thankanator gun to figure out what got applied/merged
-.TP
-.BI \-b \ BRANCH\fR,\fB \ \-\-branch \ BRANCH
-The branch to check against, instead of current
-.TP
-.BI \-\-since \ SINCE
-The \-\-since option to use when auto\-matching patches (default=1.week)
-.TP
-.B  \-S\fP,\fB  \-\-send\-email
-Send email instead of writing out .thanks files
-.TP
-.B  \-\-dry\-run
-Print out emails instead of sending them
-.TP
-.BI \-\-pw\-set\-state \ PW_STATE
-Set this patchwork state instead of default (use with \-a, \-t or \-d)
+.B \fBb4 ty \-a \-S \-\-dry\-run\fP
+Same as above, but instead of actually sending it out show what the
+message is going to be, first.
 .UNINDENT
-.UNINDENT
-.sp
-\fBNOTE:\fP
-.INDENT 0.0
-.INDENT 3.5
-To send mails directly using \-S, you should have a configured
-[sendemail] section somewhere in your applicable git configuration
-files (global or in\-tree).
-.UNINDENT
-.UNINDENT
-.sp
-\fIExample\fP: b4 ty \-aS \-\-dry\-run
 .SS b4 diff
-.INDENT 0.0
-.TP
-.B usage:
-b4 diff [\-h] [\-g GITDIR] [\-p USEPROJECT] [\-C] [\-v WANTVERS [WANTVERS ...]] [\-n] [\-o OUTDIFF] [\-c] [\-m AMBOX AMBOX] [msgid]
-.TP
-.B positional arguments:
-msgid                 Message ID to process, pipe a raw message, or use \-m
-.UNINDENT
 .sp
-optional arguments:
-.INDENT 0.0
-.INDENT 3.5
-.INDENT 0.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-g \ GITDIR\fR,\fB \ \-\-gitdir \ GITDIR
-Operate on this git tree instead of current dir
-.TP
-.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
-.TP
-.B  \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-v WANTVERS [WANTVERS ...], \-\-compare\-versions WANTVERS [WANTVERS ...]
-Compare specific versions instead of latest and one before that, e.g. \-v 3 5
-.UNINDENT
-.INDENT 0.0
-.TP
-.B  \-n\fP,\fB  \-\-no\-diff
-Do not generate a diff, just show the command to do it
-.TP
-.BI \-o \ OUTDIFF\fR,\fB \ \-\-output\-diff \ OUTDIFF
-Save diff into this file instead of outputting to stdout
-.TP
-.B  \-c\fP,\fB  \-\-color
-Force color output even when writing to file
-.UNINDENT
-.INDENT 0.0
-.TP
-.B \-m AMBOX AMBOX, \-\-compare\-am\-mboxes AMBOX AMBOX
-Compare two mbx files prepared with \(dqb4 am\(dq
-.UNINDENT
-.UNINDENT
-.UNINDENT
+The diff subcommand allows comparing two different revisions of the same
+patch series using \fBgit range\-diff\fP\&. Note, that in order to perform
+the range\-diff comparison, both revisions need to cleanly apply to the
+current tree, which may not always be possible to achieve.
 .sp
-\fIExample\fP: b4 diff \fI\%20200526205322.23465\-1\-mic@digikod.net\fP
+For options and their descriptions, see \fBb4 diff \-\-help\fP\&.
+.sp
+\fIExamples\fP
+.INDENT 0.0
+.TP
+.B \fBb4 diff [msgid\-of\-vN]\fP
+Retrieves the thread matching the msgid specified and attempts to
+auto\-locate the previous version of the series. If successful, shows
+the output of \fBgit range\-diff\fP comparing the patch differences.
+.UNINDENT
 .SS b4 kr
-.INDENT 0.0
-.TP
-.B usage:
-b4 kr [\-h] [\-p USEPROJECT] [\-m LOCALMBOX] [\-C] [\-\-show\-keys] [msgid]
-.TP
-.B positional arguments:
-msgid                 Message ID to process, or pipe a raw message
-.TP
-.B optional arguments:
-.INDENT 7.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.BI \-p \ USEPROJECT\fR,\fB \ \-\-use\-project \ USEPROJECT
-Use a specific project instead of guessing (linux\-mm, linux\-hardening, etc)
-.TP
-.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
-.TP
-.BI \-\-stdin\-pipe\-sep \ STDIN_PIPE_SEP
-When accepting messages on stdin, split using this pipe separator string
-.TP
-.B  \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
-.TP
-.B  \-\-show\-keys
-Show all developer keys from the thread
-.UNINDENT
-.UNINDENT
 .sp
-\fIExample\fP: b4 kr \-\-show\-keys \fI\%20210521184811.617875\-1\-konstantin@linuxfoundation.org\fP
-.SS b4 prep
+This subcommand allows maintaining a local keyring of contributor keys.
+.sp
+Note: this part of b4 is under active development with improvements
+planned for the near future.
+.sp
+For options and their descriptions, see \fBb4 kr \-\-help\fP\&.
+.sp
+\fIExamples\fP
 .INDENT 0.0
 .TP
-.B usage:
-b4 prep [\-h] [\-c | \-p OUTPUT_DIR | \-\-edit\-cover | \-\-show\-revision | \-\-force\-revision N | \-\-compare\-to vN | \-\-manual\-reroll COVER_MSGID | \-\-set\-prefixes PREFIX [PREFIX ...] | \-\-show\-info [PARAM] ] | [ \-\-cleanup [BRANCHNAME] ] [\-n NEW_SERIES_NAME] [\-f FORK_POINT] [\-F MSGID] [\-e ENROLL_BASE]
-.TP
-.B options:
-.INDENT 7.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.B  \-c\fP,\fB  \-\-auto\-to\-cc
-Automatically populate cover letter trailers with To and Cc addresses
-.TP
-.BI \-p \ OUTPUT_DIR\fR,\fB \ \-\-format\-patch \ OUTPUT_DIR
-Output prep\-tracked commits as patches
-.TP
-.B  \-\-edit\-cover
-Edit the cover letter in your defined $EDITOR (or core.editor)
-.TP
-.B  \-\-show\-revision
-Show current series revision number
-.TP
-.BI \-\-force\-revision \ N
-Force revision to be this number instead
-.TP
-.BI \-\-compare\-to \ vN
-Display a range\-diff to previously sent revision N
-.TP
-.BI \-\-manual\-reroll \ COVER_MSGID
-Mark current revision as sent and reroll (requires cover letter msgid)
+.B \fBb4 kr \-\-show\-keys [msgid]\fP
+Retrieve the thread specified and show any cryptographic keys used to
+attest the patches.
 .UNINDENT
-.INDENT 7.0
-.TP
-.B \-\-set\-prefixes PREFIX [PREFIX ...]
-Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)
-.TP
-.B \-\-show\-info [PARAM]
-Show series info in a format that can be passed to other tools
-.TP
-.B \-\-cleanup [BRANCHNAME]
-Archive and delete obsolete prep\-managed branches
-.UNINDENT
-.TP
-.B Create new branch:
-Create a new branch for working on patch series
-.INDENT 7.0
-.TP
-.BI \-n \ NEW_SERIES_NAME\fR,\fB \ \-\-new \ NEW_SERIES_NAME
-Create a new branch for working on a patch series
-.TP
-.BI \-f \ FORK_POINT\fR,\fB \ \-\-fork\-point \ FORK_POINT
-When creating a new branch, use this fork point instead of HEAD
-.TP
-.BI \-F \ MSGID\fR,\fB \ \-\-from\-thread \ MSGID
-When creating a new branch, use this thread
-.UNINDENT
-.TP
-.B Enroll existing branch:
-Enroll existing branch for prep work
-.INDENT 7.0
-.TP
-.BI \-e \ ENROLL_BASE\fR,\fB \ \-\-enroll \ ENROLL_BASE
-Enroll current branch, using the passed tag, branch, or commit as fork base
-.UNINDENT
-.UNINDENT
-.SS b4 send
+.SS b4 prep, trailers, send
+.sp
+These commands allow preparing and submitting a patch series for review
+on the mailing list. Full documentation is available online at the
+following address:
+.sp
+\fI\%https://b4.docs.kernel.org/en/latest/contributor/overview.html\fP
+.sp
+For options, see the output of \fBb4 prep \-\-help\fP, \fBb4 trailers
+\-\-help\fP and \fBb4 send \-\-help\fP\&.
+.sp
+\fIExamples\fP
 .INDENT 0.0
 .TP
-.B usage:
-b4 send [\-h] [\-d | \-o OUTPUT_DIR | \-\-preview\-to ADDR [ADDR ...] | \-\-reflect] [\-\-no\-trailer\-to\-cc] [\-\-to ADDR [ADDR ...]] [\-\-cc ADDR [ADDR ...]] [\-\-not\-me\-too] [\-\-resend [vN]] [\-\-no\-sign] [\-\-web\-auth\-new] [\-\-web\-auth\-verify VERIFY_TOKEN]
+.B \fBb4 prep \-n my\-new\-feature \-f v6.4\-rc4\fP
+Start a new branch, forking it from the tag \fBv6.4\-rc4\fP, and prepare
+it for adding more patches.
 .TP
-.B options:
-.INDENT 7.0
+.B \fBb4 prep \-\-edit\-cover\fP
+Edit the cover letter for the current series. This step isn\(aqt
+required for most single\-patch submissions.
 .TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
+.B \fBb4 prep \-\-auto\-to\-cc\fP
+Find all addresses that need to receive a copy of the patch series
+submission and add them to the cover letter.
 .TP
-.B  \-d\fP,\fB  \-\-dry\-run
-Do not send, just dump out raw smtp messages to the stdout
-.UNINDENT
-.INDENT 7.0
+.B \fBb4 prep \-\-check\fP
+Run the configured checks on your series to identify any potential
+problems. For Linux kernel, this runs \fBcheckpatch.pl\fP with the
+recommended set of parameters.
 .TP
-.B \-\-preview\-to ADDR [ADDR ...]
-Send everything for a pre\-review to specified addresses instead of actual recipients
-.UNINDENT
-.INDENT 7.0
+.B \fBb4 send \-o /tmp/outdir\fP
+Generate the patches that b4 is going to send out and save them into
+the directory specified. This allows you to review the series before
+actually sending them.
 .TP
-.BI \-o \ OUTPUT_DIR\fR,\fB \ \-\-output\-dir \ OUTPUT_DIR
-Do not send, write raw messages to this directory (forces \-\-dry\-run)
+.B \fBb4 send \-\-preview\-to [addr1@example.com addr2@example.com]\fP
+Send a \(dqpreview\(dq version of the series for someone to check before
+submitting it upstream.
 .TP
-.B  \-\-reflect
-Send everything to yourself instead of the actual recipients
-.TP
-.B  \-\-no\-trailer\-to\-cc
-Do not add any addresses found in the cover or patch trailers to To: or Cc:
-.UNINDENT
-.INDENT 7.0
-.TP
-.B \-\-to ADDR [ADDR ...]
-Addresses to add to the To: list
-.TP
-.B \-\-cc ADDR [ADDR ...]
-Addresses to add to the Cc: list
-.UNINDENT
-.INDENT 7.0
-.TP
-.B  \-\-not\-me\-too
-Remove yourself from the To: or Cc: list
-.UNINDENT
-.INDENT 7.0
-.TP
-.B \-\-resend [vN]
-Resend a previously sent version of the series
-.UNINDENT
-.INDENT 7.0
-.TP
-.B  \-\-no\-sign
-Do not add the cryptographic attestation signature header
-.UNINDENT
-.TP
-.B Web submission:
-Authenticate with the web submission endpoint
-.INDENT 7.0
-.TP
-.B  \-\-web\-auth\-new
-Initiate a new web authentication request
-.TP
-.BI \-\-web\-auth\-verify \ VERIFY_TOKEN
-Submit the token received via verification email
-.UNINDENT
-.UNINDENT
-.SS b4 trailers
-.INDENT 0.0
-.TP
-.B usage:
-b4 trailers [\-h] [\-u] [\-S] [\-F MSGID] [\-\-since SINCE]
-.TP
-.B options:
-.INDENT 7.0
-.TP
-.B  \-h\fP,\fB  \-\-help
-show this help message and exit
-.TP
-.B  \-u\fP,\fB  \-\-update
-Update branch commits with latest received trailers
-.TP
-.B  \-S\fP,\fB  \-\-sloppy\-trailers
-Apply trailers without email address match checking
-.TP
-.BI \-F \ MSGID\fR,\fB \ \-\-trailers\-from \ MSGID
-Look for trailers in the thread with this msgid instead of using the series change\-id
-.TP
-.BI \-\-since \ SINCE
-The \-\-since option to use with \-F when auto\-matching patches (default=1.month)
-.TP
-.BI \-m \ LOCALMBOX\fR,\fB \ \-\-use\-local\-mbox \ LOCALMBOX
-Instead of grabbing a thread from lore, process this mbox file (or \- for stdin)
-.TP
-.BI \-\-stdin\-pipe\-sep \ STDIN_PIPE_SEP
-When accepting messages on stdin, split using this pipe separator string
-.TP
-.B  \-C\fP,\fB  \-\-no\-cache
-Do not use local cache
-.UNINDENT
+.B \fBb4 trailers \-u\fP
+Retrieve any code\-review trailers provided for your series and apply
+them to the current branch.
 .UNINDENT
 .SH CONFIGURATION
 .sp
 B4 configuration is handled via git\-config(1), so you can store it in
-either the toplevel $HOME/.gitconfig file, or in a per\-repository
+either the toplevel \fB$HOME/.gitconfig\fP file, or in a per\-repository
 \&.git/config file if your workflow changes per project.
 .sp
 To see configuration options available, see online documentation at

@@ -5,7 +5,7 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2023-01-19
+:Date:      2024-06-10
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
 :Version:   0.14-dev
@@ -18,8 +18,8 @@ b4 {mbox,am,shazam,pr,diff,ty,kr,prep,send,trailers} [options]
 DESCRIPTION
 -----------
 This is a helper utility to work with patches and pull requests made
-available via a public-inbox archive like lore.kernel.org. It is
-written to make it easier to participate in a patch-based workflows,
+available via a public-inbox archive like lore.kernel.org. It's
+written to make it simpler to participate in patch-based workflows,
 like those used in the Linux kernel development.
 
 The name "b4" was chosen for ease of typing and because B-4 was the
@@ -35,69 +35,47 @@ Maintainer-oriented:
 * *am*: Create an mbox file that is ready to git-am
 * *shazam*: Apply patch series to git repositories
 * *pr*: Work with pull requests
-* *diff*: Show range-diff style diffs between patch versions
 * *ty*: Create templated replies for processed patches and pull requests
-* *kr*: (EXPERIMENTAL) Operate on patatt-compatible keyrings
+* *diff*: Show range-diff style diffs between patch versions
+* *kr*: (STUB) Operate on patatt-compatible keyrings
 
 Contributor-oriented:
 
-* *prep*: (EXPERIMENTAL) prepare your series for submission
-* *send*: (EXPERIMENTAL) send your series for review on distribution lists
-* *trailers*: (EXPERIMENTAL) retrieve and apply code-review trailers
+* *prep*: prepare your series for submission
+* *trailers*: retrieve and apply code-review trailers
+* *send*: send your series for review on distribution lists
 
-OPTIONS
--------
--h, --help            show this help message and exit
--d, --debug           Add more debugging info to the output (default: False)
--q, --quiet           Output critical information only (default: False)
--n, --no-interactive  Do not ask any interactive questions (default: False)
---offline-mode        Do not perform any network queries (default: False)
---no-stdin            Disable TTY detection for stdin (default: False)
-
-SUBCOMMAND OPTIONS
-------------------
+For full options and what they do, please see ``b4 --help`` and ``b4
+subcommand --help``.
 
 b4 mbox
 ~~~~~~~
 
 This command allows retrieving entire threads from a remote public-inbox
-instance. The resulting mbox file can then be opened with most MUA
-clients for actions like replying to conversations or reviewing patch
+instance. You can open the resulting mbox file with most mail clients
+for actions like replying to conversations or reviewing patch
 submissions.
 
-usage:
-  b4 mbox [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-o OUTDIR] [-c] [-n WANTNAME] [-M] [-f] [msgid]
+You can provide the message either as a msgid, as full URL to a
+public-inbox archive, or you can pipe it on stdin.
 
-positional arguments:
-  msgid                 Message ID to process, or pipe a raw message
+For options and their descriptions, see ``b4 mbox --help``.
 
-options:
-  -h, --help            show this help message and exit
-  -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of default (linux-mm, linux-hardening, etc)
-  -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
-  --stdin-pipe-sep STDIN_PIPE_SEP
-                        When accepting messages on stdin, split using this pipe separator string
-  -C, --no-cache
-                        Do not use local cache
-  --single-message
-                        Only retrieve the message matching the msgid and ignore the rest of the thread
-  -o OUTDIR, --outdir OUTDIR
-                        Output into this directory (or use - to output mailbox contents to stdout)
-  -c, --check-newer-revisions
-                        Check if newer patch revisions exist
-  -n WANTNAME, --mbox-name WANTNAME
-                        Filename to name the mbox destination
-  -M, --save-as-maildir
-                        Save as maildir (avoids mbox format ambiguities)
-  -f, --filter-dupes
-                        When adding messages to existing maildir, filter out duplicates
-  -r MBOX, --refetch MBOX
-                        Refetch all messages in specified mbox with their original headers
-                             
+*Examples*
 
-*Example*: b4 mbox 20200313231252.64999-1-keescook@chromium.org
+``b4 mbox [msgid]``
+  Download a thread from the default public-inbox server and save it in
+  the current directory as a .mbox file.
+
+``b4 mbox -m ~/Mail [msgid]``
+  Download a thread from your ~/Mail folder and save it in the current
+  directlry as a .mbox file.
+
+``b4 mbox -fo ~/Mail [public-inbox-url]``
+  Download the thread from this public-inbox server, and add it to your
+  existing mailbox, filtering out any dupes already in your mailbox
+  folder.
+
 
 b4 am
 ~~~~~
@@ -120,70 +98,33 @@ command. It will automatically perform the following operations:
 * prepare the tree for a 3-way merge (with ``-3``)
 * cherry-pick a subset of patches from a large series (with ``-P``)
 
-usage:
-  b4 am [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-o OUTDIR] [-c] [-n WANTNAME] [-M] [-v WANTVER] [-t] [-S] [-T] [-s] [-l] [-P CHERRYPICK] [--cc-trailers] [--no-parent] [--allow-unicode-control-chars] [-Q] [-g] [-b GUESSBRANCH [GUESSBRANCH ...]] [--guess-lookback GUESSDAYS] [-3] [--no-cover] [--no-partial-reroll] [msgid]
+Note: Unless you intend to do some preparatory work on the series before
+applying it to the git repository (e.g. a 3-way merge), you should
+consider using ``b4 shazam`` to apply the retrieved series.
 
-positional arguments:
-  msgid                 Message ID to process, or pipe a raw message
+For options and their descriptions, see ``b4 am --help``.
 
-options:
-  -h, --help            show this help message and exit
-  -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of default (linux-mm, linux-hardening, etc)
-  -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
-  --stdin-pipe-sep STDIN_PIPE_SEP
-                        When accepting messages on stdin, split using this pipe separator string
-  -C, --no-cache
-                        Do not use local cache
-  --single-message
-                        Only retrieve the message matching the msgid and ignore the rest of the thread
-  -o OUTDIR, --outdir OUTDIR
-                        Output into this directory (or use - to output mailbox contents to stdout)
-  -c, --check-newer-revisions
-                        Check if newer patch revisions exist
-  -n WANTNAME, --mbox-name WANTNAME
-                        Filename to name the mbox destination
-  -M, --save-as-maildir
-                        Save as maildir (avoids mbox format ambiguities)
-  --single-message
-                        Only retrieve the message matching the msgid and ignore the rest of the thread
-  -v WANTVER, --use-version WANTVER
-                        Get a specific version of the patch/series
-  -S, --sloppy-trailers
-                        Apply trailers without email address match checking
-  -T, --no-add-trailers
-                        Do not add or sort any trailers
-  -s, --add-my-sob
-                        Add your own signed-off-by to every patch
-  -l, --add-link
-                        Add a Link: with message-id lookup URL to every patch
-  -P CHERRYPICK, --cherry-pick CHERRYPICK
-                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", "-P _" to use just the msgid specified, or "-P *globbing*" to match on commit subject)
-  --cc-trailers
-                        Copy all Cc'd addresses into Cc: trailers
-  --no-parent
-                        Break thread at the msgid specified and ignore any parent messages
-  --allow-unicode-control-chars
-                        Allow unicode control characters (very rarely legitimate)
-  -Q, --quilt-ready
-                        Save patches in a quilt-ready folder
-  -g, --guess-base
-                        Try to guess the base of the series (if not specified)
+*Examples*
 
-  -b GUESSBRANCH [GUESSBRANCH ...], --guess-branch GUESSBRANCH [GUESSBRANCH ...]
-                        When guessing base, restrict to this branch (use with -g)
+``b4 am -sl [msgid]``
+  Download a thread from the default public-inbox server, apply any
+  follow-up trailers, add your own Signed-Off-By trailer plus a Link:
+  trailer indicating the origin of the patch, then save the resulting
+  .mbox file in the current directory ready to be applied by "git am".
 
-  --guess-lookback GUESSDAYS
-                        When guessing base, go back this many days from the patch date (default: 2 weeks)
-  -3, --prep-3way
-                        Prepare for a 3-way merge (tries to ensure that all index blobs exist by making a fake commit range)
-  --no-cover
-                        Do not save the cover letter (on by default when using -o -)
-  --no-partial-reroll
-                        Do not reroll partial series when detected
+``b4 am -sl -P 1-3 [msgid]``
+  Same as the previous example, but pick only patches 1,2,3 from the
+  entire series.
 
-*Example*: b4 am 20200313231252.64999-1-keescook@chromium.org
+``b4 am -3 [msgid]``
+  Download the series and prepare the local git tree for a 3-way merge
+  by ensuring that all index blobs exist.
+
+``b4 am --check [msgid]``
+  Download the series and show if it passes the checks. You can specify
+  the command using the ``b4.am-perpatch-check-cmd`` configuration
+  option. For the Linux kernel, the default will be the most common
+  ``checkpatch.pl`` set of options.
 
 b4 shazam
 ~~~~~~~~~
@@ -191,275 +132,157 @@ b4 shazam
 This is very similar to **b4 am**, but will also apply patches
 directly to the current git tree using ``git am``. Alternatively, when
 used with ``-H``, it can fetch the patch series into ``FETCH_HEAD`` as
-if it were a pull request, so it can be reviewed and merged. In this
-case, the cover letter is used as a template for the merge commit.
+if it were a pull request, ready to review and merge. B4 uses the cover
+letter as a template for the merge commit.
 
 If you want to automatically invoke git-merge, you can use ``-M``
-instead of ``-H``.
+instead of ``-H``. B4 automatically opens up the editor allowing you to
+edit the merge commit message.
 
-usage:
-  b4 shazam [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [-v WANTVER] [-t] [-S] [-T] [-s] [-l] [-P CHERRYPICK] [--cc-trailers] [--no-parent] [--allow-unicode-control-chars] [-H | -M] [--guess-lookback GUESSDAYS] [msgid]
+Note: the ``-M`` and ``-H`` options work best for series that have the
+``base-commit`` info matching an object in your local tree.
 
-positional arguments:
-  msgid                 Message ID to process, or pipe a raw message
+For options and their descriptions, see ``b4 shazam --help``.
 
-options:
-  -h, --help            show this help message and exit
-  -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of default (linux-mm, linux-hardening, etc)
-  -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
-  --stdin-pipe-sep STDIN_PIPE_SEP
-                        When accepting messages on stdin, split using this pipe separator string
-  -C, --no-cache        Do not use local cache
-  --single-message
-                        Only retrieve the message matching the msgid and ignore the rest of the thread
-  -v WANTVER, --use-version WANTVER
-                        Get a specific version of the patch/series
-  -S, --sloppy-trailers
-                        Apply trailers without email address match checking
-  -T, --no-add-trailers
-                        Do not add or sort any trailers
-  -s, --add-my-sob      Add your own signed-off-by to every patch
-  -l, --add-link        Add a Link: with message-id lookup URL to every patch
-  -P CHERRYPICK, --cherry-pick CHERRYPICK
-                        Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", "-P _" to use just the msgid specified, or "-P *globbing*" to match on commit subject)
-  --cc-trailers         Copy all Cc'd addresses into Cc: trailers
-  --no-parent           Break thread at the msgid specified and ignore any parent messages
-  --allow-unicode-control-chars
-                        Allow unicode control characters (very rarely legitimate)
-  -H, --make-fetch-head
-                        Attempt to treat series as a pull request and fetch it into FETCH_HEAD
-  -M, --merge
-                        Attempt to merge series as if it were a pull request (execs git-merge)
-  --guess-lookback GUESSDAYS
-                        (use with -H or -M) When guessing base, go back this many days from the patch date (default: 3 weeks)
-  --merge-base COMMIT
-                        (use with -H or -M) Force this base when merging
+*Examples*
 
-*Example*: b4 shazam -H 20200313231252.64999-1-keescook@chromium.org
+``b4 shazam -sl -M [msgid]``
+  Download a thread from the default public-inbox server, apply any
+  follow-up trailers, add your own Signed-Off-By trailer plus a Link:
+  trailer with the origin of the patch, then merge this commit
+  to the current git repository using the cover letter as the merge
+  commit template.
+
+``b4 shazam -sl -M --merge-base v6.4-rc4 [msgid]``
+  Same as the previous example, but forces the merge-base to be the
+  commit-ish object provided instead of the one listed in the patch
+  series itself.
 
 b4 pr
 ~~~~~
 This command is for working with pull requests submitted using
-``git-request-pull``.
+``git-request-pull``. It provides the following benefits as opposed to using git directly:
 
-usage:
-  b4 pr [-h] [-g GITDIR] [-b BRANCH] [-c] [-e] [-o OUTMBOX] [msgid]
+* it can check if the pull is already applied before performing a git
+  fetch
+* it checks the signature on the tag or tip commit specified in the pull
+  request
+* it can track applied pull requests and send replies to submitters
+  using ``b4 ty``
 
-positional arguments:
-  msgid                 Message ID to process, or pipe a raw message
+For options and their descriptions, see ``b4 pr --help``.
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -g GITDIR, --gitdir GITDIR
-                        Operate on this git tree instead of current dir
-  -b BRANCH, --branch BRANCH
-                        Check out FETCH_HEAD into this branch after fetching
-  -c, --check           Check if pull request has already been applied
-  -e, --explode         Convert a pull request into an mbox full of patches
-  -o OUTMBOX, --output-mbox OUTMBOX
-                        Save exploded messages into this mailbox (default: msgid.mbx)
-  -f MAILFROM, --from-addr MAILFROM
-                        Use this From: in exploded messages (use with -e)
+*Examples*
 
-*Example*: b4 pr 202003292120.2BDCB41@keescook
+``b4 pr [msgid]``
+  Download the message with the pull-request and apply it to the current
+  git tree.
 
 b4 ty
 ~~~~~
-usage:
-  b4 ty [-h] [-g GITDIR] [-o OUTDIR] [-l] [-t THANK_FOR [THANK_FOR ...]] [-d DISCARD [DISCARD ...]] [-a] [-b BRANCH] [--since SINCE] [-S] [--dry-run]
+If you've retrieved and applied some patches to your tree, you should be
+able to fire up the “auto-thankanator”, which uses patch-id and commit
+subject tracking to figure out which series from those you have
+retrieved you already applied to your tree. The process is usually
+pretty fast and fairly accurate.
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -g GITDIR, --gitdir GITDIR
-                        Operate on this git tree instead of current dir
-  -o OUTDIR, --outdir OUTDIR
-                        Write thanks files into this dir (default=.)
-  -l, --list            List pull requests and patch series you have retrieved
-  -t THANK_FOR, --thank-for THANK_FOR
-                        Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")
-  -d DISCARD, --discard DISCARD
-                        Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")
-  -a, --auto            Use the Auto-Thankanator gun to figure out what got applied/merged
-  -b BRANCH, --branch BRANCH
-                        The branch to check against, instead of current
-  --since SINCE         The --since option to use when auto-matching patches (default=1.week)
-  -S, --send-email      Send email instead of writing out .thanks files
-  --dry-run             Print out emails instead of sending them
-  --pw-set-state PW_STATE
-                        Set this patchwork state instead of default (use with -a, -t or -d)
+To send mails directly using ``-S``, you should have a configured
+``[sendemail]`` section somewhere in your applicable git configuration
+files. By default, ``b4 ty`` writes out .thanks files in the current
+directly that you can edit and sent out using a command like ``mutt -f
+thanks.file``.
 
-.. note::
+For options and their descriptions, see ``b4 ty --help``.
 
-   To send mails directly using -S, you should have a configured
-   [sendemail] section somewhere in your applicable git configuration
-   files (global or in-tree).
+*Examples*
 
-*Example*: b4 ty -aS --dry-run
+``b4 ty -a -S``
+  Locate any retrieved series that you have applied to the current git
+  repository and send out thanks to all members of the conversation.
+
+``b4 ty -a -S --dry-run``
+  Same as above, but instead of actually sending it out show what the
+  message is going to be, first.
 
 b4 diff
 ~~~~~~~
-usage:
-  b4 diff [-h] [-g GITDIR] [-p USEPROJECT] [-C] [-v WANTVERS [WANTVERS ...]] [-n] [-o OUTDIFF] [-c] [-m AMBOX AMBOX] [msgid]
+The diff subcommand allows comparing two different revisions of the same
+patch series using ``git range-diff``. Note, that in order to perform
+the range-diff comparison, both revisions need to cleanly apply to the
+current tree, which may not always be possible to achieve.
 
-positional arguments:
-  msgid                 Message ID to process, pipe a raw message, or use -m
+For options and their descriptions, see ``b4 diff --help``.
 
-optional arguments:
+*Examples*
 
-  -h, --help            show this help message and exit
-  -g GITDIR, --gitdir GITDIR
-                        Operate on this git tree instead of current dir
-  -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
-  -C, --no-cache        Do not use local cache
-
-  -v WANTVERS [WANTVERS ...], --compare-versions WANTVERS [WANTVERS ...]
-                        Compare specific versions instead of latest and one before that, e.g. -v 3 5
-
-  -n, --no-diff
-                        Do not generate a diff, just show the command to do it
-
-  -o OUTDIFF, --output-diff OUTDIFF
-                        Save diff into this file instead of outputting to stdout
-  -c, --color
-                        Force color output even when writing to file
-
-  -m AMBOX AMBOX, --compare-am-mboxes AMBOX AMBOX
-                        Compare two mbx files prepared with "b4 am"
-
-*Example*: b4 diff 20200526205322.23465-1-mic@digikod.net
+``b4 diff [msgid-of-vN]``
+  Retrieves the thread matching the msgid specified and attempts to
+  auto-locate the previous version of the series. If successful, shows
+  the output of ``git range-diff`` comparing the patch differences.
 
 b4 kr
 ~~~~~
-usage:
-  b4 kr [-h] [-p USEPROJECT] [-m LOCALMBOX] [-C] [--show-keys] [msgid]
 
-positional arguments:
-  msgid                 Message ID to process, or pipe a raw message
+This subcommand allows maintaining a local keyring of contributor keys.
 
-optional arguments:
-  -h, --help            show this help message and exit
-  -p USEPROJECT, --use-project USEPROJECT
-                        Use a specific project instead of guessing (linux-mm, linux-hardening, etc)
-  -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
-  --stdin-pipe-sep STDIN_PIPE_SEP
-                        When accepting messages on stdin, split using this pipe separator string
-  -C, --no-cache        Do not use local cache
-  --show-keys           Show all developer keys from the thread
+Note: this part of b4 is under active development with improvements
+planned for the near future.
 
-*Example*: b4 kr --show-keys 20210521184811.617875-1-konstantin@linuxfoundation.org
+For options and their descriptions, see ``b4 kr --help``.
 
-b4 prep
-~~~~~~~
-usage:
-  b4 prep [-h] [-c | -p OUTPUT_DIR | --edit-cover | --show-revision | --force-revision N | --compare-to vN | --manual-reroll COVER_MSGID | --set-prefixes PREFIX [PREFIX ...] | --show-info [PARAM] ] | [ --cleanup [BRANCHNAME] ] [-n NEW_SERIES_NAME] [-f FORK_POINT] [-F MSGID] [-e ENROLL_BASE]
+*Examples*
 
-options:
-  -h, --help            show this help message and exit
-  -c, --auto-to-cc      Automatically populate cover letter trailers with To and Cc addresses
-  -p OUTPUT_DIR, --format-patch OUTPUT_DIR
-                        Output prep-tracked commits as patches
-  --edit-cover          Edit the cover letter in your defined $EDITOR (or core.editor)
-  --show-revision       Show current series revision number
-  --force-revision N    Force revision to be this number instead
-  --compare-to vN       Display a range-diff to previously sent revision N
-  --manual-reroll COVER_MSGID
-                        Mark current revision as sent and reroll (requires cover letter msgid)
+``b4 kr --show-keys [msgid]``
+  Retrieve the thread specified and show any cryptographic keys used to
+  attest the patches.
 
-  --set-prefixes PREFIX [PREFIX ...]
-                        Extra prefixes to add to [PATCH] (e.g.: RFC mydrv)
+b4 prep, trailers, send
+~~~~~~~~~~~~~~~~~~~~~~~
+These commands allow preparing and submitting a patch series for review
+on the mailing list. Full documentation is available online at the
+following address:
 
-  --show-info [PARAM]
-                        Show series info in a format that can be passed to other tools
-  --cleanup [BRANCHNAME]
-                        Archive and delete obsolete prep-managed branches
+https://b4.docs.kernel.org/en/latest/contributor/overview.html
 
-Create new branch:
-  Create a new branch for working on patch series
+For options, see the output of ``b4 prep --help``, ``b4 trailers
+--help`` and ``b4 send --help``.
 
-  -n NEW_SERIES_NAME, --new NEW_SERIES_NAME
-                        Create a new branch for working on a patch series
-  -f FORK_POINT, --fork-point FORK_POINT
-                        When creating a new branch, use this fork point instead of HEAD
-  -F MSGID, --from-thread MSGID
-                        When creating a new branch, use this thread
+*Examples*
 
-Enroll existing branch:
-  Enroll existing branch for prep work
+``b4 prep -n my-new-feature -f v6.4-rc4``
+  Start a new branch, forking it from the tag ``v6.4-rc4``, and prepare
+  it for adding more patches.
 
-  -e ENROLL_BASE, --enroll ENROLL_BASE
-                        Enroll current branch, using the passed tag, branch, or commit as fork base
+``b4 prep --edit-cover``
+  Edit the cover letter for the current series. This step isn't
+  required for most single-patch submissions.
 
-b4 send
-~~~~~~~
-usage:
-  b4 send [-h] [-d | -o OUTPUT_DIR | --preview-to ADDR [ADDR ...] | --reflect] [--no-trailer-to-cc] [--to ADDR [ADDR ...]] [--cc ADDR [ADDR ...]] [--not-me-too] [--resend [vN]] [--no-sign] [--web-auth-new] [--web-auth-verify VERIFY_TOKEN]
+``b4 prep --auto-to-cc``
+  Find all addresses that need to receive a copy of the patch series
+  submission and add them to the cover letter.
 
-options:
-  -h, --help            show this help message and exit
-  -d, --dry-run         Do not send, just dump out raw smtp messages to the stdout
+``b4 prep --check``
+  Run the configured checks on your series to identify any potential
+  problems. For Linux kernel, this runs ``checkpatch.pl`` with the
+  recommended set of parameters.
 
-  --preview-to ADDR [ADDR ...]
-                        Send everything for a pre-review to specified addresses instead of actual recipients
+``b4 send -o /tmp/outdir``
+  Generate the patches that b4 is going to send out and save them into
+  the directory specified. This allows you to review the series before
+  actually sending them.
 
-  -o OUTPUT_DIR, --output-dir OUTPUT_DIR
-                        Do not send, write raw messages to this directory (forces --dry-run)
+``b4 send --preview-to [addr1@example.com addr2@example.com]``
+  Send a "preview" version of the series for someone to check before
+  submitting it upstream.
 
-  --reflect
-                        Send everything to yourself instead of the actual recipients
-
-  --no-trailer-to-cc
-                        Do not add any addresses found in the cover or patch trailers to To: or Cc:
-
-  --to ADDR [ADDR ...]
-                        Addresses to add to the To: list
-
-  --cc ADDR [ADDR ...]
-                        Addresses to add to the Cc: list
-
-  --not-me-too
-                        Remove yourself from the To: or Cc: list
-
-  --resend [vN]
-                        Resend a previously sent version of the series
-
-  --no-sign
-                        Do not add the cryptographic attestation signature header
-
-Web submission:
-  Authenticate with the web submission endpoint
-
-  --web-auth-new        Initiate a new web authentication request
-  --web-auth-verify VERIFY_TOKEN
-                        Submit the token received via verification email
-
-b4 trailers
-~~~~~~~~~~~
-usage:
-  b4 trailers [-h] [-u] [-S] [-F MSGID] [--since SINCE]
-
-options:
-  -h, --help            show this help message and exit
-  -u, --update          Update branch commits with latest received trailers
-  -S, --sloppy-trailers
-                        Apply trailers without email address match checking
-  -F MSGID, --trailers-from MSGID
-                        Look for trailers in the thread with this msgid instead of using the series change-id
-  --since SINCE         The --since option to use with -F when auto-matching patches (default=1.month)
-  -m LOCALMBOX, --use-local-mbox LOCALMBOX
-                        Instead of grabbing a thread from lore, process this mbox file (or - for stdin)
-  --stdin-pipe-sep STDIN_PIPE_SEP
-                        When accepting messages on stdin, split using this pipe separator string
-  -C, --no-cache        Do not use local cache
-
+``b4 trailers -u``
+  Retrieve any code-review trailers provided for your series and apply
+  them to the current branch.
 
 CONFIGURATION
 -------------
 B4 configuration is handled via git-config(1), so you can store it in
-either the toplevel $HOME/.gitconfig file, or in a per-repository
+either the toplevel ``$HOME/.gitconfig`` file, or in a per-repository
 .git/config file if your workflow changes per project.
 
 To see configuration options available, see online documentation at
