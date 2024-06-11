@@ -1,7 +1,6 @@
 v0.14
 -----
 [X] Switch to using pyproject.toml
-[X] Use hashed requirements for added security and reproducible installs
 [X] Automatic dependency resolution
 	[X] Retrieve dependencies using the standard prerequisite-patch-id
 	[X] Define the prerequisite-change-id trailer
@@ -19,7 +18,7 @@ v0.14
 	[X] Run b4-specific checks automatically (needs-editing, needs-auto-to-cc)
 	[X] Refuse to send if checks haven't been run
 	[X] Allow turning off pre-flight check all together, or by individual check
-[_] Document new features
+[X] Document new features
 	[X] prep --check
 	[X] Series dependencies overview
 	[X] prep --edit-deps
@@ -27,7 +26,17 @@ v0.14
 	[X] Pre-flight checks overview
 	[X] How to turn off pre-flight checks
 	[X] Document config file changes (am-perpatch-check-cmd, prep-perpatch-check-cmd, etc)
-	[_] Update manpages
+	[X] Update manpages
+[X] Miscellaneous enhancements
+	[X] Add prep --add-prefixes
+	[X] Add trailers --since-commit
+	[X] Automatically no-parent standalone patches in the middle of long threads
+	[X] Prevent overwriting cover letters when the tree changes while editing
+	[X] More bug avoidance in send-receive for python SMTP implementations
+	[X] Add ability to specify DNS resolvers for DKIM
+	[X] Add tab-completion generation with shtab
+	[X] Allow inserting a range-diff into the cover letter
+	[X] Use hashed requirements for added security and reproducible installs
 
 v0.15
 -----
