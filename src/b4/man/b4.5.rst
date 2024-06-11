@@ -8,7 +8,7 @@ Work with code submissions in a public-inbox archive
 :Date:      2024-06-10
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.14-dev
+:Version:   0.14.0-rc0
 :Manual section: 5
 
 SYNOPSIS
