@@ -33,7 +33,13 @@ Command flags
   * when a single larger series is broken up into multiple smaller
     series (or vice-versa)
 
-``--since SINCE``
+``--since GITLOGDATE``
   Only useful with ``-F``. By default, b4 will only look for your own
   commits as far as 1 month ago. With this flag, you can instruct it to
   look further back.
+
+``--since-commit COMMITISH``
+  Looks at all commits that happened since the specified commit (or tag,
+  or branch HEAD) where you are the committer, and then queries the
+  public-inbox server for matching patch-ids. Pulls in any code-review
+  trailers received for the matching patches.
