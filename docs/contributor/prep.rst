@@ -440,6 +440,10 @@ modifying defaults for some of these flags.
   When b4 sends the message, it should add ``PATCH``, ``vN``, to the
   subject as necessary.
 
+``--add-prefixes PREFIX [PREFIX ...]`` **(v0.14+)**
+  Similar to ``--set-prefixes``, but will add prefixes to any ones
+  currently defined, as opposed to completely replacing them.
+
 ``--show-info [PARAM]`` **(v0.13+)**
   Dumps information about the current series in a format suitable for
   parsing by other tools. Starting with v0.13, the parameter can be one
