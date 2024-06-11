@@ -475,7 +475,7 @@ def send_messages(listing: List[Dict], branch: str, cmdargs: argparse.Namespace)
             if pwstate:
                 b4.patchwork_set_state(msgids, pwstate)
     else:
-        if pwstate:
+        if pwstate and not cmdargs.dryrun:
             b4.patchwork_set_state(msgids, pwstate)
             logger.info('---')
         logger.debug('Wrote %s thank-you letters', outgoing)
