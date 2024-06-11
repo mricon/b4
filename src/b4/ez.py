@@ -2273,7 +2273,7 @@ def show_revision() -> None:
 
 def write_to_tar(bio_tar: tarfile.TarFile, name, mtime, bio_file: io.BytesIO):
     tifo = tarfile.TarInfo(name)
-    tuser = os.getlogin()
+    tuser = os.environ.get('USERNAME', 'user')
     tuid = os.getuid()
     tgid = os.getgid()
     tifo.uid = tuid
