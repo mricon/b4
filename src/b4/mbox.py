@@ -458,7 +458,6 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: bool = None) -> None:
         if pmsg is None:
             at += 1
             continue
-        msgids.append(pmsg.msgid)
 
         if lmsg is None:
             lmsg = pmsg
@@ -472,6 +471,9 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: bool = None) -> None:
             logger.debug('Skipped non-cherrypicked: %s', at)
             at += 1
             continue
+
+        # Add it for patchwork state tracking
+        msgids.append(pmsg.msgid)
 
         if pmsg.pwhash is None:
             logger.debug('Unable to get hashes for all patches, not tracking for thanks')
