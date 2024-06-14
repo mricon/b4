@@ -43,6 +43,10 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
     outdir = cmdargs.outdir
     if outdir == '-':
         cmdargs.nocover = True
+    if 'addmsgid' in cmdargs and cmdargs.addmsgid:
+        logger.debug('Setting linktrailermask to Message-ID:')
+        config['linktrailermask'] = 'Message-ID: <%s>'
+        cmdargs.addlink = True
     wantver = cmdargs.wantver
     count = len(msgs)
     logger.info('Analyzing %s messages in the thread', count)
