@@ -5,10 +5,10 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2024-06-10
+:Date:      2024-06-14
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.14.0-rc0
+:Version:   0.14.0
 :Manual section: 5
 
 SYNOPSIS
