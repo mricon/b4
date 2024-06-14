@@ -37,6 +37,7 @@ v0.14
 	[X] Add tab-completion generation with shtab
 	[X] Allow inserting a range-diff into the cover letter
 	[X] Use hashed requirements for added security and reproducible installs
+	[X] Introduce the -i switch to am/shazam to insert the Message-ID trailer
 
 v0.15
 -----

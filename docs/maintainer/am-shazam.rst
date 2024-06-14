@@ -115,6 +115,10 @@ The following flags are common to both commands:
   Adds a ``Link:`` trailer with the URL of the retrieved message using
   the ``linkmask`` template.
 
+``-i, --add-message-id``
+  Adds a ``Message-ID:`` trailer with the Message-ID of the retrieved
+  message. Cannot be used together with the ``-l`` switch.
+
 ``-P CHERRYPICK, --cherry-pick CHERRYPICK``
   This allows you to select a subset of patches from a larger series.
   Here are a few examples.

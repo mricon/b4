@@ -62,9 +62,13 @@ These options control many of the core features of b4.
   call it something other than "Link." For example, some projects
   use "Message-Id" trailers instead::
 
-      linktrailermask = Message-Id: <%s>
+      linktrailermask = Message-ID: <%s>
 
   The ``%s`` is the placeholder for the message-id.
+
+  Note: starting with version 0.14, you can pass the ``-i`` command-line
+  switch instead of ``-l`` to automatically insert the ``Message-ID``
+  trailer.
 
   Default: ``Link: https://lore.kernel.org/%s``
 

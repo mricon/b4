@@ -49,8 +49,6 @@ def cmd_am_common_opts(sp):
                     help='Do not add any trailers from follow-up messages')
     sp.add_argument('-s', '--add-my-sob', dest='addmysob', action='store_true', default=False,
                     help='Add your own signed-off-by to every patch')
-    sp.add_argument('-l', '--add-link', dest='addlink', action='store_true', default=False,
-                    help='Add a Link: with message-id lookup URL to every patch')
     sp.add_argument('-P', '--cherry-pick', dest='cherrypick', default=None,
                     help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
                          '"-P _" to use just the msgid specified, or '
@@ -63,6 +61,11 @@ def cmd_am_common_opts(sp):
                     help='Break thread at the msgid specified and ignore any parent messages')
     sp.add_argument('--allow-unicode-control-chars', dest='allowbadchars', action='store_true', default=False,
                     help='Allow unicode control characters (very rarely legitimate)')
+    sa_g = sp.add_mutually_exclusive_group()
+    sa_g.add_argument('-l', '--add-link', dest='addlink', action='store_true', default=False,
+                      help='Add a Link: trailer with message-id lookup URL to every patch')
+    sa_g.add_argument('-i', '--add-message-id', dest='addmsgid', action='store_true', default=False,
+                      help='Add a Message-ID: trailer to every patch')
 
 
 def cmd_mbox(cmdargs):
