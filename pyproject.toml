@@ -46,5 +46,6 @@ norecursedirs = "tests/helpers"
 current_version = "0.15-dev"
 files = [
     {filename = "src/b4/__init__.py"},
-    {filename = "src/man/b4.5.rst"},
+    {filename = "src/b4/man/b4.5.rst"},
+    {filename = "src/b4/man/b4.5"},
 ]
