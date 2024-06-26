@@ -2857,6 +2857,14 @@ def get_config_from_git(regexp: str, defaults: Optional[dict] = None,
     return gitconfig
 
 
+def _val_to_path(topdir, val):
+    if val.startswith('./'):
+        # replace it with full topdir path
+        return os.path.abspath(os.path.join(topdir, val))
+    else:
+        return val
+
+
 def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
     global MAIN_CONFIG
 
@@ -2865,23 +2873,24 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
     # so load them up and use as defaults
     topdir = git_get_toplevel()
     wtglobs = ['prep-*-check-cmd', 'send-*', '*mask', '*template*', 'trailer*', 'pw-*']
+    multivals = ['keyringsrc', 'am-perpatch-check-cmd', 'prep-perpatch-check-cmd']
     if topdir:
         wtcfg = os.path.join(topdir, '.b4-config')
         if os.access(wtcfg, os.R_OK):
             logger.debug('Loading worktree configs from %s', wtcfg)
-            wtconfig = get_config_from_git(r'b4\..*', source=wtcfg)
+            wtconfig = get_config_from_git(r'b4\..*', multivals=multivals, source=wtcfg)
             logger.debug('wtcfg=%s', wtconfig)
             for key, val in wtconfig.items():
-                if val.startswith('./'):
-                    # replace it with full topdir path
-                    val = os.path.abspath(os.path.join(topdir, val))
+                if key in multivals:
+                    val = [_val_to_path(topdir, x) for x in val]
+                else:
+                    val = _val_to_path(topdir, val)
                 for wtglob in wtglobs:
                     if fnmatch.fnmatch(key, wtglob):
                         logger.debug('wtcfg: %s=%s', key, val)
                         defcfg[key] = val
                         break
-    config = get_config_from_git(r'b4\..*', defaults=defcfg,
-                                 multivals=['keyringsrc', 'am-perpatch-check-cmd', 'prep-perpatch-check-cmd'])
+    config = get_config_from_git(r'b4\..*', defaults=defcfg, multivals=multivals)
     config['listid-preference'] = config['listid-preference'].split(',')
     config['listid-preference'].remove('*')
     config['listid-preference'].append('*')
