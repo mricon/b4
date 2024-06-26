@@ -1534,18 +1534,29 @@ class LoreMessage:
         topdir = git_get_toplevel()
         mycmd = os.path.basename(cmdargs[0])
         ecode, out, err = _run_command(cmdargs, stdin=bdata, rundir=topdir)
+        report = list()
+
         out = out.strip()
         out_lines = out.decode(errors='replace').split('\n') if out else list()
-        report = list()
-        if out_lines:
-            for line in out_lines:
-                flag = 'fail' if 'ERROR:' in line else 'warning'
-                # Remove '-:' from the start of the line, because it's never useful
-                if line.startswith('-:'):
-                    line = line[2:]
-                report.append((flag, f'{mycmd}: {line}'))
-        else:
-            report.append(('success', f'{mycmd}: passed all checks'))
+        for line in out_lines:
+            flag = 'fail' if 'ERROR:' in line else 'warning'
+            # Remove '-:' from the start of the line, because it's never useful
+            if line.startswith('-:'):
+                line = line[2:]
+            report.append((flag, f'{mycmd}: {line}'))
+
+        err = err.strip()
+        err_lines = err.decode(errors='replace').split('\n') if err else list()
+        for line in err_lines:
+            if line.startswith('-:'):
+                line = line[2:]
+            report.append(('fail', f'{mycmd}: {line}'))
+
+        if (not out_lines) and (not err_lines):
+            if ecode:
+                report.append(('fail', f'{mycmd}: Exited with error code {ecode}'))
+            else:
+                report.append(('success', f'{mycmd}: passed all checks'))
 
         save_cache(report, cacheid, suffix='checks', is_json=True)
         return report
