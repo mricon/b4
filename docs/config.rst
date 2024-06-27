@@ -161,9 +161,11 @@ These settings control ``b4 am`` and ``b4 shazam`` behavior.
   Default: ``None``
 
 ``b4.am-perpatch-check-cmd`` (v0.14+)
-  The command to use when running with ``--check``. If b4 finds
-  ``scripts/checkpatch.pl`` at the top of your git tree, it uses the
-  command shown below by default.
+  The command to use when running ``--check``. The command is run once for each
+  patch to check. The patch file to check is piped through stdin. If this
+  config is defined multiple times, all commands will be run. If this config is
+  not defined and b4 finds ``scripts/checkpatch.pl`` at the top of your git
+  tree, it uses the command shown below by default.
 
   Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback``
 
@@ -379,14 +381,18 @@ Contributor-oriented settings
   Default: ``no``
 
 ``b4.send-auto-to-cmd``
-  The command to use for obtaining the list of "To:" recipients. Has no effect
-  if the specified script isn't present in the repository.
+  The command to use for obtaining the list of "To:" recipients. The command is
+  run once for each patch in the series. Each patch file is piped through
+  stdin. If b4 finds ``scripts/get_maintainer.pl`` at the top of your git tree,
+  it uses the command shown below by default.
 
   Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol``
 
 ``b4.send-auto-cc-cmd``
-  The command to use for obtaining the list of Cc: recipients. Has no effect
-  if the specified script isn't present in the repository.
+  The command to use for obtaining the list of "Cc:" recipients. The command is
+  run once for each patch in the series. Each patch file is piped through
+  stdin. If b4 finds ``scripts/get_maintainer.pl`` at the top of your git tree,
+  it uses the command shown below by default.
 
   Default:: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
 
@@ -426,9 +432,11 @@ Contributor-oriented settings
   Default: ``None``
 
 ``b4.prep-perpatch-check-cmd`` (v0.14+)
-  The command to use when running ``--check``. If b4 finds
-  ``scripts/checkpatch.pl`` at the top of your git tree, it uses the
-  command shown below by default.
+  The command to use when running ``--check``. The command is run once for each
+  patch to check. The patch file to check is piped through stdin. If this
+  config is defined multiple times, all commands will be run. If this config is
+  not defined and b4 finds ``scripts/checkpatch.pl`` at the top of your git
+  tree, it uses the command shown below by default.
 
   Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback --showfile```
 
