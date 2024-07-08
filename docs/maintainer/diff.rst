@@ -39,7 +39,7 @@ Optional flags
   ``git-range`` flags to use.
 
 ``-m AMBOX AMBOX, --compare-am-mboxes AMBOX AMBOX``
-  Compares two mbox files prepared by ``git am`` instead of querying
+  Compares two mbox files prepared by ``b4 am`` instead of querying
   the public-inbox server directly.
 
 ``-o OUTDIFF, --output-diff OUTDIFF``
