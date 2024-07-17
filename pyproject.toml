@@ -27,6 +27,10 @@ dynamic = ["dependencies", "optional-dependencies"]
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.in"] }
 
+[tool.setuptools.packages.find]
+where = ['src']
+exclude = ['tests*']
+
 [tool.pip-tools]
 generate_hashes = true
 
