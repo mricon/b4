@@ -1,6 +1,6 @@
 [b4]
   midmask = https://lore.kernel.org/%s
-  linkmask = https://msgid.link/%s
+  linkmask = https://patch.msgid.link/%s
   send-series-to = Kernel.org Tools <tools@kernel.org>
   send-series-cc = Konstantin Ryabitsev <konstantin@linuxfoundation.org>
   send-endpoint-web = https://lkml.kernel.org/_b4_submit
