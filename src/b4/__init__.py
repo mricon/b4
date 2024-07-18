@@ -2824,7 +2824,10 @@ def get_config_from_git(regexp: str, defaults: Optional[dict] = None,
     for line in out.split('\x00'):
         if not line:
             continue
-        key, value = line.split('\n', 1)
+        if '\n' in line:
+            key, value = line.split('\n', 1)
+        else:
+            key, value = line, 'true'
         try:
             chunks = key.split('.')
             cfgkey = chunks[-1].lower()
