@@ -740,8 +740,15 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
         logger.critical("The current repository is not tracking a branch. To use b4, please checkout a branch.")
         logger.critical("Maybe a rebase is running?")
         raise RuntimeError("Not currently on a branch, please checkout a b4-tracked branch")
+
+    # Restrict to committer being the current person, in case an errant cover letter
+    # got added into the shared tree, as in:
+    # https://lore.kernel.org/c52b7bf6-734b-49fd-96e3-e4cde406f4e0@linaro.org/
+    # TODO: make it possible to ignore it, to make it possible to work on deliberately shared trees?
+    usercfg = b4.get_user_config()
+    limit_committer = usercfg['email']
     gitargs = ['log', '--grep', MAGIC_MARKER, '-F', '--pretty=oneline', '--max-count=1', '--since=1.year',
-               usebranch]
+               f'--committer={limit_committer}', usebranch]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
         return None
