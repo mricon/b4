@@ -3783,6 +3783,9 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
                 envpair = email.utils.parseaddr(env_sender)
             if envpair[1]:
                 smtp += ['-f', envpair[1]]
+        server_option = sconfig.get('smtpserveroption', '')
+        if server_option:
+            smtp += [server_option]
         logger.debug('sendmail command: %s', ' '.join(smtp))
         return smtp, fromaddr
 
