@@ -47,7 +47,7 @@ filterwarnings = "ignore:.*(pyopenssl|invalid escape sequence).*:DeprecationWarn
 norecursedirs = "tests/helpers"
 
 [tool.bumpversion]
-current_version = "0.14.0"
+current_version = "0.14.1"
 files = [
     {filename = "src/b4/__init__.py"},
     {filename = "src/b4/man/b4.5.rst"},
