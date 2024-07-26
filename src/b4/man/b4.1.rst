@@ -9,7 +9,7 @@ Work with code submissions in a public-inbox archive
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
 :Version:   0.14-dev
-:Manual section: 5
+:Manual section: 1
 
 SYNOPSIS
 --------
