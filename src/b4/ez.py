@@ -1674,7 +1674,17 @@ def get_check_cmds() -> Tuple[List[str], List[str]]:
         if topdir:
             checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
             if os.access(checkpatch, os.X_OK):
-                ppcmds = [f'{checkpatch} -q --terse --no-summary --mailback --showfile']
+                ecode, help_out, err = b4._run_command([checkpatch, "-h"], stdin=None, rundir=topdir)
+                help_out = help_out.decode(errors='replace').strip() if help_out else ""
+                if ecode == 0:
+                    ppcmds = f'{checkpatch}'
+                    for arg in ["q", "-terse", "-no-summary", "-mailback", "-showfile"]:
+                        if ("-" + arg + " ") in help_out:
+                            ppcmds += " " + "-" + arg
+                    ppcmds += " -"
+                    ppcmds = [ppcmds]
+                else:
+                    ppcmds = [f'{checkpatch} -q --terse --no-summary --mailback --showfile -']
 
     # TODO: support for a whole-series check command, (pytest, etc)
     return ppcmds, scmds
