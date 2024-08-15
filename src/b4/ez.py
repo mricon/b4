@@ -1666,6 +1666,8 @@ def get_check_cmds() -> Tuple[List[str], List[str]]:
     scmds = list()
     if config.get('prep-perpatch-check-cmd'):
         ppcmds = config.get('prep-perpatch-check-cmd')
+        if isinstance(ppcmds, str):
+            ppcmds = [ppcmds]
     else:
         # Use recommended checkpatch defaults if we find checkpatch
         topdir = b4.git_get_toplevel()
