@@ -1522,8 +1522,13 @@ class LoreMessage:
         ecode, out, err = _run_command(cmdargs, stdin=bdata, rundir=topdir)
         out = out.strip()
         out_lines = out.decode(errors='replace').split('\n') if out else list()
+        commanderror = False
         report = list()
         if out_lines:
+            if err and ecode > 0:
+                logger.critical('CRITICAL: Running %s failed:', ' '.join(cmdargs))
+                logger.critical(err.decode(errors='ignore'))
+                commanderror |= True
             for line in out_lines:
                 flag = 'fail' if 'ERROR:' in line else 'warning'
                 # Remove '-:' from the start of the line, because it's never useful
@@ -1533,7 +1538,8 @@ class LoreMessage:
         else:
             report.append(('success', f'{mycmd}: passed all checks'))
 
-        save_cache(report, cacheid, suffix='checks', is_json=True)
+        if not commanderror:
+            save_cache(report, cacheid, suffix='checks', is_json=True)
         return report
 
     def load_local_ci_status(self, checkcmds: List[List[str]]) -> None:
