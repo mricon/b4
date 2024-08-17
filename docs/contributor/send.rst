@@ -122,6 +122,23 @@ from the message::
 
 You should now be able to send patches via this web submission endpoint.
 
+Changing your attestation key
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If you change your attestation key without changing your email address (e.g.
+switch from a ``patatt`` generated key to a PGP key or change your PGP keys),
+your previous authorization will stop working. Trying to reauthorize will also
+result in an error as changing the attestation key is `currently unsupported
+<https://lore.kernel.org/tools/4608818.LvFx2qVVIh@radijator/T/#m9aa19999463864341ed8be929f470e5439513256>`_.
+Instead, you can change the key selector to something other than ``default``
+with the following setting::
+
+    [patatt]
+       selector = something
+
+.. note::
+   The selector can be anything besides default or any previously used selector.
+   For example, you could use the creation date of your PGP key.
+
 Using your own SMTP server
 --------------------------
 If there is a ``sendmail`` section in your git configuration, B4 tries
