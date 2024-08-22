@@ -3773,10 +3773,10 @@ def _setup_sendemail_config(cmdargs: argparse.Namespace) -> None:
     # Get the default settings first
     config = get_main_config()
     identity = config.get('sendemail-identity')
-    _basecfg = get_config_from_git(r'sendemail\.[^.]+$')
+    _basecfg = get_config_from_git(r'sendemail\.[^.]+$', multivals=['smtpserveroption'])
     if identity:
         # Use this identity to override what we got from the default one
-        sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', defaults=_basecfg)
+        sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', multivals=['smtpserveroption'], defaults=_basecfg)
         sectname = f'sendemail.{identity}'
         if not len(sconfig):
             raise smtplib.SMTPException('Unable to find %s settings in any applicable git config' % sectname)
@@ -3828,9 +3828,9 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
                 envpair = email.utils.parseaddr(env_sender)
             if envpair[1]:
                 smtp += ['-f', envpair[1]]
-        server_option = sconfig.get('smtpserveroption', '')
+        server_option = sconfig.get('smtpserveroption')
         if server_option:
-            smtp += [server_option]
+            smtp += server_option
         logger.debug('sendmail command: %s', ' '.join(smtp))
         return smtp, fromaddr
 
