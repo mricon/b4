@@ -1313,8 +1313,10 @@ class LoreMessage:
                     if hlname.find(nchunk.strip()) < 0:
                         nmatch = False
                         break
+                if nmatch:
+                    logger.debug('  trailer fuzzy name match with %s', self.fromname)
+
             if nmatch:
-                logger.debug('  trailer fuzzy name match with %s', self.fromname)
                 trailers.append(ltr)
                 continue
 
@@ -4312,7 +4314,12 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
                 # Is it a patch?
                 _qmsg = qmid_map[refmid]
                 logger.debug('  subj: %s', _qmsg.full_subject)
-                if _qmsg.has_diff:
+                # Is it the cover letter?
+                if (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
+                        and _qmsg.msgid in ref_map):
+                    logger.debug('  stopping: found the cover letter for %s', qlmsg.full_subject)
+                    break
+                elif _qmsg.has_diff:
                     pqpid = _qmsg.git_patch_id
                     if pqpid:
                         logger.debug('  pqpid: %s', pqpid)
@@ -4324,24 +4331,6 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
                             logger.debug('  matched patch-id %s to %s', pqpid, qlmsg.full_subject)
                         pfound = True
                         break
-                # Is it a cover letter?
-                elif (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
-                      and _qmsg.msgid in ref_map):
-                    logger.debug('  found a cover letter for %s', qlmsg.full_subject)
-                    logger.debug('    msgid: %s', _qmsg.msgid)
-                    logger.debug('    subj: %s', _qmsg.full_subject)
-                    # Now we find all descendant patches of the same series
-                    for _child_msgid in ref_map[_qmsg.msgid]:
-                        if _child_msgid == refmid:
-                            continue
-                        if qmid_map[_child_msgid].has_diff:
-                            cqpid = qmid_map[_child_msgid].git_patch_id
-                            if cqpid:
-                                # Found our parent patch
-                                if cqpid not in patchid_map:
-                                    patchid_map[cqpid] = list()
-                                if qlmsg not in patchid_map[cqpid]:
-                                    patchid_map[cqpid].append(qlmsg)
                 else:
                     logger.debug('  skipping parent without a diff or diffstat')
         if not pfound:
