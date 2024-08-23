@@ -398,18 +398,19 @@ class LoreMailbox:
         for lmsg in lser.patches:
             if lmsg is None or lmsg.git_patch_id is None:
                 continue
+            logger.debug('  matching patch_id %s from: %s', lmsg.git_patch_id, lmsg.full_subject)
             if lmsg.git_patch_id in self.trailer_map:
                 for fmsg in self.trailer_map[lmsg.git_patch_id]:
-                    logger.debug('  patch_id for %s matched: %s', lmsg.msgid, fmsg.msgid)
+                    logger.debug('  matched: %s', fmsg.msgid)
                     fltrs, fmis = fmsg.get_trailers(sloppy=sloppytrailers)
                     for fltr in fltrs:
                         if fltr in lmsg.trailers:
-                            logger.debug('  trailer already in the series')
+                            logger.debug('  trailer already exists')
                             continue
                         if fltr in lmsg.followup_trailers:
                             logger.debug('  identical trailer received for this series')
                             continue
-                        logger.debug('  carrying over the trailer to this series')
+                        logger.debug('  carrying over the trailer to this series (may be duplicate)')
                         logger.debug('  %s', lmsg.full_subject)
                         logger.debug('    + %s', fltr.as_string())
                         logger.debug('      via: %s', fltr.lmsg.msgid)
@@ -1151,7 +1152,7 @@ class LoreMessage:
 
     # header-based info
     in_reply_to: Optional[str]
-    references: Set[str]
+    references: List[str]
     fromname: str
     fromemail: str
     date: datetime.datetime
@@ -1222,14 +1223,15 @@ class LoreMessage:
             self.expected = self.counter
 
         self.in_reply_to = LoreMessage.get_clean_msgid(self.msg, header='In-Reply-To')
-        self.references = set()
         if self.in_reply_to:
-            self.references.add(self.in_reply_to)
+            self.references = [self.in_reply_to]
+        else:
+            self.references = list()
 
         if self.msg.get('References'):
             for pair in email.utils.getaddresses([str(x) for x in self.msg.get_all('references', [])]):
-                if pair and pair[1].strip():
-                    self.references.add(pair[1])
+                if pair and pair[1].strip() and pair[1] not in self.references:
+                    self.references.append(pair[1])
 
         try:
             fromdata = email.utils.getaddresses([LoreMessage.clean_header(str(x))
@@ -4313,13 +4315,14 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
                 if _qmsg.has_diff:
                     pqpid = _qmsg.git_patch_id
                     if pqpid:
+                        logger.debug('  pqpid: %s', pqpid)
                         # Found our parent patch
                         if pqpid not in patchid_map:
                             patchid_map[pqpid] = list()
                         if qlmsg not in patchid_map[pqpid]:
                             patchid_map[pqpid].append(qlmsg)
+                            logger.debug('  matched patch-id %s to %s', pqpid, qlmsg.full_subject)
                         pfound = True
-                        logger.debug('  found matching patch-id for %s', qlmsg.subject)
                         break
                 # Is it a cover letter?
                 elif (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
