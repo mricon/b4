@@ -394,17 +394,26 @@ class LoreMailbox:
                 break
 
         # Carry over trailers from previous series if patch/metadata did not change
+        logger.debug('Analyzing trailer_map (%s entries)', len(self.trailer_map))
         for lmsg in lser.patches:
             if lmsg is None or lmsg.git_patch_id is None:
                 continue
             if lmsg.git_patch_id in self.trailer_map:
                 for fmsg in self.trailer_map[lmsg.git_patch_id]:
+                    logger.debug('  patch_id for %s matched: %s', lmsg.msgid, fmsg.msgid)
                     fltrs, fmis = fmsg.get_trailers(sloppy=sloppytrailers)
                     for fltr in fltrs:
-                        if fltr not in lmsg.trailers and fltr not in lmsg.followup_trailers:
-                            logger.debug('    adding "%s" from trailer_map to: %s',
-                                         fltr.as_string(), lmsg.full_subject)
-                            lmsg.followup_trailers.append(fltr)
+                        if fltr in lmsg.trailers:
+                            logger.debug('  trailer already in the series')
+                            continue
+                        if fltr in lmsg.followup_trailers:
+                            logger.debug('  identical trailer received for this series')
+                            continue
+                        logger.debug('  carrying over the trailer to this series')
+                        logger.debug('  %s', lmsg.full_subject)
+                        logger.debug('    + %s', fltr.as_string())
+                        logger.debug('      via: %s', fltr.lmsg.msgid)
+                        lmsg.followup_trailers.append(fltr)
                     for fltr in fmis:
                         lser.trailer_mismatches.add((fltr.name, fltr.value, fmsg.fromname, fmsg.fromemail))
 
@@ -1275,13 +1284,14 @@ class LoreMessage:
         mismatches = set()
 
         for ltr in self.trailers:
+            logger.debug('Examining: %s', ltr.as_string())
             ltr.lmsg = self
             if sloppy or ltr.type != 'person':
                 trailers.append(ltr)
                 continue
 
             if ltr.email_eq(self.fromemail):
-                logger.debug('  trailer email match')
+                logger.debug('  trailer email match with %s', self.fromemail)
                 trailers.append(ltr)
                 continue
 
@@ -1291,7 +1301,7 @@ class LoreMessage:
             hlname = self.fromname.lower()
 
             if tlname == hlname:
-                logger.debug('  trailer exact name match')
+                logger.debug('  trailer exact name match with %s', self.fromname)
                 nmatch = True
             # Finally, see if the header From has a comma in it and try to find all
             # parts in the trailer name
@@ -1302,11 +1312,11 @@ class LoreMessage:
                         nmatch = False
                         break
             if nmatch:
-                logger.debug('  trailer fuzzy name match')
+                logger.debug('  trailer fuzzy name match with %s', self.fromname)
                 trailers.append(ltr)
                 continue
 
-            logger.debug('trailer did not match: %s: %s', ltr.name, ltr.value)
+            logger.debug('  trailer did not match: %s: %s', ltr.name, ltr.value)
             mismatches.add(ltr)
 
         return trailers, mismatches
