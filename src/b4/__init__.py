@@ -1228,7 +1228,7 @@ class LoreMessage:
 
         if self.msg.get('References'):
             for pair in email.utils.getaddresses([str(x) for x in self.msg.get_all('references', [])]):
-                if pair:
+                if pair and pair[1].strip():
                     self.references.add(pair[1])
 
         try:
@@ -4304,9 +4304,12 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
         # Find the patch-id to which this belongs
         pfound = False
         for refmid in qlmsg.references:
+            logger.debug('  looking at parent ref: %s', refmid)
             if refmid in qmid_map:
+                logger.debug('  found in qmid_map: %s', refmid)
                 # Is it a patch?
                 _qmsg = qmid_map[refmid]
+                logger.debug('  subj: %s', _qmsg.full_subject)
                 if _qmsg.has_diff:
                     pqpid = _qmsg.git_patch_id
                     if pqpid:
@@ -4321,7 +4324,9 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
                 # Is it a cover letter?
                 elif (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
                       and _qmsg.msgid in ref_map):
-                    logger.debug('  found a cover letter for %s', qlmsg.subject)
+                    logger.debug('  found a cover letter for %s', qlmsg.full_subject)
+                    logger.debug('    msgid: %s', _qmsg.msgid)
+                    logger.debug('    subj: %s', _qmsg.full_subject)
                     # Now we find all descendant patches of the same series
                     for _child_msgid in ref_map[_qmsg.msgid]:
                         if _child_msgid == refmid:
