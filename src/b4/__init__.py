@@ -3772,8 +3772,8 @@ def _setup_sendemail_config(cmdargs: argparse.Namespace) -> None:
 
     # Get the default settings first
     config = get_main_config()
-    identity = config.get('sendemail-identity')
     _basecfg = get_config_from_git(r'sendemail\.[^.]+$', multivals=['smtpserveroption'])
+    identity = config.get('sendemail-identity') or _basecfg.get('identity')
     if identity:
         # Use this identity to override what we got from the default one
         sconfig = get_config_from_git(rf'sendemail\.{identity}\..*', multivals=['smtpserveroption'], defaults=_basecfg)
