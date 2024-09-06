@@ -1509,11 +1509,16 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
             prerequisites += f'prerequisite-{prereq}\n'
             if expandprereqs:
                 msgid = chunks[1].strip('<>')
-                spatches = b4.get_pi_thread_by_msgid(msgid)
-                if not spatches:
+                lmbx = b4.get_series_by_msgid(msgid)
+                if not lmbx:
                     logger.info('Nothing known about message-id: %s', msgid)
                     logger.info('Consider running --check-deps')
                     continue
+                wantver = max(lmbx.series.keys())
+                for lmsg in lmbx.series[wantver].patches:
+                    if not lmsg:
+                        continue
+                    spatches.append(lmsg.get_am_message(add_trailers=False))
 
         if prereq.startswith('change-id:'):
             prerequisites += f'prerequisite-{prereq}\n'
