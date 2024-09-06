@@ -2171,45 +2171,55 @@ def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PR
 
     tagname, revision = get_sent_tagname(change_id, tagprefix, revision)
     logger.debug('checking if we already have %s', tagname)
+    topdir = b4.git_get_toplevel()
     if not b4.git_revparse_tag(None, tagname):
+        strategy = get_cover_strategy()
+        tagcommit = 'HEAD'
         try:
-            strategy = get_cover_strategy()
             if strategy == 'commit':
-                # Find out the head commit, which is the end of our range
-                gitargs = ['rev-parse', 'HEAD']
-                ecode, out = b4.git_run_command(None, gitargs)
-                end_commit = out.strip()
-                # Detach the head at our parent commit and apply the cover-less series
-                cover_commit = find_cover_commit()
-                gitargs = ['checkout', f'{cover_commit}~1']
-                ecode, out = b4.git_run_command(None, gitargs)
-                if ecode > 0:
-                    raise RuntimeError('Could not switch to a detached head')
-                # cherry-pick from cover letter to the last commit
-                gitargs = ['cherry-pick', f'{cover_commit}..{end_commit}']
-                ecode, out = b4.git_run_command(None, gitargs)
-                if ecode > 0:
-                    raise RuntimeError('Could not cherry-pick the cover-less range')
-                # Find out the head commit
-                gitargs = ['rev-parse', 'HEAD']
-                ecode, out = b4.git_run_command(None, gitargs)
-                if ecode > 0:
-                    raise RuntimeError('Could not find the HEAD commit of the detached head')
-                tagcommit = out.strip()
-                # Switch back to our branch
-                gitargs = ['checkout', mybranch]
-                ecode, out = b4.git_run_command(None, gitargs)
-                if ecode > 0:
-                    raise RuntimeError('Could not switch back to %s' % mybranch)
+                base_commit, start_commit, end_commit = get_series_range(usebranch=mybranch)
+                with b4.git_temp_worktree(topdir, base_commit) as gwt:
+                    logger.debug('Preparing a sparse worktree')
+                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'init'], logstderr=True)
+                    if ecode > 0:
+                        logger.critical('Error running sparse-checkout init')
+                        logger.critical(out)
+                        raise RuntimeError
+                    ecode, out = b4.git_run_command(gwt, ['checkout'], logstderr=True)
+                    if ecode > 0:
+                        logger.critical('Error running checkout into sparse workdir')
+                        logger.critical(out)
+                        raise RuntimeError
+                    gitargs = ['cherry-pick', f'{start_commit}..{end_commit}']
+                    ecode, out = b4.git_run_command(gwt, gitargs, logstderr=True)
+                    if ecode > 0:
+                        # In theory, this shouldn't happen
+                        logger.critical('Unable to cleanly apply series, see failure log below')
+                        logger.critical('---')
+                        logger.critical(out.strip())
+                        logger.critical('---')
+                        logger.critical('Not fetching into FETCH_HEAD')
+                        raise RuntimeError
+                    gitargs = ['rev-parse', 'HEAD']
+                    ecode, out = b4.git_run_command(gwt, gitargs, logstderr=True)
+                    if ecode > 0:
+                        logger.critical('Unable to resolve FETCH_HEAD')
+                        logger.critical(out.strip())
+                        raise RuntimeError
+                    tagcommit = out.strip()
+                    gitargs = ['fetch', gwt]
+                    ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
+                    if ecode > 0:
+                        logger.critical('Unable to fetch from the worktree')
+                        logger.critical(out.strip())
+                        raise RuntimeError
             elif strategy == 'tip-commit':
                 cover_commit = find_cover_commit()
                 tagcommit = f'{cover_commit}~1'
-            else:
-                tagcommit = 'HEAD'
 
             logger.info('Tagging %s', tagname)
             gitargs = ['tag', '-a', '-F', '-', tagname, tagcommit]
-            ecode, out = b4.git_run_command(None, gitargs, stdin=tag_msg.encode())
+            ecode, out = b4.git_run_command(topdir, gitargs, stdin=tag_msg.encode())
             if ecode > 0:
                 # Not a fatal error, complain about it and move on
                 logger.info('Could not tag %s as %s:', tagcommit, tagname)
