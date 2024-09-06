@@ -1595,6 +1595,9 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     if addtracking:
         patches[0][1].add_header('X-B4-Tracking', thdata)
 
+    # Add X-Change-ID header
+    patches[0][1].add_header('X-Change-ID', change_id)
+
     samethread = config.get('send-same-thread', '').lower() in {'yes', 'true', 'y'}
     if samethread and revision > 1:
         oldrev = revision - 1
