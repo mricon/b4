@@ -3311,6 +3311,16 @@ def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -
     return msgs
 
 
+def get_series_by_msgid(msgid: str, nocache: bool = False) -> Optional['LoreMailbox']:
+    lmbx = LoreMailbox()
+    t_msgs = get_pi_thread_by_msgid(msgid)
+    if t_msgs:
+        for t_msg in t_msgs:
+            lmbx.add_message(t_msg)
+
+    return lmbx
+
+
 def get_series_by_change_id(change_id: str, nocache: bool = False) -> Optional['LoreMailbox']:
     q = f'nq:"change-id:{change_id}"'
     q_msgs = get_pi_search_results(q, nocache=nocache, full_threads=False)
