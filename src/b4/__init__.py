@@ -3313,7 +3313,7 @@ def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -
 
 def get_series_by_msgid(msgid: str, nocache: bool = False) -> Optional['LoreMailbox']:
     lmbx = LoreMailbox()
-    t_msgs = get_pi_thread_by_msgid(msgid)
+    t_msgs = get_pi_thread_by_msgid(msgid, nocache=nocache)
     if t_msgs:
         for t_msg in t_msgs:
             lmbx.add_message(t_msg)
