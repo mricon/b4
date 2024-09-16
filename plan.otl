@@ -1,3 +1,14 @@
+v0.15
+-----
+[_] `b4 review` similar to `b4 prep`
+	[_] Retrieve series and apply to a branch
+	[_] Use empty commit for cover letter and review state tracking
+	[_] Simple edit mode a-la "git rebase -i" that lets you apply trailers to patches
+[ ] `b4 ty` interactive mode
+	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
+[ ] `b4 trailers` interactive mode
+	[_] Similar to above, a mode to review incoming trailers
+
 v0.14
 -----
 [X] Switch to using pyproject.toml
@@ -38,11 +49,4 @@ v0.14
 	[X] Allow inserting a range-diff into the cover letter
 	[X] Use hashed requirements for added security and reproducible installs
 	[X] Introduce the -i switch to am/shazam to insert the Message-ID trailer
-
-v0.15
------
-[_] `b4 review` similar to `b4 prep`:
-	[_] Retrieve series and apply to a branch
-	[_] Use empty commit for cover letter and review state tracking
-	[_] Simple edit mode a-la "git rebase -i" that lets you apply trailers to patches
 
