@@ -13,6 +13,7 @@ import b4
 import re
 import json
 import email
+import email.parser
 import argparse
 
 import urllib.parse
@@ -61,7 +62,7 @@ def git_get_commit_id_from_repo_ref(repo: str, ref: str) -> Optional[str]:
             lines = b4.git_get_command_lines(None, ['ls-remote', repo, 'refs/tags/%s^{}' % ref])
 
     elif ref.find('tags/') == 0:
-        #try as an annotated tag first
+        # try as an annotated tag first
         lines = b4.git_get_command_lines(None, ['ls-remote', repo, 'refs/%s^{}' % ref])
         if not lines:
             # try it as a non-annotated tag, then
@@ -81,7 +82,7 @@ def git_get_commit_id_from_repo_ref(repo: str, ref: str) -> Optional[str]:
     return commit_id
 
 
-def parse_pr_data(msg: email.message.Message) -> Optional[b4.LoreMessage]:
+def parse_pr_data(msg: email.message.EmailMessage) -> Optional[b4.LoreMessage]:
     lmsg = b4.LoreMessage(msg)
     if lmsg.body is None:
         logger.critical('Could not find a plain part in the message body')
@@ -260,7 +261,7 @@ def thanks_record_pr(lmsg: b4.LoreMessage) -> None:
 
 
 def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
-            mailfrom: Optional[str] = None) -> List[email.message.Message]:
+            mailfrom: Optional[str] = None) -> List[email.message.EmailMessage]:
     import b4.ez
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
@@ -404,7 +405,8 @@ def main(cmdargs: argparse.Namespace) -> None:
 
     if not cmdargs.no_stdin and not sys.stdin.isatty():
         logger.debug('Getting PR message from stdin')
-        msg = email.message_from_bytes(sys.stdin.buffer.read())
+        msg = email.parser.BytesParser(policy=b4.emlpolicy,
+                                       _class=email.message.EmailMessage).parse(sys.stdin.buffer)
         cmdargs.msgid = b4.LoreMessage.get_clean_msgid(msg)
         lmsg = parse_pr_data(msg)
     else:

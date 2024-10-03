@@ -11,6 +11,7 @@ import mailbox
 import email
 import email.message
 import email.utils
+import email.parser
 import re
 import time
 import json
@@ -38,7 +39,7 @@ Link: ${midurl}
 """
 
 
-def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgid: str) -> None:
+def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace, msgid: str) -> None:
     config = b4.get_main_config()
     outdir = cmdargs.outdir
     if outdir == '-':
@@ -77,7 +78,7 @@ def make_am(msgs: List[email.message.Message], cmdargs: argparse.Namespace, msgi
                     payload = payload.decode('utf-8', errors='replace')
                     part.set_param('charset', 'utf-8')
                 if payload and b4.DIFF_RE.search(payload):
-                    xmsg = email.message_from_string(payload, policy=b4.emlpolicy)
+                    xmsg = email.parser.Parser(policy=b4.emlpolicy, _class=email.message.EmailMessage).parsestr(payload)
                     # Needs to have Subject, From, Date for us to consider it
                     if xmsg.get('Subject') and xmsg.get('From') and xmsg.get('Date'):
                         logger.debug('Found attached patch: %s', xmsg.get('Subject'))
@@ -527,7 +528,7 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: bool = None) -> None:
         b4.patchwork_set_state(msgids, pwstate)
 
 
-def save_as_quilt(am_msgs: List[email.message.Message], q_dirname: str) -> None:
+def save_as_quilt(am_msgs: List[email.message.EmailMessage], q_dirname: str) -> None:
     if os.path.exists(q_dirname):
         logger.critical('ERROR: Directory %s exists, not saving quilt patches', q_dirname)
         return
@@ -558,7 +559,7 @@ def save_as_quilt(am_msgs: List[email.message.Message], q_dirname: str) -> None:
 
 
 def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None,
-                     nocache: bool = False) -> List[email.message.Message]:
+                     nocache: bool = False) -> List[email.message.EmailMessage]:
     base_msg = None
     latest_revision = None
     seen_msgids = set()
@@ -693,7 +694,7 @@ def refetch(dest: str) -> None:
         mbox = mailbox.mbox(dest)
 
     by_msgid = dict()
-    for key, msg in mbox.items():
+    for key, msg in mbox.items():  # type: str, email.message.EmailMessage
         msgid = b4.LoreMessage.get_clean_msgid(msg)
         if msgid not in by_msgid:
             amsgs = b4.get_pi_thread_by_msgid(msgid, nocache=True)
@@ -830,7 +831,7 @@ def main(cmdargs: argparse.Namespace) -> None:
         have_msgids = set()
         added = 0
         if cmdargs.filterdupes:
-            for emsg in mdr:
+            for emsg in mdr:  # type: email.message.EmailMessage
                 have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))
         for msg in msgs:
             if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:

@@ -2,6 +2,7 @@ import pytest  # noqa
 import b4
 import os
 import email
+import email.parser
 import mailbox
 import io
 
@@ -35,7 +36,7 @@ def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
         else:
             import email
             with open(f'{sampledir}/{source}.txt', 'rb') as fh:
-                msg = email.message_from_binary_file(fh, policy=b4.emlpolicy)
+                msg = email.parser.BytesParser(policy=b4.emlpolicy, _class=email.message.EmailMessage).parse(fh)
             msgs = [msg]
     else:
         import email.message

@@ -10,6 +10,7 @@ import os
 import fnmatch
 import email.utils
 import email.policy
+import email.parser
 import email.header
 import email.generator
 import email.quoprimime
@@ -41,7 +42,8 @@ from email import charset
 
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
-emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
+emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None,
+                                     message_factory=email.message.EmailMessage)
 
 # Presence of these characters requires quoting of the name in the header
 # adapted from email._parseaddr
@@ -420,7 +422,7 @@ class LoreMailbox:
 
         return lser
 
-    def add_message(self, msg: email.message.Message) -> None:
+    def add_message(self, msg: email.message.EmailMessage) -> None:
         msgid = LoreMessage.get_clean_msgid(msg)
         if msgid and msgid in self.msgid_map:
             logger.debug('Already have a message with this msgid, skipping %s', msgid)
@@ -614,7 +616,7 @@ class LoreSeries:
 
     def get_am_ready(self, noaddtrailers: bool = False, addmysob: bool = False,
                      addlink: bool = False, cherrypick: Optional[List[int]] = None, copyccs: bool = False,
-                     allowbadchars: bool = False, showchecks: bool = False) -> List[email.message.Message]:
+                     allowbadchars: bool = False, showchecks: bool = False) -> List[email.message.EmailMessage]:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -1039,7 +1041,7 @@ class LoreTrailer:
                           'base-commit', 'based-on'}
 
     def __init__(self, name: Optional[str] = None, value: Optional[str] = None, extinfo: Optional[str] = None,
-                 msg: Optional[email.message.Message] = None):
+                 msg: Optional[email.message.EmailMessage] = None):
         if name is None:
             self.name = 'Signed-off-by'
             self.type = 'person'
@@ -1135,7 +1137,7 @@ class LoreTrailer:
 
 
 class LoreMessage:
-    msg: email.message.Message
+    msg: email.message.EmailMessage
     msgid: str
 
     # Subject-based info
@@ -1524,7 +1526,7 @@ class LoreMessage:
             self._attestors.append(attestor)
 
     @staticmethod
-    def run_local_check(cmdargs: List[str], ident: str, msg: email.message.Message,
+    def run_local_check(cmdargs: List[str], ident: str, msg: email.message.EmailMessage,
                         nocache: bool = False) -> List[Tuple[str, str]]:
         cacheid = ' '.join(cmdargs) + ident
         if not nocache:
@@ -1724,7 +1726,7 @@ class LoreMessage:
         return '\n'.join(out)
 
     @staticmethod
-    def get_payload(msg: email.message.Message, use_patch: bool = True) -> Tuple[str, str]:
+    def get_payload(msg: email.message.EmailMessage, use_patch: bool = True) -> Tuple[str, str]:
         """
         :returns: Tuple[decoded body, original charset]
         """
@@ -1860,7 +1862,7 @@ class LoreMessage:
         return f'{nl} '.join(_parts).encode()
 
     @staticmethod
-    def get_msg_as_bytes(msg: email.message.Message, nl: str = '\n',
+    def get_msg_as_bytes(msg: email.message.EmailMessage, nl: str = '\n',
                          headers: Literal['encode', 'decode', 'preserve'] = 'preserve') -> bytes:
         bdata = b''
         for hname, hval in msg.items():
@@ -1883,7 +1885,7 @@ class LoreMessage:
         return hdata
 
     @staticmethod
-    def get_clean_msgid(msg: email.message.Message, header: str = 'Message-Id') -> Optional[str]:
+    def get_clean_msgid(msg: email.message.EmailMessage, header: str = 'Message-Id') -> Optional[str]:
         msgid = None
         raw = msg.get(header)
         if raw:
@@ -1893,7 +1895,8 @@ class LoreMessage:
         return msgid
 
     @staticmethod
-    def get_preferred_duplicate(msg1: email.message.Message, msg2: email.message.Message) -> email.message.Message:
+    def get_preferred_duplicate(msg1: email.message.EmailMessage,
+                                msg2: email.message.EmailMessage) -> email.message.EmailMessage:
         config = get_main_config()
         listid1 = LoreMessage.get_clean_msgid(msg1, 'list-id')
         if listid1:
@@ -2871,7 +2874,7 @@ def get_config_from_git(regexp: str, defaults: Optional[dict] = None,
     return gitconfig
 
 
-def _val_to_path(topdir, val):
+def _val_to_path(topdir: str, val: str) -> str:
     if val.startswith('./'):
         # replace it with full topdir path
         return os.path.abspath(os.path.join(topdir, val))
@@ -3069,8 +3072,7 @@ def get_requests_session() -> requests.Session:
 
 def get_msgid_from_stdin() -> Optional[str]:
     if not sys.stdin.isatty():
-        from email.parser import BytesParser
-        message = BytesParser().parsebytes(
+        message = email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parsebytes(
             sys.stdin.buffer.read(), headersonly=True)
         return message.get('Message-ID', None)
     return None
@@ -3114,8 +3116,8 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
     return msgid
 
 
-def get_strict_thread(msgs: Union[List[email.message.Message], mailbox.Mailbox, mailbox.Maildir],
-                      msgid: str, noparent: bool = False) -> Optional[List[email.message.Message]]:
+def get_strict_thread(msgs: Union[List[email.message.EmailMessage], mailbox.Mailbox, mailbox.Maildir],
+                      msgid: str, noparent: bool = False) -> Optional[List[email.message.EmailMessage]]:
     # Attempt to automatically recognize the situation when someone posts
     # a standalone patch or series in the middle of a large discussion for another series.
     # We recommend dealing with this using --no-parent, but we can also catch this
@@ -3219,7 +3221,7 @@ def get_strict_thread(msgs: Union[List[email.message.Message], mailbox.Mailbox, 
     return strict
 
 
-def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) -> List[email.message.Message]:
+def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) -> List[email.message.EmailMessage]:
     msgs = list()
     if pipesep:
         logger.debug('Mailsplitting using pipesep=%s', pipesep)
@@ -3228,7 +3230,8 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
             pipesep = codecs.decode(pipesep.encode(), 'unicode_escape')
         for chunk in bmbox.split(pipesep.encode()):
             if chunk.strip():
-                msgs.append(email.message_from_bytes(chunk, policy=emlpolicy))
+                msgs.append(email.parser.BytesParser(policy=emlpolicy,
+                                                     _class=email.message.EmailMessage).parsebytes(chunk))
         return msgs
 
     logger.debug('Mailsplitting the mbox into %s', outdir)
@@ -3240,12 +3243,12 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
     # Read in the files
     for msg in os.listdir(outdir):
         with open(os.path.join(outdir, msg), 'rb') as fh:
-            msgs.append(email.message_from_binary_file(fh, policy=emlpolicy))
+            msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parse(fh))
     return msgs
 
 
 def get_pi_search_results(query: str, nocache: bool = False, message: Optional[str] = None,
-                          full_threads: bool = True) -> Optional[List[email.message.Message]]:
+                          full_threads: bool = True) -> Optional[List[email.message.EmailMessage]]:
     config = get_main_config()
     searchmask = config.get('searchmask')
     if not searchmask:
@@ -3262,7 +3265,7 @@ def get_pi_search_results(query: str, nocache: bool = False, message: Optional[s
         logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.message_from_binary_file(fh, policy=emlpolicy))
+                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parse(fh))
         return msgs
 
     loc = urllib.parse.urlparse(query_url)
@@ -3288,7 +3291,7 @@ def get_pi_search_results(query: str, nocache: bool = False, message: Optional[s
     return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
 
 
-def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -> List[email.message.Message]:
+def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -> List[email.message.EmailMessage]:
     # Convert into individual files using git-mailsplit
     with tempfile.TemporaryDirectory(suffix='-mailsplit') as tfd:
         msgs = mailsplit_bytes(t_mbox, tfd)
@@ -3356,14 +3359,14 @@ def get_series_by_patch_id(patch_id: str, nocache: bool = False) -> Optional['Lo
     return lmbx
 
 
-def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List[email.message.Message]]:
+def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List[email.message.EmailMessage]]:
     msgs = list()
     cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
     if os.path.exists(cachedir) and not nocache:
         logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.message_from_binary_file(fh, policy=emlpolicy))
+                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parse(fh))
         return msgs
 
     logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
@@ -3386,7 +3389,7 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List
 
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
                            onlymsgids: Optional[set] = None,
-                           with_thread: bool = True) -> Optional[List[email.message.Message]]:
+                           with_thread: bool = True) -> Optional[List[email.message.EmailMessage]]:
     qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
     loc = urllib.parse.urlparse(config['midmask'])
@@ -3440,7 +3443,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                          mailfrom: Optional[Tuple[str, str]] = None,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
                          ignore_commits: Optional[Set[str]] = None,
-                         limit_committer: Optional[str] = None) -> List[Tuple[str, email.message.Message]]:
+                         limit_committer: Optional[str] = None) -> List[Tuple[str, email.message.EmailMessage]]:
     gitargs = ['rev-list', '--no-merges', '--reverse']
     if limit_committer:
         gitargs += ['-F', f'--committer={limit_committer}']
@@ -3472,7 +3475,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         )
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')
-        msg = email.message_from_bytes(out, policy=emlpolicy)
+        msg = email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parsebytes(out)
         patches.append((commit, msg))
 
     fullcount = len(patches)
@@ -3701,7 +3704,7 @@ def get_gpg_uids(keyid: str) -> List[str]:
     return uids
 
 
-def save_git_am_mbox(msgs: List[email.message.Message], dest: BinaryIO) -> None:
+def save_git_am_mbox(msgs: List[email.message.EmailMessage], dest: BinaryIO) -> None:
     # Git-am has its own understanding of what "mbox" format is that differs from Python's
     # mboxo implementation. Specifically, it never escapes the ">From " lines found in bodies
     # unless invoked with --patch-format=mboxrd (this is wrong, because ">From " escapes are also
@@ -3712,7 +3715,7 @@ def save_git_am_mbox(msgs: List[email.message.Message], dest: BinaryIO) -> None:
         dest.write(LoreMessage.get_msg_as_bytes(msg, headers='decode'))
 
 
-def save_mboxrd_mbox(msgs: List[email.message.Message], dest: BinaryIO, mangle_from: bool = False) -> None:
+def save_mboxrd_mbox(msgs: List[email.message.EmailMessage], dest: BinaryIO, mangle_from: bool = False) -> None:
     gen = email.generator.BytesGenerator(dest, mangle_from_=mangle_from, policy=emlpolicy)
     for msg in msgs:
         dest.write(b'From mboxrd@z Thu Jan  1 00:00:00 1970\n')
@@ -3951,7 +3954,7 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
                 logger.debug('Patchwork REST error: %s', ex)
 
 
-def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[email.message.Message],
+def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[email.message.EmailMessage],
               fromaddr: Optional[str], destaddrs: Optional[Union[set, list]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
               output_dir: Optional[str] = None, web_endpoint: Optional[str] = None,
@@ -4192,7 +4195,7 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
                         raise LookupError('Could not find %s in %s' % (msgid, cmdargs.localmbox))
                 else:
                     msgs = list()
-                    for msg in in_mbx:
+                    for msg in in_mbx:  # type: email.message.EmailMessage
                         if LoreMessage.get_clean_msgid(msg) == msgid:
                             msgs = [msg]
                             break
@@ -4316,7 +4319,7 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
         return bdata
 
 
-def map_codereview_trailers(qmsgs: List[email.message.Message],
+def map_codereview_trailers(qmsgs: List[email.message.EmailMessage],
                             ignore_msgids: Optional[Set[str]] = None) -> Dict[str, List['LoreMessage']]:
     """
     Map messages containing code-review trailers to patch-ids they were sent for.

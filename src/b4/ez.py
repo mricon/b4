@@ -1328,7 +1328,7 @@ def get_cover_dests(cbody: str) -> Tuple[List, List, str]:
     return tos, ccs, cbody
 
 
-def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, email.message.Message]],
+def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, email.message.EmailMessage]],
               cbody: str, datets: int, thread: bool = True):
     fp = patches[0][1]
     cmsg = email.message.EmailMessage()
@@ -1350,7 +1350,7 @@ def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str,
         rethread(patches)
 
 
-def mixin_cover(cbody: str, patches: List[Tuple[str, email.message.Message]]) -> None:
+def mixin_cover(cbody: str, patches: List[Tuple[str, email.message.EmailMessage]]) -> None:
     msg = patches[0][1]
     pbody, pcharset = b4.LoreMessage.get_payload(msg)
     pheaders, pmessage, ptrailers, pbasement, psignature = b4.LoreMessage.get_body_parts(pbody)
@@ -1410,7 +1410,7 @@ def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
     return lsubject, cbody
 
 
-def rethread(patches: List[Tuple[str, email.message.Message]]):
+def rethread(patches: List[Tuple[str, email.message.EmailMessage]]):
     refto = patches[0][1].get('message-id')
     for commit, msg in patches[1:]:
         msg.add_header('References', refto)
@@ -1430,7 +1430,7 @@ def get_mailfrom() -> Tuple[str, str]:
 def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True,
                                prefixes: Optional[List[str]] = None, usebranch: Optional[str] = None,
                                expandprereqs: bool = True,
-                               ) -> Tuple[List, List, str, List[Tuple[str, email.message.Message]]]:
+                               ) -> Tuple[List, List, str, List[Tuple[str, email.message.EmailMessage]]]:
     cover, tracking = load_cover(strip_comments=True, usebranch=usebranch)
 
     if prefixes is None:
@@ -1612,7 +1612,8 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     return alltos, allccs, tag_msg, patches
 
 
-def get_sent_tag_as_patches(tagname: str, revision: int) -> Tuple[List, List, List[Tuple[str, email.message.Message]]]:
+def get_sent_tag_as_patches(tagname: str, revision: int) \
+        -> Tuple[List, List, List[Tuple[str, email.message.EmailMessage]]]:
     cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
 
     csubject, cbody = get_cover_subject_body(cover)
