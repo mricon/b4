@@ -1245,7 +1245,12 @@ class LoreMessage:
 
         msgdate = self.msg.get('Date')
         if msgdate:
-            self.date = email.utils.parsedate_to_datetime(str(msgdate))
+            dtuple = email.utils.parsedate_tz(str(msgdate))
+            # Invalid timezone (e.g. -9900)
+            if abs(dtuple[-1]) > 86400:
+                self.date = datetime.datetime(*dtuple[:6])
+            else:
+                self.date = email.utils.parsedate_to_datetime(str(msgdate))
         else:
             # An email without a Date: field?
             self.date = datetime.datetime.now()
