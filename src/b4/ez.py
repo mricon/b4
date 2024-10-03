@@ -1013,7 +1013,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     ignore_commits = None
-    changeid = None
+    tracking = None
     cover = None
     msgid = None
     end = 'HEAD'
@@ -1024,7 +1024,6 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         limit_committer = None
         start = get_series_start()
         cover, tracking = load_cover(strip_comments=True)
-        changeid = tracking['series'].get('change-id')
         if cmdargs.trailers_from:
             msgid = cmdargs.trailers_from
         else:
@@ -1085,15 +1084,16 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         bbox.add_message(msg)
 
     commit_map = dict()
-    by_subject = dict()
+    by_patchid = dict()
     for lmsg in bbox.series[1].patches:
         if not lmsg:
             continue
-        by_subject[lmsg.subject] = lmsg.msgid
+        by_patchid[lmsg.git_patch_id] = lmsg.msgid
         commit_map[lmsg.msgid] = lmsg
 
     list_msgs = list()
-    if changeid and b4.can_network:
+    if tracking and b4.can_network:
+        changeid = tracking['series'].get('change-id')
         logger.info('Checking change-id "%s"', changeid)
         query = f'"change-id: {changeid}"'
         smsgs = b4.get_pi_search_results(query, nocache=True)
@@ -1111,44 +1111,33 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if tmsgs is not None:
             list_msgs += tmsgs
 
-    for list_msg in list_msgs:
-        llmsg = b4.LoreMessage(list_msg)
-        if not llmsg.trailers:
+    mismatches = set()
+    patchid_map = b4.map_codereview_trailers(list_msgs)
+    for patchid, llmsgs in patchid_map.items():
+        if patchid not in by_patchid:
+            logger.debug('Skipping patch-id %s: not found in the current series', patchid)
+            logger.debug('Ignoring follow-ups: %s', [x.subject for x in llmsgs])
             continue
-        if llmsg.subject in by_subject:
-            # Reparent to the commit and add to followups
-            commit = by_subject[llmsg.subject]
-            logger.debug('Mapped "%s" to commit %s', llmsg.subject, commit)
-            plmsg = commit_map[commit]
-            llmsg.in_reply_to = plmsg.msgid
-            bbox.followups.append(llmsg)
-        elif llmsg.counter == 0 and changeid:
-            logger.debug('Mapped "%s" to the cover letter', llmsg.subject)
-            # Reparent to the cover and add to followups
-            llmsg.in_reply_to = 'cover'
-            bbox.followups.append(llmsg)
-        else:
-            # Match by patch-id?
-            logger.debug('No match for %s', llmsg.subject)
+        for llmsg in llmsgs:
+            ltrailers, lmismatches = llmsg.get_trailers(sloppy=cmdargs.sloppytrailers)
+            for ltr in lmismatches:
+                mismatches.add((ltr.name, ltr.value, llmsg.fromname, llmsg.fromemail))
+            commit = by_patchid[patchid]
+            lmsg = commit_map[commit]
+            logger.debug('Adding %s to %s', [x.as_string() for x in ltrailers], lmsg.msgid)
+            lmsg.followup_trailers += ltrailers
 
-    if msgid or changeid:
+    if msgid or tracking:
         logger.debug('Will query by change-id')
         codereview_trailers = False
     else:
         codereview_trailers = True
 
     lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers, codereview_trailers=codereview_trailers)
-    mismatches = list(lser.trailer_mismatches)
+    mismatches.update(lser.trailer_mismatches)
     config = b4.get_main_config()
     seen_froms = set()
     logger.info('---')
-    # Do we have follow-up tralers sent to the cover?
-    if lser.patches[0] and lser.patches[0].followup_trailers:
-        logger.debug('Applying follow-up trailers from cover to all patches')
-        for pmsg in lser.patches[1:]:
-            logger.debug('  %s (%s)', pmsg.subject, pmsg.msgid)
-            logger.debug('  + %s', [x.as_string() for x in lser.patches[0].followup_trailers])
-            pmsg.followup_trailers += lser.patches[0].followup_trailers
 
     updates = dict()
     for lmsg in lser.patches[1:]:
@@ -1172,6 +1161,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 source = config['midmask'] % urllib.parse.quote_plus(fltr.lmsg.msgid, safe='@')
                 logger.info('  + %s', rendered)
                 logger.info('    %s', source)
+            else:
+                logger.debug('  . %s', fltr.as_string(omit_extinfo=True))
 
         # Check if we've applied mismatched trailers already
         if not cmdargs.sloppytrailers and mismatches:
@@ -1183,7 +1174,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     if len(mismatches):
         logger.critical('---')
         logger.critical('NOTE: some trailers ignored due to from/email mismatches:')
-        for tname, tvalue, fname, femail in lser.trailer_mismatches:
+        for tname, tvalue, fname, femail in mismatches:
             logger.critical('    ! Trailer: %s: %s', tname, tvalue)
             logger.critical('     Msg From: %s <%s>', fname, femail)
         logger.critical('NOTE: Rerun with -S to apply them anyway')

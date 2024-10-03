@@ -25,7 +25,7 @@ def prepdir(gitdir):
      {'shazam-am-flags': '--signoff'}),
     # Test matching trailer updates by subject when patch-id changes
     ('trailers-thread-with-followups', None, (b'vivendum', b'addendum'), [],
-     ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'trailers-thread-with-followups',
+     ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'trailers-thread-with-followups-no-match',
      {'shazam-am-flags': '--signoff'}),
     # Test that we properly perserve commits with --- in them
     ('trailers-thread-with-followups', 'trailers-with-tripledash', None, [],

@@ -1229,9 +1229,11 @@ class LoreMessage:
             self.references = list()
 
         if self.msg.get('References'):
-            for pair in email.utils.getaddresses([str(x) for x in self.msg.get_all('references', [])]):
-                if pair and pair[1].strip() and pair[1] not in self.references:
-                    self.references.append(pair[1])
+            for rbunch in self.msg.get_all('references', list()):
+                for rchunk in LoreMessage.clean_header(rbunch).split():
+                    rmsgid = rchunk.strip('<>')
+                    if rmsgid not in self.references:
+                        self.references.append(rmsgid)
 
         try:
             fromdata = email.utils.getaddresses([LoreMessage.clean_header(str(x))
@@ -1241,7 +1243,8 @@ class LoreMessage:
             if not len(self.fromname.strip()):
                 self.fromname = self.fromemail
         except IndexError:
-            pass
+            self.fromname = ''
+            self.fromemail = ''
 
         msgdate = self.msg.get('Date')
         if msgdate:
@@ -1269,7 +1272,7 @@ class LoreMessage:
 
         trailers, others = LoreMessage.find_trailers(self.body, followup=True)
         # We only pay attention to trailers that are sent in reply
-        if trailers and self.in_reply_to and not self.has_diff and not self.reply:
+        if trailers and self.references and not self.has_diff and not self.reply:
             logger.debug('A follow-up missing a Re: but containing a trailer with no patch diff')
             self.reply = True
         if self.reply:
@@ -4324,7 +4327,9 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
     qmid_map = dict()
     ref_map = dict()
     patchid_map = dict()
-    seen_msgids = set(ignore_msgids)
+    seen_msgids = set()
+    if ignore_msgids is not None:
+        seen_msgids.update(ignore_msgids)
     for qmsg in qmsgs:
         qmsgid = LoreMessage.get_clean_msgid(qmsg)
         if qmsgid in seen_msgids:
@@ -4338,6 +4343,7 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
             ref_map[qref].append(qlmsg.msgid)
 
     logger.info('Analyzing %s code-review messages', len(qmid_map))
+    covers = dict()
     for qmid, qlmsg in qmid_map.items():
         logger.debug('  new message: %s', qmid)
         if not qlmsg.reply:
@@ -4359,6 +4365,9 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
                 if (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
                         and _qmsg.msgid in ref_map):
                     logger.debug('  stopping: found the cover letter for %s', qlmsg.full_subject)
+                    if _qmsg.msgid not in covers:
+                        covers[_qmsg.msgid] = set()
+                    covers[_qmsg.msgid].add(qlmsg.msgid)
                     break
                 elif _qmsg.has_diff:
                     pqpid = _qmsg.git_patch_id
@@ -4378,5 +4387,20 @@ def map_codereview_trailers(qmsgs: List[email.message.Message],
             logger.debug('  no matching parents for %s', qlmsg.subject)
             # Does it have 'patch-id: ' in the body?
             # TODO: once we have that functionality in b4 cr
+
+    if not covers:
+        return patchid_map
+
+    # find all patches directly below these covers
+    for cmsgid, fwmsgids in covers.items():
+        logger.debug('Looking at cover: %s', cmsgid)
+        for qmid, qlmsg in qmid_map.items():
+            if qlmsg.in_reply_to == cmsgid and qlmsg.git_patch_id:
+                pqpid = qlmsg.git_patch_id
+                for fwmsgid in fwmsgids:
+                    logger.debug('Adding cover follow-up %s to patch-id %s', fwmsgid, pqpid)
+                    if pqpid not in patchid_map:
+                        patchid_map[pqpid] = list()
+                    patchid_map[pqpid].append(qmid_map[fwmsgid])
 
     return patchid_map

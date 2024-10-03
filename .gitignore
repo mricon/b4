@@ -18,3 +18,4 @@ __pycache__
 .venv
 qodana.yaml
 *.ipynb
+pytest.log

@@ -1,0 +1,42 @@
+konstantin@linuxfoundation.org
+Minor typo changes imitation
+Life imitatus artem.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Signed-off-by: Test Override <test-override@example.com>
+---
+konstantin@linuxfoundation.org
+Add some paragraphs to lipsum
+Mostly junk. As expected.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Signed-off-by: Test Override <test-override@example.com>
+---
+konstantin@linuxfoundation.org
+Add more lines to file 1
+This is a second patch in the series. It needed a paragraph with the
+words of wisdom.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Signed-off-by: Test Override <test-override@example.com>
+---
+konstantin@linuxfoundation.org
+Remove line 2 from file2
+Etiam in rhoncus lacus. Ut velit nisl, mollis ac commodo vitae, ultrices
+quis felis. Proin varius hendrerit volutpat. Pellentesque nec laoreet
+quam, eu ullamcorper mi. Donec ut purus ac sapien dignissim elementum eu
+ac ante. Mauris sed faucibus orci.
+
+Vivamus eleifend accumsan ultricies. Cras at erat nec mauris iaculis
+eleifend sit amet eu libero. Suspendisse auctor a erat at vestibulum.
+Nullam efficitur quis turpis quis sodales.
+
+Nunc elementum hendrerit arcu eget feugiat. Nulla placerat pellentesque
+metus, nec rutrum nulla porttitor vel. Ut tristique commodo sem, ac
+sollicitudin enim pharetra et. Mauris sed tellus vitae nunc sollicitudin
+fermentum. Phasellus dui elit, malesuada quis metus vel, blandit
+tristique felis. Aenean quis tempus enim.
+
+Signed-off-by: Konstantin Ryabitsev <konstantin@linuxfoundation.org>
+Signed-off-by: Test Override <test-override@example.com>
+---
