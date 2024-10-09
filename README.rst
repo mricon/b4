@@ -20,6 +20,24 @@ Or to install the latest master (warning, maybe broken!)::
 
     python3 -m pip install git+https://git.kernel.org/pub/scm/utils/b4/b4.git@master
 
+Shell completion
+----------------
+b4 makes use of the python-shtab module to provide static shell completion
+files. Currently python-shtab supports bash, zsh and tcsh, where others may be
+added in the future.
+
+To install b4 with pip and shell completion use::
+
+    python3 -m pip install b4[completion]
+
+Shell completion is provided by the command ``b4 --print-completion
+{bash,zsh,tcsh}``. To enable shell completion run::
+
+    eval $(b4 --print-completion bash)
+
+To make it permanent on new shells, add that command to your ``$HOME/.bashrc``
+or ``$HOME/.zshrc``.
+
 Upgrading
 ---------
 If you previously installed from pypi::

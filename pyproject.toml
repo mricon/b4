@@ -27,6 +27,9 @@ dynamic = ["dependencies", "optional-dependencies"]
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.in"] }
 
+[tool.setuptools.dynamic.optional-dependencies]
+completion = { file = ["misc/requirements-completion.in"] }
+
 [tool.setuptools.packages.find]
 where = ['src']
 exclude = ['tests*']

@@ -162,6 +162,13 @@ def setup_parser() -> argparse.ArgumentParser:
                         value to the empty string. Using NAME and omitting
                         =VALUE will set the value to "true".''')
 
+    try:
+        import shtab
+
+        shtab.add_argument_to(parser, ["--print-completion"])
+    except ImportError:
+        pass
+
     subparsers = parser.add_subparsers(help='sub-command help', dest='subcmd')
 
     # b4 mbox
