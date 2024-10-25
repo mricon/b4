@@ -8,12 +8,13 @@ import sys
 import gzip
 import os
 import fnmatch
-import email.utils
-import email.policy
-import email.parser
-import email.header
 import email.generator
+import email.header
+import email.message
+import email.parser
+import email.policy
 import email.quoprimime
+import email.utils
 import tempfile
 import pathlib
 import argparse

@@ -11,6 +11,7 @@ import b4
 import b4.mbox
 import mailbox
 import email
+import email.message
 import email.parser
 import shutil
 import pathlib

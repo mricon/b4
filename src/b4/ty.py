@@ -13,6 +13,7 @@ import re
 import email
 import email.message
 import email.policy
+import email.utils
 import json
 import argparse
 

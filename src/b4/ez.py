@@ -17,6 +17,8 @@ import datetime
 import json
 import shlex
 import email
+import email.policy
+import email.utils
 import pathlib
 import base64
 import textwrap

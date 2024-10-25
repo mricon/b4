@@ -35,6 +35,7 @@ def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
             msgs = list(mbx)
         else:
             import email
+            import email.parser
             with open(f'{sampledir}/{source}.txt', 'rb') as fh:
                 msg = email.parser.BytesParser(policy=b4.emlpolicy, _class=email.message.EmailMessage).parse(fh)
             msgs = [msg]
