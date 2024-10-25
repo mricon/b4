@@ -172,6 +172,7 @@ class LoreMailbox:
     msgid_map: Dict[str, 'LoreMessage']
     series: Dict[int, 'LoreSeries']
     covers: Dict[int, 'LoreMessage']
+    trailer_map: Dict[str, List['LoreMessage']]
     followups: List['LoreMessage']
     unknowns: List['LoreMessage']
 
