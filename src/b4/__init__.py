@@ -36,7 +36,7 @@ import requests
 
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, overload
+from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, TypeVar, overload
 
 from email import charset
 
@@ -2697,14 +2697,27 @@ def gpg_run_command(args: List[str], stdin: Optional[bytes] = None) -> Tuple[int
     return _run_command(cmdargs, stdin=stdin)
 
 
+@overload
+def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: Optional[bytes] = ...,
+                    *, logstderr: bool = ..., decode: Literal[False],
+                    rundir: Optional[str] = ...) -> Tuple[int, bytes]:
+    ...
+
+
+@overload
+def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: Optional[bytes] = ...,
+                    *, logstderr: bool = ..., decode: Literal[True] = ...,
+                    rundir: Optional[str] = ...) -> Tuple[int, str]:
+    ...
+
 def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: Optional[bytes] = None,
-                    logstderr: bool = False, decode: bool = True,
+                    *, logstderr: bool = False, decode: bool = True,
                     rundir: Optional[str] = None) -> Tuple[int, Union[str, bytes]]:
     cmdargs = ['git', '--no-pager']
     if gitdir:
         if os.path.exists(os.path.join(gitdir, '.git')):
             gitdir = os.path.join(gitdir, '.git')
-        cmdargs += ['--git-dir', gitdir]
+        cmdargs += ['--git-dir', str(gitdir)]
 
     # counteract some potential local settings
     if args[0] == 'log':
@@ -2714,16 +2727,18 @@ def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: 
 
     ecode, out, err = _run_command(cmdargs, stdin=stdin, rundir=rundir)
 
+    U = TypeVar('U', str, bytes)
+
+    def _handle(out: U, err: U) -> Tuple[int, Union[str, bytes]]:
+        if logstderr and len(err.strip()):
+            logger.debug('Stderr: %s', err)
+            out += err
+
+        return ecode, out
+
     if decode:
-        out = out.decode(errors='replace')
-
-    if logstderr and len(err.strip()):
-        if decode:
-            err = err.decode(errors='replace')
-        logger.debug('Stderr: %s', err)
-        out += err
-
-    return ecode, out
+        return _handle(out.decode(errors='replace'), err.decode(errors='replace'))
+    return _handle(out, err)
 
 
 def git_credential_fill(gitdir: Optional[str], protocol: str, host: str, username: str) -> Optional[str]:
