@@ -28,7 +28,7 @@ import tarfile
 import hashlib
 import urllib.parse
 
-from typing import Optional, Tuple, List, Union, Dict, Set
+from typing import Any, Optional, Tuple, List, Union, Dict, Set
 from email import utils
 from string import Template
 
@@ -589,13 +589,13 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         logger.info('NOTE: any follow-up trailers were ignored; apply them with b4 trailers -u')
 
 
-def make_magic_json(data: dict) -> str:
+def make_magic_json(data: Dict[str, Any]) -> str:
     mj = (f'{MAGIC_MARKER}\n'
           '# This section is used internally by b4 prep for tracking purposes.\n')
     return mj + json.dumps(data, indent=2)
 
 
-def load_cover(strip_comments: bool = False, usebranch: Optional[str] = None) -> Tuple[str, dict]:
+def load_cover(strip_comments: bool = False, usebranch: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     strategy = get_cover_strategy(usebranch)
     if strategy in {'commit', 'tip-commit'}:
         cover_commit = find_cover_commit(usebranch=usebranch)
@@ -636,7 +636,7 @@ def load_cover(strip_comments: bool = False, usebranch: Optional[str] = None) ->
     return cover.strip(), tracking
 
 
-def store_cover(content: str, tracking: dict, new: bool = False) -> None:
+def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> None:
     strategy = get_cover_strategy()
     if strategy in {'commit', 'tip-commit'}:
         cover_message = content + '\n\n' + make_magic_json(tracking)
@@ -654,9 +654,9 @@ def store_cover(content: str, tracking: dict, new: bool = False) -> None:
                 raise RuntimeError('Error saving cover letter (commit not found)')
             fred = FRCommitMessageEditor()
             fred.add(commit, cover_message)
-            args = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{commit}~1..HEAD'])
-            args.refs = [f'{commit}~1..HEAD']
-            frf = fr.RepoFilter(args, commit_callback=fred.callback)
+            frargs = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{commit}~1..HEAD'])
+            frargs.refs = [f'{commit}~1..HEAD']
+            frf = fr.RepoFilter(frargs, commit_callback=fred.callback)
             logger.info('Invoking git-filter-repo to update the cover letter.')
             frf.run()
 
@@ -760,18 +760,18 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
 
 
 class FRCommitMessageEditor:
-    edit_map: dict
+    edit_map: Dict[bytes, bytes]
 
-    def __init__(self, edit_map: Optional[dict] = None):
+    def __init__(self, edit_map: Optional[Dict[bytes, bytes]] = None):
         if edit_map:
             self.edit_map = edit_map
         else:
             self.edit_map = dict()
 
-    def add(self, commit: str, message: str):
+    def add(self, commit: str, message: str) -> None:
         self.edit_map[commit.encode()] = message.encode()
 
-    def callback(self, commit, metadata):
+    def callback(self, commit: fr.Commit, metadata: Dict[str, str]) -> None:
         if commit.original_id in self.edit_map:
             commit.message = self.edit_map[commit.original_id]
 
@@ -1271,7 +1271,7 @@ def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[s
     return base_commit, start_commit, end_commit, oneline, shortlog.rstrip(), diffstat.rstrip()
 
 
-def print_pretty_addrs(addrs: list, hdrname: str) -> None:
+def print_pretty_addrs(addrs: List[str], hdrname: str) -> None:
     if len(addrs) < 1:
         return
     logger.info('%s: %s', hdrname, b4.format_addrs([addrs[0]]))
@@ -1339,7 +1339,7 @@ def get_cover_dests(cbody: str) -> Tuple[List, List, str]:
 
 
 def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, email.message.EmailMessage]],
-              cbody: str, datets: int, thread: bool = True):
+              cbody: str, datets: int, thread: bool = True) -> None:
     fp = patches[0][1]
     cmsg = email.message.EmailMessage()
     cmsg.add_header('From', fp['From'])
@@ -1420,7 +1420,7 @@ def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
     return lsubject, cbody
 
 
-def rethread(patches: List[Tuple[str, email.message.EmailMessage]]):
+def rethread(patches: List[Tuple[str, email.message.EmailMessage]]) -> None:
     refto = patches[0][1].get('message-id')
     for commit, msg in patches[1:]:
         msg.add_header('References', refto)
@@ -2162,7 +2162,7 @@ def get_sent_tagname(tagbase: str, tagprefix: str, revstr: Union[str, int]) -> T
     return f'{tagprefix}{tagbase}-v{revision}', revision
 
 
-def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PREFIX):
+def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PREFIX) -> None:
     # Remove signature
     chunks = tag_msg.rsplit('\n-- \n')
     if len(chunks) > 1:
@@ -2299,7 +2299,7 @@ def show_revision() -> None:
                 logger.info('  %s: %s', rn, config['linkmask'] % link)
 
 
-def write_to_tar(bio_tar: tarfile.TarFile, name, mtime, bio_file: io.BytesIO):
+def write_to_tar(bio_tar: tarfile.TarFile, name: str, mtime: int, bio_file: io.BytesIO) -> None:
     tifo = tarfile.TarInfo(name)
     tuser = os.environ.get('USERNAME', 'user')
     tuid = os.getuid()
@@ -2316,7 +2316,7 @@ def write_to_tar(bio_tar: tarfile.TarFile, name, mtime, bio_file: io.BytesIO):
 
 def get_prep_managed_branches(gitdir: Optional[str] = None) -> List[str]:
     lines = b4.git_get_command_lines(gitdir, ['show-ref', '--heads'])
-    mybranches = list()
+    mybranches: List[str] = list()
     if not lines:
         logger.debug('Git show-ref returned no heads')
         return mybranches
@@ -2555,7 +2555,7 @@ def force_revision(forceto: int) -> None:
     store_cover(cover, tracking)
 
 
-def compare(compareto: str, execvp: bool = True, range_diff_opts: str = None) -> Union[str, None]:
+def compare(compareto: str, execvp: bool = True, range_diff_opts: Optional[str] = None) -> Union[str, None]:
     cover, tracking = load_cover()
     # Try the new format first
     tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, compareto)
@@ -2736,7 +2736,7 @@ def store_preflight_check(identity: str) -> None:
     b4.save_cache(pf_checks, cacheid, suffix='checks', is_json=True)
 
 
-def set_prefixes(prefixes: list, additive: bool = False) -> None:
+def set_prefixes(prefixes: List[str], additive: bool = False) -> None:
     cover, tracking = load_cover()
     old_prefixes = tracking['series'].get('prefixes', list())
     if len(prefixes) == 1 and not prefixes[0].strip():

@@ -4,6 +4,8 @@ import b4
 import b4.mbox
 import b4.command
 
+from typing import Any, Dict, List
+
 
 @pytest.mark.parametrize('mboxf, shazamargs, compareargs, compareout, b4cfg', [
     ('shazam-git1-just-series', [],
@@ -13,7 +15,7 @@ import b4.command
     ('shazam-git1-just-series', ['-M'],
      ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD^..'], 'shazam-git1-just-series-merged', {}),
 ])
-def test_shazam(sampledir, gitdir, mboxf, shazamargs, compareargs, compareout, b4cfg):
+def test_shazam(sampledir: str, gitdir: str, mboxf: str, shazamargs: List[str], compareargs: List[str], compareout: str, b4cfg: Dict[str, Any]) -> None:
     b4.MAIN_CONFIG.update(b4cfg)
     mfile = os.path.join(sampledir, f'{mboxf}.mbox')
     cfile = os.path.join(sampledir, f'{compareout}.verify')
