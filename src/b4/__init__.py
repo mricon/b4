@@ -36,7 +36,7 @@ import requests
 
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict
+from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, overload
 
 from email import charset
 
@@ -2758,7 +2758,7 @@ def git_get_repo_status(gitdir: Optional[str] = None, untracked: bool = False) -
 
 
 @contextmanager
-def git_temp_worktree(gitdir: Optional[str] = None, commitish: Optional[str] = None) -> Optional[Iterator[Path]]:
+def git_temp_worktree(gitdir: Optional[str] = None, commitish: Optional[str] = None) -> Generator[str]:
     """Context manager that creates a temporary work tree and chdirs into it. The
     worktree is deleted when the contex manager is closed. Taken from gj_tools."""
     dfn = None
@@ -2776,7 +2776,7 @@ def git_temp_worktree(gitdir: Optional[str] = None, commitish: Optional[str] = N
 
 
 @contextmanager
-def git_temp_clone(gitdir: Optional[str] = None) -> Optional[Iterator[Path]]:
+def git_temp_clone(gitdir: Optional[str] = None) -> Generator[str]:
     """Context manager that creates a temporary shared clone."""
     if gitdir is None:
         topdir = git_get_toplevel()
@@ -2794,7 +2794,7 @@ def git_temp_clone(gitdir: Optional[str] = None) -> Optional[Iterator[Path]]:
 
 
 @contextmanager
-def in_directory(dirname: str) -> Iterator[bool]:
+def in_directory(dirname: str) -> Generator[bool]:
     """Context manager that chdirs into a directory and restores the original
     directory when closed. Taken from gj_tools."""
     cdir = os.getcwd()
