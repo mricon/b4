@@ -1063,8 +1063,10 @@ class LoreTrailer:
                 # Normalize the value with parsed data
                 if self.addr[0]:
                     self.value = f'{self.addr[0]} <{self.addr[1]}>'
-                else:
+                elif self.addr[1]:
                     self.value = self.addr[1]
+                else:
+                    self.type = 'unknown'
             else:
                 self.type = 'unknown'
         self.lname = self.name.lower()
