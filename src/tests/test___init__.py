@@ -57,7 +57,7 @@ def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
 
 @pytest.mark.parametrize('source,expected', [
     ('trailers-test-simple',
-     [('person', 'Reviewed-By', 'Bogus Bupkes <bogus@example.com>', None),
+     [('person', 'Reviewed-by', 'Bogus Bupkes <bogus@example.com>', None),
       ('utility', 'Fixes', 'abcdef01234567890', None),
       ('utility', 'Link', 'https://msgid.link/some@msgid.here', None),
       ]),
@@ -77,10 +77,14 @@ def test_parse_trailers(sampledir, source, expected):
         assert len(expected) == len(trs)
         for tr in trs:
             mytype, myname, myvalue, myextinfo = expected.pop(0)
+            assert tr.name == myname
+            assert tr.value == myvalue
+            assert tr.extinfo == myextinfo
+            assert tr.type == mytype
+
             mytr = b4.LoreTrailer(name=myname, value=myvalue, extinfo=myextinfo)
             assert tr == mytr
             assert tr.extinfo == mytr.extinfo
-            assert tr.type == mytype
 
 
 @pytest.mark.parametrize('source,serargs,amargs,reference,b4cfg', [
