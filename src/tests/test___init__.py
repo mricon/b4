@@ -79,6 +79,7 @@ def test_parse_trailers(sampledir, source, expected):
             mytype, myname, myvalue, myextinfo = expected.pop(0)
             mytr = b4.LoreTrailer(name=myname, value=myvalue, extinfo=myextinfo)
             assert tr == mytr
+            assert tr.extinfo == mytr.extinfo
             assert tr.type == mytype
 
 
