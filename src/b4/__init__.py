@@ -1061,10 +1061,8 @@ class LoreTrailer:
                 self.type = 'person'
                 self.addr = email.utils.parseaddr(value)
                 # Normalize the value with parsed data
-                if self.addr[0]:
-                    self.value = f'{self.addr[0]} <{self.addr[1]}>'
-                elif self.addr[1]:
-                    self.value = self.addr[1]
+                if self.addr[0] or self.addr[1]:
+                    self.value = email.utils.formataddr(self.addr)
                 else:
                     self.type = 'unknown'
             else:
