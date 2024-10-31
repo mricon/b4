@@ -105,6 +105,7 @@ def test_parse_trailers(sampledir, source, expected):
     ('with-diffstat', {}, {}, 'defaults', {}),
     ('name-parens', {}, {}, 'defaults', {}),
     ('bare-address', {}, {}, 'defaults', {}),
+    ('stripped-lines', {}, {}, 'defaults', {}),
 ])
 def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg):
     b4.MAIN_CONFIG.update(b4cfg)
