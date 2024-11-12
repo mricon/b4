@@ -398,8 +398,14 @@ Contributor-oriented settings
 
 ``b4.send-same-thread`` (v0.13+)
   When sending a new version of a series, send it in the same thread as
-  the previous version. B4 sends the first message of the new series as
-  a reply to the previous version's cover letter.
+  the previous version. The config supports the following values:
+
+  * ``yes``, ``true``, ``y``: B4 sends the first message of the new series as a
+    reply to the previous version's cover letter.
+  * ``shallow``: B4 sends the first message of the new series as a reply to the
+    first version's cover letter.
+  * ``no``: B4 does not send the new version of the series in the same thread
+    as any previous version.
 
   Default: ``no``
 

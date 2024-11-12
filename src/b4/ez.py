@@ -1594,9 +1594,12 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     # Add X-Change-ID header
     patches[0][1].add_header('X-Change-ID', change_id)
 
-    samethread = config.get('send-same-thread', '').lower() in {'yes', 'true', 'y'}
-    if samethread and revision > 1:
+    samethread = config.get('send-same-thread', '').lower()
+    if samethread in {'yes', 'true', 'y', 'shallow'} and revision > 1:
         oldrev = revision - 1
+        if samethread == 'shallow':
+            oldrev = 1
+
         voldrev = f'v{oldrev}'
         try:
             oldmsgid = tracking['series']['history'][voldrev][-1]
