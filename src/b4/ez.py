@@ -1436,7 +1436,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     if prefixes is None:
         prefixes = list()
     prefixes += tracking['series'].get('prefixes', list())
-    start_commit = get_series_start()
+    base_commit, start_commit, end_commit = get_series_range(usebranch=usebranch)
     change_id = tracking['series'].get('change-id')
     revision = tracking['series'].get('revision')
     msgid_tpt = make_msgid_tpt(change_id, revision)
@@ -1449,7 +1449,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     strategy = get_cover_strategy()
     ignore_commits = None
     if strategy in {'commit', 'tip-commit'}:
-        cover_commit = find_cover_commit()
+        cover_commit = find_cover_commit(usebranch=usebranch)
         if cover_commit:
             ignore_commits = {cover_commit}
 
@@ -1457,7 +1457,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     for cprefix in csubject.get_extra_prefixes(exclude=prefixes):
         prefixes.append(cprefix)
 
-    patches = b4.git_range_to_patches(None, start_commit, 'HEAD',
+    patches = b4.git_range_to_patches(None, start_commit, end_commit,
                                       revision=revision,
                                       prefixes=prefixes,
                                       msgid_tpt=msgid_tpt,
@@ -1465,7 +1465,8 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
                                       mailfrom=mailfrom,
                                       ignore_commits=ignore_commits)
 
-    base_commit, stc, endc, oneline, shortlog, diffstat = get_series_details(start_commit=start_commit)
+    base_commit, stc, endc, oneline, shortlog, diffstat = get_series_details(start_commit=start_commit,
+                                                                             usebranch=usebranch)
 
     config = b4.get_main_config()
     cover_template = DEFAULT_COVER_TEMPLATE
