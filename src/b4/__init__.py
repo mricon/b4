@@ -3465,7 +3465,6 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             [
                 'show',
                 '--format=email',
-                '--full-index',
                 '--binary',
                 '--patch-with-stat',
                 '--encoding=utf-8',
