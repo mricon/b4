@@ -14,7 +14,7 @@ Cc: bare-address@example.org
 Reviewed-by: Original Reviewer <original-reviewer@example.com>
 Link: https://msgid.link/some@msgid.here
 Signed-off-by: Original Submitter <original-submitter@example.com>
-Reviewed-by: Followup Reviewer1 (corporate) <followup-reviewer1@example.com>
+Reviewed-by: "Followup Reviewer1 (corporate)" <followup-reviewer1@example.com>
 Tested-by: Followup Reviewer2 <followup-reviewer2@example.com>
 
 diff --git a/b4/junk.py b/b4/junk.py

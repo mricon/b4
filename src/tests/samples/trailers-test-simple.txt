@@ -4,6 +4,7 @@ Date: Tue, 30 Aug 2022 11:19:07 -0400
 
 This is a simple trailer parsing test.
 
+Reported-by: "Doe, Jane" <jane@example.com>
 Reviewed-by: Bogus Bupkes <bogus@example.com>
 Fixes: abcdef01234567890
 Link: https://msgid.link/some@msgid.here
