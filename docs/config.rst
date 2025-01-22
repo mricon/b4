@@ -403,7 +403,7 @@ Contributor-oriented settings
   * ``yes``, ``true``, ``y``: B4 sends the first message of the new series as a
     reply to the previous version's cover letter.
   * ``shallow``: B4 sends the first message of the new series as a reply to the
-    first version's cover letter.
+    first version's cover letter. (v0.15+)
   * ``no``: B4 does not send the new version of the series in the same thread
     as any previous version.
 
