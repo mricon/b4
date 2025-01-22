@@ -37,7 +37,8 @@ import requests
 
 from pathlib import Path
 from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, TypeVar, overload
+from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, \
+    TypeVar, overload, Generator
 
 from email import charset
 
@@ -2711,6 +2712,7 @@ def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: 
                     rundir: Optional[str] = ...) -> Tuple[int, str]:
     ...
 
+
 def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: Optional[bytes] = None,
                     *, logstderr: bool = False, decode: bool = True,
                     rundir: Optional[str] = None) -> Tuple[int, Union[str, bytes]]:
@@ -2730,12 +2732,12 @@ def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: 
 
     U = TypeVar('U', str, bytes)
 
-    def _handle(out: U, err: U) -> Tuple[int, Union[str, bytes]]:
-        if logstderr and len(err.strip()):
-            logger.debug('Stderr: %s', err)
-            out += err
+    def _handle(_out: U, _err: U) -> Tuple[int, Union[str, bytes]]:
+        if logstderr and len(_err.strip()):
+            logger.debug('Stderr: %s', _err)
+            _out += _err
 
-        return ecode, out
+        return ecode, _out
 
     if decode:
         return _handle(out.decode(errors='replace'), err.decode(errors='replace'))
