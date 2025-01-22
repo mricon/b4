@@ -11,6 +11,7 @@ import b4
 import b4.mbox
 import mailbox
 import email
+import email.message
 import email.parser
 import shutil
 import pathlib
@@ -174,8 +175,8 @@ def main(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
     if cmdargs.outdiff is not None:
         logger.info('Writing %s', cmdargs.outdiff)
-        fh = open(cmdargs.outdiff, 'w')
+        with open(cmdargs.outdiff, 'w') as fh:
+            fh.write(rdiff)
     else:
         logger.info('---')
-        fh = sys.stdout
-    fh.write(rdiff)
+        sys.stdout.write(rdiff)

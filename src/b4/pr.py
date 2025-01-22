@@ -13,7 +13,9 @@ import b4
 import re
 import json
 import email
+import email.message
 import email.parser
+import email.utils
 import argparse
 
 import urllib.parse

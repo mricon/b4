@@ -22,7 +22,13 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Utilities",
 ]
-dynamic = ["dependencies", "optional-dependencies"]
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "types-requests",
+]
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.in"] }
