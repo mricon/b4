@@ -2781,7 +2781,7 @@ def git_get_repo_status(gitdir: Optional[str] = None, untracked: bool = False) -
 
 
 @contextmanager
-def git_temp_worktree(gitdir: Optional[str] = None, commitish: Optional[str] = None) -> Generator[str]:
+def git_temp_worktree(gitdir: Optional[str] = None, commitish: Optional[str] = None) -> Generator[str, None, None]:
     """Context manager that creates a temporary work tree and chdirs into it. The
     worktree is deleted when the contex manager is closed. Taken from gj_tools."""
     dfn = None
@@ -2799,7 +2799,7 @@ def git_temp_worktree(gitdir: Optional[str] = None, commitish: Optional[str] = N
 
 
 @contextmanager
-def git_temp_clone(gitdir: Optional[str] = None) -> Generator[str]:
+def git_temp_clone(gitdir: Optional[str] = None) -> Generator[str, None, None]:
     """Context manager that creates a temporary shared clone."""
     if gitdir is None:
         topdir = git_get_toplevel()
@@ -2817,7 +2817,7 @@ def git_temp_clone(gitdir: Optional[str] = None) -> Generator[str]:
 
 
 @contextmanager
-def in_directory(dirname: str) -> Generator[bool]:
+def in_directory(dirname: str) -> Generator[bool, None, None]:
     """Context manager that chdirs into a directory and restores the original
     directory when closed. Taken from gj_tools."""
     cdir = os.getcwd()
