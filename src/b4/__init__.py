@@ -28,7 +28,6 @@ import time
 import copy
 import shutil
 import mailbox
-# noinspection PyCompatibility
 import pwd
 import io
 
@@ -1038,7 +1037,6 @@ class LoreSeries:
         return start_commit, end_commit
 
     def save_cover(self, outfile):
-        # noinspection PyUnresolvedReferences
         cover_msg = self.patches[0].get_am_message(add_trailers=False)
         with open(outfile, 'wb') as fh:
             fh.write(LoreMessage.get_msg_as_bytes(cover_msg, headers='decode'))

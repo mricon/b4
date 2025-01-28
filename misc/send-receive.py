@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# noinspection PyUnresolvedReferences
+
 import falcon
 import os
 import sys
@@ -35,7 +35,6 @@ logger = logging.getLogger('b4-send-receive')
 logger.setLevel(logging.DEBUG)
 
 
-# noinspection PyBroadException, PyMethodMayBeStatic
 class SendReceiveListener(object):
 
     def __init__(self, _engine, _config) -> None:
