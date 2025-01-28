@@ -1,4 +1,4 @@
-import pytest  # noqa
+import pytest
 import os
 import b4
 import b4.ez
@@ -61,7 +61,6 @@ def test_trailers(sampledir, prepdir, mboxf, bundlef, rep, trargs, compareargs, 
         cmdargs = parser.parse_args(b4args)
         with pytest.raises(SystemExit) as e:
             b4.mbox.main(cmdargs)
-            assert e.type == SystemExit
             assert e.value.code == 0
 
     cfile = os.path.join(sampledir, f'{compareout}.verify')

@@ -84,7 +84,7 @@ class SendReceiveListener(object):
         conn.execute(q)
         conn.close()
 
-    def on_get(self, req, resp):  # noqa
+    def on_get(self, req, resp):
         resp.status = falcon.HTTP_200
         resp.content_type = falcon.MEDIA_TEXT
         resp.text = "We don't serve GETs here\n"
@@ -417,7 +417,7 @@ class SendReceiveListener(object):
             bdata = umsg.encode()
             try:
                 identity, selector, auth_id = self.validate_message(conn, t_auth, bdata)
-            except patatt.NoKeyError as ex:  # noqa
+            except patatt.NoKeyError:
                 self.send_error(resp, message='No matching key, please complete web auth first.')
                 return
             except Exception as ex:
@@ -623,7 +623,7 @@ class SendReceiveListener(object):
         raw = req.bounded_stream.read()
         try:
             jdata = json.loads(raw)
-        except:
+        except Exception:
             resp.status = falcon.HTTP_500
             resp.content_type = falcon.MEDIA_TEXT
             resp.text = 'Failed to parse the request\n'
