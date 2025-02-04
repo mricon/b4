@@ -29,6 +29,9 @@ dev = [
     "pytest",
     "types-requests",
 ]
+shtab = [
+    "shtab",
+]
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.in"] }

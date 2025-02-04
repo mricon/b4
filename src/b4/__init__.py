@@ -556,7 +556,7 @@ class LoreSeries:
                 self.patches[lmsg.counter + 1] = omsg
         else:
             self.patches[lmsg.counter] = lmsg
-        self.complete = not (None in self.patches[1:])
+        self.complete = None not in self.patches[1:]
 
         if lmsg.counter < 2:
             # Cover letter or first patch
@@ -3976,6 +3976,8 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
                     logger.info(' -> %s : %s', state, title)
             except requests.exceptions.RequestException as ex:
                 logger.debug('Patchwork REST error: %s', ex)
+
+    return True
 
 
 def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[email.message.EmailMessage],

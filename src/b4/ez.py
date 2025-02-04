@@ -814,7 +814,7 @@ def edit_deps() -> None:
                 logger.debug('Ignoring: %s', entry)
                 continue
             chunks = [x.strip() for x in entry.split(':')]
-            if not chunks[0] in recognized:
+            if chunks[0] not in recognized:
                 logger.warning('WARNING: Unrecognized entry: %s', entry)
             prereqs.append(entry)
 
@@ -908,7 +908,7 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
                 lmbx.add_message(s_msg)
             if len(lmbx.series) > 1:
                 logger.debug('FAIL: msgid=%s is a thread with multiple series', msgid)
-                res[prereq] = (False, f'Message-id <%s> has multiple posted series', msgid)
+                res[prereq] = (False, f'Message-id <{msgid}> has multiple posted series')
                 continue
 
             maxser = max(lmbx.series.keys())
