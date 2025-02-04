@@ -3483,18 +3483,20 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         if commit in ignore_commits:
             logger.debug('Ignoring commit %s', commit)
             continue
+        showargs = [
+            '--format=email',
+            '--binary',
+            '--patch-with-stat',
+            '--encoding=utf-8',
+            '--default-prefix',
+            '--find-renames',
+        ]
+        smcfg = get_sendemail_config()
+        if not get_git_bool(smcfg.get('mailmap', 'false')):
+            showargs.append('--no-mailmap')
+        logger.debug('showargs=%s', showargs)
         ecode, out = git_run_command(
-            gitdir,
-            [
-                'show',
-                '--format=email',
-                '--binary',
-                '--patch-with-stat',
-                '--encoding=utf-8',
-                '--default-prefix',
-                '--find-renames',
-                commit,
-            ],
+            gitdir, ['show'] + showargs + [commit],
             decode=False,
         )
         if ecode > 0:
@@ -4122,7 +4124,7 @@ def get_excluded_addrs() -> Set[str]:
 
 
 def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
-                        gitdir: Optional[str]) -> List[Tuple[str, str]]:
+                        gitdir: Optional[str], mailmap_replace: bool = True) -> List[Tuple[str, str]]:
     global MAILMAP_INFO
     for entry in list(addresses):
         # Only qualified addresses, please
@@ -4139,6 +4141,9 @@ def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
                 break
         if removed:
             continue
+        if not mailmap_replace:
+            return addresses
+
         # Check if it's mailmap-replaced
         if entry[1] in MAILMAP_INFO:
             if MAILMAP_INFO[entry[1]]:
@@ -4433,3 +4438,11 @@ def map_codereview_trailers(qmsgs: List[email.message.EmailMessage],
                     patchid_map[pqpid].append(qmid_map[fwmsgid])
 
     return patchid_map
+
+
+def get_git_bool(gitbool: str) -> bool:
+    if gitbool.lower() in ('true', 'yes', '1', 'on', 'y'):
+        return True
+    elif gitbool.lower() in ('false', 'no', '0', 'off', 'n'):
+        return False
+    raise ValueError('Invalid git boolean value: %s' % gitbool)

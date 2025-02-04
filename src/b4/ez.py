@@ -1874,11 +1874,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     allcc = list()
     alldests = set()
 
+    sconfig = b4.get_sendemail_config()
+    mailmap_replace = b4.get_git_bool(sconfig.get('mailmap', 'false'))
     if todests:
-        allto = b4.cleanup_email_addrs(todests, excludes, None)
+        allto = b4.cleanup_email_addrs(todests, excludes, None, mailmap_replace=mailmap_replace)
         alldests.update(set([x[1] for x in allto]))
     if ccdests:
-        allcc = b4.cleanup_email_addrs(ccdests, excludes, None)
+        allcc = b4.cleanup_email_addrs(ccdests, excludes, None, mailmap_replace=mailmap_replace)
         alldests.update(set([x[1] for x in allcc]))
 
     if not len(allto):
@@ -1891,7 +1893,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.info('Will write out messages into %s', cmdargs.output_dir)
         pathlib.Path(cmdargs.output_dir).mkdir(parents=True, exist_ok=True)
 
-    sconfig = b4.get_sendemail_config()
     endpoint = None
     if not sconfig.get('smtpserver') or cmdargs.send_web:
         endpoint = config.get('send-endpoint-web', '')
@@ -2069,13 +2070,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             myto = mycc
             mycc = list()
         if myto:
-            pto = b4.cleanup_email_addrs(myto, excludes, None)
+            pto = b4.cleanup_email_addrs(myto, excludes, None, mailmap_replace=mailmap_replace)
             if msg['To']:
                 msg.replace_header('To', b4.format_addrs(pto))
             else:
                 msg.add_header('To', b4.format_addrs(pto))
         if mycc:
-            pcc = b4.cleanup_email_addrs(mycc, excludes, None)
+            pcc = b4.cleanup_email_addrs(mycc, excludes, None, mailmap_replace=mailmap_replace)
             if msg['Cc']:
                 msg.replace_header('Cc', b4.format_addrs(pcc))
             else:
