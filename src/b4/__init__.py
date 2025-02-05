@@ -4124,7 +4124,7 @@ def get_excluded_addrs() -> Set[str]:
 
 
 def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
-                        gitdir: Optional[str], mailmap_replace: bool = True) -> List[Tuple[str, str]]:
+                        gitdir: Optional[str]) -> List[Tuple[str, str]]:
     global MAILMAP_INFO
     for entry in list(addresses):
         # Only qualified addresses, please
@@ -4141,9 +4141,6 @@ def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
                 break
         if removed:
             continue
-        if not mailmap_replace:
-            return addresses
-
         # Check if it's mailmap-replaced
         if entry[1] in MAILMAP_INFO:
             if MAILMAP_INFO[entry[1]]:
