@@ -494,3 +494,9 @@ modifying defaults for some of these flags.
 ``-e ENROLL_BASE, --enroll ENROLL_BASE``
   Enrolls your current branch to be b4-prep managed. Requires the name
   of the branch to use as the fork-point tracking base.
+
+``--range-diff-opts RANGE_DIFF_OPTS``
+  Additional arguments passed to ``git range-diff`` when comparing series with
+  ``--compare-to``. For example::
+
+      b4 prep --compare-to v1 --range-diff-opts "--creation-factor=80 --no-dual-color"
