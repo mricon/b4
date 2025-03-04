@@ -42,6 +42,11 @@ Optional flags
   Compares two mbox files prepared by ``b4 am`` instead of querying
   the public-inbox server directly.
 
+``--range-diff-opts RANGE_DIFF_OPTS``
+  Additional arguments passed to ``git range-diff``. For example::
+
+      b4 diff --range-diff-opts "--creation-factor=80 --no-dual-color" <url>
+
 ``-o OUTDIFF, --output-diff OUTDIFF``
   **(DEPRECATED)** Sends ``range-diff`` output into a file. You should use
   ``-n`` instead and redirect output from the actual ``git range-diff``

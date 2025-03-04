@@ -16,6 +16,7 @@ import email.parser
 import shutil
 import pathlib
 import argparse
+import shlex
 
 from typing import Tuple, Optional, List
 
@@ -156,7 +157,14 @@ def main(cmdargs: argparse.Namespace) -> None:
         logger.critical('---')
         logger.critical('Could not create fake-am range for upper series v%s', user.revision)
         sys.exit(1)
-    grdcmd = 'git range-diff %.12s..%.12s %.12s..%.12s' % (lsc, lec, usc, uec)
+    rd_opts = []
+    if cmdargs.range_diff_opts:
+        sp = shlex.shlex(cmdargs.range_diff_opts, posix=True)
+        sp.whitespace_split = True
+        rd_opts = list(sp)
+    grdcmd = 'git range-diff %s%.12s..%.12s %.12s..%.12s' % (
+        " ".join(rd_opts) + " " if rd_opts else "",
+        lsc, lec, usc, uec)
     if cmdargs.nodiff:
         logger.info('Success, to compare v%s and v%s:', lser.revision, user.revision)
         logger.info(f'    {grdcmd}')
@@ -164,7 +172,7 @@ def main(cmdargs: argparse.Namespace) -> None:
     logger.info('---')
     logger.info('Diffing v%s and v%s', lser.revision, user.revision)
     logger.info('    Running: %s', grdcmd)
-    gitargs = ['range-diff', f'{lsc}..{lec}', f'{usc}..{uec}']
+    gitargs = ['range-diff'] + rd_opts + [f'{lsc}..{lec}', f'{usc}..{uec}']
     if cmdargs.outdiff is None or cmdargs.color:
         gitargs.append('--color')
     ecode, rdiff = b4.git_run_command(cmdargs.gitdir, gitargs)

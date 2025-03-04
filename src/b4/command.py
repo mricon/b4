@@ -286,6 +286,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Force color output even when writing to file')
     sp_diff.add_argument('-m', '--compare-am-mboxes', dest='ambox', nargs=2, default=None,
                          help='Compare two mbx files prepared with "b4 am"')
+    sp_diff.add_argument('--range-diff-opts', default=None,
+                         help='Arguments passed to git range-diff')
     sp_diff.set_defaults(func=cmd_diff)
 
     # b4 kr
