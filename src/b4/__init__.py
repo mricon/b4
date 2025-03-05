@@ -3132,6 +3132,13 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
             logger.debug('Overriding midmask with passed url parameters')
             config['midmask'] = f'{wantloc.scheme}://{wantloc.netloc}/{chunks[0]}/%s'
         msgid = urllib.parse.unquote(chunks[1])
+    elif msgid.startswith('http'):
+        # Finally, try finding something that looks like msgid in that URL
+        matches = re.search(r'^https?://[^@]+/([^/]+@[^/]+)', msgid, re.IGNORECASE)
+        if matches:
+            chunks = matches.groups()
+            msgid = urllib.parse.unquote(chunks[0])
+
     # Handle special case when msgid is prepended by id: or rfc822msgid:
     if msgid.find('id:') >= 0:
         msgid = re.sub(r'^\w*id:', '', msgid)
