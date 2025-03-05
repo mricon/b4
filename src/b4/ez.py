@@ -2550,7 +2550,7 @@ def force_revision(forceto: int) -> None:
     store_cover(cover, tracking)
 
 
-def compare(compareto: str, execvp: bool = True) -> Union[str, None]:
+def compare(compareto: str, execvp: bool = True, range_diff_opts: str = None) -> Union[str, None]:
     cover, tracking = load_cover()
     # Try the new format first
     tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, compareto)
@@ -2580,6 +2580,11 @@ def compare(compareto: str, execvp: bool = True) -> Union[str, None]:
     lines = b4.git_get_command_lines(None, gitargs)
     curr_end = lines[0]
     grdcmd = ['git', 'range-diff', '%.12s..%.12s' % (prev_start, prev_end), '%.12s..%.12s' % (curr_start, curr_end)]
+    if range_diff_opts:
+        sp = shlex.shlex(range_diff_opts, posix=True)
+        sp.whitespace_split = True
+        rd_opts = list(sp)
+        grdcmd = grdcmd + rd_opts
     logger.debug('Running %s', ' '.join(grdcmd))
     if execvp:
         # We exec range-diff and let it take over
@@ -2792,7 +2797,7 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         return format_patch(cmdargs.format_patch)
 
     if cmdargs.compare_to:
-        return compare(cmdargs.compare_to)
+        return compare(cmdargs.compare_to, range_diff_opts=cmdargs.range_diff_opts)
 
     if cmdargs.enroll_base and cmdargs.new_series_name:
         logger.critical('CRITICAL: -n NEW_SERIES_NAME and -e [ENROLL_BASE] can not be used together.')

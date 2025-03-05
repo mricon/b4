@@ -286,6 +286,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Force color output even when writing to file')
     sp_diff.add_argument('-m', '--compare-am-mboxes', dest='ambox', nargs=2, default=None,
                          help='Compare two mbx files prepared with "b4 am"')
+    sp_diff.add_argument('--range-diff-opts', default=None,
+                         help='Arguments passed to git range-diff')
     sp_diff.set_defaults(func=cmd_diff)
 
     # b4 kr
@@ -307,6 +309,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Additional prefixes to add to those already defined')
     sp_prep.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                          help='Do not use local cache when performing remote queries')
+    sp_prep.add_argument('--range-diff-opts', default=None, type=str,
+                         help='Arguments passed to git range-diff when comparing series')
 
     spp_g = sp_prep.add_mutually_exclusive_group()
     spp_g.add_argument('-p', '--format-patch', metavar='OUTPUT_DIR',
