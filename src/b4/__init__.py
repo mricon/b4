@@ -1234,7 +1234,7 @@ class LoreMessage:
 
         if self.msg.get('References'):
             for rbunch in self.msg.get_all('references', list()):
-                for rchunk in LoreMessage.clean_header(rbunch).split():
+                for rchunk in reversed(LoreMessage.clean_header(rbunch).split()):
                     rmsgid = rchunk.strip('<>')
                     if rmsgid not in self.references:
                         self.references.append(rmsgid)
@@ -4392,35 +4392,44 @@ def map_codereview_trailers(qmsgs: List[email.message.EmailMessage],
             continue
         # Find the patch-id to which this belongs
         pfound = False
-        for refmid in qlmsg.references:
+        logger.debug('references: %s', qlmsg.references)
+        _qmsg = qlmsg
+        while _qmsg.in_reply_to:
+            # There is no guarantee that the list of references is going to be in
+            # the order we need to traverse it, so we're going to look at each
+            # message and go stricly by the message-id listed in in-reply-to.
+            refmid = _qmsg.in_reply_to
+            if refmid not in qmid_map:
+                logger.debug('in-reply-to msgid not known: %s', refmid)
+                break
             logger.debug('  looking at parent ref: %s', refmid)
-            if refmid in qmid_map:
-                logger.debug('  found in qmid_map: %s', refmid)
-                # Is it a patch?
-                _qmsg = qmid_map[refmid]
-                logger.debug('  subj: %s', _qmsg.full_subject)
-                # Is it the cover letter?
-                if (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
-                        and _qmsg.msgid in ref_map):
-                    logger.debug('  stopping: found the cover letter for %s', qlmsg.full_subject)
-                    if _qmsg.msgid not in covers:
-                        covers[_qmsg.msgid] = set()
-                    covers[_qmsg.msgid].add(qlmsg.msgid)
+            _qmsg = qmid_map[refmid]
+            # Is it a patch?
+            logger.debug('  subj: %s', _qmsg.full_subject)
+            # Is it the cover letter?
+            if (_qmsg.counter == 0 and (not _qmsg.counters_inferred or _qmsg.has_diffstat)
+                    and _qmsg.msgid in ref_map):
+                logger.debug('  stopping: found the cover letter for %s', qlmsg.full_subject)
+                if _qmsg.msgid not in covers:
+                    covers[_qmsg.msgid] = set()
+                covers[_qmsg.msgid].add(qlmsg.msgid)
+                break
+            elif _qmsg.has_diff:
+                pqpid = _qmsg.git_patch_id
+                if pqpid:
+                    logger.debug('  pqpid: %s', pqpid)
+                    # Found our parent patch
+                    if pqpid not in patchid_map:
+                        patchid_map[pqpid] = list()
+                    if qlmsg not in patchid_map[pqpid]:
+                        patchid_map[pqpid].append(qlmsg)
+                        logger.debug('  matched patch-id %s to %s', pqpid, qlmsg.full_subject)
+                    pfound = True
                     break
-                elif _qmsg.has_diff:
-                    pqpid = _qmsg.git_patch_id
-                    if pqpid:
-                        logger.debug('  pqpid: %s', pqpid)
-                        # Found our parent patch
-                        if pqpid not in patchid_map:
-                            patchid_map[pqpid] = list()
-                        if qlmsg not in patchid_map[pqpid]:
-                            patchid_map[pqpid].append(qlmsg)
-                            logger.debug('  matched patch-id %s to %s', pqpid, qlmsg.full_subject)
-                        pfound = True
-                        break
-                else:
-                    logger.debug('  skipping parent without a diff or diffstat')
+            else:
+                logger.debug('  skipping parent without a diff or diffstat')
+            plmsg = _qmsg
+
         if not pfound:
             logger.debug('  no matching parents for %s', qlmsg.subject)
             # Does it have 'patch-id: ' in the body?
