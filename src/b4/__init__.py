@@ -3669,7 +3669,7 @@ def parse_int_range(intrange: str, upper: int) -> Iterator[int]:
                 yield i
             else:
                 logger.critical('Unknown range value specified: %s', n)
-                continue
+            continue
         except ValueError:
             pass
 
