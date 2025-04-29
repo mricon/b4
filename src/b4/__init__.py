@@ -1227,17 +1227,17 @@ class LoreMessage:
             self.expected = self.counter
 
         self.in_reply_to = LoreMessage.get_clean_msgid(self.msg, header='In-Reply-To')
-        if self.in_reply_to:
-            self.references = [self.in_reply_to]
-        else:
-            self.references = list()
+        self.references = list()
 
         if self.msg.get('References'):
             for rbunch in self.msg.get_all('references', list()):
-                for rchunk in reversed(LoreMessage.clean_header(rbunch).split()):
+                for rchunk in LoreMessage.clean_header(rbunch).split():
                     rmsgid = rchunk.strip('<>')
                     if rmsgid not in self.references:
                         self.references.append(rmsgid)
+
+        if self.in_reply_to and self.in_reply_to not in self.references:
+            self.references.append(self.in_reply_to)
 
         try:
             fromdata = email.utils.getaddresses([LoreMessage.clean_header(str(x))
@@ -4428,7 +4428,6 @@ def map_codereview_trailers(qmsgs: List[email.message.EmailMessage],
                     break
             else:
                 logger.debug('  skipping parent without a diff or diffstat')
-            plmsg = _qmsg
 
         if not pfound:
             logger.debug('  no matching parents for %s', qlmsg.subject)
