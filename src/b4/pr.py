@@ -41,7 +41,8 @@ PULL_BODY_WITH_COMMIT_ID_RE = [
 
 # I don't like these
 PULL_BODY_REMOTE_REF_RE = [
-    re.compile(r'^\s*([\w+-]+(?:://|@)[\w/.@:~-]+)[\s\\]+([\w/._-]+)\s*$', re.M | re.I),
+    # match string like: "https://git.kernel.org/pub/scm/linux/kernel/git/conor/linux.git/ riscv-dt-fixes-for-v6.10-rc5+"
+    re.compile(r'^\s*([\w+-]+(?:://|@)[\w/.@:~-]+)[\s\\]+([\w/._+-]+)\s*$', re.M | re.I),
     re.compile(r'^\s*([\w+-]+(?:://|@)[\w/.@~-]+)\s*$', re.M | re.I),
 ]
 
