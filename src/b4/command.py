@@ -163,7 +163,7 @@ def setup_parser() -> argparse.ArgumentParser:
                         =VALUE will set the value to "true".''')
 
     try:
-        import shtab  # noqa
+        import shtab  # type: ignore
         shtab.add_argument_to(parser, ["--print-completion"])
     except ImportError:
         pass

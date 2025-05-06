@@ -9,9 +9,7 @@ import os
 import sys
 import b4
 import b4.mbox
-import mailbox
 import email
-import email.message
 import email.parser
 import shutil
 import pathlib
@@ -19,6 +17,7 @@ import argparse
 import shlex
 
 from typing import Tuple, Optional, List
+from email.message import EmailMessage
 
 logger = b4.logger
 
@@ -40,12 +39,13 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
         identifier += '-' + '-'.join([str(x) for x in wantvers])
 
     cachedir = b4.get_cache_file(identifier, suffix='diff.msgs')
+    msgs: Optional[List[EmailMessage]]
     if os.path.exists(cachedir) and not cmdargs.nocache:
         logger.info('Using cached copy of the lookup')
         msgs = list()
         for cachemsg in os.listdir(cachedir):
             with open(os.path.join(cachedir, cachemsg), 'rb') as fh:
-                msgs.append(email.parser.BytesParser(policy=b4.emlpolicy, _class=email.message.EmailMessage).parse(fh))
+                msgs.append(email.parser.BytesParser(policy=b4.emlpolicy, _class=EmailMessage).parse(fh))
     else:
         msgs = b4.get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache)
         if not msgs:
@@ -65,7 +65,7 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
     logger.info('---')
     logger.info('Analyzing %s messages in the thread', count)
     lmbx = b4.LoreMailbox()
-    for msg in msgs:  # type: email.message.EmailMessage
+    for msg in msgs:
         lmbx.add_message(msg)
 
     if not len(lmbx.series):
@@ -109,21 +109,19 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
     return lmbx.series[lower], lmbx.series[upper]
 
 
-def diff_mboxes(cmdargs: argparse.Namespace) -> Optional[List[b4.LoreSeries]]:
+def diff_mboxes(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.LoreSeries], Optional[b4.LoreSeries]]:
     chunks = list()
     for mboxfile in cmdargs.ambox:
         if not os.path.exists(mboxfile):
             logger.critical('Cannot open %s', mboxfile)
-            return None
+            sys.exit(1)
 
-        if os.path.isdir(mboxfile):
-            mbx = mailbox.Maildir(mboxfile)
-        else:
-            mbx = mailbox.mbox(mboxfile)
-        count = len(mbx)
+        mb_msgs = b4.get_msgs_from_mailbox_or_maildir(mboxfile)
+        count = len(mb_msgs)
+
         logger.info('Loading %s messages from %s', count, mboxfile)
         lmbx = b4.LoreMailbox()
-        for key, msg in mbx.items():  # type: str, email.message.EmailMessage
+        for msg in mb_msgs:
             lmbx.add_message(msg)
         if len(lmbx.series) < 1:
             logger.critical('No valid patches found in %s', mboxfile)
@@ -133,7 +131,7 @@ def diff_mboxes(cmdargs: argparse.Namespace) -> Optional[List[b4.LoreSeries]]:
 
         chunks.append(lmbx.series[max(lmbx.series.keys())])
 
-    return chunks
+    return chunks[0], chunks[1]
 
 
 def main(cmdargs: argparse.Namespace) -> None:

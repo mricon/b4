@@ -28,7 +28,7 @@ import tarfile
 import hashlib
 import urllib.parse
 
-from typing import Optional, Tuple, List, Union, Dict
+from typing import Optional, Tuple, List, Union, Dict, Set
 from email import utils
 from string import Template
 
@@ -1019,7 +1019,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     cover = None
     msgid = None
     end = 'HEAD'
-    limit_committer = usercfg['email']
+    limit_committer: Optional[str] = str(usercfg['email'])
     # If we are in an b4-prep branch, we start from the beginning of the series
     if is_prep_branch():
         # Don't limit by committer in a prep branch
@@ -1085,8 +1085,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             msg['Message-Id'] = f'<{commit}>'
         bbox.add_message(msg)
 
-    commit_map = dict()
-    by_patchid = dict()
+    commit_map: Dict[str, b4.LoreMessage] = dict()
+    by_patchid: Dict[str, str] = dict()
     for lmsg in bbox.series[1].patches:
         if not lmsg:
             continue
@@ -1113,7 +1113,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if tmsgs is not None:
             list_msgs += tmsgs
 
-    mismatches = set()
+    mismatches: Set[Tuple[str, str, str, str]] = set()
     patchid_map = b4.map_codereview_trailers(list_msgs)
     for patchid, llmsgs in patchid_map.items():
         if patchid not in by_patchid:
@@ -1136,12 +1136,16 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         codereview_trailers = True
 
     lser = bbox.get_series(sloppytrailers=cmdargs.sloppytrailers, codereview_trailers=codereview_trailers)
+    if lser is None:
+        logger.critical('CRITICAL: Unable to find series for %s', msgid)
+        sys.exit(1)
+
     mismatches.update(lser.trailer_mismatches)
     config = b4.get_main_config()
     seen_froms = set()
     logger.info('---')
 
-    updates = dict()
+    updates: Dict[str, List[b4.LoreTrailer]] = dict()
     for lmsg in lser.patches[1:]:
         if not lmsg:
             continue
@@ -1151,6 +1155,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
 
         commit = lmsg.msgid
         parts = b4.LoreMessage.get_body_parts(lmsg.body)
+        midmask = str(config['midmask'])
         for fltr in lmsg.followup_trailers:
             if fltr not in parts[2]:
                 if commit not in updates:
@@ -1160,7 +1165,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 if rendered in seen_froms:
                     continue
                 seen_froms.add(rendered)
-                source = config['midmask'] % urllib.parse.quote_plus(fltr.lmsg.msgid, safe='@')
+                if fltr.lmsg is not None:
+                    source = midmask % urllib.parse.quote_plus(fltr.lmsg.msgid, safe='@')
                 logger.info('  + %s', rendered)
                 logger.info('    %s', source)
             else:
@@ -1196,12 +1202,14 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     # Create the map of new messages
     fred = FRCommitMessageEditor()
     for commit, newtrailers in updates.items():
-        cmsg = commit_map[commit]
-        logger.info('  %s', cmsg.subject)
+        clmsg = commit_map[commit]
+        logger.info('  %s', clmsg.subject)
+        logger.debug('  commit: %s', commit)
         if len(newtrailers):
-            cmsg.followup_trailers = newtrailers
-        cmsg.fix_trailers()
-        fred.add(commit, cmsg.message)
+            clmsg.followup_trailers = newtrailers
+        clmsg.fix_trailers()
+        logger.debug('commit=%s, message=%s', commit, clmsg.message)
+        fred.add(commit, clmsg.message)
     logger.info('---')
     args = fr.FilteringOptions.parse_args(['--force', '--quiet', '--refs', f'{start}..'])
     args.refs = [f'{start}..']
@@ -1419,16 +1427,6 @@ def rethread(patches: List[Tuple[str, email.message.EmailMessage]]):
         msg.add_header('In-Reply-To', refto)
 
 
-def get_mailfrom() -> Tuple[str, str]:
-    sconfig = b4.get_sendemail_config()
-    fromaddr = sconfig.get('from')
-    if fromaddr:
-        return email.utils.parseaddr(fromaddr)
-
-    usercfg = b4.get_user_config()
-    return usercfg.get('name'), usercfg.get('email')
-
-
 def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True,
                                prefixes: Optional[List[str]] = None, usebranch: Optional[str] = None,
                                expandprereqs: bool = True,
@@ -1446,7 +1444,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
 
     mailfrom = None
     if movefrom:
-        mailfrom = get_mailfrom()
+        mailfrom = b4.get_mailfrom()
 
     strategy = get_cover_strategy()
     ignore_commits = None
@@ -1627,7 +1625,7 @@ def get_sent_tag_as_patches(tagname: str, revision: int) \
     prefixes = ['RESEND'] + csubject.get_extra_prefixes(exclude=['RESEND'])
     msgid_tpt = make_msgid_tpt(change_id, str(revision))
     seriests = int(time.time())
-    mailfrom = get_mailfrom()
+    mailfrom = b4.get_mailfrom()
 
     patches = b4.git_range_to_patches(None, base_commit, tagname,
                                       revision=revision,

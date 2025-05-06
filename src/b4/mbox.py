@@ -9,7 +9,6 @@ import os
 import sys
 import mailbox
 import email
-import email.message
 import email.utils
 import email.parser
 import re
@@ -24,8 +23,10 @@ import argparse
 
 import b4
 
-from typing import Optional, List
+from typing import Optional, Union, List, Set, Dict, Tuple
 from string import Template
+
+from email.message import EmailMessage
 
 logger = b4.logger
 
@@ -39,7 +40,7 @@ Link: ${midurl}
 """
 
 
-def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace, msgid: str) -> None:
+def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -> None:
     config = b4.get_main_config()
     outdir = cmdargs.outdir
     if outdir == '-':
@@ -58,27 +59,27 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
         # Is it a collection of patches attached to the same message?
         # We only trigger this mode with --single-msg
         if msg.is_multipart() and ('singlemsg' in cmdargs and cmdargs.singlemsg):
-            xpatches = list()
+            xpatches: List[EmailMessage] = list()
             xmsgid = b4.LoreMessage.get_clean_msgid(msg)
             for part in msg.walk():
                 cte = part.get_content_type()
                 if cte.find('/x-patch') < 0:
                     continue
-                payload = part.get_payload(decode=True)
-                if payload is None:
+                bpayload = part.get_payload(decode=True)
+                if not isinstance(bpayload, bytes):
                     continue
                 pcharset = part.get_content_charset()
                 if not pcharset:
                     pcharset = 'utf-8'
                 try:
-                    payload = payload.decode(pcharset, errors='replace')
+                    payload = bpayload.decode(pcharset, errors='replace')
                 except LookupError:
                     # what kind of encoding is that?
                     # Whatever, we'll use utf-8 and hope for the best
-                    payload = payload.decode('utf-8', errors='replace')
+                    payload = bpayload.decode('utf-8', errors='replace')
                     part.set_param('charset', 'utf-8')
                 if payload and b4.DIFF_RE.search(payload):
-                    xmsg = email.parser.Parser(policy=b4.emlpolicy, _class=email.message.EmailMessage).parsestr(payload)
+                    xmsg = email.parser.Parser(policy=b4.emlpolicy, _class=EmailMessage).parsestr(payload)
                     # Needs to have Subject, From, Date for us to consider it
                     if xmsg.get('Subject') and xmsg.get('From') and xmsg.get('Date'):
                         logger.debug('Found attached patch: %s', xmsg.get('Subject'))
@@ -93,12 +94,12 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
                 for xmsg in xpatches:
                     lmbx.add_message(xmsg)
                 # Make a cover letter out of the original message
-                cmsg = email.message.EmailMessage()
+                cmsg = EmailMessage()
                 cbody, ccharset = b4.LoreMessage.get_payload(msg, use_patch=False)
                 cmsg['From'] = msg.get('From')
                 cmsg['Date'] = msg.get('Date')
                 cmsg['Message-ID'] = msg.get('Message-ID')
-                cmsg['Subject'] = '[PATCH 0/0] ' + msg.get('Subject')
+                cmsg['Subject'] = '[PATCH 0/0] ' + msg.get('Subject', '(no subject)')
                 cmsg.set_payload(cbody, ccharset)
                 lmbx.add_message(cmsg)
                 break
@@ -117,6 +118,10 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
         else:
             logger.critical('Unable to find revision %s', wantver)
         return
+    if lser is None:
+        logger.critical('No patches found.')
+        return
+
     if len(lmbx.series) > 1 and not wantver:
         logger.info('Will use the latest revision: v%s', lser.revision)
         logger.info('You can pick other revisions using the -vN flag')
@@ -147,6 +152,8 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
             at = 0
             for lmsg in lser.patches[1:]:
                 at += 1
+                if lmsg is None:
+                    continue
                 if fnmatch.fnmatch(lmsg.subject, cmdargs.cherrypick):
                     cherrypick.append(at)
             if not len(cherrypick):
@@ -182,7 +189,7 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
             first_body = lmsg.body
             top_msgid = lmsg.msgid
             break
-    if top_msgid is None:
+    if top_msgid is None or first_body is None:
         logger.critical('Could not find any patches in the series.')
         return
 
@@ -209,6 +216,11 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
 
     gitbranch = lser.get_slug(extended=False)
     am_filename = None
+
+    linkmask = str(config.get('linkmask', ''))
+    if '%s' not in linkmask:
+        logger.critical('ERROR: linkmask must contain %s for the message-id')
+        sys.exit(1)
 
     if cmdargs.subcmd == 'am':
         wantname = cmdargs.wantname
@@ -250,7 +262,7 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
         if lser.has_cover and not cmdargs.nocover:
             lser.save_cover(am_cover)
 
-        linkurl = config['linkmask'] % top_msgid
+        linkurl = linkmask % top_msgid
         if cmdargs.quiltready:
             q_dirname = os.path.join(outdir, f'{slug}.patches')
             save_as_quilt(am_msgs, q_dirname)
@@ -331,7 +343,7 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
         b4.save_git_am_mbox(am_msgs, ifh)
         ambytes = ifh.getvalue()
         if not cmdargs.makefetchhead:
-            amflags = config.get('shazam-am-flags', '')
+            amflags = str(config.get('shazam-am-flags', ''))
             sp = shlex.shlex(amflags, posix=True)
             sp.whitespace_split = True
             amargs = list(sp) + ['--patch-format=mboxrd']
@@ -345,7 +357,7 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
             # Try our best with HEAD, I guess
             base_commit = 'HEAD'
 
-        linkurl = config['linkmask'] % top_msgid
+        linkurl = linkmask % top_msgid
         try:
             b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit, origin=linkurl)
         except RuntimeError:
@@ -362,7 +374,7 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
         if config.get('shazam-merge-template'):
             # Try to load this template instead
             try:
-                merge_template = b4.read_template(config['shazam-merge-template'])
+                merge_template = b4.read_template(str(config['shazam-merge-template']))
             except FileNotFoundError:
                 logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
                                 config['shazam-merge-template'])
@@ -373,19 +385,23 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
             # Make sure any old cover letters don't confuse anyone
             os.unlink(mmf)
 
-        if lser.has_cover:
-            cmsg = lser.patches[0]
-            parts = b4.LoreMessage.get_body_parts(cmsg.body)
+        if lser.has_cover and lser.patches[0] is not None:
+            clmsg: b4.LoreMessage = lser.patches[0]
+            parts = b4.LoreMessage.get_body_parts(clmsg.body)
             covermessage = parts[1]
         else:
-            cmsg = lser.patches[1]
+            if lser.patches[1] is None:
+                logger.critical('No cover letter provided by the author and no first patch, cannot shazam')
+                sys.exit(1)
+
+            clmsg = lser.patches[1]
             covermessage = ('NOTE: No cover letter provided by the author.\n'
                             '      Add merge commit message here.')
 
         tptvals = {
-            'seriestitle': cmsg.subject,
-            'authorname': cmsg.fromname,
-            'authoremail': cmsg.fromemail,
+            'seriestitle': clmsg.subject,
+            'authorname': clmsg.fromname,
+            'authoremail': clmsg.fromemail,
             'covermessage': covermessage,
             'mid': top_msgid,
             'midurl': linkurl,
@@ -399,7 +415,7 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
         with open(mmf, 'w') as mmh:
             mmh.write(body)
 
-        mergeflags = config.get('shazam-merge-flags', '--signoff')
+        mergeflags = str(config.get('shazam-merge-flags', '--signoff'))
         sp = shlex.shlex(mergeflags, posix=True)
         sp.whitespace_split = True
         if cmdargs.no_interactive:
@@ -422,8 +438,8 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
                 logger.info('Invoking: %s', ' '.join(mergecmd))
             if hasattr(sys, '_running_in_pytest'):
                 # Don't execvp, as this kills our tests
-                out, logstr = b4.git_run_command(None, mergeargs)
-                sys.exit(out)
+                _out = b4.git_run_command(None, mergeargs)
+                sys.exit(_out[0])
 
             # We exec git-merge and let it take over
             os.execvp(mergecmd[0], mergecmd)
@@ -433,8 +449,8 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
         sys.exit(0)
 
     if not base_commit:
-        checked, mismatches = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
-        if checked and len(mismatches) == 0 and checked != mismatches:
+        checked, mismatched = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
+        if checked and len(mismatched) == 0 and checked != mismatched:
             logger.critical(' Base: applies clean to current tree')
             base_commit = 'HEAD'
         else:
@@ -447,7 +463,7 @@ def make_am(msgs: List[email.message.EmailMessage], cmdargs: argparse.Namespace,
     thanks_record_am(lser, cherrypick=cherrypick)
 
 
-def thanks_record_am(lser: b4.LoreSeries, cherrypick: bool = None) -> None:
+def thanks_record_am(lser: b4.LoreSeries, cherrypick: Optional[List[int]]) -> None:
     # Are we tracking this already?
     datadir = b4.get_data_dir()
     slug = lser.get_slug(extended=True)
@@ -523,12 +539,12 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: bool = None) -> None:
         logger.debug('Wrote %s for thanks tracking', filename)
 
     config = b4.get_main_config()
-    pwstate = config.get('pw-review-state')
+    pwstate = str(config.get('pw-review-state', ''))
     if pwstate:
         b4.patchwork_set_state(msgids, pwstate)
 
 
-def save_as_quilt(am_msgs: List[email.message.EmailMessage], q_dirname: str) -> None:
+def save_as_quilt(am_msgs: List[EmailMessage], q_dirname: str) -> None:
     if os.path.exists(q_dirname):
         logger.critical('ERROR: Directory %s exists, not saving quilt patches', q_dirname)
         return
@@ -543,11 +559,11 @@ def save_as_quilt(am_msgs: List[email.message.EmailMessage], q_dirname: str) -> 
         i, m, p = b4.get_mailinfo(msg.as_bytes(policy=b4.emlpolicy), scissors=True)
         with open(quilt_out, 'wb') as fh:
             if i.get('Author'):
-                fh.write(b'From: %s <%s>\n' % (i.get('Author').encode(), i.get('Email').encode()))
+                fh.write(b'From: %s <%s>\n' % (i.get('Author', '').encode(), i.get('Email', '').encode()))
             else:
-                fh.write(b'From: %s\n' % i.get('Email').encode())
-            fh.write(b'Subject: %s\n' % i.get('Subject').encode())
-            fh.write(b'Date: %s\n' % i.get('Date').encode())
+                fh.write(b'From: %s\n' % i.get('Email', '').encode())
+            fh.write(b'Subject: %s\n' % i.get('Subject', '').encode())
+            fh.write(b'Date: %s\n' % i.get('Date', '').encode())
             fh.write(b'\n')
             fh.write(m)
             fh.write(p)
@@ -558,15 +574,17 @@ def save_as_quilt(am_msgs: List[email.message.EmailMessage], q_dirname: str) -> 
             sfh.write('%s\n' % patch_filename)
 
 
-def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = None,
-                     nocache: bool = False) -> List[email.message.EmailMessage]:
-    base_msg = None
-    latest_revision = None
-    seen_msgids = set()
-    seen_covers = set()
-    queries = set()
+def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[List[int]] = None,
+                     nocache: bool = False) -> List[EmailMessage]:
+    base_msg: Optional[EmailMessage] = None
+    latest_revision: Optional[int] = None
+    seen_msgids: Set[str] = set()
+    seen_covers: Set[int] = set()
+    queries: Set[str] = set()
     for msg in msgs:
         msgid = b4.LoreMessage.get_clean_msgid(msg)
+        if msgid is None:
+            continue
         seen_msgids.add(msgid)
         lsub = b4.LoreSubject(msg['Subject'])
 
@@ -596,7 +614,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
                 # A patch/series without a cover letter
                 base_msg = msg
 
-    if not queries and base_msg is None:
+    if base_msg is None or latest_revision is None:
         return msgs
 
     # Get subject info from base_msg again
@@ -612,6 +630,9 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
 
     fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
     msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
+    if msgdate is None:
+        logger.debug('Unable to parse the date, not checking for revisions')
+        return msgs
     q = '(s:"%s" AND f:"%s")' % (lsub.subject.replace('"', ''), fromeml)
     queries.add(q)
     startdate = time.strftime('%Y%m%d', msgdate[:9])
@@ -630,6 +651,8 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     seen_revisions = dict()
     for q_msg in q_msgs:
         q_msgid = b4.LoreMessage.get_clean_msgid(q_msg)
+        if q_msgid is None:
+            continue
         lsub = b4.LoreSubject(q_msg.get('subject'))
         if q_msgid in seen_msgids:
             logger.debug('Skipping %s: already have it', lsub.full_subject)
@@ -647,7 +670,7 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
         elif direction < 0 and lsub.revision >= latest_revision:
             logger.debug('Ignoring result (not old revision): %s', lsub.full_subject)
             continue
-        elif direction < 0 and lsub.revision not in wantvers:
+        elif direction < 0 and wantvers and lsub.revision not in wantvers:
             logger.debug('Ignoring result (not revision we want): %s', lsub.full_subject)
             continue
 
@@ -679,38 +702,37 @@ def get_extra_series(msgs: list, direction: int = 1, wantvers: Optional[int] = N
     return msgs
 
 
-def is_maildir(dest: str) -> bool:
-    if (os.path.isdir(os.path.join(dest, 'new'))
-            and os.path.isdir(os.path.join(dest, 'cur'))
-            and os.path.isdir(os.path.join(dest, 'tmp'))):
-        return True
-    return False
-
-
 def refetch(dest: str) -> None:
-    if is_maildir(dest):
+    mbox: Union[mailbox.Maildir, mailbox.mbox]
+    if b4.is_maildir(dest):
         mbox = mailbox.Maildir(dest)
     else:
         mbox = mailbox.mbox(dest)
 
-    by_msgid = dict()
-    for key, msg in mbox.items():  # type: str, email.message.EmailMessage
-        msgid = b4.LoreMessage.get_clean_msgid(msg)
+    by_msgid: Dict[str, EmailMessage] = dict()
+    for key, msg in mbox.items():
+        # We normally pass EmailMessage objects, but this works, too
+        msgid = b4.LoreMessage.get_clean_msgid(msg)  # type: ignore[arg-type]
+        if not msgid:
+            continue
         if msgid not in by_msgid:
             amsgs = b4.get_pi_thread_by_msgid(msgid, nocache=True)
-            for amsg in amsgs:
-                amsgid = b4.LoreMessage.get_clean_msgid(amsg)
-                if amsgid not in by_msgid:
-                    by_msgid[amsgid] = amsg
+            if amsgs:
+                for amsg in amsgs:
+                    amsgid = b4.LoreMessage.get_clean_msgid(amsg)
+                    if not amsgid:
+                        continue
+                    if amsgid not in by_msgid:
+                        by_msgid[amsgid] = amsg
         if msgid in by_msgid:
             mbox.update(((key, by_msgid[msgid]),))
             logger.info('Refetched: %s', msg.get('Subject'))
         else:
-            logger.warn('WARNING: Message-id not known: %s', msgid)
+            logger.warning('WARNING: Message-id not known: %s', msgid)
     mbox.close()
 
 
-def minimize_thread(msgs: List[email.message.EmailMessage]) -> List[email.message.EmailMessage]:
+def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
     # We go through each message and minimize headers and body content
     wanthdrs = {
                 'From',
@@ -722,7 +744,7 @@ def minimize_thread(msgs: List[email.message.EmailMessage]) -> List[email.messag
                 }
     mmsgs = list()
     for msg in msgs:
-        mmsg = email.message.EmailMessage()
+        mmsg = EmailMessage()
         for wanthdr in wanthdrs:
             cleanhdr = b4.LoreMessage.clean_header(msg[wanthdr])
             if cleanhdr:
@@ -732,8 +754,8 @@ def minimize_thread(msgs: List[email.message.EmailMessage]) -> List[email.messag
         if not (b4.DIFF_RE.search(body) or b4.DIFFSTAT_RE.search(body)):
             htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(body)
             # split the message into quoted and unquoted chunks
-            chunks = list()
-            chunk = list()
+            chunks: List[Tuple[bool, List[str]]] = list()
+            chunk: List[str] = list()
             current = None
             for line in (cmsg.rstrip().splitlines()):
                 quoted = line.startswith('>') and True or False
@@ -757,6 +779,9 @@ def minimize_thread(msgs: List[email.message.EmailMessage]) -> List[email.messag
                 chunk = list()
                 chunk.append(line)
                 current = quoted
+
+            if current is None:
+                current = False
 
             # Don't append bottom quotes
             if chunk and not current:
@@ -806,7 +831,7 @@ def main(cmdargs: argparse.Namespace) -> None:
         logger.critical('CRITICAL: %s', ex)
         sys.exit(1)
 
-    if not msgs:
+    if not msgs or not msgid:
         sys.exit(1)
 
     if len(msgs) and cmdargs.checknewer and b4.can_network:
@@ -826,13 +851,13 @@ def main(cmdargs: argparse.Namespace) -> None:
         return
 
     # Check if outdir is a maildir
-    if is_maildir(cmdargs.outdir):
+    if b4.is_maildir(cmdargs.outdir):
         mdr = mailbox.Maildir(cmdargs.outdir)
         have_msgids = set()
         added = 0
         if cmdargs.filterdupes:
-            for emsg in mdr:  # type: email.message.EmailMessage
-                have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))
+            for emsg in mdr:
+                have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))  # type: ignore[arg-type]
         for msg in msgs:
             if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:
                 added += 1

@@ -10,7 +10,6 @@ import os
 import fnmatch
 import email.generator
 import email.header
-import email.message
 import email.parser
 import email.policy
 import email.quoprimime
@@ -38,21 +37,22 @@ import requests
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, \
-    TypeVar, overload, Generator
+    TypeVar, overload, Generator, Any
+
+from email.message import EmailMessage
 
 from email import charset
 
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
-emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None,
-                                     message_factory=email.message.EmailMessage)
+emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None, message_factory=EmailMessage)
 
 # Presence of these characters requires quoting of the name in the header
 # adapted from email._parseaddr
 qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 try:
-    import dkim
+    import dkim  # type: ignore[import]
 
     can_dkim = True
 except ModuleNotFoundError:
@@ -162,11 +162,11 @@ USER_CONFIG: Dict[str, Optional[Union[str, List[str]]]] = dict()
 SENDEMAIL_CONFIG: Dict[str, Optional[Union[str, List[str]]]] = dict()
 
 # Used for storing our requests session
-REQSESSION = None
+REQSESSION: Optional[requests.Session] = None
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
 # Used to track mailmap replacements
-MAILMAP_INFO = dict()
+MAILMAP_INFO: Dict[str, Optional[Tuple[str, str]]] = dict()
 
 
 class LoreMailbox:
@@ -417,14 +417,15 @@ class LoreMailbox:
                         logger.debug('  carrying over the trailer to this series (may be duplicate)')
                         logger.debug('  %s', lmsg.full_subject)
                         logger.debug('    + %s', fltr.as_string())
-                        logger.debug('      via: %s', fltr.lmsg.msgid)
+                        if fltr.lmsg:
+                            logger.debug('      via: %s', fltr.lmsg.msgid)
                         lmsg.followup_trailers.append(fltr)
                     for fltr in fmis:
                         lser.trailer_mismatches.add((fltr.name, fltr.value, fmsg.fromname, fmsg.fromemail))
 
         return lser
 
-    def add_message(self, msg: email.message.EmailMessage) -> None:
+    def add_message(self, msg: EmailMessage) -> None:
         msgid = LoreMessage.get_clean_msgid(msg)
         if msgid and msgid in self.msgid_map:
             logger.debug('Already have a message with this msgid, skipping %s', msgid)
@@ -537,10 +538,9 @@ class LoreSeries:
         while len(self.patches) < lmsg.expected + 1:
             self.patches.append(None)
         self.expected = lmsg.expected
-        if self.patches[lmsg.counter] is not None:
+        omsg = self.patches[lmsg.counter]
+        if omsg is not None:
             # Okay, strange, is the one in there a reply?
-            omsg = self.patches[lmsg.counter]
-
             logger.warning('WARNING: duplicate messages found at index %s', lmsg.counter)
             logger.warning('   Subject 1: %s', lmsg.subject)
             logger.warning('   Subject 2: %s', omsg.subject)
@@ -569,8 +569,7 @@ class LoreSeries:
                 if matches:
                     self.change_id = matches.groups()[0]
             if not self.prereq_patch_ids and '\nprerequisite-patch-id:' in lmsg.body:
-                matches = re.findall(r'^prerequisite-patch-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
-                self.prereq_patch_ids = matches
+                self.prereq_patch_ids = re.findall(r'^prerequisite-patch-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
             if not self.prereq_base_commit and '\nprerequisite-base-commit:' in lmsg.body:
                 matches = re.search(r'^prerequisite-base-id:\s+(\S+)', lmsg.body, flags=re.I | re.M)
                 if matches:
@@ -606,19 +605,19 @@ class LoreSeries:
 
         return slug[:100]
 
-    def add_extra_trailers(self, trailers: tuple) -> None:
+    def add_extra_trailers(self, trailers: List['LoreTrailer']) -> None:
         for lmsg in self.patches[1:]:
             if lmsg is None:
                 continue
             lmsg.followup_trailers += trailers
 
     def add_cover_trailers(self) -> None:
-        if self.patches[0] and self.patches[0].followup_trailers:  # noqa
-            self.add_extra_trailers(self.patches[0].followup_trailers)  # noqa
+        if self.patches[0] and self.patches[0].followup_trailers:
+            self.add_extra_trailers(self.patches[0].followup_trailers)
 
     def get_am_ready(self, noaddtrailers: bool = False, addmysob: bool = False,
                      addlink: bool = False, cherrypick: Optional[List[int]] = None, copyccs: bool = False,
-                     allowbadchars: bool = False, showchecks: bool = False) -> List[email.message.EmailMessage]:
+                     allowbadchars: bool = False, showchecks: bool = False) -> List[EmailMessage]:
 
         usercfg = get_user_config()
         config = get_main_config()
@@ -628,9 +627,9 @@ class LoreSeries:
                 logger.critical('WARNING: Unable to add your Signed-off-by: git returned no user.name or user.email')
                 addmysob = False
 
-        attpolicy = config['attestation-policy']
+        attpolicy = str(config.get('attestation-policy', 'softfail'))
         try:
-            maxdays = int(config['attestation-staleness-days'])
+            maxdays = int(str(config.get('attestation-staleness-days', '0')))
         except ValueError:
             logger.info('WARNING: attestation-staleness-days must be an int')
             maxdays = 0
@@ -662,10 +661,10 @@ class LoreSeries:
         local_check_cmds = list()
         if showchecks:
             # Local checks
-            checkcmds = list()
-            if config.get('am-perpatch-check-cmd'):
-                checkcmds = config.get('am-perpatch-check-cmd')
-            else:
+            checkcmds = config.get('am-perpatch-check-cmd', list())
+            if isinstance(checkcmds, str):
+                checkcmds = [checkcmds]
+            if not checkcmds:
                 # Use recommended checkpatch defaults if we find checkpatch
                 topdir = git_get_toplevel()
                 if topdir:
@@ -712,7 +711,7 @@ class LoreSeries:
                 if addlink:
                     linktrailer = None
                     ltrmask = config.get('linktrailermask')
-                    if ltrmask:
+                    if ltrmask and isinstance(ltrmask, str):
                         if ltrmask.find(':'):
                             lparts = ltrmask.split(':', maxsplit=1)
                             llname = lparts[0].strip()
@@ -722,8 +721,14 @@ class LoreSeries:
                             logger.critical('linktrailermask does not look like a valid trailer, using defaults')
 
                     if not linktrailer:
-                        llval = config.get('linkmask', LOREADDR + '/r/%s') % lmsg.msgid
-                        linktrailer = LoreTrailer(name='Link', value=llval)
+                        defmask = LOREADDR + '/r/%s'
+                        cfg_llval = config.get('linkmask', defmask)
+                        if isinstance(cfg_llval, str) and '%s' in cfg_llval:
+                            linktrailer = LoreTrailer(name='Link', value=cfg_llval % lmsg.msgid)
+                        else:
+                            logger.critical('linkmask does not look like a valid mask, using defaults')
+                            linktrailer = LoreTrailer(name='Link', value=defmask % lmsg.msgid)
+
                     extras.append(linktrailer)
 
                 if attsame and not attcrit:
@@ -806,9 +811,14 @@ class LoreSeries:
                     continue
                 self.indexes.append((ofn, obh))
 
-    def check_applies_clean(self, gitdir: Optional[str] = None, at: Optional[str] = None) -> Tuple[int, list]:
+    def check_applies_clean(self, gitdir: Optional[str] = None,
+                            at: Optional[str] = None) -> Tuple[int, List[Tuple[str, str]]]:
         if self.indexes is None:
             self.populate_indexes()
+
+        if self.indexes is None:
+            logger.debug('No indexes to check against')
+            return 0, list()
 
         mismatches = list()
         if at is None:
@@ -829,7 +839,12 @@ class LoreSeries:
 
         return len(self.indexes), mismatches
 
-    def find_base(self, gitdir: str, branches: Optional[list] = None, maxdays: int = 30) -> Tuple[str, len, len]:
+    def find_base(self, gitdir: Optional[str], branches: Optional[list] = None, maxdays: int = 30) -> Tuple[str, int, int]:
+        if self.indexes is None:
+            self.populate_indexes()
+        if self.indexes is None or not len(self.indexes):
+            raise IndexError('No indexes to check against')
+
         # Find the date of the first patch we have
         pdate = datetime.datetime.now()
         for lmsg in self.patches:
@@ -1037,20 +1052,20 @@ class LoreTrailer:
     value: str
     extinfo: Optional[str] = None
     addr: Optional[Tuple[str, str]] = None
-    lmsg = None
+    lmsg: Optional['LoreMessage'] = None
     # Small list of recognized utility trailers
     _utility: Set[str] = {'fixes', 'link', 'buglink', 'closes', 'obsoleted-by', 'message-id', 'change-id',
                           'base-commit', 'based-on'}
 
     def __init__(self, name: Optional[str] = None, value: Optional[str] = None, extinfo: Optional[str] = None,
-                 msg: Optional[email.message.EmailMessage] = None):
-        if name is None:
+                 msg: Optional[EmailMessage] = None):
+        if name is None or value is None:
             self.name = 'Signed-off-by'
             self.type = 'person'
             ucfg = get_user_config()
             try:
                 self.value = '%s <%s>' % (ucfg['name'], ucfg['email'])
-                self.addr = (ucfg['name'], ucfg['email'])
+                self.addr = (str(ucfg['name']), str(ucfg['email']))
             except KeyError:
                 self.value = 'User Not Set <email@not.set>'
                 self.addr = ('User Not Set', 'email@not.set')
@@ -1118,11 +1133,13 @@ class LoreTrailer:
 
         return False
 
-    def __eq__(self, other: 'LoreTrailer') -> bool:
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, LoreTrailer):
+            return NotImplemented
         # We never compare extinfo, we just tack it if we find a match
         return self.lname == other.lname and self.value.lower() == other.value.lower()
 
-    def __hash__(self) -> hash:
+    def __hash__(self) -> int:
         return hash(f'{self.lname}: {self.value}')
 
     def __repr__(self) -> str:
@@ -1139,7 +1156,7 @@ class LoreTrailer:
 
 
 class LoreMessage:
-    msg: email.message.EmailMessage
+    msg: EmailMessage
     msgid: str
 
     # Subject-based info
@@ -1300,7 +1317,7 @@ class LoreMessage:
         for ltr in self.trailers:
             logger.debug('Examining: %s', ltr.as_string())
             ltr.lmsg = self
-            if sloppy or ltr.type != 'person':
+            if sloppy or ltr.type != 'person' or ltr.addr is None:
                 trailers.append(ltr)
                 continue
 
@@ -1389,10 +1406,10 @@ class LoreMessage:
         # Identify all DKIM-Signature headers and try them in reverse order
         # until we come to a passing one
         dkhdrs = list()
-        for header in list(self.msg._headers):  # noqa
+        for header in list(self.msg._headers):  # type: ignore[attr-defined]
             if header[0].lower() == 'dkim-signature':
                 dkhdrs.append(header)
-                self.msg._headers.remove(header) # noqa
+                self.msg._headers.remove(header)  # type: ignore[attr-defined]
         dkhdrs.reverse()
 
         seenatts = list()
@@ -1408,6 +1425,10 @@ class LoreMessage:
             identity = hdata.get('i')
             if not identity:
                 identity = hdata.get('d')
+            if not identity:
+                # This forces it to fail on check
+                identity = ''
+
             ts = hdata.get('t')
             signtime = None
             if ts:
@@ -1415,10 +1436,10 @@ class LoreMessage:
             else:
                 # See if date is included in the h: field
                 sh = hdata.get('h')
-                if 'date' in sh.lower().split(':'):
+                if isinstance(sh, str) and 'date' in sh.lower().split(':'):
                     signtime = self.date
 
-            self.msg._headers.append((hn, hval))  # noqa
+            self.msg._headers.append((hn, hval))  # type: ignore[attr-defined]
             try:
                 res = dkim.verify(self.msg.as_bytes(policy=emlpolicy), logger=dkimlogger)
                 logger.debug('DKIM verify results: %s=%s', identity, res)
@@ -1435,7 +1456,7 @@ class LoreMessage:
                 self._attestors.append(attestor)
                 return
 
-            self.msg._headers.pop(-1)  # noqa
+            self.msg._headers.pop(-1)  # type: ignore[attr-defined]
             seenatts.append(attestor)
 
         # No exact domain matches, so return everything we have
@@ -1460,9 +1481,9 @@ class LoreMessage:
             # so make sure we put them back into the body if they are different
             ibh = list()
             if i.get('Subject') != self.subject:
-                ibh.append('Subject: ' + i.get('Subject'))
+                ibh.append('Subject: %s' % str(i.get('Subject')))
             if i.get('Email') != self.fromemail or i.get('Author') != self.fromname:
-                ibh.append('From: ' + format_addrs([(i.get('Author'), i.get('Email'))]))
+                ibh.append('From: ' + format_addrs([(str(i.get('Author')), str(i.get('Email')))]))
             if len(ibh):
                 self.body = '\n'.join(ibh) + '\n\n' + self.body
 
@@ -1482,6 +1503,8 @@ class LoreMessage:
             sources = patatt_config.get('keyringsrc')
             if not sources:
                 sources = ['ref:::.keys', 'ref:::.local-keys', 'ref::refs/meta/keyring:']
+        if not isinstance(sources, list):
+            sources = [sources]
         if pdir not in sources:
             sources.append(pdir)
 
@@ -1533,7 +1556,7 @@ class LoreMessage:
             self._attestors.append(attestor)
 
     @staticmethod
-    def run_local_check(cmdargs: List[str], ident: str, msg: email.message.EmailMessage,
+    def run_local_check(cmdargs: List[str], ident: str, msg: EmailMessage,
                         nocache: bool = False) -> List[Tuple[str, str]]:
         cacheid = ' '.join(cmdargs) + ident
         if not nocache:
@@ -1585,9 +1608,9 @@ class LoreMessage:
     @staticmethod
     def get_patchwork_data_by_msgid(msgid: str) -> dict:
         config = get_main_config()
-        pwkey = config.get('pw-key')
-        pwurl = config.get('pw-url')
-        pwproj = config.get('pw-project')
+        pwkey = str(config.get('pw-key', ''))
+        pwurl = str(config.get('pw-url', ''))
+        pwproj = str(config.get('pw-project', ''))
         if not (pwkey and pwurl and pwproj):
             logger.debug('Patchwork support requires pw-key, pw-url and pw-project settings')
             raise LookupError('Error looking up %s in patchwork' % msgid)
@@ -1644,7 +1667,7 @@ class LoreMessage:
         logger.debug('ci_state for %s: %s', self.msgid, ci_status)
         self.pw_ci_status = ci_status
 
-    def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[str, list, bool]:
+    def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[Optional[str], List[str], bool]:
         trailers = list()
         checkmark = None
         critical = False
@@ -1688,9 +1711,9 @@ class LoreMessage:
                             self.fromname = xpair[0]
                             self.fromemail = xpair[1]
                             # Drop the reply-to header if it's exactly the same
-                            for header in list(self.msg._headers):  # noqa
+                            for header in list(self.msg._headers):  # type: ignore[attr-defined]
                                 if header[0].lower() == 'reply-to' and header[1].find(xpair[1]) > 0:
-                                    self.msg._headers.remove(header)  # noqa
+                                    self.msg._headers.remove(header)  # type: ignore[attr-defined]
                 if passing:
                     trailers.append('%s Signed: %s' % (attestor.checkmark, attestor.trailer))
                 else:
@@ -1733,7 +1756,7 @@ class LoreMessage:
         return '\n'.join(out)
 
     @staticmethod
-    def get_payload(msg: email.message.EmailMessage, use_patch: bool = True) -> Tuple[str, str]:
+    def get_payload(msg: EmailMessage, use_patch: bool = True) -> Tuple[str, str]:
         """
         :returns: Tuple[decoded body, original charset]
         """
@@ -1747,19 +1770,19 @@ class LoreMessage:
             cte = part.get_content_type()
             if cte.find('/plain') < 0 and cte.find('/x-patch') < 0:
                 continue
-            payload = part.get_payload(decode=True)
-            if payload is None:
+            bpayload = part.get_payload(decode=True)
+            if bpayload is None or not isinstance(bpayload, bytes):
                 continue
             pcharset = part.get_content_charset()
             if not pcharset:
                 pcharset = mcharset
             try:
-                payload = payload.decode(pcharset, errors='replace')
+                payload = bpayload.decode(pcharset, errors='replace')
                 mcharset = pcharset
             except LookupError:
                 # what kind of encoding is that?
                 # Whatever, we'll use utf-8 and hope for the best
-                payload = payload.decode('utf-8', errors='replace')
+                payload = bpayload.decode('utf-8', errors='replace')
                 part.set_param('charset', 'utf-8')
                 mcharset = 'utf-8'
             if mbody is None:
@@ -1769,6 +1792,11 @@ class LoreMessage:
             # then we prefer this part
             if use_patch and DIFF_RE.search(payload):
                 mbody = payload
+        if mbody is None:
+            # No usable parts found
+            logger.debug('  No plain or patch parts found in message')
+            # We need to return something, so let's just return an empty string
+            mbody = ''
 
         return mbody, mcharset
 
@@ -1869,13 +1897,16 @@ class LoreMessage:
         return f'{nl} '.join(_parts).encode()
 
     @staticmethod
-    def get_msg_as_bytes(msg: email.message.EmailMessage, nl: str = '\n',
+    def get_msg_as_bytes(msg: EmailMessage, nl: str = '\n',
                          headers: Literal['encode', 'decode', 'preserve'] = 'preserve') -> bytes:
         bdata = b''
         for hname, hval in msg.items():
             bdata += LoreMessage.wrap_header((hname, str(hval)), nl=nl, transform=headers) + nl.encode()
         bdata += nl.encode()
         payload = msg.get_payload(decode=True)
+        if not isinstance(payload, bytes):
+            logger.critical('Unable to get payload from message %s', msg.get('Message-Id'))
+            return b''
         for bline in payload.split(b'\n'):
             bdata += re.sub(rb'[\r\n]*$', b'', bline) + nl.encode()
         return bdata
@@ -1892,7 +1923,7 @@ class LoreMessage:
         return hdata
 
     @staticmethod
-    def get_clean_msgid(msg: email.message.EmailMessage, header: str = 'Message-Id') -> Optional[str]:
+    def get_clean_msgid(msg: EmailMessage, header: str = 'Message-Id') -> Optional[str]:
         msgid = None
         raw = msg.get(header)
         if raw:
@@ -1902,28 +1933,31 @@ class LoreMessage:
         return msgid
 
     @staticmethod
-    def get_preferred_duplicate(msg1: email.message.EmailMessage,
-                                msg2: email.message.EmailMessage) -> email.message.EmailMessage:
+    def get_preferred_duplicate(msg1: EmailMessage, msg2: EmailMessage) -> EmailMessage:
         config = get_main_config()
+        listidpref = config['listid-preference']
+        if not isinstance(listidpref, list):
+            listidpref = [str(listidpref)]
+
         listid1 = LoreMessage.get_clean_msgid(msg1, 'list-id')
         if listid1:
             prefidx1 = 0
-            for listglob in config['listid-preference']:
+            for listglob in listidpref:
                 if fnmatch.fnmatch(listid1, listglob):
                     break
                 prefidx1 += 1
         else:
-            prefidx1 = config['listid-preference'].index('*')
+            prefidx1 = listidpref.index('*')
 
         listid2 = LoreMessage.get_clean_msgid(msg2, 'list-id')
         if listid2:
             prefidx2 = 0
-            for listglob in config['listid-preference']:
+            for listglob in listidpref:
                 if fnmatch.fnmatch(listid2, listglob):
                     break
                 prefidx2 += 1
         else:
-            prefidx2 = config['listid-preference'].index('*')
+            prefidx2 = listidpref.index('*')
 
         if prefidx1 <= prefidx2:
             logger.debug('Picked duplicate from preferred source: %s', listid1)
@@ -2032,8 +2066,8 @@ class LoreMessage:
         # thing but thing]
         # (too false-positivey, commented out)
         # body = re.sub(r'^(\[[^]]+)\n([^]]+]$)', r'\1 \2', body, flags=re.M)
-        trailers = list()
-        others = list()
+        trailers: List[LoreTrailer] = list()
+        others: List[str] = list()
         was_trailer = False
         at = 0
         for line in body.split('\n'):
@@ -2239,6 +2273,10 @@ class LoreMessage:
                     new_trailers.append(altr)
 
         torder = config.get('trailer-order', fallback_order)
+        if not isinstance(torder, str):
+            logger.critical('b4.trailer-order must be a string, falling back to default')
+            torder = fallback_order
+
         if torder and torder != '*':
             # this only applies to trailers within our chain of custody, so walk existing
             # body trailers backwards and stop at the outermost Signed-off-by we find (if any)
@@ -2266,7 +2304,7 @@ class LoreMessage:
 
         # load trailers we should ignore
         ignore_from = config.get('trailers-ignore-from')
-        if ignore_from:
+        if isinstance(ignore_from, str):
             ignores = [x[1].lower() for x in email.utils.getaddresses([ignore_from])]
         else:
             ignores = list()
@@ -2358,7 +2396,7 @@ class LoreMessage:
 
     def get_am_message(self, add_trailers: bool = True, addmysob: bool = False,
                        extras: Optional[List['LoreTrailer']] = None, copyccs: bool = False,
-                       allowbadchars: bool = False) -> email.message.EmailMessage:
+                       allowbadchars: bool = False) -> EmailMessage:
         # Look through the body to make sure there aren't any suspicious unicode control flow chars
         # First, encode into ascii and compare for a quick utf8 presence test
         if not allowbadchars and self.body.encode('ascii', errors='replace') != self.body.encode():
@@ -2387,7 +2425,7 @@ class LoreMessage:
                         at += 1
 
         # Remove anything cut off by scissors
-        mi_msg = email.message.EmailMessage()
+        mi_msg = EmailMessage()
         mi_msg['From'] = LoreMessage.clean_header(self.msg['From'])
         mi_msg['Date'] = LoreMessage.clean_header(self.msg['Date'])
         mi_msg['Subject'] = LoreMessage.clean_header(self.msg['Subject'])
@@ -2401,11 +2439,11 @@ class LoreMessage:
         if add_trailers:
             self.fix_trailers(copyccs=copyccs, addmysob=addmysob, extras=extras)
 
-        am_msg = email.message.EmailMessage()
-        hfrom = format_addrs([(i.get('Author', ''), i.get('Email'))])
+        am_msg = EmailMessage()
+        hfrom = format_addrs([(str(i.get('Author', '')), str(i.get('Email')))])
         am_msg.add_header('Subject', self.get_am_subject(indicate_reroll=False, use_subject=i.get('Subject')))
         am_msg.add_header('From', hfrom)
-        am_msg.add_header('Date', i.get('Date'))
+        am_msg.add_header('Date', str(i.get('Date')))
         am_msg.add_header('Message-Id', f'<{self.msgid}>')
         am_msg.set_payload(self.body, charset='utf-8')
         return am_msg
@@ -2551,12 +2589,12 @@ class LoreAttestor:
     mode: Optional[str]
     level: Optional[str]
     identity: Optional[str]
-    signtime: Optional[any]
+    signtime: Optional[datetime.datetime]
     keysrc: Optional[str]
     keyalgo: Optional[str]
     passing: bool
     have_key: bool
-    errors: list
+    errors: List[str]
 
     def __init__(self) -> None:
         self.mode = None
@@ -2604,7 +2642,7 @@ class LoreAttestor:
         return True
 
     def check_identity(self, emlfrom: str) -> bool:
-        if not self.passing or not emlfrom:
+        if not self.passing or not emlfrom or self.identity is None:
             return False
 
         if self.level == 'domain':
@@ -2622,6 +2660,8 @@ class LoreAttestor:
 
     @staticmethod
     def parse_ts(ts: Optional[str]) -> Optional[datetime.datetime]:
+        if not ts:
+            return None
         try:
             return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc)
         except:  # noqa
@@ -2643,7 +2683,7 @@ class LoreAttestor:
 
 
 class LoreAttestorDKIM(LoreAttestor):
-    def __init__(self, passing: bool, identity: str, signtime: Optional[any], errors: list) -> None:
+    def __init__(self, passing: bool, identity: str, signtime: Optional[datetime.datetime], errors: list) -> None:
         super().__init__()
         self.mode = 'DKIM'
         self.level = 'domain'
@@ -2658,7 +2698,7 @@ class LoreAttestorDKIM(LoreAttestor):
 
 
 class LoreAttestorPatatt(LoreAttestor):
-    def __init__(self, result: bool, identity: str, signtime: Optional[any], keysrc: str, keyalgo: str,
+    def __init__(self, result: bool, identity: str, signtime: Optional[datetime.datetime], keysrc: str, keyalgo: str,
                  errors: list) -> None:
         super().__init__()
         self.mode = 'patatt'
@@ -2696,9 +2736,13 @@ def _run_command(cmdargs: List[str], stdin: Optional[bytes] = None,
 
 def gpg_run_command(args: List[str], stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
     config = get_main_config()
-    cmdargs = [config['gpgbin'], '--batch', '--no-auto-key-retrieve', '--no-auto-check-trustdb']
+    gpgbin = config.get('gpgbin', 'gpg') 
+    if not isinstance(gpgbin, str):
+        logger.critical('gpgbin must be a string, falling back to default')
+        gpgbin = 'gpg'
+    cmdargs = [gpgbin, '--batch', '--no-auto-key-retrieve', '--no-auto-check-trustdb']
     if config['attestation-gnupghome'] is not None:
-        cmdargs += ['--homedir', config['attestation-gnupghome']]
+        cmdargs += ['--homedir', str(config['attestation-gnupghome'])]
     cmdargs += args
 
     return _run_command(cmdargs, stdin=stdin)
@@ -2985,7 +3029,7 @@ def get_cache_dir(appname: str = 'b4') -> str:
     # Delete all .mbx and .lookup files older than cache-expire
     config = get_main_config()
     try:
-        expmin = int(config['cache-expire']) * 60
+        expmin = int(str(config['cache-expire'])) * 60
     except ValueError:
         logger.critical('ERROR: cache-expire must be an integer (minutes): %s', config['cache-expire'])
         expmin = 600
@@ -3018,7 +3062,7 @@ def get_cache_file(identifier: str, suffix: Optional[str] = None) -> str:
     return os.path.join(cachedir, cachefile)
 
 
-def get_cache(identifier: str, suffix: Optional[str] = None, as_json: bool = False) -> Optional[any]:
+def get_cache(identifier: str, suffix: Optional[str] = None, as_json: bool = False) -> Optional[Any]:
     fullpath = get_cache_file(identifier, suffix=suffix)
     cachedata = None
     try:
@@ -3045,7 +3089,7 @@ def clear_cache(identifier: str, suffix: Optional[str] = None) -> None:
         logger.debug('Removed cache %s for %s', fullpath, identifier)
 
 
-def save_cache(contents: any, identifier: str, suffix: Optional[str] = None, is_json: bool = False) -> None:
+def save_cache(contents: Any, identifier: str, suffix: Optional[str] = None, is_json: bool = False) -> None:
     fullpath = get_cache_file(identifier, suffix=suffix)
     try:
         with open(fullpath, 'w') as fh:
@@ -3095,7 +3139,7 @@ def get_requests_session() -> requests.Session:
 
 def get_msgid_from_stdin() -> Optional[str]:
     if not sys.stdin.isatty():
-        message = email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parsebytes(
+        message = email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parsebytes(
             sys.stdin.buffer.read(), headersonly=True)
         return message.get('Message-ID', None)
     return None
@@ -3126,7 +3170,7 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
     if matches:
         chunks = matches.groups()
         config = get_main_config()
-        myloc = urllib.parse.urlparse(config['midmask'])
+        myloc = urllib.parse.urlparse(str(config['midmask']))
         wantloc = urllib.parse.urlparse(msgid)
         if myloc.netloc != wantloc.netloc:
             logger.debug('Overriding midmask with passed url parameters')
@@ -3146,16 +3190,16 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
     return msgid
 
 
-def get_strict_thread(msgs: Union[List[email.message.EmailMessage], mailbox.Mailbox, mailbox.Maildir],
-                      msgid: str, noparent: bool = False) -> Optional[List[email.message.EmailMessage]]:
+def get_strict_thread(msgs: List[EmailMessage], msgid: str, noparent: bool = False) -> Optional[List[EmailMessage]]:
     # Attempt to automatically recognize the situation when someone posts
     # a standalone patch or series in the middle of a large discussion for another series.
     # We recommend dealing with this using --no-parent, but we can also catch this
     # automatically in certain situations.
-    msgid_map = dict()
+    msgid_map: Dict[str, EmailMessage] = dict()
     for msg in msgs:
         c_msgid = LoreMessage.get_clean_msgid(msg)
-        msgid_map[c_msgid] = msg
+        if c_msgid is not None:
+            msgid_map[c_msgid] = msg
 
     if not noparent:
         # If it's a single standalone patch with no versioning info, we automatically no-parent it
@@ -3178,12 +3222,12 @@ def get_strict_thread(msgs: Union[List[email.message.EmailMessage], mailbox.Mail
                         msgid = irt_msgid
                         noparent = True
 
-    want = {msgid}
-    ignore = set()
-    got = set()
-    seen = set()
-    maybe = dict()
-    strict = list()
+    want: Set[str] = {msgid}
+    ignore: Set[str] = set()
+    got: Set[str] = set()
+    seen: Set[str] = set()
+    maybe: Dict[str, Set[str]] = dict()
+    strict: List[EmailMessage] = list()
     while True:
         for c_msgid, msg in msgid_map.items():
             if c_msgid in ignore:
@@ -3251,7 +3295,7 @@ def get_strict_thread(msgs: Union[List[email.message.EmailMessage], mailbox.Mail
     return strict
 
 
-def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) -> List[email.message.EmailMessage]:
+def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) -> List[EmailMessage]:
     msgs = list()
     if pipesep:
         logger.debug('Mailsplitting using pipesep=%s', pipesep)
@@ -3261,7 +3305,7 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
         for chunk in bmbox.split(pipesep.encode()):
             if chunk.strip():
                 msgs.append(email.parser.BytesParser(policy=emlpolicy,
-                                                     _class=email.message.EmailMessage).parsebytes(chunk))
+                                                     _class=EmailMessage).parsebytes(chunk))
         return msgs
 
     logger.debug('Mailsplitting the mbox into %s', outdir)
@@ -3273,16 +3317,19 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
     # Read in the files
     for msg in os.listdir(outdir):
         with open(os.path.join(outdir, msg), 'rb') as fh:
-            msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parse(fh))
+            msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh))
     return msgs
 
 
 def get_pi_search_results(query: str, nocache: bool = False, message: Optional[str] = None,
-                          full_threads: bool = True) -> Optional[List[email.message.EmailMessage]]:
+                          full_threads: bool = True) -> Optional[List[EmailMessage]]:
     config = get_main_config()
     searchmask = config.get('searchmask')
     if not searchmask:
         logger.critical('b4.searchmask is not defined')
+        return None
+    if not isinstance(searchmask, str):
+        logger.critical('b4.searchmask must be a string')
         return None
     if full_threads and 't=1' not in searchmask:
         logger.debug('full_threads specified, adding t=1')
@@ -3295,7 +3342,7 @@ def get_pi_search_results(query: str, nocache: bool = False, message: Optional[s
         logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parse(fh))
+                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh))
         return msgs
 
     loc = urllib.parse.urlparse(query_url)
@@ -3321,15 +3368,18 @@ def get_pi_search_results(query: str, nocache: bool = False, message: Optional[s
     return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
 
 
-def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -> List[email.message.EmailMessage]:
+def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -> List[EmailMessage]:
     # Convert into individual files using git-mailsplit
     with tempfile.TemporaryDirectory(suffix='-mailsplit') as tfd:
         msgs = mailsplit_bytes(t_mbox, tfd)
 
-    deduped = dict()
+    deduped: Dict[str, EmailMessage] = dict()
 
     for msg in msgs:
         msgid = LoreMessage.get_clean_msgid(msg)
+        if msgid is None:
+            logger.debug('No message-id found, ignoring %s', msg.get('Subject', '(no subject)'))
+            continue
         if msgid in deduped:
             deduped[msgid] = LoreMessage.get_preferred_duplicate(deduped[msgid], msg)
             continue
@@ -3369,6 +3419,9 @@ def get_series_by_change_id(change_id: str, nocache: bool = False) -> Optional['
             logger.debug('No change-id match for %s', q_msg.get('Subject', '(no subject)'))
             continue
         q_msgid = LoreMessage.get_clean_msgid(q_msg)
+        if q_msgid is None:
+            logger.debug('No message-id found, ignoring %s', q_msg.get('Subject', '(no subject)'))
+            continue
         t_msgs = get_pi_thread_by_msgid(q_msgid, nocache=nocache)
         if t_msgs:
             for t_msg in t_msgs:
@@ -3389,14 +3442,14 @@ def get_series_by_patch_id(patch_id: str, nocache: bool = False) -> Optional['Lo
     return lmbx
 
 
-def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List[email.message.EmailMessage]]:
+def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List[EmailMessage]]:
     msgs = list()
     cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
     if os.path.exists(cachedir) and not nocache:
         logger.debug('Using cached copy: %s', cachedir)
         for msg in os.listdir(cachedir):
             with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parse(fh))
+                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh))
         return msgs
 
     logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
@@ -3419,10 +3472,11 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List
 
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
                            onlymsgids: Optional[set] = None,
-                           with_thread: bool = True) -> Optional[List[email.message.EmailMessage]]:
+                           with_thread: bool = True) -> Optional[List[EmailMessage]]:
     qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
-    loc = urllib.parse.urlparse(config['midmask'])
+    midmask = str(config['midmask'])
+    loc = urllib.parse.urlparse(midmask)
     # The public-inbox instance may provide a unified index at /all/.
     # In fact, /all/ naming is arbitrary, but for now we are going to
     # hardcode it to lore.kernel.org settings and maybe make it configurable
@@ -3431,7 +3485,7 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
         projurl = '%s://%s/all' % (loc.scheme, loc.netloc)
     else:
         # Grab the head from lore, to see where we are redirected
-        midmask = config['midmask'] % qmsgid
+        midmask = midmask % qmsgid
         logger.info('Looking up %s', midmask)
         session = get_requests_session()
         resp = session.head(midmask)
@@ -3449,6 +3503,7 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
     if not msgs:
         return None
 
+    strict: Optional[List[EmailMessage]] = None
     if onlymsgids:
         strict = list()
         for msg in msgs:
@@ -3473,7 +3528,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                          mailfrom: Optional[Tuple[str, str]] = None,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
                          ignore_commits: Optional[Set[str]] = None,
-                         limit_committer: Optional[str] = None) -> List[Tuple[str, email.message.EmailMessage]]:
+                         limit_committer: Optional[str] = None) -> List[Tuple[str, EmailMessage]]:
     gitargs = ['rev-list', '--no-merges', '--reverse']
     if limit_committer:
         gitargs += ['-F', f'--committer={limit_committer}']
@@ -3499,7 +3554,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             '--find-renames',
         ]
         smcfg = get_sendemail_config()
-        if not get_git_bool(smcfg.get('mailmap', 'false')):
+        if not get_git_bool(str(smcfg.get('mailmap', 'false'))):
             showargs.append('--no-mailmap')
         logger.debug('showargs=%s', showargs)
         ecode, out = git_run_command(
@@ -3508,7 +3563,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         )
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')
-        msg = email.parser.BytesParser(policy=emlpolicy, _class=email.message.EmailMessage).parsebytes(out)
+        msg = email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parsebytes(out)
         patches.append((commit, msg))
 
     fullcount = len(patches)
@@ -3529,7 +3584,8 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         lsubject = LoreSubject(msg.get('Subject'))
         lsubject.counter = counter + 1
         lsubject.expected = expected
-        lsubject.revision = revision
+        if revision is not None:
+            lsubject.revision = revision
         subject = lsubject.get_rebuilt_subject(eprefixes=prefixes)
 
         logger.debug('  %s', subject)
@@ -3737,7 +3793,7 @@ def get_gpg_uids(keyid: str) -> List[str]:
     return uids
 
 
-def save_git_am_mbox(msgs: List[email.message.EmailMessage], dest: BinaryIO) -> None:
+def save_git_am_mbox(msgs: List[EmailMessage], dest: BinaryIO) -> None:
     # Git-am has its own understanding of what "mbox" format is that differs from Python's
     # mboxo implementation. Specifically, it never escapes the ">From " lines found in bodies
     # unless invoked with --patch-format=mboxrd (this is wrong, because ">From " escapes are also
@@ -3748,7 +3804,7 @@ def save_git_am_mbox(msgs: List[email.message.EmailMessage], dest: BinaryIO) -> 
         dest.write(LoreMessage.get_msg_as_bytes(msg, headers='decode'))
 
 
-def save_mboxrd_mbox(msgs: List[email.message.EmailMessage], dest: BinaryIO, mangle_from: bool = False) -> None:
+def save_mboxrd_mbox(msgs: List[EmailMessage], dest: BinaryIO, mangle_from: bool = False) -> None:
     gen = email.generator.BytesGenerator(dest, mangle_from_=mangle_from, policy=emlpolicy)
     for msg in msgs:
         dest.write(b'From mboxrd@z Thu Jan  1 00:00:00 1970\n')
@@ -3847,41 +3903,40 @@ def get_sendemail_config() -> Dict[str, Optional[Union[str, List[str]]]]:
 def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, list, None], str]:
     sconfig = get_sendemail_config()
     # Limited support for smtp settings to begin with, but should cover the vast majority of cases
-    fromaddr = sconfig.get('from')
+    fromaddr = str(sconfig.get('from'))
     if not fromaddr:
         # We fall back to user.email
         usercfg = get_user_config()
-        fromaddr = usercfg['email']
+        fromaddr = str(usercfg['email'])
 
-    server = sconfig.get('smtpserver', 'localhost')
-    port = sconfig.get('smtpserverport', 0)
+    server = str(sconfig.get('smtpserver', 'localhost'))
     try:
-        port = int(port)
+        port = int(str(sconfig.get('smtpserverport', '0')))
     except ValueError:
-        raise smtplib.SMTPException('Invalid smtpport entry in config')
+        raise smtplib.SMTPException('Invalid smtpport entry in config: %s' % sconfig.get('smtpserverport'))
 
     # If server contains slashes, then it's a local command
     if '/' in server:
         server = os.path.expanduser(os.path.expandvars(server))
         sp = shlex.shlex(server, posix=True)
         sp.whitespace_split = True
-        smtp = list(sp)
-        if '-i' not in smtp:
-            smtp.append('-i')
+        smcmd = list(sp)
+        if '-i' not in smcmd:
+            smcmd.append('-i')
         # Do we have the envelopesender defined?
-        env_sender = sconfig.get('envelopesender', '')
+        env_sender = str(sconfig.get('envelopesender', ''))
         if env_sender:
             if env_sender == 'auto':
                 envpair = email.utils.parseaddr(fromaddr)
             else:
                 envpair = email.utils.parseaddr(env_sender)
             if envpair[1]:
-                smtp += ['-f', envpair[1]]
+                smcmd += ['-f', envpair[1]]
         server_option = sconfig.get('smtpserveroption')
         if server_option:
-            smtp += server_option
-        logger.debug('sendmail command: %s', ' '.join(smtp))
-        return smtp, fromaddr
+            smcmd += server_option
+        logger.debug('sendmail command: %s', ' '.join(smcmd))
+        return smcmd, fromaddr
 
     encryption = sconfig.get('smtpencryption')
     if dryrun:
@@ -3906,15 +3961,17 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
             raise smtplib.SMTPException('Unclear what to do with smtpencryption=%s' % encryption)
 
         # If we got to this point, we should do authentication.
-        auser = sconfig.get('smtpuser')
-        apass = sconfig.get('smtppass')
+        auser = str(sconfig.get('smtpuser', ''))
+        apass = str(sconfig.get('smtppass', ''))
         if auser and not apass:
             # Try with git-credential-helper
             if port:
                 gchost = f'{server}:{port}'
             else:
                 gchost = server
-            apass = git_credential_fill(None, protocol='smtp', host=gchost, username=auser)
+            gc_pass = git_credential_fill(None, protocol='smtp', host=gchost, username=auser)
+            if gc_pass:
+                apass = gc_pass
             if not apass:
                 raise smtplib.SMTPException('No password specified for connecting to %s', server)
         if auser and apass:
@@ -3941,9 +3998,9 @@ def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str
 def patchwork_set_state(msgids: List[str], state: str) -> bool:
     # Do we have a pw-key defined in config?
     config = get_main_config()
-    pwkey = config.get('pw-key')
-    pwurl = config.get('pw-url')
-    pwproj = config.get('pw-project')
+    pwkey = str(config.get('pw-key', ''))
+    pwurl = str(config.get('pw-url', ''))
+    pwproj = str(config.get('pw-project', ''))
     if not (pwkey and pwurl and pwproj):
         logger.debug('Patchwork support requires pw-key, pw-url and pw-project settings')
         return False
@@ -3989,8 +4046,8 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
     return True
 
 
-def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[email.message.EmailMessage],
-              fromaddr: Optional[str], destaddrs: Optional[Union[set, list]] = None,
+def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[EmailMessage],
+              fromaddr: Optional[str], destaddrs: Optional[Union[Set[str], List[str]]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
               output_dir: Optional[str] = None, web_endpoint: Optional[str] = None,
               reflect: bool = False) -> Optional[int]:
@@ -4041,7 +4098,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
             myaddrs = {x[1] for x in alldests}
         else:
-            myaddrs = destaddrs
+            myaddrs = set(destaddrs)
 
         tosend.append((myaddrs, bdata, ls))
 
@@ -4075,7 +4132,12 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             return 0
 
     sent = 0
-    envpair = email.utils.parseaddr(fromaddr)
+    if fromaddr is not None:
+        envpair = email.utils.parseaddr(fromaddr)
+    else:
+        envpair = get_mailfrom()
+        fromaddr = format_addrs([envpair])
+
     if isinstance(smtp, list):
         # This is a local command
         if reflect:
@@ -4101,7 +4163,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             if reflect:
                 smtp.sendmail(fromaddr, [envpair[1]], bdata)
             else:
-                smtp.sendmail(fromaddr, destaddrs, bdata)
+                smtp.sendmail(fromaddr, list(destaddrs), bdata)
             sent += 1
 
     return sent
@@ -4122,7 +4184,7 @@ def git_get_current_branch(gitdir: Optional[str] = None, short: bool = True) -> 
 def get_excluded_addrs() -> Set[str]:
     config = get_main_config()
     excludes = set()
-    c_excludes = config.get('email-exclude')
+    c_excludes = str(config.get('email-exclude', ''))
     if c_excludes:
         for entry in c_excludes.split(','):
             excludes.add(entry.strip())
@@ -4150,9 +4212,10 @@ def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
             continue
         # Check if it's mailmap-replaced
         if entry[1] in MAILMAP_INFO:
-            if MAILMAP_INFO[entry[1]]:
-                addresses.remove(entry)
-                addresses.append(MAILMAP_INFO[entry[1]])
+            replacement = MAILMAP_INFO[entry[1]]
+            addresses.remove(entry)
+            if replacement is not None:
+                addresses.append(replacement)
             continue
         logger.debug('Checking if %s is mailmap-replaced', entry[1])
         args = ['check-mailmap', f'<{entry[1]}>']
@@ -4160,15 +4223,15 @@ def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
         if ecode != 0:
             MAILMAP_INFO[entry[1]] = None
             continue
-        replacement = email.utils.getaddresses([out.strip()])
-        if len(replacement) == 1:
-            if entry[1] == replacement[0][1]:
+        cm_data: List[Tuple[str, str]] = email.utils.getaddresses([out.strip()])
+        if len(cm_data) == 1:
+            if entry[1] == cm_data[0][1]:
                 MAILMAP_INFO[entry[1]] = None
                 continue
-            logger.debug('Replaced %s with mailmap-updated %s', entry[1], replacement[0][1])
-            MAILMAP_INFO[entry[1]] = replacement[0]
+            logger.debug('Replaced %s with mailmap-updated %s', entry[1], cm_data[0][1])
+            MAILMAP_INFO[entry[1]] = cm_data[0]
             addresses.remove(entry)
-            addresses.append(replacement[0])
+            addresses.append(cm_data[0])
 
     return addresses
 
@@ -4218,24 +4281,22 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
 
         elif os.path.exists(cmdargs.localmbox):
             msgid = get_msgid(cmdargs)
-            if os.path.isdir(cmdargs.localmbox):
-                in_mbx = mailbox.Maildir(cmdargs.localmbox)
-            else:
-                in_mbx = mailbox.mbox(cmdargs.localmbox)
+            # We ignore arg-types here because we are pretty sure we get EmailMessage back in each case
+            mb_msgs = get_msgs_from_mailbox_or_maildir(cmdargs.localmbox)
 
             if msgid:
                 if with_thread:
-                    msgs = get_strict_thread(in_mbx, msgid)
+                    msgs = get_strict_thread(mb_msgs, msgid)
                     if not msgs:
                         raise LookupError('Could not find %s in %s' % (msgid, cmdargs.localmbox))
                 else:
                     msgs = list()
-                    for msg in in_mbx:  # type: email.message.EmailMessage
+                    for msg in mb_msgs:
                         if LoreMessage.get_clean_msgid(msg) == msgid:
                             msgs = [msg]
                             break
             else:
-                msgs = in_mbx
+                msgs = mb_msgs
         else:
             raise LookupError('Mailbox %s does not exist' % cmdargs.localmbox)
 
@@ -4260,7 +4321,7 @@ def git_revparse_obj(gitobj: str, gitdir: Optional[str] = None) -> str:
 
 
 def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str = 'HEAD',
-                           origin: str = None, check_only: bool = False) -> None:
+                           origin: Optional[str] = None, check_only: bool = False) -> None:
     if gitdir is None:
         gitdir = os.getcwd()
     topdir = git_get_toplevel(gitdir)
@@ -4335,8 +4396,8 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
         sp.whitespace_split = True
         cmdargs = list(sp) + [temp_fpath]
         logger.debug('Running %s' % ' '.join(cmdargs))
-        sp = subprocess.Popen(cmdargs)
-        sp.wait()
+        spop = subprocess.Popen(cmdargs)
+        spop.wait()
 
         with open(temp_fpath, 'rb') as edited_file:
             bdata = edited_file.read()
@@ -4354,7 +4415,7 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
         return bdata
 
 
-def map_codereview_trailers(qmsgs: List[email.message.EmailMessage],
+def map_codereview_trailers(qmsgs: List[EmailMessage],
                             ignore_msgids: Optional[Set[str]] = None) -> Dict[str, List['LoreMessage']]:
     """
     Map messages containing code-review trailers to patch-ids they were sent for.
@@ -4362,14 +4423,16 @@ def map_codereview_trailers(qmsgs: List[email.message.EmailMessage],
     :param ignore_msgids: list of message-id's to ignore
     :return: mapping of patch-ids to LoreMessage objects containing follow-up trailers
     """
-    qmid_map = dict()
-    ref_map = dict()
-    patchid_map = dict()
+    qmid_map: Dict[str, LoreMessage] = dict()
+    ref_map: Dict[str, List[str]] = dict()
+    patchid_map: Dict[str, List[LoreMessage]] = dict()
     seen_msgids = set()
     if ignore_msgids is not None:
         seen_msgids.update(ignore_msgids)
     for qmsg in qmsgs:
         qmsgid = LoreMessage.get_clean_msgid(qmsg)
+        if not qmsgid:
+            continue
         if qmsgid in seen_msgids:
             continue
         seen_msgids.add(qmsgid)
@@ -4381,7 +4444,7 @@ def map_codereview_trailers(qmsgs: List[email.message.EmailMessage],
             ref_map[qref].append(qlmsg.msgid)
 
     logger.info('Analyzing %s code-review messages', len(qmid_map))
-    covers = dict()
+    covers: Dict[str, Set[str]] = dict()
     for qmid, qlmsg in qmid_map.items():
         logger.debug('  new message: %s', qmid)
         if not qlmsg.reply:
@@ -4458,3 +4521,37 @@ def get_git_bool(gitbool: str) -> bool:
     elif gitbool.lower() in ('false', 'no', '0', 'off', 'n'):
         return False
     raise ValueError('Invalid git boolean value: %s' % gitbool)
+
+
+def mailbox_email_factory(fh: BinaryIO) -> EmailMessage:
+    """Factory function to create EmailMessage objects"""
+
+    return email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh)
+
+
+def get_msgs_from_mailbox_or_maildir(mbmd: str) -> List[EmailMessage]:
+    if is_maildir(mbmd):
+        in_mdr = mailbox.Maildir(mbmd, factory=mailbox_email_factory) # type: ignore[arg-type]
+        return [x[1] for x in in_mdr.items()] # type: ignore[arg-type, misc]
+
+    in_mbx = mailbox.mbox(mbmd, factory=mailbox_email_factory) # type: ignore[arg-type]
+    return[x[1] for x in in_mbx.items()] # type: ignore[arg-type, misc]
+
+
+def get_mailfrom() -> Tuple[str, str]:
+    sconfig = get_sendemail_config()
+    fromaddr = str(sconfig.get('from', ''))
+    if fromaddr:
+        return email.utils.parseaddr(fromaddr)
+
+    usercfg = get_user_config()
+    return str(usercfg.get('name', '')), str(usercfg.get('email', ''))
+
+
+def is_maildir(dest: str) -> bool:
+    if (os.path.isdir(os.path.join(dest, 'new'))
+            and os.path.isdir(os.path.join(dest, 'cur'))
+            and os.path.isdir(os.path.join(dest, 'tmp'))):
+        return True
+    return False
+
