@@ -1040,7 +1040,7 @@ class LoreTrailer:
     lmsg = None
     # Small list of recognized utility trailers
     _utility: Set[str] = {'fixes', 'link', 'buglink', 'closes', 'obsoleted-by', 'message-id', 'change-id',
-                          'base-commit', 'based-on'}
+                          'base-commit', 'based-on', 'supersedes'}
 
     def __init__(self, name: Optional[str] = None, value: Optional[str] = None, extinfo: Optional[str] = None,
                  msg: Optional[email.message.EmailMessage] = None):
