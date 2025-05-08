@@ -1874,10 +1874,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     if todests:
         allto = b4.cleanup_email_addrs(todests, excludes, None)
+        logger.debug('allto: %s', allto)
         alldests.update(set([x[1] for x in allto]))
     if ccdests:
         allcc = b4.cleanup_email_addrs(ccdests, excludes, None)
+        logger.debug('allcc: %s', allcc)
         alldests.update(set([x[1] for x in allcc]))
+
+    logger.debug('alldests: %s', alldests)
 
     if not len(allto):
         # Move all cc's into the To field if there's nothing in "To"
@@ -2067,13 +2071,16 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             myto = mycc
             mycc = list()
         if myto:
+            logger.debug('myto: %s', myto)
             pto = b4.cleanup_email_addrs(myto, excludes, None)
+            logger.debug('pto: %s', pto)
             if msg['To']:
                 msg.replace_header('To', b4.format_addrs(pto))
             else:
                 msg.add_header('To', b4.format_addrs(pto))
         if mycc:
             pcc = b4.cleanup_email_addrs(mycc, excludes, None)
+            logger.debug('pcc: %s', pcc)
             if msg['Cc']:
                 msg.replace_header('Cc', b4.format_addrs(pcc))
             else:

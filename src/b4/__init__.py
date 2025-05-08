@@ -4213,8 +4213,10 @@ def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
         # Check if it's mailmap-replaced
         if entry[1] in MAILMAP_INFO:
             replacement = MAILMAP_INFO[entry[1]]
-            addresses.remove(entry)
+            # If it's None, we don't want to replace it
             if replacement is not None:
+                logger.debug('Replaced %s with mailmap-updated %s', entry[1], replacement[1])
+                addresses.remove(entry)
                 addresses.append(replacement)
             continue
         logger.debug('Checking if %s is mailmap-replaced', entry[1])
