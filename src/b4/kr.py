@@ -5,6 +5,7 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import argparse
 import os
 import sys
 import pathlib
@@ -15,7 +16,7 @@ import b4
 logger = b4.logger
 
 
-def main(cmdargs):
+def main(cmdargs: argparse.Namespace) -> None:
     if cmdargs.showkeys:
         msgid, msgs = b4.retrieve_messages(cmdargs)
         logger.info('---')

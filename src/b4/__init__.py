@@ -28,7 +28,6 @@ import time
 import copy
 import shutil
 import mailbox
-# noinspection PyCompatibility
 import pwd
 import io
 
@@ -52,7 +51,7 @@ emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length
 qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 try:
-    import dkim  # type: ignore[import]
+    import dkim  # type: ignore[import-not-found]
 
     can_dkim = True
 except ModuleNotFoundError:
@@ -72,7 +71,7 @@ __VERSION__ = '0.15-dev'
 PW_REST_API_VERSION = '1.2'
 
 
-def _dkim_log_filter(record):
+def _dkim_log_filter(record: logging.LogRecord) -> bool:
     # Hide all dkim logging output in normal operation by setting the level to
     # DEBUG. If debugging output has been enabled then prefix dkim logging
     # output to make its origin clear.
@@ -173,10 +172,11 @@ class LoreMailbox:
     msgid_map: Dict[str, 'LoreMessage']
     series: Dict[int, 'LoreSeries']
     covers: Dict[int, 'LoreMessage']
+    trailer_map: Dict[str, List['LoreMessage']]
     followups: List['LoreMessage']
     unknowns: List['LoreMessage']
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.msgid_map = dict()
         self.series = dict()
         self.covers = dict()
@@ -184,7 +184,7 @@ class LoreMailbox:
         self.followups = list()
         self.unknowns = list()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         out = list()
         for key, lser in self.series.items():
             out.append(str(lser))
@@ -202,15 +202,17 @@ class LoreMailbox:
             return self.msgid_map[msgid]
         return None
 
-    def partial_reroll(self, revision, sloppytrailers):
+    def partial_reroll(self, revision: int, sloppytrailers: bool) -> None:
         # Is it a partial reroll?
         # To qualify for a partial reroll:
         # 1. Needs to be version > 1
         # 2. Replies need to be to the exact X/N of the previous revision
-        if revision <= 1 or revision - 1 not in self.series:
+        if revision <= 1:
+            return
+        pser = self.get_series(revision - 1, sloppytrailers=sloppytrailers)
+        if pser is None:
             return
         # Are existing patches replies to previous revisions with the same counter?
-        pser = self.get_series(revision - 1, sloppytrailers=sloppytrailers)
         lser = self.series[revision]
         sane = True
         for patch in lser.patches:
@@ -245,11 +247,12 @@ class LoreMailbox:
         logger.debug('Reconstituting a partial reroll')
         at = 0
         for patch in lser.patches:
-            if pser.patches[at] is None:
+            pserpatch = pser.patches[at]
+            if pserpatch is None:
                 at += 1
                 continue
             if patch is None:
-                ppatch = copy.deepcopy(pser.patches[at])
+                ppatch = copy.deepcopy(pserpatch)
                 ppatch.revision = lser.revision
                 ppatch.reroll_from_revision = pser.revision
                 lser.patches[at] = ppatch
@@ -353,12 +356,12 @@ class LoreMailbox:
                 if pmsg is None:
                     # Can't find the message we're replying to here
                     continue
-            elif fmsg.in_reply_to in self.msgid_map:
-                logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
-                pmsg = self.msgid_map[fmsg.in_reply_to]
             else:
-                logger.debug('  missing message, skipping: %s', fmsg.in_reply_to)
-                continue
+                pmsg = self.msgid_map[fmsg.in_reply_to]
+                if pmsg is None:
+                    logger.debug('  missing message, skipping: %s', fmsg.in_reply_to)
+                    continue
+                logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
             for ltr in mismatches:
@@ -499,7 +502,7 @@ class LoreSeries:
     has_cover: bool = False
     partial_reroll: bool = False
     subject: str
-    indexes: Optional[List[Tuple[str, str]]] = None
+    _indexes: Optional[List[Tuple[str, str]]] = None
     base_commit: Optional[str] = None
     change_id: Optional[str] = None
     prereq_patch_ids: Optional[List[str]] = None
@@ -513,7 +516,7 @@ class LoreSeries:
         self.trailer_mismatches = set()
         self.subject = '(untitled)'
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         out = list()
         out.append('- Series: [v%s] %s' % (self.revision, self.subject))
         out.append('  revision: %s' % self.revision)
@@ -792,8 +795,11 @@ class LoreSeries:
 
         return msgs
 
-    def populate_indexes(self):
-        self.indexes = list()
+    @property
+    def indexes(self) -> List[Tuple[str, str]]:
+        if self._indexes is not None:
+            return self._indexes
+        self._indexes = list()
         seenfiles = set()
         for lmsg in self.patches[1:]:
             if lmsg is None or not lmsg.blob_indexes:
@@ -809,17 +815,11 @@ class LoreSeries:
                 if set(obh) == {'0'}:
                     # New file, will for sure apply clean
                     continue
-                self.indexes.append((ofn, obh))
+                self._indexes.append((ofn, obh))
+        return self._indexes
 
     def check_applies_clean(self, gitdir: Optional[str] = None,
                             at: Optional[str] = None) -> Tuple[int, List[Tuple[str, str]]]:
-        if self.indexes is None:
-            self.populate_indexes()
-
-        if self.indexes is None:
-            logger.debug('No indexes to check against')
-            return 0, list()
-
         mismatches = list()
         if at is None:
             at = 'HEAD'
@@ -839,7 +839,7 @@ class LoreSeries:
 
         return len(self.indexes), mismatches
 
-    def find_base(self, gitdir: Optional[str], branches: Optional[list] = None, maxdays: int = 30) -> Tuple[str, int, int]:
+    def find_base(self, gitdir: Optional[str], branches: Optional[List[str]] = None, maxdays: int = 30) -> Tuple[str, int, int]:
         if self.indexes is None:
             self.populate_indexes()
         if self.indexes is None or not len(self.indexes):
@@ -1037,8 +1037,7 @@ class LoreSeries:
 
         return start_commit, end_commit
 
-    def save_cover(self, outfile):
-        # noinspection PyUnresolvedReferences
+    def save_cover(self, outfile: str) -> None:
         cover_msg = self.patches[0].get_am_message(add_trailers=False)
         with open(outfile, 'wb') as fh:
             fh.write(LoreMessage.get_msg_as_bytes(cover_msg, headers='decode'))
@@ -1198,7 +1197,7 @@ class LoreMessage:
     pw_ci_status: Optional[str]
     local_ci_status: Optional[List[Tuple[str, str]]]
 
-    def __init__(self, msg):
+    def __init__(self, msg: EmailMessage) -> None:
         self.msg = msg
 
         # set some defaults
@@ -1234,10 +1233,10 @@ class LoreMessage:
         self.counters_inferred = self.lsubject.counters_inferred
 
         # Loaded when properties are called
-        self._attestors = None
-        self._git_patch_id = None
-        self._pwhash = None
-        self._blob_indexes = None
+        self._attestors: Optional[List['LoreAttestor']] = None
+        self._git_patch_id: Optional[str] = None
+        self._pwhash: Optional[str] = None
+        self._blob_indexes: Optional[Set[Tuple[str, str, str, str]]] = None
 
         # Handle [PATCH 6/5]
         if self.counter > self.expected:
@@ -1443,7 +1442,7 @@ class LoreMessage:
             try:
                 res = dkim.verify(self.msg.as_bytes(policy=emlpolicy), logger=dkimlogger)
                 logger.debug('DKIM verify results: %s=%s', identity, res)
-            except Exception as ex:  # noqa
+            except Exception as ex:
                 # Usually, this is due to some DNS resolver failure, which we can't
                 # possibly cleanly try/catch. Just mark it as failed and move on.
                 logger.debug('DKIM attestation failed: %s', ex)
@@ -1606,7 +1605,7 @@ class LoreMessage:
                     self.local_ci_status.extend(status)
 
     @staticmethod
-    def get_patchwork_data_by_msgid(msgid: str) -> dict:
+    def get_patchwork_data_by_msgid(msgid: str) -> Dict[str, str]:
         config = get_main_config()
         pwkey = str(config.get('pw-key', ''))
         pwurl = str(config.get('pw-url', ''))
@@ -1648,7 +1647,7 @@ class LoreMessage:
         save_cache(pwdata, pwurl + pwproj + msgid, suffix='lookup', is_json=True)
         return pwdata
 
-    def get_patchwork_info(self) -> Optional[dict]:
+    def get_patchwork_info(self) -> Optional[Dict[str,str]]:
         if not self.pwhash:
             return None
         try:
@@ -1722,7 +1721,7 @@ class LoreMessage:
 
         return checkmark, trailers, critical
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         out = list()
         out.append('msgid: %s' % self.msgid)
         out.append(str(self.lsubject))
@@ -1838,7 +1837,7 @@ class LoreMessage:
         return new_hdrval.strip()
 
     @staticmethod
-    def wrap_header(hdr, width: int = 75, nl: str = '\n',
+    def wrap_header(hdr: Tuple[str, str], width: int = 75, nl: str = '\n',
                     transform: Literal['encode', 'decode', 'preserve'] = 'preserve') -> bytes:
         hname, hval = hdr
         if hname.lower() in ('to', 'cc', 'from', 'x-original-from'):
@@ -1912,7 +1911,7 @@ class LoreMessage:
         return bdata
 
     @staticmethod
-    def get_parts_from_header(hstr: str) -> dict:
+    def get_parts_from_header(hstr: str) -> Dict[str, str]:
         hstr = re.sub(r'\s*', '', hstr)
         hdata = dict()
         for chunk in hstr.split(';'):
@@ -1998,7 +1997,7 @@ class LoreMessage:
                 line = filename_match.group(1) + ' ' + filename
             elif hunk_match:
                 # remove line numbers, but leave line counts
-                def fn(x):
+                def fn(x: Optional[str]) -> int:
                     if not x:
                         return 1
                     return int(x)
@@ -2463,7 +2462,7 @@ class LoreSubject:
     counters_inferred: bool
     prefixes: List[str]
 
-    def __init__(self, subject):
+    def __init__(self, subject: str) -> None:
         # Subject-based info
         self.reply = False
         self.resend = False
@@ -2561,7 +2560,7 @@ class LoreSubject:
         else:
             return f'[PATCH] {self.subject}'
 
-    def get_slug(self, sep='_', with_counter: bool = True) -> str:
+    def get_slug(self, sep: str = '_', with_counter: bool = True) -> str:
         unsafe = self.subject
         if with_counter:
             unsafe = '%04d%s%s' % (self.counter, sep, unsafe)
@@ -2619,7 +2618,7 @@ class LoreAttestor:
         return ATT_FAIL_SIMPLE
 
     @property
-    def trailer(self):
+    def trailer(self) -> str:
         if self.keyalgo:
             mode = self.keyalgo
         else:
@@ -2627,7 +2626,7 @@ class LoreAttestor:
 
         return '%s/%s' % (mode, self.identity.lower())
 
-    def check_time_drift(self, emldate, maxdays: int = 30) -> bool:
+    def check_time_drift(self, emldate: datetime.datetime, maxdays: int = 30) -> bool:
         if not self.passing or self.signtime is None:
             return False
 
@@ -2664,11 +2663,11 @@ class LoreAttestor:
             return None
         try:
             return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc)
-        except:  # noqa
+        except Exception:
             logger.debug('Failed parsing t=%s', ts)
         return None
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         out = list()
         out.append('    mode: %s' % self.mode)
         out.append('   level: %s' % self.level)
@@ -2683,7 +2682,7 @@ class LoreAttestor:
 
 
 class LoreAttestorDKIM(LoreAttestor):
-    def __init__(self, passing: bool, identity: str, signtime: Optional[datetime.datetime], errors: list) -> None:
+    def __init__(self, passing: bool, identity: str, signtime: Optional[datetime.datetime], errors: List[str]) -> None:
         super().__init__()
         self.mode = 'DKIM'
         self.level = 'domain'
@@ -2699,7 +2698,7 @@ class LoreAttestorDKIM(LoreAttestor):
 
 class LoreAttestorPatatt(LoreAttestor):
     def __init__(self, result: bool, identity: str, signtime: Optional[datetime.datetime], keysrc: str, keyalgo: str,
-                 errors: list) -> None:
+                 errors: List[str]) -> None:
         super().__init__()
         self.mode = 'patatt'
         self.level = 'person'
@@ -2805,7 +2804,7 @@ def git_credential_fill(gitdir: Optional[str], protocol: str, host: str, usernam
     return None
 
 
-def git_get_command_lines(gitdir: Optional[str], args: list) -> List[str]:
+def git_get_command_lines(gitdir: Optional[str], args: List[str]) -> List[str]:
     ecode, out = git_run_command(gitdir, args)
     lines = list()
     if out:
@@ -2872,7 +2871,7 @@ def in_directory(dirname: str) -> Generator[bool, None, None]:
         os.chdir(cdir)
 
 
-def setup_config(cmdargs: argparse.Namespace):
+def setup_config(cmdargs: argparse.Namespace) -> None:
     """Setup configuration options. Needs to be called before accessing any of
     the config options."""
     _setup_main_config(cmdargs)
@@ -2882,7 +2881,7 @@ def setup_config(cmdargs: argparse.Namespace):
     _setup_sendemail_config(cmdargs)
 
 
-def _cmdline_config_override(cmdargs: argparse.Namespace, config: dict, section: str):
+def _cmdline_config_override(cmdargs: argparse.Namespace, config: Dict[str, Any], section: str) -> None:
     """Use cmdline.config to set and override config values for section."""
     if not cmdargs.config:
         return
@@ -2898,14 +2897,14 @@ def _cmdline_config_override(cmdargs: argparse.Namespace, config: dict, section:
     config.update(config_override)
 
 
-def git_set_config(fullpath: Optional[str], param: str, value: str, operation: str = '--replace-all'):
+def git_set_config(fullpath: Optional[str], param: str, value: str, operation: str = '--replace-all') -> int:
     args = ['config', operation, param, value]
     ecode, out = git_run_command(fullpath, args)
     return ecode
 
 
-def get_config_from_git(regexp: str, defaults: Optional[dict] = None,
-                        multivals: Optional[list] = None, source: Optional[str] = None) -> dict:
+def get_config_from_git(regexp: str, defaults: Optional[Dict[str, Any]] = None,
+                        multivals: Optional[List[str]] = None, source: Optional[str] = None) -> Dict[str, Any]:
     if multivals is None:
         multivals = list()
     args = ['config']
@@ -2988,7 +2987,7 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
             resolvers = [x.strip() for x in config['attestation-dns-resolvers'].split(',')]
             if resolvers:
                 # Don't force this as an automatically discovered dependency
-                import dns.resolver  # noqa
+                import dns.resolver
                 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
                 dns.resolver.default_resolver.nameservers = resolvers
         except ImportError:
@@ -3102,7 +3101,7 @@ def save_cache(contents: Any, identifier: str, suffix: Optional[str] = None, is_
         logger.debug('Could not write cache %s for %s', fullpath, identifier)
 
 
-def _setup_user_config(cmdargs: argparse.Namespace):
+def _setup_user_config(cmdargs: argparse.Namespace) -> None:
     global USER_CONFIG
 
     USER_CONFIG = get_config_from_git(r'user\..*')
@@ -3471,7 +3470,7 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List
 
 
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
-                           onlymsgids: Optional[set] = None,
+                           onlymsgids: Optional[Set[str]] = None,
                            with_thread: bool = True) -> Optional[List[EmailMessage]]:
     qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
@@ -3811,7 +3810,7 @@ def save_mboxrd_mbox(msgs: List[EmailMessage], dest: BinaryIO, mangle_from: bool
         gen.flatten(msg)
 
 
-def save_maildir(msgs: list, dest) -> None:
+def save_maildir(msgs: List[EmailMessage], dest: str) -> None:
     d_new = os.path.join(dest, 'new')
     pathlib.Path(d_new).mkdir(parents=True)
     d_cur = os.path.join(dest, 'cur')
@@ -3827,7 +3826,7 @@ def save_maildir(msgs: list, dest) -> None:
         os.rename(os.path.join(d_tmp, f'{slug}.eml'), os.path.join(d_new, f'{slug}.eml'))
 
 
-def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[dict, bytes, bytes]:
+def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[Dict[str, str], bytes, bytes]:
     with tempfile.TemporaryDirectory() as tfd:
         m_out = os.path.join(tfd, 'm')
         p_out = os.path.join(tfd, 'p')
@@ -3900,7 +3899,7 @@ def get_sendemail_config() -> Dict[str, Optional[Union[str, List[str]]]]:
     return SENDEMAIL_CONFIG
 
 
-def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, list, None], str]:
+def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], str]:
     sconfig = get_sendemail_config()
     # Limited support for smtp settings to begin with, but should cover the vast majority of cases
     fromaddr = str(sconfig.get('from'))
@@ -3995,7 +3994,7 @@ def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str
     return session, url
 
 
-def patchwork_set_state(msgids: List[str], state: str) -> bool:
+def patchwork_set_state(msgids: List[str], state: str) -> None:
     # Do we have a pw-key defined in config?
     config = get_main_config()
     pwkey = str(config.get('pw-key', ''))
@@ -4003,7 +4002,7 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
     pwproj = str(config.get('pw-project', ''))
     if not (pwkey and pwurl and pwproj):
         logger.debug('Patchwork support requires pw-key, pw-url and pw-project settings')
-        return False
+        return
     pses, url = get_patchwork_session(pwkey, pwurl)
     patches_url = '/'.join((url, 'patches'))
     tochange = list()
@@ -4042,8 +4041,6 @@ def patchwork_set_state(msgids: List[str], state: str) -> bool:
                     logger.info(' -> %s : %s', state, title)
             except requests.exceptions.RequestException as ex:
                 logger.debug('Patchwork REST error: %s', ex)
-
-    return True
 
 
 def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[EmailMessage],
@@ -4123,7 +4120,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             rdata = res.json()
             if rdata.get('result') == 'success':
                 return len(tosend)
-        except Exception as ex:  # noqa
+        except Exception:
             logger.critical('Odd response from the endpoint: %s', res.text)
             return 0
 
@@ -4251,7 +4248,7 @@ def get_email_signature() -> str:
     return signature
 
 
-def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[list]]:
+def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[List[EmailMessage]]]:
     msgid = None
     with_thread = True
     pickings = set()

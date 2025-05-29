@@ -22,22 +22,26 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Utilities",
 ]
-dynamic = ["dependencies"]
+dependencies = [
+    "requests>=2.24,<3.0",
+    "git-filter-repo>=2.30,<3.0",
+    "dkimpy>=1.0,<2.0",
+    "patatt>=0.6,<2.0",
+]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
+    "mypy",
+    "pip-tools",
     "pytest",
+    "ruff",
     "types-requests",
 ]
-shtab = [
-    "shtab",
+
+[project.optional-dependencies]
+completion = [
+    "shtab>=1.7",
 ]
-
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.in"] }
-
-[tool.setuptools.dynamic.optional-dependencies]
-completion = { file = ["misc/requirements-completion.in"] }
 
 [tool.setuptools.packages.find]
 where = ['src']
@@ -69,3 +73,9 @@ files = [
     {filename = "src/b4/man/b4.5.rst"},
     {filename = "src/b4/man/b4.5"},
 ]
+
+[tool.ruff.lint]
+select = [
+    "PGH004", # https://docs.astral.sh/ruff/rules/blanket-noqa/
+]
+flake8-quotes.inline-quotes = "single"
