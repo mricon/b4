@@ -10,10 +10,12 @@ import logging
 import b4
 import sys
 
+from typing import Any, Optional, Sequence, Union
+
 logger = b4.logger
 
 
-def cmd_retrieval_common_opts(sp):
+def cmd_retrieval_common_opts(sp: argparse.ArgumentParser) -> None:
     sp.add_argument('msgid', nargs='?',
                     help='Message ID to process, or pipe a raw message')
     sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
@@ -26,7 +28,7 @@ def cmd_retrieval_common_opts(sp):
                     help='Only retrieve the message matching the msgid and ignore the rest of the thread')
 
 
-def cmd_mbox_common_opts(sp):
+def cmd_mbox_common_opts(sp: argparse.ArgumentParser) -> None:
     cmd_retrieval_common_opts(sp)
     sp.add_argument('-o', '--outdir', default='.',
                     help='Output into this directory (or use - to output mailbox contents to stdout)')
@@ -38,7 +40,7 @@ def cmd_mbox_common_opts(sp):
                     help='Save as maildir (avoids mbox format ambiguities)')
 
 
-def cmd_am_common_opts(sp):
+def cmd_am_common_opts(sp: argparse.ArgumentParser) -> None:
     sp.add_argument('-v', '--use-version', dest='wantver', type=int, default=None,
                     help='Get a specific version of the patch/series')
     sp.add_argument('-t', '--apply-cover-trailers', dest='covertrailers', action='store_true', default=False,
@@ -68,59 +70,59 @@ def cmd_am_common_opts(sp):
                       help='Add a Message-ID: trailer to every patch')
 
 
-def cmd_mbox(cmdargs):
+def cmd_mbox(cmdargs: argparse.Namespace) -> None:
     import b4.mbox
     b4.mbox.main(cmdargs)
 
 
-def cmd_kr(cmdargs):
+def cmd_kr(cmdargs: argparse.Namespace) -> None:
     import b4.kr
     b4.kr.main(cmdargs)
 
 
-def cmd_prep(cmdargs):
+def cmd_prep(cmdargs: argparse.Namespace) -> None:
     import b4.ez
     b4.ez.cmd_prep(cmdargs)
 
 
-def cmd_trailers(cmdargs):
+def cmd_trailers(cmdargs: argparse.Namespace) -> None:
     import b4.ez
     b4.ez.cmd_trailers(cmdargs)
 
 
-def cmd_send(cmdargs):
+def cmd_send(cmdargs: argparse.Namespace) -> None:
     import b4.ez
     b4.ez.cmd_send(cmdargs)
 
 
-def cmd_am(cmdargs):
+def cmd_am(cmdargs: argparse.Namespace) -> None:
     import b4.mbox
     b4.mbox.main(cmdargs)
 
 
-def cmd_shazam(cmdargs):
+def cmd_shazam(cmdargs: argparse.Namespace) -> None:
     import b4.mbox
     b4.mbox.main(cmdargs)
 
 
-def cmd_pr(cmdargs):
+def cmd_pr(cmdargs: argparse.Namespace) -> None:
     import b4.pr
     b4.pr.main(cmdargs)
 
 
-def cmd_ty(cmdargs):
+def cmd_ty(cmdargs: argparse.Namespace) -> None:
     import b4.ty
     b4.ty.main(cmdargs)
 
 
-def cmd_diff(cmdargs):
+def cmd_diff(cmdargs: argparse.Namespace) -> None:
     import b4.diff
     b4.diff.main(cmdargs)
 
 
 class ConfigOption(argparse.Action):
     """Action class for storing key=value arguments in a dict."""
-    def __call__(self, parser, namespace, keyval, option_string=None):
+    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, keyval: Union[str, Sequence[Any], None], option_string: Optional[str] = None) -> None:
         config = getattr(namespace, self.dest, None)
 
         if config is None:
@@ -137,7 +139,6 @@ class ConfigOption(argparse.Action):
 
 
 def setup_parser() -> argparse.ArgumentParser:
-    # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
         prog='b4',
         description='A tool to work with patches in public-inbox archives',
@@ -396,7 +397,7 @@ def setup_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cmd():
+def cmd() -> None:
     parser = setup_parser()
     cmdargs = parser.parse_args()
     logger.setLevel(logging.DEBUG)
@@ -431,7 +432,6 @@ if __name__ == '__main__':
     # We're running from a checkout, so reflect git commit in the version
     import os
 
-    # noinspection PyBroadException
     try:
         if b4.__VERSION__.find('-dev') > 0:
             base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))

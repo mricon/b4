@@ -78,7 +78,7 @@ def git_get_commit_message(gitdir: Optional[str], rev: str) -> Tuple[int, Union[
     return b4.git_run_command(gitdir, args)
 
 
-def make_reply(reply_template: str, jsondata: dict, gitdir: Optional[str]) -> email.message.EmailMessage:
+def make_reply(reply_template: str, jsondata: Dict[str, str], gitdir: Optional[str]) -> email.message.EmailMessage:
     msg = email.message.EmailMessage()
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
     excludes = b4.get_excluded_addrs()
@@ -118,7 +118,7 @@ def make_reply(reply_template: str, jsondata: dict, gitdir: Optional[str]) -> em
     return msg
 
 
-def auto_locate_pr(gitdir: Optional[str], jsondata: dict, branch: str) -> Optional[str]:
+def auto_locate_pr(gitdir: Optional[str], jsondata: Dict[str, str], branch: str) -> Optional[str]:
     pr_commit_id = jsondata['pr_commit_id']
     logger.debug('Checking %s', jsondata['pr_commit_id'])
     if not b4.git_commit_exists(gitdir, pr_commit_id):
@@ -192,7 +192,7 @@ def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
     return MY_COMMITS
 
 
-def auto_locate_series(gitdir: Optional[str], jsondata: dict, branch: str,
+def auto_locate_series(gitdir: Optional[str], jsondata: Dict[str, str], branch: str,
                        since: str = '1.week') -> List[Tuple[int, Optional[str]]]:
     commits = get_all_commits(gitdir, branch, since)
 
@@ -238,7 +238,7 @@ def auto_locate_series(gitdir: Optional[str], jsondata: dict, branch: str,
     return found
 
 
-def set_branch_details(gitdir: Optional[str], branch: str, jsondata: dict, config: dict) -> Tuple[dict, dict]:
+def set_branch_details(gitdir: Optional[str], branch: str, jsondata: Dict[str, str], config: Dict[str, str]) -> Tuple[dict, dict]:
     binfo = get_branch_info(gitdir, branch)
     jsondata['branch'] = branch
     for key, val in binfo.items():
@@ -256,12 +256,11 @@ def set_branch_details(gitdir: Optional[str], branch: str, jsondata: dict, confi
     if 'thanks-treename' in config:
         jsondata['treename'] = config['thanks-treename']
     elif 'url' in binfo:
-        # noinspection PyBroadException
         try:
             # Try to grab the last two chunks of the path
             purl = Path(binfo['url'])
             jsondata['treename'] = os.path.join(purl.parts[-2], purl.parts[-1])
-        except:
+        except Exception:
             # Something went wrong... just use the whole URL
             jsondata['treename'] = binfo['url']
     else:
@@ -270,7 +269,7 @@ def set_branch_details(gitdir: Optional[str], branch: str, jsondata: dict, confi
     return jsondata, config
 
 
-def generate_pr_thanks(gitdir: Optional[str], jsondata: dict, branch: str) -> email.message.EmailMessage:
+def generate_pr_thanks(gitdir: Optional[str], jsondata: Dict[str, str], branch: str) -> email.message.EmailMessage:
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_PR_TEMPLATE
@@ -299,7 +298,7 @@ def generate_pr_thanks(gitdir: Optional[str], jsondata: dict, branch: str) -> em
     return msg
 
 
-def generate_am_thanks(gitdir: Optional[str], jsondata: dict, branch: str, since: str) -> email.message.EmailMessage:
+def generate_am_thanks(gitdir: Optional[str], jsondata: Dict[str, str], branch: str, since: str) -> email.message.EmailMessage:
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_AM_TEMPLATE
@@ -400,7 +399,7 @@ def send_messages(listing: List[Dict], branch: str, cmdargs: argparse.Namespace)
         send_email = True
         try:
             smtp, fromaddr = b4.get_smtp()
-        except Exception as ex:  # noqa
+        except Exception as ex:
             logger.critical('Failed to configure the smtp connection:')
             logger.critical(ex)
             sys.exit(1)
