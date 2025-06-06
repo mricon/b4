@@ -5,6 +5,9 @@ import email
 import email.parser
 import mailbox
 import io
+import pathlib
+
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 
 @pytest.mark.parametrize('source,expected', [
@@ -14,7 +17,7 @@ import io
     ('badsig', (False, False, False, 'B6C41CE35664996C', None)),
     ('no-pubkey', (False, False, False, None, None)),
 ])
-def test_check_gpg_status(sampledir, source, expected):
+def test_check_gpg_status(sampledir: str, source: str, expected: Tuple[bool, bool, bool, Optional[str], Optional[str]]) -> None:
     with open(f'{sampledir}/gpg-{source}.txt', 'r') as fh:
         status = fh.read()
     assert b4.check_gpg_status(status) == expected
@@ -27,7 +30,7 @@ def test_check_gpg_status(sampledir, source, expected):
     # mailbox.mbox does not properly handle 8bit-clean headers
     ('save-8bit-clean', r'From: Unicôdé', 0, False),
 ])
-def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
+def test_save_git_am_mbox(sampledir: Optional[str], tmp_path: pathlib.Path, source: Optional[str], regex: str, flags: int, ismbox: bool) -> None:
     import re
     if source is not None:
         if ismbox:
@@ -72,7 +75,7 @@ def test_save_git_am_mbox(sampledir, tmp_path, source, regex, flags, ismbox):
       ('person', 'Signed-off-by', 'Wrapped Persontrailer <broken@example.com>', None),
       ]),
 ])
-def test_parse_trailers(sampledir, source, expected):
+def test_parse_trailers(sampledir: str, source: str, expected: List[Tuple[str, str, str, Optional[str]]]) -> None:
     with open(f'{sampledir}/{source}.txt', 'r') as fh:
         msg = email.message_from_file(fh)
         lmsg = b4.LoreMessage(msg)
@@ -116,7 +119,7 @@ def test_parse_trailers(sampledir, source, expected):
     ('bare-address', {}, {}, 'defaults', {}),
     ('stripped-lines', {}, {}, 'defaults', {}),
 ])
-def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg):
+def test_followup_trailers(sampledir: str, source: str, serargs: Dict[str, Any], amargs: Dict[str, Any], reference: str, b4cfg: Dict[str, Any]) -> None:
     b4.MAIN_CONFIG.update(b4cfg)
     lmbx = b4.LoreMailbox()
     for msg in mailbox.mbox(f'{sampledir}/trailers-followup-{source}.mbox'):
@@ -187,7 +190,7 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
      '<20240319-very-long-message-id-that-spans-multiple-lines-for-sure-because-longer-than-75-characters-abcde123456@longdomain.example.com>',
      'encode'),
 ])
-def test_header_wrapping(sampledir, hval, verify, tr):
+def test_header_wrapping(sampledir: str, hval: str, verify: str, tr: Literal['encode', 'decode', 'preserve']) -> None:
     if ':' in hval:
         chunks = hval.split(':', maxsplit=1)
         hname = chunks[0].strip()
@@ -216,7 +219,7 @@ def test_header_wrapping(sampledir, hval, verify, tr):
     ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx=2C_Foo?=', 'quux@example.com')],
      'foo@example.com, =?utf-8?q?Qu=C3=BBx=2C_Foo?= <quux@example.com>', False),
 ])
-def test_format_addrs(pairs, verify, clean):
+def test_format_addrs(pairs: List[Tuple[str, str]], verify: str, clean: bool) -> None:
     formatted = b4.format_addrs(pairs, clean)
     assert formatted == verify
 
@@ -233,7 +236,7 @@ def test_format_addrs(pairs, verify, clean):
     ('-7', 5, []),
     ('1-8', 3, [1, 2, 3]),
 ])
-def test_parse_int_range(intrange, upper, expected):
+def test_parse_int_range(intrange: str, upper: int, expected: List[int]) -> None:
     assert list(b4.parse_int_range(intrange, upper)) == expected
 
 
@@ -248,6 +251,6 @@ def test_parse_int_range(intrange, upper, expected):
     ('[PATCH RFC v3] This is a [patch]', ['RFC'], '[PATCH RFC v3] This is a [patch]'),
     ('[PATCH RFC v3 2/3] This is a patch', ['netdev', 'bpf'], '[PATCH RFC netdev bpf v3 2/3] This is a patch'),
 ])
-def test_lore_subject_prefixes(subject, extras, expected):
+def test_lore_subject_prefixes(subject: str, extras: Optional[List[str]], expected: str) -> None:
     lsubj = b4.LoreSubject(subject)
     assert lsubj.get_rebuilt_subject(eprefixes=extras) == expected

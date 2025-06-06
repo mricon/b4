@@ -5,9 +5,11 @@ import b4.ez
 import b4.mbox
 import b4.command
 
+from typing import Any, Dict, Generator, List, Optional, Tuple
+
 
 @pytest.fixture(scope="function")
-def prepdir(gitdir):
+def prepdir(gitdir: str) -> Generator[str, None, None]:
     b4.MAIN_CONFIG.update({'prep-cover-strategy': 'branch-description'})
     parser = b4.command.setup_parser()
     b4args = ['--no-stdin', '--no-interactive', '--offline-mode', 'prep', '-n', 'pytest']
@@ -32,7 +34,7 @@ def prepdir(gitdir):
      ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'], 'trailers-thread-with-followups-and-tripledash',
      None),
 ])
-def test_trailers(sampledir, prepdir, mboxf, bundlef, rep, trargs, compareargs, compareout, b4cfg):
+def test_trailers(sampledir: str, prepdir: str, mboxf: str, bundlef: Optional[str], rep: Optional[Tuple[bytes, bytes]], trargs: List[str], compareargs: List[str], compareout: str, b4cfg: Dict[str, Any]) -> None:
     if b4cfg:
         b4.MAIN_CONFIG.update(b4cfg)
     config = b4.get_main_config()

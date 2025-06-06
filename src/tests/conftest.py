@@ -1,11 +1,14 @@
 import pytest
 import b4
 import os
+import pathlib
 import sys
+
+from typing import Generator
 
 
 @pytest.fixture(scope="function", autouse=True)
-def settestdefaults(tmp_path):
+def settestdefaults(tmp_path: pathlib.Path) -> None:
     topdir = b4.git_get_toplevel()
     if topdir and topdir != os.getcwd():
         os.chdir(topdir)
@@ -23,15 +26,15 @@ def settestdefaults(tmp_path):
 
 
 @pytest.fixture(scope="function")
-def sampledir(request):
-    return os.path.join(request.fspath.dirname, 'samples')
+def sampledir(request: pytest.FixtureRequest) -> str:
+    return os.path.join(request.path.parent, 'samples')
 
 
 @pytest.fixture(scope="function")
-def gitdir(request, tmp_path):
-    sampledir = os.path.join(request.fspath.dirname, 'samples')
+def gitdir(request: pytest.FixtureRequest, tmp_path: pathlib.Path) -> Generator[str, None, None]:
+    sampledir = os.path.join(request.path.parent, 'samples')
     # look for bundle file specific to the calling fspath
-    bname = request.fspath.basename[5:-3]
+    bname = request.path.name[5:-3]
     bfile = os.path.join(sampledir, f'{bname}-gitdir.bundle')
     if not os.path.exists(bfile):
         # Fall back to the default
