@@ -24,11 +24,13 @@ classifiers = [
 ]
 dynamic = ["dependencies"]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest",
     "types-requests",
 ]
+
+[project.optional-dependencies]
 shtab = [
     "shtab",
 ]
