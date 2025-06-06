@@ -256,7 +256,6 @@ def set_branch_details(gitdir: Optional[str], branch: str, jsondata: dict, confi
     if 'thanks-treename' in config:
         jsondata['treename'] = config['thanks-treename']
     elif 'url' in binfo:
-        # noinspection PyBroadException
         try:
             # Try to grab the last two chunks of the path
             purl = Path(binfo['url'])

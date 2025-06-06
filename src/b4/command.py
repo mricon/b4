@@ -137,7 +137,6 @@ class ConfigOption(argparse.Action):
 
 
 def setup_parser() -> argparse.ArgumentParser:
-    # noinspection PyTypeChecker
     parser = argparse.ArgumentParser(
         prog='b4',
         description='A tool to work with patches in public-inbox archives',
@@ -431,7 +430,6 @@ if __name__ == '__main__':
     # We're running from a checkout, so reflect git commit in the version
     import os
 
-    # noinspection PyBroadException
     try:
         if b4.__VERSION__.find('-dev') > 0:
             base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
