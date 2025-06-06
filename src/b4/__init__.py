@@ -207,10 +207,12 @@ class LoreMailbox:
         # To qualify for a partial reroll:
         # 1. Needs to be version > 1
         # 2. Replies need to be to the exact X/N of the previous revision
-        if revision <= 1 or revision - 1 not in self.series:
+        if revision <= 1:
+            return
+        pser = self.get_series(revision - 1, sloppytrailers=sloppytrailers)
+        if pser is None:
             return
         # Are existing patches replies to previous revisions with the same counter?
-        pser = self.get_series(revision - 1, sloppytrailers=sloppytrailers)
         lser = self.series[revision]
         sane = True
         for patch in lser.patches:
@@ -245,11 +247,12 @@ class LoreMailbox:
         logger.debug('Reconstituting a partial reroll')
         at = 0
         for patch in lser.patches:
-            if pser.patches[at] is None:
+            pserpatch = pser.patches[at]
+            if pserpatch is None:
                 at += 1
                 continue
             if patch is None:
-                ppatch = copy.deepcopy(pser.patches[at])
+                ppatch = copy.deepcopy(pserpatch)
                 ppatch.revision = lser.revision
                 ppatch.reroll_from_revision = pser.revision
                 lser.patches[at] = ppatch
@@ -353,12 +356,12 @@ class LoreMailbox:
                 if pmsg is None:
                     # Can't find the message we're replying to here
                     continue
-            elif fmsg.in_reply_to in self.msgid_map:
-                logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
-                pmsg = self.msgid_map[fmsg.in_reply_to]
             else:
-                logger.debug('  missing message, skipping: %s', fmsg.in_reply_to)
-                continue
+                pmsg = self.msgid_map[fmsg.in_reply_to]
+                if pmsg is None:
+                    logger.debug('  missing message, skipping: %s', fmsg.in_reply_to)
+                    continue
+                logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
             for ltr in mismatches:
