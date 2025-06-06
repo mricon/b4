@@ -51,7 +51,7 @@ emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length
 qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 try:
-    import dkim  # type: ignore[import-not-found]
+    import dkim  # type: ignore[import-not-found, import-untyped]
 
     can_dkim = True
 except ModuleNotFoundError:
@@ -145,7 +145,7 @@ DEFAULT_CONFIG = {
     'thanks-pr-template': None,
     # See thanks-am-template.example
     'thanks-am-template': None,
-    # If this is not set, we'll use what we find in 
+    # If this is not set, we'll use what we find in
     # git-config for gpg.program, and if that's not set,
     # we'll use "gpg" and hope for the better
     'gpgbin': None,
@@ -1038,6 +1038,8 @@ class LoreSeries:
         return start_commit, end_commit
 
     def save_cover(self, outfile: str) -> None:
+        if self.patches[0] is None:
+            return
         cover_msg = self.patches[0].get_am_message(add_trailers=False)
         with open(outfile, 'wb') as fh:
             fh.write(LoreMessage.get_msg_as_bytes(cover_msg, headers='decode'))
@@ -1220,7 +1222,12 @@ class LoreMessage:
         self.pw_ci_status = None
         self.local_ci_status = None
 
-        self.msgid = LoreMessage.get_clean_msgid(self.msg)
+        msgid = LoreMessage.get_clean_msgid(self.msg)
+        if not msgid:
+            # We don't really deal with messages that don't have a valid Message-ID
+            logger.error('Message without a valid Message-ID, cannot process')
+            raise ValueError('Message without a valid Message-ID')
+        self.msgid = msgid
         self.lsubject = LoreSubject(msg['Subject'])
         # Copy them into this object for convenience
         self.full_subject = self.lsubject.full_subject
@@ -1269,8 +1276,12 @@ class LoreMessage:
         msgdate = self.msg.get('Date')
         if msgdate:
             dtuple = email.utils.parsedate_tz(str(msgdate))
+            if dtuple is None:
+                # If we can't parse the date, use the current time
+                logger.warning('Could not parse Date: %s', msgdate)
+                self.date = datetime.datetime.now()
             # Invalid timezone (e.g. -9900)
-            if abs(dtuple[-1]) > 86400:
+            elif dtuple[-1] is not None and abs(dtuple[-1]) > 86400:
                 self.date = datetime.datetime(*dtuple[:6])
             else:
                 self.date = email.utils.parsedate_to_datetime(str(msgdate))
@@ -1354,13 +1365,13 @@ class LoreMessage:
         return trailers, mismatches
 
     @property
-    def git_patch_id(self) -> str:
+    def git_patch_id(self) -> Optional[str]:
         if self._git_patch_id is None and self.has_diff:
             self._git_patch_id = LoreMessage.get_patch_id(self.body)
         return self._git_patch_id
 
     @property
-    def pwhash(self) -> str:
+    def pwhash(self) -> Optional[str]:
         if self._pwhash is None and self.has_diff:
             self._pwhash = LoreMessage.get_patchwork_hash(self.body)
         return self._pwhash
@@ -1395,6 +1406,8 @@ class LoreMessage:
         return self._attestors
 
     def _load_dkim_attestors(self) -> None:
+        # This should be always the case, but assert it anyway
+        assert isinstance(self._attestors, list)
         if not can_network:
             logger.debug('Message has DKIM signatures, but can_network is off')
             return
@@ -1491,6 +1504,9 @@ class LoreMessage:
             logger.debug('Message has %s headers, but can_patatt is off', DEVSIG_HDR)
             return
 
+        # This should be always the case, but assert it anyway
+        assert isinstance(self._attestors, list)
+
         # load our key sources if necessary
         ddir = get_data_dir()
         pdir = os.path.join(ddir, 'keyring')
@@ -1561,6 +1577,8 @@ class LoreMessage:
         if not nocache:
             cachedata = get_cache(cacheid, suffix='checks', as_json=True)
             if cachedata is not None:
+                assert isinstance(cachedata, list), \
+                    'Cache data for %s is not a list: %s' % (cacheid, str(cachedata))
                 return cachedata
 
         logger.debug('Checking ident=%s using %s', ident, cmdargs[0])
@@ -1616,6 +1634,8 @@ class LoreMessage:
 
         cachedata = get_cache(pwurl + pwproj + msgid, suffix='lookup', as_json=True)
         if cachedata is not None:
+            assert isinstance(cachedata, dict), \
+                'Cache data for %s is not a dict: %s' % (msgid, str(cachedata))
             return cachedata
 
         pses, url = get_patchwork_session(pwkey, pwurl)
@@ -1625,7 +1645,7 @@ class LoreMessage:
             ('archived', 'false'),
             ('msgid', msgid),
         ]
-        pwdata = None
+        pwdata: Optional[Dict[str, str]] = None
         try:
             logger.debug('looking up patch_id of msgid=%s', msgid)
             rsp = pses.get(patches_url, params=params, stream=False)
@@ -2621,10 +2641,16 @@ class LoreAttestor:
     def trailer(self) -> str:
         if self.keyalgo:
             mode = self.keyalgo
-        else:
+        elif self.mode is not None:
             mode = self.mode
+        else:
+            mode = 'unknown'
+        if self.identity is None:
+            identity = 'unknown'
+        else:
+            identity = self.identity.lower()
 
-        return '%s/%s' % (mode, self.identity.lower())
+        return f'{mode}/{identity}'
 
     def check_time_drift(self, emldate: datetime.datetime, maxdays: int = 30) -> bool:
         if not self.passing or self.signtime is None:
@@ -2735,7 +2761,7 @@ def _run_command(cmdargs: List[str], stdin: Optional[bytes] = None,
 
 def gpg_run_command(args: List[str], stdin: Optional[bytes] = None) -> Tuple[int, bytes, bytes]:
     config = get_main_config()
-    gpgbin = config.get('gpgbin', 'gpg') 
+    gpgbin = config.get('gpgbin', 'gpg')
     if not isinstance(gpgbin, str):
         logger.critical('gpgbin must be a string, falling back to default')
         gpgbin = 'gpg'
@@ -3140,7 +3166,9 @@ def get_msgid_from_stdin() -> Optional[str]:
     if not sys.stdin.isatty():
         message = email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parsebytes(
             sys.stdin.buffer.read(), headersonly=True)
-        return message.get('Message-ID', None)
+        msgid = message.get('Message-ID', None)
+        if msgid:
+            return str(msgid)
     return None
 
 
@@ -4524,8 +4552,8 @@ def get_git_bool(gitbool: str) -> bool:
 
 def mailbox_email_factory(fh: BinaryIO) -> EmailMessage:
     """Factory function to create EmailMessage objects"""
-
-    return email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh)
+    msg = email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh)  # type: EmailMessage
+    return msg
 
 
 def get_msgs_from_mailbox_or_maildir(mbmd: str) -> List[EmailMessage]:
