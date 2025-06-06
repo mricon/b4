@@ -510,12 +510,12 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: Optional[List[int]]) -> No
 
     try:
         allto = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('to', [])])
-    except Exception as ex:  # noqa
+    except Exception as ex:
         allto = []
         logger.debug('Unable to parse the To: header in %s: %s', lmsg.msgid, str(ex))
     try:
         allcc = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('cc', [])])
-    except Exception as ex:  # noqa
+    except Exception as ex:
         allcc = []
         logger.debug('Unable to parse the Cc: header in %s: %s', lmsg.msgid, str(ex))
 

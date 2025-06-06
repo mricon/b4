@@ -261,7 +261,7 @@ def set_branch_details(gitdir: Optional[str], branch: str, jsondata: dict, confi
             # Try to grab the last two chunks of the path
             purl = Path(binfo['url'])
             jsondata['treename'] = os.path.join(purl.parts[-2], purl.parts[-1])
-        except:
+        except Exception:
             # Something went wrong... just use the whole URL
             jsondata['treename'] = binfo['url']
     else:
@@ -400,7 +400,7 @@ def send_messages(listing: List[Dict], branch: str, cmdargs: argparse.Namespace)
         send_email = True
         try:
             smtp, fromaddr = b4.get_smtp()
-        except Exception as ex:  # noqa
+        except Exception as ex:
             logger.critical('Failed to configure the smtp connection:')
             logger.critical(ex)
             sys.exit(1)

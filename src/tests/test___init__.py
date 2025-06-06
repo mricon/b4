@@ -1,4 +1,4 @@
-import pytest  # noqa
+import pytest
 import b4
 import os
 import email
@@ -183,8 +183,8 @@ def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg)
     # Test short message-id
     ('Message-ID: <20240319-short-message-id@example.com>', '<20240319-short-message-id@example.com>', 'encode'),
     # Test long message-id
-    ('Message-ID: <20240319-very-long-message-id-that-spans-multiple-lines-for-sure-because-longer-than-75-characters-abcde123456@longdomain.example.com>',  # noqa
-     '<20240319-very-long-message-id-that-spans-multiple-lines-for-sure-because-longer-than-75-characters-abcde123456@longdomain.example.com>',  # noqa
+    ('Message-ID: <20240319-very-long-message-id-that-spans-multiple-lines-for-sure-because-longer-than-75-characters-abcde123456@longdomain.example.com>',
+     '<20240319-very-long-message-id-that-spans-multiple-lines-for-sure-because-longer-than-75-characters-abcde123456@longdomain.example.com>',
      'encode'),
 ])
 def test_header_wrapping(sampledir, hval, verify, tr):

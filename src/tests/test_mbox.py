@@ -1,4 +1,4 @@
-import pytest  # noqa
+import pytest
 import os
 import b4
 import b4.mbox
@@ -24,7 +24,6 @@ def test_shazam(sampledir, gitdir, mboxf, shazamargs, compareargs, compareout, b
     cmdargs = parser.parse_args(shazamargs)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
-        assert e.type == SystemExit
         assert e.value.code == 0
     out, logstr = b4.git_run_command(None, compareargs)
     assert out == 0

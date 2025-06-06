@@ -1443,7 +1443,7 @@ class LoreMessage:
             try:
                 res = dkim.verify(self.msg.as_bytes(policy=emlpolicy), logger=dkimlogger)
                 logger.debug('DKIM verify results: %s=%s', identity, res)
-            except Exception as ex:  # noqa
+            except Exception as ex:
                 # Usually, this is due to some DNS resolver failure, which we can't
                 # possibly cleanly try/catch. Just mark it as failed and move on.
                 logger.debug('DKIM attestation failed: %s', ex)
@@ -2664,7 +2664,7 @@ class LoreAttestor:
             return None
         try:
             return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc)
-        except:  # noqa
+        except Exception:
             logger.debug('Failed parsing t=%s', ts)
         return None
 
@@ -2988,7 +2988,7 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
             resolvers = [x.strip() for x in config['attestation-dns-resolvers'].split(',')]
             if resolvers:
                 # Don't force this as an automatically discovered dependency
-                import dns.resolver  # noqa
+                import dns.resolver
                 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
                 dns.resolver.default_resolver.nameservers = resolvers
         except ImportError:
@@ -4123,7 +4123,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[
             rdata = res.json()
             if rdata.get('result') == 'success':
                 return len(tosend)
-        except Exception as ex:  # noqa
+        except Exception:
             logger.critical('Odd response from the endpoint: %s', res.text)
             return 0
 

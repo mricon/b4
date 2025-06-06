@@ -1,4 +1,4 @@
-import pytest  # noqa
+import pytest
 import b4
 import os
 import sys

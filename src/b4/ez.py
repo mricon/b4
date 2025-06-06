@@ -40,7 +40,7 @@ except ModuleNotFoundError:
     can_patatt = False
 
 try:
-    import git_filter_repo as fr  # noqa
+    import git_filter_repo as fr
 
     can_gfr = True
 except ModuleNotFoundError:
@@ -199,7 +199,7 @@ def auth_new() -> None:
                 logger.info('Once you receive it, run b4 send --web-auth-verify [challenge-string]')
             sys.exit(0)
 
-        except Exception as ex:  # noqa
+        except Exception:
             logger.critical('Odd response from the endpoint: %s', res.text)
             sys.exit(1)
 
@@ -241,7 +241,7 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
                 logger.info('You may now use this endpoint for submitting patches.')
             sys.exit(0)
 
-        except Exception as ex:  # noqa
+        except Exception:
             logger.critical('Odd response from the endpoint: %s', res.text)
             sys.exit(1)
 
@@ -316,7 +316,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                             break
                         cover_sections.append(section)
                     cover = '\n---\n'.join(cover_sections).strip()
-                except Exception as ex:  # noqa
+                except Exception as ex:
                     logger.critical('CRITICAL: unable to restore tracking information, ignoring')
                     logger.critical('          %s', ex)
 
@@ -771,7 +771,7 @@ class FRCommitMessageEditor:
     def add(self, commit: str, message: str):
         self.edit_map[commit.encode()] = message.encode()
 
-    def callback(self, commit, metadata):  # noqa
+    def callback(self, commit, metadata):
         if commit.original_id in self.edit_map:
             commit.message = self.edit_map[commit.original_id]
 
@@ -1224,7 +1224,7 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
         return list()
     # Run this command from git toplevel
     topdir = b4.git_get_toplevel()
-    ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes, rundir=topdir)  # noqa
+    ecode, out, err = b4._run_command(cmdargs, stdin=msgbytes, rundir=topdir)
     if ecode > 0:
         logger.critical('CRITICAL: Running %s failed:', ' '.join(cmdargs))
         logger.critical(err.decode(errors='ignore'))
@@ -2105,7 +2105,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     else:
         try:
             smtp, fromaddr = b4.get_smtp(dryrun=cmdargs.dryrun)
-        except Exception as ex:  # noqa
+        except Exception as ex:
             logger.critical('Failed to configure the smtp connection:')
             logger.critical(ex)
             sys.exit(1)
