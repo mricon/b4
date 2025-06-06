@@ -502,7 +502,7 @@ class LoreSeries:
     has_cover: bool = False
     partial_reroll: bool = False
     subject: str
-    indexes: Optional[List[Tuple[str, str]]] = None
+    _indexes: Optional[List[Tuple[str, str]]] = None
     base_commit: Optional[str] = None
     change_id: Optional[str] = None
     prereq_patch_ids: Optional[List[str]] = None
@@ -795,8 +795,11 @@ class LoreSeries:
 
         return msgs
 
-    def populate_indexes(self):
-        self.indexes = list()
+    @property
+    def indexes(self) -> List[Tuple[str, str]]:
+        if self._indexes is not None:
+            return self._indexes
+        self._indexes = list()
         seenfiles = set()
         for lmsg in self.patches[1:]:
             if lmsg is None or not lmsg.blob_indexes:
@@ -812,17 +815,11 @@ class LoreSeries:
                 if set(obh) == {'0'}:
                     # New file, will for sure apply clean
                     continue
-                self.indexes.append((ofn, obh))
+                self._indexes.append((ofn, obh))
+        return self._indexes
 
     def check_applies_clean(self, gitdir: Optional[str] = None,
                             at: Optional[str] = None) -> Tuple[int, List[Tuple[str, str]]]:
-        if self.indexes is None:
-            self.populate_indexes()
-
-        if self.indexes is None:
-            logger.debug('No indexes to check against')
-            return 0, list()
-
         mismatches = list()
         if at is None:
             at = 'HEAD'
