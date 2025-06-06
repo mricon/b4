@@ -22,10 +22,16 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Utilities",
 ]
-dynamic = ["dependencies"]
+dependencies = [
+    "requests>=2.24,<3.0",
+    "git-filter-repo>=2.30,<3.0",
+    "dkimpy>=1.0,<2.0",
+    "patatt>=0.6,<2.0",
+]
 
 [dependency-groups]
 dev = [
+    "pip-tools",
     "pytest",
     "types-requests",
 ]
@@ -34,9 +40,6 @@ dev = [
 completion = [
     "shtab>=1.7",
 ]
-
-[tool.setuptools.dynamic]
-dependencies = { file = ["requirements.in"] }
 
 [tool.setuptools.packages.find]
 where = ['src']
