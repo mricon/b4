@@ -79,3 +79,10 @@ select = [
     "PGH004", # https://docs.astral.sh/ruff/rules/blanket-noqa/
 ]
 flake8-quotes.inline-quotes = "single"
+
+[tool.pyright]
+typeCheckingMode = "off"
+
+# Configure mypy in strict mode
+[tool.mypy]
+strict = true
