@@ -4071,7 +4071,7 @@ def patchwork_set_state(msgids: List[str], state: str) -> None:
                 logger.debug('Patchwork REST error: %s', ex)
 
 
-def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, None], msgs: Sequence[EmailMessage],
+def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], msgs: Sequence[EmailMessage],
               fromaddr: Optional[str], destaddrs: Optional[Union[Set[str], List[str]]] = None,
               patatt_sign: bool = False, dryrun: bool = False,
               output_dir: Optional[str] = None, web_endpoint: Optional[str] = None,

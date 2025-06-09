@@ -31,6 +31,7 @@ import urllib.parse
 from typing import Any, Optional, Tuple, List, Union, Dict, Set
 from email import utils
 from string import Template
+from email.message import EmailMessage
 
 try:
     import patatt
@@ -40,8 +41,7 @@ except ModuleNotFoundError:
     can_patatt = False
 
 try:
-    import git_filter_repo as fr
-
+    import git_filter_repo as fr  # type: ignore[import-untyped]
     can_gfr = True
 except ModuleNotFoundError:
     can_gfr = False
@@ -66,7 +66,7 @@ base-commit: ${base_commit}
 change-id: ${change_id}
 ${prerequisites}
 Best regards,
--- 
+-- """ + ' ' + """
 ${signature}
 """
 
@@ -107,29 +107,34 @@ DEPS_HELP = """
 # during "b4 send".
 """
 
-PFHASH_CACHE = dict()
+# Cache of preflight hashes, used to avoid recalculating them
+PFHASH_CACHE: Dict[str, str]= dict()
 
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     config = b4.get_main_config()
     endpoint = config.get('send-endpoint-web', '')
-    if not re.search(r'^https?://', endpoint):
+    if not isinstance(endpoint, str):
+        logger.debug('Web submission endpoint (b4.send-endpoint-web) is not defined, or is not a string.')
+        endpoint = None
+    elif not re.search(r'^https?://', endpoint):
+        logger.debug('Web submission endpoint (b4.send-endpoint-web) is not a web URL.')
         endpoint = None
 
     if not endpoint:
         # Use the default endpoint if we are in the kernel repo
         topdir = b4.git_get_toplevel()
-        if os.path.exists(os.path.join(topdir, 'Kconfig')):
+        if topdir and os.path.exists(os.path.join(topdir, 'Kconfig')):
             logger.debug('No sendemail configs found, will use the default web endpoint')
             endpoint = DEFAULT_ENDPOINT
         else:
-            raise RuntimeError('Web submission endpoint (b4.send-endpoint-web) is not defined, or is not a web URL.')
+            raise RuntimeError('Web submission endpoint (b4.send-endpoint-web) is not defined, or is not valid.')
 
     usercfg = b4.get_user_config()
-    myemail = usercfg.get('email')
+    myemail = str(usercfg.get('email', ''))
     if not myemail:
         raise RuntimeError('No email configured, set user.email')
-    myname = usercfg.get('name')
+    myname = str(usercfg.get('name', ''))
     pconfig = patatt.get_main_config()
     selector = pconfig.get('selector', 'default')
     algo, keydata = patatt.get_algo_keydata(pconfig)
@@ -209,17 +214,17 @@ def auth_new() -> None:
 
 def auth_verify(cmdargs: argparse.Namespace) -> None:
     vstr = cmdargs.auth_verify
-    endpoint, myname, myemail, selector, algo, keydata = get_auth_configs()
+    endpoint, _, myemail, _, _, _ = get_auth_configs()
     logger.info('Signing challenge')
     # Create a minimal message
-    cmsg = email.message.EmailMessage()
+    cmsg = EmailMessage()
     cmsg.add_header('From', myemail)
     cmsg.add_header('Subject', 'b4-send-verify')
     cmsg.set_charset('utf-8')
     cmsg.set_payload(f'verify:{vstr}\n', charset='utf-8')
     bdata = cmsg.as_bytes(policy=b4.emlpolicy)
     try:
-        bdata = patatt.rfc2822_sign(bdata).decode()
+        sdata = patatt.rfc2822_sign(bdata).decode()
     except patatt.SigningError as ex:
         logger.critical('CRITICAL: Unable to sign verification message')
         logger.critical('          %s', ex)
@@ -227,7 +232,7 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
 
     req = {
         'action': 'auth-verify',
-        'msg': bdata,
+        'msg': sdata,
     }
     logger.info('Submitting verification to %s', endpoint)
     ses = b4.get_requests_session()
@@ -262,6 +267,8 @@ def get_rev_count(revrange: str, maxrevs: Optional[int] = 500) -> int:
 def get_base_forkpoint(basebranch: str, mybranch: Optional[str] = None) -> str:
     if mybranch is None:
         mybranch = b4.git_get_current_branch()
+        if not mybranch:
+            raise RuntimeError('Not currently on a branch, please checkout a b4-tracked branch')
     logger.debug('Finding the fork-point with %s', basebranch)
     gitargs = ['merge-base', '--fork-point', basebranch]
     lines = b4.git_get_command_lines(None, gitargs)
@@ -286,6 +293,8 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
     cover = tracking = patches = thread_msgid = revision = None
     if cmdargs.msgid:
         msgid = b4.get_msgid(cmdargs)
+        if not msgid:
+            raise RuntimeError('No message-id provided, cannot start a new series')
         list_msgs = b4.get_pi_thread_by_msgid(msgid)
         if not list_msgs:
             logger.critical('CRITICAL: no messages in the thread')
@@ -294,18 +303,21 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         for msg in list_msgs:
             lmbx.add_message(msg)
         lser = lmbx.get_series()
+        if not lser:
+            raise RuntimeError('No series found for message-id %s' % msgid)
         if lser.has_cover:
             cmsg = lser.patches[0]
-            b64tracking = cmsg.msg.get('x-b4-tracking')
-            if b64tracking:
+            assert cmsg is not None  # should never happen if has_cover is True
+            b4tracking = cmsg.msg.get('x-b4-tracking')
+            if b4tracking:
                 logger.debug('Found x-b4-tracking header, attempting to restore')
                 try:
                     # If we have b=, strip that out (we only support a single format,
                     # so there is currently no need to check what it's set to)
-                    if b64tracking.find('v=1; b=') >= 0:
-                        chunks = b64tracking.split('b=', maxsplit=1)
-                        b64tracking = chunks[1].strip()
-                    ztracking = base64.b64decode(b64tracking)
+                    if b4tracking.find('v=1; b=') >= 0:
+                        chunks = b4tracking.split('b=', maxsplit=1)
+                        b4tracking = chunks[1].strip()
+                    ztracking = base64.b64decode(b4tracking)
                     btracking = gzip.decompress(ztracking)
                     tracking = json.loads(btracking.decode())
                     logger.debug('tracking: %s', tracking)
@@ -353,7 +365,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                 cmdargs.fork_point = base_commit
         else:
             # Use the first patch as our thread_msgid
-            thread_msgid = lser.patches[1].msgid
+            fpmsg = lser.patches[1]
+            assert fpmsg is not None  # should in theory never happen
+            thread_msgid = fpmsg.msgid
 
         # We start with next revision
         revision = lser.revision + 1
@@ -416,8 +430,11 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
 
     elif cmdargs.enroll_base:
         basebranch = None
-        branchname = b4.git_get_current_branch()
-        seriesname = branchname
+        _cb = b4.git_get_current_branch()
+        if _cb is None:
+            logger.critical('CRITICAL: not currently on a branch, unable to enroll with a base')
+            sys.exit(1)
+        seriesname = branchname = _cb
         slug = re.sub(r'\W+', '-', branchname).strip('-').lower()
         enroll_base = cmdargs.enroll_base
         # Convert @{upstream}, @{push} to an abbreviated ref
@@ -509,7 +526,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
 
     if not cover:
         # create a default cover letter and store it where the strategy indicates
-        cover = ('EDITME: cover title for %s' % seriesname,
+        uname = str(usercfg.get('name', ''))
+        uemail = str(usercfg.get('email', ''))
+        carry = (f'EDITME: cover title for {seriesname}',
                  '',
                  '# Describe the purpose of this series. The information you put here',
                  '# will be used by the project maintainer to make a decision whether',
@@ -529,11 +548,11 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                  '# auto-populate the To: and Cc: trailers based on the code being',
                  '# modified.',
                  '',
-                 'Signed-off-by: %s <%s>' % (usercfg.get('name', ''), usercfg.get('email', '')),
+                 f'Signed-off-by: {uname} <{uemail}>',
                  '',
                  '',
                  )
-        cover = '\n'.join(cover)
+        cover = '\n'.join(carry)
         logger.info('Created the default cover letter, you can edit with --edit-cover.')
 
     if not tracking:
@@ -546,8 +565,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             prefixes = list(cmdargs.set_prefixes)
         else:
             config = b4.get_main_config()
-            if config.get('send-prefixes'):
-                prefixes = config.get('send-prefixes').split()
+            _sp = config.get('send-prefixes')
+            if _sp and isinstance(_sp, str):
+                prefixes = _sp.split()
 
         tracking = {
             'series': {
@@ -680,15 +700,19 @@ def get_cover_strategy(usebranch: Optional[str] = None) -> str:
     if usebranch:
         branch = usebranch
     else:
-        branch = b4.git_get_current_branch()
+        _cb = b4.git_get_current_branch()
+        if _cb is None:
+            logger.critical('CRITICAL: not currently on a branch, unable to determine cover strategy')
+            sys.exit(1)
+        branch = _cb
     # Check local branch config for the strategy
     bconfig = b4.get_config_from_git(rf'branch\.{branch}\..*')
     if 'b4-prep-cover-strategy' in bconfig:
-        strategy = bconfig.get('b4-prep-cover-strategy')
+        strategy = str(bconfig.get('b4-prep-cover-strategy'))
         logger.debug('Got strategy=%s from branch-config', strategy)
     else:
         config = b4.get_main_config()
-        strategy = config.get('prep-cover-strategy', 'commit')
+        strategy = str(config.get('prep-cover-strategy', 'commit'))
 
     if strategy in {'commit', 'branch-description', 'tip-commit'}:
         return strategy
@@ -699,6 +723,7 @@ def get_cover_strategy(usebranch: Optional[str] = None) -> str:
 
 def is_prep_branch(mustbe: bool = False, usebranch: Optional[str] = None) -> bool:
     mustmsg = 'CRITICAL: This is not a prep-managed branch.'
+    mybranch: Optional[str] = None
     if usebranch:
         mybranch = usebranch
     else:
@@ -865,7 +890,11 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
                     logger.debug('Pass: change-id %s found and is the latest posted series', change_id)
                     res[prereq] = (True, f'Change-id {change_id} found and is the latest available version')
                     lser = lmbx.get_series(wantser, codereview_trailers=False)
+                    assert lser is not None  # should never happen if we found the series
                     for lmsg in lser.patches[1:]:
+                        if not lmsg:
+                            # Should also never happen, but just in case
+                            raise RuntimeError('Found a None message in the series')
                         prereq_patches.append(lmsg.get_am_message(add_trailers=False))
                         known_patches[lmsg.git_patch_id] = lmsg
             else:
@@ -903,6 +932,9 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
                 continue
             # Always do no-parent for these
             s_msgs = b4.get_strict_thread(q_msgs, msgid, noparent=True)
+            if not s_msgs:
+                res[prereq] = (False, 'No matching message-id found on the server after strict thread check')
+                continue
             lmbx = b4.LoreMailbox()
             for s_msg in s_msgs:
                 lmbx.add_message(s_msg)
@@ -913,7 +945,14 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
 
             maxser = max(lmbx.series.keys())
             lser = lmbx.get_series(maxser, codereview_trailers=False)
+            if not lser:
+                logger.debug('FAIL: msgid=%s is not a series', msgid)
+                res[prereq] = (False, f'Message-id <{msgid}> is not a series')
+                continue
             for lmsg in lser.patches[1:]:
+                if lmsg is None:
+                    # For now, throw an error on incomplete series
+                    raise RuntimeError('Found a None message in the series')
                 prereq_patches.append(lmsg.get_am_message(add_trailers=False))
                 known_patches[lmsg.git_patch_id] = lmsg
             logger.debug('PASS: message-id found: %s', msgid)
@@ -928,7 +967,7 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
         res['base-commit: MISSING'] = (False, 'Series with dependencies require a base-commit')
     elif allgood:
         logger.info('Testing if all patches can be applied to %s', base_commit)
-        tos, ccs, tstr, mypatches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
+        _, _, _, mypatches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
         if get_cover_strategy() == "commit":
             # If the cover letter is stored as a commit, skip it to avoid empty patches
             prereq_patches += [x[1] for x in mypatches[1:]]
@@ -967,7 +1006,8 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
     store_preflight_check('check-deps')
 
 
-def get_series_start(usebranch: Optional[str] = None) -> str:
+def get_series_start(usebranch: Optional[str] = None) -> Optional[str]:
+    mybranch: Optional[str] = None
     if usebranch:
         mybranch = usebranch
     else:
@@ -1025,6 +1065,9 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         # Don't limit by committer in a prep branch
         limit_committer = None
         start = get_series_start()
+        if start is None:
+            logger.critical('CRITICAL: Could not find the start of the series')
+            sys.exit(1)
         cover, tracking = load_cover(strip_comments=True)
         if cmdargs.trailers_from:
             msgid = cmdargs.trailers_from
@@ -1068,7 +1111,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         patches = b4.git_range_to_patches(None, start, end, ignore_commits=ignore_commits,
                                           limit_committer=limit_committer)
         if cover:
-            cmsg = email.message.EmailMessage()
+            cmsg = EmailMessage()
             cmsg['Subject'] = f'[PATCH 0/{len(patches)}] cover'
             cmsg['Message-Id'] = '<cover>'
             cmsg.set_payload('cover', 'us-ascii')
@@ -1088,7 +1131,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     commit_map: Dict[str, b4.LoreMessage] = dict()
     by_patchid: Dict[str, str] = dict()
     for lmsg in bbox.series[1].patches:
-        if not lmsg:
+        if lmsg is None or lmsg.git_patch_id is None:
+            logger.debug('Skipping None or empty patch-id in %s', lmsg.subject if lmsg else 'unknown message')
             continue
         by_patchid[lmsg.git_patch_id] = lmsg.msgid
         commit_map[lmsg.msgid] = lmsg
@@ -1236,12 +1280,16 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
 
 
 def get_series_range(start_commit: Optional[str] = None, usebranch: Optional[str] = None) -> Tuple[str, str, str]:
+    mybranch: Optional[str] = None
     if usebranch:
         mybranch = usebranch
     else:
         mybranch = b4.git_get_current_branch()
     if not start_commit:
         start_commit = get_series_start(usebranch=mybranch)
+        if start_commit is None:
+            logger.critical('CRITICAL: Could not find the start of the series')
+            sys.exit(1)
     strategy = get_cover_strategy(usebranch=mybranch)
     if strategy == 'commit':
         gitargs = ['rev-parse', f'{start_commit}~1']
@@ -1252,8 +1300,11 @@ def get_series_range(start_commit: Optional[str] = None, usebranch: Optional[str
     if strategy == 'tip-commit':
         cover_commit = find_cover_commit(usebranch=mybranch)
         end_commit = b4.git_revparse_obj(f'{cover_commit}~1')
-    else:
+    elif mybranch:
         end_commit = b4.git_revparse_obj(mybranch)
+    else:
+        logger.critical('CRITICAL: Not currently on a branch, unable to determine end commit')
+        sys.exit(1)
 
     return base_commit, start_commit, end_commit
 
@@ -1262,16 +1313,16 @@ def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[s
                        ) -> Tuple[str, str, str, List[str], str, str]:
     base_commit, start_commit, end_commit = get_series_range(start_commit, usebranch)
     gitargs = ['shortlog', f'{start_commit}..{end_commit}']
-    ecode, shortlog = b4.git_run_command(None, gitargs)
+    _, shortlog = b4.git_run_command(None, gitargs)
     gitargs = ['diff', '--stat', f'{start_commit}..{end_commit}']
-    ecode, diffstat = b4.git_run_command(None, gitargs)
+    _, diffstat = b4.git_run_command(None, gitargs)
     gitargs = ['log', '--oneline', f'{start_commit}..{end_commit}']
-    ecode, oneline = b4.git_run_command(None, gitargs)
-    oneline = oneline.rstrip().splitlines()
+    _, _olout = b4.git_run_command(None, gitargs)
+    oneline = _olout.rstrip().splitlines()
     return base_commit, start_commit, end_commit, oneline, shortlog.rstrip(), diffstat.rstrip()
 
 
-def print_pretty_addrs(addrs: List[str], hdrname: str) -> None:
+def print_pretty_addrs(addrs: List[Tuple[str, str]], hdrname: str) -> None:
     if len(addrs) < 1:
         return
     logger.info('%s: %s', hdrname, b4.format_addrs([addrs[0]]))
@@ -1303,7 +1354,7 @@ def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) 
     if not domain:
         usercfg = b4.get_user_config()
         myemail = usercfg.get('email')
-        if myemail:
+        if isinstance(myemail, str):
             domain = re.sub(r'^[^@]*@', '', myemail)
         else:
             # Just use "b4" for the domain name (it doesn't need to be anything real)
@@ -1323,25 +1374,25 @@ def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) 
     return msgid_tpt
 
 
-def get_cover_dests(cbody: str) -> Tuple[List, List, str]:
+def get_cover_dests(cbody: str) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], str]:
     htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(cbody)
     tos = list()
     ccs = list()
     for mtr in list(mtrs):
-        if mtr.lname == 'to':
+        if mtr.lname == 'to' and mtr.addr is not None:
             tos.append(mtr.addr)
             mtrs.remove(mtr)
-        elif mtr.lname == 'cc':
+        elif mtr.lname == 'cc' and mtr.addr is not None:
             ccs.append(mtr.addr)
             mtrs.remove(mtr)
     cbody = b4.LoreMessage.rebuild_message(htrs, cmsg, mtrs, basement, sig)
     return tos, ccs, cbody
 
 
-def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, email.message.EmailMessage]],
+def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, EmailMessage]],
               cbody: str, datets: int, thread: bool = True) -> None:
     fp = patches[0][1]
-    cmsg = email.message.EmailMessage()
+    cmsg = EmailMessage()
     cmsg.add_header('From', fp['From'])
     fpls = b4.LoreSubject(fp['Subject'])
 
@@ -1360,7 +1411,7 @@ def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str,
         rethread(patches)
 
 
-def mixin_cover(cbody: str, patches: List[Tuple[str, email.message.EmailMessage]]) -> None:
+def mixin_cover(cbody: str, patches: List[Tuple[str, EmailMessage]]) -> None:
     msg = patches[0][1]
     pbody, pcharset = b4.LoreMessage.get_payload(msg)
     pheaders, pmessage, ptrailers, pbasement, psignature = b4.LoreMessage.get_body_parts(pbody)
@@ -1420,17 +1471,18 @@ def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
     return lsubject, cbody
 
 
-def rethread(patches: List[Tuple[str, email.message.EmailMessage]]) -> None:
+def rethread(patches: List[Tuple[str, EmailMessage]]) -> None:
     refto = patches[0][1].get('message-id')
-    for commit, msg in patches[1:]:
-        msg.add_header('References', refto)
-        msg.add_header('In-Reply-To', refto)
+    if refto is not None:
+        for commit, msg in patches[1:]:
+            msg.add_header('References', refto)
+            msg.add_header('In-Reply-To', refto)
 
 
 def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True,
                                prefixes: Optional[List[str]] = None, usebranch: Optional[str] = None,
                                expandprereqs: bool = True,
-                               ) -> Tuple[List, List, str, List[Tuple[str, email.message.EmailMessage]]]:
+                               ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], str, List[Tuple[str, EmailMessage]]]:
     cover, tracking = load_cover(strip_comments=True, usebranch=usebranch)
 
     if prefixes is None:
@@ -1465,15 +1517,19 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
                                       mailfrom=mailfrom,
                                       ignore_commits=ignore_commits)
 
-    base_commit, stc, endc, oneline, shortlog, diffstat = get_series_details(start_commit=start_commit,
-                                                                             usebranch=usebranch)
+    base_commit, _, _, _, shortlog, diffstat = get_series_details(start_commit=start_commit,
+                                                                  usebranch=usebranch)
 
     config = b4.get_main_config()
     cover_template = DEFAULT_COVER_TEMPLATE
     if config.get('prep-cover-template'):
         # Try to load this template instead
         try:
-            cover_template = b4.read_template(config['prep-cover-template'])
+            ctf = config['prep-cover-template']
+            if not isinstance(ctf, str):
+                logger.critical('ERROR: prep-cover-template must be a string, got %s', type(ctf).__name__)
+                sys.exit(1)
+            cover_template = b4.read_template(ctf)
         except FileNotFoundError:
             logger.critical('ERROR: prep-cover-template says to use %s, but it does not exist',
                             config['prep-cover-template'])
@@ -1520,9 +1576,12 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
             pver = chunks[-1]
             if expandprereqs and pcid and pver:
                 tagname, revision = get_sent_tagname(pcid, SENT_TAG_PREFIX, pver)
+                if revision is None:
+                    logger.debug('No revision found for change-id %s, skipping', pcid)
+                    continue
                 logger.debug('Checking if we have a sent version')
                 try:
-                    todests, ccdests, ppatches = get_sent_tag_as_patches(tagname, revision=revision)
+                    _, _, ppatches = get_sent_tag_as_patches(tagname, revision=revision)
                     for psha, ppatch in ppatches:
                         spatches.append(ppatch)
                 except RuntimeError:
@@ -1570,7 +1629,9 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
                 'oldrev': oldrev,
             }
             range_diff = Template(rangediff_template.lstrip()).safe_substitute(rd_tptvals)
-            range_diff += compare(oldrev, execvp=False)
+            _rdcmp = range_diff_compare(oldrev, execvp=False)
+            if _rdcmp:
+                range_diff += _rdcmp
             tptvals['range_diff'] = range_diff
         else:
             tptvals['range_diff'] = ""
@@ -1578,9 +1639,9 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     # Store tracking info in the header in a safe format, which should allow us to
     # fully restore our work from the already sent series.
     ztracking = gzip.compress(bytes(json.dumps(tracking), 'utf-8'))
-    b64tracking = base64.b64encode(ztracking).decode()
+    b4tracking = base64.b64encode(ztracking).decode()
     # A little trick for pretty wrapping
-    wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b64tracking, subsequent_indent=' ', width=75)
+    wrapped = textwrap.wrap('X-B4-Tracking: v=1; b=' + b4tracking, subsequent_indent=' ', width=75)
     thdata = ''.join(wrapped).replace('X-B4-Tracking: ', '')
 
     alltos, allccs, cbody = get_cover_dests(cover_letter)
@@ -1595,7 +1656,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     # Add X-Change-ID header
     patches[0][1].add_header('X-Change-ID', change_id)
 
-    samethread = config.get('send-same-thread', '').lower()
+    samethread = str(config.get('send-same-thread', '')).lower()
     if samethread in {'yes', 'true', 'y', 'shallow'} and revision > 1:
         oldrev = revision - 1
         if samethread == 'shallow':
@@ -1617,7 +1678,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
 
 
 def get_sent_tag_as_patches(tagname: str, revision: int) \
-        -> Tuple[List, List, List[Tuple[str, email.message.EmailMessage]]]:
+        -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], List[Tuple[str, EmailMessage]]]:
     cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
 
     csubject, cbody = get_cover_subject_body(cover)
@@ -1645,7 +1706,7 @@ def get_sent_tag_as_patches(tagname: str, revision: int) \
 
 def format_patch(output_dir: str) -> None:
     try:
-        tos, ccs, tstr, patches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
+        _, _, _, patches = get_prep_branch_as_patches(thread=False, movefrom=False, addtracking=False)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
@@ -1666,10 +1727,14 @@ def format_patch(output_dir: str) -> None:
 
 def get_check_cmds() -> Tuple[List[str], List[str]]:
     config = b4.get_main_config()
-    ppcmds = list()
-    scmds = list()
-    if config.get('prep-perpatch-check-cmd'):
-        ppcmds = config.get('prep-perpatch-check-cmd')
+    ppcmds: List[str] = list()
+    scmds: List[str] = list()
+
+    _cppcc = config.get('prep-perpatch-check-cmd')
+    if isinstance(_cppcc, str):
+        ppcmds.append(_cppcc)
+    elif isinstance(_cppcc, list):
+        ppcmds.extend(_cppcc)
     else:
         # Use recommended checkpatch defaults if we find checkpatch
         topdir = b4.git_get_toplevel()
@@ -1691,7 +1756,7 @@ def check(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(expandprereqs=False)
+        _, _, _, patches = get_prep_branch_as_patches(expandprereqs=False)
     except RuntimeError as ex:
         logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
         sys.exit(1)
@@ -1751,12 +1816,15 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         return
 
     mybranch = b4.git_get_current_branch()
+    if mybranch is None:
+        logger.critical('CRITICAL: Not currently on a branch, unable to send')
+        sys.exit(1)
 
     config = b4.get_main_config()
 
     tag_msg = None
     cl_msgid = None
-    cover, tracking = load_cover(strip_comments=True)
+    _, tracking = load_cover(strip_comments=True)
     if cmdargs.resend:
         if cmdargs.resend == 'latest':
             revstr = tracking['series']['revision'] - 1
@@ -1773,6 +1841,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if not b4.git_revparse_tag(None, tagname):
             # Try initial branch-name only based version
             tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, revstr)
+            if revision is None:
+                logger.critical('Could not figure out revision from %s', revstr)
+                sys.exit(1)
 
         try:
             todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision)
@@ -1802,12 +1873,16 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
         logger.info('Converted the branch to %s messages', len(patches))
 
-    usercfg = b4.get_user_config()
-    myemail = usercfg.get('email')
+    if tag_msg is None:
+        logger.critical('CRITICAL: unable to get tag_msg from %s', mybranch)
+        sys.exit(1)
 
-    seen = set()
-    excludes = set()
-    pccs = dict()
+    usercfg = b4.get_user_config()
+    myemail = str(usercfg.get('email', ''))
+
+    seen: Set[str] = set()
+    excludes: Set[str] = set()
+    pccs: Dict[str, List[Tuple[str, str]]] = dict()
 
     if cmdargs.preview_to or cmdargs.no_trailer_to_cc:
         todests = list()
@@ -1819,10 +1894,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         for commit, msg in patches:
             if not msg:
                 continue
-            body, charset = b4.LoreMessage.get_payload(msg)
-            btrs, junk = b4.LoreMessage.find_trailers(body)
+            body, _ = b4.LoreMessage.get_payload(msg)
+            btrs, _ = b4.LoreMessage.find_trailers(body)
             for btr in btrs:
                 if btr.type != 'person':
+                    continue
+                if btr.addr is None:
+                    logger.debug('Skipping trailer %s with no address', btr.lname)
                     continue
                 if btr.addr[1] in seen:
                     continue
@@ -1896,14 +1974,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     sconfig = b4.get_sendemail_config()
     endpoint = None
     if not sconfig.get('smtpserver') or cmdargs.send_web:
-        endpoint = config.get('send-endpoint-web', '')
+        endpoint = str(config.get('send-endpoint-web', ''))
         if not re.search(r'^https?://', endpoint):
             logger.debug('Endpoint does not start with https, ignoring: %s', endpoint)
             endpoint = None
         if not endpoint:
             # Use the default endpoint if we are in the kernel repo
             topdir = b4.git_get_toplevel()
-            if os.path.exists(os.path.join(topdir, 'Kconfig')):
+            if topdir and os.path.exists(os.path.join(topdir, 'Kconfig')):
                 logger.debug('No sendemail configs found, will use the default web endpoint')
                 endpoint = DEFAULT_ENDPOINT
 
@@ -1928,6 +2006,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         'needs-auto-to-cc': True,
                         }
             cfg_checks = config.get('prep-pre-flight-checks', 'enable-all')
+            if not isinstance(cfg_checks, list):
+                logger.critical('CRITICAL: prep-pre-flight-checks must be a list, got %s', type(cfg_checks).__name__)
+                sys.exit(1)
             if 'disable-all' in cfg_checks:
                 logger.debug('Disabling all preflight checks')
                 pfchecks = dict()
@@ -1938,8 +2019,12 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         del pfchecks[pfcheck]
             failing = False
             for pfcheck in pfchecks.keys():
-                pfchecks[pfcheck] = sinfo[pfcheck]
-                if sinfo[pfcheck] and not failing:
+                pfdata = sinfo[pfcheck]
+                if not isinstance(pfdata, bool):
+                    logger.debug('Pre-flight check %s is not a boolean, got %s', pfcheck, type(pfdata).__name__)
+                    continue
+                pfchecks[pfcheck] = pfdata
+                if pfdata and not failing:
                     failing = True
             if failing:
                 logger.critical('---')
@@ -1999,7 +2084,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 logger.info('  - send the above messages to actual listed recipients')
             logger.info('  - with envelope-from: %s', fromaddr)
 
-            smtpserver = sconfig.get('smtpserver', 'localhost')
+            smtpserver = str(sconfig.get('smtpserver', 'localhost'))
             if '/' in smtpserver:
                 logger.info('  - via local command %s', smtpserver)
                 if cmdargs.reflect and sconfig.get('b4-really-reflect-via') != smtpserver:
@@ -2035,7 +2120,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     # And now we go through each message to set addressees and send them off
     sign = True
-    if cmdargs.no_sign or config.get('send-no-patatt-sign', '').lower() in {'yes', 'true', 'y'}:
+    _csnps = str(config.get('send-no-patatt-sign', ''))
+    if cmdargs.no_sign or _csnps.lower() in {'yes', 'true', 'y'}:
         sign = False
 
     send_msgs = list()
@@ -2087,6 +2173,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 msg.add_header('Cc', b4.format_addrs(pcc))
 
         send_msgs.append(msg)
+
+    if cl_msgid is None:
+        logger.critical('CRITICAL: Unable to get a clean message-id for the cover letter')
+        sys.exit(1)
 
     if endpoint:
         # Web endpoint always requires signing
@@ -2145,17 +2235,20 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
 def get_sent_tagname(tagbase: str, tagprefix: str, revstr: Union[str, int]) -> Tuple[str, Optional[int]]:
     revision = None
-    try:
-        revision = int(revstr)
-    except ValueError:
-        matches = re.search(r'^v(\d+)$', revstr)
-        if not matches:
-            # assume we got a full tag name, so try to find the revision there
-            matches = re.search(r'v(\d+)$', revstr)
-            if matches:
-                revision = int(matches.groups()[0])
-            return revstr.replace('refs/tags/', ''), revision
-        revision = int(matches.groups()[0])
+    if isinstance(revstr, int):
+        revision = revstr
+    elif isinstance(revstr, str):
+        try:
+            revision = int(revstr)
+        except ValueError:
+            matches = re.search(r'^v(\d+)$', revstr)
+            if not matches:
+                # assume we got a full tag name, so try to find the revision there
+                matches = re.search(r'v(\d+)$', revstr)
+                if matches:
+                    revision = int(matches.groups()[0])
+                return revstr.replace('refs/tags/', ''), revision
+            revision = int(matches.groups()[0])
 
     if tagbase.startswith('b4/'):
         return f'{tagprefix}{tagbase[3:]}-v{revision}', revision
@@ -2447,6 +2540,7 @@ def cleanup(param: str) -> None:
 
 def show_info(param: str) -> None:
     # is param a name of the branch?
+    mybranch: Optional[str] = None
     if ':' in param:
         chunks = param.split(':')
         if len(chunks[0]):
@@ -2470,6 +2564,10 @@ def show_info(param: str) -> None:
         mybranch = b4.git_get_current_branch()
         getval = param
 
+    if mybranch is None:
+        logger.critical('No branch specified and no current branch found')
+        sys.exit(1)
+
     prep_info = get_info(usebranch=mybranch)
     if getval == '_all':
         for key, val in prep_info.items():
@@ -2482,13 +2580,13 @@ def show_info(param: str) -> None:
         sys.exit(1)
 
 
-def get_info(usebranch: str) -> Dict[str, str]:
+def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
     is_prep_branch(mustbe=True, usebranch=usebranch)
     cover, tracking = load_cover(usebranch=usebranch)
-    csubject, cbody = get_cover_subject_body(cover)
+    csubject, _ = get_cover_subject_body(cover)
     ts = tracking['series']
     base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=usebranch)
-    todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(usebranch=usebranch, expandprereqs=False)
+    todests, ccdests, _, patches = get_prep_branch_as_patches(usebranch=usebranch, expandprereqs=False)
     prereqs = tracking['series'].get('prerequisites', list())
     tocmd, cccmd = get_auto_to_cc_cmds()
     ppcmds, scmds = get_check_cmds()
@@ -2555,20 +2653,23 @@ def force_revision(forceto: int) -> None:
     store_cover(cover, tracking)
 
 
-def compare(compareto: str, execvp: bool = True, range_diff_opts: Optional[str] = None) -> Union[str, None]:
-    cover, tracking = load_cover()
+def range_diff_compare(compareto: str, execvp: bool = True, range_diff_opts: Optional[str] = None) -> Union[str, None]:
+    _, tracking = load_cover()
     # Try the new format first
-    tagname, revision = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, compareto)
+    tagname, _ = get_sent_tagname(tracking['series']['change-id'], SENT_TAG_PREFIX, compareto)
     prev_end = b4.git_revparse_tag(None, tagname)
     if not prev_end:
         mybranch = b4.git_get_current_branch(None)
-        tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, compareto)
+        if mybranch is None:
+            logger.critical('CRITICAL: No current branch found')
+            sys.exit(1)
+        tagname, _ = get_sent_tagname(mybranch, SENT_TAG_PREFIX, compareto)
         prev_end = b4.git_revparse_tag(None, tagname)
     if not prev_end:
         logger.critical('CRITICAL: Could not rev-parse %s', tagname)
         sys.exit(1)
     try:
-        cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+        _, base_commit, _ = get_base_changeid_from_tag(tagname)
     except RuntimeError as ex:
         logger.critical('CRITICAL: %s', str(ex))
         sys.exit(1)
@@ -2603,19 +2704,22 @@ def compare(compareto: str, execvp: bool = True, range_diff_opts: Optional[str] 
             return out
 
 
-def get_auto_to_cc_cmds() -> Tuple[List, List]:
+def get_auto_to_cc_cmds() -> Tuple[List[str], List[str]]:
     tocmdstr = None
     cccmdstr = None
     topdir = b4.git_get_toplevel()
+    if not topdir:
+        logger.debug('Not in a git repository, cannot get auto to/cc commands')
+        return list(), list()
     # Use recommended tocmd and cccmd defaults if we find a get_maintainer.pl
     getm = os.path.join(topdir, 'scripts', 'get_maintainer.pl')
     config = b4.get_main_config()
     if config.get('send-auto-to-cmd'):
-        tocmdstr = config.get('send-auto-to-cmd')
+        tocmdstr = str(config.get('send-auto-to-cmd'))
     elif os.access(getm, os.X_OK):
         tocmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol'
     if config.get('send-auto-cc-cmd'):
-        cccmdstr = config.get('send-auto-cc-cmd')
+        cccmdstr = str(config.get('send-auto-cc-cmd'))
     elif os.access(getm, os.X_OK):
         cccmdstr = f'{getm} --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom'
 
@@ -2653,18 +2757,19 @@ def auto_to_cc() -> None:
 
     extras = list()
     for tname, addrs in (('To', config.get('send-series-to')), ('Cc', config.get('send-series-cc'))):
-        if not addrs:
+        if not addrs or not isinstance(addrs, str):
             continue
         for pair in utils.getaddresses([addrs]):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
             ltr = b4.LoreTrailer(name=tname, value=b4.format_addrs([pair]))
-            logger.debug('added %s to seen', ltr.addr[1])
-            extras.append(ltr)
+            if ltr.addr:
+                logger.debug('added %s to seen', ltr.addr[1])
+                extras.append(ltr)
 
     try:
-        tos, ccs, tag_msg, patches = get_prep_branch_as_patches()
+        _, _, _, patches = get_prep_branch_as_patches()
     except RuntimeError:
         logger.info('No commits in branch')
         return
@@ -2688,10 +2793,10 @@ def auto_to_cc() -> None:
 
     if extras:
         # Make it a LoreMessage, so we can run a fix_trailers on it
-        cmsg = email.message.EmailMessage()
+        cmsg = EmailMessage()
         cmsg.set_payload(cover, charset='utf-8')
         clm = b4.LoreMessage(cmsg)
-        fallback_order = config.get('send-trailer-order', 'To,Cc,*')
+        fallback_order = str(config.get('send-trailer-order', 'To,Cc,*'))
         clm.fix_trailers(extras=extras, fallback_order=fallback_order)
         logger.info('---')
         logger.info('You can trim/expand this list with: b4 prep --edit-cover')
@@ -2773,12 +2878,15 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         msgid = cmdargs.reroll
         msgs = b4.get_pi_thread_by_msgid(msgid, onlymsgids={msgid}, nocache=True)
         mybranch = b4.git_get_current_branch(None)
+        if not mybranch:
+            logger.critical('CRITICAL: No current branch found')
+            sys.exit(1)
         if msgs:
             for msg in msgs:
                 if b4.LoreMessage.get_clean_msgid(msg) == msgid:
                     # Prepare annotated tag body from the cover letter
-                    lsubject = b4.LoreSubject(msg.get('subject'))
-                    cbody, charset = b4.LoreMessage.get_payload(msg)
+                    lsubject = b4.LoreSubject(str(msg.get('subject', '(no subject)')))
+                    cbody, _ = b4.LoreMessage.get_payload(msg)
                     prefixes = lsubject.get_extra_prefixes()
                     if prefixes:
                         subject = '[%s] %s' % (' '.join(prefixes), lsubject.subject)
@@ -2802,7 +2910,8 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         return format_patch(cmdargs.format_patch)
 
     if cmdargs.compare_to:
-        return compare(cmdargs.compare_to, range_diff_opts=cmdargs.range_diff_opts)
+        range_diff_compare(cmdargs.compare_to, range_diff_opts=cmdargs.range_diff_opts)
+        return
 
     if cmdargs.enroll_base and cmdargs.new_series_name:
         logger.critical('CRITICAL: -n NEW_SERIES_NAME and -e [ENROLL_BASE] can not be used together.')

@@ -122,18 +122,21 @@ def cmd_diff(cmdargs: argparse.Namespace) -> None:
 
 class ConfigOption(argparse.Action):
     """Action class for storing key=value arguments in a dict."""
-    def __call__(self, parser: argparse.ArgumentParser, namespace: argparse.Namespace, keyval: Union[str, Sequence[Any], None], option_string: Optional[str] = None) -> None:
+    def __call__(self, parser: argparse.ArgumentParser,
+                 namespace: argparse.Namespace,
+                 keyval: Union[str, Sequence[Any], None],
+                 option_string: Optional[str] = None) -> None:
         config = getattr(namespace, self.dest, None)
 
         if config is None:
             config = dict()
             setattr(namespace, self.dest, config)
 
-        if '=' in keyval:
-            key, value = keyval.split('=', maxsplit=1)
-        else:
-            # mimic git -c option
-            key, value = keyval, 'true'
+        if isinstance(keyval, str):
+            if '=' in keyval:
+                key, value = keyval.split('=', maxsplit=1)
+            else:
+                key, value = keyval, 'true'
 
         config[key] = value
 
