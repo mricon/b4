@@ -1,6 +1,7 @@
 From: Test Test <test@example.com>
 Subject: [PATCH] Simple test
 Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-ID: <foo@bar.baz>
 
 This is a simple trailer parsing test.
 
