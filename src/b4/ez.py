@@ -29,7 +29,6 @@ import hashlib
 import urllib.parse
 
 from typing import Any, Optional, Tuple, List, Union, Dict, Set
-from email import utils
 from string import Template
 from email.message import EmailMessage
 
@@ -220,6 +219,7 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
     cmsg = EmailMessage()
     cmsg.add_header('From', myemail)
     cmsg.add_header('Subject', 'b4-send-verify')
+    cmsg.add_header('Message-ID', email.utils.make_msgid(domain='b4'))
     cmsg.set_charset('utf-8')
     cmsg.set_payload(f'verify:{vstr}\n', charset='utf-8')
     bdata = cmsg.as_bytes(policy=b4.emlpolicy)
@@ -1113,7 +1113,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if cover:
             cmsg = EmailMessage()
             cmsg['Subject'] = f'[PATCH 0/{len(patches)}] cover'
-            cmsg['Message-Id'] = '<cover>'
+            cmsg['Message-Id'] = email.utils.make_msgid(domain='b4')
             cmsg.set_payload('cover', 'us-ascii')
             patches.insert(0, ('', cmsg))
             rethread(patches)
@@ -1276,7 +1276,7 @@ def get_addresses_from_cmd(cmdargs: List[str], msgbytes: bytes) -> List[Tuple[st
     addrs = out.strip().decode(errors='ignore')
     if not addrs:
         return list()
-    return utils.getaddresses(addrs.split('\n'))
+    return email.utils.getaddresses(addrs.split('\n'))
 
 
 def get_series_range(start_commit: Optional[str] = None, usebranch: Optional[str] = None) -> Tuple[str, str, str]:
@@ -1934,13 +1934,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if config.get('send-series-cc'):
             ccs.add(config.get('send-series-cc'))
     if ccs:
-        for pair in utils.getaddresses(list(ccs)):
+        for pair in email.utils.getaddresses(list(ccs)):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
             ccdests.append(pair)
     if tos:
-        for pair in utils.getaddresses(list(tos)):
+        for pair in email.utils.getaddresses(list(tos)):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
@@ -2759,7 +2759,7 @@ def auto_to_cc() -> None:
     for tname, addrs in (('To', config.get('send-series-to')), ('Cc', config.get('send-series-cc'))):
         if not addrs or not isinstance(addrs, str):
             continue
-        for pair in utils.getaddresses([addrs]):
+        for pair in email.utils.getaddresses([addrs]):
             if pair[1] in seen:
                 continue
             seen.add(pair[1])
@@ -2794,6 +2794,8 @@ def auto_to_cc() -> None:
     if extras:
         # Make it a LoreMessage, so we can run a fix_trailers on it
         cmsg = EmailMessage()
+        cmsg['Message-ID'] = email.utils.make_msgid(domain='b4')
+        cmsg['Subject'] = 'Cover letter'
         cmsg.set_payload(cover, charset='utf-8')
         clm = b4.LoreMessage(cmsg)
         fallback_order = str(config.get('send-trailer-order', 'To,Cc,*'))
