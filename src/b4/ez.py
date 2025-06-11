@@ -2005,10 +2005,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         'needs-checking-deps': True,
                         'needs-auto-to-cc': True,
                         }
-            cfg_checks = config.get('prep-pre-flight-checks', 'enable-all')
-            if not isinstance(cfg_checks, list):
-                logger.critical('CRITICAL: prep-pre-flight-checks must be a list, got %s', type(cfg_checks).__name__)
+            _cppfc = config.get('prep-pre-flight-checks', 'enable-all')
+            if not isinstance(_cppfc, str):
+                logger.critical('CRITICAL: prep-pre-flight-checks must be a str, got %s', type(_cppfc).__name__)
                 sys.exit(1)
+            cfg_checks = [x.strip() for x in _cppfc.split(',')]
             if 'disable-all' in cfg_checks:
                 logger.debug('Disabling all preflight checks')
                 pfchecks = dict()
