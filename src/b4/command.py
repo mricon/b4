@@ -312,7 +312,7 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_prep.add_argument('--add-prefixes', metavar='PREFIX', nargs='+',
                          help='Additional prefixes to add to those already defined')
     sp_prep.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
-                         help='Do not use local cache when performing remote queries')
+                         help='Do not use local cache')
     sp_prep.add_argument('--range-diff-opts', default=None, type=str,
                          help='Arguments passed to git range-diff when comparing series')
 
