@@ -7,7 +7,7 @@ import mailbox
 import io
 import pathlib
 
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 
 @pytest.mark.parametrize('source,expected', [
@@ -32,10 +32,10 @@ def test_check_gpg_status(sampledir: str, source: str, expected: Tuple[bool, boo
 ])
 def test_save_git_am_mbox(sampledir: Optional[str], tmp_path: pathlib.Path, source: Optional[str], regex: str, flags: int, ismbox: bool) -> None:
     import re
+    msgs: List[email.message.EmailMessage]
     if source is not None:
         if ismbox:
-            mbx = mailbox.mbox(f'{sampledir}/{source}.txt')
-            msgs = list(mbx)
+            msgs = b4.get_msgs_from_mailbox_or_maildir(f'{sampledir}/{source}.txt')
         else:
             import email
             import email.parser
@@ -76,10 +76,10 @@ def test_save_git_am_mbox(sampledir: Optional[str], tmp_path: pathlib.Path, sour
       ]),
 ])
 def test_parse_trailers(sampledir: str, source: str, expected: List[Tuple[str, str, str, Optional[str]]]) -> None:
-    with open(f'{sampledir}/{source}.txt', 'r') as fh:
-        msg = email.message_from_file(fh)
+    msgs = b4.get_msgs_from_mailbox_or_maildir(f'{sampledir}/{source}.txt')
+    for msg in msgs:
         lmsg = b4.LoreMessage(msg)
-        gh, m, trs, bas, sig = b4.LoreMessage.get_body_parts(lmsg.body)
+        _, _, trs, _, _ = b4.LoreMessage.get_body_parts(lmsg.body)
         assert len(expected) == len(trs)
         for tr in trs:
             mytype, myname, myvalue, myextinfo = expected.pop(0)
@@ -122,7 +122,7 @@ def test_parse_trailers(sampledir: str, source: str, expected: List[Tuple[str, s
 def test_followup_trailers(sampledir: str, source: str, serargs: Dict[str, Any], amargs: Dict[str, Any], reference: str, b4cfg: Dict[str, Any]) -> None:
     b4.MAIN_CONFIG.update(b4cfg)
     lmbx = b4.LoreMailbox()
-    for msg in mailbox.mbox(f'{sampledir}/trailers-followup-{source}.mbox'):
+    for msg in b4.get_msgs_from_mailbox_or_maildir(f'{sampledir}/trailers-followup-{source}.mbox'):
         lmbx.add_message(msg)
     lser = lmbx.get_series(**serargs)
     assert lser is not None

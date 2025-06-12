@@ -22,7 +22,7 @@ def settestdefaults(tmp_path: pathlib.Path) -> None:
     os.environ['XDG_DATA_HOME'] = str(tmp_path)
     os.environ['XDG_CACHE_HOME'] = str(tmp_path)
     # This lets us avoid execvp-ing from inside b4 when testing
-    sys._running_in_pytest = True
+    sys._running_in_pytest = True  # type: ignore[attr-defined]
 
 
 @pytest.fixture(scope="function")
