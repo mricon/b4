@@ -18,7 +18,10 @@ logger = b4.logger
 
 def main(cmdargs: argparse.Namespace) -> None:
     if cmdargs.showkeys:
-        msgid, msgs = b4.retrieve_messages(cmdargs)
+        _, msgs = b4.retrieve_messages(cmdargs)
+        if not msgs:
+            logger.info('No messages found in the thread.')
+            sys.exit(0)
         logger.info('---')
         try:
             import patatt
@@ -54,6 +57,12 @@ def main(cmdargs: argparse.Namespace) -> None:
         pgp = False
         ecc = False
         for identity, algo, selector, keyinfo in keydata:
+            if not identity:
+                logger.warning('No identity found for key %s %s %s', algo, selector, keyinfo)
+                continue
+            if not keyinfo:
+                logger.warning('No keyinfo found for key %s %s %s', algo, selector, identity)
+                continue
             keypath = patatt.make_pkey_path(algo, identity, selector)
             fullpath = os.path.join(krpath, keypath)
             if os.path.exists(fullpath):

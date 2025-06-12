@@ -259,7 +259,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             am_cover = None
             b4.save_git_am_mbox(am_msgs, sys.stdout.buffer)
 
-        if lser.has_cover and not cmdargs.nocover:
+        if am_cover and lser.has_cover and not cmdargs.nocover:
             lser.save_cover(am_cover)
 
         linkurl = linkmask % top_msgid
@@ -450,7 +450,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
 
     if not base_commit:
         checked, mismatched = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
-        if checked and len(mismatched) == 0 and checked != mismatched:
+        if checked and len(mismatched) == 0 and checked != len(mismatched):
             logger.critical(' Base: applies clean to current tree')
             base_commit = 'HEAD'
         else:
@@ -653,7 +653,8 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         q_msgid = b4.LoreMessage.get_clean_msgid(q_msg)
         if q_msgid is None:
             continue
-        lsub = b4.LoreSubject(q_msg.get('subject'))
+        _subject = q_msg.get('Subject', '(no subject)')
+        lsub = b4.LoreSubject(_subject)
         if q_msgid in seen_msgids:
             logger.debug('Skipping %s: already have it', lsub.full_subject)
             continue

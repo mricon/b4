@@ -198,6 +198,11 @@ def fetch_remote(gitdir: Optional[str], lmsg: b4.LoreMessage, branch: Optional[s
         logger.critical('       msg=%s, remote=%s', lmsg.pr_tip_commit, lmsg.pr_remote_tip_commit)
         return 1
 
+    if not lmsg.pr_repo or not lmsg.pr_ref:
+        logger.critical('ERROR: Could not find remote repository or ref in pull request')
+        logger.critical('       msgid=%s', lmsg.msgid)
+        return 1
+
     # Fetch it now
     logger.info('  Fetching %s %s', lmsg.pr_repo, lmsg.pr_ref)
     gitargs = ['fetch', lmsg.pr_repo, lmsg.pr_ref]
@@ -263,7 +268,7 @@ def thanks_record_pr(lmsg: b4.LoreMessage) -> None:
 
 
 def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
-            mailfrom: Optional[str] = None) -> List[email.message.EmailMessage]:
+            usefrom: Optional[str] = None) -> List[email.message.EmailMessage]:
     import b4.ez
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
@@ -296,10 +301,10 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
     allcc = utils.getaddresses(lmsg.msg.get_all('cc', []))
 
     emlfrom = email.utils.parseaddr(b4.LoreMessage.clean_header(lmsg.msg.get('From')))
-    if mailfrom is None:
+    if usefrom is None:
         mailfrom = emlfrom
     else:
-        mailfrom = email.utils.parseaddr(mailfrom)
+        mailfrom = email.utils.parseaddr(usefrom)
         vianame = mailfrom[0]
         if not vianame:
             vianame = 'B4 Explode'
@@ -333,7 +338,7 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
             msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
 
         msgs.append(msg)
-        logger.info('  %s', re.sub(r'\n\s*', ' ', msg.get('Subject')))
+        logger.info('  %s', re.sub(r'\n\s*', ' ', msg.get('Subject', '(no subject)')))
 
     logger.info('Exploded %s messages', len(msgs))
     return msgs
@@ -419,6 +424,9 @@ def main(cmdargs: argparse.Namespace) -> None:
             logger.debug('Getting PR message from public-inbox')
 
             msgid = b4.get_msgid(cmdargs)
+            if not msgid:
+                logger.critical('No message-id specified, and no stdin available')
+                sys.exit(1)
             msgs = b4.get_pi_thread_by_msgid(msgid)
             if not msgs:
                 return
@@ -439,7 +447,7 @@ def main(cmdargs: argparse.Namespace) -> None:
         # Set up a temporary clone
         with b4.git_temp_clone(gitdir) as tc:
             try:
-                msgs = explode(tc, lmsg, mailfrom=cmdargs.mailfrom)
+                msgs = explode(tc, lmsg, usefrom=cmdargs.mailfrom)
             except RuntimeError:
                 logger.critical('Nothing exploded.')
                 sys.exit(1)

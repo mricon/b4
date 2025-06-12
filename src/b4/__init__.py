@@ -38,6 +38,8 @@ from contextlib import contextmanager
 from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, \
     TypeVar, overload, Generator, Any
 
+type ConfigDictT = Dict[str, Union[str, List[str]], None]
+
 from email.message import EmailMessage
 
 from email import charset
@@ -51,7 +53,7 @@ emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length
 qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 try:
-    import dkim  # type: ignore[import-not-found, import-untyped]
+    import dkim  # type: ignore[import-untyped]
 
     can_dkim = True
 except ModuleNotFoundError:
@@ -111,7 +113,7 @@ CI_FLAGS_FANCY = {
 DEVSIG_HDR = 'X-Developer-Signature'
 LOREADDR = 'https://lore.kernel.org'
 
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: ConfigDictT = {
     'midmask': LOREADDR + '/all/%s',
     'linkmask': LOREADDR + '/r/%s',
     'searchmask': LOREADDR + '/all/?x=m&q=%s',
@@ -154,11 +156,11 @@ DEFAULT_CONFIG = {
 }
 
 # This is where we store actual config
-MAIN_CONFIG: Dict[str, Optional[Union[str, List[str]]]] = dict()
+MAIN_CONFIG: ConfigDictT = dict()
 # This is git-config user.*
-USER_CONFIG: Dict[str, Optional[Union[str, List[str]]]] = dict()
+USER_CONFIG: ConfigDictT = dict()
 # This is git-config sendemail.*
-SENDEMAIL_CONFIG: Dict[str, Optional[Union[str, List[str]]]] = dict()
+SENDEMAIL_CONFIG: ConfigDictT = dict()
 
 # Used for storing our requests session
 REQSESSION: Optional[requests.Session] = None
@@ -1555,7 +1557,7 @@ class LoreMessage:
                 uids = get_gpg_uids(fpr)
                 idmatch = False
                 for uid in uids:
-                    if uid.find(identity) >= 0:
+                    if identity and uid.find(identity) >= 0:
                         idmatch = True
                         break
                 if not idmatch:
@@ -2723,7 +2725,11 @@ class LoreAttestorDKIM(LoreAttestor):
 
 
 class LoreAttestorPatatt(LoreAttestor):
-    def __init__(self, result: bool, identity: str, signtime: Optional[datetime.datetime], keysrc: str, keyalgo: str,
+    def __init__(self, result: int,
+                 identity: Optional[str],
+                 signtime: Optional[datetime.datetime],
+                 keysrc: Optional[str],
+                 keyalgo: Optional[str],
                  errors: List[str]) -> None:
         super().__init__()
         self.mode = 'patatt'
@@ -3026,7 +3032,7 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
     MAIN_CONFIG = config
 
 
-def get_main_config() -> Dict[str, Optional[Union[str, List[str]]]]:
+def get_main_config() -> ConfigDictT:
     return MAIN_CONFIG
 
 
@@ -3150,7 +3156,7 @@ def _setup_user_config(cmdargs: argparse.Namespace) -> None:
     _cmdline_config_override(cmdargs, USER_CONFIG, 'user')
 
 
-def get_user_config() -> Dict[str, Optional[Union[str, List[str]]]]:
+def get_user_config() -> ConfigDictT:
     return USER_CONFIG
 
 
@@ -3502,7 +3508,10 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
                            with_thread: bool = True) -> Optional[List[EmailMessage]]:
     qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
-    midmask = str(config['midmask'])
+    midmask = config['midmask']
+    if midmask is None:
+        logger.critical('b4.midmask is not defined')
+        return None
     loc = urllib.parse.urlparse(midmask)
     # The public-inbox instance may provide a unified index at /all/.
     # In fact, /all/ naming is arbitrary, but for now we are going to

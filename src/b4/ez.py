@@ -5,7 +5,6 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import email.message
 import os
 import sys
 import b4
@@ -34,7 +33,6 @@ from email.message import EmailMessage
 
 try:
     import patatt
-
     can_patatt = True
 except ModuleNotFoundError:
     can_patatt = False
@@ -135,7 +133,7 @@ def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
         raise RuntimeError('No email configured, set user.email')
     myname = str(usercfg.get('name', ''))
     pconfig = patatt.get_main_config()
-    selector = pconfig.get('selector', 'default')
+    selector = str(pconfig.get('selector', 'default'))
     algo, keydata = patatt.get_algo_keydata(pconfig)
     return endpoint, myname, myemail, selector, algo, keydata
 
