@@ -80,7 +80,7 @@ def git_get_commit_message(gitdir: Optional[str], rev: str) -> Tuple[int, str]:
     return b4.git_run_command(gitdir, args)
 
 
-def make_reply(reply_template: str, jsondata: JsonDictT, gitdir: Optional[str]) -> EmailMessage:
+def make_reply(reply_template: str, jsondata: JsonDictT, gitdir: Optional[str], cmdargs: argparse.Namespace) -> EmailMessage:
     msg = EmailMessage()
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
     excludes = b4.get_excluded_addrs()
@@ -92,7 +92,8 @@ def make_reply(reply_template: str, jsondata: JsonDictT, gitdir: Optional[str]) 
     newto = b4.cleanup_email_addrs([(jsondata['fromname'], jsondata['fromemail'])], excludes, gitdir)
 
     # Exclude ourselves and original sender from allto or allcc
-    excludes.add(jsondata['myemail'])
+    if not cmdargs.metoo:
+        excludes.add(jsondata['myemail'])
     excludes.add(jsondata['fromemail'])
     allto = b4.cleanup_email_addrs(email.utils.getaddresses([jsondata['to']]), excludes, gitdir)
     allcc = b4.cleanup_email_addrs(email.utils.getaddresses([jsondata['cc']]), excludes, gitdir)
@@ -287,7 +288,7 @@ def set_branch_details(gitdir: Optional[str],
     return jsondata, config
 
 
-def generate_pr_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str) -> EmailMessage:
+def generate_pr_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace) -> EmailMessage:
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_PR_TEMPLATE
@@ -316,11 +317,11 @@ def generate_pr_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str) 
         cidmask = 'merge commit: %s'
     assert isinstance(cidmask, str), 'thanks-commit-url-mask must be a string'
     jsondata['summary'] = cidmask % jsondata['merge_commit_id']
-    msg = make_reply(thanks_template, jsondata, gitdir)
+    msg = make_reply(thanks_template, jsondata, gitdir, cmdargs)
     return msg
 
 
-def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, since: str) -> EmailMessage:
+def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace) -> EmailMessage:
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_AM_TEMPLATE
@@ -334,7 +335,7 @@ def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, 
                             config['thanks-am-template'])
             sys.exit(2)
     if 'commits' not in jsondata:
-        commits = auto_locate_series(gitdir, jsondata, branch, since)
+        commits = auto_locate_series(gitdir, jsondata, branch, cmdargs.since)
     else:
         assert isinstance(jsondata['commits'], list), 'commits must be a list'
         commits = jsondata['commits']
@@ -367,7 +368,7 @@ def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, 
                         nomatch, len(commits), jsondata['subject'])
         logger.critical('           Please review the resulting message')
 
-    msg = make_reply(thanks_template, jsondata, gitdir)
+    msg = make_reply(thanks_template, jsondata, gitdir, cmdargs)
     return msg
 
 
@@ -449,10 +450,10 @@ def send_messages(listing: List[JsonDictT], branch: str, cmdargs: argparse.Names
         jsondata['signature'] = signature
         if 'pr_commit_id' in jsondata:
             # This is a pull request
-            msg = generate_pr_thanks(gitdir, jsondata, branch)
+            msg = generate_pr_thanks(gitdir, jsondata, branch, cmdargs)
         else:
             # This is a patch series
-            msg = generate_am_thanks(gitdir, jsondata, branch, cmdargs.since)
+            msg = generate_am_thanks(gitdir, jsondata, branch, cmdargs)
 
         if msg is None:
             continue
