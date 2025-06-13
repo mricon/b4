@@ -66,3 +66,9 @@ Support
 -------
 For support or with any other questions, please email tools@kernel.org,
 or browse the list archive at https://lore.kernel.org/tools.
+
+Please send patches to tools@kernel.org.
+
+Submissions must be made under the terms of the Linux Foundation
+certificate of contribution and should include a Signed-off-by: line.
+Please read the DCO file for full legal definition of what that implies.
