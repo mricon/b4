@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, \
     TypeVar, overload, Generator, Any
 
-type ConfigDictT = Dict[str, Union[str, List[str]], None]
+ConfigDictT = Dict[str, Union[str, List[str], None]]
 
 from email.message import EmailMessage
 

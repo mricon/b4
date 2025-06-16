@@ -22,8 +22,8 @@ from email.message import EmailMessage
 
 from typing import cast, Optional, Tuple, Union, List, Dict, Any
 
-type ConfigDictT = Dict[str, Union[str, List[str]]]
-type JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
+ConfigDictT = Dict[str, Union[str, List[str]]]
+JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
 
 logger = b4.logger
 
