@@ -1527,6 +1527,8 @@ class LoreMessage:
 
         # Push our logger and GPGBIN into patatt
         patatt.logger = logger
+        assert isinstance(config['gpgbin'], str), \
+            'gpgbin config value is not a string: %s' % str(config['gpgbin'])
         patatt.GPGBIN = config['gpgbin']
 
         logger.debug('Loading patatt attestations with sources=%s', str(sources))
@@ -3512,6 +3514,7 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
     if midmask is None:
         logger.critical('b4.midmask is not defined')
         return None
+    assert isinstance(midmask, str), 'b4.midmask must be a string'
     loc = urllib.parse.urlparse(midmask)
     # The public-inbox instance may provide a unified index at /all/.
     # In fact, /all/ naming is arbitrary, but for now we are going to

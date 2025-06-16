@@ -44,6 +44,8 @@ def gitdir(request: pytest.FixtureRequest, tmp_path: pathlib.Path) -> Generator[
     args = ['clone', '--branch', 'master', bfile, dest]
     out, logstr = b4.git_run_command(None, args)
     assert out == 0
+    assert isinstance(b4.USER_CONFIG['name'], str)
+    assert isinstance(b4.USER_CONFIG['email'], str)
     b4.git_set_config(dest, 'user.name', b4.USER_CONFIG['name'])
     b4.git_set_config(dest, 'user.email', b4.USER_CONFIG['email'])
     olddir = os.getcwd()

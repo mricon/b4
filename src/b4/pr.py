@@ -262,7 +262,8 @@ def thanks_record_pr(lmsg: b4.LoreMessage) -> None:
         logger.debug('Wrote %s for thanks tracking', filename)
 
     config = b4.get_main_config()
-    pwstate = config.get('pw-review-state')
+    pwstate = config.get('pw-review-state', '')
+    assert isinstance(pwstate, str), 'pw-review-state must be a string'
     if pwstate:
         b4.patchwork_set_state([lmsg.msgid], pwstate)
 
@@ -320,8 +321,10 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
 
     msgs = list()
     # Build the cover message from the pull request body
+    linkmask = config.get('linkmask', 'https://lore.kernel.org/%s')
+    assert isinstance(linkmask, str), 'linkmask must be a string'
     cbody = '%s\n\nbase-commit: %s\npull-request: %s\n' % (
-        lmsg.body.strip(), lmsg.pr_base_commit, config['linkmask'] % lmsg.msgid)
+        lmsg.body.strip(), lmsg.pr_base_commit, linkmask % lmsg.msgid)
 
     if len(pmsgs) == 1:
         b4.ez.mixin_cover(cbody, pmsgs)

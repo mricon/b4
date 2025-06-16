@@ -22,7 +22,7 @@ from email.message import EmailMessage
 
 from typing import cast, Optional, Tuple, Union, List, Dict, Any
 
-ConfigDictT = Dict[str, Union[str, List[str]]]
+ConfigDictT = b4.ConfigDictT
 JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
 
 logger = b4.logger
@@ -272,7 +272,7 @@ def set_branch_details(gitdir: Optional[str],
         elif key == 'branch':
             jsondata['branch'] = val
 
-    if 'thanks-treename' in config:
+    if 'thanks-treename' in config and isinstance(config['thanks-treename'], str):
         jsondata['treename'] = config['thanks-treename']
     elif 'url' in binfo:
         try:
@@ -421,7 +421,10 @@ def send_messages(listing: List[JsonDictT], branch: str, cmdargs: argparse.Names
     smtp = None
     config = b4.get_main_config()
 
-    if cmdargs.sendemail or config.get('ty-send-email', 'no').lower() in ['yes', 'true', '1']:
+    _ctse = config.get('ty-send-email', 'no')
+    assert isinstance(_ctse, str), 'ty-send-email must be a string'
+
+    if cmdargs.sendemail or b4.get_git_bool(_ctse):
         send_email = True
         try:
             smtp, fromaddr = b4.get_smtp()
@@ -439,7 +442,9 @@ def send_messages(listing: List[JsonDictT], branch: str, cmdargs: argparse.Names
     usercfg = b4.get_user_config()
     config = b4.get_main_config()
     user_name = config.get('thanks-from-name', usercfg['name'])
+    assert isinstance(user_name, str), 'thanks-from-name must be a string'
     user_email = config.get('thanks-from-email', usercfg['email'])
+    assert isinstance(user_email, str), 'thanks-from-email must be a string'
     signature = b4.get_email_signature()
 
     outgoing = 0
@@ -536,11 +541,13 @@ def write_tracked(tracked: List[JsonDictT]) -> None:
     counter = 1
     config = b4.get_main_config()
     logger.info('Currently tracking:')
+    linkmask = config.get('linkmask')
     for entry in tracked:
         logger.info('%3d: %s', counter, entry['subject'])
         logger.info('       From: %s <%s>', entry['fromname'], entry['fromemail'])
         logger.info('       Date: %s', entry['sentdate'])
-        logger.info('       Link: %s', config['linkmask'] % entry['msgid'])
+        if isinstance(linkmask, str) and linkmask:
+            logger.info('       Link: %s', linkmask % entry['msgid'])
         counter += 1
 
 
