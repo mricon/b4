@@ -1016,10 +1016,11 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     changeid = None
     cover = None
     msgid = None
-    end = 'HEAD'
-    limit_committer = usercfg['email']
+    end = b4.git_revparse_obj('HEAD')
+    limit_committer: Optional[str] = str(usercfg['email'])
     # If we are in an b4-prep branch, we start from the beginning of the series
-    if is_prep_branch():
+    in_prep_branch = is_prep_branch()
+    if in_prep_branch:
         # Don't limit by committer in a prep branch
         limit_committer = None
         start = get_series_start()
@@ -1045,23 +1046,56 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
     else:
-        # There doesn't appear to be a great way to find the first commit
-        # where we're NOT the committer, so we get all commits since range specified where
-        # we're the committer and pick the earliest commit
-        gitargs = ['log', '-F', '--no-merges', f'--committer={limit_committer}', '--format=%H', '--reverse',
-                   '--since', cmdargs.since]
+        # Find the most recent commit where we're not the committer
+        gitargs = ['log', '--perl-regexp', f'--committer=^(?!.*<{limit_committer}>)', '--max-count=1',
+                   '--format=%H', '--since', cmdargs.since]
+
         lines = b4.git_get_command_lines(None, gitargs)
         if not lines:
-            logger.critical('CRITICAL: could not find any commits where committer=%s', limit_committer)
+            logger.critical('CRITICAL: could not find any commits, try changing --since')
             sys.exit(1)
-        first_commit = lines[0]
-        start = f'{first_commit}~1'
+        # Iterate through the commits we will consider and do some sanity checking
+        first_considered = lines[0]
+        logger.debug('First commit to consider: %s', first_considered)
+        # Make sure this commit isn't HEAD
+        if first_considered == end:
+            logger.critical('CRITICAL: the tip commit was not committed by you, refusing to continue')
+            sys.exit(1)
+        start = first_considered
+
+    # Do some sanity checking to makes sure that all commits between the start and the HEAD are:
+    # 1. Single-parent commits
+    # 2. Committed by the limit_committer
+    gitargs = ['log', '--format=%H %ce %p', f'{start}..']
+    lines = b4.git_get_command_lines(None, gitargs)
+    if not lines:
+        # Should never happen?
+        logger.critical('CRITICAL: could not find any commits between %s and HEAD.', start)
+        sys.exit(1)
+    first_to_update = end
+    for line in lines:
+        logger.debug('Considering commit line: %s', line)
+        cparts = line.split()
+        # If we have more than 3 parts, that means we found a commit with multiple parents
+        commit, committer_email, parents = cparts[0], cparts[1], cparts[2:]
+        if len(parents) != 1:
+            logger.debug('Commit %s has non-single parent, stopping: %s', commit, parents)
+            break
+        if committer_email != limit_committer and not in_prep_branch:
+            logger.debug('Commit %s is not by %s, stopping', commit, committer_email)
+            break
+        first_to_update = commit
+    logger.debug('Will use %s as the start of the range', first_to_update)
+    start = b4.git_revparse_obj(f'{first_to_update}~1')
 
     if cmdargs.msgid or cmdargs.trailers_from:
         if cmdargs.trailers_from:
             # Compatibility with b4 overall retrieval tools
             cmdargs.msgid = cmdargs.trailers_from
         msgid = b4.get_msgid(cmdargs)
+
+    logger.debug('Start of the range: %s', start)
+    logger.debug('End of the range: %s', end)
 
     try:
         patches = b4.git_range_to_patches(None, start, end, ignore_commits=ignore_commits,
@@ -1082,6 +1116,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     for commit, msg in patches:
         if commit:
             msg['Message-Id'] = f'<{commit}>'
+            logger.debug('  %s', msg.get('Subject', '(no subject)'))
         bbox.add_message(msg)
 
     commit_map = dict()
@@ -1157,6 +1192,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if not lmsg.followup_trailers:
             logger.debug('No new follow-up trailers in: %s', lmsg.subject)
             continue
+        logger.info('%s', lmsg.subject)
 
         commit = lmsg.msgid
         parts = b4.LoreMessage.get_body_parts(lmsg.body)
@@ -1171,7 +1207,9 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                 seen_froms.add(rendered)
                 source = config['midmask'] % urllib.parse.quote_plus(fltr.lmsg.msgid, safe='@')
                 logger.info('  + %s', rendered)
-                logger.info('    %s', source)
+                logger.info('    via: %s', source)
+            else:
+                logger.debug('  . %s', fltr.as_string(omit_extinfo=True))
 
         # Check if we've applied mismatched trailers already
         if not cmdargs.sloppytrailers and mismatches:
@@ -1192,13 +1230,21 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         logger.info('No trailer updates found.')
         return
 
-    try:
-        logger.critical('---')
-        if not cmdargs.no_interactive:
-            input('Press Enter to apply these trailers or Ctrl-C to abort')
-    except KeyboardInterrupt:
-        logger.info('')
-        sys.exit(130)
+    # Shrink the update range to start with the first commit we're actually modifying
+    commits = [x[0] for x in patches]
+    for commit in list(commits):
+        if commit in updates:
+            start = b4.git_revparse_obj(f'{commit}~1')
+            logger.debug('Will update trailers starting from %s', start)
+            break
+        commits.pop(0)
+
+    logger.critical('---')
+    if not cmdargs.no_interactive:
+        resp = input('Rewrite %d commit(s) to add these trailers? [y/N] ' % len(commits))
+        if resp.lower() not in {'y', 'yes'}:
+            logger.info('Exiting without changes.')
+            sys.exit(130)
 
     # Create the map of new messages
     fred = FRCommitMessageEditor()

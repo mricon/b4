@@ -44,7 +44,7 @@ b4 = "b4.command:cmd"
 
 [tool.pytest.ini_options]
 filterwarnings = "ignore:.*(pyopenssl|invalid escape sequence).*:DeprecationWarning"
-norecursedirs = "tests/helpers"
+norecursedirs = ["tests/helpers", "patatt"]
 
 [tool.bumpversion]
 current_version = "0.14.2"
