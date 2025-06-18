@@ -720,7 +720,7 @@ def get_cover_strategy(usebranch: Optional[str] = None) -> str:
 
 
 def is_prep_branch(mustbe: bool = False, usebranch: Optional[str] = None) -> bool:
-    mustmsg = 'CRITICAL: This is not a prep-managed branch.'
+    mustmsg = 'CRITICAL: This is not a prep-managed branch or it was created by someone else.'
     mybranch: Optional[str] = None
     if usebranch:
         mybranch = usebranch
@@ -1861,6 +1861,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     if mybranch is None:
         logger.critical('CRITICAL: Not currently on a branch, unable to send')
         sys.exit(1)
+
+    is_prep_branch(mustbe=True)
 
     config = b4.get_main_config()
 
