@@ -118,8 +118,10 @@ def test_parse_trailers(sampledir: str, source: str, expected: List[Tuple[str, s
     ('name-parens', {}, {}, 'defaults', {}),
     ('bare-address', {}, {}, 'defaults', {}),
     ('stripped-lines', {}, {}, 'defaults', {}),
+    ('htmljunk', {}, {}, 'defaults', {}),
 ])
-def test_followup_trailers(sampledir: str, source: str, serargs: Dict[str, Any], amargs: Dict[str, Any], reference: str, b4cfg: Dict[str, Any]) -> None:
+def test_followup_trailers(sampledir: str, source: str, serargs: Dict[str, Any], amargs: Dict[str, Any],
+                           reference: str, b4cfg: Dict[str, Any]) -> None:
     b4.MAIN_CONFIG.update(b4cfg)
     lmbx = b4.LoreMailbox()
     for msg in b4.get_msgs_from_mailbox_or_maildir(f'{sampledir}/trailers-followup-{source}.mbox'):
