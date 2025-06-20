@@ -142,7 +142,7 @@ DEFAULT_CONFIG = {
     'thanks-pr-template': None,
     # See thanks-am-template.example
     'thanks-am-template': None,
-    # If this is not set, we'll use what we find in 
+    # If this is not set, we'll use what we find in
     # git-config for gpg.program, and if that's not set,
     # we'll use "gpg" and hope for the better
     'gpgbin': None,
@@ -1057,12 +1057,16 @@ class LoreTrailer:
                 self.type = 'utility'
             elif re.search(r'\S+@\S+\.\S+', value):
                 self.type = 'person'
-                self.addr = email.utils.parseaddr(value)
+                if '<mailto:' in value:
+                    # This was inserted by a mail client that back-converted from html mail
+                    # Remove the <mailto:...> part
+                    self.value = re.sub(r'<mailto:[^>]+>', '', value)
+                self.addr = email.utils.parseaddr(self.value)
                 # Normalize the value with parsed data
-                if self.addr[0]:
-                    self.value = f'{self.addr[0]} <{self.addr[1]}>'
+                if self.addr[0] or self.addr[1]:
+                    self.value = format_addrs([self.addr], header_safe=False)
                 else:
-                    self.value = self.addr[1]
+                    self.type = 'unknown'
             else:
                 self.type = 'unknown'
         self.lname = self.name.lower()
@@ -3592,15 +3596,19 @@ def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
     return topdir
 
 
-def format_addrs(pairs: List[Tuple[str, str]], clean: bool = True) -> str:
+def format_addrs(pairs: List[Tuple[str, str]], clean: bool = True,
+                 header_safe: bool = True) -> str:
     addrs = list()
     for pair in pairs:
-        if pair[0] == pair[1]:
+        if not pair[0] or pair[0] == pair[1]:
             addrs.append(pair[1])
             continue
         if clean:
             # Remove any quoted-printable header junk from the name
             pair = (LoreMessage.clean_header(pair[0]), pair[1])
+        if not header_safe:
+            addrs.append(f'{pair[0]} <{pair[1]}>')
+            continue
         # Work around https://github.com/python/cpython/issues/100900
         if not pair[0].startswith('=?') and not pair[0].startswith('"') and qspecials.search(pair[0]):
             quoted = email.utils.quote(pair[0])

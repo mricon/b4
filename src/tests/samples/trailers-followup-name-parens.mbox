@@ -76,3 +76,32 @@ Reviewed-by: Mismatched Reviewer1 <mismatched-reviewer1@example.net>
 --
 My sig
 
+From foo@z Thu Jan  1 00:00:00 1970
+From: Followup Tester1 <followup-tester1@example.com>
+Subject: Re: [PATCH] Simple test
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <fwup-message-4@example.com>
+In-Reply-To: <orig-message@example.com>
+References: <orig-message@example.com>
+
+> This is a simple trailer parsing test.
+
+Tested-by: Followup Tester1 [corporate] <followup-tester1@example.com>
+
+--
+My sig
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Followup Tester2 <followup-tester2@example.com>
+Subject: Re: [PATCH] Simple test
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <fwup-message-5@example.com>
+In-Reply-To: <orig-message@example.com>
+References: <orig-message@example.com>
+
+> This is a simple trailer parsing test.
+
+Tested-by: Tester2, Followup <followup-tester2@example.com>
+
+--
+My sig

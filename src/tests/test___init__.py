@@ -106,8 +106,9 @@ def test_parse_trailers(sampledir, source, expected):
     ('name-parens', {}, {}, 'defaults', {}),
     ('bare-address', {}, {}, 'defaults', {}),
     ('stripped-lines', {}, {}, 'defaults', {}),
+    ('htmljunk', {}, {}, 'defaults', {}),
 ])
-def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg):
+def test_followup_trailers(sampledir, source, serargs, amargs, reference, b4cfg) -> None:
     b4.MAIN_CONFIG.update(b4cfg)
     lmbx = b4.LoreMailbox()
     for msg in mailbox.mbox(f'{sampledir}/trailers-followup-{source}.mbox'):
