@@ -43,7 +43,7 @@ The two commands are similar -- the main distinction is that ``b4 am``
 prepares the patch series so you can ``git am`` the resulting mbox file,
 but it doesn't make any actual modifications to your current branch.
 
-The ``b4 shazam`` command dos the same as ``b4 am`` *and* actually
+The ``b4 shazam`` command does the same as ``b4 am`` *and* actually
 applies the patch series to the current branch (if it's possible to do
 so cleanly).
 
