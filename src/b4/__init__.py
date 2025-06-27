@@ -3888,6 +3888,10 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
             raise smtplib.SMTPException('Unclear what to do with smtpencryption=%s' % encryption)
 
         # If we got to this point, we should do authentication.
+        # unless smtpauth is set to a special "none" value
+        smtpauth = str(sconfig.get('smtpauth', ''))
+        if smtpauth.lower() == 'none':
+            return smtp, fromaddr
         auser = sconfig.get('smtpuser')
         apass = sconfig.get('smtppass')
         if auser and not apass:
