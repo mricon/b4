@@ -1917,10 +1917,6 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
         logger.info('Converted the branch to %s messages', len(patches))
 
-    if tag_msg is None:
-        logger.critical('CRITICAL: unable to get tag_msg from %s', mybranch)
-        sys.exit(1)
-
     usercfg = b4.get_user_config()
     myemail = str(usercfg.get('email', ''))
 
@@ -2273,6 +2269,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         return
     if cmdargs.preview_to:
         logger.debug('Not updating cover/tracking on --preview-to')
+        return
+
+    if tag_msg is None:
+        logger.critical('CRITICAL: unable to get tag_msg from %s, not rerolling', mybranch)
         return
 
     reroll(mybranch, tag_msg, cl_msgid)
