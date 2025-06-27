@@ -354,16 +354,14 @@ class LoreMailbox:
                 for refid in fmsg.references:
                     if refid in self.msgid_map and refid != fmsg.msgid:
                         pmsg = self.msgid_map[refid]
+                        logger.debug('Found a references entry %s in msgid_map', refid)
                         break
-                if pmsg is None:
-                    # Can't find the message we're replying to here
-                    continue
-            else:
+            elif fmsg.in_reply_to in self.msgid_map:
                 pmsg = self.msgid_map[fmsg.in_reply_to]
-                if pmsg is None:
-                    logger.debug('  missing message, skipping: %s', fmsg.in_reply_to)
-                    continue
                 logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
+            if pmsg is None:
+                # Can't find the message we're replying to here
+                continue
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
             for ltr in mismatches:
@@ -441,6 +439,7 @@ class LoreMailbox:
 
         if msgid:
             self.msgid_map[lmsg.msgid] = lmsg
+        logger.debug('            msgid: %s', lmsg.msgid)
 
         if lmsg.reply:
             # We'll figure out where this belongs later

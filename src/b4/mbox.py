@@ -661,6 +661,7 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         if lsub.reply:
             # These will get sorted out later
             logger.debug('Adding reply: %s', lsub.full_subject)
+            logger.debug('              msgid: %s', q_msgid)
             msgs.append(q_msg)
             seen_msgids.add(q_msgid)
             continue
