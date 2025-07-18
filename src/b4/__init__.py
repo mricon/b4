@@ -3949,8 +3949,10 @@ def get_sendemail_config() -> Dict[str, Optional[Union[str, List[str]]]]:
 def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], str]:
     sconfig = get_sendemail_config()
     # Limited support for smtp settings to begin with, but should cover the vast majority of cases
-    fromaddr = str(sconfig.get('from'))
-    if not fromaddr:
+    fromaddr = sconfig.get('from')
+    if fromaddr:
+        fromaddr = str(fromaddr)
+    else:
         # We fall back to user.email
         usercfg = get_user_config()
         fromaddr = str(usercfg['email'])
