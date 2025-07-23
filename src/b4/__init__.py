@@ -2074,7 +2074,7 @@ class LoreMessage:
 
     @staticmethod
     def find_trailers(body: str, followup: bool = False) -> Tuple[List[LoreTrailer], List[str]]:
-        ignores = {'phone', 'email', 'prerequisite-message-id'}
+        ignores = {'phone', 'email', 'e-mail', 'prerequisite-message-id'}
         headers = {'subject', 'date', 'from'}
         links = {'link', 'buglink', 'closes'}
         nonperson = links | {'fixes', 'subject', 'date', 'obsoleted-by', 'change-id', 'base-commit'}
@@ -4607,4 +4607,3 @@ def is_maildir(dest: str) -> bool:
             and os.path.isdir(os.path.join(dest, 'tmp'))):
         return True
     return False
-
