@@ -1106,6 +1106,13 @@ class LoreTrailer:
 
         return ret
 
+    @property
+    def origin(self) -> str:
+        """Return the origin of this trailer, if it has one."""
+        if self.lmsg is None:
+            return '(origin unknown)'
+        return self.lmsg.msgid
+
     def email_eq(self, cmp_email: str, fuzzy: bool = True) -> bool:
         if not self.addr:
             return False
@@ -2360,9 +2367,11 @@ class LoreMessage:
                             sys.exit(1)
 
                 logger.info('    + %s%s', ltr.as_string(omit_extinfo=True), extra)
+                logger.debug('      origin: %s', ltr.origin)
 
             elif extras is not None and ltr in extras:
                 logger.info('    + %s%s', ltr.as_string(omit_extinfo=True), extra)
+                logger.debug('      origin: %s', ltr.origin)
 
         if addmysob or hasmysob:
             # Tack on our signoff at the bottom
