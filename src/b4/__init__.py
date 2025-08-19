@@ -43,6 +43,7 @@ ConfigDictT = Dict[str, Union[str, List[str], None]]
 from email.message import EmailMessage
 
 from email import charset
+from packaging import version
 
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
@@ -2838,6 +2839,12 @@ def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: 
     return _handle(out, err)
 
 
+def git_check_minimal_version(min_version: str) -> bool:
+    ecode, out = git_run_command(None, ["version"])
+    current_version = out.split()[2]
+    return version.parse(current_version) >= version.parse(min_version)
+
+
 def git_credential_fill(gitdir: Optional[str], protocol: str, host: str, username: str) -> Optional[str]:
     stdin = f'protocol={protocol}\nhost={host}\nusername={username}\n'.encode()
     ecode, out = git_run_command(gitdir, args=['credential', 'fill'], stdin=stdin)
@@ -3601,9 +3608,12 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
             '--binary',
             '--patch-with-stat',
             '--encoding=utf-8',
-            '--default-prefix',
             '--find-renames',
         ]
+
+        if git_check_minimal_version("2.40"):
+            showargs.append("--default-prefix")
+
         smcfg = get_sendemail_config()
         if not get_git_bool(str(smcfg.get('mailmap', 'false'))):
             showargs.append('--no-mailmap')
