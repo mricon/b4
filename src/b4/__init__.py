@@ -3165,7 +3165,7 @@ def _setup_user_config(cmdargs: argparse.Namespace) -> None:
             USER_CONFIG['name'] = os.environ['GIT_AUTHOR_NAME']
         else:
             udata = pwd.getpwuid(os.getuid())
-            USER_CONFIG['name'] = udata.pw_gecos
+            USER_CONFIG['name'] = udata.pw_gecos.strip(",")
     if 'email' not in USER_CONFIG:
         if 'GIT_COMMITTER_EMAIL' in os.environ:
             USER_CONFIG['email'] = os.environ['GIT_COMMITTER_EMAIL']
