@@ -581,6 +581,7 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
     seen_msgids: Set[str] = set()
     seen_covers: Set[int] = set()
     queries: Set[str] = set()
+    by_changeid: bool = False
     for msg in msgs:
         msgid = b4.LoreMessage.get_clean_msgid(msg)
         if msgid is None:
@@ -592,17 +593,22 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         if lsub.counter > 1:
             continue
 
-        if not lsub.reply:
-            payload, charset = b4.LoreMessage.get_payload(msg)
-            if payload:
-                matches = re.search(r'^change-id:\s+(\S+)', payload, flags=re.I | re.M)
-                if matches:
-                    logger.debug('Found change-id %s', matches.groups()[0])
-                    q = 'nq:"change-id: %s"' % matches.groups()[0]
-                    queries.add(q)
-
         if base_msg is not None:
             logger.debug('Current base_msg: %s', base_msg['Subject'])
+
+        if lsub.reply:
+            logger.debug('Ignoring reply: %s', lsub.full_subject)
+            continue
+
+        payload, _ = b4.LoreMessage.get_payload(msg)
+        if payload:
+            matches = re.search(r'^change-id:\s+(\S+)', payload, flags=re.I | re.M)
+            if matches:
+                logger.debug('Found change-id %s', matches.groups()[0])
+                by_changeid = True
+                q = 'nq:"change-id: %s"' % matches.groups()[0]
+                queries.add(q)
+
         logger.debug('Checking the subject on %s', lsub.full_subject)
         if latest_revision is None or lsub.revision >= latest_revision:
             latest_revision = lsub.revision
@@ -628,13 +634,17 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
     if direction < 0 and wantvers is None:
         wantvers = [latest_revision - 1]
 
-    fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
     msgdate = email.utils.parsedate_tz(str(base_msg['Date']))
     if msgdate is None:
         logger.debug('Unable to parse the date, not checking for revisions')
         return msgs
-    q = '(s:"%s" AND f:"%s")' % (lsub.subject.replace('"', ''), fromeml)
-    queries.add(q)
+
+    if not by_changeid:
+        logger.debug('Using subject+from combo for query')
+        fromeml = email.utils.getaddresses(base_msg.get_all('from', []))[0][1]
+        q = '(s:"%s" AND f:"%s")' % (lsub.subject.replace('"', ''), fromeml)
+        queries.add(q)
+
     startdate = time.strftime('%Y%m%d', msgdate[:9])
     if direction > 0:
         logger.critical('Checking for newer revisions')
@@ -644,6 +654,7 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         datelim = 'd:..%s' % startdate
 
     q = '(%s) AND %s' % (' OR '.join(queries), datelim)
+    logger.debug('Query: %s', q)
     q_msgs = b4.get_pi_search_results(q, nocache=nocache)
     if not q_msgs:
         return msgs
