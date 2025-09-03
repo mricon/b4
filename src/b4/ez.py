@@ -108,6 +108,31 @@ DEPS_HELP = """
 PFHASH_CACHE = dict()
 
 
+def run_frf(frf: fr.RepoFilter) -> None:
+    """
+    Run git-filter-repo with the provided RepoFilter configuration
+    and then clean up any trace files that are created during the process.
+
+    Recent versions of git-filter-repo create a .git/filter-repo/already_ran
+    file after each run that may be useful for other uses of git-filter-repo,
+    but is completely unnecessary for b4's purposes. Delete this file after
+    each invocation, so it doesn't interfere with subsequent runs.
+    """
+    if not can_gfr:
+        logger.critical('CRITICAL: git-filter-repo is not available')
+        sys.exit(1)
+    logger.debug('Running git-filter-repo...')
+    frf.run()
+    logger.debug('git-filter-repo complete')
+    gtl = b4.git_get_toplevel()
+    if isinstance(gtl, str):
+        # Remove .git/filter-repo/already_ran
+        already_ran = os.path.join(gtl, '.git', 'filter-repo', 'already_ran')
+        if os.path.exists(already_ran):
+            logger.debug('Removing %s', already_ran)
+            os.remove(already_ran)
+
+
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     config = b4.get_main_config()
     endpoint = config.get('send-endpoint-web', '')
@@ -656,7 +681,7 @@ def store_cover(content: str, tracking: dict, new: bool = False) -> None:
             args.refs = [f'{commit}~1..HEAD']
             frf = fr.RepoFilter(args, commit_callback=fred.callback)
             logger.info('Invoking git-filter-repo to update the cover letter.')
-            frf.run()
+            run_frf(frf)
 
     if strategy == 'branch-description':
         mybranch = b4.git_get_current_branch(None)
@@ -1260,7 +1285,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     args.refs = [f'{start}..']
     frf = fr.RepoFilter(args, commit_callback=fred.callback)
     logger.info('Invoking git-filter-repo to update trailers.')
-    frf.run()
+    run_frf(frf)
     logger.info('Trailers updated.')
 
 
