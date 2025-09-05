@@ -43,7 +43,6 @@ ConfigDictT = Dict[str, Union[str, List[str], None]]
 from email.message import EmailMessage
 
 from email import charset
-from packaging import version
 
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
@@ -2841,8 +2840,9 @@ def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: 
 
 def git_check_minimal_version(min_version: str) -> bool:
     ecode, out = git_run_command(None, ["version"])
-    current_version = out.split()[2]
-    return version.parse(current_version) >= version.parse(min_version)
+    current_version = re.sub(r"git version (\d+\.\d+)\..*", r"\1", out)
+    return tuple(map(int, current_version.split(".")[:2])) >= tuple(map(int, min_version.split(".")[:2]))
+
 
 
 def git_credential_fill(gitdir: Optional[str], protocol: str, host: str, username: str) -> Optional[str]:
