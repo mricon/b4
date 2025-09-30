@@ -448,8 +448,8 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         logger.info('  e.g.: %s', ' '.join(mergecmd))
         sys.exit(0)
 
-    base_commit = get_base_commit(topdir, first_body, lser, cmdargs)
     if topdir:
+        base_commit = get_base_commit(topdir, first_body, lser, cmdargs)
         checked, mismatched = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
         if checked and len(mismatched) == 0 and checked != len(mismatched):
             logger.critical(' Base: applies clean to current tree')
