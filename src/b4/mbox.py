@@ -39,6 +39,54 @@ ${covermessage}
 Link: ${midurl}
 """
 
+def get_base_commit(topdir: Optional[str], body: str, lser: b4.LoreSeries,
+                    cmdargs: argparse.Namespace) -> str:
+    base_commit = 'HEAD'
+
+    if lser.prereq_base_commit:
+        logger.debug('Setting base-commit to prereq-base-commit: %s', lser.prereq_base_commit)
+        base_commit = lser.prereq_base_commit
+    else:
+        matches = re.search(r'base-commit: .*?([\da-f]+)', body, re.MULTILINE)
+        if matches:
+            base_commit = matches.groups()[0]
+        else:
+            # Try a more relaxed search
+            matches = re.search(r'based on .*?([\da-f]{40})', body, re.MULTILINE)
+            if matches:
+                base_commit = matches.groups()[0]
+
+    if base_commit and topdir:
+        # Does it actually exist in this tree?
+        if not b4.git_commit_exists(topdir, base_commit):
+            logger.warning(' Base: base-commit %s not known, ignoring', base_commit)
+            base_commit = 'HEAD'
+        elif not cmdargs.mergebase:
+            logger.debug(' Base: using specified base-commit %s', base_commit)
+
+    if base_commit == 'HEAD' and topdir and cmdargs.guessbase:
+        logger.info(' Base: attempting to guess base-commit...')
+        try:
+            base_commit, nblobs, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
+                                                             maxdays=cmdargs.guessdays)
+            if mismatches == 0:
+                logger.critical(' Base: %s (exact match)', base_commit)
+            elif nblobs == mismatches:
+                logger.critical(' Base: failed to guess base')
+            else:
+                logger.critical(' Base: %s (best guess, %s/%s blobs matched)', base_commit,
+                                nblobs - mismatches, nblobs)
+        except IndexError:
+            logger.critical(' Base: failed to guess base')
+
+    if cmdargs.mergebase:
+        if base_commit:
+            logger.warning(' Base: overriding submitter provided base-commit %s', base_commit)
+        base_commit = cmdargs.mergebase
+        logger.info(' Base: using CLI provided base-commit %s', base_commit)
+
+    return base_commit
+
 
 def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -> None:
     config = b4.get_main_config()
@@ -214,7 +262,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
     if not lser.complete and not cmdargs.cherrypick:
         logger.critical('WARNING: Thread incomplete!')
 
-    gitbranch = lser.get_slug(extended=False)
     am_filename = None
 
     linkmask = str(config.get('linkmask', ''))
@@ -235,7 +282,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             slug = wantname
             if wantname.find('.') > -1:
                 slug = '.'.join(wantname.split('.')[:-1])
-            gitbranch = slug
         else:
             slug = lser.get_slug(extended=True)
 
@@ -270,46 +316,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
 
         logger.critical(' Link: %s', linkurl)
 
-    base_commit = None
-
-    matches = re.search(r'base-commit: .*?([\da-f]+)', first_body, re.MULTILINE)
-    if matches:
-        base_commit = matches.groups()[0]
-    else:
-        # Try a more relaxed search
-        matches = re.search(r'based on .*?([\da-f]{40})', first_body, re.MULTILINE)
-        if matches:
-            base_commit = matches.groups()[0]
-
-    if base_commit and topdir:
-        # Does it actually exist in this tree?
-        if not b4.git_commit_exists(topdir, base_commit):
-            logger.info(' Base: base-commit %s not known, ignoring', base_commit)
-            base_commit = None
-        elif not cmdargs.mergebase:
-            logger.info(' Base: using specified base-commit %s', base_commit)
-
-    if not base_commit and topdir and cmdargs.guessbase:
-        logger.critical(' Base: attempting to guess base-commit...')
-        try:
-            base_commit, nblobs, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
-                                                             maxdays=cmdargs.guessdays)
-            if mismatches == 0:
-                logger.critical(' Base: %s (exact match)', base_commit)
-            elif nblobs == mismatches:
-                logger.critical(' Base: failed to guess base')
-            else:
-                logger.critical(' Base: %s (best guess, %s/%s blobs matched)', base_commit,
-                                nblobs - mismatches, nblobs)
-        except IndexError:
-            logger.critical(' Base: failed to guess base')
-
-    if cmdargs.mergebase:
-        if base_commit:
-            logger.warn(' Base: overriding submitter provided base-commit %s', base_commit)
-        base_commit = cmdargs.mergebase
-        logger.info(' Base: using CLI provided base-commit %s', base_commit)
-
     if cmdargs.subcmd == 'shazam':
         if not topdir:
             logger.critical('Could not figure out where your git dir is, cannot shazam.')
@@ -317,9 +323,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
 
         ifh = io.BytesIO()
         if lser.prereq_patch_ids:
-            if lser.prereq_base_commit:
-                logger.debug('Setting base-commit to prereq-base-commit: %s', lser.prereq_base_commit)
-                base_commit = lser.prereq_base_commit
             logger.info(' Deps: looking for dependencies matching %s patch-ids', len(lser.prereq_patch_ids))
             query = ' OR '.join([f'patchid:{x}' for x in lser.prereq_patch_ids])
             logger.debug('query=%s', query)
@@ -327,7 +330,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             pmap = dict()
             if dmsgs:
                 for dmsg in dmsgs:
-                    dbody, dcharset = b4.LoreMessage.get_payload(dmsg)
+                    dbody, _ = b4.LoreMessage.get_payload(dmsg)
                     if not b4.DIFF_RE.search(dbody):
                         continue
                     dlmsg = b4.LoreMessage(dmsg)
@@ -353,10 +356,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 thanks_record_am(lser, cherrypick=cherrypick)
             sys.exit(ecode)
 
-        if not base_commit:
-            # Try our best with HEAD, I guess
-            base_commit = 'HEAD'
-
+        base_commit = get_base_commit(topdir, first_body, lser, cmdargs)
         linkurl = linkmask % top_msgid
         try:
             b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit, origin=linkurl)
@@ -448,18 +448,17 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         logger.info('  e.g.: %s', ' '.join(mergecmd))
         sys.exit(0)
 
-    if not base_commit:
+    base_commit = get_base_commit(topdir, first_body, lser, cmdargs)
+    if topdir:
         checked, mismatched = lser.check_applies_clean(topdir, at=cmdargs.guessbranch)
         if checked and len(mismatched) == 0 and checked != len(mismatched):
             logger.critical(' Base: applies clean to current tree')
-            base_commit = 'HEAD'
-        else:
-            logger.critical(' Base: not specified')
+        elif base_commit != 'HEAD':
+            gitbranch = lser.get_slug(extended=False)
+            logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
+            if cmdargs.outdir != '-':
+                logger.critical('       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename)
 
-    if base_commit is not None:
-        logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
-    if cmdargs.outdir != '-':
-        logger.critical('       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename)
     thanks_record_am(lser, cherrypick=cherrypick)
 
 
