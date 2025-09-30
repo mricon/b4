@@ -348,9 +348,9 @@ class LoreMailbox:
             # we either run out of in-reply-tos, or we find a patch in
             # one of our series
             logger.debug('fmsg.in_reply_to=%s', fmsg.in_reply_to)
+            pmsg: Optional['LoreMessage'] = None
             if fmsg.in_reply_to is None:
                 # Check if there's something matching in References
-                pmsg = None
                 for refid in fmsg.references:
                     if refid in self.msgid_map and refid != fmsg.msgid:
                         pmsg = self.msgid_map[refid]
