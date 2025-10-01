@@ -81,9 +81,9 @@ def get_base_commit(topdir: Optional[str], body: str, lser: b4.LoreSeries,
 
     if cmdargs.mergebase:
         if base_commit:
-            logger.warning(' Base: overriding submitter provided base-commit %s', base_commit)
+            logger.debug(' Base: overriding submitter provided base-commit %s with %s',
+                           base_commit, cmdargs.mergebase)
         base_commit = cmdargs.mergebase
-        logger.info(' Base: using CLI provided base-commit %s', base_commit)
 
     return base_commit
 
@@ -359,6 +359,10 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         base_commit = get_base_commit(topdir, first_body, lser, cmdargs)
         linkurl = linkmask % top_msgid
         try:
+            if cmdargs.mergebase:
+                logger.info(' Base: %s', base_commit)
+            else:
+                logger.info(' Base: %s (use --merge-base to override)', base_commit)
             b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit, origin=linkurl)
         except RuntimeError:
             sys.exit(1)
