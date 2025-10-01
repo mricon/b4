@@ -2729,6 +2729,12 @@ def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: 
     return ecode, out
 
 
+def git_check_minimal_version(min_version: str) -> bool:
+    ecode, out = git_run_command(None, ["version"])
+    current_version = re.sub(r"git version (\d+\.\d+)\..*", r"\1", out)
+    return tuple(map(int, current_version.split(".")[:2])) >= tuple(map(int, min_version.split(".")[:2]))
+
+
 def git_credential_fill(gitdir: Optional[str], protocol: str, host: str, username: str) -> Optional[str]:
     stdin = f'protocol={protocol}\nhost={host}\nusername={username}\n'.encode()
     ecode, out = git_run_command(gitdir, args=['credential', 'fill'], stdin=stdin)
@@ -3470,20 +3476,23 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         if commit in ignore_commits:
             logger.debug('Ignoring commit %s', commit)
             continue
+
+        showargs = [
+            '--format=email',
+            '--binary',
+            '--patch-with-stat',
+            '--encoding=utf-8',
+            '--find-renames',
+        ]
+
+        if git_check_minimal_version("2.40"):
+            showargs.append("--default-prefix")
+
         ecode, out = git_run_command(
-            gitdir,
-            [
-                'show',
-                '--format=email',
-                '--binary',
-                '--patch-with-stat',
-                '--encoding=utf-8',
-                '--default-prefix',
-                '--find-renames',
-                commit,
-            ],
+            gitdir, ['show'] + showargs + [commit],
             decode=False,
         )
+
         if ecode > 0:
             raise RuntimeError(f'Could not get a patch out of {commit}')
         msg = email.message_from_bytes(out, policy=emlpolicy)
