@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "b4"
-version = "0.14.2"
+version = "0.14.3"
 description = "A tool to work with public-inbox and patch archives"
 readme = "README.rst"
 keywords = ["git", "public-inbox", "lore.kernel.org", "patch", "email", "workflow"]
@@ -47,7 +47,7 @@ filterwarnings = "ignore:.*(pyopenssl|invalid escape sequence).*:DeprecationWarn
 norecursedirs = ["tests/helpers", "patatt"]
 
 [tool.bumpversion]
-current_version = "0.14.2"
+current_version = "0.14.3"
 files = [
     {filename = "src/b4/__init__.py"},
     {filename = "src/b4/man/b4.5.rst"},
