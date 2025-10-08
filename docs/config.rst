@@ -444,7 +444,7 @@ Contributor-oriented settings
   not defined and b4 finds ``scripts/checkpatch.pl`` at the top of your git
   tree, it uses the command shown below by default.
 
-  Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback --showfile```
+  Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback --showfile``
 
 ``b4.prep-pre-flight-checks`` (v0.14+)
   You can use this to turn off some or all pre-flight checks that b4 runs
