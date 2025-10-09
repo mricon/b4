@@ -166,6 +166,8 @@ SENDEMAIL_CONFIG: ConfigDictT = dict()
 REQSESSION: Optional[requests.Session] = None
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
+# Used to track send-email alias replacements
+ALIAS_INFO: Dict[str, Optional[Tuple[str, str]]] = dict()
 # Used to track mailmap replacements
 MAILMAP_INFO: Dict[str, Optional[Tuple[str, str]]] = dict()
 
@@ -4264,7 +4266,52 @@ def get_excluded_addrs() -> Set[str]:
 
 def cleanup_email_addrs(addresses: List[Tuple[str, str]], excludes: Set[str],
                         gitdir: Optional[str]) -> List[Tuple[str, str]]:
+    global ALIAS_INFO
     global MAILMAP_INFO
+
+    # Translate aliases if support is available
+    if git_check_minimal_version("2.47"):
+        logger.debug('Translating aliases via git send-email')
+
+        unqual_addrs: Set[str] = set()
+
+        # Assume aliases won't have '@' and are always unqualified
+        for entry in addresses:
+            if entry[1] not in ALIAS_INFO and '@' not in entry[1]:
+                unqual_addrs.add(entry[1])
+
+        if unqual_addrs:
+            tocheck = list(unqual_addrs)
+            data = '\n'.join(tocheck).encode('utf-8')
+            args = ['send-email', '--translate-aliases']
+            ecode, out = git_run_command(gitdir,
+                                        ['send-email', '--translate-aliases'],
+                                        stdin=data)
+            if ecode == 0:
+                translated_addrs = email.utils.getaddresses(out.strip().splitlines())
+
+                for alias, entry in zip(tocheck, translated_addrs):
+                    if alias != entry[1]:
+                        logger.debug('Translated alias %s to qualified address %s',
+                                    alias, entry[1])
+                        ALIAS_INFO[alias] = entry
+                    else:
+                        logger.debug('"%s" is not a known alias', alias)
+                        ALIAS_INFO[alias] = None
+            else:
+                logger.debug('git send-email --translate-aliases failed with exit code %s',
+                             ecode)
+
+        def _replace_aliases(entry: Tuple[str, str]) -> Tuple[str, str]:
+            if entry[1] in ALIAS_INFO:
+                replacement = ALIAS_INFO[entry[1]]
+                if replacement is not None:
+                    return replacement
+
+            return entry
+
+        addresses = list(map(_replace_aliases, addresses))
+
     for entry in list(addresses):
         # Only qualified addresses, please
         if not len(entry[1].strip()) or '@' not in entry[1]:
