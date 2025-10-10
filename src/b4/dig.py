@@ -154,8 +154,8 @@ def dig_commit(cmdargs: argparse.Namespace) -> None:
     logger.info('---')
     logger.info('This patch is present in the following series:')
     logger.info('---')
-    firstmsg: Optional[b4.LoreMessage] = None
     for rev in revs:
+        firstmsg: Optional[b4.LoreMessage] = None
         pref = f'  v{rev}: '
         lser = lmbx.series[rev]
         lmsg: Optional[b4.LoreMessage] = None
@@ -180,7 +180,7 @@ def dig_commit(cmdargs: argparse.Namespace) -> None:
             # Use the first patch in the series as a fallback
             lmsg = firstmsg
         logger.info('%s%s', pref, lmsg.full_subject)
-        logger.info('%s%s', ' ' * len(pref), linkmask % firstmsg.msgid)
+        logger.info('%s%s', ' ' * len(pref), linkmask % lmsg.msgid)
 
 
 def main(cmdargs: argparse.Namespace) -> None:
