@@ -295,13 +295,25 @@ class LoreMailbox:
                 self.trailer_map[patchid] = list()
             self.trailer_map[patchid] += fmsgs
 
+
+    def get_latest_revision(self) -> Optional[int]:
+        if not len(self.series):
+            return None
+        # Use the latest revision
+        revs = list(self.series.keys())
+        # sort by date of each series.submission_date
+        revs.sort(key=lambda r: self.series[r].submission_date or 0)
+        return revs[-1]
+
+
     def get_series(self, revision: Optional[int] = None, sloppytrailers: bool = False,
                    reroll: bool = True, codereview_trailers: bool = True) -> Optional['LoreSeries']:
         if revision is None:
             if not len(self.series):
                 return None
-            # Use the highest revision
-            revision = max(self.series.keys())
+            revision = self.get_latest_revision()
+            if revision is None:
+                return None
         elif revision not in self.series.keys():
             return None
 
@@ -510,6 +522,7 @@ class LoreSeries:
     change_id: Optional[str] = None
     prereq_patch_ids: Optional[List[str]] = None
     prereq_base_commit: Optional[str] = None
+    _submission_date: Optional[datetime.datetime] = None
 
     def __init__(self, revision: int, expected: int) -> None:
         self.revision = revision
@@ -798,6 +811,20 @@ class LoreSeries:
 
         return msgs
 
+
+    @property
+    def submission_date(self) -> Optional[datetime.datetime]:
+        # Find the date of the first patch we have
+        if self._submission_date is not None:
+            return self._submission_date
+        for lmsg in self.patches:
+            if lmsg is None:
+                continue
+            self._submission_date = lmsg.date
+            break
+        return self._submission_date
+
+
     @property
     def indexes(self) -> List[Tuple[str, str]]:
         if self._indexes is not None:
@@ -848,13 +875,9 @@ class LoreSeries:
         if self.indexes is None or not len(self.indexes):
             raise IndexError('No indexes to check against')
 
-        # Find the date of the first patch we have
-        pdate = datetime.datetime.now()
-        for lmsg in self.patches:
-            if lmsg is None:
-                continue
-            pdate = lmsg.date
-            break
+        pdate = self.submission_date
+        if not pdate:
+            pdate = datetime.datetime.now()
 
         # Find the latest commit on that date
         guntil = pdate.strftime('%Y-%m-%d')

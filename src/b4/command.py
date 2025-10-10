@@ -120,6 +120,11 @@ def cmd_diff(cmdargs: argparse.Namespace) -> None:
     b4.diff.main(cmdargs)
 
 
+def cmd_dig(cmdargs: argparse.Namespace) -> None:
+    import b4.dig
+    b4.dig.main(cmdargs)
+
+
 class ConfigOption(argparse.Action):
     """Action class for storing key=value arguments in a dict."""
     def __call__(self, parser: argparse.ArgumentParser,
@@ -398,6 +403,12 @@ def setup_parser() -> argparse.ArgumentParser:
     ag_sendh.add_argument('--web-auth-verify', dest='auth_verify', metavar='VERIFY_TOKEN',
                           help='Submit the token received via verification email')
     sp_send.set_defaults(func=cmd_send)
+
+    # b4 dig
+    sp_dig = subparsers.add_parser('dig', help='Dig into the details of a specific commit')
+    sp_dig.add_argument('-c', '--commit', dest='commit_id', metavar='COMMITISH',
+                        help='Commit-ish object to dig into')
+    sp_dig.set_defaults(func=cmd_dig)
 
     return parser
 
