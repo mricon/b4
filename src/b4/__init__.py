@@ -4514,12 +4514,12 @@ def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str =
 
     with git_temp_worktree(topdir, at_base) as gwt:
         logger.info('Magic: Preparing a sparse worktree')
-        ecode, out = git_run_command(gwt, ['sparse-checkout', 'init'], logstderr=True)
+        ecode, out = git_run_command(gwt, ['sparse-checkout', 'set'], logstderr=True)
         if ecode > 0:
-            logger.critical('Error running sparse-checkout init')
+            logger.critical('Error running sparse-checkout set')
             logger.critical(out)
             raise RuntimeError
-        ecode, out = git_run_command(gwt, ['checkout'], logstderr=True)
+        ecode, out = git_run_command(gwt, ['checkout', '-f'], logstderr=True)
         if ecode > 0:
             logger.critical('Error running checkout into sparse workdir')
             logger.critical(out)
