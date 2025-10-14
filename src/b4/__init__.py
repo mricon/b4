@@ -516,7 +516,9 @@ class LoreSeries:
     complete: bool = False
     has_cover: bool = False
     partial_reroll: bool = False
-    subject: str
+    subject: Optional[str] = None
+    fromname: Optional[str] = None
+    fromemail: Optional[str] = None
     _indexes: Optional[List[Tuple[str, str]]] = None
     base_commit: Optional[str] = None
     change_id: Optional[str] = None
@@ -535,6 +537,7 @@ class LoreSeries:
     def __repr__(self) -> str:
         out = list()
         out.append('- Series: [v%s] %s' % (self.revision, self.subject))
+        out.append('  author: %s <%s>' % (self.fromname, self.fromemail))
         out.append('  revision: %s' % self.revision)
         out.append('  expected: %s' % self.expected)
         out.append('  complete: %s' % self.complete)
@@ -552,6 +555,27 @@ class LoreSeries:
             at += 1
 
         return '\n'.join(out)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, LoreSeries):
+            return NotImplemented
+        # We are the same series if all patch-id's are exactly the same
+        my_patchids: List[Optional[str]] = list()
+        for patch in self.patches[1:]:
+            if patch is not None:
+                my_patchids.append(patch.git_patch_id)
+        other_patchids: List[Optional[str]] = list()
+        for patch in other.patches[1:]:
+            if patch is not None:
+                other_patchids.append(patch.git_patch_id)
+        return my_patchids == other_patchids
+
+    def get_patch_by_msgid(self, msgid: str) -> Optional['LoreMessage']:
+        for lmsg in self.patches:
+            if lmsg is not None and lmsg.msgid == msgid:
+                return lmsg
+        raise IndexError('No such patch in series')
+
 
     def add_patch(self, lmsg: 'LoreMessage') -> None:
         while len(self.patches) < lmsg.expected + 1:
@@ -596,8 +620,12 @@ class LoreSeries:
 
             if self.patches[0] is not None:
                 self.subject = self.patches[0].subject
+                self.fromname = self.patches[0].fromname
+                self.fromemail = self.patches[0].fromemail
             elif self.patches[1] is not None:
                 self.subject = self.patches[1].subject
+                self.fromname = self.patches[1].fromname
+                self.fromemail = self.patches[1].fromemail
 
     def get_slug(self, extended: bool = False) -> str:
         # Find the first non-None entry
@@ -3509,9 +3537,22 @@ def get_series_by_change_id(change_id: str, nocache: bool = False) -> Optional['
     return lmbx
 
 
-def get_series_by_patch_id(patch_id: str, nocache: bool = False) -> Optional['LoreMailbox']:
+def get_msgs_by_patch_id(patch_id: str, extra_query: Optional[str] = None,
+                         nocache: bool = False, full_threads: bool = False
+                         ) -> Optional[List[EmailMessage]]:
     q = f'patchid:{patch_id}'
-    q_msgs = get_pi_search_results(q, nocache=nocache)
+    if extra_query:
+        q = f'{q} {extra_query}'
+    logger.debug('Full query: %s (nocache=%s)', q, nocache)
+    q_msgs = get_pi_search_results(q, nocache=nocache, full_threads=full_threads)
+    if not q_msgs:
+        return None
+
+    return q_msgs
+
+
+def get_series_by_patch_id(patch_id: str, nocache: bool = False) -> Optional['LoreMailbox']:
+    q_msgs = get_msgs_by_patch_id(patch_id, full_threads=True, nocache=nocache)
     if not q_msgs:
         return None
     lmbx = LoreMailbox()

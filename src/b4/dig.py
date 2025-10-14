@@ -9,10 +9,11 @@ import os
 import sys
 import b4
 import argparse
-import email.parser
+import re
+import urllib.parse
 
 from email.message import EmailMessage
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Union
 
 logger = b4.logger
 
@@ -23,6 +24,28 @@ try_diff_algos: List[str] = [
     'patience',
     'minimal',
 ]
+
+
+def try_links(links: Set[str]) -> None:
+    logger.info('Try following these Link trailers:')
+    for link in links:
+        logger.info('  Link: %s', link)
+
+
+def print_one_match(subject: str, link: str) -> None:
+    logger.info('---')
+    logger.info(subject)
+    sys.stdout.write(f'{link}\n')
+
+
+def get_all_msgids_from_urls(urls: Set[str]) -> Set[str]:
+    msgids: Set[str] = set()
+    for url in urls:
+        matches = re.search(r'^https?://[^@]+/([^/]+@[^/]+)', url, re.IGNORECASE)
+        if matches:
+            chunks = matches.groups()
+            msgids.add(urllib.parse.unquote(chunks[0]))
+    return msgids
 
 
 def dig_commitish(cmdargs: argparse.Namespace) -> None:
@@ -56,15 +79,30 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         logger.error('Merge commit detected, please specify a single-parent commit.')
         sys.exit(1)
 
+    # Look at the commit message and find any Link: trailers
+    links: Set[str] = set()
+    ecode, out = b4.git_run_command(
+        topdir, ['show', '--no-patch', '--format=%B', commit],
+    )
+    if ecode > 0:
+        logger.error('Could not get commit message for %s', commit)
+        sys.exit(1)
+    trailers, _ = b4.LoreMessage.find_trailers(out)
+    ltrs = [t for t in trailers if t.name.lower() == 'link']
+    if ltrs:
+        links = set(ltr.value for ltr in ltrs)
+
+    msgids = get_all_msgids_from_urls(links)
+
     # Find commit's author and subject from git
     ecode, out = b4.git_run_command(
-        topdir, ['show', '--no-patch', '--format=%ae %s', commit],
+        topdir, ['show', '--no-patch', '--format=%as %ae %s', commit],
     )
     if ecode > 0:
         logger.error('Could not get commit info for %s', commit)
         sys.exit(1)
-    fromeml, csubj = out.strip().split(maxsplit=1)
-    logger.debug('fromeml=%s, csubj=%s', fromeml, csubj)
+    cdate, fromeml, csubj = out.strip().split(maxsplit=2)
+    logger.debug('cdate=%s, fromeml=%s, csubj=%s', cdate, fromeml, csubj)
     logger.info('Attempting to match by exact patch-id...')
     showargs = [
         '--format=email',
@@ -74,7 +112,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     ]
     # Keep a record so we don't try git-patch-id on identical patches
     bpatches: Set[bytes] = set()
-    lmbx: Optional[b4.LoreMailbox] = None
+    msgs: Optional[List[EmailMessage]] = None
     for algo in try_diff_algos:
         logger.debug('Trying with diff-algorithm=%s', algo)
         algoarg = f'--diff-algorithm={algo}'
@@ -97,68 +135,121 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
         patch_id = out.split(maxsplit=1)[0]
         logger.debug('Patch-id for commit %s is %s', commit, patch_id)
-        logger.info('Trying to find matching series by patch-id %s', patch_id)
-        lmbx = b4.get_series_by_patch_id(patch_id)
-        if lmbx:
+        logger.info('Trying to find matching series by patch-id %s (%s)', patch_id, algo)
+        # Limit lookup by date prior to the commit date, to weed out any false-positives from
+        # backports or from erroneously resent series
+        extra_query = f'AND rt:..{cdate}'
+        logger.debug('extra_query=%s', extra_query)
+        msgs = b4.get_msgs_by_patch_id(patch_id, nocache=cmdargs.nocache, extra_query=extra_query)
+        if msgs:
             logger.info('Found matching series by patch-id')
+            for msg in msgs:
+                msgid = b4.LoreMessage.get_clean_msgid(msg)
+                if msgid:
+                    logger.debug('Adding from patch-id matches: %s', msgid)
+                    msgids.add(msgid)
             break
 
-    if not lmbx:
+    if not msgs:
         logger.info('Attempting to match by author and subject...')
-        q = '(s:"%s" AND f:"%s")' % (csubj.replace('"', ''), fromeml)
-        msgs = b4.get_pi_search_results(q)
+        q = '(s:"%s" AND f:"%s" AND rt:..%s)' % (csubj.replace('"', ''), fromeml, cdate)
+        msgs = b4.get_pi_search_results(q, nocache=cmdargs.nocache, full_threads=False)
         if msgs:
-            logger.info('Found %s matching messages', len(msgs))
-            lmbx = b4.LoreMailbox()
             for msg in msgs:
-                lmbx.add_message(msg)
-        else:
+                msgid = b4.LoreMessage.get_clean_msgid(msg)
+                if msgid:
+                    logger.debug('Adding from author+subject matches: %s', msgid)
+                    msgids.add(msgid)
+        if not msgs and not msgids:
             logger.error('Could not find anything matching commit %s', commit)
-            # Look at the commit message and find any Link: trailers
-            ecode, out = b4.git_run_command(
-                topdir, ['show', '--no-patch', '--format=%B', commit],
-            )
-            if ecode > 0:
-                logger.error('Could not get commit message for %s', commit)
-                sys.exit(1)
-            trailers, _ = b4.LoreMessage.find_trailers(out)
-            ltrs = [t for t in trailers if t.name.lower() == 'link']
-            if ltrs:
-                logger.info('---')
-                logger.info('Try following these Link trailers:')
-                for ltr in ltrs:
-                    logger.info('  %s', ltr.as_string())
+            if links:
+                try_links(links)
             sys.exit(1)
 
-    # Grab the latest series and see if we have a change_id
-    revs = list(lmbx.series.keys())
-    revs.sort(key=lambda r: lmbx.series[r].submission_date or 0)
-
-    change_id: Optional[str] = None
-    lser = lmbx.get_series(codereview_trailers=False)
-    for rev in revs:
-        change_id = lmbx.series[rev].change_id
-        if not change_id:
+    logger.info('Will consider promising messages: %s', len(msgids))
+    logger.debug('msgids: %s', msgids)
+    # Go one by one and grab threads by message-id
+    seen_msgids: Set[str] = set()
+    lmbxs: List[b4.LoreMailbox] = list()
+    for msgid in msgids:
+        if not msgid or msgid in seen_msgids:
+            logger.debug('Skipping duplicate or invalid msgid %s', msgid)
             continue
-        logger.info('Backfilling any missing series by change-id')
-        logger.debug('change_id=%s', change_id)
-        # Fill in the rest of the series by change_id
-        q = f'nq:"change-id:{change_id}"'
-        q_msgs = b4.get_pi_search_results(q, full_threads=True)
-        if q_msgs:
-            for q_msg in q_msgs:
-                lmbx.add_message(q_msg)
-        break
+        seen_msgids.add(msgid)
+        logger.debug('Fetching thread by msgid %s', msgid)
+        lmbx = b4.get_series_by_msgid(msgid)
+        if not lmbx:
+            logger.error('Could not fetch thread for msgid %s, skipping', msgid)
+            continue
+        if not lmbx.series:
+            logger.debug('No series found in this mailbox, skipping')
+            continue
+        lmbxs.append(lmbx)
 
-    logger.debug('Number of series in the mbox: %d', len(lmbx.series))
+    if not lmbxs:
+        logger.error('Could not fetch any threads for the matching messages!')
+        sys.exit(1)
+
+    lsers: List[b4.LoreSeries] = list()
+    for lmbx in lmbxs:
+        maxrev = max(lmbx.series.keys())
+        if cmdargs.all_series and len(lmbx.series) < maxrev:
+            logger.debug('Fetching prior series')
+            # Do we have a change-id in this series?
+            lser = lmbx.get_series(codereview_trailers=False)
+            fillin_q: str = ''
+            if lser and lser.change_id:
+                logger.debug('Found change-id %s in the series', lser.change_id)
+                fillin_q = f'nq:"change-id:{lser.change_id}"'
+            elif lser and lser.subject and lser.fromemail:
+                # We're going to match by first patch/cover letter subject and author.
+                # It's not perfect, but it's the best we can do without a change-id.
+                fillin_q = '(s:"%s" AND f:"%s")' % (lser.subject.replace('"', ''), lser.fromemail)
+            if fillin_q:
+                fillin_q += f' AND rt:..{cdate}'
+                logger.debug('fillin_q=%s', fillin_q)
+                q_msgs = b4.get_pi_search_results(fillin_q, nocache=cmdargs.nocache, full_threads=True)
+                if q_msgs:
+                    for q_msg in q_msgs:
+                        lmbx.add_message(q_msg)
+                        q_msgid = b4.LoreMessage.get_clean_msgid(q_msg)
+                        if q_msgid:
+                            seen_msgids.add(q_msgid)
+
+        for lser in lmbx.series.values():
+            if lser and lser not in lsers:
+                lsers.append(lser)
+
+    if not len(lsers):
+        logger.error('Could not find any series containing this patch!')
+        if links:
+            try_links(links)
+        sys.exit(1)
+
+    lsers.sort(key=lambda r: r.submission_date or 0)
+    logger.debug('Number of matching series: %d', len(lsers))
+    lmsg: Optional[b4.LoreMessage] = None
+    if not cmdargs.all_series:
+        # Go backwards in time and find the first matching patch
+        for lser in reversed(lsers):
+            for lmsg in lser.patches[1:]:
+                if lmsg is None:
+                    continue
+                if lmsg.git_patch_id == patch_id:
+                    logger.debug('matched by exact patch-id')
+                    print_one_match(lmsg.full_subject, linkmask % lmsg.msgid)
+                    return
+                if lmsg.subject == csubj:
+                    logger.debug('matched by subject')
+                    print_one_match(lmsg.full_subject, linkmask % lmsg.msgid)
+                    return
+
     logger.info('---')
-    logger.info('This patch is present in the following series:')
+    logger.info('This patch belongs in the following series:')
     logger.info('---')
-    for rev in revs:
+    for lser in lsers:
         firstmsg: Optional[b4.LoreMessage] = None
-        pref = f'  v{rev}: '
-        lser = lmbx.series[rev]
-        lmsg: Optional[b4.LoreMessage] = None
+        pref = f'  v{lser.revision}: '
         if lser.has_cover:
             firstmsg = lser.patches[0]
         for lmsg in lser.patches[1:]:
@@ -179,7 +270,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         if lmsg is None:
             # Use the first patch in the series as a fallback
             lmsg = firstmsg
-        logger.info('%s%s', pref, lmsg.full_subject)
+        logger.info('%s%s', pref, firstmsg.full_subject)
         logger.info('%s%s', ' ' * len(pref), linkmask % lmsg.msgid)
 
 

@@ -408,6 +408,10 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_dig = subparsers.add_parser('dig', help='Dig into the details of a specific commit')
     sp_dig.add_argument('-c', '--commitish', dest='commitish', metavar='COMMITISH',
                         help='Commit-ish object to dig into')
+    sp_dig.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
+                        help='Do not use local cache')
+    sp_dig.add_argument('-a', '--all-series', action='store_true', default=False,
+                        help='Show all series, not just the latest matching')
     sp_dig.set_defaults(func=cmd_dig)
 
     return parser
