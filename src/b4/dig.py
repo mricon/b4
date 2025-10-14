@@ -25,7 +25,7 @@ try_diff_algos: List[str] = [
 ]
 
 
-def dig_commit(cmdargs: argparse.Namespace) -> None:
+def dig_commitish(cmdargs: argparse.Namespace) -> None:
     config = b4.get_main_config()
     cfg_llval = config.get('linkmask', '')
     if isinstance(cfg_llval, str) and '%s' in cfg_llval:
@@ -39,9 +39,9 @@ def dig_commit(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Can we resolve this commit to an object?
-    commit = b4.git_revparse_obj(cmdargs.commit_id, topdir)
+    commit = b4.git_revparse_obj(f'{cmdargs.commitish}^0', topdir)
     if not commit:
-        logger.error('Cannot find a commit matching %s', cmdargs.commit_id)
+        logger.error('Cannot find a commit matching %s', cmdargs.commitish)
         sys.exit(1)
 
     logger.info('Digging into commit %s', commit)
@@ -184,5 +184,5 @@ def dig_commit(cmdargs: argparse.Namespace) -> None:
 
 
 def main(cmdargs: argparse.Namespace) -> None:
-    if cmdargs.commit_id:
-        dig_commit(cmdargs)
+    if cmdargs.commitish:
+        dig_commitish(cmdargs)

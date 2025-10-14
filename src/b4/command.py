@@ -406,7 +406,7 @@ def setup_parser() -> argparse.ArgumentParser:
 
     # b4 dig
     sp_dig = subparsers.add_parser('dig', help='Dig into the details of a specific commit')
-    sp_dig.add_argument('-c', '--commit', dest='commit_id', metavar='COMMITISH',
+    sp_dig.add_argument('-c', '--commitish', dest='commitish', metavar='COMMITISH',
                         help='Commit-ish object to dig into')
     sp_dig.set_defaults(func=cmd_dig)
 
