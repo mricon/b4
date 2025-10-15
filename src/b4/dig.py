@@ -11,6 +11,7 @@ import b4
 import argparse
 import re
 import urllib.parse
+import datetime
 
 from email.message import EmailMessage
 from typing import List, Set, Optional, Union
@@ -103,6 +104,12 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
     cdate, fromeml, csubj = out.strip().split(maxsplit=2)
     logger.debug('cdate=%s, fromeml=%s, csubj=%s', cdate, fromeml, csubj)
+    # Add 24 hours to the date to account for timezones
+    # First, parse YYYY-MM-DD into datetime
+    cdate_dt = datetime.datetime.strptime(cdate, '%Y-%m-%d')
+    cdate_dt += datetime.timedelta(days=1)
+    # Convert into YYYYMMDD format for xapian range search
+    pidate = cdate_dt.strftime('%Y%m%d')
     logger.info('Attempting to match by exact patch-id...')
     showargs = [
         '--format=email',
@@ -138,7 +145,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         logger.info('Trying to find matching series by patch-id %s (%s)', patch_id, algo)
         # Limit lookup by date prior to the commit date, to weed out any false-positives from
         # backports or from erroneously resent series
-        extra_query = f'AND rt:..{cdate}'
+        extra_query = f'AND d:..{pidate}'
         logger.debug('extra_query=%s', extra_query)
         msgs = b4.get_msgs_by_patch_id(patch_id, nocache=cmdargs.nocache, extra_query=extra_query)
         if msgs:
@@ -152,7 +159,8 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
 
     if not msgs:
         logger.info('Attempting to match by author and subject...')
-        q = '(s:"%s" AND f:"%s" AND rt:..%s)' % (csubj.replace('"', ''), fromeml, cdate)
+        q = '(s:"%s" AND f:"%s" AND d:..%s)' % (csubj.replace('"', ''), fromeml, pidate)
+        logger.debug('q=%s', q)
         msgs = b4.get_pi_search_results(q, nocache=cmdargs.nocache, full_threads=False)
         if msgs:
             for msg in msgs:
@@ -206,7 +214,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
                 # It's not perfect, but it's the best we can do without a change-id.
                 fillin_q = '(s:"%s" AND f:"%s")' % (lser.subject.replace('"', ''), lser.fromemail)
             if fillin_q:
-                fillin_q += f' AND rt:..{cdate}'
+                fillin_q += f' AND d:..{pidate}'
                 logger.debug('fillin_q=%s', fillin_q)
                 q_msgs = b4.get_pi_search_results(fillin_q, nocache=cmdargs.nocache, full_threads=True)
                 if q_msgs:
