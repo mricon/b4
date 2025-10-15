@@ -280,6 +280,8 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             # Use the first patch in the series as a fallback
             lmsg = firstmsg
         logger.info('%s%s', pref, firstmsg.full_subject)
+        logger.info('%sDate: %s, From: %s <%s>', ' ' * len(pref),
+                    firstmsg.date.strftime('%Y-%m-%d'), firstmsg.fromname, firstmsg.fromemail)
         logger.info('%s%s', ' ' * len(pref), linkmask % lmsg.msgid)
 
 
