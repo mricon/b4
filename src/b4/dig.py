@@ -63,8 +63,9 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Can we resolve this commit to an object?
-    commit = b4.git_revparse_obj(f'{cmdargs.commitish}^0', topdir)
-    if not commit:
+    try:
+        commit = b4.git_revparse_obj(f'{cmdargs.commitish}^0', topdir)
+    except RuntimeError:
         logger.error('Cannot find a commit matching %s', cmdargs.commitish)
         sys.exit(1)
 
