@@ -13,8 +13,11 @@ import re
 import urllib.parse
 import datetime
 
+import b4.mbox
+
 from email.message import EmailMessage
-from typing import List, Set, Optional, Union
+import email.utils
+from typing import List, Set, Optional, Tuple
 
 logger = b4.logger
 
@@ -95,6 +98,8 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         links = set(ltr.value for ltr in ltrs)
 
     msgids = get_all_msgids_from_urls(links)
+    # Make a copy for finding best match later
+    linked_msgids = set(msgids)
 
     # Find commit's author and subject from git
     ecode, out = b4.git_run_command(
@@ -239,19 +244,71 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     logger.debug('Number of matching series: %d', len(lsers))
     lmsg: Optional[b4.LoreMessage] = None
     if not cmdargs.all_series:
-        # Go backwards in time and find the first matching patch
+        all_lmsgs: List[b4.LoreMessage] = list()
         for lser in reversed(lsers):
             for lmsg in lser.patches[1:]:
                 if lmsg is None:
                     continue
+                all_lmsgs.append(lmsg)
+
+        logger.debug('Number of candidate patches: %d', len(all_lmsgs))
+        # First try to find the exact message by Linked message-id
+        best_match: Optional[b4.LoreMessage] = None
+        for lmsg in all_lmsgs:
+            if lmsg.msgid in linked_msgids:
+                logger.debug('matched by message-id')
+                best_match = lmsg
+                break
+        if not best_match:
+            # Next, try to find by exact patch-id
+            for lmsg in all_lmsgs:
                 if lmsg.git_patch_id == patch_id:
                     logger.debug('matched by exact patch-id')
-                    print_one_match(lmsg.full_subject, linkmask % lmsg.msgid)
-                    return
+                    best_match = lmsg
+                    break
+        if not best_match:
+            # Finally, try to find by subject match
+            for lmsg in all_lmsgs:
                 if lmsg.subject == csubj:
                     logger.debug('matched by subject')
-                    print_one_match(lmsg.full_subject, linkmask % lmsg.msgid)
-                    return
+                    best_match = lmsg
+                    break
+        if not best_match:
+            logger.error('Could not find a matching patch in any series!')
+            if links:
+                try_links(links)
+            sys.exit(1)
+
+        print_one_match(best_match.full_subject, linkmask % best_match.msgid)
+
+        if cmdargs.save_mbox:
+            msgs = b4.get_pi_thread_by_msgid(best_match.msgid, quiet=True)
+            if not msgs:
+                logger.error('Could not fetch thread for msgid %s', best_match.msgid)
+                sys.exit(1)
+            logger.info('---')
+            b4.mbox.save_msgs_as_mbox(cmdargs.save_mbox, msgs)
+            logger.info('Saved matched thread to %s', cmdargs.save_mbox)
+            return
+
+        if cmdargs.who:
+            allto = email.utils.getaddresses(best_match.msg.get_all('to', []))
+            allcc = email.utils.getaddresses(best_match.msg.get_all('cc', []))
+            allrto = email.utils.getaddresses(best_match.msg.get_all('reply-to', []))
+            if not allrto:
+                allrto = [(best_match.fromname, best_match.fromemail)]
+            allwho: List[Tuple[str, str]] = list()
+            seen_addrs: Set[str] = set()
+            # Make it unique, but keep the order
+            for pair in allrto + allto + allcc:
+                if pair[1] not in seen_addrs:
+                    seen_addrs.add(pair[1])
+                    allwho.append(pair)
+            logger.info('---')
+            logger.info('People originally included in this patch:')
+            logger.info(b4.format_addrs(allwho, header_safe=False))
+
+        return
 
     logger.info('---')
     logger.info('This patch belongs in the following series:')

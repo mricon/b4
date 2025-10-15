@@ -39,6 +39,31 @@ ${covermessage}
 Link: ${midurl}
 """
 
+
+def save_msgs_as_mbox(dest: str, msgs: List[EmailMessage], filterdupes: bool = False) -> int:
+    if dest == '-':
+        b4.save_mboxrd_mbox(msgs, sys.stdout.buffer, mangle_from=False)
+        return len(msgs)
+
+    if b4.is_maildir(dest):
+        mdr = mailbox.Maildir(dest)
+        have_msgids = set()
+        added = 0
+        if filterdupes:
+            for emsg in mdr:
+                have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))  # type: ignore[arg-type]
+        for msg in msgs:
+            if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:
+                added += 1
+                mdr.add(msg)
+        return added
+
+    with open(dest, 'wb') as fh:
+        b4.save_mboxrd_mbox(msgs, fh, mangle_from=True)
+
+    return len(msgs)
+
+
 def get_base_commit(topdir: Optional[str], body: str, lser: b4.LoreSeries,
                     cmdargs: argparse.Namespace) -> str:
     base_commit = 'HEAD'
@@ -863,21 +888,12 @@ def main(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.outdir == '-':
         logger.info('---')
-        b4.save_mboxrd_mbox(msgs, sys.stdout.buffer, mangle_from=False)
+        save_msgs_as_mbox('-', msgs)
         return
 
-    # Check if outdir is a maildir
+    # Check if outdir is an existing maildir
     if b4.is_maildir(cmdargs.outdir):
-        mdr = mailbox.Maildir(cmdargs.outdir)
-        have_msgids = set()
-        added = 0
-        if cmdargs.filterdupes:
-            for emsg in mdr:
-                have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))  # type: ignore[arg-type]
-        for msg in msgs:
-            if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:
-                added += 1
-                mdr.add(msg)
+        added = save_msgs_as_mbox(cmdargs.outdir, msgs, filterdupes=cmdargs.filterdupes)
         logger.info('Added %s messages to maildir %s', added, cmdargs.outdir)
         return
 
@@ -898,14 +914,10 @@ def main(cmdargs: argparse.Namespace) -> None:
     if save_maildir:
         if os.path.isdir(savename):
             shutil.rmtree(savename)
-        md = mailbox.Maildir(savename, create=True)
-        for msg in msgs:
-            md.add(msg)
-        md.close()
+        mailbox.Maildir(savename, create=True)
+        save_msgs_as_mbox(savename, msgs)
         logger.info('Saved maildir %s', savename)
         return
 
-    with open(savename, 'wb') as fh:
-        b4.save_mboxrd_mbox(msgs, fh, mangle_from=True)
-
+    save_msgs_as_mbox(savename, msgs)
     logger.info('Saved %s', savename)

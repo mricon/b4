@@ -3592,7 +3592,8 @@ def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List
 
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
                            onlymsgids: Optional[Set[str]] = None,
-                           with_thread: bool = True) -> Optional[List[EmailMessage]]:
+                           with_thread: bool = True,
+                           quiet: bool = False) -> Optional[List[EmailMessage]]:
     qmsgid = urllib.parse.quote_plus(msgid, safe='@')
     config = get_main_config()
     midmask = config['midmask']
@@ -3610,11 +3611,13 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
     else:
         # Grab the head from lore, to see where we are redirected
         midmask = midmask % qmsgid
-        logger.info('Looking up %s', midmask)
+        if not quiet:
+            logger.info('Looking up %s', midmask)
         session = get_requests_session()
         resp = session.head(midmask)
         if resp.status_code < 300 or resp.status_code > 400:
-            logger.critical('That message-id is not known.')
+            if not quiet:
+                logger.critical('That message-id is not known.')
             return None
         # Pop msgid from the end of the redirect
         chunks = resp.headers['Location'].rstrip('/').split('/')

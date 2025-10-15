@@ -410,8 +410,13 @@ def setup_parser() -> argparse.ArgumentParser:
                         help='Commit-ish object to dig into')
     sp_dig.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                         help='Do not use local cache')
-    sp_dig.add_argument('-a', '--all-series', action='store_true', default=False,
-                        help='Show all series, not just the latest matching')
+    sp_dig_eg = sp_dig.add_mutually_exclusive_group()
+    sp_dig_eg.add_argument('-a', '--all-series', action='store_true', default=False,
+                           help='Show all series, not just the latest matching')
+    sp_dig_eg.add_argument('-m', '--save-mbox', metavar='DEST', default=None,
+                           help='Save matched thread to the specified mbox file')
+    sp_dig_eg.add_argument('-w', '--who', action='store_true', default=False,
+                           help='Show list of recipients in the original message')
     sp_dig.set_defaults(func=cmd_dig)
 
     return parser
