@@ -43,6 +43,12 @@ try:
 except ModuleNotFoundError:
     can_gfr = False
 
+try:
+    import codespell_lib
+    can_codespell = True
+except ModuleNotFoundError:
+    can_codespell = False
+
 logger = b4.logger
 
 MAGIC_MARKER = '--- b4-submit-tracking ---'
@@ -1808,7 +1814,8 @@ def get_check_cmds() -> Tuple[List[str], List[str]]:
         if topdir:
             checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
             if os.access(checkpatch, os.X_OK):
-                ppcmds = [f'{checkpatch} -q --terse --no-summary --mailback --showfile']
+                spell = "--codespell" if can_codespell else ""
+                ppcmds = [f'{checkpatch} -q --terse --no-summary --mailback --showfile {spell}']
 
     # TODO: support for a whole-series check command, (pytest, etc)
     return ppcmds, scmds
