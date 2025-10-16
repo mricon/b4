@@ -5,7 +5,7 @@ Konstantin Ryabitsev <konstantin@linuxfoundation.org> says:
 
 Test patches for pytest.
 
-Link: https://lore.kernel.org/r/20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org
+Link: https://patch.msgid.link/20221025-test1-v1-0-e4f28f57990c@linuxfoundation.org
 Signed-off-by: Test Override <test-override@example.com>
 ---
 konstantin@linuxfoundation.org

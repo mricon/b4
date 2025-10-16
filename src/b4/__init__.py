@@ -112,11 +112,12 @@ CI_FLAGS_FANCY = {
 
 DEVSIG_HDR = 'X-Developer-Signature'
 LOREADDR = 'https://lore.kernel.org'
+LINKADDR = 'https://patch.msgid.link'
 
 DEFAULT_CONFIG: ConfigDictT = {
     'midmask': LOREADDR + '/all/%s',
-    'linkmask': LOREADDR + '/r/%s',
     'searchmask': LOREADDR + '/all/?x=m&q=%s',
+    'linkmask': LINKADDR + '/%s',
     # You can override the format for the Link: trailer, e.g.
     # if you would rather use the Message-Id trailer. It takes the
     # message-id as the expansion for %s

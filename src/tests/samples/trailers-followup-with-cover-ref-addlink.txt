@@ -14,7 +14,7 @@ Reviewed-by: Original Reviewer <original-reviewer@example.com>
 Link: https://msgid.link/some@msgid.here
 Signed-off-by: Original Submitter <original-submitter@example.com>
 Reviewed-by: Coverletter Reviewer1 <followup-reviewer1@example.com>
-Link: https://lore.kernel.org/r/patch-1-message@example.com
+Link: https://patch.msgid.link/patch-1-message@example.com
 Signed-off-by: Test Override <test-override@example.com>
 
 diff --git a/b4/junk.py b/b4/junk.py
@@ -48,7 +48,7 @@ Link: https://msgid.link/some@msgid.here
 Signed-off-by: Original Submitter <original-submitter@example.com>
 Reviewed-by: Followup Reviewer1 <followup-reviewer1@example.com>
 Reviewed-by: Coverletter Reviewer1 <followup-reviewer1@example.com>
-Link: https://lore.kernel.org/r/patch-2-message@example.com
+Link: https://patch.msgid.link/patch-2-message@example.com
 Signed-off-by: Test Override <test-override@example.com>
 
 diff --git a/b4/bupkes.py b/b4/bupkes.py
