@@ -485,8 +485,9 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         elif base_commit != 'HEAD':
             gitbranch = lser.get_slug(extended=False)
             logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
-            if cmdargs.outdir != '-':
-                logger.critical('       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename)
+
+    if cmdargs.outdir != '-':
+        logger.critical('       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename)
 
     thanks_record_am(lser, cherrypick=cherrypick)
 
