@@ -3602,29 +3602,28 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
         logger.critical('b4.midmask is not defined')
         return None
     assert isinstance(midmask, str), 'b4.midmask must be a string'
-    loc = urllib.parse.urlparse(midmask)
-    # The public-inbox instance may provide a unified index at /all/.
-    # In fact, /all/ naming is arbitrary, but for now we are going to
-    # hardcode it to lore.kernel.org settings and maybe make it configurable
-    # in the future, if necessary.
-    if loc.path.startswith('/all/'):
-        projurl = '%s://%s/all' % (loc.scheme, loc.netloc)
-    else:
-        # Grab the head from lore, to see where we are redirected
-        midmask = midmask % qmsgid
+    # Grab the head from remote, to see if/where we are redirected
+    midurl = midmask % qmsgid + '/'  # trailing slash important for the HEAD lookup
+    if not quiet:
+        logger.info('Looking up %s', midurl)
+    session = get_requests_session()
+    resp = session.head(midurl)
+    logger.debug('HEAD returned %s', resp.status_code)
+    if resp.status_code >= 400 or resp.status_code == 300:
         if not quiet:
-            logger.info('Looking up %s', midmask)
-        session = get_requests_session()
-        resp = session.head(midmask)
-        if resp.status_code < 300 or resp.status_code > 400:
+            logger.critical('That message-id is not known.')
+        return None
+    if resp.status_code > 300:
+        if 'Location' not in resp.headers:
+            # In theory, never happens?
             if not quiet:
-                logger.critical('That message-id is not known.')
+                logger.critical('Remote %s did not provide a redirect location.', midurl)
             return None
-        # Pop msgid from the end of the redirect
-        chunks = resp.headers['Location'].rstrip('/').split('/')
-        projurl = '/'.join(chunks[:-1])
-        resp.close()
-    t_mbx_url = '%s/%s/t.mbox.gz' % (projurl, qmsgid)
+        t_mbx_url = f'{resp.headers["Location"].rstrip("/")}/t.mbox.gz'
+    else:
+        t_mbx_url = f'{midurl}t.mbox.gz'
+
+    resp.close()
     logger.debug('t_mbx_url=%s', t_mbx_url)
 
     msgs = get_pi_thread_by_url(t_mbx_url, nocache=nocache)
