@@ -798,7 +798,7 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
     usercfg = b4.get_user_config()
     limit_committer = usercfg['email']
     gitargs = ['log', '--grep', MAGIC_MARKER, '-F', '--pretty=oneline', '--max-count=1', '--since=1.year',
-               f'--committer={limit_committer}', usebranch]
+               '--no-mailmap', f'--committer={limit_committer}', usebranch]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
         return None
@@ -1114,7 +1114,8 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
 
     else:
         # Find the most recent commit where we're not the committer
-        gitargs = ['log', '--perl-regexp', f'--committer=^(?!.*<{limit_committer}>)', '--max-count=1',
+        gitargs = ['log', '--perl-regexp', '--no-mailmap',
+                   f'--committer=^(?!.*<{limit_committer}>)', '--max-count=1',
                    '--format=%H', '--since', cmdargs.since]
 
         lines = b4.git_get_command_lines(None, gitargs)
