@@ -3228,6 +3228,9 @@ def _setup_user_config(cmdargs: argparse.Namespace) -> None:
         elif 'EMAIL' in os.environ:
             USER_CONFIG['email'] = os.environ['EMAIL']
 
+    if 'email' in USER_CONFIG and isinstance(USER_CONFIG['email'], str):
+        USER_CONFIG['email'] = USER_CONFIG['email'].strip('<>')
+
     _cmdline_config_override(cmdargs, USER_CONFIG, 'user')
 
 
