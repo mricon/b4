@@ -1992,8 +1992,9 @@ class LoreMessage:
         bdata += nl.encode()
         payload = msg.get_payload(decode=True)
         if not isinstance(payload, bytes):
-            logger.critical('Unable to get payload from message %s', msg.get('Message-Id'))
-            return b''
+            # Ensure per-patch checkers always receive usable input even if from a local mbox
+            body_text, _charset = LoreMessage.get_payload(msg, use_patch=True)
+            payload = body_text.encode('utf-8', errors='replace')
         for bline in payload.split(b'\n'):
             bdata += re.sub(rb'[\r\n]*$', b'', bline) + nl.encode()
         return bdata
