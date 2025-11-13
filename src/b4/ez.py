@@ -584,19 +584,30 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         if revision is None:
             revision = 1
         prefixes = list()
+
+        config = b4.get_main_config()
+
         if cmdargs.set_prefixes:
             prefixes = list(cmdargs.set_prefixes)
         else:
-            config = b4.get_main_config()
             _sp = config.get('send-prefixes')
             if _sp and isinstance(_sp, str):
                 prefixes = _sp.split()
+
+        presubject = ''
+        if cmdargs.set_presubject:
+            presubject = cmdargs.set_presubject
+        else:
+            presubject = config.get('send-presubject', '')
+            if presubject and isinstance(presubject, str):
+                _check_presubject(presubject)
 
         tracking = {
             'series': {
                 'revision': revision,
                 'change-id': changeid,
                 'prefixes': prefixes,
+                'presubject': presubject,
             },
         }
         if thread_msgid:
@@ -1458,16 +1469,17 @@ def get_cover_dests(cbody: str) -> Tuple[List[Tuple[str, str]], List[Tuple[str, 
 
 
 def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, EmailMessage]],
-              cbody: str, datets: int, thread: bool = True) -> None:
+              cbody: str, datets: int, thread: bool = True, presubject: str = None) -> None:
     fp = patches[0][1]
     cmsg = EmailMessage()
     cmsg.add_header('From', fp['From'])
-    fpls = b4.LoreSubject(fp['Subject'])
+    fpls = b4.LoreSubject(fp['Subject'], presubject=presubject)
 
     csubject.expected = fpls.expected
     csubject.counter = 0
     csubject.revision = fpls.revision
-    cmsg.add_header('Subject', csubject.get_rebuilt_subject(eprefixes=fpls.get_extra_prefixes()))
+    cmsg.add_header('Subject', csubject.get_rebuilt_subject(eprefixes=fpls.get_extra_prefixes(),
+                                                            presubject=presubject))
     cmsg.add_header('Date', email.utils.formatdate(datets, localtime=True))
     cmsg.add_header('Message-Id', msgid_tpt % str(0))
 
@@ -1577,13 +1589,16 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     for cprefix in csubject.get_extra_prefixes(exclude=prefixes):
         prefixes.append(cprefix)
 
+    presubject = tracking['series'].get('presubject', list())
+
     patches = b4.git_range_to_patches(None, start_commit, end_commit,
                                       revision=revision,
                                       prefixes=prefixes,
                                       msgid_tpt=msgid_tpt,
                                       seriests=seriests,
                                       mailfrom=mailfrom,
-                                      ignore_commits=ignore_commits)
+                                      ignore_commits=ignore_commits,
+                                      presubject=presubject)
 
     base_commit, _, _, _, shortlog, diffstat = get_series_details(start_commit=start_commit,
                                                                   usebranch=usebranch)
@@ -1649,7 +1664,8 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
                     continue
                 logger.debug('Checking if we have a sent version')
                 try:
-                    _, _, ppatches = get_sent_tag_as_patches(tagname, revision=revision)
+                    _, _, ppatches = get_sent_tag_as_patches(tagname, revision=revision,
+                                                             presubject=presubject)
                     for psha, ppatch in ppatches:
                         spatches.append(ppatch)
                 except RuntimeError:
@@ -1716,7 +1732,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     if len(patches) == 1:
         mixin_cover(cbody, patches)
     else:
-        add_cover(csubject, msgid_tpt, patches, cbody, seriests, thread=thread)
+        add_cover(csubject, msgid_tpt, patches, cbody, seriests, thread=thread, presubject=presubject)
 
     if addtracking:
         patches[0][1].add_header('X-B4-Tracking', thdata)
@@ -1745,7 +1761,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     return alltos, allccs, tag_msg, patches
 
 
-def get_sent_tag_as_patches(tagname: str, revision: int) \
+def get_sent_tag_as_patches(tagname: str, revision: int, presubject: str = None) \
         -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], List[Tuple[str, EmailMessage]]]:
     cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
 
@@ -1761,7 +1777,8 @@ def get_sent_tag_as_patches(tagname: str, revision: int) \
                                       prefixes=prefixes,
                                       msgid_tpt=msgid_tpt,
                                       seriests=seriests,
-                                      mailfrom=mailfrom)
+                                      mailfrom=mailfrom,
+                                      presubject=presubject)
 
     alltos, allccs, cbody = get_cover_dests(cbody)
     if len(patches) == 1:
@@ -1915,8 +1932,11 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 logger.critical('Could not figure out revision from %s', revstr)
                 sys.exit(1)
 
+        presubject = tracking['series'].get('presubject', None)
+
         try:
-            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision)
+            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision, 
+                                                                presubject=presubject)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert tag to patches: %s', ex)
             sys.exit(1)
@@ -2939,6 +2959,30 @@ def set_prefixes(prefixes: List[str], additive: bool = False) -> None:
         logger.info('No changes to extra prefixes.')
 
 
+def _check_presubject(presubject: str):
+    if presubject == "":
+        return
+
+    if presubject.startswith("[") and presubject.endswith("]"):
+        return
+
+    raise RuntimeError("The presubject must be enclosed with brackets. E.g: [mylist]")
+
+
+def set_presubject(presubject: str) -> None:
+    cover, tracking = load_cover()
+    old_presubject = tracking['series'].get('presubject', None)
+    tracking['series']['presubject'] = presubject
+    if tracking['series']['presubject'] != old_presubject:
+        store_cover(cover, tracking)
+        if tracking['series']['presubject'] != "":
+            logger.info(f'Updated pre-subject to: {presubject}')
+        else:
+            logger.info('Removed pre-subject.')
+    else:
+        logger.info('No changes to the pre-subject.')
+
+
 def cmd_prep(cmdargs: argparse.Namespace) -> None:
     check_can_gfr()
     status = b4.git_get_repo_status()
@@ -3020,6 +3064,10 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.add_prefixes:
         set_prefixes(cmdargs.add_prefixes, additive=True)
+
+    if cmdargs.set_presubject is not None:
+        _check_presubject(cmdargs.set_presubject)
+        set_presubject(cmdargs.set_presubject)
 
     if cmdargs.auto_to_cc:
         auto_to_cc()

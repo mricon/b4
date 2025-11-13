@@ -2552,7 +2552,7 @@ class LoreSubject:
     counters_inferred: bool
     prefixes: List[str]
 
-    def __init__(self, subject: str) -> None:
+    def __init__(self, subject: str, presubject: str = None) -> None:
         # Subject-based info
         self.reply = False
         self.resend = False
@@ -2592,6 +2592,9 @@ class LoreSubject:
             bracketed = re.sub(r'(patch)(v\d+)', r'\1 \2', bracketed, flags=re.I)
 
             for chunk in bracketed.split():
+                if presubject is not None and chunk in presubject:
+                    continue
+
                 # Remove any trailing commas or semicolons
                 chunk = chunk.strip(',;')
                 if re.search(r'^\d{1,4}/\d{1,4}$', chunk):
@@ -2629,7 +2632,9 @@ class LoreSubject:
 
         return ret
 
-    def get_rebuilt_subject(self, eprefixes: Optional[List[str]] = None) -> str:
+    def get_rebuilt_subject(self, eprefixes: Optional[List[str]] = None,
+                            presubject: str = None) -> str:
+
         exclude = None
         if eprefixes and 'PATCH' in eprefixes:
             exclude = ['patch']
@@ -2645,10 +2650,16 @@ class LoreSubject:
         if self.expected > 1:
             _pfx.append('%s/%s' % (str(self.counter).zfill(len(str(self.expected))), self.expected))
 
+        subject = ""
         if len(_pfx):
-            return '[' + ' '.join(_pfx) + '] ' + self.subject
+            subject = '[' + ' '.join(_pfx) + '] ' + self.subject
         else:
-            return f'[PATCH] {self.subject}'
+            subject = f'[PATCH] {self.subject}'
+
+        if presubject:
+            subject = f'{presubject}{subject}'
+
+        return subject
 
     def get_slug(self, sep: str = '_', with_counter: bool = True) -> str:
         unsafe = self.subject
@@ -3658,7 +3669,8 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
                          mailfrom: Optional[Tuple[str, str]] = None,
                          extrahdrs: Optional[List[Tuple[str, str]]] = None,
                          ignore_commits: Optional[Set[str]] = None,
-                         limit_committer: Optional[str] = None) -> List[Tuple[str, EmailMessage]]:
+                         limit_committer: Optional[str] = None,
+                         presubject: Optional[str] = None) -> List[Tuple[str, EmailMessage]]:
     gitargs = ['rev-list', '--no-merges', '--reverse']
     if limit_committer:
         gitargs += ['-F', f'--committer={limit_committer}']
@@ -3714,12 +3726,13 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         msg.set_charset('utf-8')
         # Clean From to remove any 7bit-safe encoding
         origfrom = LoreMessage.clean_header(msg.get('From'))
-        lsubject = LoreSubject(msg.get('Subject'))
+        lsubject = LoreSubject(msg.get('Subject'), presubject=presubject)
         lsubject.counter = counter + 1
         lsubject.expected = expected
         if revision is not None:
             lsubject.revision = revision
-        subject = lsubject.get_rebuilt_subject(eprefixes=prefixes)
+        subject = lsubject.get_rebuilt_subject(eprefixes=prefixes,
+                                               presubject=presubject)
 
         logger.debug('  %s', subject)
         msg.replace_header('Subject', subject)
