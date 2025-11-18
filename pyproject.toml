@@ -12,7 +12,7 @@ license = {file = "COPYING"}
 authors = [
     {name = "Konstantin Ryabitsev", email="konstantin@linuxfoundation.org"},
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 classifiers = [
     "Environment :: Console",
     "Operating System :: POSIX :: Linux",
@@ -40,7 +40,7 @@ dev = [
 
 [project.optional-dependencies]
 completion = [
-    "shtab>=1.7",
+    "shtab>=1.8",
 ]
 
 [tool.setuptools.packages.find]
