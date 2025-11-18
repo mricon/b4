@@ -433,12 +433,12 @@ class SendReceiveListener(object):
             msg = email.message_from_bytes(bdata, policy=emlpolicy)
             logger.debug('Checking sanity on message: %s', msg.get('Subject'))
             # Some quick sanity checking:
-            # - Subject has to start with [PATCH
+            # - Subject must include [PATCH and have only bracketed prefixes before
             # - Content-type may ONLY be text/plain
             # - Has to include a diff or a diffstat
             passes = True
             subject = self.clean_header(msg.get('Subject', ''))
-            if not subject.startswith('[PATCH'):
+            if not re.match(r'(\[[^]]+\])*\[PATCH', subject):
                 passes = False
             if passes:
                 cte = msg.get_content_type()

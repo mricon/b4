@@ -318,6 +318,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Prefixes to include after [PATCH] (e.g.: RFC mydrv)')
     sp_prep.add_argument('--add-prefixes', metavar='PREFIX', nargs='+',
                          help='Additional prefixes to add to those already defined')
+    sp_prep.add_argument('--set-presubject', metavar='PRESUBJECT', type=str, default=None,
+                         help='Prefix to include before [PATCH] (e.g.: [mylist])')
     sp_prep.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
                          help='Do not use local cache')
     sp_prep.add_argument('--range-diff-opts', default=None, type=str,
