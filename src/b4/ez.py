@@ -1970,6 +1970,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
         logger.info('Converted the branch to %s messages', len(patches))
 
+    if cmdargs.in_reply_to:
+        patches[0][1].add_header('In-Reply-To', '<%s>' % cmdargs.in_reply_to)
+
     usercfg = b4.get_user_config()
     myemail = str(usercfg.get('email', ''))
 

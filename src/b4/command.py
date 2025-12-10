@@ -391,6 +391,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Do not add any addresses found in the cover or patch trailers to To: or Cc:')
     sp_send.add_argument('--to', nargs='+', metavar='ADDR', help='Addresses to add to the To: list')
     sp_send.add_argument('--cc', nargs='+', metavar='ADDR', help='Addresses to add to the Cc: list')
+    sp_send.add_argument('--in-reply-to', metavar='IDENTIFIER',
+                         help='Send patchset in reply to a message')
     sp_send.add_argument('--not-me-too', action='store_true', default=False,
                          help='Remove yourself from the To: or Cc: list')
     sp_send.add_argument('--resend', metavar='vN', nargs='?', const='latest',
