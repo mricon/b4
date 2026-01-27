@@ -1567,7 +1567,7 @@ def rethread(patches: List[Tuple[str, EmailMessage]]) -> None:
 
 def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtracking: bool = True,
                                prefixes: Optional[List[str]] = None, usebranch: Optional[str] = None,
-                               expandprereqs: bool = True,
+                               expandprereqs: bool = True, force_cover: bool = False,
                                ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], str, List[Tuple[str, EmailMessage]]]:
     cover, tracking = load_cover(strip_comments=True, usebranch=usebranch)
 
@@ -1735,7 +1735,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     thdata = ''.join(wrapped).replace('X-B4-Tracking: ', '')
 
     alltos, allccs, cbody = get_cover_dests(cover_letter)
-    if len(patches) == 1:
+    if len(patches) == 1 and not force_cover:
         mixin_cover(cbody, patches)
     else:
         add_cover(csubject, msgid_tpt, patches, cbody, seriests, thread=thread, presubject=presubject)
@@ -1767,7 +1767,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     return alltos, allccs, tag_msg, patches
 
 
-def get_sent_tag_as_patches(tagname: str, revision: int, presubject: str = None) \
+def get_sent_tag_as_patches(tagname: str, revision: int, presubject: str = None, force_cover: bool = False) \
         -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], List[Tuple[str, EmailMessage]]]:
     cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
 
@@ -1787,7 +1787,7 @@ def get_sent_tag_as_patches(tagname: str, revision: int, presubject: str = None)
                                       presubject=presubject)
 
     alltos, allccs, cbody = get_cover_dests(cbody)
-    if len(patches) == 1:
+    if len(patches) == 1 and not force_cover:
         mixin_cover(cbody, patches)
     else:
         add_cover(csubject, msgid_tpt, patches, cbody, seriests)
@@ -1942,8 +1942,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         presubject = tracking['series'].get('presubject', None)
 
         try:
-            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision, 
-                                                                presubject=presubject)
+            todests, ccdests, patches = get_sent_tag_as_patches(tagname, revision=revision,
+                                                                presubject=presubject,
+                                                                force_cover=cmdargs.force_cover_letter)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert tag to patches: %s', ex)
             sys.exit(1)
@@ -1963,7 +1964,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             prefixes = None
 
         try:
-            todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(prefixes=prefixes)
+            todests, ccdests, tag_msg, patches = get_prep_branch_as_patches(prefixes=prefixes,
+                                                                            force_cover=cmdargs.force_cover_letter)
         except RuntimeError as ex:
             logger.critical('CRITICAL: Failed to convert range to patches: %s', ex)
             sys.exit(1)

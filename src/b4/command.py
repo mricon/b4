@@ -397,6 +397,8 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Resend a previously sent version of the series')
     sp_send.add_argument('--no-sign', action='store_true', default=False,
                          help='Do not add the cryptographic attestation signature header')
+    sp_send.add_argument('--force-cover-letter', action='store_true', default=False,
+                         help='Send a cover letter even for single-patch series')
     sp_send.add_argument('--use-web-endpoint', dest='send_web', action='store_true', default=False,
                          help="Force going through the web endpoint")
     ag_sendh = sp_send.add_argument_group('Web submission', 'Authenticate with the web submission endpoint')
