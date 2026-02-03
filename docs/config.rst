@@ -236,7 +236,13 @@ Attestation settings
 
 ``ty`` settings
 ~~~~~~~~~~~~~~~
-``b4.thanks-pr-template``, ``b4.thanks-am-template``
+``b4.thanks-pr-template``
+  Full paths to the templates to use when generating thank-you messages
+  for contributors. See example templates provided with the project.
+
+  Default: ``None``
+
+``b4.thanks-am-template``
   Full paths to the templates to use when generating thank-you messages
   for contributors. See example templates provided with the project.
 
