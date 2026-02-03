@@ -60,7 +60,7 @@ These options control many of the core features of b4.
 
 ``b4.linktrailermask`` (v0.13+)
   Overrides the format of the ``Link:`` trailer, in case you want to
-  call it something other than "Link." For example, some projects
+  call it something other than "Link". For example, some projects
   use "Message-ID" trailers instead::
 
       linktrailermask = Message-ID: <%s>
@@ -85,7 +85,7 @@ These options control many of the core features of b4.
 
 ``b4.save-maildirs``
   The "mbox" file format is actually several incompatible standards,
-  such as "mboxo" vs. "mboxrd." Setting this option can avoid potential
+  such as "mboxo" vs. "mboxrd". Setting this option can avoid potential
   problems by saving retrieved threads as Maildirs.
 
   Default: ``no``
@@ -116,7 +116,7 @@ These options control many of the core features of b4.
       Signed-off-by: Your Name <your.name@example.com>
 
   Your custody section is beneath "Ezri Submaintainer," so the only
-  trailers considered for reordering are "Link" and "Tested-by." Your
+  trailers considered for reordering are "Link" and "Tested-by". Your
   own Signed-off-by trailer is always at the bottom of your own custody
   section.
 

@@ -126,7 +126,7 @@ Enrolling an existing branch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 If you've already started working on a set of commits without first
 running ``b4 prep -n``, you can enroll your existing branch to make it
-"prep-tracked."
+"prep-tracked".
 
 For example, if you have a branch called ``my-topical-branch`` that was
 forked from ``master``, you can enroll it with b4::
