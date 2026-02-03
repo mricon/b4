@@ -402,7 +402,7 @@ Contributor-oriented settings
   stdin. If b4 finds ``scripts/get_maintainer.pl`` at the top of your git tree,
   it uses the command shown below by default.
 
-  Default:: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
+  Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
 
 ``b4.send-same-thread`` (v0.13+)
   When sending a new version of a series, send it in the same thread as
