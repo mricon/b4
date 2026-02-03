@@ -156,8 +156,10 @@ These settings control ``b4 am`` and ``b4 shazam`` behavior.
   Default: ``--signoff``
 
 ``b4.shazam-merge-template``
-  Path to a template to use when creating a merge commit. See
-  ``shazam-merge-template.example`` for an example.
+  Path to a template to use when creating a merge commit. Take the following
+  as example content for this file:
+
+  .. literalinclude:: ../src/b4/templates/shazam-merge-template.example
 
   Default: ``None``
 
@@ -239,13 +241,17 @@ Attestation settings
 ~~~~~~~~~~~~~~~
 ``b4.thanks-pr-template``
   Full paths to the templates to use when generating thank-you messages
-  for contributors. See example templates provided with the project.
+  for contributors. Take the following as example content for this file:
+
+  .. literalinclude:: ../src/b4/templates/thanks-pr-template.example
 
   Default: ``None``
 
 ``b4.thanks-am-template``
   Full paths to the templates to use when generating thank-you messages
-  for contributors. See example templates provided with the project.
+  for contributors. Take the following as example content for this file:
+
+  .. literalinclude:: ../src/b4/templates/thanks-am-template.example
 
   Default: ``None``
 
