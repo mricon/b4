@@ -74,7 +74,7 @@ Editing the templates
 You can edit the default templates that are provided with b4 to
 customize the thank-you message. Once you have your own versions, you
 can specify the path to the template to use via the
-``b4.thanks_am_template`` and ``b4.thanks_pr_template`` configuration
+``b4.thanks-am-template`` and ``b4.thanks-pr-template`` configuration
 parameters. See :ref:`ty_settings` for details.
 
 Optional flags
