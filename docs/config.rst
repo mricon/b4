@@ -61,7 +61,7 @@ These options control many of the core features of b4.
 ``b4.linktrailermask`` (v0.13+)
   Overrides the format of the ``Link:`` trailer, in case you want to
   call it something other than "Link." For example, some projects
-  use "Message-Id" trailers instead::
+  use "Message-ID" trailers instead::
 
       linktrailermask = Message-ID: <%s>
 
