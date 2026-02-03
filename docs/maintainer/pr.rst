@@ -64,14 +64,19 @@ archival public-inbox so they can be analyzed by archivists at a later
 date if necessary.
 
 ``-f MAILFROM, --from-addr MAILFROM``
-  **(DEPRECATED)** When exploding pull requests, use this email address
+  When exploding pull requests, use this email address
   in the From header, instead of reusing the same From as in the pull
   request.
 
+  .. deprecated:: v0.10
+
 ``-s SENDIDENTITY, --send-as-identity SENDIDENTITY``
-  **(DEPRECATED)** When resending pull requests as patch series, use
+  When resending pull requests as patch series, use
   this sendemail identity.
 
-``--dry-run``
-  **(DEPRECATED)** Force a --dry-run on ``git-send-email`` invocation.
+  .. deprecated:: v0.10
 
+``--dry-run``
+  Force a --dry-run on ``git-send-email`` invocation.
+
+  .. deprecated:: v0.10

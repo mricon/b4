@@ -50,10 +50,14 @@ Optional flags
   .. versionadded:: v0.15
 
 ``-o OUTDIFF, --output-diff OUTDIFF``
-  **(DEPRECATED)** Sends ``range-diff`` output into a file. You should use
-  ``-n`` instead and redirect output from the actual ``git range-diff``
-  command.
+  Sends ``range-diff`` output into a file.
+
+  .. deprecated:: v0.10
+     You should use ``-n`` instead and redirect output from the actual
+     ``git range-diff`` command.
 
 ``-c, --color``
-  **(DEPRECATED)** Show colour output even when outputting into a file.
-  You should use ``-n`` instead and modify flags to ``range-diff``.
+  Show colour output even when outputting into a file.
+
+  .. deprecated:: v0.10
+     You should use ``-n`` instead and modify flags to ``range-diff``.
