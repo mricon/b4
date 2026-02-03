@@ -115,7 +115,7 @@ The following flags are common to both commands:
 
 ``-l, --add-link``
   Adds a ``Link:`` trailer with the URL of the retrieved message using
-  the ``linkmask`` template.
+  the :term:`b4.linkmask` template.
 
 ``-i, --add-message-id``
   Adds a ``Message-ID:`` trailer with the Message-ID of the retrieved
