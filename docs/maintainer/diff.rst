@@ -47,6 +47,8 @@ Optional flags
 
       b4 diff --range-diff-opts "--creation-factor=80 --no-dual-color" <url>
 
+  .. versionadded:: v0.15
+
 ``-o OUTDIFF, --output-diff OUTDIFF``
   **(DEPRECATED)** Sends ``range-diff`` output into a file. You should use
   ``-n`` instead and redirect output from the actual ``git range-diff``
