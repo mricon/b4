@@ -130,6 +130,8 @@ Optional flags
   state instead of the default specified in config settings (use with
   -a, -t or -d). See :ref:`patchwork_settings` for more details.
 
-``--me-too`` **(v0.15+)**
+``--me-too``
   Include yourself in the thank-you message cc's. This is useful if you
   want to keep track of which patches you applied to your tree.
+
+  .. versionadded:: v0.15

@@ -279,18 +279,22 @@ Command line flags
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
 
-``--preview-to`` **(v0.13+)**
+``--preview-to``
   Sometimes it's useful to send your series for a pre-review to a
   colleague, mentor, boss, etc. Using this option sends out the prepared
   patches to the addresses specified on the command line, but doesn't
   reroll your series, allowing you to send the actual submission at some
   later point.
 
-``--reflect`` **(v0.11+)**
+  .. versionadded:: v0.13
+
+``--reflect``
   Prepares everything for sending, but only emails yourself (the address
   in the ``From:`` header). Useful as a last step to make sure that
   everything is looking good, and especially useful when using the web
   endpoint, because it may rewrite your From: header for DMARC reasons.
+
+  .. versionadded:: v0.11
 
 ``--no-trailer-to-cc``
   Tells b4 not to add any addresses found in the cover or patch trailers
