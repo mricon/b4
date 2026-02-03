@@ -39,12 +39,14 @@ Core options
 These options control many of the core features of b4.
 
 .. glossary::
+   :sorted:
 
-   :term:`b4.midmask`
-     Specifies the server from where to retrieve the messages specified by
-     their message-id.
+   :term:`b4.cache-expire`
+     B4 caches retrieved threads for 10 minutes. This option allows
+     tweaking the time that the cache remains valid. Many commands also
+     allow a ``--no-cache`` flag to force b4 to perform remote lookups.
 
-     Default: ``https://lore.kernel.org/%s``
+     Default: ``10``
 
    :term:`b4.linkmask`
      B4 uses this setting to construct the URL in the ``Link:`` trailers.
@@ -52,13 +54,6 @@ These options control many of the core features of b4.
      ``https://msgid.link/%s``, which is an alias for lore.kernel.org.
 
      Default: ``https://lore.kernel.org/%s``
-
-   :term:`b4.searchmask`
-     B4 uses this setting to query and retrieve threads matching specific
-     search terms. For example, it can retrieve trailer updates using the
-     series ``change-id`` identifier.
-
-     Default: ``https://lore.kernel.org/all/?x=m&t=1&q=%s``
 
    :term:`b4.linktrailermask`
      Overrides the format of the ``Link:`` trailer, in case you want to
@@ -87,12 +82,25 @@ These options control many of the core features of b4.
 
      Default: ``*.feeds.kernel.org, *.linux.dev,*.kernel.org,*``
 
+   :term:`b4.midmask`
+     Specifies the server from where to retrieve the messages specified by
+     their message-id.
+
+     Default: ``https://lore.kernel.org/%s``
+
    :term:`b4.save-maildirs`
      The "mbox" file format is actually several incompatible standards,
      such as "mboxo" vs. "mboxrd". Setting this option can avoid potential
      problems by saving retrieved threads as Maildirs.
 
      Default: ``no``
+
+   :term:`b4.searchmask`
+     B4 uses this setting to query and retrieve threads matching specific
+     search terms. For example, it can retrieve trailer updates using the
+     series ``change-id`` identifier.
+
+     Default: ``https://lore.kernel.org/all/?x=m&t=1&q=%s``
 
    :term:`b4.trailer-order`
      This lets you control the order of trailers that get added to your own
@@ -135,13 +143,6 @@ These options control many of the core features of b4.
 
      Default: ``None``
 
-   :term:`b4.cache-expire`
-     B4 caches retrieved threads for 10 minutes. This option allows
-     tweaking the time that the cache remains valid. Many commands also
-     allow a ``--no-cache`` flag to force b4 to perform remote lookups.
-
-     Default: ``10``
-
 .. _shazam_settings:
 
 ``am`` and ``shazam`` settings
@@ -149,6 +150,18 @@ These options control many of the core features of b4.
 These settings control ``b4 am`` and ``b4 shazam`` behavior.
 
 .. glossary::
+   :sorted:
+
+   :term:`b4.am-perpatch-check-cmd`
+     The command to use when running ``--check``. The command is run once for each
+     patch to check. The patch file to check is piped through stdin. If this
+     config is defined multiple times, all commands will be run. If this config is
+     not defined and b4 finds ``scripts/checkpatch.pl`` at the top of your git
+     tree, it uses the command shown below by default.
+
+     Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback``
+
+     .. versionadded:: v0.14
 
    :term:`b4.shazam-am-flags`
      Additional flags to pass to ``git am`` when applying patches.
@@ -169,34 +182,13 @@ These settings control ``b4 am`` and ``b4 shazam`` behavior.
 
      Default: ``None``
 
-   :term:`b4.am-perpatch-check-cmd`
-     The command to use when running ``--check``. The command is run once for each
-     patch to check. The patch file to check is piped through stdin. If this
-     config is defined multiple times, all commands will be run. If this config is
-     not defined and b4 finds ``scripts/checkpatch.pl`` at the top of your git
-     tree, it uses the command shown below by default.
-
-     Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback``
-
-     .. versionadded:: v0.14
-
 .. _attestation_settings:
 
 Attestation settings
 ~~~~~~~~~~~~~~~~~~~~
 
 .. glossary::
-
-   :term:`b4.attestation-policy`
-     B4 supports domain-level and end-to-end attestation of patches using
-     the `patatt`_ library. There are four different operation modes:
-
-     * ``off``: don't bother checking attestation at all
-     * ``softfail``: print green marks when attestation is passing and
-       red marks when it's failing
-     * ``hardfail``: exit with an error when any attestation checks fail
-
-     Default: ``softfail``
+   :sorted:
 
    :term:`b4.attestation-check-dkim`
      Controls whether to perform DKIM attestation checks.
@@ -214,18 +206,29 @@ Attestation settings
 
      .. versionadded:: v0.14
 
+   :term:`b4.attestation-gnupghome`
+     Sets ``GNUPGHOME`` before running PGP attestation checks that rely on
+     GnuPG.
+
+     Default: ``None``
+
+   :term:`b4.attestation-policy`
+     B4 supports domain-level and end-to-end attestation of patches using
+     the `patatt`_ library. There are four different operation modes:
+
+     * ``off``: don't bother checking attestation at all
+     * ``softfail``: print green marks when attestation is passing and
+       red marks when it's failing
+     * ``hardfail``: exit with an error when any attestation checks fail
+
+     Default: ``softfail``
+
    :term:`b4.attestation-staleness-days`
      Ignore attestation signatures that are more than this many days
      old. This helps avoid a class of attacks when someone re-sends old
      patches that contain known security bugs.
 
      Default: ``30``
-
-   :term:`b4.attestation-gnupghome`
-     Sets ``GNUPGHOME`` before running PGP attestation checks that rely on
-     GnuPG.
-
-     Default: ``None``
 
    :term:`b4.gpgbin`
      Full path to a different binary to use for ``gpg``. B4 also checks the
@@ -253,12 +256,21 @@ Attestation settings
 ~~~~~~~~~~~~~~~
 
 .. glossary::
+   :sorted:
 
-   :term:`b4.thanks-pr-template`
-     Full paths to the templates to use when generating thank-you messages
-     for contributors. Take the following as example content for this file:
+   :term:`b4.email-exclude`
+     A list of addresses to always exclude from the message recipients.
+     Expects a comma-separated list with shell-style globbing. E.g.::
 
-     .. literalinclude:: ../src/b4/templates/thanks-pr-template.example
+         email-exclude = *@codeaurora.org, *@obsolete.example.com
+
+     Default: ``None``
+
+   :term:`b4.sendemail-identity`
+     The ``sendemail`` identity to use when sending mail directly with b4.
+     This setting applies to ``b4 send`` and ``b4 ty``. See `man
+     git-send-email <https://git-scm.com/docs/git-send-email>`__ for info about
+     sendemail identities.
 
      Default: ``None``
 
@@ -284,16 +296,6 @@ Attestation settings
 
      Default: ``None``
 
-   :term:`b4.thanks-from-name`
-     The name to use in the ``From:`` header when sending thank-you notes.
-     By default, b4 uses ``user.name``. For example::
-
-         thanks-from-name = Project Foo Thanks Bot
-
-     Default: ``None``
-
-     .. versionadded:: v0.13
-
    :term:`b4.thanks-from-email`
      The email to use in the ``From:`` header when sending thank-you notes.
      By default, b4 uses ``user.email``. For example::
@@ -304,23 +306,26 @@ Attestation settings
 
      .. versionadded:: v0.13
 
+   :term:`b4.thanks-from-name`
+     The name to use in the ``From:`` header when sending thank-you notes.
+     By default, b4 uses ``user.name``. For example::
+
+         thanks-from-name = Project Foo Thanks Bot
+
+     Default: ``None``
+
+     .. versionadded:: v0.13
+
+   :term:`b4.thanks-pr-template`
+     Full paths to the templates to use when generating thank-you messages
+     for contributors. Take the following as example content for this file:
+
+     .. literalinclude:: ../src/b4/templates/thanks-pr-template.example
+
+     Default: ``None``
+
    :term:`b4.thanks-treename`
      Name of the tree to use in the thank-you templates.
-
-     Default: ``None``
-
-   :term:`b4.email-exclude`
-     A list of addresses to always exclude from the message recipients.
-     Expects a comma-separated list with shell-style globbing. E.g.::
-
-         email-exclude = *@codeaurora.org, *@obsolete.example.com
-
-     Default: ``None``
-
-   :term:`b4.sendemail-identity`
-     The ``sendemail`` identity to use when sending mail directly with b4.
-     This setting applies to ``b4 send`` and ``b4 ty``. See `man
-     git-send-email <https://git-scm.com/docs/git-send-email>`__ for info about
 
      Default: ``None``
 
@@ -340,13 +345,21 @@ If your project uses a patchwork server, setting these allows you to
 integrate your b4 workflow with patchwork.
 
 .. glossary::
+   :sorted:
 
-   :term:`b4.pw-url`
-     The URL of your patchwork server. Note, that this should point at the
-     top-level of your patchwork installation and **not** at the project patch
-     listing. For example::
+   :term:`b4.pw-accept-state`
+     Enabling this option makes ``b4 ty`` set the status of any applied patches
+     to the specified state. For example::
 
-         pw-url = https://patchwork.kernel.org/
+         pw-accept-state = accepted
+
+     Default: ``None``
+
+   :term:`b4.pw-discard-state`
+     Enabling this option makes ``b4 ty -d`` set the status of any matching
+     patches to the specified state. For example::
+
+         pw-discard-state = rejected
 
      Default: ``None``
 
@@ -372,19 +385,12 @@ integrate your b4 workflow with patchwork.
 
      Default: ``None``
 
-   :term:`b4.pw-accept-state`
-     Enabling this option makes ``b4 ty`` set the status of any applied patches
-     to the specified state. For example::
+   :term:`b4.pw-url`
+     The URL of your patchwork server. Note, that this should point at the
+     top-level of your patchwork installation and **not** at the project patch
+     listing. For example::
 
-         pw-accept-state = accepted
-
-     Default: ``None``
-
-   :term:`b4.pw-discard-state`
-     Enabling this option makes ``b4 ty -d`` set the status of any matching
-     patches to the specified state. For example::
-
-         pw-discard-state = rejected
+         pw-url = https://patchwork.kernel.org/
 
      Default: ``None``
 
@@ -394,63 +400,7 @@ Contributor-oriented settings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. glossary::
-
-   :term:`b4.send-endpoint-web`
-     The web submission endpoint to use. See :ref:`web_endpoint`.
-
-     Default: ``None``
-
-   :term:`b4.send-series-to`
-     A comma-separated list of addresses to always add to the "To:" header.
-     See :ref:`prep_recipients`.
-
-     Default: ``None``
-
-   :term:`b4.send-series-cc`
-     A comma-separated list of addresses to always add to the "Cc:" header.
-     See :ref:`prep_recipients`.
-
-     Default: ``None``
-
-   :term:`b4.send-no-patatt-sign`
-     Instructs b4 not to sign patches with patatt before sending them. Note, that
-     using the web submission endpoint requires using signed patches.
-
-     Default: ``no``
-
-   :term:`b4.send-auto-to-cmd`
-     The command to use for obtaining the list of "To:" recipients. The command is
-     run once for each patch in the series. Each patch file is piped through
-     stdin. If b4 finds ``scripts/get_maintainer.pl`` at the top of your git tree,
-     it uses the command shown below by default.
-
-     Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol``
-
-   :term:`b4.send-auto-cc-cmd`
-     The command to use for obtaining the list of "Cc:" recipients. The command is
-     run once for each patch in the series. Each patch file is piped through
-     stdin. If b4 finds ``scripts/get_maintainer.pl`` at the top of your git tree,
-     it uses the command shown below by default.
-
-     Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
-
-   :term:`b4.send-same-thread`
-     When sending a new version of a series, send it in the same thread as
-     the previous version. The config supports the following values:
-
-     * ``yes``, ``true``, ``y``: B4 sends the first message of the new series as a
-       reply to the previous version's cover letter.
-     * ``shallow``: B4 sends the first message of the new series as a reply to the
-       first version's cover letter.
-     * ``no``: B4 does not send the new version of the series in the same thread
-       as any previous version.
-
-     Default: ``no``
-
-     .. versionadded:: v0.13
-
-     .. versionchanged:: v0.15
-        Added ``shallow`` config value.
+   :sorted:
 
    :term:`b4.prep-cover-strategy`
      Alternative cover letter storage strategy to use, in case you don't
@@ -472,15 +422,6 @@ Contributor-oriented settings
      * ``${signature}``: your signature, either from ``~/.signature`` if found, or from your Git config
 
      Default: ``None``
-
-   :term:`b4.send-prefixes`
-     Extra prefixes to add to ``[PATCH]`` (e.g. ``RFC mydrv``).
-
-     This setting can be replaced for a series with ``b4 prep --set-prefixes``.
-
-     Default: ``None``
-
-     .. versionadded:: v0.11
 
    :term:`b4.prep-perpatch-check-cmd`
      The command to use when running ``--check``. The command is run once for each
@@ -508,10 +449,77 @@ Contributor-oriented settings
 
      .. versionadded:: v0.14
 
+   :term:`b4.send-auto-cc-cmd`
+     The command to use for obtaining the list of "Cc:" recipients. The command is
+     run once for each patch in the series. Each patch file is piped through
+     stdin. If b4 finds ``scripts/get_maintainer.pl`` at the top of your git tree,
+     it uses the command shown below by default.
+
+     Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
+
+   :term:`b4.send-auto-to-cmd`
+     The command to use for obtaining the list of "To:" recipients. The command is
+     run once for each patch in the series. Each patch file is piped through
+     stdin. If b4 finds ``scripts/get_maintainer.pl`` at the top of your git tree,
+     it uses the command shown below by default.
+
+     Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nol``
+
+   :term:`b4.send-endpoint-web`
+     The web submission endpoint to use. See :ref:`web_endpoint`.
+
+     Default: ``None``
+
+   :term:`b4.send-no-patatt-sign`
+     Instructs b4 not to sign patches with patatt before sending them. Note, that
+     using the web submission endpoint requires using signed patches.
+
+     Default: ``no``
+
+   :term:`b4.send-prefixes`
+     Extra prefixes to add to ``[PATCH]`` (e.g. ``RFC mydrv``).
+
+     This setting can be replaced for a series with ``b4 prep --set-prefixes``.
+
+     Default: ``None``
+
+     .. versionadded:: v0.11
+
+   :term:`b4.send-same-thread`
+     When sending a new version of a series, send it in the same thread as
+     the previous version. The config supports the following values:
+
+     * ``yes``, ``true``, ``y``: B4 sends the first message of the new series as a
+       reply to the previous version's cover letter.
+     * ``shallow``: B4 sends the first message of the new series as a reply to the
+       first version's cover letter.
+     * ``no``: B4 does not send the new version of the series in the same thread
+       as any previous version.
+
+     Default: ``no``
+
+     .. versionadded:: v0.13
+
+     .. versionchanged:: v0.15
+        Added ``shallow`` config value.
+
+   :term:`b4.send-series-cc`
+     A comma-separated list of addresses to always add to the "Cc:" header.
+     See :ref:`prep_recipients`.
+
+     Default: ``None``
+
+   :term:`b4.send-series-to`
+     A comma-separated list of addresses to always add to the "To:" header.
+     See :ref:`prep_recipients`.
+
+     Default: ``None``
+
 To document
 -----------
 
 .. glossary::
+   :sorted:
 
    :term:`b4.gh-api-key`
      Deliberately undocumented because the feature is incomplete and poorly
