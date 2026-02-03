@@ -1,6 +1,7 @@
 Configuration options
 =====================
-B4 doesn't have a separate configuration file but uses ``git-config`` to
+B4 doesn't have a separate configuration file but uses
+`git-config <https://git-scm.com/docs/git-config#_configuration_file>`__ to
 retrieve a set of b4-specific settings. This means that you can have three
 levels of b4 configuration:
 
