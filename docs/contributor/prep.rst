@@ -187,7 +187,9 @@ additional information about the intent of your entire series.
 Working with series dependencies
 --------------------------------
 
-.. warning:: new in **(v0.14+)**
+.. versionadded:: v0.14
+
+.. warning::
 
    This is an experimental set of features introduced in v0.14. It may
    have rough edges or unexpected bugs.
@@ -314,7 +316,10 @@ This may also be already set by the project, if they have a
 
 Checking your work
 ------------------
-.. warning:: new in **(v0.14+)**
+
+.. versionadded:: v0.14
+
+.. warning::
 
    This is a new feature in version 0.14 and you should consider it
    experimental.

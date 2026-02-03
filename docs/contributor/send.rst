@@ -170,8 +170,11 @@ sending your work.
   prep``, but future versions may support sending arbitrary patches
   generated with ``git format-patch``.
 
-Passing pre-flight checks **(v0.14+)**
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Passing pre-flight checks
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: v0.14
+
 B4 defines some pre-flight checks that should be passing, or the command
 generates a warning:
 
@@ -230,8 +233,11 @@ When ``--reflect`` is on:
   public-inbox feed
 * your branch is **not** automatically rerolled to the next revision
 
-Checking things over with ``--preview-to`` **(v0.13+)**
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Checking things over with ``--preview-to``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: v0.13
+
 Sometimes you want to ask your friend, colleague, boss, or mentor to
 give your submission a quick review. You can send them your series using
 ``--preview-to boss@example.com`` before you send things out to the
