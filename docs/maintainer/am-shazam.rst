@@ -175,7 +175,7 @@ The following flags are common to both commands:
       ./scripts/checkpatch.pl -q --terse --no-summary --mailback
 
   You can specify a different command to run by setting the
-  ``b4.am-perpatch-check-cmd`` configuration setting, e.g.::
+  :term:`b4.am-perpatch-check-cmd` configuration setting, e.g.::
 
       [b4]
       am-perpatch-check-cmd = ./scripts/checkpatch.pl -q --terse --no-summary --mailback --strict

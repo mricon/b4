@@ -311,13 +311,13 @@ Command line flags
 ``--to``
   Additional email addresses to include into the To: header. Separate
   multiple entries with a comma. You can also set this in the
-  configuration file using the ``b4.send-series-to`` option (see
+  configuration file using the :term:`b4.send-series-to` option (see
   :ref:`contributor_settings`).
 
 ``--cc``
   Additional email addresses to include into the Cc: header. Separate
   multiple entries with a comma. You can also set this in the
-  configuration file using the ``b4.send-series-cc`` option (see
+  configuration file using the :term:`b4.send-series-cc` option (see
   :ref:`contributor_settings`).
 
 ``--not-me-too``
@@ -328,7 +328,7 @@ Command line flags
   Note, that sending via the web submission endpoint requires
   cryptographic signatures at all times, so this is only a valid option
   to use with ``-o`` or when using your own SMTP server. This can be set
-  in the configuration using the ``b4.send-no-patatt-sign`` (see
+  in the configuration using the :term:`b4.send-no-patatt-sign` (see
   :ref:`contributor_settings`).
 
 ``--resend V``

@@ -66,7 +66,7 @@ happy with the results, you can omit the ``--dry-run`` switch to
 actually send the mail.
 
 If you want ``b4 ty`` to always send mail, you can make the ``-S``
-switch permanent by setting the ``b4.ty-send-email`` config variable to
+switch permanent by setting the :term:`b4.ty-send-email` config variable to
 ``yes``.
 
 Editing the templates
@@ -74,7 +74,7 @@ Editing the templates
 You can edit the default templates that are provided with b4 to
 customize the thank-you message. Once you have your own versions, you
 can specify the path to the template to use via the
-``b4.thanks-am-template`` and ``b4.thanks-pr-template`` configuration
+:term:`b4.thanks-am-template` and :term:`b4.thanks-pr-template` configuration
 parameters. See :ref:`ty_settings` for details.
 
 Optional flags

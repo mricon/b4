@@ -65,7 +65,7 @@ disadvantages in some less-common situations:
 
 For this reason, b4 supports alternative strategies for storing the
 cover letter. You can tell ``b4`` which strategy to use using the
-``b4.prep-cover-strategy`` configuration variable.
+:term:`b4.prep-cover-strategy` configuration variable.
 
 ``commit`` strategy (default)
   This is the default strategy that keeps the cover letter and all
@@ -400,7 +400,7 @@ modifying defaults for some of these flags.
   ``./scripts/checkpatch.pl --terse --no-summary --mailback --showfile``
 
   You can specify your own command by setting the
-  ``b4.prep-perpatch-check-cmd`` configuration parameter. For example
+  :term:`b4.prep-perpatch-check-cmd` configuration parameter. For example
   you can make it more strict::
 
       [b4]

@@ -28,7 +28,7 @@ file in the repository you're currently using.
 Configuration options
 ---------------------
 All settings are under the ``b4`` section. For example, to set the
-``b4.midmask`` option, add the following section to the relevant git
+:term:`b4.midmask` option, add the following section to the relevant git
 config file::
 
     [b4]
