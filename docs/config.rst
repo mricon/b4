@@ -58,7 +58,7 @@ These options control many of the core features of b4.
 
   Default: ``https://lore.kernel.org/all/?x=m&t=1&q=%s``
 
-``b4.linktrailermask`` (v0.13+)
+``b4.linktrailermask``
   Overrides the format of the ``Link:`` trailer, in case you want to
   call it something other than "Link". For example, some projects
   use "Message-ID" trailers instead::
@@ -67,11 +67,13 @@ These options control many of the core features of b4.
 
   The ``%s`` is the placeholder for the message-id.
 
-  Note: starting with version 0.14, you can pass the ``-i`` command-line
-  switch instead of ``-l`` to automatically insert the ``Message-ID``
-  trailer.
-
   Default: ``Link: https://lore.kernel.org/%s``
+
+  .. versionadded:: v0.13
+
+  .. versionchanged:: v0.14
+     You can now pass the ``-i`` command-line switch instead of ``-l`` to
+     automatically insert the ``Message-ID`` trailer.
 
 ``b4.listid-preference``
   Sometimes messages with the same message-id can have different
@@ -163,7 +165,7 @@ These settings control ``b4 am`` and ``b4 shazam`` behavior.
 
   Default: ``None``
 
-``b4.am-perpatch-check-cmd`` (v0.14+)
+``b4.am-perpatch-check-cmd``
   The command to use when running ``--check``. The command is run once for each
   patch to check. The patch file to check is piped through stdin. If this
   config is defined multiple times, all commands will be run. If this config is
@@ -171,6 +173,8 @@ These settings control ``b4 am`` and ``b4 shazam`` behavior.
   tree, it uses the command shown below by default.
 
   Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback``
+
+  .. versionadded:: v0.14
 
 .. _attestation_settings:
 
@@ -193,7 +197,7 @@ Attestation settings
 
   Default: ``yes``
 
-``b4.attestation-dns-resolvers`` (v0.14+)
+``b4.attestation-dns-resolvers``
   You can specify your own DNS servers if you are on a company network
   and your OS-provided resolvers aren't able to perform domain key
   lookups. For example, to use Google DNS servers::
@@ -201,6 +205,8 @@ Attestation settings
       attestation-dns-resolvers = 8.8.8.8, 8.8.4.4
 
   Default: ``None``
+
+  .. versionadded:: v0.14
 
 ``b4.attestation-staleness-days``
   Ignore attestation signatures that are more than this many days
@@ -269,7 +275,7 @@ Attestation settings
 
   Default: ``None``
 
-``b4.thanks-from-name`` (v0.13+)
+``b4.thanks-from-name``
   The name to use in the ``From:`` header when sending thank-you notes.
   By default, b4 uses ``user.name``. For example::
 
@@ -277,13 +283,17 @@ Attestation settings
 
   Default: ``None``
 
-``b4.thanks-from-email`` (v0.13+)
+  .. versionadded:: v0.13
+
+``b4.thanks-from-email``
   The email to use in the ``From:`` header when sending thank-you notes.
   By default, b4 uses ``user.email``. For example::
 
       thanks-from-email = thanks-bot@example.com
 
   Default: ``None``
+
+  .. versionadded:: v0.13
 
 ``b4.thanks-treename``
   Name of the tree to use in the thank-you templates.
@@ -306,11 +316,13 @@ Attestation settings
 
   Default: ``None``
 
-``b4.ty-send-email`` (v0.11+)
+``b4.ty-send-email``
   When set, tells ``b4 ty`` to send email directly instead of writing
   out ``.thanks`` files.
 
   Default: ``no``
+
+  .. versionadded:: v0.11
 
 .. _patchwork_settings:
 
@@ -410,18 +422,23 @@ Contributor-oriented settings
 
   Default: ``scripts/get_maintainer.pl --nogit --nogit-fallback --nogit-chief-penguins --norolestats --nom``
 
-``b4.send-same-thread`` (v0.13+)
+``b4.send-same-thread``
   When sending a new version of a series, send it in the same thread as
   the previous version. The config supports the following values:
 
   * ``yes``, ``true``, ``y``: B4 sends the first message of the new series as a
     reply to the previous version's cover letter.
   * ``shallow``: B4 sends the first message of the new series as a reply to the
-    first version's cover letter. (v0.15+)
+    first version's cover letter.
   * ``no``: B4 does not send the new version of the series in the same thread
     as any previous version.
 
   Default: ``no``
+
+  .. versionadded:: v0.13
+
+  .. versionchanged:: v0.15
+     Added ``shallow`` config value.
 
 ``b4.prep-cover-strategy``
   Alternative cover letter storage strategy to use, in case you don't
@@ -444,14 +461,16 @@ Contributor-oriented settings
 
   Default: ``None``
 
-``b4.send-prefixes`` (v0.11+)
+``b4.send-prefixes``
   Extra prefixes to add to ``[PATCH]`` (e.g. ``RFC mydrv``).
 
   This setting can be replaced for a series with ``b4 prep --set-prefixes``.
 
   Default: ``None``
 
-``b4.prep-perpatch-check-cmd`` (v0.14+)
+  .. versionadded:: v0.11
+
+``b4.prep-perpatch-check-cmd``
   The command to use when running ``--check``. The command is run once for each
   patch to check. The patch file to check is piped through stdin. If this
   config is defined multiple times, all commands will be run. If this config is
@@ -460,7 +479,9 @@ Contributor-oriented settings
 
   Default: ``./scripts/checkpatch.pl -q --terse --no-summary --mailback --showfile``
 
-``b4.prep-pre-flight-checks`` (v0.14+)
+  .. versionadded:: v0.14
+
+``b4.prep-pre-flight-checks``
   You can use this to turn off some or all pre-flight checks that b4 runs
   prior to sending out patches. To cancel all checks::
 
@@ -473,6 +494,7 @@ Contributor-oriented settings
       [b4]
       prep-pre-flight-checks = disable-needs-auto-to-cc, needs-checking
 
+  .. versionadded:: v0.14
 
 To document
 -----------
