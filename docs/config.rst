@@ -151,7 +151,7 @@ These settings control ``b4 am`` and ``b4 shazam`` behavior.
 
 ``b4.shazam-merge-flags``
   Additional flags to pass to ``git merge`` when performing a merge with
-  ``b4 shazam -M``
+  ``b4 shazam -M``.
 
   Default: ``--signoff``
 
