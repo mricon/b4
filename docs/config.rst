@@ -220,7 +220,7 @@ Attestation settings
   Default: ``None``
 
 ``b4.keyringsrc``
-  See ``patatt`` for details on how to configure keyrings. For example,
+  See `patatt`_ for details on how to configure keyrings. For example,
   you can clone the kernel.org pgp keys repository and use it for
   attestation::
 
