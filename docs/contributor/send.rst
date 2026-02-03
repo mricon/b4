@@ -141,9 +141,9 @@ with the following setting::
 
 Using your own SMTP server
 --------------------------
-If there is a ``sendmail`` section in your git configuration, B4 tries
+If there is a ``sendemail`` section in your git configuration, B4 tries
 to use that by default instead of going via the web endpoint. At this
-time, b4 only recognizes a subset of ``sendmail`` options supported by
+time, b4 only recognizes a subset of ``sendemail`` options supported by
 git itself. The vast majority of servers should only need the following
 settings::
 
@@ -156,7 +156,7 @@ settings::
 
 You can also set up ``msmtp`` or a similar tool and specify the path to
 the ``sendmail``-compliant binary as the value for ``smtpServer``. To
-force B4 to use the web endpoint even when a ``sendmail`` option is
+force B4 to use the web endpoint even when a ``sendemail`` option is
 present, use the ``--use-web-endpoint`` switch.
 
 Sending your patches
