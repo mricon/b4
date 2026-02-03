@@ -294,8 +294,9 @@ Attestation settings
 
 ``b4.sendemail-identity``
   The ``sendemail`` identity to use when sending mail directly with b4.
-  This setting applies to ``b4 send`` and ``b4 ty``. See ``man
-  git-send-email`` for info about sendemail identities.
+  This setting applies to ``b4 send`` and ``b4 ty``. See `man
+  git-send-email <https://git-scm.com/docs/git-send-email>`__ for info about
+  sendemail identities.
 
   Default: ``None``
 
