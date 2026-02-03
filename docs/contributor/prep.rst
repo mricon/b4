@@ -500,3 +500,5 @@ modifying defaults for some of these flags.
   ``--compare-to``. For example::
 
       b4 prep --compare-to v1 --range-diff-opts "--creation-factor=80 --no-dual-color"
+
+  .. versionadded:: v0.15
