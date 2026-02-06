@@ -3725,6 +3725,16 @@ def git_branch_contains(gitdir: Optional[str], commit_id: str, checkall: bool = 
     return lines
 
 
+def git_get_git_dir(topdir: Optional[Union[str, Path]] = None):
+    gitargs = ['rev-parse', '--git-dir']
+    ecode, out = git_run_command(topdir, gitargs, logstderr=True)
+    if ecode > 0:
+        logger.critical('Unable to find git directory')
+        logger.critical(out.strip())
+        sys.exit(ecode)
+    return out.rstrip()
+
+
 def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
     topdir = None
     # Are we in a git tree and if so, what is our toplevel?
