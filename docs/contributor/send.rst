@@ -141,9 +141,9 @@ with the following setting::
 
 Using your own SMTP server
 --------------------------
-If there is a ``sendmail`` section in your git configuration, B4 tries
+If there is a ``sendemail`` section in your git configuration, B4 tries
 to use that by default instead of going via the web endpoint. At this
-time, b4 only recognizes a subset of ``sendmail`` options supported by
+time, b4 only recognizes a subset of ``sendemail`` options supported by
 git itself. The vast majority of servers should only need the following
 settings::
 
@@ -156,7 +156,7 @@ settings::
 
 You can also set up ``msmtp`` or a similar tool and specify the path to
 the ``sendmail``-compliant binary as the value for ``smtpServer``. To
-force B4 to use the web endpoint even when a ``sendmail`` option is
+force B4 to use the web endpoint even when a ``sendemail`` option is
 present, use the ``--use-web-endpoint`` switch.
 
 Sending your patches
@@ -170,8 +170,11 @@ sending your work.
   prep``, but future versions may support sending arbitrary patches
   generated with ``git format-patch``.
 
-Passing pre-flight checks **(v0.14+)**
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Passing pre-flight checks
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: v0.14
+
 B4 defines some pre-flight checks that should be passing, or the command
 generates a warning:
 
@@ -230,8 +233,11 @@ When ``--reflect`` is on:
   public-inbox feed
 * your branch is **not** automatically rerolled to the next revision
 
-Checking things over with ``--preview-to`` **(v0.13+)**
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Checking things over with ``--preview-to``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: v0.13
+
 Sometimes you want to ask your friend, colleague, boss, or mentor to
 give your submission a quick review. You can send them your series using
 ``--preview-to boss@example.com`` before you send things out to the
@@ -279,18 +285,22 @@ Command line flags
   actually sending things out and lets you verify that all patches are
   looking good and all recipients are correctly set.
 
-``--preview-to`` **(v0.13+)**
+``--preview-to``
   Sometimes it's useful to send your series for a pre-review to a
   colleague, mentor, boss, etc. Using this option sends out the prepared
   patches to the addresses specified on the command line, but doesn't
   reroll your series, allowing you to send the actual submission at some
   later point.
 
-``--reflect`` **(v0.11+)**
+  .. versionadded:: v0.13
+
+``--reflect``
   Prepares everything for sending, but only emails yourself (the address
   in the ``From:`` header). Useful as a last step to make sure that
   everything is looking good, and especially useful when using the web
   endpoint, because it may rewrite your From: header for DMARC reasons.
+
+  .. versionadded:: v0.11
 
 ``--no-trailer-to-cc``
   Tells b4 not to add any addresses found in the cover or patch trailers
@@ -301,13 +311,13 @@ Command line flags
 ``--to``
   Additional email addresses to include into the To: header. Separate
   multiple entries with a comma. You can also set this in the
-  configuration file using the ``b4.send-series-to`` option (see
+  configuration file using the :term:`b4.send-series-to` option (see
   :ref:`contributor_settings`).
 
 ``--cc``
   Additional email addresses to include into the Cc: header. Separate
   multiple entries with a comma. You can also set this in the
-  configuration file using the ``b4.send-series-cc`` option (see
+  configuration file using the :term:`b4.send-series-cc` option (see
   :ref:`contributor_settings`).
 
 ``--not-me-too``
@@ -318,7 +328,7 @@ Command line flags
   Note, that sending via the web submission endpoint requires
   cryptographic signatures at all times, so this is only a valid option
   to use with ``-o`` or when using your own SMTP server. This can be set
-  in the configuration using the ``b4.send-no-patatt-sign`` (see
+  in the configuration using the :term:`b4.send-no-patatt-sign` (see
   :ref:`contributor_settings`).
 
 ``--resend V``

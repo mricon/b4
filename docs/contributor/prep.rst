@@ -65,7 +65,7 @@ disadvantages in some less-common situations:
 
 For this reason, b4 supports alternative strategies for storing the
 cover letter. You can tell ``b4`` which strategy to use using the
-``b4.prep-cover-strategy`` configuration variable.
+:term:`b4.prep-cover-strategy` configuration variable.
 
 ``commit`` strategy (default)
   This is the default strategy that keeps the cover letter and all
@@ -126,7 +126,7 @@ Enrolling an existing branch
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 If you've already started working on a set of commits without first
 running ``b4 prep -n``, you can enroll your existing branch to make it
-"prep-tracked."
+"prep-tracked".
 
 For example, if you have a branch called ``my-topical-branch`` that was
 forked from ``master``, you can enroll it with b4::
@@ -187,7 +187,9 @@ additional information about the intent of your entire series.
 Working with series dependencies
 --------------------------------
 
-.. warning:: new in **(v0.14+)**
+.. versionadded:: v0.14
+
+.. warning::
 
    This is an experimental set of features introduced in v0.14. It may
    have rough edges or unexpected bugs.
@@ -314,7 +316,10 @@ This may also be already set by the project, if they have a
 
 Checking your work
 ------------------
-.. warning:: new in **(v0.14+)**
+
+.. versionadded:: v0.14
+
+.. warning::
 
    This is a new feature in version 0.14 and you should consider it
    experimental.
@@ -372,16 +377,20 @@ modifying defaults for some of these flags.
   don't like vim, you would have already set your ``$EDITOR`` to use
   some other command.
 
-``--edit-deps`` **(v0.14+)**
+``--edit-deps``
   Lets you edit the series dependencies using the editor command defined
   in git-config as ``core.editor``, the ``$EDITOR`` environment var if
   that isn't found, or ``vim``.
 
-``--check-deps`` **(v0.14+)**
+  .. versionadded:: v0.14
+
+``--check-deps``
   Verifies that b4 can resolve all specified dependencies and that
   everything cleanly applies to the base-commit specified.
 
-``--check`` **(v0.14+)**
+  .. versionadded:: v0.14
+
+``--check``
   Runs a set of checks on your series to identify some of the more
   common problems.
 
@@ -391,7 +400,7 @@ modifying defaults for some of these flags.
   ``./scripts/checkpatch.pl --terse --no-summary --mailback --showfile``
 
   You can specify your own command by setting the
-  ``b4.prep-perpatch-check-cmd`` configuration parameter. For example
+  :term:`b4.prep-perpatch-check-cmd` configuration parameter. For example
   you can make it more strict::
 
       [b4]
@@ -402,6 +411,8 @@ modifying defaults for some of these flags.
 
       ./scripts/checkpatch.pl --strict --git $(b4 prep --show-info series-range)
 
+  .. versionadded:: v0.14
+
 ``--show-revision``
   Shows the current series revision.
 
@@ -409,12 +420,14 @@ modifying defaults for some of these flags.
   Forces the revision to a different integer number. This modifies your
   cover letter and tracking information and makes this change permanent.
 
-``--compare-to vN`` **(v0.11+)**
+``--compare-to vN``
   This executes a ``git range-diff`` command that lets you compare the
   previously sent version of the series to what is currently in your
   working branch. This is very useful right before sending off a new
   revision to make sure that you didn't forget to include anything into
   changelogs.
+
+  .. versionadded:: v0.11
 
 ``--manual-reroll MSGID``
   Normally, your patch series should be automatically rerolled to the
@@ -425,7 +438,7 @@ modifying defaults for some of these flags.
   from the public-inbox server, so we can properly add the reference to
   the previously sent series to the cover letter changelog.
 
-``--set-prefixes PREFIX [PREFIX ...]`` **(v0.11+)**
+``--set-prefixes PREFIX [PREFIX ...]``
   If you want to mark your patch as ``RFC``, ``WIP``, or add any other
   subsystem identifiers, you can define them via this command. Do
   **not** add ``PATCH`` or ``v1`` here, as these are already
@@ -440,11 +453,15 @@ modifying defaults for some of these flags.
   When b4 sends the message, it should add ``PATCH``, ``vN``, to the
   subject as necessary.
 
-``--add-prefixes PREFIX [PREFIX ...]`` **(v0.14+)**
+  .. versionadded:: v0.11
+
+``--add-prefixes PREFIX [PREFIX ...]``
   Similar to ``--set-prefixes``, but will add prefixes to any ones
   currently defined, as opposed to completely replacing them.
 
-``--show-info [PARAM]`` **(v0.13+)**
+  .. versionadded:: v0.14
+
+``--show-info [PARAM]``
   Dumps information about the current series in a format suitable for
   parsing by other tools. Starting with v0.13, the parameter can be one
   of the following:
@@ -471,13 +488,17 @@ modifying defaults for some of these flags.
 
       b4 prep --show-info
 
-``--cleanup [BRANCHNAME]`` **(v0.13+)**
+  .. versionadded:: v0.13
+
+``--cleanup [BRANCHNAME]``
   Archive and delete obsolete prep-managed branches and all git objects
   related to them, such as sent tags. Run without parameters to list
   all known prep-managed branches in the repository. Rerun with the
   branch name to create an archival tarball with all patches, covers,
   and tracking information, and then delete all git objects related to
   that series from the local repository.
+
+  .. versionadded:: v0.13
 
 ``-n NEW_SERIES_NAME, --new NEW_SERIES_NAME``
   Creates a new branch to start work on a new patch series.
@@ -500,3 +521,5 @@ modifying defaults for some of these flags.
   ``--compare-to``. For example::
 
       b4 prep --compare-to v1 --range-diff-opts "--creation-factor=80 --no-dual-color"
+
+  .. versionadded:: v0.15

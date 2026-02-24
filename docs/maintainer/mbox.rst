@@ -33,7 +33,7 @@ Option flags
   and you need to do some work while offline. You can pass ``-`` to read
   messages from stdin.
 
-``--stdin-pipe-sep STDIN_PIPE_SEP`` **(0.11+)**
+``--stdin-pipe-sep STDIN_PIPE_SEP``
   When reading input from stdin, split messages using the string passed
   as parameter. Otherwise, b4 expects stdin to be a single message or a
   valid mbox.
@@ -45,16 +45,20 @@ Option flags
 
   Then invoke b4 with ``-m - --stdin-pipe-sep='\n---randomstr---\n'``
 
+  .. versionadded:: v0.11
+
 ``-C, --no-cache``
   By default, b4 will cache the retrieved threads for about 10 minutes.
   This lets you force b4 to ignore cache and retrieve the latest
   results.
 
-``--single-message`` **(0.13+)**
+``--single-message``
   By default, b4 will retrieve the entire thread, but sometimes you
   really just want a single message. This helps when someone posts a
   patch in the middle of a long thread and you just want that patch and
   ignore the rest of what is going on.
+
+  .. versionadded:: v0.13
 
 ``-o OUTDIR, --outdir OUTDIR``
   Instead of writing the .mbox file to the current directory, write it
@@ -85,13 +89,15 @@ Option flags
   that aren't already present. Note, that this uses simple message-id
   matching and no other checks for correctness are performed.
 
-``-r MBOX, --refetch MBOX`` **(v0.12+)**
+``-r MBOX, --refetch MBOX``
   This allows you to refetch all messages in the provided mailbox from
   the upstream public-inbox server. For example, this is useful when you
   have a .mbx file prepared by ``b4 am`` and you want to send a
   response to one of the patches. Performing a refetch will restore the
   original message headers that may have been dropped or modified by
   ``b4 am``.
+
+  .. versionadded:: v0.12
 
 Using with mutt
 ---------------

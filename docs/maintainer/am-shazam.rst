@@ -75,11 +75,13 @@ The following flags are common to both commands:
   This lets you force b4 to ignore cache and retrieve the latest
   results.
 
-``--single-message`` **(0.13+)**
+``--single-message``
   By default, b4 retrieves the entire thread, but sometimes you really
   just want a single message. This helps when someone posts a patch in
   the middle of a long thread and you just want that patch and ignore
   the rest of the messages.
+
+  .. versionadded:: v0.13
 
 ``-v WANTVER, --use-version WANTVER``
   If a thread (or threads, when used with ``-c``) contains multiple
@@ -113,7 +115,7 @@ The following flags are common to both commands:
 
 ``-l, --add-link``
   Adds a ``Link:`` trailer with the URL of the retrieved message using
-  the ``linkmask`` template.
+  the :term:`b4.linkmask` template.
 
 ``-i, --add-message-id``
   Adds a ``Message-ID:`` trailer with the Message-ID of the retrieved
@@ -162,7 +164,7 @@ The following flags are common to both commands:
   translated into left-to-right languages), you can override the default
   behavior with this switch.
 
-``--check`` **(0.14+)**
+``--check``
   Tells b4 to run a series of local checks on each patch of the series
   and display any problems. When b4 finds a valid patchwork project
   definition in the configuration settings, it also looks up the CI
@@ -173,10 +175,12 @@ The following flags are common to both commands:
       ./scripts/checkpatch.pl -q --terse --no-summary --mailback
 
   You can specify a different command to run by setting the
-  ``b4.am-perpatch-check-cmd`` configuration setting, e.g.::
+  :term:`b4.am-perpatch-check-cmd` configuration setting, e.g.::
 
       [b4]
       am-perpatch-check-cmd = ./scripts/checkpatch.pl -q --terse --no-summary --mailback --strict
+
+  .. versionadded:: v0.14
 
 Flags only valid for ``b4 am``
 ------------------------------
