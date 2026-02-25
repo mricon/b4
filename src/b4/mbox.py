@@ -392,13 +392,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         except RuntimeError:
             sys.exit(1)
 
-        gitargs = ['rev-parse', '--git-dir']
-        ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
-        if ecode > 0:
-            logger.critical('Unable to find git directory')
-            logger.critical(out.strip())
-            sys.exit(ecode)
-        mmf = os.path.join(out.rstrip(), 'b4-cover')
+        mmf = os.path.join(b4.git_get_git_dir(), 'b4-cover')
         merge_template = DEFAULT_MERGE_TEMPLATE
         if config.get('shazam-merge-template'):
             # Try to load this template instead

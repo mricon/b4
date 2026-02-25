@@ -130,13 +130,11 @@ def run_frf(frf: fr.RepoFilter) -> None:
     logger.debug('Running git-filter-repo...')
     frf.run()
     logger.debug('git-filter-repo complete')
-    gtl = b4.git_get_toplevel()
-    if isinstance(gtl, str):
-        # Remove .git/filter-repo/already_ran
-        already_ran = os.path.join(gtl, '.git', 'filter-repo', 'already_ran')
-        if os.path.exists(already_ran):
-            logger.debug('Removing %s', already_ran)
-            os.remove(already_ran)
+    # Remove .git/filter-repo/already_ran
+    already_ran = os.path.join(b4.git_get_git_dir(), 'filter-repo', 'already_ran')
+    if os.path.exists(already_ran):
+        logger.debug('Removing %s', already_ran)
+        os.remove(already_ran)
 
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
