@@ -490,6 +490,29 @@ modifying defaults for some of these flags.
 
   .. versionadded:: v0.13
 
+``--set-presubject [PRESUBJECT]``
+  If you want to include a project name or any other identifier before the
+  subject of your patch, you can define them via this command. These are
+  placed **before** ``[PATCH ...]`` in the subject, and **must** be
+  enclosed with brackets.
+
+  For example, running the following command::
+
+      b4 prep --set-presubject "[myproject]"
+
+  Will render your patch(es) as follows::
+
+      [myproject][PATCH ...] <title>
+
+  These do not collide with prefixes set with ``--set-prefixes`` or
+  ``--add-prefixes`` or patch versions, which are located next to ``PATCH``
+  in the subject.
+
+  To remove any presubject you previously set, you can run ``b4 prep
+  --set-presubject ''``.
+
+  .. versionadded:: v0.15
+
 ``--cleanup [BRANCHNAME]``
   Archive and delete obsolete prep-managed branches and all git objects
   related to them, such as sent tags. Run without parameters to list

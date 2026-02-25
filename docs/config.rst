@@ -485,6 +485,19 @@ Contributor-oriented settings
 
      .. versionadded:: v0.11
 
+   :term:`b4.send-presubject`
+     Identifiers to include before ``[PATCH]``. These **must** be enclosed
+     with brackets. For example::
+
+         [b4]
+         send-presubject = "[myproject]"
+
+     This setting can be replaced for a series with ``b4 prep --set-presubject``.
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
    :term:`b4.send-same-thread`
      When sending a new version of a series, send it in the same thread as
      the previous version. The config supports the following values:
