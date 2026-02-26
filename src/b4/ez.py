@@ -2520,47 +2520,41 @@ def get_prep_managed_branches(gitdir: Optional[str] = None) -> List[str]:
     return mybranches
 
 
-def cleanup(param: str) -> None:
-    if param == '_show':
-        # Show all b4-tracked branches
-        mybranches = get_prep_managed_branches(None)
-        if not len(mybranches):
-            logger.info('No b4-tracked branches found')
-            sys.exit(0)
+def _cleanup_branch(branch: str) -> None:
 
-        logger.info('Please specify branch:')
-        for branch in mybranches:
-            logger.info(' %s', branch)
+    if not b4.git_branch_exists(None, branch):
+        logger.error('ERROR: Not a known branch: %s', branch)
         return
 
-    mybranch = param
-    if not b4.git_branch_exists(None, mybranch):
-        logger.critical('Not a known branch: %s', mybranch)
-        sys.exit(1)
-    is_prep_branch(mustbe=True, usebranch=mybranch)
-    base_commit, start_commit, end_commit = get_series_range(usebranch=mybranch)
+    if not is_prep_branch(usebranch=branch):
+        logger.error('ERROR: %s is not a prep-managed branch', branch)
+        return
+
+    base_commit, start_commit, end_commit = get_series_range(usebranch=branch)
     # start commit and end commit can't be the same
     if start_commit == end_commit:
-        logger.critical('CRITICAL: %s appears to be an empty branch', mybranch)
-        sys.exit(1)
+        logger.error('ERROR: %s appears to be an empty branch', branch)
+        return
+
     # Refuse to clean up the currently checked out branch
     curbranch = b4.git_get_current_branch()
-    if curbranch == mybranch:
-        logger.critical('CRITICAL: %s is currently checked out, cannot cleanup', mybranch)
-        sys.exit(1)
-    cover, tracking = load_cover(usebranch=mybranch)
+    if curbranch == branch:
+        logger.error('ERROR: %s is currently checked out, cannot cleanup', branch)
+        return
+
+    cover, tracking = load_cover(usebranch=branch)
     # Find all tags
     ts = tracking['series']
     tags = list()
-    logger.info('Will archive and delete all of the following:')
+    logger.info('\nWill archive and delete all of the following:')
     logger.info('---')
-    logger.info('branch: %s', mybranch)
+    logger.info('branch: %s', branch)
     if 'history' in ts:
         for rn, links in ts['history'].items():
             tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
             tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
-                tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, rn)
+                tagname, revision = get_sent_tagname(branch, SENT_TAG_PREFIX, rn)
                 tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
                 logger.debug('No tag matching revision %s', revision)
@@ -2575,7 +2569,37 @@ def cleanup(param: str) -> None:
             tags.append((tagname, base_commit, tag_commit, revision, cover))
     logger.info('---')
     try:
-        input('Press Enter to confirm or Ctrl-C to abort')
+        resp = None
+        while resp is None:
+            resp = input('Proceed? [y/s/q/N/?] ')
+            if resp == "?":
+                logger.info(textwrap.dedent(
+                    """
+                    Possible answers:
+                    y: cleanup the branch
+                    s: show branch log
+                    q or Ctrl-C: abort cleanup
+                    n (default): do not cleanup this branch
+                    ?: show this help message
+                    """))
+                resp = None
+            elif resp in ("show", "s"):
+                ecode, out = b4.git_run_command(None, ["log",
+                                                       "--patch",
+                                                       "--color=always",
+                                                       f"{start_commit}~..{end_commit}"])
+                if ecode > 0:
+                    logger.critical('ERROR: unable to show git log between %s and %s',
+                                    start_commit, end_commit)
+                    sys.exit(130)
+                logger.info(out)
+                logger.info('')
+                resp = None
+            elif resp == "q":
+                sys.exit(130)
+            elif resp != "y":
+                return
+
     except KeyboardInterrupt:
         logger.info('')
         sys.exit(130)
@@ -2597,13 +2621,13 @@ def cleanup(param: str) -> None:
         write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
         ifh.close()
         # Add the current series
-        logger.info('Archiving branch %s', mybranch)
+        logger.info('Archiving branch %s', branch)
         patches = b4.git_range_to_patches(None, start_commit, end_commit)
         ifh = io.BytesIO()
         b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
         write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
         ifh.close()
-        deletes.append(['branch', '--delete', '--force', mybranch])
+        deletes.append(['branch', '--delete', '--force', branch])
 
         for tagname, base_commit, tag_commit, revision, cover in tags:
             logger.info('Archiving %s', tagname)
@@ -2636,6 +2660,23 @@ def cleanup(param: str) -> None:
         b4.git_run_command(None, gitargs)
     logger.info('---')
     logger.info('Wrote: %s', tarpath)
+
+
+def cleanup(branches: List[str]) -> None:
+    if not branches:
+        # Show all b4-tracked branches
+        mybranches = get_prep_managed_branches(None)
+        if not len(mybranches):
+            logger.info('No b4-tracked branches found')
+            sys.exit(0)
+
+        logger.info('Please specify branch:')
+        for branch in mybranches:
+            logger.info(' %s', branch)
+        return
+
+    for branch in branches:
+        _cleanup_branch(branch)
 
 
 def show_info(param: str) -> None:
@@ -3029,7 +3070,7 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
     if cmdargs.show_info:
         return show_info(cmdargs.show_info)
 
-    if cmdargs.cleanup:
+    if cmdargs.cleanup is not None:
         return cleanup(cmdargs.cleanup)
 
     if cmdargs.format_patch:

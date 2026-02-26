@@ -342,15 +342,15 @@ up the prep-managed branch, together with all of its sent tags::
 
     b4 prep --cleanup
 
-This command lists all prep-managed branches in your repository. Pick a
-branch to clean up, make sure it's not currently checked out, and run
-the command again::
+This command lists all prep-managed branches in your repository. Pick one or
+more branches to clean up, make sure it's not currently checked out, and run the
+command again::
 
-    b4 prep --cleanup b4/my-topical-branch
+    b4 prep --cleanup b4/my-topical-branch ...
 
 After you confirm your action, this should create a tarball with all the
 patches, cover letters, and tracking information from your series.
-Afterwards, b4 deletes the branch and all related tags from your local
+Afterwards, b4 deletes the branch(es) and all related tags from your local
 repository.
 
 .. _prep_flags:

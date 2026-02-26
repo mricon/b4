@@ -344,8 +344,8 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Mark current revision as sent and reroll (requires cover letter msgid)')
     spp_g.add_argument('--show-info', metavar='PARAM', nargs='?', const=':_all',
                        help='Show series info in a format that can be passed to other commands.')
-    spp_g.add_argument('--cleanup', metavar='BRANCHNAME', nargs='?', const='_show',
-                       help='Archive and remove a prep-tracked branch and all its sent/ tags')
+    spp_g.add_argument('--cleanup', metavar='BRANCHNAME', nargs='*',
+                       help='Archive and remove prep-tracked branches and all associated sent/ tags')
 
     ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
     ag_prepn.add_argument('-n', '--new', dest='new_series_name',
