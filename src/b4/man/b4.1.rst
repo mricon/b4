@@ -13,7 +13,7 @@ Work with code submissions in a public-inbox archive
 
 SYNOPSIS
 --------
-b4 {mbox,am,shazam,pr,diff,ty,kr,prep,send,trailers} [options]
+b4 {mbox,am,shazam,pr,diff,ty,kr,review,prep,send,trailers} [options]
 
 DESCRIPTION
 -----------
@@ -37,6 +37,7 @@ Maintainer-oriented:
 * *pr*: Work with pull requests
 * *ty*: Create templated replies for processed patches and pull requests
 * *diff*: Show range-diff style diffs between patch versions
+* *review*: TUI-based patch review workflow (alpha)
 * *kr*: (STUB) Operate on patatt-compatible keyrings
 
 Contributor-oriented:
@@ -235,6 +236,33 @@ For options and their descriptions, see ``b4 kr --help``.
 ``b4 kr --show-keys [msgid]``
   Retrieve the thread specified and show any cryptographic keys used to
   attest the patches.
+
+b4 review (alpha)
+~~~~~~~~~~~~~~~~~
+**Note:** this subcommand is a technology preview. Commands, flags, and
+on-disk formats may change in incompatible ways between releases.
+
+This command provides a TUI-based review workflow for maintainers
+receiving patches on mailing lists. It lets you track incoming series,
+review diffs with inline commenting, add code-review trailers, send
+review emails, and take (apply) patches.
+
+The workflow consists of three steps: enrol a repository, track one or
+more series, and launch the TUI to review and act on them.
+
+For options and their descriptions, see ``b4 review --help`` and
+``b4 review <subcommand> --help``.
+
+*Examples*
+
+``b4 review enroll``
+  Enrol the current repository for review tracking.
+
+``b4 review track <msgid>``
+  Track a series by its message-id, URL, or change-id.
+
+``b4 review tui``
+  Launch the review TUI.
 
 b4 prep, trailers, send
 ~~~~~~~~~~~~~~~~~~~~~~~

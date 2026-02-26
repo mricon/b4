@@ -9,6 +9,10 @@ aggregator service, such as the one running on lore.kernel.org, but can
 be used with local mailboxes and maildirs, thus providing fully
 decentralized, experience with robust end-to-end attestation.
 
+B4 also provides a TUI-based review workflow (``b4 review``, currently
+in alpha) that lets you track, review, and act on incoming patch series
+from a single terminal interface. See :doc:`review` for details.
+
 .. _`public-inbox`: https://public-inbox.org/README.html
 
 Working with patches sent to distribution lists

@@ -101,8 +101,8 @@ def get_base_commit(topdir: Optional[str], body: str, lser: b4.LoreSeries,
             else:
                 logger.critical(' Base: %s (best guess, %s/%s blobs matched)', base_commit,
                                 nblobs - mismatches, nblobs)
-        except IndexError:
-            logger.critical(' Base: failed to guess base')
+        except IndexError as ex:
+            logger.critical(' Base: failed to guess base (%s)', ex)
 
     if cmdargs.mergebase:
         if base_commit:
@@ -819,7 +819,8 @@ def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
                 if chunk:
                     chunks.append((quoted, chunk))
                 chunk = list()
-                chunk.append(line)
+                if not (quoted and line.strip() == '>'):
+                    chunk.append(line)
                 current = quoted
 
             if current is None:

@@ -28,6 +28,7 @@ For maintainers
    maintainer/diff
    maintainer/pr
    maintainer/ty
+   maintainer/review
    maintainer/kr
 
 For developers

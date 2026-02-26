@@ -571,6 +571,14 @@ class LoreSeries:
                 other_patchids.append(patch.git_patch_id)
         return my_patchids == other_patchids
 
+    @property
+    def fingerprint(self) -> str:
+        parts: list[str] = [self.fromemail or '', str(self.revision)]
+        for patch in self.patches[1:]:
+            if patch is not None and patch.git_patch_id:
+                parts.append(patch.git_patch_id)
+        return hashlib.sha256(':'.join(parts).encode()).hexdigest()
+
     def get_patch_by_msgid(self, msgid: str) -> Optional['LoreMessage']:
         for lmsg in self.patches:
             if lmsg is not None and lmsg.msgid == msgid:
@@ -918,7 +926,7 @@ class LoreSeries:
         gitargs = ['log', '--pretty=oneline', '--until', guntil, '--max-count=1'] + where
         lines = git_get_command_lines(gitdir, gitargs)
         if not lines:
-            raise IndexError
+            raise IndexError('No commits found before %s' % guntil)
         commit = lines[0].split()[0]
         checked, mismatches = self.check_applies_clean(gitdir, commit)
         fewest = len(mismatches)
@@ -958,13 +966,13 @@ class LoreSeries:
             best = commit
         if fewest == len(self.indexes):
             # None of the blobs matched
-            raise IndexError
+            raise IndexError('None of the %d blob(s) matched' % len(self.indexes))
 
         lines = git_get_command_lines(gitdir, ['describe', '--all', best])
         if len(lines):
             return lines[0], len(self.indexes), fewest
 
-        raise IndexError
+        raise IndexError('Could not describe commit %s' % best)
 
     def make_fake_am_range(self, gitdir: Optional[str],
                            at_base: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
@@ -1754,38 +1762,67 @@ class LoreMessage:
         logger.debug('ci_state for %s: %s', self.msgid, ci_status)
         self.pw_ci_status = ci_status
 
-    def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[Optional[str], List[str], bool]:
-        trailers = list()
-        checkmark = None
+    def get_attestation_status(self, attpolicy: str, maxdays: int = 0) -> Tuple[List[Dict[str, Any]], bool, bool]:
+        """Get attestation status for this message.
+
+        Args:
+            attpolicy: Attestation policy ('off', 'softfail', 'hardfail')
+            maxdays: Maximum allowed time drift in days (0 to disable)
+
+        Returns:
+            Tuple of (attestations, overall_passing, critical) where:
+            - attestations: List of dicts with keys:
+                - status: 'signed', 'badsig', 'nokey'
+                - identity: The attestor identity (e.g., 'ed25519/user@example.com')
+                - mismatch: From address if identity doesn't match (optional)
+                - passing: Boolean for this specific attestor
+            - overall_passing: True if no failures (including when no attestation info)
+            - critical: True if hardfail policy triggered
+        """
+        attestations: List[Dict[str, Any]] = []
+        has_passing = False
+        has_failing = False
         critical = False
+
         for attestor in self.attestors:
             if attestor.passing and maxdays and not attestor.check_time_drift(self.date, maxdays):
                 logger.debug('The time drift is too much, marking as non-passing')
                 attestor.passing = False
+
             if not attestor.passing:
                 # Is it a person-trailer for which we have a key?
                 if attestor.level == 'person':
                     if attestor.have_key:
                         # This was signed, and we have a key, but it's failing
-                        trailers.append('%s BADSIG: %s' % (attestor.checkmark, attestor.trailer))
-                        checkmark = attestor.checkmark
+                        has_failing = True
+                        attestations.append({
+                            'status': 'badsig',
+                            'identity': attestor.trailer,
+                            'passing': False,
+                        })
                     elif attpolicy in ('softfail', 'hardfail'):
-                        trailers.append('%s No key: %s' % (attestor.checkmark, attestor.trailer))
+                        has_failing = True
+                        attestations.append({
+                            'status': 'nokey',
+                            'identity': attestor.trailer,
+                            'passing': False,
+                        })
                         # This is not critical even in hardfail
                         continue
                 elif attpolicy in ('softfail', 'hardfail'):
-                    if not checkmark:
-                        checkmark = attestor.checkmark
-                    trailers.append('%s BADSIG: %s' % (attestor.checkmark, attestor.trailer))
+                    has_failing = True
+                    attestations.append({
+                        'status': 'badsig',
+                        'identity': attestor.trailer,
+                        'passing': False,
+                    })
 
                 if attpolicy == 'hardfail':
                     critical = True
             else:
-                passing = False
-                if not checkmark:
-                    checkmark = attestor.checkmark
+                identity_passing = False
                 if attestor.check_identity(self.fromemail):
-                    passing = True
+                    identity_passing = True
                 else:
                     # Do we have an x-original-from?
                     xofh = self.msg.get('X-Original-From')
@@ -1793,7 +1830,7 @@ class LoreMessage:
                         logger.debug('Using X-Original-From for identity check')
                         xpair = email.utils.getaddresses([xofh])[0]
                         if attestor.check_identity(xpair[1]):
-                            passing = True
+                            identity_passing = True
                             # Fix our fromname and fromemail, mostly for thanks-tracking
                             self.fromname = xpair[0]
                             self.fromemail = xpair[1]
@@ -1801,11 +1838,65 @@ class LoreMessage:
                             for header in list(self.msg._headers):  # type: ignore[attr-defined]
                                 if header[0].lower() == 'reply-to' and header[1].find(xpair[1]) > 0:
                                     self.msg._headers.remove(header)  # type: ignore[attr-defined]
-                if passing:
-                    trailers.append('%s Signed: %s' % (attestor.checkmark, attestor.trailer))
+
+                has_passing = True
+                att_info: Dict[str, Any] = {
+                    'status': 'signed',
+                    'identity': attestor.trailer,
+                    'passing': True,
+                }
+                if not identity_passing:
+                    att_info['mismatch'] = self.fromemail
+                attestations.append(att_info)
+
+        # No attestation info or has at least one passing = overall passing
+        # Only fail if we have failures and no passing attestors
+        overall_passing = not has_failing or has_passing
+        return attestations, overall_passing, critical
+
+    def get_attestation_trailers(self, attpolicy: str, maxdays: int = 0) -> Tuple[Optional[str], List[str], bool]:
+        """Get formatted attestation trailers with checkmarks for display.
+
+        Args:
+            attpolicy: Attestation policy ('off', 'softfail', 'hardfail')
+            maxdays: Maximum allowed time drift in days (0 to disable)
+
+        Returns:
+            Tuple of (checkmark, trailers, critical) where:
+            - checkmark: Overall pass/fail checkmark character (with ANSI codes if configured)
+            - trailers: List of formatted trailer strings with checkmarks
+            - critical: True if hardfail policy triggered
+        """
+        attestations, overall_passing, critical = self.get_attestation_status(attpolicy, maxdays)
+
+        config = get_main_config()
+        if config['attestation-checkmarks'] == 'fancy':
+            pass_mark = ATT_PASS_FANCY
+            fail_mark = ATT_FAIL_FANCY
+        else:
+            pass_mark = ATT_PASS_SIMPLE
+            fail_mark = ATT_FAIL_SIMPLE
+
+        trailers = []
+        checkmark = None
+
+        for att in attestations:
+            if att['passing']:
+                mark = pass_mark
+                if checkmark is None:
+                    checkmark = mark
+                if 'mismatch' in att:
+                    trailers.append(f'{mark} Signed: {att["identity"]} (From: {att["mismatch"]})')
                 else:
-                    trailers.append('%s Signed: %s (From: %s)' % (attestor.checkmark, attestor.trailer,
-                                                                  self.fromemail))
+                    trailers.append(f'{mark} Signed: {att["identity"]}')
+            else:
+                mark = fail_mark
+                if checkmark is None:
+                    checkmark = mark
+                if att['status'] == 'badsig':
+                    trailers.append(f'{mark} BADSIG: {att["identity"]}')
+                elif att['status'] == 'nokey':
+                    trailers.append(f'{mark} No key: {att["identity"]}')
 
         return checkmark, trailers, critical
 
@@ -1923,6 +2014,31 @@ class LoreMessage:
 
         new_hdrval = re.sub(r'\n?\s+', ' ', decoded)
         return new_hdrval.strip()
+
+    @staticmethod
+    def make_reply_addrs(to_addrs: List[Tuple[str, str]],
+                         cc_addrs: List[Tuple[str, str]],
+                         ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+        """Deduplicate To and Cc address lists for a reply.
+
+        Removes duplicates within To, then removes any Cc entries that
+        already appear in To.  Comparison is case-insensitive on the
+        email address part.  Order is preserved.
+        """
+        seen: Set[str] = set()
+        deduped_to: List[Tuple[str, str]] = []
+        for name, addr in to_addrs:
+            laddr = addr.lower()
+            if laddr not in seen:
+                seen.add(laddr)
+                deduped_to.append((name, addr))
+        deduped_cc: List[Tuple[str, str]] = []
+        for name, addr in cc_addrs:
+            laddr = addr.lower()
+            if laddr not in seen:
+                seen.add(laddr)
+                deduped_cc.append((name, addr))
+        return deduped_to, deduped_cc
 
     @staticmethod
     def wrap_header(hdr: Tuple[str, str], width: int = 75, nl: str = '\n',
@@ -3843,6 +3959,15 @@ def format_addrs(pairs: List[Tuple[str, str]], clean: bool = True,
     return ', '.join(addrs)
 
 
+def print_pretty_addrs(addrs: List[Tuple[str, str]], hdrname: str) -> None:
+    if len(addrs) < 1:
+        return
+    logger.info('%s: %s', hdrname, format_addrs([addrs[0]]))
+    if len(addrs) > 1:
+        for addr in addrs[1:]:
+            logger.info('%s  %s', ' ' * len(hdrname), format_addrs([addr]))
+
+
 def make_quote(body: str, maxlines: int = 5) -> str:
     headers, message, trailers, basement, signature = LoreMessage.get_body_parts(body)
     if not len(message):
@@ -3860,6 +3985,9 @@ def make_quote(body: str, maxlines: int = 5) -> str:
             break
         quotelines.append('> %s' % line.rstrip())
         qcount += 1
+    # Remove any trailing lines that are just '> '
+    while len(quotelines) and quotelines[-1].strip() == '>':
+        quotelines.pop()
     return '\n'.join(quotelines)
 
 
@@ -4622,6 +4750,33 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
         raise RuntimeError(f"Branch changed during file editing, the temporary file was saved at {save_file.name}")
     else:
         return bdata
+
+
+def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
+    corecfg = get_config_from_git(r'core\..*', {'pager': os.environ.get('PAGER', 'less')})
+    pager = corecfg.get('pager')
+    logger.debug('pager=%s', pager)
+
+    topdir = git_get_toplevel()
+    if topdir is not None:
+        p = Path(topdir)
+    else:
+        p = None
+    with tempfile.TemporaryDirectory(prefix='.b4-pager', dir=p) as temp_dir:
+        temp_fpath = os.path.join(temp_dir, filehint)
+        with open(temp_fpath, 'xb') as view_file:
+            view_file.write(bdata)
+
+        sp = shlex.shlex(pager, posix=True)
+        sp.whitespace_split = True
+        cmdargs = list(sp) + [temp_fpath]
+        logger.debug('Running %s' % ' '.join(cmdargs))
+        # Strip -F (quit-if-one-screen) from LESS so the pager always
+        # stays open, even when the output fits on a single screen.
+        env = dict(os.environ)
+        env['LESS'] = env.get('LESS', 'FRX').replace('F', '')
+        spop = subprocess.Popen(cmdargs, env=env)
+        spop.wait()
 
 
 def map_codereview_trailers(qmsgs: List[EmailMessage],

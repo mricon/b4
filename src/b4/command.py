@@ -105,6 +105,11 @@ def cmd_shazam(cmdargs: argparse.Namespace) -> None:
     b4.mbox.main(cmdargs)
 
 
+def cmd_review(cmdargs: argparse.Namespace) -> None:
+    import b4.review
+    b4.review.main(cmdargs)
+
+
 def cmd_pr(cmdargs: argparse.Namespace) -> None:
     import b4.pr
     b4.pr.main(cmdargs)
@@ -172,7 +177,7 @@ def setup_parser() -> argparse.ArgumentParser:
                         =VALUE will set the value to "true".''')
 
     try:
-        import shtab  # type: ignore
+        import shtab
         shtab.add_argument_to(parser, ["--print-completion"])
     except ImportError:
         pass
@@ -227,6 +232,32 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_sh.add_argument('--merge-base', dest='mergebase', type=str, default=None,
                        help='(use with -H or -M) Force this base when merging')
     sp_sh.set_defaults(func=cmd_shazam)
+
+    # b4 review
+    sp_rev = subparsers.add_parser('review', help='Review patch series received on mailing lists')
+    sp_rev.set_defaults(func=cmd_review)
+    rev_subparsers = sp_rev.add_subparsers(help='review sub-command help', dest='review_subcmd')
+
+    # b4 review tui
+    sp_rev_tui = rev_subparsers.add_parser('tui', help='Browse tracked series in a TUI')
+    sp_rev_tui.add_argument('-i', '--identifier', dest='identifier', default=None,
+                            help='Project identifier (required if not in an enrolled repository)')
+    sp_rev_tui.add_argument('--email-dry-run', dest='email_dryrun', action='store_true', default=False,
+                            help='Show all email dialogs but print messages to stdout instead of sending')
+
+    # b4 review enroll
+    sp_rev_enroll = rev_subparsers.add_parser('enroll', help='Enroll a repository for review tracking')
+    sp_rev_enroll.add_argument('repo_path', nargs='?', default=None,
+                               help='Path to the git repository to enroll (default: current directory)')
+    sp_rev_enroll.add_argument('-i', '--identifier', dest='identifier', default=None,
+                               help='Project identifier (default: repository directory name)')
+
+    # b4 review track
+    sp_rev_track = rev_subparsers.add_parser('track', help='Track a series for review')
+    sp_rev_track.add_argument('series_id', nargs='?', default=None,
+                              help='Series identifier (message-id, URL, or change-id); or pipe message to stdin')
+    sp_rev_track.add_argument('-i', '--identifier', dest='identifier', default=None,
+                              help='Project identifier (required if not in an enrolled repository)')
 
     # b4 pr
     sp_pr = subparsers.add_parser('pr', help='Fetch a pull request found in a message ID')

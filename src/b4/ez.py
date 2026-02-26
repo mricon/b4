@@ -1405,15 +1405,6 @@ def get_series_details(start_commit: Optional[str] = None, usebranch: Optional[s
     return base_commit, start_commit, end_commit, oneline, shortlog.rstrip(), diffstat.rstrip()
 
 
-def print_pretty_addrs(addrs: List[Tuple[str, str]], hdrname: str) -> None:
-    if len(addrs) < 1:
-        return
-    logger.info('%s: %s', hdrname, b4.format_addrs([addrs[0]]))
-    if len(addrs) > 1:
-        for addr in addrs[1:]:
-            logger.info('%s  %s', ' ' * len(hdrname), b4.format_addrs([addr]))
-
-
 def get_base_changeid_from_tag(tagname: str) -> Tuple[str, str, str]:
     gitargs = ['cat-file', '-p', tagname]
     ecode, tagmsg = b4.git_run_command(None, gitargs)
@@ -2142,8 +2133,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                     sys.exit(130)
 
         logger.info('---')
-        print_pretty_addrs(allto, 'To')
-        print_pretty_addrs(allcc, 'Cc')
+        b4.print_pretty_addrs(allto, 'To')
+        b4.print_pretty_addrs(allcc, 'Cc')
         logger.info('---')
         for commit, msg in patches:
             if not msg:
@@ -2155,7 +2146,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                     if pair[1] not in seen:
                         extracc.append(pair)
                 if extracc:
-                    print_pretty_addrs(extracc, '    +Cc')
+                    b4.print_pretty_addrs(extracc, '    +Cc')
 
         logger.info('---')
         usercfg = b4.get_user_config()

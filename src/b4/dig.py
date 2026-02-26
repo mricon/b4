@@ -296,16 +296,10 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             allrto = email.utils.getaddresses(best_match.msg.get_all('reply-to', []))
             if not allrto:
                 allrto = [(best_match.fromname, best_match.fromemail)]
-            allwho: List[Tuple[str, str]] = list()
-            seen_addrs: Set[str] = set()
-            # Make it unique, but keep the order
-            for pair in allrto + allto + allcc:
-                if pair[1] not in seen_addrs:
-                    seen_addrs.add(pair[1])
-                    allwho.append(pair)
+            deduped_to, deduped_cc = b4.LoreMessage.make_reply_addrs(allrto, allto + allcc)
             logger.info('---')
             logger.info('People originally included in this patch:')
-            logger.info(b4.format_addrs(allwho, header_safe=False))
+            logger.info(b4.format_addrs(deduped_to + deduped_cc, header_safe=False))
 
         return
 

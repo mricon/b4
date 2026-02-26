@@ -5,6 +5,7 @@
 *.pdf
 test.log
 build/*
+docs/_build/
 dist/*
 MANIFEST
 .idea

@@ -1,9 +1,44 @@
 v0.15
 -----
-[_] `b4 review` similar to `b4 prep`
-	[_] Retrieve series and apply to a branch
-	[_] Use empty commit for cover letter and review state tracking
-	[_] Simple edit mode a-la "git rebase -i" that lets you apply trailers to patches
+[X] `b4 review` interactive patch review workflow
+	[X] Retrieve series from lore and apply to a review branch
+	[X] Use tracking commit for cover letter and review state metadata
+	[X] Project enrolment and SQLite tracking database
+		[X] Multi-project support via per-repository identifiers
+		[X] Series and revisions tables with status lifecycle
+	[X] Review TUI (b4 review branch)
+		[X] Split-pane interface with patch list and diff viewer
+		[X] Inline comment editing via $EDITOR with delimiter-based parsing
+		[X] Trailer selection and management modal
+		[X] Follow-up comment display from mailing list threads
+		[X] Agent integration for automated/AI-assisted reviews
+		[X] Email preview mode with To/Cc/Bcc editing and send workflow
+		[X] Per-patch check command execution
+		[X] Note editing for patches and cover letter
+		[X] Multi-reviewer comment support with attribution
+		[X] Comment navigation and horizontal scroll bindings
+		[X] Shell suspension and resume
+	[X] Tracking TUI (b4 review tui)
+		[X] Browse and manage tracked series with status indicators
+		[X] Series lifecycle management (new/reviewing/replied/archived)
+		[X] Take action with merge, linear, and cherry-pick methods
+		[X] Range-diff display between revisions
+		[X] Rebase review branches on current HEAD
+		[X] Thank-you message composition and preview
+		[X] Archive and abandon actions with confirmation
+		[X] Mutt-style limit filtering
+		[X] View/preview series details
+		[X] Patchwork TUI integration
+	[X] Patchwork TUI (b4 review pw)
+		[X] Browse outstanding Patchwork series via REST API
+		[X] Set Patchwork state and archived flag
+		[X] Track series from Patchwork into b4 database
+		[X] Hide/unhide series
+		[X] Mutt-style limit filtering
+	[X] Prerequisite series handling
+	[X] Revision tracking and discovery
+	[X] Patchwork state synchronisation on review lifecycle transitions
+	[_] Update review branch to a newer revision
 [ ] `b4 ty` interactive mode
 	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
 [ ] `b4 trailers` interactive mode

@@ -337,6 +337,52 @@ Attestation settings
 
      .. versionadded:: v0.11
 
+.. _review_settings:
+
+``review`` settings (alpha)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+These settings control ``b4 review`` TUI behaviour.
+
+.. warning::
+
+   ``b4 review`` is a **technology preview**. These configuration options may
+   change in incompatible ways between releases.
+
+.. glossary::
+   :sorted:
+
+   :term:`b4.review-perpatch-check-cmd`
+     The command to run for per-patch checks in the review TUI (triggered
+     by the ``x`` keybinding). The patch is piped through stdin. If this
+     option is defined multiple times, all commands will be run. If it is
+     not defined and b4 finds ``scripts/checkpatch.pl`` at the top of
+     your git tree, it uses the same default as
+     :term:`b4.am-perpatch-check-cmd`.
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
+   :term:`b4.review-agent-command`
+     The command to invoke for AI-assisted review (triggered by the ``a``
+     keybinding). Both this option and :term:`b4.review-agent-prompt-path`
+     must be set for the agent feature to be available.
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
+   :term:`b4.review-agent-prompt-path`
+     Path to a file containing the prompt to use with the review agent.
+     Both this option and :term:`b4.review-agent-command` must be set for
+     the agent feature to be available. A sample prompt is included in
+     ``misc/agent-reviewer.md`` in the b4 source tree and can be adapted
+     to your project's review guidelines.
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
 .. _patchwork_settings:
 
 Patchwork integration settings
