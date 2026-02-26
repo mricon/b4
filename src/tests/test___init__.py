@@ -3,11 +3,10 @@ import b4
 import os
 import email
 import email.parser
-import mailbox
 import io
 import pathlib
 
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 
 @pytest.mark.parametrize('source,expected', [

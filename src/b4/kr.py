@@ -63,7 +63,7 @@ def main(cmdargs: argparse.Namespace) -> None:
             if not keyinfo:
                 logger.warning('No keyinfo found for key %s %s %s', algo, selector, identity)
                 continue
-            keypath = patatt.make_pkey_path(algo, identity, selector)
+            keypath = patatt.make_pkey_path(algo, identity, selector)  # type: ignore[attr-defined]
             fullpath = os.path.join(krpath, keypath)
             if os.path.exists(fullpath):
                 status = 'known'

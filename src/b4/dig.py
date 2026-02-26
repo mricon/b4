@@ -5,7 +5,6 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
 import sys
 import b4
 import argparse
@@ -17,7 +16,7 @@ import b4.mbox
 
 from email.message import EmailMessage
 import email.utils
-from typing import List, Set, Optional, Tuple
+from typing import List, Set, Optional
 
 logger = b4.logger
 

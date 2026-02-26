@@ -1580,7 +1580,7 @@ class LoreMessage:
         sources = config.get('keyringsrc')
         if not sources:
             # fallback to patatt's keyring if none is specified for b4
-            patatt_config = patatt.get_config_from_git(r'patatt\..*', multivals=['keyringsrc'])
+            patatt_config = patatt.get_config_from_git(r'patatt\..*', multivals=['keyringsrc'])  # type: ignore[attr-defined]
             sources = patatt_config.get('keyringsrc')
             if not sources:
                 sources = ['ref:::.keys', 'ref:::.local-keys', 'ref::refs/meta/keyring:']
@@ -1590,20 +1590,20 @@ class LoreMessage:
             sources.append(pdir)
 
         # Push our logger and GPGBIN into patatt
-        patatt.logger = logger
+        patatt.logger = logger  # type: ignore[attr-defined]
         assert isinstance(config['gpgbin'], str), \
             'gpgbin config value is not a string: %s' % str(config['gpgbin'])
-        patatt.GPGBIN = config['gpgbin']
+        patatt.GPGBIN = config['gpgbin']  # type: ignore[attr-defined]
 
         logger.debug('Loading patatt attestations with sources=%s', str(sources))
 
         success = False
         trim_body = False
         while True:
-            attestations = patatt.validate_message(self.msg.as_bytes(policy=emlpolicy), sources, trim_body=trim_body)
+            attestations = patatt.validate_message(self.msg.as_bytes(policy=emlpolicy), sources, trim_body=trim_body)  # type: ignore[attr-defined]
             # Do we have any successes?
             for attestation in attestations:
-                if attestation[0] == patatt.RES_VALID:
+                if attestation[0] == patatt.RES_VALID:  # type: ignore[attr-defined]
                     success = True
                     break
             if success:
@@ -2553,7 +2553,7 @@ class LoreSubject:
     counters_inferred: bool
     prefixes: List[str]
 
-    def __init__(self, subject: str, presubject: str = None) -> None:
+    def __init__(self, subject: str, presubject: Optional[str] = None) -> None:
         # Subject-based info
         self.reply = False
         self.resend = False
@@ -2634,7 +2634,7 @@ class LoreSubject:
         return ret
 
     def get_rebuilt_subject(self, eprefixes: Optional[List[str]] = None,
-                            presubject: str = None) -> str:
+                            presubject: Optional[str] = None) -> str:
 
         exclude = None
         if eprefixes and 'PATCH' in eprefixes:
@@ -2819,10 +2819,10 @@ class LoreAttestorPatatt(LoreAttestor):
         self.keysrc = keysrc
         self.keyalgo = keyalgo
         self.errors = errors
-        if result == patatt.RES_VALID:
+        if result == patatt.RES_VALID:  # type: ignore[attr-defined]
             self.passing = True
             self.have_key = True
-        elif result >= patatt.RES_BADSIG:
+        elif result >= patatt.RES_BADSIG:  # type: ignore[attr-defined]
             self.have_key = True
 
 
@@ -4229,13 +4229,13 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], msgs
             import patatt
             # patatt.logger = logger
             try:
-                bdata = patatt.rfc2822_sign(bdata)
-            except patatt.NoKeyError as ex:
+                bdata = patatt.rfc2822_sign(bdata)  # type: ignore[attr-defined]
+            except patatt.NoKeyError as ex:  # type: ignore[attr-defined]
                 logger.critical('CRITICAL: Error signing: no key configured')
                 logger.critical('          Run "patatt genkey" or configure "user.signingKey" to use PGP')
                 logger.critical('          As a last resort, rerun with --no-sign')
                 raise RuntimeError(str(ex))
-            except patatt.SigningError as ex:
+            except patatt.SigningError as ex:  # type: ignore[attr-defined]
                 raise RuntimeError('Failure trying to patatt-sign: %s' % str(ex))
         if dryrun:
             if output_dir:
@@ -4740,11 +4740,11 @@ def mailbox_email_factory(fh: BinaryIO) -> EmailMessage:
 
 def get_msgs_from_mailbox_or_maildir(mbmd: str) -> List[EmailMessage]:
     if is_maildir(mbmd):
-        in_mdr = mailbox.Maildir(mbmd, factory=mailbox_email_factory) # type: ignore[arg-type]
-        return [x[1] for x in in_mdr.items()] # type: ignore[arg-type, misc]
+        in_mdr = mailbox.Maildir(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]
+        return [x[1] for x in in_mdr.items()]  # type: ignore[misc]
 
-    in_mbx = mailbox.mbox(mbmd, factory=mailbox_email_factory) # type: ignore[arg-type]
-    return[x[1] for x in in_mbx.items()] # type: ignore[arg-type, misc]
+    in_mbx = mailbox.mbox(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]
+    return[x[1] for x in in_mbx.items()]  # type: ignore[misc]
 
 
 def get_mailfrom() -> Tuple[str, str]:

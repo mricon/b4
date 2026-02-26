@@ -43,11 +43,8 @@ try:
 except ModuleNotFoundError:
     can_gfr = False
 
-try:
-    import codespell_lib
-    can_codespell = True
-except ModuleNotFoundError:
-    can_codespell = False
+import importlib.util
+can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
 logger = b4.logger
 
@@ -163,16 +160,16 @@ def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     if not myemail:
         raise RuntimeError('No email configured, set user.email')
     myname = str(usercfg.get('name', ''))
-    pconfig = patatt.get_main_config()
+    pconfig = patatt.get_main_config()  # type: ignore[attr-defined]
     selector = str(pconfig.get('selector', 'default'))
-    algo, keydata = patatt.get_algo_keydata(pconfig)
+    algo, keydata = patatt.get_algo_keydata(pconfig)  # type: ignore[attr-defined]
     return endpoint, myname, myemail, selector, algo, keydata
 
 
 def auth_new() -> None:
     try:
         endpoint, myname, myemail, selector, algo, keydata = get_auth_configs()
-    except patatt.NoKeyError as ex:
+    except patatt.NoKeyError as ex:  # type: ignore[attr-defined]
         logger.critical('CRITICAL: no usable signing key configured')
         logger.critical('          %s', ex)
         sys.exit(1)
@@ -253,8 +250,8 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
     cmsg.set_payload(f'verify:{vstr}\n', charset='utf-8')
     bdata = cmsg.as_bytes(policy=b4.emlpolicy)
     try:
-        sdata = patatt.rfc2822_sign(bdata).decode()
-    except patatt.SigningError as ex:
+        sdata = patatt.rfc2822_sign(bdata).decode()  # type: ignore[attr-defined]
+    except patatt.SigningError as ex:  # type: ignore[attr-defined]
         logger.critical('CRITICAL: Unable to sign verification message')
         logger.critical('          %s', ex)
         sys.exit(1)
@@ -604,9 +601,10 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         if cmdargs.set_presubject:
             presubject = cmdargs.set_presubject
         else:
-            presubject = config.get('send-presubject', '')
-            if presubject and isinstance(presubject, str):
-                _check_presubject(presubject)
+            _presubject = config.get('send-presubject', '')
+            if _presubject and isinstance(_presubject, str):
+                _check_presubject(_presubject)
+                presubject = _presubject
 
         tracking = {
             'series': {
@@ -1475,7 +1473,7 @@ def get_cover_dests(cbody: str) -> Tuple[List[Tuple[str, str]], List[Tuple[str, 
 
 
 def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str, EmailMessage]],
-              cbody: str, datets: int, thread: bool = True, presubject: str = None) -> None:
+              cbody: str, datets: int, thread: bool = True, presubject: Optional[str] = None) -> None:
     fp = patches[0][1]
     cmsg = EmailMessage()
     cmsg.add_header('From', fp['From'])
@@ -1767,7 +1765,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
     return alltos, allccs, tag_msg, patches
 
 
-def get_sent_tag_as_patches(tagname: str, revision: int, presubject: str = None, force_cover: bool = False) \
+def get_sent_tag_as_patches(tagname: str, revision: int, presubject: Optional[str] = None, force_cover: bool = False) \
         -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], List[Tuple[str, EmailMessage]]]:
     cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
 
@@ -3009,7 +3007,7 @@ def set_prefixes(prefixes: List[str], additive: bool = False) -> None:
         logger.info('No changes to extra prefixes.')
 
 
-def _check_presubject(presubject: str):
+def _check_presubject(presubject: str) -> None:
     if presubject == "":
         return
 
