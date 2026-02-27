@@ -933,16 +933,32 @@ class ConfirmScreen(ModalScreen[bool]):
         height: auto;
         background: $surface;
         padding: 1 2;
+        border: solid $accent;
+    }
+    #confirm-dialog.--border-warning {
+        border: solid $warning;
+    }
+    #confirm-dialog.--border-error {
+        border: solid $error;
     }
     #confirm-title {
         text-style: bold;
         margin-bottom: 1;
+    }
+    #confirm-title.--color-warning {
+        color: $warning;
+    }
+    #confirm-title.--color-error {
+        color: $error;
     }
     #confirm-hint {
         margin-top: 1;
         color: $text-muted;
     }
     """
+
+    # Map CSS variable names to CSS class suffixes for border/title colours.
+    _COLOUR_CLASSES = {'$warning': 'warning', '$error': 'error'}
 
     def __init__(self, title: str, body: List[str],
                  border: str = '$accent',
@@ -955,11 +971,14 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         dialog = Vertical(id='confirm-dialog')
-        dialog.styles.border = ('solid', self._border)
+        border_cls = self._COLOUR_CLASSES.get(self._border)
+        if border_cls:
+            dialog.add_class(f'--border-{border_cls}')
         with dialog:
             title = Static(self._title, id='confirm-title', markup=False)
-            if self._title_colour:
-                title.styles.color = self._title_colour
+            colour_cls = self._COLOUR_CLASSES.get(self._title_colour or '')
+            if colour_cls:
+                title.add_class(f'--color-{colour_cls}')
             yield title
             for line in self._body:
                 yield Static(line, markup=False)
