@@ -31,6 +31,13 @@ For maintainers
    maintainer/review
    maintainer/kr
 
+For reviewers
+-------------
+.. toctree::
+   :maxdepth: 1
+
+   reviewer/getting-started
+
 For developers
 --------------
 .. toctree::
