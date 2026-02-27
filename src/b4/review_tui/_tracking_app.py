@@ -385,8 +385,8 @@ class TrackingApp(App[Optional[str]]):
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
         'new': frozenset({'review', 'view', 'abandon'}),
-        'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'suspend', 'abandon', 'waiting'}),
-        'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'suspend', 'archive', 'waiting'}),
+        'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting'}),
+        'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting'}),
         'waiting': frozenset({'review', 'view', 'range_diff', 'abandon', 'archive'}),
         'taken': frozenset({'thank', 'archive'}),
         'thanked': frozenset({'archive'}),
