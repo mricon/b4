@@ -18,12 +18,11 @@ from textual.containers import Vertical
 from textual.widgets import Checkbox, Input, Label, ListItem, ListView, LoadingIndicator, ProgressBar, RichLog, Select, Static, TextArea
 from textual.screen import ModalScreen
 from textual.worker import Worker, WorkerState
-from rich.markup import escape as _escape_markup
 from rich.rule import Rule
 from rich.text import Text
 
 from b4.review_tui._common import (
-    CI_CHECK_MARKUP,
+    CI_CHECK_MARKUP, CI_CHECK_STYLES, CI_CHECK_LABELS,
     JKListNavMixin,
     _addrs_to_lines, _lines_to_header, _validate_addrs,
     _write_diff_line, _quiet_worker,
@@ -318,7 +317,7 @@ class NoteScreen(ModalScreen[Optional[str]]):
             header_text = Text(header, style=f'bold {colour}')
             viewer.write(header_text)
             for line in note.splitlines():
-                viewer.write(line)
+                viewer.write(Text(line))
             viewer.write('')
 
     def action_edit(self) -> None:
@@ -452,11 +451,14 @@ class SendScreen(ModalScreen[bool]):
         self._msgs = msgs
 
     def compose(self) -> ComposeResult:
-        lines: List[str] = []
-        lines.append(f'[bold]Send {len(self._msgs)} review email(s)?[/bold]\n')
+        text = Text()
+        text.append(f'Send {len(self._msgs)} review email(s)?', style='bold')
+        text.append('\n')
         for msg in self._msgs:
             subj = str(msg['Subject']) if msg['Subject'] else '(no subject)'
-            lines.append(f'  [bold]Subject:[/bold] {_escape_markup(subj)}')
+            text.append('\n  ')
+            text.append('Subject:', style='bold')
+            text.append(f' {subj}')
             to_count = len(email.utils.getaddresses([msg['To']])) if msg['To'] else 0
             cc_count = len(email.utils.getaddresses([msg['Cc']])) if msg['Cc'] else 0
             recip_parts: List[str] = []
@@ -465,10 +467,10 @@ class SendScreen(ModalScreen[bool]):
             if cc_count:
                 recip_parts.append(f'{cc_count} Cc')
             if recip_parts:
-                lines.append(f'          {", ".join(recip_parts)}')
-            lines.append('')
+                text.append(f'\n          {", ".join(recip_parts)}')
+            text.append('\n')
         with Vertical(id='send-dialog'):
-            yield Static('\n'.join(lines))
+            yield Static(text, markup=False)
             yield Static('y confirm  |  Escape cancel', id='send-hint')
 
     def action_confirm(self) -> None:
@@ -622,8 +624,8 @@ class CherryPickScreen(ModalScreen[bool]):
             yield Static('Select patches to apply', id='cherrypick-title')
             with Vertical(id='cherrypick-list'):
                 for i, patch in enumerate(self._patches):
-                    title = _escape_markup(patch.get('title', f'Patch {i + 1}'))
-                    yield Checkbox(f' {i + 1:3d}. {title}', value=False,
+                    title = patch.get('title', f'Patch {i + 1}')
+                    yield Checkbox(Text(f' {i + 1:3d}. {title}'), value=False,
                                    id=f'cherrypick-{i}', classes='cherrypick-checkbox')
             yield Static('y confirm  |  Escape cancel', id='cherrypick-hint')
 
@@ -752,7 +754,7 @@ class _FetchViewerScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='fv-dialog'):
-            yield Static(self._loading_text, id='fv-title')
+            yield Static(self._loading_text, id='fv-title', markup=False)
             yield LoadingIndicator(id='fv-loading')
             yield RichLog(id='fv-viewer', highlight=False, wrap=True,
                           markup=True, auto_scroll=False)
@@ -812,7 +814,7 @@ class ViewSeriesScreen(_FetchViewerScreen):
 
     def _show_result(self, lser: 'b4.LoreSeries') -> None:
         subject = lser.subject or '(no subject)'
-        self.query_one('#fv-title', Static).update(_escape_markup(subject))
+        self.query_one('#fv-title', Static).update(subject)
         viewer = self.query_one('#fv-viewer', RichLog)
 
         first = True
@@ -837,7 +839,7 @@ class ViewSeriesScreen(_FetchViewerScreen):
                     if in_diff:
                         _write_diff_line(viewer, line)
                     else:
-                        viewer.write(_escape_markup(line))
+                        viewer.write(Text(line))
 
 
 class CIChecksScreen(_FetchViewerScreen):
@@ -862,7 +864,7 @@ class CIChecksScreen(_FetchViewerScreen):
     def _show_result(self, checks: List[Dict[str, Any]]) -> None:
         series_name = self._series.get('name') or '(no subject)'
         self.query_one('#fv-title', Static).update(
-            _escape_markup(f'CI checks \u2014 {series_name}'))
+            f'CI checks \u2014 {series_name}')
         viewer = self.query_one('#fv-viewer', RichLog)
 
         if not checks:
@@ -892,22 +894,25 @@ class CIChecksScreen(_FetchViewerScreen):
             viewer.write('')
             for check in by_patch[pid]:
                 state = check.get('state', 'pending')
-                indicator = CI_CHECK_MARKUP.get(state, CI_CHECK_MARKUP['pending'])
-                context = _escape_markup(check.get('context') or 'default')
-                line = f'  {indicator}  {context}'
+                ci_style = CI_CHECK_STYLES.get(state, CI_CHECK_STYLES['pending'])
+                ci_label = CI_CHECK_LABELS.get(state, CI_CHECK_LABELS['pending'])
+                context = check.get('context') or 'default'
+                line_text = Text()
+                line_text.append('  ')
+                line_text.append(ci_label, style=ci_style)
+                line_text.append(f'  {context}')
                 desc = check.get('description')
                 if desc:
                     desc_lines = desc.splitlines()
-                    line += f' \u2014 {_escape_markup(desc_lines[0])}'
-                    viewer.write(line)
-                    # Indent continuation lines to align with first
+                    line_text.append(f' \u2014 {desc_lines[0]}')
+                    viewer.write(line_text)
                     for dline in desc_lines[1:]:
-                        viewer.write(f'    {_escape_markup(dline)}')
+                        viewer.write(Text(f'    {dline}'))
                 else:
-                    viewer.write(line)
+                    viewer.write(line_text)
                 target_url = check.get('target_url')
                 if target_url:
-                    viewer.write(f'    [dim]\u2192 {_escape_markup(target_url)}[/dim]')
+                    viewer.write(Text(f'    \u2192 {target_url}', style='dim'))
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -1433,7 +1438,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
         with Vertical(id='updateall-dialog'):
             yield Label('Updating all tracked series', id='updateall-title')
             yield Label(f'Checking 0/{len(self._series_list)} series...', id='updateall-status')
-            yield Label('', id='updateall-series')
+            yield Label('', id='updateall-series', markup=False)
             yield ProgressBar(total=len(self._series_list), show_eta=False, id='updateall-progress')
 
     def on_mount(self) -> None:
@@ -1473,7 +1478,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
         self.query_one('#updateall-status', Label).update(
             f'Checking {completed}/{len(self._series_list)} series...'
         )
-        self.query_one('#updateall-series', Label).update(_escape_markup(subject))
+        self.query_one('#updateall-series', Label).update(subject)
         self.query_one('#updateall-progress', ProgressBar).progress = completed
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:

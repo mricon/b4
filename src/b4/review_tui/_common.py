@@ -28,11 +28,11 @@ from textual.widgets import Footer, ListView, RichLog
 from textual.widgets._footer import FooterKey
 from rich import box
 from rich.panel import Panel
-from rich.markup import escape as _escape_markup
 from rich.rule import Rule
 from rich.text import Text
 
 logger = b4.logger
+
 
 # Unicode marker for patches that have review data
 REVIEW_MARKER = '\u2714'  # ✔
@@ -57,6 +57,20 @@ CI_CHECK_MARKUP = {
     'success': '[green]\u25cf pass[/green]',
     'warning': '[dark_orange]\u25cf warning[/dark_orange]',
     'fail': '[bold red]\u25cf FAIL[/bold red]',
+}
+
+# Style and label dicts for building Text() objects (markup-free)
+CI_CHECK_STYLES = {
+    'pending': 'dim',
+    'success': 'green',
+    'warning': 'dark_orange',
+    'fail': 'bold red',
+}
+CI_CHECK_LABELS = {
+    'pending': '\u25cf pending',
+    'success': '\u25cf pass',
+    'warning': '\u25cf warning',
+    'fail': '\u25cf FAIL',
 }
 
 _REVIEWER_COLOURS = [
@@ -310,17 +324,16 @@ def _write_followup_trailers(
 
 def _write_diff_line(viewer: 'RichLog', line: str) -> None:
     """Write a single diff line to a RichLog with appropriate colouring."""
-    escaped = _escape_markup(line)
     if line.startswith('diff --git ') or line.startswith('--- ') or line.startswith('+++ '):
-        viewer.write(f'[bold]{escaped}[/bold]')
+        viewer.write(Text(line, style='bold'))
     elif line.startswith('@@'):
-        viewer.write(f'[bold cyan]{escaped}[/bold cyan]')
+        viewer.write(Text(line, style='bold cyan'))
     elif line.startswith('+'):
-        viewer.write(f'[green]{escaped}[/green]')
+        viewer.write(Text(line, style='green'))
     elif line.startswith('-'):
-        viewer.write(f'[red]{escaped}[/red]')
+        viewer.write(Text(line, style='red'))
     else:
-        viewer.write(escaped)
+        viewer.write(Text(line))
 
 
 def _suspend_to_shell(hint: str = 'b4 review') -> None:

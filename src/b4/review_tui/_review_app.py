@@ -18,7 +18,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
-from rich.markup import escape as _escape_markup
 from rich.syntax import Syntax
 from rich.text import Text
 
@@ -61,7 +60,7 @@ class FollowupItem(ListItem):
         self._display_name = name
 
     def compose(self) -> ComposeResult:
-        st = Static(f'\u00a0\u00a0\u00a0\u00a0{_escape_markup(self._display_name)}')
+        st = Static(f'\u00a0\u00a0\u00a0\u00a0{self._display_name}', markup=False)
         st.styles.text_opacity = '60%'
         yield st
 
@@ -205,12 +204,12 @@ class ReviewApp(App[None]):
         self._reply_sent: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static(id='newer-warning')
-        yield Static(id='title-bar')
+        yield Static(id='newer-warning', markup=False)
+        yield Static(id='title-bar', markup=False)
         with Horizontal():
             with Vertical(id='left-pane'):
                 yield ListView(id='patch-list')
-                yield Static(id='trailer-overlay')
+                yield Static(id='trailer-overlay', markup=False)
             yield RichLog(id='diff-viewer', highlight=False, wrap=False, markup=True, auto_scroll=False)
         yield SeparatedFooter()
 
@@ -223,7 +222,7 @@ class ReviewApp(App[None]):
     def _refresh_title_bar(self) -> None:
         """Update the title bar to reflect current mode."""
         bar = self.query_one('#title-bar', Static)
-        subject = _escape_markup(self._series.get('subject', self._cover_subject_clean))
+        subject = self._series.get('subject', self._cover_subject_clean)
         if self._preview_mode:
             label = f' \u2709 {subject}'
             if self._email_dryrun:
@@ -374,7 +373,7 @@ class ReviewApp(App[None]):
                 has_content = False
                 if bheaders:
                     for lt in bheaders:
-                        viewer.write(f'[dim]{_escape_markup(lt.as_string())}[/dim]')
+                        viewer.write(Text(lt.as_string(), style='dim'))
                     has_content = True
                 if message:
                     if has_content:
@@ -385,7 +384,7 @@ class ReviewApp(App[None]):
                     if has_content:
                         viewer.write('')
                     for lt in btrailers:
-                        viewer.write(f'[dim]{_escape_markup(lt.as_string())}[/dim]')
+                        viewer.write(Text(lt.as_string(), style='dim'))
                     has_content = True
                 # Show follow-up trailers not already in the commit,
                 # including cover-letter trailers that apply to all patches
@@ -428,28 +427,28 @@ class ReviewApp(App[None]):
 
         for line in diff_out.splitlines():
             if line.startswith('diff --git '):
-                viewer.write(f'[bold]{_escape_markup(line)}[/bold]')
+                viewer.write(Text(line, style='bold'))
                 continue
             if line.startswith('--- '):
                 if line.startswith('--- a/') or line.startswith('--- /dev/null'):
                     current_a_file = line[4:]
-                viewer.write(f'[bold]{_escape_markup(line)}[/bold]')
+                viewer.write(Text(line, style='bold'))
                 continue
             if line.startswith('+++ '):
                 if line.startswith('+++ b/') or line.startswith('+++ /dev/null'):
                     current_b_file = line[4:]
-                viewer.write(f'[bold]{_escape_markup(line)}[/bold]')
+                viewer.write(Text(line, style='bold'))
                 continue
 
             hm = hunk_re.match(line)
             if hm:
                 a_line = int(hm.group(1))
                 b_line = int(hm.group(2))
-                viewer.write(f'[bold cyan]{_escape_markup(line)}[/bold cyan]')
+                viewer.write(Text(line, style='bold cyan'))
                 continue
 
             if line.startswith('+'):
-                viewer.write(f'[green]{_escape_markup(line)}[/green]')
+                viewer.write(Text(line, style='green'))
                 key = (current_b_file, b_line)
                 entries = comment_map.pop(key, [])
                 if entries:
@@ -457,7 +456,7 @@ class ReviewApp(App[None]):
                     _write_comments(viewer, entries)
                 b_line += 1
             elif line.startswith('-'):
-                viewer.write(f'[red]{_escape_markup(line)}[/red]')
+                viewer.write(Text(line, style='red'))
                 key = (current_a_file, a_line)
                 entries = comment_map.pop(key, [])
                 if entries:
@@ -465,7 +464,7 @@ class ReviewApp(App[None]):
                     _write_comments(viewer, entries)
                 a_line += 1
             elif line.startswith(' '):
-                viewer.write(_escape_markup(line))
+                viewer.write(Text(line))
                 key = (current_b_file, b_line)
                 entries = comment_map.pop(key, [])
                 if entries:
@@ -474,7 +473,7 @@ class ReviewApp(App[None]):
                 a_line += 1
                 b_line += 1
             else:
-                viewer.write(_escape_markup(line))
+                viewer.write(Text(line))
 
         # Render follow-up comments at the bottom
         fc_author_pos: Dict[str, int] = {}
@@ -524,26 +523,32 @@ class ReviewApp(App[None]):
                     (hdr, val), transform='decode').decode(errors='replace')
                 first_line, *rest = wrapped.splitlines()
                 colon = first_line.find(':')
+                hdr_text = Text()
                 if colon >= 0:
-                    first_line = (f'[bold]{_escape_markup(first_line[:colon + 1])}[/bold]'
-                                  f'{_escape_markup(first_line[colon + 1:])}')
+                    hdr_text.append(first_line[:colon + 1], style='bold')
+                    hdr_text.append(first_line[colon + 1:])
                 else:
-                    first_line = _escape_markup(first_line)
-                rest = [_escape_markup(r) for r in rest]
-                viewer.write('\n'.join([first_line] + rest))
+                    hdr_text.append(first_line)
+                for r in rest:
+                    hdr_text.append('\n')
+                    hdr_text.append(r)
+                viewer.write(hdr_text)
             else:
-                viewer.write(f'[bold]{_escape_markup(hdr)}:[/bold] {_escape_markup(val)}')
+                hdr_text = Text()
+                hdr_text.append(f'{hdr}:', style='bold')
+                hdr_text.append(f' {val}')
+                viewer.write(hdr_text)
         viewer.write('')
         payload = msg.get_payload(decode=True)
         body = payload.decode(errors='replace') if isinstance(payload, bytes) else str(payload or '')
         # Render body line-by-line so quoted lines are highlighted
         for line in body.splitlines():
             if line.startswith('>'):
-                viewer.write(f'[dim cyan]{_escape_markup(line)}[/dim cyan]')
+                viewer.write(Text(line, style='dim cyan'))
             elif line.startswith('---'):
-                viewer.write(f'[dim]{_escape_markup(line)}[/dim]')
+                viewer.write(Text(line, style='dim'))
             else:
-                viewer.write(_escape_markup(line))
+                viewer.write(Text(line))
 
     def _refresh_trailer_overlay(self) -> None:
         """Update the review status overlay in the left pane."""
@@ -567,7 +572,8 @@ class ReviewApp(App[None]):
             if email != my_email:
                 ordered.append((email, all_reviews[email]))
 
-        parts: List[str] = []
+        text = Text()
+        has_content = False
         for rev_email, review in ordered:
             if not (review.get('trailers') or review.get('reply', '')
                     or review.get('comments') or review.get('note', '')):
@@ -579,30 +585,31 @@ class ReviewApp(App[None]):
             else:
                 header = review.get('name', rev_email)
 
-            if parts:
-                parts.append('')
-            parts.append(f'[bold][on {colour}] {_escape_markup(header)} [/on {colour}][/bold]')
+            if has_content:
+                text.append('\n')
+            text.append(f' {header} ', style=f'bold on {colour}')
+            has_content = True
 
             comments = review.get('comments', [])
             if comments:
                 files: set[str] = set(c.get('path', '') for c in comments)
-                parts.append(f'[yellow]    {len(comments)} comments across '
-                             f'{len(files)} files[/yellow]')
+                text.append(f'\n    {len(comments)} comments across '
+                            f'{len(files)} files', style='yellow')
             reply = review.get('reply', '')
             if reply:
                 non_quoted = sum(1 for ln in reply.splitlines()
                                  if ln.strip() and not ln.startswith('>'))
-                parts.append(f'[cyan]    {non_quoted} non-quoted reply lines[/cyan]')
+                text.append(f'\n    {non_quoted} non-quoted reply lines', style='cyan')
             trailers = review.get('trailers', [])
             if trailers:
                 for t in trailers:
                     ttype = t.split(':', 1)[0] if ':' in t else t
-                    parts.append(f'[green]    {_escape_markup(ttype)}[/green]')
+                    text.append(f'\n    {ttype}', style='green')
             note = review.get('note', '')
             if note:
                 lines = note.splitlines()
                 summary = lines[0] if lines else ''
-                parts.append(f'[magenta]    {_escape_markup(summary)}[/magenta]')
+                text.append(f'\n    {summary}', style='magenta')
                 # Find body after blank-line separator
                 body_start = None
                 for i, ln in enumerate(lines[1:], 1):
@@ -612,13 +619,13 @@ class ReviewApp(App[None]):
                 if body_start is not None and body_start < len(lines):
                     body_words = ' '.join(lines[body_start:]).split()
                     if body_words:
-                        parts.append('[magenta]    (view full note with N)[/magenta]')
+                        text.append('\n    (view full note with N)', style='magenta')
 
-        if not parts:
+        if not has_content:
             overlay.display = False
             return
 
-        overlay.update('\n'.join(parts))
+        overlay.update(text)
         overlay.display = True
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:

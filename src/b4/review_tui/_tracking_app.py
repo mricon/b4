@@ -26,11 +26,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Label, ListItem, ListView, Static
-from rich.markup import escape as _escape_markup
-
 from b4.review_tui._common import (
-    logger, _wait_for_enter, _suspend_to_shell, gather_attestation_info,
-    SeparatedFooter,
+    logger, _wait_for_enter, _suspend_to_shell,
+    gather_attestation_info, SeparatedFooter,
 )
 from b4.review_tui._modals import (
     ViewSeriesScreen, AttestationScreen, TakeScreen,
@@ -1521,7 +1519,7 @@ class TrackingApp(App[Optional[str]]):
 
         others = [r for r in revisions if r['revision'] != current_rev]
         if not others:
-            self.notify(_escape_markup('No other known revisions. Try [u]pdate.'), severity='warning')
+            self.notify('No other known revisions. Try \\[u]pdate.', severity='warning')
             return
 
         self.push_screen(
@@ -1745,7 +1743,7 @@ class TrackingApp(App[Optional[str]]):
 
         if not newer_versions:
             self.notify(
-                _escape_markup('No newer revisions known. Try [u]pdate first.'),
+                'No newer revisions known. Try \\[u]pdate first.',
                 severity='warning')
             return
 
@@ -1761,7 +1759,7 @@ class TrackingApp(App[Optional[str]]):
         newer_revs = [r for r in revisions if r['revision'] in newer_versions]
         if not newer_revs:
             self.notify(
-                _escape_markup('No newer revisions known. Try [u]pdate first.'),
+                'No newer revisions known. Try \\[u]pdate first.',
                 severity='warning')
             return
 

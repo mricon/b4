@@ -10,8 +10,6 @@ import pathlib
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from rich.markup import escape as _escape_markup
-
 import b4
 import b4.review
 import b4.review.tracking
@@ -21,22 +19,29 @@ from textual.binding import Binding
 from textual.widgets import Footer, Label, ListItem, ListView, LoadingIndicator, Static
 from textual.worker import Worker, WorkerState
 
-from b4.review_tui._common import CI_MARKUP, logger, SeparatedFooter
+from rich.text import Text
+
+from b4.review_tui._common import CI_COLOURS, CI_MARKUP, logger, SeparatedFooter
 from b4.review_tui._modals import (
     ViewSeriesScreen, CIChecksScreen, SetStateScreen, ApplyStateModal,
     LimitScreen, HelpScreen, PW_HELP_LINES,
 )
 
 
-def _format_series_label(series: Dict[str, Any], tracked: bool) -> str:
-    """Build a Rich-markup label string for a series row."""
+def _format_series_label(series: Dict[str, Any], tracked: bool) -> Text:
+    """Build a Text label for a series row."""
     track_mark = 'T' if tracked else ' '
-    ci = CI_MARKUP.get(series.get('check') or 'pending', CI_MARKUP['pending'])
-    date = _escape_markup((series.get('date') or '')[:10])
-    state = _escape_markup(f"{(series.get('state') or 'new'):<15s}")
-    submitter = _escape_markup(f"{(series.get('submitter') or 'Unknown'):<30s}")
-    name = _escape_markup(series.get('name') or '(no subject)')
-    return f'{track_mark}{ci} {date}  {state} {submitter} {name}'
+    ci_state = series.get('check') or 'pending'
+    ci_style = CI_COLOURS.get(ci_state, CI_COLOURS['pending'])
+    date = (series.get('date') or '')[:10]
+    state = f"{(series.get('state') or 'new'):<15s}"
+    submitter = f"{(series.get('submitter') or 'Unknown'):<30s}"
+    name = series.get('name') or '(no subject)'
+    text = Text()
+    text.append(track_mark)
+    text.append('\u25cf', style=ci_style)
+    text.append(f' {date}  {state} {submitter} {name}')
+    return text
 
 
 class PwSeriesItem(ListItem):
@@ -188,7 +193,7 @@ class PwApp(App[None]):
             pass
 
     def compose(self) -> ComposeResult:
-        yield Static(' Patchwork — loading\u2026', id='pw-title')
+        yield Static(' Patchwork — loading\u2026', id='pw-title', markup=False)
         yield LoadingIndicator(id='pw-loading')
         yield SeparatedFooter()
 
@@ -245,7 +250,7 @@ class PwApp(App[None]):
                 if pat in (s.get('name', '') or '').lower()
                 or pat in (s.get('submitter', '') or '').lower()
             ]
-        limit_suffix = f', limit: {_escape_markup(self._limit_pattern)}' if self._limit_pattern else ''
+        limit_suffix = f', limit: {self._limit_pattern}' if self._limit_pattern else ''
         if hidden_count and not self._show_hidden:
             title.update(f' Patchwork — {len(visible)} series ({hidden_count} hidden{limit_suffix})')
         elif hidden_count and self._show_hidden:
