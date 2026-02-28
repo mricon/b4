@@ -622,7 +622,7 @@ class CherryPickScreen(ModalScreen[bool]):
             yield Static('Select patches to apply', id='cherrypick-title')
             with Vertical(id='cherrypick-list'):
                 for i, patch in enumerate(self._patches):
-                    title = patch.get('title', f'Patch {i + 1}')
+                    title = _escape_markup(patch.get('title', f'Patch {i + 1}'))
                     yield Checkbox(f' {i + 1:3d}. {title}', value=False,
                                    id=f'cherrypick-{i}', classes='cherrypick-checkbox')
             yield Static('y confirm  |  Escape cancel', id='cherrypick-hint')
@@ -812,7 +812,7 @@ class ViewSeriesScreen(_FetchViewerScreen):
 
     def _show_result(self, lser: 'b4.LoreSeries') -> None:
         subject = lser.subject or '(no subject)'
-        self.query_one('#fv-title', Static).update(subject)
+        self.query_one('#fv-title', Static).update(_escape_markup(subject))
         viewer = self.query_one('#fv-viewer', RichLog)
 
         first = True
@@ -1473,7 +1473,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
         self.query_one('#updateall-status', Label).update(
             f'Checking {completed}/{len(self._series_list)} series...'
         )
-        self.query_one('#updateall-series', Label).update(subject)
+        self.query_one('#updateall-series', Label).update(_escape_markup(subject))
         self.query_one('#updateall-progress', ProgressBar).progress = completed
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:

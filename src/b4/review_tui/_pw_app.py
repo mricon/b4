@@ -245,13 +245,13 @@ class PwApp(App[None]):
                 if pat in (s.get('name', '') or '').lower()
                 or pat in (s.get('submitter', '') or '').lower()
             ]
-        limit_suffix = f', limit: {self._limit_pattern}' if self._limit_pattern else ''
+        limit_suffix = f', limit: {_escape_markup(self._limit_pattern)}' if self._limit_pattern else ''
         if hidden_count and not self._show_hidden:
             title.update(f' Patchwork — {len(visible)} series ({hidden_count} hidden{limit_suffix})')
         elif hidden_count and self._show_hidden:
             title.update(f' Patchwork — {len(visible)} series (showing {hidden_count} hidden{limit_suffix})')
         elif self._limit_pattern:
-            title.update(f' Patchwork — {len(visible)} action-required series (limit: {self._limit_pattern})')
+            title.update(f' Patchwork — {len(visible)} action-required series{limit_suffix}')
         else:
             title.update(f' Patchwork — {len(visible)} action-required series')
         if not visible:
