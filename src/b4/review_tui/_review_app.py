@@ -223,7 +223,7 @@ class ReviewApp(App[None]):
     def _refresh_title_bar(self) -> None:
         """Update the title bar to reflect current mode."""
         bar = self.query_one('#title-bar', Static)
-        subject = self._series.get('subject', self._cover_subject_clean)
+        subject = _escape_markup(self._series.get('subject', self._cover_subject_clean))
         if self._preview_mode:
             label = f' \u2709 {subject}'
             if self._email_dryrun:
