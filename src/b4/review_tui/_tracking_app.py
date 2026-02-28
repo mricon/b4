@@ -161,8 +161,12 @@ class TrackingApp(App[Optional[str]]):
     }
     """
 
-    _GRP_SERIES = Binding.Group('Series')
-    _GRP_APP = Binding.Group('App')
+    BINDING_GROUPS = {
+        'review': 'Series', 'view': 'Series', 'range_diff': 'Series',
+        'action': 'Series',
+        'update': 'App', 'limit': 'App', 'suspend': 'App',
+        'patchwork': 'App', 'quit': 'App', 'help': 'App',
+    }
 
     BINDINGS = [
         # Hidden navigation bindings
@@ -170,17 +174,17 @@ class TrackingApp(App[Optional[str]]):
         Binding('k', 'cursor_up', 'Up', show=False),
         Binding('escape', 'hide_details', 'Close', show=False),
         # Series-specific actions
-        Binding('r', 'review', 'review', group=_GRP_SERIES),
-        Binding('v', 'view', 'view', group=_GRP_SERIES),
-        Binding('d', 'range_diff', 'range-diff', group=_GRP_SERIES),
-        Binding('a', 'action', 'action', group=_GRP_SERIES),
+        Binding('r', 'review', 'review'),
+        Binding('v', 'view', 'view'),
+        Binding('d', 'range_diff', 'range-diff'),
+        Binding('a', 'action', 'action'),
         # App-global actions
-        Binding('u', 'update', 'update', group=_GRP_APP),
-        Binding('l', 'limit', 'limit', group=_GRP_APP),
-        Binding('s', 'suspend', 'shell', group=_GRP_APP),
-        Binding('p', 'patchwork', 'patchwork', group=_GRP_APP),
-        Binding('q', 'quit', 'quit', group=_GRP_APP),
-        Binding('question_mark', 'help', 'help', key_display='?', group=_GRP_APP),
+        Binding('u', 'update', 'update'),
+        Binding('l', 'limit', 'limit'),
+        Binding('s', 'suspend', 'shell'),
+        Binding('p', 'patchwork', 'patchwork'),
+        Binding('q', 'quit', 'quit'),
+        Binding('question_mark', 'help', 'help', key_display='?'),
     ]
 
     def __init__(self, identifier: str, original_branch: Optional[str] = None,

@@ -43,7 +43,7 @@ completion = [
     "shtab>=1.8",
 ]
 tui = [
-    "textual[syntax]>=6.0",
+    "textual[syntax]>=1.0",
 ]
 
 [tool.setuptools.packages.find]

@@ -106,8 +106,11 @@ class PwApp(App[None]):
     }
     """
 
-    _GRP_SERIES = Binding.Group('Series')
-    _GRP_APP = Binding.Group('App')
+    BINDING_GROUPS = {
+        'view': 'Series', 'ci_checks': 'Series', 'track_series': 'Series',
+        'set_state': 'Series', 'hide_series': 'Series',
+        'limit': 'App', 'toggle_show_hidden': 'App', 'quit': 'App', 'help': 'App',
+    }
 
     BINDINGS = [
         # Hidden navigation bindings
@@ -116,16 +119,16 @@ class PwApp(App[None]):
         Binding('enter', 'select_series', 'Select', show=False),
         Binding('u', 'unhide_series', 'unhide', show=False),
         # Series-specific actions
-        Binding('v', 'view', 'view', group=_GRP_SERIES),
-        Binding('c', 'ci_checks', 'ci checks', group=_GRP_SERIES),
-        Binding('t', 'track_series', 'track', group=_GRP_SERIES),
-        Binding('s', 'set_state', 'set state', group=_GRP_SERIES),
-        Binding('h', 'hide_series', 'hide', group=_GRP_SERIES),
+        Binding('v', 'view', 'view'),
+        Binding('c', 'ci_checks', 'ci checks'),
+        Binding('t', 'track_series', 'track'),
+        Binding('s', 'set_state', 'set state'),
+        Binding('h', 'hide_series', 'hide'),
         # App-global actions
-        Binding('l', 'limit', 'limit', group=_GRP_APP),
-        Binding('H', 'toggle_show_hidden', 'show hidden', key_display='H', group=_GRP_APP),
-        Binding('q', 'quit', 'quit', group=_GRP_APP),
-        Binding('question_mark', 'help', 'help', key_display='?', group=_GRP_APP),
+        Binding('l', 'limit', 'limit'),
+        Binding('H', 'toggle_show_hidden', 'show hidden', key_display='H'),
+        Binding('q', 'quit', 'quit'),
+        Binding('question_mark', 'help', 'help', key_display='?'),
     ]
 
     def __init__(self, pwkey: str, pwurl: str, pwproj: str) -> None:

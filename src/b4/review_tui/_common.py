@@ -596,10 +596,11 @@ class SeparatedFooter(Footer):
 
         self.styles.grid_size_columns = len(action_to_bindings)
 
+        group_map = getattr(self.app, 'BINDING_GROUPS', {})
         prev_group: object = _SENTINEL
         for multi_bindings_list in action_to_bindings.values():
             binding, enabled, tooltip = multi_bindings_list[0]
-            cur_group = binding.group
+            cur_group = group_map.get(binding.action)
             is_first = prev_group is not _SENTINEL and cur_group != prev_group
             prev_group = cur_group
             classes = '-group-first' if is_first else ''

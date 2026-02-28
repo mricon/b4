@@ -135,8 +135,12 @@ class ReviewApp(App[None]):
     # Actions visible only in email mode
     _EMAIL_ACTIONS = frozenset({'edit_tocc', 'send'})
 
-    _GRP_REVIEW = Binding.Group('Review')
-    _GRP_APP = Binding.Group('App')
+    BINDING_GROUPS = {
+        'trailer': 'Review', 'review_diff': 'Review', 'edit_note': 'Review',
+        'edit_reply': 'Review', 'followups': 'Review', 'agent': 'Review',
+        'edit_tocc': 'Review', 'send': 'Review',
+        'toggle_preview': 'App', 'suspend': 'App', 'quit': 'App', 'help': 'App',
+    }
 
     BINDINGS = [
         # Hidden navigation bindings
@@ -145,23 +149,23 @@ class ReviewApp(App[None]):
         Binding('down', 'j_key', 'Next/Scroll down', show=False),
         Binding('up', 'k_key', 'Prev/Scroll up', show=False),
         # Review mode bindings
-        Binding('t', 'trailer', 'trailers', group=_GRP_REVIEW),
-        Binding('c', 'review_diff', 'comment', group=_GRP_REVIEW),
-        Binding('n', 'edit_note', 'note', group=_GRP_REVIEW),
-        Binding('r', 'edit_reply', 'reply', group=_GRP_REVIEW),
-        Binding('f', 'followups', 'followups', group=_GRP_REVIEW),
-        Binding('a', 'agent', 'agent', group=_GRP_REVIEW),
+        Binding('t', 'trailer', 'trailers'),
+        Binding('c', 'review_diff', 'comment'),
+        Binding('n', 'edit_note', 'note'),
+        Binding('r', 'edit_reply', 'reply'),
+        Binding('f', 'followups', 'followups'),
+        Binding('a', 'agent', 'agent'),
         Binding('x', 'check', 'Check', show=False),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings
-        Binding('T', 'edit_tocc', 'edit to/cc', key_display='T', group=_GRP_REVIEW),
-        Binding('S', 'send', 'send', key_display='S', group=_GRP_REVIEW),
+        Binding('T', 'edit_tocc', 'edit to/cc', key_display='T'),
+        Binding('S', 'send', 'send', key_display='S'),
         # App bindings
-        Binding('e', 'toggle_preview', 'email mode', group=_GRP_APP),
-        Binding('s', 'suspend', 'shell', group=_GRP_APP),
-        Binding('q', 'quit', 'quit', group=_GRP_APP),
-        Binding('question_mark', 'help', 'help', key_display='?', group=_GRP_APP),
+        Binding('e', 'toggle_preview', 'email mode'),
+        Binding('s', 'suspend', 'shell'),
+        Binding('q', 'quit', 'quit'),
+        Binding('question_mark', 'help', 'help', key_display='?'),
         Binding('tab', 'focus_next', 'Tab', show=False),
         Binding('space', 'page_down', 'Page down', show=False),
         Binding('backspace', 'page_up', 'Page up', show=False),
