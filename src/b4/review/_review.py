@@ -1436,6 +1436,13 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     # Integrate agent reviews from .git/b4-review/
     _integrate_agent_reviews(topdir, cover_text, tracking, commit_shas, patches)
 
+    # Ensure the plain-text thread-context-blob exists for the AI agent.
+    # Runs only when thread-blob was stored before this feature existed
+    # (migration) or is being seen for the first time this session.
+    change_id = series.get('change-id')
+    if change_id and series.get('thread-blob') and not series.get('thread-context-blob'):
+        b4.review.tracking.ensure_thread_context_blob(topdir, change_id, series, patches)
+
     return {
         'topdir': topdir,
         'branch': branch,

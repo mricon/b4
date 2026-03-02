@@ -105,6 +105,21 @@ The array is ordered the same way as the patch commits on the branch,
 so `patches[0]` corresponds to `first-patch-commit` (the first commit
 after any prerequisite commits).
 
+## Thread discussion context (optional)
+
+The `series` dict may contain a `thread-context-blob` key.  If present, it
+holds the SHA of a git blob containing a plain-text rendering of community
+replies to the series — replies that arrived after the series was posted.
+
+```shell
+git cat-file blob <thread-context-blob>
+```
+
+Read this when it is present.  It provides useful context: concerns already
+raised by other reviewers, design feedback, questions the author has already
+answered, and approval or objection signals.  Use it to avoid duplicating
+feedback and to focus your review on gaps the community has not yet addressed.
+
 ## Finding the cover letter and diffs
 
 **Cover letter text** -- The portion of the tracking commit message

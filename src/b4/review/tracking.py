@@ -690,8 +690,264 @@ def _fetch_new_since(canonical_url: str, since: str) -> Optional[Tuple[int, Opti
         return None
 
 
+def _store_thread_blob(topdir: str, change_id: str,
+                       msgs: List[Any]) -> Optional[str]:
+    """Serialize msgs to mboxrd and write as a git blob; update tracking commit.
+
+    Also writes thread-context-blob (the plain-text rendered context for the
+    AI agent) in the same save_tracking_ref call to avoid a second write.
+
+    Returns the mbox blob SHA, or None on failure.  Non-fatal: a failure here
+    just means the next 'f' press will fall back to a live lore fetch.
+    """
+    # Local import first — avoids circular deps AND prevents UnboundLocalError
+    # that would occur if `import b4.review` appeared after a `b4.xxx` call.
+    import io
+    import b4.review as _b4_review
+
+    buf = io.BytesIO()
+    b4.save_mboxrd_mbox(msgs, buf)
+    mbox_bytes = buf.getvalue()
+    if not mbox_bytes:
+        logger.debug('No bytes to store for thread blob for %s', change_id)
+        return None
+
+    ecode, out = b4.git_run_command(topdir,
+                                    ['hash-object', '-w', '--stdin'],
+                                    stdin=mbox_bytes)
+    if ecode != 0:
+        logger.debug('Could not write thread blob for %s', change_id)
+        return None
+    blob_sha = out.strip()
+
+    branch_name = f'b4/review/{change_id}'
+    if b4.git_branch_exists(topdir, branch_name):
+        try:
+            cover_text, tracking = _b4_review.load_tracking(topdir, branch_name)
+            series = tracking.get('series', {})
+            changed = False
+
+            if series.get('thread-blob') != blob_sha:
+                series['thread-blob'] = blob_sha
+                changed = True
+
+            # Build and store the context blob in the same write.
+            cover_msgid = series.get('header-info', {}).get('msgid')
+            cover_subject = series.get('subject', '')
+            patches = tracking.get('patches', [])
+            followup_comments = _parse_msgs_to_followup_comments(
+                msgs, cover_msgid, patches)
+            context_text = _render_thread_context(
+                followup_comments, patches, cover_subject)
+            if context_text.strip():
+                ctx_bytes = context_text.encode()
+                ecode2, ctx_out = b4.git_run_command(
+                    topdir, ['hash-object', '-w', '--stdin'], stdin=ctx_bytes)
+                if ecode2 == 0:
+                    ctx_sha = ctx_out.strip()
+                    if series.get('thread-context-blob') != ctx_sha:
+                        series['thread-context-blob'] = ctx_sha
+                        changed = True
+
+            if changed:
+                _b4_review.save_tracking_ref(topdir, branch_name,
+                                             cover_text, tracking)
+        except Exception as ex:
+            logger.debug('Could not update thread blobs for %s: %s',
+                         change_id, ex)
+    return blob_sha
+
+
+def get_thread_mbox(topdir: str, blob_sha: str) -> Optional[bytes]:
+    """Read cached thread mbox bytes from a git blob; None if unavailable (e.g. GC'd)."""
+    ecode, out = b4.git_run_command(topdir, ['cat-file', 'blob', blob_sha],
+                                    decode=False)
+    if ecode != 0:
+        logger.debug("Followup blob %s not found (may have been GC'd)", blob_sha)
+        return None
+    return out  # type: ignore[return-value]  — bytes when decode=False
+
+
+def _resolve_patch_for_followup_local(
+    in_reply_to: Optional[str],
+    patch_msgids: Dict[str, int],
+    msgid_map: Dict[str, Any],
+) -> Optional[int]:
+    """Walk the in_reply_to chain to find which patch a follow-up belongs to.
+
+    Returns the display index (0=cover, 1..N=patches) or None.
+    Duplicated from review_tui._common to avoid a cross-layer import.
+    """
+    seen: set = set()
+    current = in_reply_to
+    while current and current not in seen:
+        if current in patch_msgids:
+            return patch_msgids[current]
+        seen.add(current)
+        lmsg = msgid_map.get(current)
+        if lmsg is None:
+            break
+        current = lmsg.in_reply_to
+    return None
+
+
+def _parse_msgs_to_followup_comments(
+    msgs: List[Any],
+    cover_msgid: Optional[str],
+    patches: List[Dict[str, Any]],
+) -> Dict[int, List[Dict[str, Any]]]:
+    """Parse email messages into a followup-comments dict.
+
+    Returns Dict[display_idx -> List[{body, fromname, fromemail, date}]].
+    display_idx 0 = cover letter, 1..N = patches.
+    """
+    minimised = b4.mbox.minimize_thread(list(msgs))
+    minimised_body_map: Dict[str, str] = {}
+    for mmsg in minimised:
+        mid = b4.LoreMessage.clean_header(mmsg.get('Message-ID', ''))
+        if mid:
+            mid = mid.strip('<>')
+            payload = mmsg.get_payload(decode=True)
+            if isinstance(payload, bytes):
+                minimised_body_map[mid] = payload.decode(errors='replace')
+            elif isinstance(payload, str):
+                minimised_body_map[mid] = payload
+
+    lmbx = b4.LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+
+    patch_msgids: Dict[str, int] = {}
+    if cover_msgid:
+        patch_msgids[cover_msgid] = 0
+    for i, pmeta in enumerate(patches):
+        pmsgid = pmeta.get('header-info', {}).get('msgid')
+        if pmsgid:
+            patch_msgids[pmsgid] = i + 1
+
+    followup_comments: Dict[int, List[Dict[str, Any]]] = {}
+    for lmsg in sorted(lmbx.followups, key=lambda m: m.date):
+        display_idx = _resolve_patch_for_followup_local(
+            lmsg.in_reply_to, patch_msgids, lmbx.msgid_map)
+        if display_idx is None:
+            continue
+        mbody = minimised_body_map.get(lmsg.msgid, '').strip()
+        if not mbody:
+            continue
+        mbody_lines = [ln for ln in mbody.splitlines() if ln.strip()]
+        if len(mbody_lines) <= 2 and mbody_lines[-1].strip().endswith(':'):
+            continue
+        _htrs, _cmsg, mtrs, _basement, _sig = b4.LoreMessage.get_body_parts(lmsg.body)
+        if mtrs:
+            trailer_block = '\n'.join(t.as_string() for t in mtrs)
+            mbody = mbody.rstrip('\n') + '\n\n' + trailer_block
+        entry: Dict[str, Any] = {
+            'body': mbody,
+            'fromname': lmsg.fromname,
+            'fromemail': lmsg.fromemail,
+            'date': lmsg.date,
+        }
+        followup_comments.setdefault(display_idx, []).append(entry)
+
+    for fc_list in followup_comments.values():
+        fc_list.sort(key=lambda e: e['date'])
+
+    return followup_comments
+
+
+def _render_thread_context(
+    followup_comments: Dict[int, List[Dict[str, Any]]],
+    patches: List[Dict[str, Any]],
+    cover_subject: str,
+) -> str:
+    """Render a followup-comments dict as a human-readable plain-text string."""
+    lines: List[str] = []
+    n_patches = len(patches)
+    for display_idx in sorted(followup_comments.keys()):
+        fc_list = followup_comments[display_idx]
+        if not fc_list:
+            continue
+        if display_idx == 0:
+            section = f'Follow-up: cover letter ({cover_subject})'
+        else:
+            patch_idx = display_idx - 1
+            title = (patches[patch_idx].get('title', f'patch {display_idx}')
+                     if patch_idx < len(patches) else f'patch {display_idx}')
+            section = f'Follow-up: patch {display_idx}/{n_patches} — {title}'
+        lines.append(f'== {section} ==')
+        lines.append('')
+        for entry in fc_list:
+            date_str = (entry['date'].strftime('%Y-%m-%d %H:%M %z')
+                        if entry.get('date') else '')
+            lines.append(f"From: {entry['fromname']} <{entry['fromemail']}> | {date_str}")
+            lines.append('')
+            lines.append(entry['body'].rstrip())
+            lines.append('')
+    return '\n'.join(lines)
+
+
+def ensure_thread_context_blob(topdir: str, change_id: str,
+                                series: Dict[str, Any],
+                                patches: List[Dict[str, Any]]) -> Optional[str]:
+    """Ensure thread-context-blob exists in the tracking commit.
+
+    Migration aid: if thread-blob was written before this feature existed
+    (no thread-context-blob key), parse the stored mbox and write the context
+    blob now.  Also updates the in-memory *series* dict so the caller sees
+    the new key immediately.
+
+    Returns the context blob SHA, or None if thread-blob doesn't exist or the
+    operation fails.
+    """
+    import b4.review as _b4_review
+
+    if series.get('thread-context-blob'):
+        return series['thread-context-blob']
+
+    blob_sha = series.get('thread-blob')
+    if not blob_sha:
+        return None
+
+    mbox_bytes = get_thread_mbox(topdir, blob_sha)
+    if not mbox_bytes:
+        return None
+
+    msgs = b4.split_and_dedupe_pi_results(mbox_bytes)
+    if not msgs:
+        return None
+
+    cover_msgid = series.get('header-info', {}).get('msgid')
+    cover_subject = series.get('subject', '')
+    followup_comments = _parse_msgs_to_followup_comments(msgs, cover_msgid, patches)
+    context_text = _render_thread_context(followup_comments, patches, cover_subject)
+    if not context_text.strip():
+        return None
+
+    ctx_bytes = context_text.encode()
+    ecode, out = b4.git_run_command(topdir, ['hash-object', '-w', '--stdin'],
+                                    stdin=ctx_bytes)
+    if ecode != 0:
+        logger.debug('Could not write thread-context blob for %s', change_id)
+        return None
+    ctx_sha = out.strip()
+
+    branch_name = f'b4/review/{change_id}'
+    if b4.git_branch_exists(topdir, branch_name):
+        try:
+            cover_text, tracking = _b4_review.load_tracking(topdir, branch_name)
+            if tracking.get('series', {}).get('thread-context-blob') != ctx_sha:
+                tracking['series']['thread-context-blob'] = ctx_sha
+                _b4_review.save_tracking_ref(topdir, branch_name, cover_text, tracking)
+        except Exception as ex:
+            logger.debug('Could not persist thread-context-blob for %s: %s', change_id, ex)
+
+    series['thread-context-blob'] = ctx_sha
+    return ctx_sha
+
+
 def update_followup_counts(identifier: str,
-                           series_list: List[Dict[str, Any]]) -> Dict[str, int]:
+                           series_list: List[Dict[str, Any]],
+                           topdir: Optional[str] = None) -> Dict[str, int]:
     """Fetch and store followup reply counts for a list of series.
 
     For each active series in *series_list* that has a message_id:
@@ -759,6 +1015,10 @@ def update_followup_counts(identifier: str,
                 (count, count, now, last_activity, change_id, revision))
             conn.commit()
             updated += 1
+            if topdir:
+                parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
+                if parsed:
+                    _store_thread_blob(topdir, change_id, parsed)
         else:
             # ── Incremental: dt: query for messages since last check ─────────
             result = _fetch_new_since(canonical_url, last_check)
@@ -776,6 +1036,12 @@ def update_followup_counts(identifier: str,
                     (new_count, now, new_activity, change_id, revision))
                 conn.commit()
                 updated += 1
+                if topdir:
+                    new_mbox = _fetch_mbox_bytes(canonical_url)
+                    if new_mbox:
+                        parsed = b4.split_and_dedupe_pi_results(new_mbox)
+                        if parsed:
+                            _store_thread_blob(topdir, change_id, parsed)
             # new_count == 0: nothing changed, no DB write at all
 
     conn.close()

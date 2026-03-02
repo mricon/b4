@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import b4
 import b4.mbox
 import b4.review
+import b4.review.tracking
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -63,6 +64,7 @@ class FollowupItem(ListItem):
         st = Static(f'\u00a0\u00a0\u00a0\u00a0{self._display_name}', markup=False)
         st.styles.text_opacity = '60%'
         yield st
+
 
 
 class ReviewApp(App[None]):
@@ -1214,21 +1216,9 @@ class ReviewApp(App[None]):
 
         self.push_screen(SendScreen(msgs), _on_send_confirmed)
 
-    def action_followups(self) -> None:
-        """Fetch the mailing list thread and load follow-up comments."""
-        cover_info = self._series.get('header-info', {})
-        cover_msgid = cover_info.get('msgid')
-        if not cover_msgid:
-            self.notify('No message-id for cover letter', severity='error')
-            return
-
-        with self.suspend():
-            logger.info('Fetching thread for %s ...', cover_msgid)
-            msgs = b4.get_pi_thread_by_msgid(cover_msgid)
-
-        if not msgs:
-            self.notify('Could not fetch thread from lore', severity='error')
-            return
+    def _load_followup_msgs(self, msgs: List[Any]) -> None:
+        """Parse msgs into follow-up comments and refresh the display."""
+        cover_msgid = self._series.get('header-info', {}).get('msgid')
 
         # Minimise for body parsing (strips deep quoting, signatures)
         minimised = b4.mbox.minimize_thread(list(msgs))
@@ -1257,7 +1247,6 @@ class ReviewApp(App[None]):
             if pmsgid:
                 patch_msgids[pmsgid] = i + 1
 
-        # Clear previous follow-up comments
         self._followup_comments = {}
         count = 0
 
@@ -1303,6 +1292,46 @@ class ReviewApp(App[None]):
             self.notify('No follow-up comments found')
         self._populate_patch_list()
         self._show_content(self._selected_idx)
+
+    def action_followups(self) -> None:
+        """Toggle follow-up comments on/off."""
+        # ── Toggle off ────────────────────────────────────────────────────────
+        if self._followup_comments:
+            self._followup_comments = {}
+            self._followup_positions = {}
+            self._populate_patch_list()
+            self._show_content(self._selected_idx)
+            return
+
+        # ── Try local blob first ──────────────────────────────────────────────
+        blob_sha = self._series.get('thread-blob')
+        msgs = None
+        if blob_sha:
+            mbox_bytes = b4.review.tracking.get_thread_mbox(self._topdir, blob_sha)
+            if mbox_bytes is not None:
+                msgs = b4.split_and_dedupe_pi_results(mbox_bytes)
+
+        # ── Fallback: live lore fetch ─────────────────────────────────────────
+        if msgs is None:
+            cover_msgid = self._series.get('header-info', {}).get('msgid')
+            if not cover_msgid:
+                self.notify('No message-id for cover letter', severity='error')
+                return
+            with self.suspend():
+                logger.info('Fetching thread for %s ...', cover_msgid)
+                msgs = b4.get_pi_thread_by_msgid(cover_msgid)
+            if not msgs:
+                self.notify('Could not fetch thread from lore', severity='error')
+                return
+            # Cache the thread locally so future 'f' presses are instant.
+            change_id = self._series.get('change-id')
+            if change_id:
+                new_sha = b4.review.tracking._store_thread_blob(
+                    self._topdir, change_id, msgs)
+                if new_sha:
+                    self._series['thread-blob'] = new_sha
+
+        self._load_followup_msgs(msgs)
 
     def action_agent(self) -> None:
         """Run the configured review agent command."""

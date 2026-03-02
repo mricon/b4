@@ -1,6 +1,8 @@
 import argparse
 import datetime
+import io
 import os
+from email.message import EmailMessage
 from unittest import mock
 
 import pytest
@@ -1453,3 +1455,212 @@ class TestFollowupCounts:
         # None fetched — all skipped, no errors
         assert result['updated'] == 0
         assert result['errors'] == 0
+
+
+def _make_mbox_bytes(num_msgs: int, prefix: str = 'msg') -> bytes:
+    """Return valid mboxrd bytes containing *num_msgs* messages with unique IDs."""
+    result = b''
+    for i in range(num_msgs):
+        result += (
+            f'From sender@example.com Mon Jan 15 10:00:00 2024\n'
+            f'Message-ID: <{prefix}-{i}@example.com>\n'
+            f'From: Test Author <author@example.com>\n'
+            f'Date: Mon, 15 Jan 2024 10:00:00 +0000\n'
+            f'Subject: Test message {i}\n'
+            f'\n'
+            f'Body of message {i}\n'
+            f'\n'
+        ).encode()
+    return result
+
+
+def _make_test_msg(msgid: str = 'test@example.com') -> EmailMessage:
+    """Return a minimal EmailMessage suitable for passing to _store_thread_blob."""
+    msg = EmailMessage()
+    msg['Message-ID'] = f'<{msgid}>'
+    msg['From'] = 'Test Author <author@example.com>'
+    msg['Date'] = 'Mon, 15 Jan 2024 10:00:00 +0000'
+    msg['Subject'] = 'Test'
+    msg.set_payload('Hello world\n')
+    return msg
+
+
+def _make_blob_tracking_data(change_id: str, identifier: str = 'blob-proj') -> dict:
+    """Return a minimal tracking dict for blob tests."""
+    return {
+        'series': {
+            'identifier': identifier,
+            'status': 'reviewing',
+            'revision': 1,
+            'change-id': change_id,
+            'subject': 'Test series',
+            'fromname': 'Test Author',
+            'fromemail': 'author@example.com',
+            'expected': 3,
+            'complete': True,
+            'base-commit': 'abc123',
+            'prerequisite-commits': [],
+            'first-patch-commit': 'def456',
+            'header-info': {
+                'msgid': f'{change_id}@example.com',
+                'sentdate': 'Mon, 15 Jan 2024 10:00:00 +0000',
+            },
+            'link': f'https://lore.kernel.org/r/{change_id}',
+        },
+        'followups': [],
+        'patches': [],
+    }
+
+
+class TestFollowupBlob:
+    """Tests for _store_thread_blob() and get_thread_mbox()."""
+
+    def test_store_thread_blob_writes_blob_and_updates_tracking_json(
+        self, gitdir: str
+    ) -> None:
+        """_store_thread_blob serializes msgs via save_mboxrd_mbox and records SHA."""
+        change_id = 'blob-write-test'
+        _create_review_branch(gitdir, change_id,
+                              _make_blob_tracking_data(change_id))
+
+        msgs = [_make_test_msg('cover@example.com')]
+        blob_sha = review_tracking._store_thread_blob(gitdir, change_id, msgs)
+        assert blob_sha is not None
+
+        # Blob content must equal what save_mboxrd_mbox produces for those messages
+        expected_buf = io.BytesIO()
+        b4.save_mboxrd_mbox(msgs, expected_buf)
+        ecode, content = b4.git_run_command(
+            gitdir, ['cat-file', 'blob', blob_sha], decode=False)
+        assert ecode == 0
+        assert content == expected_buf.getvalue()
+
+        # Tracking commit JSON must carry the blob SHA
+        _cover, loaded = b4.review.load_tracking(
+            gitdir, f'b4/review/{change_id}')
+        assert loaded['series']['thread-blob'] == blob_sha
+
+    def test_store_thread_blob_skips_update_when_sha_unchanged(
+        self, gitdir: str
+    ) -> None:
+        """_store_thread_blob avoids a new tracking commit when SHA is unchanged."""
+        change_id = 'blob-nochurn-test'
+        _create_review_branch(gitdir, change_id,
+                              _make_blob_tracking_data(change_id))
+
+        msgs = [_make_test_msg('nochurn@example.com')]
+
+        sha1 = review_tracking._store_thread_blob(gitdir, change_id, msgs)
+        assert sha1 is not None
+
+        ecode, tip1 = b4.git_run_command(
+            gitdir, ['rev-parse', f'b4/review/{change_id}'])
+        assert ecode == 0
+
+        # Second call with identical messages — SHA and branch tip unchanged
+        sha2 = review_tracking._store_thread_blob(gitdir, change_id, msgs)
+        assert sha2 == sha1
+
+        ecode, tip2 = b4.git_run_command(
+            gitdir, ['rev-parse', f'b4/review/{change_id}'])
+        assert ecode == 0
+        assert tip2.strip() == tip1.strip()
+
+    def test_get_thread_mbox_returns_bytes(self, gitdir: str) -> None:
+        """get_thread_mbox returns the exact bytes written to the blob."""
+        sample = b'From mboxrd@z Thu Jan  1 00:00:00 1970\nSubject: hi\n\nbody\n'
+        ecode, blob_sha = b4.git_run_command(
+            gitdir, ['hash-object', '-w', '--stdin'], stdin=sample)
+        assert ecode == 0
+
+        result = review_tracking.get_thread_mbox(gitdir, blob_sha.strip())
+        assert result == sample
+
+    def test_get_thread_mbox_returns_none_for_missing_sha(
+        self, gitdir: str
+    ) -> None:
+        """get_thread_mbox returns None (not an exception) for a bogus SHA."""
+        result = review_tracking.get_thread_mbox(gitdir, 'deadbeef' * 5)
+        assert result is None
+
+    @mock.patch('b4.review.tracking._resolve_canonical_url')
+    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    def test_update_followup_counts_stores_blob_on_first_fetch(
+        self, mock_mbox: mock.Mock, mock_resolve: mock.Mock,
+        gitdir: str
+    ) -> None:
+        """update_followup_counts writes a thread blob on the first fetch."""
+        mock_resolve.return_value = 'https://lore.kernel.org/linux-kernel/blob-first@example.com'
+        # 9 unique messages → count = 9 - 3 - 1 = 5
+        mock_mbox.return_value = _make_mbox_bytes(9, prefix='ff')
+
+        change_id = 'blob-first-fetch'
+        _create_review_branch(gitdir, change_id,
+                              _make_blob_tracking_data(change_id, 'blob-ff-proj'))
+
+        conn = review_tracking.init_db('blob-ff-proj')
+        review_tracking.add_series_to_db(
+            conn, change_id, 1, 'Subject', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'blob-first@example.com', 3)
+        conn.close()
+
+        series_list = [{'change_id': change_id, 'revision': 1,
+                        'message_id': 'blob-first@example.com',
+                        'num_patches': 3, 'status': 'reviewing'}]
+        review_tracking.update_followup_counts(
+            'blob-ff-proj', series_list, topdir=gitdir)
+
+        _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
+        blob_sha = loaded['series'].get('thread-blob')
+        assert blob_sha is not None
+        # Blob must be readable
+        ecode, _ = b4.git_run_command(
+            gitdir, ['cat-file', 'blob', blob_sha], decode=False)
+        assert ecode == 0
+
+    @mock.patch('b4.review.tracking._fetch_new_since')
+    @mock.patch('b4.review.tracking._resolve_canonical_url')
+    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    def test_update_followup_counts_updates_blob_on_incremental(
+        self, mock_fetch: mock.Mock, mock_resolve: mock.Mock,
+        mock_new_since: mock.Mock, gitdir: str
+    ) -> None:
+        """update_followup_counts replaces the blob when new replies arrive."""
+        canonical = 'https://lore.kernel.org/linux-kernel/blob-incr@example.com'
+        mock_resolve.return_value = canonical
+        # Different prefixes → different Message-IDs → different blobs
+        initial_mbox = _make_mbox_bytes(5, prefix='init')
+        larger_mbox = _make_mbox_bytes(8, prefix='upd')
+        mock_fetch.return_value = initial_mbox
+        mock_new_since.return_value = (3, '2024-02-01T00:00:00+00:00')
+
+        change_id = 'blob-incr-test'
+        _create_review_branch(gitdir, change_id,
+                              _make_blob_tracking_data(change_id, 'blob-incr-proj'))
+
+        conn = review_tracking.init_db('blob-incr-proj')
+        review_tracking.add_series_to_db(
+            conn, change_id, 1, 'Subject', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'blob-incr@example.com', 3)
+        conn.close()
+
+        series_list = [{'change_id': change_id, 'revision': 1,
+                        'message_id': 'blob-incr@example.com',
+                        'num_patches': 3, 'status': 'reviewing'}]
+
+        # First fetch — stores initial blob
+        review_tracking.update_followup_counts(
+            'blob-incr-proj', series_list, topdir=gitdir)
+        _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
+        sha_initial = loaded['series'].get('thread-blob')
+        assert sha_initial is not None
+
+        # Incremental — _fetch_mbox_bytes now returns the larger mbox
+        mock_fetch.return_value = larger_mbox
+        review_tracking.update_followup_counts(
+            'blob-incr-proj', series_list, topdir=gitdir)
+        _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
+        sha_updated = loaded['series'].get('thread-blob')
+
+        assert sha_updated is not None
+        assert sha_updated != sha_initial

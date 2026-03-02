@@ -1504,7 +1504,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
                 self.app.call_from_thread(
                     self._update_status_text, 'Fetching followup counts...')
                 followup_result = b4.review.tracking.update_followup_counts(
-                    self._identifier, self._series_list)
+                    self._identifier, self._series_list, topdir=self._topdir)
                 self._result['followup_updated'] = followup_result.get('updated', 0)
 
         return self._result
