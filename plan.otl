@@ -48,7 +48,25 @@ v0.15
 		[X] Add review-target-branch config option to DEFAULT_CONFIG
 		[X] Use review-target-branch as first choice in take flow branch defaulting
 		[X] Update tests for real worktree scenarios instead of faked .git files
-	[_] Cross-machine review synchronisation with privacy (hard)
+	[X] Cross-machine review synchronisation via private remote (hard)
+		[X] Embed status and identifier in tracking commit JSON for portability
+			[X] create_review_branch() stores status and identifier in tracking commit
+			[X] All status transitions write back to the tracking commit
+			[X] _entry.py sync loop reads status from tracking commit instead of _reply_sent flag
+		[X] rescan_branches() — rebuild tracking DB from b4/review/* branch metadata
+			[X] Detect and mark disappeared branches as "gone" status
+			[X] Return rescanned/gone/changed counts for conditional refresh logic
+		[X] Tracking TUI runs rescan automatically
+			[X] Background worker on startup; list renders immediately, reload only on changes
+			[X] DB-mtime advanced after no-op rescan to silence poll timer (no flicker)
+			[X] Pre-update rescan in UpdateAllScreen worker before fetching threads
+			[X] Gone-branch warning notification after update or startup
+			[X] _check_db_changed() skips while a modal is active (prevents flicker)
+		[X] "gone" series lifecycle state
+			[X] Dimmed/italic styling in tracking TUI listing
+			[X] Action menu offers abandon or fresh re-checkout for gone series
+		[X] Multi-machine workflow: push b4/review/* branches to a private remote,
+			pull on another machine, run b4 review rescan to reconstruct DB state
 	[_] Differentiate drafted vs sent review completion indicators (medium)
 	[_] Show followup activity count in series list (medium)
 	[_] Recently-used branch list in take dialog (medium)

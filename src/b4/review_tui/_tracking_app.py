@@ -26,9 +26,10 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Label, ListItem, ListView, Static
+from textual.worker import Worker, WorkerState
 from b4.review_tui._common import (
     logger, _wait_for_enter, _suspend_to_shell,
-    gather_attestation_info, SeparatedFooter,
+    gather_attestation_info, SeparatedFooter, _quiet_worker,
 )
 from b4.review_tui._modals import (
     ViewSeriesScreen, AttestationScreen, TakeScreen,
@@ -81,6 +82,10 @@ class TrackedSeriesItem(ListItem):
     TrackedSeriesItem.waiting Label {
         opacity: 50%;
     }
+    TrackedSeriesItem.gone Label {
+        text-style: italic;
+        opacity: 50%;
+    }
     """
 
     def __init__(self, series: Dict[str, Any]) -> None:
@@ -91,12 +96,16 @@ class TrackedSeriesItem(ListItem):
             self.add_class('reviewing')
         elif status == 'waiting':
             self.add_class('waiting')
+        elif status == 'gone':
+            self.add_class('gone')
 
     def compose(self) -> ComposeResult:
         subject = self.series.get('subject', '(no subject)')
         submitter = self.series.get('sender_name', 'Unknown')
         date = self.series.get('sent_at', '')[:10]
         status = self.series.get('status', 'new')
+        if self.series.get('needs_update'):
+            status = status + '*'
         label_text = f'{date}  {status:<12s} {submitter:<30s} {subject}'
         yield Label(label_text, markup=False)
 
@@ -238,6 +247,29 @@ class TrackingApp(App[Optional[str]]):
     def on_mount(self) -> None:
         self._load_series()
         self.set_interval(1, self._check_db_changed)
+        topdir = b4.git_get_toplevel()
+        if topdir and b4.review.tracking.db_exists(self._identifier):
+            self.run_worker(lambda: self._startup_rescan(topdir),
+                            name='_startup_rescan', thread=True)
+
+    def _startup_rescan(self, topdir: str) -> Dict[str, int]:
+        """Rescan review branches in the background on app startup."""
+        with _quiet_worker():
+            return b4.review.tracking.rescan_branches(self._identifier, topdir)
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != '_startup_rescan':
+            return
+        if event.state == WorkerState.SUCCESS:
+            result = event.worker.result or {}
+            gone = result.get('gone', 0)
+            if gone:
+                self.notify(f'{gone} review branch(es) are gone', severity='warning')
+            # Only rebuild the list when something actually changed; the DB is
+            # only written when a branch SHA differs, so _check_db_changed()
+            # naturally stays quiet on a no-op rescan.
+            if gone or result.get('changed', 0):
+                self._load_series()
 
     def _load_series(self) -> None:
         all_series = b4.review.tracking.get_all_tracked_series(self._identifier)
@@ -270,6 +302,8 @@ class TrackingApp(App[Optional[str]]):
                     revs = b4.review.tracking.get_revisions(conn, change_id)
                     if len(revs) > 1:
                         series['has_multiple_revisions'] = True
+                    if not revs and series.get('status') not in ('new', 'gone'):
+                        series['needs_update'] = True
                 except Exception:
                     pass
             # Load A/R/T trailer counts from the review branch
@@ -302,6 +336,10 @@ class TrackingApp(App[Optional[str]]):
 
     def _check_db_changed(self) -> None:
         """Poll the database file mtime and reload if it changed."""
+        # Skip while a modal is active — the DB may be changing (e.g. during
+        # an update) and rebuilding the list behind the modal causes flickering.
+        if len(self.app.screen_stack) > 1:
+            return
         try:
             db_path = b4.review.tracking.get_db_path(self._identifier)
             mtime = os.path.getmtime(db_path)
@@ -392,6 +430,7 @@ class TrackingApp(App[Optional[str]]):
         'waiting': frozenset({'review', 'view', 'range_diff', 'abandon', 'archive'}),
         'taken': frozenset({'thank', 'archive'}),
         'thanked': frozenset({'archive'}),
+        'gone': frozenset({'abandon', 'review'}),
     }
     # All state-gated actions (union of all per-state sets)
     _GATED_ACTIONS = frozenset().union(*_STATE_ACTIONS.values())
@@ -421,17 +460,21 @@ class TrackingApp(App[Optional[str]]):
             return
         status = self._selected_series.get('status', 'new')
         actions: list[tuple[str, str]] = []
-        if status in ('reviewing', 'replied'):
-            actions.append(('take', 'Take (apply to branch)'))
-            actions.append(('rebase', 'Rebase review branch'))
-            actions.append(('waiting', 'Mark as waiting on new revision'))
-        if status == 'reviewing' and self._selected_series.get('has_newer'):
-            actions.append(('upgrade', 'Upgrade to newer revision'))
-        if status == 'taken':
-            actions.append(('thank', 'Send thank-you'))
-        if status != 'thanked':
+        if status in ('new', 'gone'):
+            actions.append(('review', 'Review'))
             actions.append(('abandon', 'Abandon series'))
-        actions.append(('archive', 'Archive series'))
+        else:
+            if status in ('reviewing', 'replied'):
+                actions.append(('take', 'Take (apply to branch)'))
+                actions.append(('rebase', 'Rebase review branch'))
+                actions.append(('waiting', 'Mark as waiting on new revision'))
+            if status == 'reviewing' and self._selected_series.get('has_newer'):
+                actions.append(('upgrade', 'Upgrade to newer revision'))
+            if status == 'taken':
+                actions.append(('thank', 'Send thank-you'))
+            if status != 'thanked':
+                actions.append(('abandon', 'Abandon series'))
+            actions.append(('archive', 'Archive series'))
         self.push_screen(
             ActionScreen(actions),
             callback=self._on_action_selected,
@@ -442,6 +485,7 @@ class TrackingApp(App[Optional[str]]):
         if action is None:
             return
         handler = {
+            'review': self.action_review,
             'take': self.action_take,
             'rebase': self.action_rebase,
             'abandon': self.action_abandon,
@@ -461,6 +505,7 @@ class TrackingApp(App[Optional[str]]):
             # Already checked out - go to review mode
             change_id = self._selected_series.get('change_id', '')
             revision = self._selected_series.get('revision')
+            branch_name = f'b4/review/{change_id}'
             if status == 'waiting':
                 # Bring back to reviewing on re-entry
                 try:
@@ -470,7 +515,9 @@ class TrackingApp(App[Optional[str]]):
                     conn.close()
                 except Exception:
                     pass
-            branch_name = f'b4/review/{change_id}'
+                topdir = b4.git_get_toplevel()
+                if topdir:
+                    b4.review.update_tracking_status(topdir, branch_name, 'reviewing')
             self.exit(branch_name)
         elif self._selected_series.get('has_newer'):
             # New series with a newer revision available — ask which to review
@@ -672,7 +719,9 @@ class TrackingApp(App[Optional[str]]):
 
                 # Create the review branch
                 b4.review.create_review_branch(topdir, branch_name, base_commit, lser,
-                                               linkurl, linkmask, num_prereqs=0)
+                                               linkurl, linkmask, num_prereqs=0,
+                                               identifier=self._identifier,
+                                               status='reviewing')
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
             except Exception as ex:
@@ -829,6 +878,10 @@ class TrackingApp(App[Optional[str]]):
         updated = result.get('series_updated', 0)
         promoted = result.get('promoted', 0)
         errors = result.get('errors', 0)
+        gone = result.get('gone', 0)
+
+        if gone:
+            self.notify(f'{gone} review branch(es) are gone', severity='warning')
 
         parts = [f'Checked {checked} series']
         if updated:
@@ -998,6 +1051,7 @@ class TrackingApp(App[Optional[str]]):
             return
 
         series = tracking.get('series', {})
+        series['status'] = 'taken'
         series['taken'] = {
             'branch': target_branch,
             'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),
@@ -1945,7 +1999,9 @@ class TrackingApp(App[Optional[str]]):
                                           at_base=base_commit, origin=linkurl)
                 b4.review.create_review_branch(topdir, review_branch,
                                                base_commit, lser, linkurl,
-                                               linkmask, num_prereqs=0)
+                                               linkmask, num_prereqs=0,
+                                               identifier=self._identifier,
+                                               status='reviewing')
                 logger.info('Review branch created: %s', review_branch)
             except Exception as ex:
                 logger.critical('Error creating review branch: %s', ex)
@@ -1998,6 +2054,7 @@ class TrackingApp(App[Optional[str]]):
             new_shas = [sha for _idx, sha, _pid in new_patch_ids]
             b4.review.reanchor_patch_comments(topdir, new_shas, new_patches)
 
+            new_tracking['series']['status'] = 'reviewing'
             b4.review.save_tracking_ref(topdir, review_branch,
                                         new_cover_text, new_tracking)
             logger.info('Restored reviews for %d of %d patch(es)',
@@ -2025,6 +2082,10 @@ class TrackingApp(App[Optional[str]]):
         except Exception as ex:
             self.notify(f'Error: {ex}', severity='error')
             return
+        topdir = b4.git_get_toplevel()
+        if topdir:
+            branch_name = f'b4/review/{change_id}'
+            b4.review.update_tracking_status(topdir, branch_name, 'waiting')
         self.notify('Series moved to waiting')
         self._load_series()
 
@@ -2316,6 +2377,10 @@ class TrackingApp(App[Optional[str]]):
                     conn.close()
                 except Exception as ex:
                     logger.warning('Could not update series status: %s', ex)
+                topdir = b4.git_get_toplevel()
+                if topdir:
+                    review_branch = f'b4/review/{change_id}'
+                    b4.review.update_tracking_status(topdir, review_branch, 'thanked')
             self.notify('Thank-you message sent')
             self._load_series()
         except Exception as ex:

@@ -22,7 +22,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from b4.review_tui._common import (
-    CI_CHECK_MARKUP, CI_CHECK_STYLES, CI_CHECK_LABELS,
+    CI_CHECK_STYLES, CI_CHECK_LABELS,
     JKListNavMixin,
     _addrs_to_lines, _lines_to_header, _validate_addrs,
     _write_diff_line, _quiet_worker,
@@ -1432,6 +1432,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
             'series_updated': 0,
             'promoted': 0,
             'errors': 0,
+            'gone': 0,
         }
 
     def compose(self) -> ComposeResult:
@@ -1451,6 +1452,16 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
         import b4.review
 
         with _quiet_worker():
+            # Rescan local review branches first so the DB reflects current
+            # on-disk state before the network update runs.
+            if self._topdir:
+                try:
+                    rescan = b4.review.tracking.rescan_branches(
+                        self._identifier, self._topdir)
+                    self._result['gone'] = rescan.get('gone', 0)
+                except Exception as ex:
+                    logger.warning('Pre-update rescan failed: %s', ex)
+
             for i, series in enumerate(self._series_list):
                 if self._cancelled:
                     break

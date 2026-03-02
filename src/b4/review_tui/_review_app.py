@@ -1206,6 +1206,8 @@ class ReviewApp(App[None]):
                     self.notify('Failed to send review emails.', severity='error')
                 else:
                     self._reply_sent = True
+                    self._tracking['series']['status'] = 'replied'
+                    self._save_tracking()
                     self.notify(f'Sent {sent} review email(s).')
             except Exception as ex:
                 self.notify(f'Send failed: {ex}', severity='error')

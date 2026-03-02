@@ -6,6 +6,7 @@ from unittest import mock
 import pytest
 
 import b4
+import b4.review
 from b4.review import tracking as review_tracking
 
 
@@ -910,3 +911,319 @@ class TestReviewTargetBranch:
         """Verify review-target-branch is in DEFAULT_CONFIG."""
         assert 'review-target-branch' in b4.DEFAULT_CONFIG
         assert b4.DEFAULT_CONFIG['review-target-branch'] is None
+
+
+def _create_review_branch(topdir: str, change_id: str, tracking_data: dict) -> str:
+    """Helper: create a b4/review/<change_id> branch with a tracking commit."""
+    branch = f'b4/review/{change_id}'
+    cover_text = f'Cover letter for {change_id}'
+    commit_msg = (cover_text + '\n\n'
+                  + b4.review.make_review_magic_json(tracking_data))
+    # Create an orphan-ish branch off current HEAD
+    b4.git_run_command(topdir, ['branch', branch])
+    # Create a tracking commit on it via commit-tree
+    ecode, tree = b4.git_run_command(topdir, ['rev-parse', f'{branch}^{{tree}}'])
+    assert ecode == 0
+    tree = tree.strip()
+    ecode, parent = b4.git_run_command(topdir, ['rev-parse', branch])
+    assert ecode == 0
+    parent = parent.strip()
+    ecode, new_sha = b4.git_run_command(
+        topdir, ['commit-tree', tree, '-p', parent, '-F', '-'],
+        stdin=commit_msg.encode())
+    assert ecode == 0
+    new_sha = new_sha.strip()
+    ecode, _ = b4.git_run_command(topdir, ['update-ref', f'refs/heads/{branch}', new_sha])
+    assert ecode == 0
+    return branch
+
+
+class TestUpdateTrackingStatus:
+    """Tests for update_tracking_status() helper."""
+
+    def test_updates_status(self, gitdir: str) -> None:
+        """Verify update_tracking_status writes status to tracking commit."""
+        tracking_data = {
+            'series': {
+                'identifier': 'test-proj',
+                'status': 'reviewing',
+                'revision': 1,
+                'change-id': 'status-test',
+                'subject': 'Test',
+                'fromname': 'Author',
+                'fromemail': 'a@example.com',
+                'expected': 1,
+                'complete': True,
+                'base-commit': 'abc123',
+                'prerequisite-commits': [],
+                'first-patch-commit': 'def456',
+                'header-info': {},
+                'link': '',
+            },
+            'followups': [],
+            'patches': [],
+        }
+        branch = _create_review_branch(gitdir, 'status-test', tracking_data)
+
+        result = b4.review.update_tracking_status(gitdir, branch, 'replied')
+        assert result is True
+
+        # Read back and verify
+        _cover, trk = b4.review.load_tracking(gitdir, branch)
+        assert trk['series']['status'] == 'replied'
+
+    def test_round_trip(self, gitdir: str) -> None:
+        """Verify status survives a write-then-read round-trip."""
+        tracking_data = {
+            'series': {
+                'identifier': 'test-proj',
+                'status': 'reviewing',
+                'revision': 2,
+                'change-id': 'roundtrip-test',
+                'subject': 'Roundtrip',
+                'fromname': 'Author',
+                'fromemail': 'a@example.com',
+                'expected': 3,
+                'complete': True,
+                'base-commit': 'abc123',
+                'prerequisite-commits': [],
+                'first-patch-commit': 'def456',
+                'header-info': {},
+                'link': '',
+            },
+            'followups': [],
+            'patches': [],
+        }
+        branch = _create_review_branch(gitdir, 'roundtrip-test', tracking_data)
+
+        for new_status in ('replied', 'waiting', 'taken', 'thanked'):
+            b4.review.update_tracking_status(gitdir, branch, new_status)
+            _cover, trk = b4.review.load_tracking(gitdir, branch)
+            assert trk['series']['status'] == new_status
+
+    def test_returns_false_for_missing_branch(self, gitdir: str) -> None:
+        """Verify update_tracking_status returns False for non-existent branch."""
+        result = b4.review.update_tracking_status(gitdir, 'b4/review/nonexistent', 'replied')
+        assert result is False
+
+
+class TestGetReviewBranches:
+    """Tests for get_review_branches()."""
+
+    def test_lists_review_branches(self, gitdir: str) -> None:
+        """Verify get_review_branches finds b4/review/* branches."""
+        tracking_data = {
+            'series': {
+                'identifier': 'test-proj',
+                'status': 'reviewing',
+                'revision': 1,
+                'change-id': 'branch-list-1',
+                'subject': 'Test 1',
+                'fromname': 'A',
+                'fromemail': 'a@example.com',
+                'expected': 1,
+                'complete': True,
+                'base-commit': 'abc',
+                'prerequisite-commits': [],
+                'first-patch-commit': 'def',
+                'header-info': {},
+                'link': '',
+            },
+            'followups': [],
+            'patches': [],
+        }
+        _create_review_branch(gitdir, 'branch-list-1', tracking_data)
+        tracking_data['series']['change-id'] = 'branch-list-2'
+        _create_review_branch(gitdir, 'branch-list-2', tracking_data)
+
+        branches = review_tracking.get_review_branches(gitdir)
+        names = set(branches)
+        assert 'b4/review/branch-list-1' in names
+        assert 'b4/review/branch-list-2' in names
+
+    def test_returns_empty_when_none(self, gitdir: str) -> None:
+        """Verify get_review_branches returns empty list with no review branches."""
+        branches = review_tracking.get_review_branches(gitdir)
+        assert branches == []
+
+
+class TestRescanBranches:
+    """Tests for rescan_branches()."""
+
+    def _make_tracking_data(self, change_id: str, identifier: str = 'rescan-proj',
+                            status: str = 'reviewing', revision: int = 1,
+                            subject: str = 'Test series') -> dict:
+        return {
+            'series': {
+                'identifier': identifier,
+                'status': status,
+                'revision': revision,
+                'change-id': change_id,
+                'subject': subject,
+                'fromname': 'Test Author',
+                'fromemail': 'author@example.com',
+                'expected': 3,
+                'complete': True,
+                'base-commit': 'abc123',
+                'prerequisite-commits': [],
+                'first-patch-commit': 'def456',
+                'header-info': {
+                    'msgid': f'{change_id}@example.com',
+                    'sentdate': 'Mon, 15 Jan 2024 10:00:00 +0000',
+                },
+                'link': f'https://lore.kernel.org/r/{change_id}',
+            },
+            'followups': [],
+            'patches': [],
+        }
+
+    def test_rescan_single_branch(self, gitdir: str) -> None:
+        """Verify rescan populates DB from a single branch."""
+        identifier = 'rescan-single'
+        review_tracking.init_db(identifier).close()
+
+        tracking_data = self._make_tracking_data('single-change', identifier=identifier,
+                                                  status='replied')
+        branch = _create_review_branch(gitdir, 'single-change', tracking_data)
+
+        review_tracking.rescan_branches(identifier, gitdir, branch=branch)
+
+        conn = review_tracking.get_db(identifier)
+        cursor = conn.execute(
+            'SELECT change_id, status, revision FROM series WHERE change_id = ?',
+            ('single-change',))
+        row = cursor.fetchone()
+        assert row is not None
+        assert row['change_id'] == 'single-change'
+        assert row['status'] == 'replied'
+        assert row['revision'] == 1
+        conn.close()
+
+    def test_rescan_marks_gone(self, gitdir: str) -> None:
+        """Verify full rescan marks missing branches as 'gone'."""
+        identifier = 'rescan-gone'
+        conn = review_tracking.init_db(identifier)
+        # Add a series to DB with 'reviewing' status but no corresponding branch
+        review_tracking.add_series_to_db(
+            conn, 'gone-change', 1, 'Gone series', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3)
+        review_tracking.update_series_status(conn, 'gone-change', 'reviewing')
+        conn.close()
+
+        review_tracking.rescan_branches(identifier, gitdir)
+
+        conn = review_tracking.get_db(identifier)
+        cursor = conn.execute(
+            'SELECT status FROM series WHERE change_id = ?', ('gone-change',))
+        row = cursor.fetchone()
+        assert row['status'] == 'gone'
+        conn.close()
+
+    def test_rescan_skips_mismatched_identifier(self, gitdir: str) -> None:
+        """Verify rescan skips branches with a different identifier."""
+        identifier = 'rescan-mismatch'
+        review_tracking.init_db(identifier).close()
+
+        # Create branch with a different identifier
+        tracking_data = self._make_tracking_data('mismatch-change',
+                                                  identifier='other-project')
+        _create_review_branch(gitdir, 'mismatch-change', tracking_data)
+
+        review_tracking.rescan_branches(identifier, gitdir)
+
+        conn = review_tracking.get_db(identifier)
+        cursor = conn.execute(
+            'SELECT * FROM series WHERE change_id = ?', ('mismatch-change',))
+        row = cursor.fetchone()
+        assert row is None
+        conn.close()
+
+    def test_rescan_preserves_non_active_statuses(self, gitdir: str) -> None:
+        """Verify full rescan does not mark taken/thanked series as gone."""
+        identifier = 'rescan-preserve'
+        conn = review_tracking.init_db(identifier)
+        # Add a 'taken' series with no branch — should NOT become 'gone'
+        review_tracking.add_series_to_db(
+            conn, 'taken-change', 1, 'Taken', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3)
+        review_tracking.update_series_status(conn, 'taken-change', 'taken')
+        conn.close()
+
+        review_tracking.rescan_branches(identifier, gitdir)
+
+        conn = review_tracking.get_db(identifier)
+        cursor = conn.execute(
+            'SELECT status FROM series WHERE change_id = ?', ('taken-change',))
+        row = cursor.fetchone()
+        assert row['status'] == 'taken'
+        conn.close()
+
+    def test_rescan_all_branches(self, gitdir: str) -> None:
+        """Verify full rescan processes all review branches."""
+        identifier = 'rescan-all'
+        review_tracking.init_db(identifier).close()
+
+        for i in range(3):
+            cid = f'all-change-{i}'
+            tracking_data = self._make_tracking_data(cid, identifier=identifier)
+            _create_review_branch(gitdir, cid, tracking_data)
+
+        review_tracking.rescan_branches(identifier, gitdir)
+
+        conn = review_tracking.get_db(identifier)
+        cursor = conn.execute('SELECT COUNT(*) FROM series')
+        count = cursor.fetchone()[0]
+        assert count == 3
+        conn.close()
+
+    def test_sha_skips_unchanged_branch(self, gitdir: str) -> None:
+        """Verify that a second rescan with no branch changes reports changed=0."""
+        identifier = 'rescan-sha-skip'
+        review_tracking.init_db(identifier).close()
+
+        tracking_data = self._make_tracking_data('sha-skip', identifier=identifier)
+        _create_review_branch(gitdir, 'sha-skip', tracking_data)
+
+        # First rescan: new branch, should be processed.
+        result = review_tracking.rescan_branches(identifier, gitdir)
+        assert result['changed'] == 1
+
+        # Second rescan: branch unchanged, should be skipped entirely.
+        result = review_tracking.rescan_branches(identifier, gitdir)
+        assert result['changed'] == 0
+        assert result['gone'] == 0
+
+    def test_sha_detects_changed_branch(self, gitdir: str) -> None:
+        """Verify that updating a branch's tracking commit triggers a re-read."""
+        identifier = 'rescan-sha-change'
+        review_tracking.init_db(identifier).close()
+
+        tracking_data = self._make_tracking_data('sha-change', identifier=identifier,
+                                                  status='reviewing')
+        branch = _create_review_branch(gitdir, 'sha-change', tracking_data)
+
+        # First rescan: registers the branch with status 'reviewing'.
+        result = review_tracking.rescan_branches(identifier, gitdir)
+        assert result['changed'] == 1
+
+        # Amend the tracking commit on the branch with a different status.
+        tracking_data['series']['status'] = 'replied'
+        new_msg = ('Cover\n\n' + b4.review.make_review_magic_json(tracking_data))
+        ecode, tree = b4.git_run_command(gitdir, ['rev-parse', f'{branch}^{{tree}}'])
+        tree = tree.strip()
+        ecode, parent = b4.git_run_command(gitdir, ['rev-parse', branch])
+        parent = parent.strip()
+        ecode, new_sha = b4.git_run_command(
+            gitdir, ['commit-tree', tree, '-p', parent, '-F', '-'],
+            stdin=new_msg.encode())
+        b4.git_run_command(gitdir, ['update-ref', f'refs/heads/{branch}', new_sha.strip()])
+
+        # Second rescan: SHA changed, should re-read and update status.
+        result = review_tracking.rescan_branches(identifier, gitdir)
+        assert result['changed'] == 1
+
+        conn = review_tracking.get_db(identifier)
+        row = conn.execute('SELECT status FROM series WHERE change_id = ?',
+                           ('sha-change',)).fetchone()
+        assert row['status'] == 'replied'
+        conn.close()

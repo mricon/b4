@@ -259,6 +259,7 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_rev_track.add_argument('-i', '--identifier', dest='identifier', default=None,
                               help='Project identifier (required if not in an enrolled repository)')
 
+
     # b4 pr
     sp_pr = subparsers.add_parser('pr', help='Fetch a pull request found in a message ID')
     sp_pr.add_argument('-g', '--gitdir', default=None,

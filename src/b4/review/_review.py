@@ -161,7 +161,9 @@ def determine_review_branch(lser: b4.LoreSeries, cmdargs: argparse.Namespace) ->
 
 def create_review_branch(topdir: str, branch_name: str, base_commit: str,
                          lser: b4.LoreSeries, linkurl: str, linkmask: str,
-                         num_prereqs: int = 0) -> None:
+                         num_prereqs: int = 0,
+                         identifier: Optional[str] = None,
+                         status: str = 'reviewing') -> None:
     # Verify branch does not already exist
     ecode, out = b4.git_run_command(topdir, ['rev-parse', '--verify', branch_name])
     if ecode == 0:
@@ -245,6 +247,8 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
     # Build tracking metadata
     tracking: Dict[str, Any] = {
         'series': {
+            'identifier': identifier,
+            'status': status,
             'revision': lser.revision,
             'change-id': lser.change_id or branch_name.removeprefix(REVIEW_BRANCH_PREFIX),
             'link': linkurl,
@@ -390,6 +394,17 @@ def save_tracking_ref(topdir: str, branch: str,
     ecode, out = b4.git_run_command(topdir,
                                     ['update-ref', f'refs/heads/{branch}', new_sha])
     return ecode == 0
+
+
+def update_tracking_status(topdir: str, branch: str, status: str) -> bool:
+    """Update the status field in a review branch's tracking commit."""
+    try:
+        cover_text, tracking = load_tracking(topdir, branch)
+        tracking['series']['status'] = status
+        return save_tracking_ref(topdir, branch, cover_text, tracking)
+    except (Exception, SystemExit):
+        logger.warning('Could not update tracking commit status on %s', branch)
+        return False
 
 
 def save_tracking(topdir: str, cover_text: str, tracking: Dict[str, Any]) -> None:
