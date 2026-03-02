@@ -102,22 +102,20 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
         # can position the cursor on it.
         focus_change_id = branch_name.removeprefix(b4.review.REVIEW_BRANCH_PREFIX)
 
-        # Update status to 'replied' if a review reply was sent.
-        # Derive change_id from the branch name rather than the tracking
-        # JSON — the JSON's change-id may be empty for series that lack a
-        # Change-Id header while the branch name always carries the
-        # database's synthetic identifier.
-        if review_app._reply_sent:
-            change_id = focus_change_id
+        # Sync status from tracking commit to DB.  The ReviewApp writes
+        # status changes (e.g. 'replied') into the tracking commit JSON,
+        # so we read it back here and propagate to the SQLite database.
+        try:
+            cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
+            tracking_status = tracking.get('series', {}).get('status')
             revision = session['series'].get('revision')
-            if change_id:
-                try:
-                    conn = b4.review.tracking.get_db(identifier)
-                    b4.review.tracking.update_series_status(conn, change_id, 'replied',
-                                                            revision=revision)
-                    conn.close()
-                except Exception as ex:
-                    logger.warning('Could not update series status: %s', ex)
+            if tracking_status and focus_change_id:
+                conn = b4.review.tracking.get_db(identifier)
+                b4.review.tracking.update_series_status(
+                    conn, focus_change_id, tracking_status, revision=revision)
+                conn.close()
+        except Exception as ex:
+            logger.warning('Could not sync tracking status: %s', ex)
 
         # Restore original branch after exiting ReviewApp
         if original_branch:

@@ -90,6 +90,7 @@ Status         Meaning
 ``taken``      Patches applied to the target branch
 ``thanked``    Thank-you note sent to the contributor
 ``archived``   Review completed and archived
+``gone``       Review branch deleted or missing (e.g. after a sync)
 =============  =========================================================
 
 **Keybindings**
@@ -299,6 +300,69 @@ Open the action menu (``a``) and select **Archive** to archive a
 completed series (creates a ``.tar.gz`` in
 ``$XDG_DATA_HOME/b4/review-archived/``). Select **Abandon** to delete
 the series and review branch entirely.
+
+Working across multiple machines
+--------------------------------
+
+Because review state is stored in ``b4/review/*`` git branches, it can
+be synchronised between machines using any git remote. This makes it
+straightforward to start reviewing a series on one machine and continue
+on another, or to keep a laptop and a workstation in sync.
+
+Setting up a sync remote
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Configure a dedicated remote pointing to a repository accessible from
+all your machines::
+
+    git remote add review-sync git@example.com:linux-review.git
+
+Then configure push and fetch refspecs so that only ``b4/review/*``
+branches are transferred::
+
+    git config --add remote.review-sync.push  '+refs/heads/b4/review/*:refs/heads/b4/review/*'
+    git config --add remote.review-sync.fetch  'refs/heads/b4/review/*:refs/heads/b4/review/*'
+
+The ``+`` prefix in the push refspec enables force-push, which is
+required because the tracking commit at the tip of each review branch is
+replaced in-place whenever the series status changes.
+
+.. warning::
+
+   Review branches may contain unpublished comments, draft responses, or
+   early-stage review notes that you would not want to share publicly.
+   Make sure the remote repository is not publicly accessible if you want
+   to keep your in-progress review work private.
+
+Syncing your review branches
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After a review session, push all your review branches in one command::
+
+    git push review-sync
+
+Add ``--prune`` to also remove remote branches that you have abandoned
+or archived locally::
+
+    git push --prune review-sync
+
+On another machine, fetch the latest branches::
+
+    git fetch review-sync
+
+Then launch the TUI as normal — a rescan runs automatically in the
+background and detects any branches whose HEAD commit changed since the
+last fetch, updating the tracking database to reflect their current
+state::
+
+    b4 review tui
+
+.. note::
+
+   The TUI compares the HEAD commit SHA of each ``b4/review/*`` branch
+   against a cached value in the database. Only branches that have
+   actually changed are re-read, so the background rescan adds no
+   perceptible delay even in large repositories.
 
 Optional flags
 --------------

@@ -48,7 +48,12 @@ v0.15
 		[X] Add review-target-branch config option to DEFAULT_CONFIG
 		[X] Use review-target-branch as first choice in take flow branch defaulting
 		[X] Update tests for real worktree scenarios instead of faked .git files
-	[_] Cross-machine review synchronisation with privacy (hard)
+	[X] Cross-machine review synchronisation via private remote
+		[X] Embed status and identifier in tracking commit JSON for portability
+		[X] rescan_branches() — rebuild tracking DB from b4/review/* branch metadata
+		[X] Tracking TUI runs rescan automatically
+		[X] "gone" series lifecycle state
+		[X] Multi-machine workflow: push b4/review/* branches to a private remote,
 	[_] Differentiate drafted vs sent review completion indicators (medium)
 	[_] Show followup activity count in series list (medium)
 	[_] Recently-used branch list in take dialog (medium)

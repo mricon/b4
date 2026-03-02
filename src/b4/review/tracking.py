@@ -16,14 +16,14 @@ import sys
 import b4
 import b4.mbox
 
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 logger = b4.logger
 
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = '''
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS series (
     pw_series_id INTEGER,
     status TEXT DEFAULT 'new',
     fingerprint TEXT,
+    branch_sha TEXT,
     UNIQUE (change_id, revision)
 );
 
@@ -88,6 +89,18 @@ def init_db(identifier: str) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
+    """Apply any pending schema migrations in-place."""
+    row = conn.execute('SELECT version FROM schema_version').fetchone()
+    version = row[0] if row else 0
+    if version >= SCHEMA_VERSION:
+        return
+    if version < 2:
+        conn.execute('ALTER TABLE series ADD COLUMN branch_sha TEXT')
+    conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
+    conn.commit()
+
+
 def get_db(identifier: str) -> sqlite3.Connection:
     """Get a database connection for the given identifier."""
     db_path = get_db_path(identifier)
@@ -95,6 +108,7 @@ def get_db(identifier: str) -> sqlite3.Connection:
         raise FileNotFoundError(f'No database found for identifier: {identifier}')
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    _migrate_db_if_needed(conn)
     return conn
 
 
@@ -520,6 +534,138 @@ def update_series_status(conn: sqlite3.Connection, change_id: str, status: str,
     else:
         conn.execute('UPDATE series SET status = ? WHERE change_id = ?', (status, change_id))
     conn.commit()
+
+
+def get_review_branches(topdir: Optional[str] = None) -> list[str]:
+    """List all b4/review/* branch names."""
+    gitargs = ['for-each-ref', '--format=%(refname:short)', 'refs/heads/b4/review/']
+    return b4.git_get_command_lines(topdir, gitargs)
+
+
+def rescan_branches(identifier: str, topdir: str,
+                    branch: Optional[str] = None) -> Dict[str, int]:
+    """Rescan review branches and sync status/metadata into the tracking DB.
+
+    Iterates b4/review/* branches (or a single branch if specified).  For each
+    branch the HEAD commit SHA is compared against the value stored in the DB;
+    if they match the branch is skipped entirely (fast path).  Only branches
+    whose SHA has changed (or that have no stored SHA) are fully re-read and
+    upserted.  When doing a full rescan (branch=None), series whose branches
+    have disappeared are marked as 'gone'.
+
+    Returns ``{'gone': n, 'changed': n}`` where ``changed`` is the number of
+    branches whose SHA differed and were re-processed.
+    """
+    import email.utils
+    import b4.review
+
+    if branch:
+        branches = [branch]
+    else:
+        branches = get_review_branches(topdir)
+
+    conn = get_db(identifier)
+    scanned_change_ids: set[str] = set()
+    changed = 0
+
+    for br in branches:
+        # Derive change_id from the branch name for the fast SHA check.
+        change_id_from_branch = br.removeprefix('b4/review/')
+
+        # Read the current HEAD SHA with a single cheap rev-parse call.
+        ecode, sha_out = b4.git_run_command(topdir, ['rev-parse', br])
+        if ecode != 0:
+            logger.warning('Could not resolve HEAD for %s, skipping', br)
+            continue
+        current_sha = sha_out.strip()
+
+        # Check the stored SHA for the most recent revision of this change_id.
+        stored = conn.execute(
+            'SELECT branch_sha FROM series WHERE change_id = ?'
+            ' ORDER BY revision DESC LIMIT 1',
+            (change_id_from_branch,)).fetchone()
+        if stored and stored['branch_sha'] == current_sha:
+            # Branch HEAD unchanged — skip the expensive tracking-commit read.
+            scanned_change_ids.add(change_id_from_branch)
+            continue
+
+        # SHA changed (or no record yet) — do the full read and upsert.
+        try:
+            _cover_text, tracking = b4.review.load_tracking(topdir, br)
+        except (SystemExit, Exception):
+            logger.warning('Could not load tracking from %s, skipping', br)
+            continue
+
+        series = tracking.get('series', {})
+        track_id_value = series.get('identifier')
+
+        # Verify identifier matches (skip if mismatch)
+        if track_id_value and track_id_value != identifier:
+            logger.warning('Branch %s has identifier %s, expected %s; skipping',
+                           br, track_id_value, identifier)
+            continue
+
+        change_id = series.get('change-id')
+        if not change_id:
+            logger.warning('Branch %s has no change-id, skipping', br)
+            continue
+
+        scanned_change_ids.add(change_id)
+        status = series.get('status', 'reviewing')
+        revision = series.get('revision', 1)
+
+        # Parse sent date from header-info
+        sent_at = None
+        sentdate = series.get('header-info', {}).get('sentdate')
+        if sentdate:
+            try:
+                dt = email.utils.parsedate_to_datetime(sentdate)
+                sent_at = dt.isoformat()
+            except Exception:
+                pass
+
+        message_id = series.get('header-info', {}).get('msgid', '')
+
+        # Upsert metadata and sync status from the tracking commit.
+        add_series_to_db(conn, change_id,
+                         revision=revision,
+                         subject=series.get('subject'),
+                         sender_name=series.get('fromname'),
+                         sender_email=series.get('fromemail'),
+                         sent_at=sent_at,
+                         message_id=message_id,
+                         num_patches=series.get('expected', 0))
+        update_series_status(conn, change_id, status, revision=revision)
+
+        # Persist the new HEAD SHA so future rescans can skip this branch.
+        conn.execute('UPDATE series SET branch_sha = ? WHERE change_id = ? AND revision = ?',
+                     (current_sha, change_id, revision))
+        conn.commit()
+
+        logger.info('Rescanned: %s (status: %s)', change_id, status)
+        changed += 1
+
+    # Full rescan: mark missing branches as "gone"
+    gone = 0
+    if not branch:
+        all_series = get_all_tracked_series(identifier)
+        active_statuses = ('reviewing', 'replied', 'waiting')
+        for s in all_series:
+            sid = s.get('change_id')
+            if not sid:
+                continue
+            if (s.get('status') in active_statuses
+                    and sid not in scanned_change_ids):
+                branch_name = f'b4/review/{sid}'
+                if not b4.git_branch_exists(topdir, branch_name):
+                    update_series_status(conn, sid, 'gone',
+                                         revision=s.get('revision'))
+                    logger.info('Marked as gone: %s', sid)
+                    gone += 1
+
+    conn.close()
+    return {'gone': gone, 'changed': changed}
+
 
 
 def delete_series(conn: sqlite3.Connection, change_id: str,
