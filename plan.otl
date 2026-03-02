@@ -54,8 +54,30 @@ v0.15
 		[X] Tracking TUI runs rescan automatically
 		[X] "gone" series lifecycle state
 		[X] Multi-machine workflow: push b4/review/* branches to a private remote,
+	[X] Show followup activity count in series list
+		[X] Track followup count and unseen delta via public-inbox t.mbox.gz
+		[X] Incremental updates via public-inbox dt: query (no DB write on no-op)
+		[X] last_activity_at column — updated by thread activity and local status changes
+		[X] Within-group sort by last_activity_at for most-recently-active series first
+		[X] Single-char Unicode status symbols column replacing verbose status text
+		[X] Four status groups in listing: Active, New, Waiting, Gone
+		[X] Compact [subsystem,vN,0/M] subject prefix in listing via LoreSubject
+		[X] Fups column in listing showing total+new followup count
+		[X] A·R·T trailer count column in listing
+	[X] Cache thread mbox as git blob; pass community context to AI agent
+		[X] _store_thread_blob() serializes via save_mboxrd_mbox() and writes git blob
+		[X] get_thread_mbox() reads blob back; returns None on GC so callers fall back
+		[X] update_followup_counts() stores blob on first-fetch and incremental paths
+		[X] 'f' key toggled: second press clears comments; first press tries local blob
+		[X] Falls back to live lore fetch only when blob absent; caches result immediately
+		[X] _parse_msgs_to_followup_comments() / _render_thread_context() distil thread
+		  into plain-text context blob (thread-context-blob) for the AI agent
+		[X] _store_thread_blob() writes both blobs in one save_tracking_ref() call
+		[X] ensure_thread_context_blob() migrates existing tracking commits on first open
+		[X] _prepare_review_session() calls ensure_thread_context_blob() so agent always
+		  has context before the review app starts
+		[X] agent-reviewer.md documents thread-context-blob and how to use it
 	[_] Differentiate drafted vs sent review completion indicators (medium)
-	[_] Show followup activity count in series list (medium)
 	[_] Recently-used branch list in take dialog (medium)
 	[_] Cherry-pick patch selection during review checkout, not just take (medium)
 	[_] Better followup threading detail and message-id display (medium)
