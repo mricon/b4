@@ -28,6 +28,9 @@ logger = b4.logger
 
 REVIEW_MAGIC_MARKER = '--- b4-review-tracking ---'
 REVIEW_BRANCH_PREFIX = 'b4/review/'
+# Maximum number of diff context lines quoted above a comment in reply emails.
+# The @@ hunk header is always included regardless of this limit.
+_REPLY_CONTEXT_LINES = 5
 
 
 def make_review_magic_json(data: Dict[str, Any]) -> str:
@@ -1107,22 +1110,36 @@ def _build_reply_from_comments(diff_text: str,
             for fh_line in file_header_buf:
                 result.append(f'> {fh_line}')
             file_header_emitted = True
-        # Build hunk output with comments inserted
-        # hunk_comments: list of (index_in_buf, comment_text)
-        # Sort by index to insert in order
+        # Build hunk output with comments inserted, limiting context to
+        # _REPLY_CONTEXT_LINES lines above each comment.  The @@ header
+        # (hunk_buf[0]) is always emitted; gaps between context windows
+        # are represented by a skip marker or the lines themselves when few.
         insert_map: Dict[int, List[str]] = {}
         for idx, text in hunk_comments:
             insert_map.setdefault(idx, []).append(text)
-        last_comment_idx = max(insert_map)
-        for i, hline in enumerate(hunk_buf):
-            if i > last_comment_idx:
-                break
-            result.append(f'> {hline}')
-            if i in insert_map:
-                for text in insert_map[i]:
-                    result.append('')
-                    result.append(text)
-                    result.append('')
+        prev_quoted = -1  # last hunk_buf index that was emitted
+        for comment_idx in sorted(insert_map):
+            # Emit the @@ header exactly once
+            if prev_quoted < 0:
+                result.append(f'> {hunk_buf[0]}')
+                prev_quoted = 0
+            # Context window: up to _REPLY_CONTEXT_LINES before the comment,
+            # but never re-emit lines already quoted by a prior comment.
+            window_start = max(prev_quoted + 1, comment_idx - _REPLY_CONTEXT_LINES)
+            skipped = window_start - (prev_quoted + 1)
+            if skipped >= 3:
+                result.append(f'> [ ... skip {skipped} lines ... ]')
+            elif skipped > 0:
+                # Few enough lines that it's cleaner to just include them.
+                for i in range(prev_quoted + 1, window_start):
+                    result.append(f'> {hunk_buf[i]}')
+            for i in range(window_start, comment_idx + 1):
+                result.append(f'> {hunk_buf[i]}')
+            prev_quoted = comment_idx
+            for text in insert_map[comment_idx]:
+                result.append('')
+                result.append(text)
+                result.append('')
         hunk_buf.clear()
         hunk_comments.clear()
 

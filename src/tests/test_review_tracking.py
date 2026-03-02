@@ -1756,3 +1756,123 @@ class TestPatchState:
         assert b4.review._get_patch_state(target, self._USERCFG) == 'skip'
         # Entry must still be present so the skip is persisted
         assert self._USERCFG['email'] in target.get('reviews', {})
+
+
+class TestBuildReplyFromComments:
+    """Tests for _build_reply_from_comments() context-limiting logic."""
+
+    # Minimal diff with a 20-line added hunk so we can test truncation.
+    # Lines are numbered from 1 in the diff (b_line), matching comment['line'].
+    _DIFF = (
+        'diff --git a/foo.py b/foo.py\n'
+        '--- a/foo.py\n'
+        '+++ b/foo.py\n'
+        '@@ -0,0 +1,20 @@\n'
+        + ''.join(f'+line{i}\n' for i in range(1, 21))
+    )
+
+    def _make_comment(self, line: int, text: str) -> dict[str, Any]:
+        return {'path': 'b/foo.py', 'line': line, 'text': text}
+
+    def _call(self, comments: list[dict[str, Any]]) -> list[str]:
+        result = b4.review._build_reply_from_comments(self._DIFF, comments, [])
+        return result.splitlines()
+
+    def _skip_markers(self, lines: list[str]) -> list[str]:
+        """Return all skip-marker lines from the output."""
+        return [l for l in lines if l.startswith('> [ ... skip')]
+
+    def test_short_hunk_no_skip_marker(self) -> None:
+        """Comment within 5 lines of hunk start → no skip marker of any kind."""
+        lines = self._call([self._make_comment(3, 'nice')])
+        assert not self._skip_markers(lines)
+        # @@ header always present
+        assert any('@@ -0,0 +1,20 @@' in l for l in lines)
+        # All 3 added lines quoted
+        assert '> +line1' in lines
+        assert '> +line2' in lines
+        assert '> +line3' in lines
+        # Line 4 not quoted
+        assert '> +line4' not in lines
+
+    def test_few_skipped_lines_included_directly(self) -> None:
+        """Gap of fewer than 3 lines → lines included, no skip marker."""
+        # Comment on line 8: window_start=3, skipped=2 (lines 1-2 before window)
+        lines = self._call([self._make_comment(8, 'here')])
+        assert not self._skip_markers(lines)
+        # Lines 1 and 2 should be included directly (gap < 3)
+        assert '> +line1' in lines
+        assert '> +line2' in lines
+        assert '> +line8' in lines
+
+    def test_distant_comment_gets_skip_marker(self) -> None:
+        """Comment far from hunk start → skip marker with line count inserted."""
+        lines = self._call([self._make_comment(15, 'issue here')])
+        markers = self._skip_markers(lines)
+        assert len(markers) == 1
+        assert 'skip 9 lines' in markers[0]
+        # @@ header present
+        assert any('@@ -0,0 +1,20 @@' in l for l in lines)
+        # Only lines 10-15 quoted (5 context + the commented line)
+        assert '> +line10' in lines
+        assert '> +line15' in lines
+        # Line 9 not quoted
+        assert '> +line9' not in lines
+        # Comment text present
+        assert 'issue here' in lines
+
+    def test_two_distant_comments_skip_marker_between(self) -> None:
+        """Two comments far apart produce exactly one skip marker between them.
+
+        Comment at line 2 is close to the @@ header (no leading marker);
+        comment at line 18 is far enough from line 2 to need a gap marker.
+        """
+        comments = [
+            self._make_comment(2, 'first comment'),
+            self._make_comment(18, 'second comment'),
+        ]
+        lines = self._call(comments)
+        assert len(self._skip_markers(lines)) == 1
+        assert 'first comment' in lines
+        assert 'second comment' in lines
+
+    def test_two_comments_both_distant_two_skip_markers(self) -> None:
+        """Two comments both far from hunk start and each other → two skip markers."""
+        comments = [
+            self._make_comment(10, 'first comment'),
+            self._make_comment(20, 'second comment'),
+        ]
+        lines = self._call(comments)
+        assert len(self._skip_markers(lines)) == 2
+        assert 'first comment' in lines
+        assert 'second comment' in lines
+
+    def test_two_adjacent_comments_no_extra_skip_marker(self) -> None:
+        """Two comments close together → only one skip marker (before first window)."""
+        comments = [
+            self._make_comment(10, 'a'),
+            self._make_comment(12, 'b'),
+        ]
+        lines = self._call(comments)
+        assert len(self._skip_markers(lines)) == 1
+        assert '> +line11' in lines
+        assert '> +line12' in lines
+
+    def test_hunk_header_always_present(self) -> None:
+        """The @@ hunk header is always included even for a comment on line 20."""
+        lines = self._call([self._make_comment(20, 'end')])
+        assert any('@@ -0,0 +1,20 @@' in l for l in lines)
+        assert self._skip_markers(lines)
+        assert '> +line20' in lines
+        assert '> +line14' not in lines
+
+    def test_no_duplicate_lines_between_comments(self) -> None:
+        """Lines are never quoted twice when two comments share context."""
+        comments = [
+            self._make_comment(8, 'x'),
+            self._make_comment(10, 'y'),
+        ]
+        lines = self._call(comments)
+        quoted = [l for l in lines if l.startswith('> +')]
+        # Each quoted diff line should appear exactly once
+        assert len(quoted) == len(set(quoted))
