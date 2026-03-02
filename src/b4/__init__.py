@@ -2042,6 +2042,57 @@ class LoreMessage:
                 deduped_cc.append((name, addr))
         return deduped_to, deduped_cc
 
+    def make_reply(self, body: str,
+                   mailfrom: Optional[Tuple[str, str]] = None) -> EmailMessage:
+        """Build a reply EmailMessage addressing this message.
+
+        Handles Reply-To → To promotion, folds the original To into Cc,
+        deduplicates via make_reply_addrs(), and sets In-Reply-To, References,
+        Date and Message-Id correctly.  Pass *mailfrom* as a (name, email)
+        tuple to override the value from get_mailfrom().
+        """
+        if mailfrom is None:
+            mailfrom = get_mailfrom()
+        user_name, user_email = mailfrom
+
+        subject = self.full_subject
+        if not self.reply:
+            subject = f'Re: {subject}'
+
+        try:
+            reply_to = email.utils.getaddresses([str(x) for x in self.msg.get_all('reply-to', [])])
+        except Exception:
+            reply_to = []
+        if reply_to:
+            to_addrs = reply_to
+        else:
+            to_addrs = [(self.fromname, self.fromemail)]
+
+        try:
+            orig_to = email.utils.getaddresses([str(x) for x in self.msg.get_all('to', [])])
+        except Exception:
+            orig_to = []
+        try:
+            orig_cc = email.utils.getaddresses([str(x) for x in self.msg.get_all('cc', [])])
+        except Exception:
+            orig_cc = []
+
+        deduped_to, deduped_cc = LoreMessage.make_reply_addrs(to_addrs, orig_to + orig_cc)
+
+        msg = EmailMessage()
+        msg.set_payload(body, charset='utf-8')
+        msg['Subject'] = subject
+        msg['From'] = f'{user_name} <{user_email}>'
+        msg['To'] = format_addrs(deduped_to, clean=False)
+        if deduped_cc:
+            msg['Cc'] = format_addrs(deduped_cc, clean=False)
+        msg['In-Reply-To'] = f'<{self.msgid}>'
+        references = LoreMessage.clean_header(self.msg.get('References', '') or '')
+        msg['References'] = f'{references} <{self.msgid}>'.strip()
+        msg['Date'] = email.utils.formatdate(localtime=True)
+        msg['Message-Id'] = email.utils.make_msgid()
+        return msg
+
     @staticmethod
     def wrap_header(hdr: Tuple[str, str], width: int = 75, nl: str = '\n',
                     transform: Literal['encode', 'decode', 'preserve'] = 'preserve') -> bytes:

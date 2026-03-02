@@ -18,7 +18,7 @@ import urllib.parse
 import b4
 import b4.mbox
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = b4.logger
 
@@ -791,6 +791,33 @@ def _resolve_patch_for_followup_local(
     return None
 
 
+def _get_followup_depth_local(
+    in_reply_to: Optional[str],
+    patch_msgids: Dict[str, int],
+    msgid_map: Dict[str, Any],
+    max_depth: int = 5,
+) -> int:
+    """Return the threading depth of a follow-up relative to its patch.
+
+    Depth 0 = direct reply to a patch; depth N = N hops through follow-up
+    replies. Capped at max_depth to prevent runaway indentation.
+    Duplicated from review_tui._common to avoid a cross-layer import.
+    """
+    depth = 0
+    seen: Set[str] = set()
+    current = in_reply_to
+    while current and current not in seen:
+        if current in patch_msgids:
+            break
+        seen.add(current)
+        lmsg = msgid_map.get(current)
+        if lmsg is None:
+            break
+        depth += 1
+        current = lmsg.in_reply_to
+    return min(depth, max_depth)
+
+
 def _parse_msgs_to_followup_comments(
     msgs: List[Any],
     cover_msgid: Optional[str],
@@ -846,6 +873,9 @@ def _parse_msgs_to_followup_comments(
             'fromname': lmsg.fromname,
             'fromemail': lmsg.fromemail,
             'date': lmsg.date,
+            'msgid': lmsg.msgid,
+            'subject': lmsg.subject,
+            'depth': _get_followup_depth_local(lmsg.in_reply_to, patch_msgids, lmbx.msgid_map),
         }
         followup_comments.setdefault(display_idx, []).append(entry)
 

@@ -18,6 +18,7 @@ import b4.review.tracking
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Click
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
 from rich.syntax import Syntax
 from rich.text import Text
@@ -27,11 +28,12 @@ from b4.review_tui._common import (
     _has_review_data, _make_initials, _wait_for_enter,
     _write_comments, _write_followup_comments,
     _write_followup_trailers, _resolve_patch_for_followup,
+    _get_followup_depth, _render_email_to_viewer,
     _suspend_to_shell, SeparatedFooter,
 )
 from b4.review_tui._modals import (
     TrailerScreen, HelpScreen, _review_help_lines,
-    NoteScreen, ToCcScreen, SendScreen,
+    NoteScreen, ToCcScreen, SendScreen, FollowupReplyPreviewScreen,
 )
 
 class PatchListItem(ListItem):
@@ -223,6 +225,7 @@ class ReviewApp(App[None]):
         self._comment_positions: List[int] = []
         self._followup_positions: Dict[Tuple[int, str], int] = {}
         self._followup_comments: Dict[int, List[Dict[str, Any]]] = {}
+        self._followup_header_map: Dict[int, Dict[str, Any]] = {}
         self._reply_sent: bool = False
 
     def compose(self) -> ComposeResult:
@@ -344,6 +347,7 @@ class ReviewApp(App[None]):
         viewer.clear()
         self._comment_positions = []
         self._followup_positions = {}
+        self._followup_header_map = {}
 
         self._selected_idx = display_idx
 
@@ -368,7 +372,8 @@ class ReviewApp(App[None]):
         fc_author_pos: Dict[str, int] = {}
         _write_followup_comments(
             viewer, self._followup_comments.get(0, []),
-            self._comment_positions, fc_author_pos)
+            self._comment_positions, fc_author_pos,
+            header_position_map=self._followup_header_map)
         for email, pos in fc_author_pos.items():
             self._followup_positions[(0, email)] = pos
 
@@ -501,7 +506,8 @@ class ReviewApp(App[None]):
         fc_author_pos: Dict[str, int] = {}
         _write_followup_comments(
             viewer, self._followup_comments.get(patch_idx + 1, []),
-            self._comment_positions, fc_author_pos)
+            self._comment_positions, fc_author_pos,
+            header_position_map=self._followup_header_map)
         display_idx = patch_idx + 1
         for email, pos in fc_author_pos.items():
             self._followup_positions[(display_idx, email)] = pos
@@ -541,43 +547,7 @@ class ReviewApp(App[None]):
             viewer.write('[dim]No email to preview (missing message-id?).[/dim]')
             return
 
-        # Render headers
-        for hdr in ('Subject', 'To', 'Cc'):
-            val = msg[hdr]
-            if not val:
-                continue
-            val = str(val)
-            if hdr.lower() in ('to', 'cc'):
-                wrapped = b4.LoreMessage.wrap_header(
-                    (hdr, val), transform='decode').decode(errors='replace')
-                first_line, *rest = wrapped.splitlines()
-                colon = first_line.find(':')
-                hdr_text = Text()
-                if colon >= 0:
-                    hdr_text.append(first_line[:colon + 1], style='bold')
-                    hdr_text.append(first_line[colon + 1:])
-                else:
-                    hdr_text.append(first_line)
-                for r in rest:
-                    hdr_text.append('\n')
-                    hdr_text.append(r)
-                viewer.write(hdr_text)
-            else:
-                hdr_text = Text()
-                hdr_text.append(f'{hdr}:', style='bold')
-                hdr_text.append(f' {val}')
-                viewer.write(hdr_text)
-        viewer.write('')
-        payload = msg.get_payload(decode=True)
-        body = payload.decode(errors='replace') if isinstance(payload, bytes) else str(payload or '')
-        # Render body line-by-line so quoted lines are highlighted
-        for line in body.splitlines():
-            if line.startswith('>'):
-                viewer.write(Text(line, style='dim cyan'))
-            elif line.startswith('---'):
-                viewer.write(Text(line, style='dim'))
-            else:
-                viewer.write(Text(line))
+        _render_email_to_viewer(viewer, msg)
 
     def _refresh_trailer_overlay(self) -> None:
         """Update the review status overlay in the left pane."""
@@ -1288,6 +1258,72 @@ class ReviewApp(App[None]):
 
         self.push_screen(SendScreen(msgs), _on_send_confirmed)
 
+    def on_click(self, event: Click) -> None:
+        """Detect clicks on follow-up panel header rows to open quick reply."""
+        if not self._followup_header_map:
+            return
+        try:
+            viewer = self.query_one('#diff-viewer', RichLog)
+        except Exception:
+            return
+        region = viewer.content_region
+        if not region.contains(event.screen_x, event.screen_y):
+            return
+        content_line = int(viewer.scroll_y) + (event.screen_y - region.y)
+        entry = self._followup_header_map.get(content_line)
+        if entry:
+            self._compose_followup_reply(entry)
+            event.stop()
+
+    def _compose_followup_reply(self, entry: Dict[str, Any],
+                                 initial_text: Optional[str] = None) -> None:
+        """Compose a reply to a follow-up message using the external editor.
+
+        If *initial_text* is given (re-edit loop), use it directly instead of
+        building the attribution+quote from the entry.
+        """
+        if initial_text is not None:
+            editor_text = initial_text
+        else:
+            orig_date = entry.get('date', '')
+            orig_author = entry.get('fromname', '') or entry.get('fromemail', '')
+            body = entry.get('body', '')
+            quoted = '\n'.join(f'> {line}' for line in body.splitlines())
+            editor_text = f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
+
+        with self.suspend():
+            result = b4.edit_in_editor(editor_text.encode(), filehint='reply.eml')
+        reply_text = result.decode(errors='replace')
+        if reply_text == editor_text:
+            self.notify('No changes made')
+            return
+
+        def _on_preview(action: Optional[str]) -> None:
+            if action == 'send':
+                self._send_followup_reply(entry, reply_text)
+            elif action == 'edit':
+                self._compose_followup_reply(entry, reply_text)
+
+        self.push_screen(FollowupReplyPreviewScreen(entry, reply_text), _on_preview)
+
+    def _send_followup_reply(self, entry: Dict[str, Any], text: str) -> None:
+        """Build and immediately send a quick reply to a follow-up message."""
+        msg = entry['lmsg'].make_reply(text)
+        try:
+            with self.suspend():
+                smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
+                sent = b4.send_mail(smtp, [msg], fromaddr=fromaddr,
+                                    patatt_sign=False, dryrun=self._email_dryrun,
+                                    output_dir=None, reflect=False)
+            if sent is None:
+                self.notify('Failed to send reply.', severity='error')
+            elif self._email_dryrun:
+                self.notify(f'Dry-run: reply to {entry["fromemail"]} logged, not sent')
+            else:
+                self.notify(f'Reply sent to {entry["fromemail"]}')
+        except Exception as ex:
+            self.notify(f'Send failed: {ex}', severity='error')
+
     def _load_followup_msgs(self, msgs: List[Any]) -> None:
         """Parse msgs into follow-up comments and refresh the display."""
         cover_msgid = self._series.get('header-info', {}).get('msgid')
@@ -1345,11 +1381,16 @@ class ReviewApp(App[None]):
                 trailer_block = '\n'.join(t.as_string() for t in mtrs)
                 mbody = mbody.rstrip('\n') + '\n\n' + trailer_block
 
-            entry = {
+            entry: Dict[str, Any] = {
                 'body': mbody,
                 'fromname': lmsg.fromname,
                 'fromemail': lmsg.fromemail,
                 'date': lmsg.date,
+                'msgid': lmsg.msgid,
+                'subject': lmsg.full_subject,
+                'reply': lmsg.reply,
+                'depth': _get_followup_depth(lmsg.in_reply_to, patch_msgids, lmbx.msgid_map),
+                'lmsg': lmsg,
             }
             self._followup_comments.setdefault(display_idx, []).append(entry)
             count += 1

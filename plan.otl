@@ -89,7 +89,17 @@ v0.15
 	[X] Cherry-pick patch selection honours skip state
 		[X] Skipped patches auto-deselected in cherry-pick dialog
 		[X] Auto-defaults to cherry-pick method when any patch is skipped
-	[_] Better followup threading detail and message-id display
+	[X] Better followup threading detail and message-id display
+		[X] Depth field computed by walking in_reply_to chain, capped at 5
+		[X] Panels indented by depth * 2 columns using rich Padding
+		[X] Msgid header shown in each follow-up panel
+	[X] Quick-reply to follow-up messages from within review TUI
+		[X] ↩ symbol in panel header row; click opens external editor with quoted body
+		[X] Preview screen (Send/Edit/Abandon) matches patch email preview rendering
+		[X] LoreMessage.make_reply() core method handles all reply-header construction
+		[X] _render_email_to_viewer() shared helper used by both preview screens
+		[X] From header shown in email preview to catch misconfigured identities
+		[X] Dry-run mode shows accurate "logged, not sent" notification
 	[_] Per-patch signoffs and Link tags with merge take strategy
 	[_] "Applied but not taken" state for CI-testing workflows
 	[_] Non-Patchwork CI integration for external tool results

@@ -25,7 +25,7 @@ from b4.review_tui._common import (
     CI_CHECK_STYLES, CI_CHECK_LABELS,
     JKListNavMixin, logger,
     _addrs_to_lines, _lines_to_header, _validate_addrs,
-    _write_diff_line, _quiet_worker,
+    _write_diff_line, _quiet_worker, _render_email_to_viewer,
 )
 
 
@@ -344,6 +344,78 @@ class NoteScreen(ModalScreen[Optional[str]]):
         self.dismiss('__DELETE__')
 
     def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
+    """Preview a composed follow-up reply before sending.
+
+    Builds the real EmailMessage (including signature) via
+    lmsg.make_reply() and renders it identically to the patch email
+    preview — headers and body in a single scrollable RichLog.
+
+    Dismisses with:
+    - 'send'  on S — caller should send the reply immediately
+    - 'edit'  on E — caller should re-open the editor with the current text
+    - None    on Escape — abandon (no action)
+    """
+
+    BINDINGS = [
+        Binding('S', 'send', 'Send'),
+        Binding('e', 'edit', 'Edit'),
+        Binding('escape', 'abandon', 'Abandon'),
+    ]
+
+    DEFAULT_CSS = """
+    FollowupReplyPreviewScreen {
+        align: center middle;
+    }
+    #followup-preview-dialog {
+        width: 80%;
+        height: 80%;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #followup-preview-viewer {
+        height: 1fr;
+        border: solid $panel;
+        margin-bottom: 1;
+    }
+    #followup-preview-hint {
+        height: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, entry: Dict[str, Any], reply_text: str) -> None:
+        super().__init__()
+        self._entry = entry
+        self._reply_text = reply_text
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='followup-preview-dialog'):
+            yield RichLog(id='followup-preview-viewer', highlight=False,
+                          wrap=True, markup=False, auto_scroll=False)
+            yield Static('S  send  |  e  edit  |  Escape  abandon',
+                         id='followup-preview-hint')
+
+    def on_mount(self) -> None:
+        body = self._reply_text
+        if '\n-- \n' not in body:
+            sig = b4.get_email_signature()
+            body = body.rstrip('\n') + '\n\n-- \n' + sig
+        msg = self._entry['lmsg'].make_reply(body)
+        viewer = self.query_one('#followup-preview-viewer', RichLog)
+        _render_email_to_viewer(viewer, msg)
+
+    def action_send(self) -> None:
+        self.dismiss('send')
+
+    def action_edit(self) -> None:
+        self.dismiss('edit')
+
+    def action_abandon(self) -> None:
         self.dismiss(None)
 
 

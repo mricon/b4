@@ -27,6 +27,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, ListView, RichLog
 from textual.widgets._footer import FooterKey
 from rich import box
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
@@ -197,12 +198,17 @@ def _write_followup_comments(
     fc_list: List[Dict[str, Any]],
     comment_positions: List[int],
     fc_author_positions: Optional[Dict[str, int]] = None,
+    header_position_map: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> None:
     """Render follow-up comments at the bottom of the viewer.
 
-    Each entry has 'body', 'fromname', 'fromemail', and 'date'.
+    Each entry has 'body', 'fromname', 'fromemail', 'date', and optionally
+    'depth' (0 = direct reply to patch, N = N hops through follow-up replies).
+    Entries with depth > 0 are indented to visually show threading.
     If *fc_author_positions* is provided, it is populated with the
     first viewer line position for each unique fromemail.
+    If *header_position_map* is provided, it is populated with
+    {viewer_line: entry} for each panel header row, enabling click-to-reply.
     """
     if not fc_list:
         return
@@ -218,12 +224,16 @@ def _write_followup_comments(
         colour = colour_map.get(e['fromemail'], _REVIEWER_COLOURS[1])
         line_pos = len(viewer.lines)
         comment_positions.append(line_pos)
+        if header_position_map is not None:
+            header_position_map[line_pos] = e
         if fc_author_positions is not None and e['fromemail'] not in fc_author_positions:
             fc_author_positions[e['fromemail']] = line_pos
         body = _strip_attribution(e['body'])
         body_text = Text()
-        body_text.append(f'From: {e["fromname"]} <{e["fromemail"]}>\n', style='bold')
-        body_text.append(f'Date: {e["date"].strftime("%Y-%m-%d %H:%M %z")}\n', style='bold')
+        body_text.append(f'From:  {e["fromname"]} <{e["fromemail"]}>\n', style='bold')
+        body_text.append(f'Date:  {e["date"].strftime("%Y-%m-%d %H:%M %z")}\n', style='bold')
+        if msgid := e.get('msgid', ''):
+            body_text.append(f'Msgid: <{msgid}>\n', style='bold')
         body_text.append('\n')
         for line in body.splitlines():
             if line.startswith('> ') or line == '>':
@@ -231,16 +241,51 @@ def _write_followup_comments(
             else:
                 body_text.append(line)
             body_text.append('\n')
+        depth = e.get('depth', 0)
+        title_text = Text()
+        title_text.append(initials)
+        title_text.append('  ↩', style='dim')
         panel = Panel(
             body_text,
             box=box.ROUNDED,
             border_style=colour,
-            title=initials,
+            title=title_text,
             title_align='left',
             expand=True,
             padding=(0, 1),
         )
-        viewer.write(panel)
+        if depth > 0:
+            viewer.write(Padding(panel, pad=(0, 0, 0, depth * 2)))
+        else:
+            viewer.write(panel)
+
+
+_FOLLOWUP_MAX_DEPTH = 5
+
+
+def _get_followup_depth(
+    in_reply_to: Optional[str],
+    patch_msgids: Dict[str, int],
+    msgid_map: Dict[str, 'b4.LoreMessage'],
+) -> int:
+    """Return the threading depth of a follow-up relative to its patch.
+
+    Depth 0 = direct reply to a patch; depth N = N hops through follow-up
+    replies. Capped at _FOLLOWUP_MAX_DEPTH to prevent runaway indentation.
+    """
+    depth = 0
+    seen: Set[str] = set()
+    current = in_reply_to
+    while current and current not in seen:
+        if current in patch_msgids:
+            break
+        seen.add(current)
+        lmsg = msgid_map.get(current)
+        if lmsg is None:
+            break
+        depth += 1
+        current = lmsg.in_reply_to
+    return min(depth, _FOLLOWUP_MAX_DEPTH)
 
 
 def _resolve_patch_for_followup(
@@ -339,6 +384,50 @@ def _write_diff_line(viewer: 'RichLog', line: str) -> None:
         viewer.write(Text(line, style='red'))
     else:
         viewer.write(Text(line))
+
+
+def _render_email_to_viewer(viewer: 'RichLog', msg: email.message.EmailMessage) -> None:
+    """Render an EmailMessage into a RichLog, headers first then body.
+
+    Subject, To and Cc labels are bold.  Address headers are word-wrapped
+    using LoreMessage.wrap_header.  Quoted body lines (>) are dim cyan,
+    separator lines (---) are dim.
+    """
+    for hdr in ('From', 'Subject', 'To', 'Cc'):
+        val = msg[hdr]
+        if not val:
+            continue
+        val = str(val)
+        if hdr.lower() in ('to', 'cc'):
+            wrapped = b4.LoreMessage.wrap_header(
+                (hdr, val), transform='decode').decode(errors='replace')
+            first_line, *rest = wrapped.splitlines()
+            colon = first_line.find(':')
+            hdr_text = Text()
+            if colon >= 0:
+                hdr_text.append(first_line[:colon + 1], style='bold')
+                hdr_text.append(first_line[colon + 1:])
+            else:
+                hdr_text.append(first_line)
+            for r in rest:
+                hdr_text.append('\n')
+                hdr_text.append(r)
+            viewer.write(hdr_text)
+        else:
+            hdr_text = Text()
+            hdr_text.append(f'{hdr}:', style='bold')
+            hdr_text.append(f' {val}')
+            viewer.write(hdr_text)
+    viewer.write('')
+    payload = msg.get_payload(decode=True)
+    body = payload.decode(errors='replace') if isinstance(payload, bytes) else str(payload or '')
+    for line in body.splitlines():
+        if line.startswith('>'):
+            viewer.write(Text(line, style='dim cyan'))
+        elif line.startswith('---'):
+            viewer.write(Text(line, style='dim'))
+        else:
+            viewer.write(Text(line))
 
 
 def _suspend_to_shell(hint: str = 'b4 review') -> None:
