@@ -23,7 +23,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from b4.review_tui._common import (
-    logger, REVIEW_MARKER, _REVIEWER_COLOURS,
+    logger, PATCH_STATE_MARKERS, _REVIEWER_COLOURS,
     _has_review_data, _make_initials, _wait_for_enter,
     _write_comments, _write_followup_comments,
     _write_followup_trailers, _resolve_patch_for_followup,
@@ -37,18 +37,36 @@ from b4.review_tui._modals import (
 class PatchListItem(ListItem):
     """A single entry in the patch list."""
 
-    def __init__(self, label: str, patch_idx: int) -> None:
+    def __init__(self, label: str, patch_idx: int, state: str = '') -> None:
         super().__init__()
         self.patch_idx = patch_idx
         self._label_text = label
+        self._state = state
 
     def compose(self) -> ComposeResult:
         yield Label(self._label_text, markup=False)
 
-    def update_label(self, label: str) -> None:
+    def on_mount(self) -> None:
+        self._apply_state_style()
+
+    def _apply_state_style(self) -> None:
+        lbl = self.query_one(Label)
+        if self._state == 'skip':
+            lbl.styles.text_opacity = '40%'
+            lbl.styles.text_style = 'none'
+        elif self._state == 'done':
+            lbl.styles.text_opacity = '100%'
+            lbl.styles.text_style = 'bold'
+        else:
+            lbl.styles.text_opacity = '100%'
+            lbl.styles.text_style = 'none'
+
+    def update_label(self, label: str, state: str = '') -> None:
         self._label_text = label
+        self._state = state
         lbl = self.query_one(Label)
         lbl.update(label)
+        self._apply_state_style()
 
 
 class FollowupItem(ListItem):
@@ -139,6 +157,7 @@ class ReviewApp(App[None]):
     BINDING_GROUPS = {
         'trailer': 'Review', 'review_diff': 'Review', 'edit_note': 'Review',
         'edit_reply': 'Review', 'followups': 'Review', 'agent': 'Review',
+        'patch_done': 'Review', 'patch_skip': 'Review',
         'edit_tocc': 'Review', 'send': 'Review',
         'toggle_preview': 'App', 'suspend': 'App', 'quit': 'App', 'help': 'App',
     }
@@ -156,7 +175,8 @@ class ReviewApp(App[None]):
         Binding('r', 'edit_reply', 'reply'),
         Binding('f', 'followups', 'followups'),
         Binding('a', 'agent', 'agent'),
-        Binding('x', 'check', 'Check', show=False),
+        Binding('d', 'patch_done', 'done'),
+        Binding('x', 'patch_skip', 'skip'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings
@@ -255,21 +275,21 @@ class ReviewApp(App[None]):
 
         # Cover letter entry (skip if no actual cover letter)
         if self._has_cover:
-            has_review = _has_review_data(self._series.get('reviews', {}))
-            mark = REVIEW_MARKER if has_review else ' '
+            state = b4.review._get_patch_state(self._series, self._usercfg)
+            mark = PATCH_STATE_MARKERS[state]
             cover_label = f'{mark} 0/{total} {self._cover_subject_clean[:40]}'
-            lv.append(PatchListItem(cover_label, 0))
+            lv.append(PatchListItem(cover_label, 0, state))
             self._append_followup_items(lv, 0)
 
         # Patch entries
         for idx, sha in enumerate(self._commit_shas):
             patch_num = idx + 1
             subject = self._commit_subjects[idx] if idx < len(self._commit_subjects) else '(unknown)'
-            reviews = self._patches[idx].get('reviews', {}) if idx < len(self._patches) else {}
-            has_review = _has_review_data(reviews)
-            mark = REVIEW_MARKER if has_review else ' '
+            patch_meta = self._patches[idx] if idx < len(self._patches) else {}
+            state = b4.review._get_patch_state(patch_meta, self._usercfg)
+            mark = PATCH_STATE_MARKERS[state]
             label = f'{mark} {patch_num}/{total} {subject[:40]}'
-            lv.append(PatchListItem(label, patch_num))
+            lv.append(PatchListItem(label, patch_num, state))
             self._append_followup_items(lv, patch_num)
 
         if lv.children:
@@ -302,18 +322,18 @@ class ReviewApp(App[None]):
             return
         total = len(self._commit_shas)
         if display_idx == 0:
-            reviews = self._series.get('reviews', {})
+            target = self._series
             subject = self._cover_subject_clean[:40]
             label_num = f'0/{total}'
         else:
             patch_idx = display_idx - 1
             subject = self._commit_subjects[patch_idx] if patch_idx < len(self._commit_subjects) else '(unknown)'
-            reviews = self._patches[patch_idx].get('reviews', {}) if patch_idx < len(self._patches) else {}
+            target = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
             label_num = f'{display_idx}/{total}'
             subject = subject[:40]
-        has_review = _has_review_data(reviews)
-        mark = REVIEW_MARKER if has_review else ' '
-        item.update_label(f'{mark} {label_num} {subject}')
+        state = b4.review._get_patch_state(target, self._usercfg)
+        mark = PATCH_STATE_MARKERS[state]
+        item.update_label(f'{mark} {label_num} {subject}', state)
 
     def _show_content(self, display_idx: int) -> None:
         """Show the diff/cover or email preview for the given index."""
@@ -501,6 +521,13 @@ class ReviewApp(App[None]):
                 review = {}
                 patch_meta = None
             commit_sha = self._commit_shas[patch_idx] if patch_idx < len(self._commit_shas) else None
+
+        target = self._series if display_idx == 0 else patch_meta
+        if target and b4.review._get_patch_state(target, self._usercfg) == 'skip':
+            total = len(self._commit_shas)
+            label = 'cover' if display_idx == 0 else f'{display_idx}/{total}'
+            viewer.write(f'[dim]Patch {label} is marked as skipped — no email will be sent.[/dim]')
+            return
 
         if not review or not (review.get('trailers') or review.get('reply', '')
                               or review.get('comments') or review.get('note', '')):
@@ -1184,9 +1211,54 @@ class ReviewApp(App[None]):
         _tocc_screen = ToCcScreen(to_addrs, cc_addrs, bcc_addrs, show_apply_all)
         self.push_screen(_tocc_screen, _on_tocc_result)
 
+    def action_patch_done(self) -> None:
+        """Toggle the explicit 'done' state on the current patch."""
+        target = self._get_current_review_target()
+        if not target:
+            return
+        current = b4.review._get_patch_state(target, self._usercfg)
+        new_state = '' if current == 'done' else 'done'
+        b4.review._set_patch_state(target, self._usercfg, new_state)
+        self._save_tracking()
+        self._refresh_patch_item(self._selected_idx)
+        total = len(self._commit_shas)
+        label = 'cover' if self._selected_idx == 0 else f'{self._selected_idx}/{total}'
+        self.notify(f'{label} marked as done' if new_state else f'{label} unmarked done')
+
+    def action_patch_skip(self) -> None:
+        """Toggle the explicit 'skip' state on the current patch."""
+        target = self._get_current_review_target()
+        if not target:
+            return
+        current = b4.review._get_patch_state(target, self._usercfg)
+        new_state = '' if current == 'skip' else 'skip'
+        b4.review._set_patch_state(target, self._usercfg, new_state)
+        self._save_tracking()
+        self._refresh_patch_item(self._selected_idx)
+        if self._preview_mode:
+            self._show_content(self._selected_idx)
+        total = len(self._commit_shas)
+        label = 'cover' if self._selected_idx == 0 else f'{self._selected_idx}/{total}'
+        self.notify(f'{label} skipped' if new_state else f'{label} unskipped')
+
     def action_send(self) -> None:
         """Collect review emails and show send confirmation dialog."""
         self._save_tracking()
+
+        draft_patches = []
+        total = len(self._commit_shas)
+        all_targets = [(0, self._series)] + [
+            (i + 1, p) for i, p in enumerate(self._patches)
+        ]
+        for display_idx, target in all_targets:
+            if b4.review._get_patch_state(target, self._usercfg) == 'draft':
+                label = 'cover' if display_idx == 0 else f'{display_idx}/{total}'
+                draft_patches.append(label)
+        if draft_patches:
+            self.notify(
+                f'Still in draft: {", ".join(draft_patches)}. Mark as done (d) or skip (x) first.',
+                severity='warning')
+            return
 
         msgs = b4.review.collect_review_emails(
             self._series, self._patches, self._cover_text,

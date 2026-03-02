@@ -450,6 +450,45 @@ def _cleanup_review(target: Dict[str, Any], usercfg: Dict[str, str]) -> None:
         del target['reviews']
 
 
+_APPROVAL_TRAILER_KEYS = frozenset({'reviewed-by', 'acked-by'})
+_NACK_TRAILER_KEY = 'nacked-by'
+
+
+def _get_patch_state(target: Dict[str, Any], usercfg: Dict[str, str]) -> str:
+    """Derive the effective per-patch state for the current user.
+
+    Returns 'done', 'draft', 'skip', or '' (no state).
+    Only 'done' and 'skip' are stored explicitly; other states are derived.
+    """
+    review = _get_my_review(target, usercfg)
+    explicit = str(review.get('patch-state', ''))
+    if explicit in ('skip', 'done'):
+        return explicit
+    trailer_keys = {
+        t.split(':', 1)[0].strip().lower()
+        for t in review.get('trailers', [])
+    }
+    if _NACK_TRAILER_KEY in trailer_keys:
+        return 'draft'
+    if trailer_keys & _APPROVAL_TRAILER_KEYS:
+        return 'done'
+    if review.get('comments') or review.get('reply', ''):
+        return 'draft'
+    return ''
+
+
+def _set_patch_state(target: Dict[str, Any], usercfg: Dict[str, str],
+                     state: str) -> None:
+    """Store an explicit patch state ('done', 'skip', or '' to clear)."""
+    if state:
+        review = _ensure_my_review(target, usercfg)
+        review['patch-state'] = state
+    else:
+        review = _get_my_review(target, usercfg)
+        review.pop('patch-state', None)
+        _cleanup_review(target, usercfg)
+
+
 def _extract_patch_comments(edited: str, track_content: bool = False,
                             delimited_only: bool = False) -> List[Dict[str, Any]]:
     """Walk the edited patch and extract maintainer comments.
@@ -1620,6 +1659,8 @@ def collect_review_emails(
     for _reviewer_email, cover_review in series.get('reviews', {}).items():
         if not cover_review:
             continue
+        if cover_review.get('patch-state') == 'skip':
+            continue
         msg = _build_review_email(series, None, cover_review, cover_text,
                                   topdir, None)
         if msg is not None:
@@ -1629,6 +1670,8 @@ def collect_review_emails(
     for idx, patch_meta in enumerate(patches):
         for _reviewer_email, patch_review in patch_meta.get('reviews', {}).items():
             if not patch_review:
+                continue
+            if patch_review.get('patch-state') == 'skip':
                 continue
             commit_sha = commit_shas[idx] if idx < len(commit_shas) else None
             msg = _build_review_email(series, patch_meta, patch_review, cover_text,

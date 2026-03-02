@@ -1031,7 +1031,23 @@ class TrackingApp(App[Optional[str]]):
                           review_branch: str, series: Dict[str, Any]) -> None:
         """Push the TakeScreen dialog."""
         num_patches = series.get('num_patches', 0) or 0
-        take_screen = TakeScreen(target_branch, review_branch, num_patches=num_patches)
+        # Start with user config preference; skip detection below may override it.
+        _valid_take_methods = {'merge', 'linear', 'cherry-pick'}
+        b4cfg = b4.get_config_from_git(r'b4\..*')
+        cfg_method = str(b4cfg.get('review-default-take-method', ''))
+        default_method: Optional[str] = cfg_method if cfg_method in _valid_take_methods else None
+        topdir = b4.git_get_toplevel()
+        if topdir:
+            try:
+                _cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                usercfg = b4.get_user_config()
+                patches = tracking.get('patches', [])
+                if any(b4.review._get_patch_state(p, usercfg) == 'skip' for p in patches):
+                    default_method = 'cherry-pick'
+            except Exception:
+                pass
+        take_screen = TakeScreen(target_branch, review_branch, num_patches=num_patches,
+                                 default_method=default_method)
         self.push_screen(
             take_screen,
             callback=lambda confirmed: self._on_take_confirmed(
@@ -1068,7 +1084,15 @@ class TrackingApp(App[Optional[str]]):
             if not patches:
                 self.notify('No patches found in tracking data', severity='error')
                 return
-            pick_screen = CherryPickScreen(patches)
+            usercfg = b4.get_user_config()
+            preselected = [
+                i + 1 for i, p in enumerate(patches)
+                if b4.review._get_patch_state(p, usercfg) != 'skip'
+            ]
+            # Only pre-populate if some patches are actually skipped
+            if len(preselected) == len(patches):
+                preselected = []
+            pick_screen = CherryPickScreen(patches, preselected=preselected or None)
             self.push_screen(
                 pick_screen,
                 callback=lambda picked: self._on_cherrypick_confirmed(

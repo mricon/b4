@@ -3,6 +3,7 @@ import datetime
 import io
 import os
 from email.message import EmailMessage
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -1664,3 +1665,94 @@ class TestFollowupBlob:
 
         assert sha_updated is not None
         assert sha_updated != sha_initial
+
+
+class TestPatchState:
+    """Tests for _get_patch_state() and _set_patch_state()."""
+
+    _USERCFG = {'email': 'reviewer@example.com', 'name': 'Test Reviewer'}
+
+    def _make_target(self, review_data: dict | None = None) -> dict:
+        """Return a minimal target dict, optionally with review data."""
+        if review_data is None:
+            return {}
+        return {'reviews': {self._USERCFG['email']: {'name': 'Test Reviewer', **review_data}}}
+
+    def test_no_data(self) -> None:
+        """Empty reviews dict → no state."""
+        target = self._make_target()
+        assert b4.review._get_patch_state(target, self._USERCFG) == ''
+
+    def test_note_only(self) -> None:
+        """A private note alone never triggers 'draft'."""
+        target = self._make_target({'note': 'just a private note'})
+        assert b4.review._get_patch_state(target, self._USERCFG) == ''
+
+    def test_comments(self) -> None:
+        """Inline comments list → 'draft'."""
+        target = self._make_target({'comments': [{'path': 'a.c', 'line': 1, 'text': 'hi'}]})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+    def test_reply(self) -> None:
+        """Non-empty reply text → 'draft'."""
+        target = self._make_target({'reply': 'Looks good overall but...'})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+    def test_reviewed_by(self) -> None:
+        """Reviewed-by trailer → 'done'."""
+        target = self._make_target({'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>']})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
+    def test_acked_by(self) -> None:
+        """Acked-by trailer → 'done'."""
+        target = self._make_target({'trailers': ['Acked-by: Test Reviewer <reviewer@example.com>']})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
+    def test_nacked_by_alone(self) -> None:
+        """NACKed-by trailer alone → 'draft' (explanation required)."""
+        target = self._make_target({'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>']})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+    def test_nacked_by_with_acked(self) -> None:
+        """NACK wins over Acked-by — result is still 'draft'."""
+        target = self._make_target({'trailers': [
+            'NACKed-by: Test Reviewer <reviewer@example.com>',
+            'Acked-by: Test Reviewer <reviewer@example.com>',
+        ]})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+    def test_explicit_done(self) -> None:
+        """Stored patch-state=done with no other content → 'done'."""
+        target = self._make_target({'patch-state': 'done'})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
+    def test_explicit_skip(self) -> None:
+        """Stored patch-state=skip → 'skip'."""
+        target = self._make_target({'patch-state': 'skip'})
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'skip'
+
+    def test_explicit_done_beats_nack(self) -> None:
+        """Explicit done overrides a NACKed-by trailer (human override wins)."""
+        target = self._make_target({
+            'patch-state': 'done',
+            'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>'],
+        })
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
+    def test_set_and_clear(self) -> None:
+        """_set_patch_state done then clear → state '' and entry cleaned up."""
+        target: dict[str, Any] = {}
+        b4.review._set_patch_state(target, self._USERCFG, 'done')
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+        b4.review._set_patch_state(target, self._USERCFG, '')
+        assert b4.review._get_patch_state(target, self._USERCFG) == ''
+        # The review entry should have been cleaned up entirely
+        assert not target.get('reviews', {})
+
+    def test_set_skip_preserves_entry(self) -> None:
+        """_set_patch_state skip keeps the review entry (not GC'd)."""
+        target: dict[str, Any] = {}
+        b4.review._set_patch_state(target, self._USERCFG, 'skip')
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'skip'
+        # Entry must still be present so the skip is persisted
+        assert self._USERCFG['email'] in target.get('reviews', {})

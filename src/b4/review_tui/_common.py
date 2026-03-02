@@ -34,8 +34,13 @@ from rich.text import Text
 logger = b4.logger
 
 
-# Unicode marker for patches that have review data
-REVIEW_MARKER = '\u2714'  # ✔
+# Per-patch state indicators — same glyphs as _tracking_app._STATUS_SYMBOLS
+PATCH_STATE_MARKERS: Dict[str, str] = {
+    '':      ' ',
+    'draft': '\u270e',  # ✎ lower right pencil  (= reviewing)
+    'done':  '\u2713',  # ✓ check mark           (= thanked)
+    'skip':  '\u2715',  # ✕ multiplication x      (= gone)
+}
 
 # Rich markup for CI check indicators (● = \u25cf)
 CI_COLOURS = {

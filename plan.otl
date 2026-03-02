@@ -77,14 +77,23 @@ v0.15
 		[X] _prepare_review_session() calls ensure_thread_context_blob() so agent always
 		  has context before the review app starts
 		[X] agent-reviewer.md documents thread-context-blob and how to use it
-	[_] Differentiate drafted vs sent review completion indicators (medium)
-	[_] Recently-used branch list in take dialog (medium)
-	[_] Cherry-pick patch selection during review checkout, not just take (medium)
-	[_] Better followup threading detail and message-id display (medium)
-	[_] Per-patch signoffs and Link tags with merge take strategy (medium)
-	[_] "Applied but not taken" state for CI-testing workflows (hard)
-	[_] Non-Patchwork CI integration for external tool results (hard)
-	[_] Reply/comment mode UX redesign to reduce mode-switching confusion (hard)
+	[X] Differentiate drafted vs sent review completion indicators
+		[X] Per-patch state machine: draft/done/skip with reactive derivation
+		[X] Visual indicators: ✎/✓/✕ glyphs with opacity/bold styling
+		[X] d/x key bindings to toggle done/skip in review and preview modes
+		[X] Draft guard on send action with actionable warning
+		[X] Skipped patches excluded from collect_review_emails
+		[X] Cherry-pick auto-default and pre-deselection for skipped patches
+		[X] review-default-take-method config option (merge/linear/cherry-pick)
+	[_] Recently-used branch list in take dialog
+	[X] Cherry-pick patch selection honours skip state
+		[X] Skipped patches auto-deselected in cherry-pick dialog
+		[X] Auto-defaults to cherry-pick method when any patch is skipped
+	[_] Better followup threading detail and message-id display
+	[_] Per-patch signoffs and Link tags with merge take strategy
+	[_] "Applied but not taken" state for CI-testing workflows
+	[_] Non-Patchwork CI integration for external tool results
+	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails
 [ ] `b4 ty` interactive mode
 	[_] Similar to above, a mode to review auto-ty messages and drop false-positives

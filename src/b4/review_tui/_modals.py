@@ -542,18 +542,20 @@ class TakeScreen(ModalScreen[bool]):
     """
 
     def __init__(self, target_branch: str, review_branch: str,
-                 num_patches: int = 0) -> None:
+                 num_patches: int = 0,
+                 default_method: Optional[str] = None) -> None:
         """Initialize take screen.
 
         Args:
             target_branch: Pre-populated target branch name
             review_branch: The review branch to take
             num_patches: Number of patches in the series
+            default_method: Override the default take method selection
         """
         super().__init__()
         self._target_branch = target_branch
         self._review_branch = review_branch
-        self._default_method = 'linear' if num_patches == 1 else 'merge'
+        self._default_method = default_method or ('linear' if num_patches == 1 else 'merge')
         # Results set after continue
         self.target_result: str = ''
         self.method_result: str = self._default_method
@@ -625,24 +627,35 @@ class CherryPickScreen(ModalScreen[bool]):
     .cherrypick-checkbox {
         margin: 0;
     }
+    #cherrypick-skip-note {
+        color: $warning;
+        margin-bottom: 1;
+    }
     #cherrypick-hint {
         margin-top: 1;
         color: $text-muted;
     }
     """
 
-    def __init__(self, patches: List[Dict[str, Any]]) -> None:
+    def __init__(self, patches: List[Dict[str, Any]],
+                 preselected: Optional[List[int]] = None) -> None:
         super().__init__()
         self._patches = patches
+        self._preselected: List[int] = preselected if preselected is not None else []
         self.selected_indices: List[int] = []
 
     def compose(self) -> ComposeResult:
+        has_preselected = bool(self._preselected)
         with Vertical(id='cherrypick-dialog'):
             yield Static('Select patches to apply', id='cherrypick-title')
+            if has_preselected:
+                yield Static('Skipped patches are pre-deselected.',
+                             id='cherrypick-skip-note')
             with Vertical(id='cherrypick-list'):
                 for i, patch in enumerate(self._patches):
                     title = patch.get('title', f'Patch {i + 1}')
-                    yield Checkbox(Text(f' {i + 1:3d}. {title}'), value=False,
+                    checked = (i + 1) in self._preselected if has_preselected else False
+                    yield Checkbox(Text(f' {i + 1:3d}. {title}'), value=checked,
                                    id=f'cherrypick-{i}', classes='cherrypick-checkbox')
             yield Static('y confirm  |  Escape cancel', id='cherrypick-hint')
 
