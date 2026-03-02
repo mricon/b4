@@ -154,6 +154,8 @@ DEFAULT_CONFIG: ConfigDictT = {
     'gpgbin': None,
     # When sending mail, use this sendemail identity configuration
     'sendemail-identity': None,
+    # Default target branch for review take flow
+    'review-target-branch': None,
 }
 
 # This is where we store actual config
@@ -3935,6 +3937,20 @@ def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
     if len(lines) == 1:
         topdir = lines[0]
     return topdir
+
+
+def git_get_common_dir(path: Optional[str] = None) -> Optional[str]:
+    gitargs = ['rev-parse', '--git-common-dir']
+    lines = git_get_command_lines(path, gitargs)
+    if len(lines) == 1:
+        result = lines[0]
+        if not os.path.isabs(result):
+            # --git-common-dir returns a relative path from cwd
+            topdir = git_get_toplevel(path)
+            if topdir:
+                result = os.path.normpath(os.path.join(topdir, result))
+        return result
+    return None
 
 
 def format_addrs(pairs: List[Tuple[str, str]], clean: bool = True,

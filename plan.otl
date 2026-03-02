@@ -38,7 +38,27 @@ v0.15
 	[X] Prerequisite series handling
 	[X] Revision tracking and discovery
 	[X] Patchwork state synchronisation on review lifecycle transitions
-	[_] Update review branch to a newer revision
+	[X] Update review branch to a newer revision
+[ ] `b4 review` feedback
+	[X] Worktree support and configurable default target branch
+		[X] Add git_get_common_dir() helper using git rev-parse --git-common-dir
+		[X] Fix get_repo_identifier() to resolve metadata via shared .git directory
+		[X] Fix cmd_enroll() to write metadata from worktrees to shared .git
+		[X] Handle already-enrolled repos gracefully (exit 0 for same id, exit 1 for conflict)
+		[X] Add review-target-branch config option to DEFAULT_CONFIG
+		[X] Use review-target-branch as first choice in take flow branch defaulting
+		[X] Update tests for real worktree scenarios instead of faked .git files
+	[_] Cross-machine review synchronisation with privacy (hard)
+	[_] Differentiate drafted vs sent review completion indicators (medium)
+	[_] Show followup activity count in series list (medium)
+	[_] Recently-used branch list in take dialog (medium)
+	[_] Cherry-pick patch selection during review checkout, not just take (medium)
+	[_] Better followup threading detail and message-id display (medium)
+	[_] Per-patch signoffs and Link tags with merge take strategy (medium)
+	[_] "Applied but not taken" state for CI-testing workflows (hard)
+	[_] Non-Patchwork CI integration for external tool results (hard)
+	[_] Reply/comment mode UX redesign to reduce mode-switching confusion (hard)
+	[X] Respect sendemail.from in review emails
 [ ] `b4 ty` interactive mode
 	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
 [ ] `b4 trailers` interactive mode

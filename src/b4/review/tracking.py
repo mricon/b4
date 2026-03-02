@@ -105,9 +105,8 @@ def get_repo_metadata_path(gitdir: str) -> str:
 
 def get_repo_identifier(topdir: str) -> Optional[str]:
     """Get the project identifier from a repository's metadata file."""
-    gitdir = os.path.join(topdir, '.git')
-    if not os.path.isdir(gitdir):
-        # Worktree or bare repo - no metadata file support
+    gitdir = b4.git_get_common_dir(topdir)
+    if not gitdir:
         return None
     metadata_path = get_repo_metadata_path(gitdir)
     if not os.path.exists(metadata_path):
@@ -160,15 +159,9 @@ def cmd_enroll(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
         repo_path = repo_path_opt
 
-    # Check if it's a git repository
-    gitdir = os.path.join(repo_path, '.git')
-    is_worktree = False
-
-    if os.path.isfile(gitdir):
-        # This is a worktree - .git is a file pointing to the main repo
-        is_worktree = True
-        logger.debug('Detected worktree at %s', repo_path)
-    elif not os.path.isdir(gitdir):
+    # Resolve the shared .git directory (works for both main repos and worktrees)
+    gitdir = b4.git_get_common_dir(repo_path)
+    if not gitdir:
         logger.critical('Not a git repository: %s', repo_path)
         sys.exit(1)
 
@@ -184,11 +177,13 @@ def cmd_enroll(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Check if this repository is already enrolled
-    if not is_worktree:
-        existing_id = get_repo_identifier(repo_path)
-        if existing_id:
-            logger.critical('Repository already enrolled with identifier: %s', existing_id)
-            sys.exit(1)
+    existing_id = get_repo_identifier(repo_path)
+    if existing_id:
+        if existing_id == identifier:
+            logger.info('Repository already enrolled with identifier: %s', existing_id)
+            sys.exit(0)
+        logger.critical('Repository already enrolled with identifier: %s', existing_id)
+        sys.exit(1)
 
     # Check if database already exists
     if db_exists(identifier):
@@ -208,13 +203,9 @@ def cmd_enroll(cmdargs: argparse.Namespace) -> None:
         conn.close()
         logger.info('Created tracking database: %s', get_db_path(identifier))
 
-    # Create metadata file in .git directory if not a worktree
-    if not is_worktree:
-        save_repo_metadata(gitdir, identifier)
-        logger.info('Created metadata file: %s', get_repo_metadata_path(gitdir))
-    else:
-        logger.info('Worktree detected - no metadata file created')
-        logger.info('Use -i %s when running track commands in this worktree', identifier)
+    # Create metadata file in shared .git directory
+    save_repo_metadata(gitdir, identifier)
+    logger.info('Created metadata file: %s', get_repo_metadata_path(gitdir))
 
     logger.info('Project enrolled successfully with identifier: %s', identifier)
 

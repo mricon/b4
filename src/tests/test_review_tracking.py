@@ -5,6 +5,7 @@ from unittest import mock
 
 import pytest
 
+import b4
 from b4.review import tracking as review_tracking
 
 
@@ -248,19 +249,19 @@ class TestRepoMetadata:
         identifier = review_tracking.get_repo_identifier(gitdir)
         assert identifier is None
 
-    def test_get_repo_identifier_returns_none_for_worktree(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """Verify get_repo_identifier returns None for worktrees."""
-        # Simulate a worktree by making .git a file instead of directory
-        worktree_dir = os.path.join(str(tmp_path), 'worktree')
-        os.makedirs(worktree_dir)
-        git_file = os.path.join(worktree_dir, '.git')
-        with open(git_file, 'w') as f:
-            f.write('gitdir: /some/path/.git/worktrees/name\n')
+    def test_get_repo_identifier_resolves_from_worktree(self, gitdir: str) -> None:
+        """Verify get_repo_identifier resolves identifier from worktree."""
+        # Enroll the main repo
+        git_dir = os.path.join(gitdir, '.git')
+        review_tracking.save_repo_metadata(git_dir, 'worktree-project')
+
+        # Create a real worktree
+        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
+        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        assert out == 0
 
         identifier = review_tracking.get_repo_identifier(worktree_dir)
-        assert identifier is None
+        assert identifier == 'worktree-project'
 
 
 class TestResolveIdentifier:
@@ -420,8 +421,7 @@ class TestCmdEnroll:
 
         # Create a second git repo
         second_repo = os.path.join(str(tmp_path), 'second-repo')
-        os.makedirs(second_repo)
-        os.makedirs(os.path.join(second_repo, '.git'))
+        b4.git_run_command(None, ['init', second_repo])
 
         # Enroll second repo with same identifier - user confirms
         cmdargs2 = argparse.Namespace(
@@ -430,7 +430,7 @@ class TestCmdEnroll:
         )
         review_tracking.cmd_enroll(cmdargs2)
 
-        # Metadata file should exist in second repo
+        # Metadata file should exist in second repo's .git
         metadata_path = os.path.join(second_repo, '.git', 'b4-review', 'metadata.json')
         assert os.path.exists(metadata_path)
         mock_input.assert_called_once()
@@ -449,8 +449,7 @@ class TestCmdEnroll:
 
         # Create a second git repo
         second_repo = os.path.join(str(tmp_path), 'second-repo')
-        os.makedirs(second_repo)
-        os.makedirs(os.path.join(second_repo, '.git'))
+        b4.git_run_command(None, ['init', second_repo])
 
         # Enroll second repo with same identifier - user declines
         cmdargs2 = argparse.Namespace(
@@ -466,16 +465,14 @@ class TestCmdEnroll:
         metadata_path = os.path.join(second_repo, '.git', 'b4-review', 'metadata.json')
         assert not os.path.exists(metadata_path)
 
-    def test_enroll_worktree_no_metadata_file(
-        self, tmp_path: pytest.TempPathFactory
+    def test_enroll_from_worktree_writes_metadata_to_common_dir(
+        self, gitdir: str
     ) -> None:
-        """Verify enroll doesn't create metadata file for worktrees."""
-        # Create a fake worktree (directory with .git as a file)
-        worktree_dir = os.path.join(str(tmp_path), 'worktree')
-        os.makedirs(worktree_dir)
-        git_file = os.path.join(worktree_dir, '.git')
-        with open(git_file, 'w') as f:
-            f.write('gitdir: /some/path/.git/worktrees/name\n')
+        """Verify enroll from a worktree writes metadata to the shared .git."""
+        # Create a real worktree
+        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
+        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        assert out == 0
 
         cmdargs = argparse.Namespace(
             repo_path=worktree_dir,
@@ -485,9 +482,55 @@ class TestCmdEnroll:
 
         # Database should be created
         assert review_tracking.db_exists('worktree-test')
-        # But no metadata directory should exist
-        metadata_dir = os.path.join(worktree_dir, '.git', 'b4-review')
-        assert not os.path.exists(metadata_dir)
+        # Metadata should exist in the main repo's .git directory
+        metadata_path = os.path.join(gitdir, '.git', 'b4-review', 'metadata.json')
+        assert os.path.exists(metadata_path)
+
+    def test_enroll_from_worktree_already_enrolled(self, gitdir: str) -> None:
+        """Verify enrolling from worktree exits 0 when repo already enrolled."""
+        # Enroll the main repo first
+        cmdargs = argparse.Namespace(
+            repo_path=gitdir,
+            identifier='main-id'
+        )
+        review_tracking.cmd_enroll(cmdargs)
+
+        # Create a real worktree
+        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
+        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        assert out == 0
+
+        # Enrolling from worktree with same identifier should exit 0
+        cmdargs2 = argparse.Namespace(
+            repo_path=worktree_dir,
+            identifier='main-id'
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            review_tracking.cmd_enroll(cmdargs2)
+        assert exc_info.value.code == 0
+
+    def test_enroll_from_worktree_conflicting_identifier(self, gitdir: str) -> None:
+        """Verify enrolling from worktree fails with a different identifier."""
+        # Enroll the main repo first
+        cmdargs = argparse.Namespace(
+            repo_path=gitdir,
+            identifier='main-id'
+        )
+        review_tracking.cmd_enroll(cmdargs)
+
+        # Create a real worktree
+        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
+        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        assert out == 0
+
+        # Enrolling from worktree with different identifier should fail
+        cmdargs2 = argparse.Namespace(
+            repo_path=worktree_dir,
+            identifier='different-id'
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            review_tracking.cmd_enroll(cmdargs2)
+        assert exc_info.value.code == 1
 
 
 class TestCmdTrack:
@@ -829,3 +872,41 @@ class TestUpdateSeriesStatus:
         # Should not raise
         review_tracking.update_series_status(conn, 'nonexistent', 'reviewing')
         conn.close()
+
+
+class TestGitGetCommonDir:
+    """Tests for git_get_common_dir()."""
+
+    def test_returns_git_dir_for_main_repo(self, gitdir: str) -> None:
+        """Verify git_get_common_dir returns .git path for a normal repo."""
+        result = b4.git_get_common_dir(gitdir)
+        assert result is not None
+        expected = os.path.join(gitdir, '.git')
+        assert os.path.normpath(result) == os.path.normpath(expected)
+
+    def test_returns_shared_git_dir_from_worktree(self, gitdir: str) -> None:
+        """Verify git_get_common_dir returns the shared .git from a worktree."""
+        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
+        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        assert out == 0
+
+        result = b4.git_get_common_dir(worktree_dir)
+        assert result is not None
+        expected = os.path.join(gitdir, '.git')
+        assert os.path.normpath(result) == os.path.normpath(expected)
+
+    def test_returns_none_for_non_git_dir(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify git_get_common_dir returns None outside a git repo."""
+        non_git = os.path.join(str(tmp_path), 'not-a-repo')
+        os.makedirs(non_git)
+        result = b4.git_get_common_dir(non_git)
+        assert result is None
+
+
+class TestReviewTargetBranch:
+    """Tests for review-target-branch config."""
+
+    def test_default_config_has_review_target_branch(self) -> None:
+        """Verify review-target-branch is in DEFAULT_CONFIG."""
+        assert 'review-target-branch' in b4.DEFAULT_CONFIG
+        assert b4.DEFAULT_CONFIG['review-target-branch'] is None

@@ -858,7 +858,11 @@ class TrackingApp(App[Optional[str]]):
             return
 
         # Determine the target branch suggestion
-        if self._original_branch:
+        config = b4.get_main_config()
+        cfg_branch = config.get('review-target-branch')
+        if cfg_branch:
+            target_branch = str(cfg_branch)
+        elif self._original_branch:
             target_branch = self._original_branch
         else:
             # Fall back: check for master, main, or empty
