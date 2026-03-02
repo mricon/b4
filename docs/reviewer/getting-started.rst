@@ -62,7 +62,7 @@ B4 fetches the series from lore, discovers all available revisions
 **Quick actions in the tracking list:**
 
 - ``v`` — view the series (cover letter + patches) in a modal
-- ``u`` — update: fetch latest trailers and check for newer revisions
+- ``u`` — update: fetch latest trailers, check for newer revisions, and refresh follow-up counts
 - ``a`` — open the action menu (context-sensitive)
 - ``q`` — quit
 
@@ -145,7 +145,8 @@ Waiting for a new revision
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 If your review requested changes, open the action menu (``a``) and
 select **Mark as waiting on new revision**. The series moves to
-**waiting** status and sorts to the bottom of the tracking list.
+**waiting** status and sorts into its own Waiting group below the
+active series.
 
 When you press ``u`` to update all tracked series, b4 checks lore for
 newer revisions. If one is found, the series is highlighted and you

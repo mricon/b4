@@ -87,11 +87,46 @@ Status         Meaning
 ``new``        Freshly tracked, not yet reviewed
 ``reviewing``  Review branch created, review in progress
 ``replied``    Review comments sent to the mailing list
+``waiting``    Waiting for a new revision from the submitter
 ``taken``      Patches applied to the target branch
 ``thanked``    Thank-you note sent to the contributor
 ``archived``   Review completed and archived
 ``gone``       Review branch deleted or missing (e.g. after a sync)
 =============  =========================================================
+
+Series are grouped by lifecycle stage — Active (reviewing/replied/taken/
+thanked), New, Waiting, and Gone — and sorted within each group by the
+most recent activity, whether that is a new mailing list reply or a local
+status change.
+
+**Listing columns**
+
+Each row in the tracking list shows:
+
+* **Submitter** — patch author name (truncated if necessary)
+* **A·R·T** — Acked-by · Reviewed-by · Tested-by trailer counts
+  collected from the review branch
+* **Fups** — total follow-up reply count for the thread, with any
+  unseen replies shown as ``+N`` in yellow (populated after pressing
+  ``u``)
+* **S** — single-character status symbol; ``*`` suffix means the
+  tracking data needs a refresh
+* **Subject** — compact ``[subsystem,vN,0/M]`` prefix followed by the
+  series subject
+
+**Status symbols**
+
+=======  =============
+Symbol   Status
+=======  =============
+``★``    new
+``✎``    reviewing
+``↩``    replied
+``↻``    waiting
+``∈``    taken
+``✓``    thanked
+``∅``    gone
+=======  =============
 
 **Keybindings**
 
@@ -102,7 +137,8 @@ Key           Action
 ``v``         View series in a modal (fetches from lore)
 ``d``         Range-diff between revisions
 ``a``         Action menu — context-sensitive actions (see below)
-``u``         Update — fetch latest trailers and check for newer revisions
+``u``         Update — fetch latest trailers, check for newer revisions,
+              and refresh follow-up reply counts
 ``l``         Limit — filter the list of displayed series
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)
@@ -124,9 +160,9 @@ depend on the series status:
 * **Abandon** — delete series and review branch
 * **Archive** — archive a completed series
 
-The details panel at the bottom shows an **A/R/T** row (Acked-by /
-Reviewed-by / Tested-by) for series with review branches, tallying
-follow-up trailers that are not already present in the commit messages.
+The details panel at the bottom shows the full original subject, sender,
+send date, status, change-ID, lore link, known revisions, and the
+review branch name for active series.
 
 Review interface
 ~~~~~~~~~~~~~~~~
