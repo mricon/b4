@@ -1541,9 +1541,7 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
         body += '\n\n-- \n' + signature
 
     # Construct the EmailMessage
-    usercfg = b4.get_user_config()
-    user_name = usercfg.get('name', 'Unknown')
-    user_email = usercfg.get('email', 'unknown@example.com')
+    user_name, user_email = b4.get_mailfrom()
 
     msg = email.message.EmailMessage()
     msg.set_payload(body, charset='utf-8')
