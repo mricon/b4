@@ -792,12 +792,10 @@ def _integrate_agent_reviews(
         logger.warning('b4-review/%s: missing identity.txt, skipping', head_sha[:12])
         return False
 
-    m = re.match(r'^(.+?)\s+<([^>]+)>', identity_line)
-    if not m:
+    reviewer_name, reviewer_email = email.utils.parseaddr(identity_line)
+    if not reviewer_name or not reviewer_email:
         logger.warning('b4-review/%s: malformed identity.txt, skipping', head_sha[:12])
         return False
-    reviewer_name = m.group(1)
-    reviewer_email = m.group(2)
 
     integrated = 0
 
@@ -1406,8 +1404,7 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
 
     # Parse cover subject (strip email prefixes like [PATCH v2 0/3])
     cover_subject = series.get('subject', '')
-    # Remove [PATCH ...] prefix if present
-    cover_subject_clean = re.sub(r'^\[.*?\]\s*', '', cover_subject)
+    cover_subject_clean = b4.LoreSubject(cover_subject).subject
     if not cover_subject_clean:
         cover_subject_clean = cover_text.split('\n', maxsplit=1)[0] if cover_text else '(no subject)'
 

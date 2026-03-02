@@ -1227,3 +1227,229 @@ class TestRescanBranches:
                            ('sha-change',)).fetchone()
         assert row['status'] == 'replied'
         conn.close()
+
+
+class TestFollowupCounts:
+    """Tests for followup_count / seen_followup_count tracking."""
+
+    def test_schema_has_followup_columns(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify fresh DB has followup_count, seen_followup_count, last_update_check, last_activity_at."""
+        conn = review_tracking.init_db('fc-schema-test')
+        cursor = conn.execute('PRAGMA table_info(series)')
+        col_names = {row[1] for row in cursor.fetchall()}
+        assert 'followup_count' in col_names
+        assert 'seen_followup_count' in col_names
+        assert 'last_update_check' in col_names
+        assert 'last_activity_at' in col_names
+        conn.close()
+
+    def test_migration_adds_followup_columns(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify v1 DB gets followup/update columns during migration."""
+        import sqlite3 as _sqlite3
+        db_path = review_tracking.get_db_path('fc-migration-test')
+        # Manually build a schema-version 1 database (no branch_sha, no followup cols)
+        raw = _sqlite3.connect(db_path)
+        raw.executescript('''
+            CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+            CREATE TABLE series (
+                track_id INTEGER PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                status TEXT DEFAULT 'new',
+                UNIQUE (change_id, revision)
+            );
+        ''')
+        raw.execute('INSERT INTO schema_version (version) VALUES (1)')
+        raw.commit()
+        raw.close()
+
+        # open via get_db which triggers migration
+        conn = review_tracking.get_db('fc-migration-test')
+        cursor = conn.execute('PRAGMA table_info(series)')
+        col_names = {row[1] for row in cursor.fetchall()}
+        assert 'branch_sha' in col_names
+        assert 'followup_count' in col_names
+        assert 'seen_followup_count' in col_names
+        assert 'last_update_check' in col_names
+        assert 'last_activity_at' in col_names
+        row = conn.execute('SELECT version FROM schema_version').fetchone()
+        assert row[0] == review_tracking.SCHEMA_VERSION
+        conn.close()
+
+    @mock.patch('b4.review.tracking._resolve_canonical_url')
+    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    def test_first_fetch_initialises_seen(
+        self, mock_mbox_bytes: mock.Mock, mock_resolve: mock.Mock,
+        tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """First update_followup_counts sets seen = count (no badge shown yet)."""
+        mock_resolve.return_value = 'https://lore.kernel.org/linux-kernel/cover@example.com'
+        # 9 From lines: num_patches=3 → count = 9 - 3 - 1 = 5
+        # Single known date so last_activity_at is predictable
+        mock_mbox_bytes.return_value = (
+            b'From foo@example.com Mon Jan 01 00:00:00 2024\n'
+            b'Date: Mon, 15 Jan 2024 10:00:00 +0000\n\n'
+        ) * 9
+
+        conn = review_tracking.init_db('fc-first-test')
+        review_tracking.add_series_to_db(
+            conn, 'fc-change', 1, 'Subject', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'cover@example.com', 3)
+        conn.close()
+
+        series_list = [{'change_id': 'fc-change', 'revision': 1,
+                        'message_id': 'cover@example.com', 'num_patches': 3,
+                        'status': 'new'}]
+        result = review_tracking.update_followup_counts('fc-first-test', series_list)
+        assert result['updated'] == 1
+        assert result['errors'] == 0
+
+        conn = review_tracking.get_db('fc-first-test')
+        row = conn.execute(
+            'SELECT followup_count, seen_followup_count, last_update_check, last_activity_at'
+            ' FROM series WHERE change_id = ?', ('fc-change',)).fetchone()
+        assert row['followup_count'] == 5
+        # First fetch: seen initialised to same value — no badge yet
+        assert row['seen_followup_count'] == 5
+        assert row['last_update_check'] is not None
+        assert row['last_activity_at'] == '2024-01-15T10:00:00+00:00'
+        conn.close()
+
+    @mock.patch('b4.review.tracking._fetch_new_since')
+    @mock.patch('b4.review.tracking._resolve_canonical_url')
+    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    def test_incremental_fetch_adds_new_count(
+        self, mock_fetch: mock.Mock, mock_resolve: mock.Mock,
+        mock_new_since: mock.Mock, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Incremental update adds new message count and keeps seen unchanged."""
+        canonical = 'https://lore.kernel.org/linux-kernel/cover2@example.com'
+        mock_resolve.return_value = canonical
+        # 9 From lines: num_patches=3 → count = 9 - 3 - 1 = 5
+        mock_fetch.return_value = (
+            b'From foo@example.com Mon Jan 01 00:00:00 2024\n'
+            b'Date: Mon, 15 Jan 2024 10:00:00 +0000\n\n'
+        ) * 9
+        # incremental: 3 new replies, with a newer activity date
+        mock_new_since.return_value = (3, '2024-02-01T00:00:00+00:00')
+
+        conn = review_tracking.init_db('fc-incr-test')
+        review_tracking.add_series_to_db(
+            conn, 'fc-change2', 1, 'Subject', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'cover2@example.com', 3)
+        conn.close()
+
+        series_list = [{'change_id': 'fc-change2', 'revision': 1,
+                        'message_id': 'cover2@example.com', 'num_patches': 3,
+                        'status': 'reviewing'}]
+
+        # First fetch: seen = count = 5, last_update_check set
+        review_tracking.update_followup_counts('fc-incr-test', series_list)
+
+        # Incremental: 3 new replies since last check
+        result = review_tracking.update_followup_counts('fc-incr-test', series_list)
+        assert result['updated'] == 1
+
+        conn = review_tracking.get_db('fc-incr-test')
+        row = conn.execute(
+            'SELECT followup_count, seen_followup_count, last_activity_at FROM series'
+            ' WHERE change_id = ?', ('fc-change2',)).fetchone()
+        assert row['followup_count'] == 8   # 5 + 3
+        assert row['seen_followup_count'] == 5  # badge shows +3
+        assert row['last_activity_at'] == '2024-02-01T00:00:00+00:00'
+        conn.close()
+
+    @mock.patch('b4.review.tracking._fetch_new_since')
+    @mock.patch('b4.review.tracking._resolve_canonical_url')
+    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    def test_incremental_noop_makes_no_db_write(
+        self, mock_fetch: mock.Mock, mock_resolve: mock.Mock,
+        mock_new_since: mock.Mock, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Incremental update with zero new messages writes nothing to the DB."""
+        canonical = 'https://lore.kernel.org/linux-kernel/cover3@example.com'
+        mock_resolve.return_value = canonical
+        # 9 From lines: num_patches=3 → count = 9 - 3 - 1 = 5
+        mock_fetch.return_value = (
+            b'From foo@example.com Mon Jan 01 00:00:00 2024\n'
+            b'Date: Mon, 15 Jan 2024 10:00:00 +0000\n\n'
+        ) * 9
+        mock_new_since.return_value = (0, None)   # no new replies
+
+        conn = review_tracking.init_db('fc-noop-test')
+        review_tracking.add_series_to_db(
+            conn, 'fc-change3', 1, 'Subject', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'cover3@example.com', 3)
+        conn.close()
+
+        series_list = [{'change_id': 'fc-change3', 'revision': 1,
+                        'message_id': 'cover3@example.com', 'num_patches': 3,
+                        'status': 'reviewing'}]
+
+        # First fetch sets the baseline
+        review_tracking.update_followup_counts('fc-noop-test', series_list)
+
+        import os
+        db_path = review_tracking.get_db_path('fc-noop-test')
+        mtime_before = os.path.getmtime(db_path)
+
+        # Incremental no-op — should not touch the DB at all
+        result = review_tracking.update_followup_counts('fc-noop-test', series_list)
+        assert result['updated'] == 0
+        assert result['errors'] == 0
+        assert os.path.getmtime(db_path) == mtime_before
+
+    def test_mark_followups_seen_clears_badge(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """mark_followups_seen sets seen_followup_count = followup_count."""
+        conn = review_tracking.init_db('fc-seen-test')
+        review_tracking.add_series_to_db(
+            conn, 'fc-seen', 1, 'Subject', 'Author', 'a@example.com',
+            '2024-01-15T10:00:00+00:00', 'cover3@example.com', 3)
+        # Manually set a delta
+        conn.execute('UPDATE series SET followup_count = 10, seen_followup_count = 6'
+                     ' WHERE change_id = ?', ('fc-seen',))
+        conn.commit()
+
+        review_tracking.mark_followups_seen(conn, 'fc-seen', 1)
+        conn.close()
+
+        # Reopen with get_db to get row_factory for named column access
+        conn = review_tracking.get_db('fc-seen-test')
+        row = conn.execute('SELECT followup_count, seen_followup_count FROM series'
+                           ' WHERE change_id = ?', ('fc-seen',)).fetchone()
+        assert row['followup_count'] == 10
+        assert row['seen_followup_count'] == 10
+        conn.close()
+
+    def test_followup_fetch_skips_offline(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """fetch_thread_reply_count and _resolve_canonical_url return None offline."""
+        # can_network is False in test fixture — no mock needed
+        assert review_tracking._resolve_canonical_url('any@example.com') is None
+        assert review_tracking.fetch_thread_reply_count('any@example.com', 3) is None
+
+    def test_update_followup_counts_skips_terminal_statuses(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """update_followup_counts skips archived/taken/thanked series."""
+        conn = review_tracking.init_db('fc-skip-test')
+        for status in ('archived', 'taken', 'thanked'):
+            cid = f'fc-{status}'
+            review_tracking.add_series_to_db(
+                conn, cid, 1, 'Subject', 'Author', 'a@example.com',
+                '2024-01-15T10:00:00+00:00', f'{cid}@example.com', 3)
+            review_tracking.update_series_status(conn, cid, status)
+        conn.close()
+
+        series_list = [
+            {'change_id': f'fc-{s}', 'revision': 1,
+             'message_id': f'fc-{s}@example.com', 'num_patches': 3, 'status': s}
+            for s in ('archived', 'taken', 'thanked')
+        ]
+        result = review_tracking.update_followup_counts('fc-skip-test', series_list)
+        # None fetched — all skipped, no errors
+        assert result['updated'] == 0
+        assert result['errors'] == 0

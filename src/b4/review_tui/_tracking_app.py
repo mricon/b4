@@ -22,6 +22,7 @@ import b4.mbox
 import b4.review
 import b4.review.tracking
 
+from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -39,6 +40,33 @@ from b4.review_tui._modals import (
     LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
     ActionScreen, HelpScreen, TRACKING_HELP_LINES,
 )
+
+
+# Single-character Unicode symbols for each series status.
+_STATUS_SYMBOLS: Dict[str, str] = {
+    'new':       '★',  # U+2605 black star
+    'reviewing': '✎',  # U+270E lower right pencil (matches review app)
+    'replied':   '↩',  # U+21A9 leftwards arrow with hook
+    'waiting':   '↻',  # U+21BB clockwise open circle arrow
+    'taken':     '∈',  # U+2208 element of
+    'thanked':   '✓',  # U+2713 check mark
+    'gone':      '∅',  # U+2205 empty set
+}
+
+# Ordered status groups for the series list display.
+# Each entry is (section_label, tuple_of_statuses).
+_STATUS_GROUPS: List[Tuple[str, Tuple[str, ...]]] = [
+    ('Active',  ('reviewing', 'replied', 'taken', 'thanked')),
+    ('New',     ('new',)),
+    ('Waiting', ('waiting',)),
+    ('Gone',    ('gone',)),
+]
+# Quick status → group-index lookup built from the above.
+_STATUS_GROUP_INDEX: Dict[str, int] = {
+    status: i
+    for i, (_, statuses) in enumerate(_STATUS_GROUPS)
+    for status in statuses
+}
 
 
 def _get_art_counts(topdir: str, branch: str) -> Optional[Tuple[int, int, int]]:
@@ -102,12 +130,41 @@ class TrackedSeriesItem(ListItem):
     def compose(self) -> ComposeResult:
         subject = self.series.get('subject', '(no subject)')
         submitter = self.series.get('sender_name', 'Unknown')
-        date = self.series.get('sent_at', '')[:10]
+        revision = self.series.get('revision', 1)
+        num_patches = self.series.get('num_patches', 0)
         status = self.series.get('status', 'new')
-        if self.series.get('needs_update'):
-            status = status + '*'
-        label_text = f'{date}  {status:<12s} {submitter:<30s} {subject}'
-        yield Label(label_text, markup=False)
+        symbol = _STATUS_SYMBOLS.get(status, '?')
+        flag = '*' if self.series.get('needs_update') else ' '
+        art = self.series.get('art')
+        if art:
+            a, r, t = art
+            art_str = f'{a}·{r}·{t}'
+        else:
+            art_str = '-'
+        fc = self.series.get('followup_count')
+        sc = self.series.get('seen_followup_count')
+        if fc is not None and fc > 0:
+            delta = (fc - sc) if (sc is not None and fc > sc) else 0
+            fu_base = str(fc)
+            fu_new = f'+{delta}' if delta > 0 else ''
+        else:
+            fu_base = '-'
+            fu_new = ''
+        # Build compact prefix using LoreSubject to extract subsystem/modifier tokens
+        ls = b4.LoreSubject(subject)
+        extras = ls.get_extra_prefixes(exclude=['patch'])
+        width = len(str(num_patches)) if num_patches > 0 else 1
+        parts = extras + [f'v{revision}', f'{"0" * width}/{num_patches:0{width}d}']
+        subject_display = f'[{",".join(parts)}] {ls.subject}'
+        if len(submitter) > 20:
+            submitter = submitter[:19] + '…'
+        label = RichText(no_wrap=True, overflow='ellipsis')
+        label.append(f'{submitter:<20s}  ')
+        label.append(art_str.rjust(7))
+        label.append(f'  {fu_base.rjust(3)}')
+        label.append(f'{fu_new:<3s}', style='bold yellow' if fu_new else '')
+        label.append(f'  {symbol}{flag}  {subject_display}')
+        yield Label(label)
 
 
 class TrackingApp(App[Optional[str]]):
@@ -166,6 +223,7 @@ class TrackingApp(App[Optional[str]]):
         color: ansi_bright_yellow;
         text-style: bold;
     }
+
     """
 
     BINDING_GROUPS = {
@@ -228,6 +286,9 @@ class TrackingApp(App[Optional[str]]):
                 yield Static('Sent:', classes='details-label')
                 yield Static('', id='detail-sent', markup=False)
             with Horizontal(classes='details-row'):
+                yield Static('Status:', classes='details-label')
+                yield Static('', id='detail-status', markup=False)
+            with Horizontal(classes='details-row'):
                 yield Static('Change-ID:', classes='details-label')
                 yield Static('', id='detail-changeid', markup=False)
             with Horizontal(classes='details-row'):
@@ -236,9 +297,6 @@ class TrackingApp(App[Optional[str]]):
             with Horizontal(classes='details-row', id='detail-revisions-row'):
                 yield Static('Revisions:', classes='details-label')
                 yield Static('', id='detail-revisions', markup=False)
-            with Horizontal(classes='details-row', id='detail-art-row'):
-                yield Static('A/R/T:', classes='details-label')
-                yield Static('', id='detail-art', markup=False)
             with Horizontal(classes='details-row', id='detail-branch-row'):
                 yield Static('Branch:', classes='details-label')
                 yield Static('', id='detail-branch', markup=False)
@@ -314,24 +372,16 @@ class TrackingApp(App[Optional[str]]):
                     series['art'] = art
         if conn:
             conn.close()
-        # Sort by status (reviewing/replied first) then by date (newest first)
-        _active_statuses = frozenset(('reviewing', 'replied'))
-
-        def sort_key(s: Dict[str, Any]) -> Tuple[int, str]:
-            status = s.get('status', 'new')
-            status_order = 0 if status in _active_statuses else 1
-            # Negate date string for reverse sort (newest first within each group)
-            # ISO dates sort lexicographically, so we can just reverse the string comparison
-            sent_at = s.get('sent_at', '') or ''
-            return (status_order, sent_at)
-        # Sort by status ascending, then date descending (newest first)
-        self._all_series.sort(key=sort_key)
-        # Now reverse within each status group by re-sorting with stable sort
-        active = [s for s in self._all_series if s.get('status') in _active_statuses]
-        others = [s for s in self._all_series if s.get('status') not in _active_statuses]
-        active.sort(key=lambda s: s.get('sent_at', '') or '', reverse=True)
-        others.sort(key=lambda s: s.get('sent_at', '') or '', reverse=True)
-        self._all_series = active + others
+        # Sort: latest activity descending first (stable), then group index ascending (stable).
+        # last_activity_at is the date of the most recent message in the thread; fall back
+        # to sent_at for series that haven't been updated yet.
+        self._all_series.sort(
+            key=lambda s: s.get('last_activity_at') or s.get('sent_at') or '',
+            reverse=True,
+        )
+        self._all_series.sort(
+            key=lambda s: _STATUS_GROUP_INDEX.get(s.get('status', 'new'), len(_STATUS_GROUPS))
+        )
         self.call_later(self._refresh_list)
 
     def _check_db_changed(self) -> None:
@@ -375,15 +425,16 @@ class TrackingApp(App[Optional[str]]):
             await self.mount(empty, before=self.query_one(Footer))
             return
 
-        header_text = f'{"Date":<12s}{"Status":<12s} {"Submitter":<30s} {"Subject"}'
+        header_text = f'{"Submitter":<20s}  {"A·R·T":>7s}  {"Fups":>6s}  {"S":<4s}{"Subject"}'
         header = Static(header_text, id='tracking-header')
-        items = [TrackedSeriesItem(s) for s in display_series]
-        lv = ListView(*items, id='tracking-list')
+
+        list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
+        lv = ListView(*list_items, id='tracking-list')
         await self.mount(header, before=self.query_one(Footer))
         await self.mount(lv, before=self.query_one(Footer))
         if self._focus_change_id:
-            for idx, series in enumerate(self._all_series):
-                if series.get('change_id') == self._focus_change_id:
+            for idx, item in enumerate(list_items):
+                if isinstance(item, TrackedSeriesItem) and item.series.get('change_id') == self._focus_change_id:
                     lv.index = idx
                     break
             self._focus_change_id = None
@@ -518,6 +569,14 @@ class TrackingApp(App[Optional[str]]):
                 topdir = b4.git_get_toplevel()
                 if topdir:
                     b4.review.update_tracking_status(topdir, branch_name, 'reviewing')
+            # Clear the followup badge — user is about to read this series
+            if self._identifier and isinstance(revision, int):
+                try:
+                    conn = b4.review.tracking.get_db(self._identifier)
+                    b4.review.tracking.mark_followups_seen(conn, change_id, revision)
+                    conn.close()
+                except Exception:
+                    pass
             self.exit(branch_name)
         elif self._selected_series.get('has_newer'):
             # New series with a newer revision available — ask which to review
@@ -748,6 +807,17 @@ class TrackingApp(App[Optional[str]]):
         if pw_series_id:
             b4.review.pw_update_series_state(pw_series_id, 'under-review')
 
+        # Clear the followup badge — user is about to review this series
+        _co_change_id = series.get('change_id', '')
+        _co_revision = series.get('revision', 1)
+        if self._identifier and _co_change_id and isinstance(_co_revision, int):
+            try:
+                conn = b4.review.tracking.get_db(self._identifier)
+                b4.review.tracking.mark_followups_seen(conn, _co_change_id, _co_revision)
+                conn.close()
+            except Exception:
+                pass
+
         # Exit to review mode
         self.exit(branch_name)
 
@@ -759,11 +829,6 @@ class TrackingApp(App[Optional[str]]):
         panel.styles.height = 7
 
         subject = series.get('subject', '(no subject)')
-        revision = series.get('revision', 1)
-        num_patches = series.get('num_patches', 0)
-        # Format subject with version and patch count prefix
-        width = len(str(num_patches)) if num_patches > 0 else 1
-        subject_display = f'[v{revision},{"0" * width}/{num_patches:0{width}d}] {subject}'
 
         sender_name = series.get('sender_name', 'Unknown')
         sender_email = series.get('sender_email', '')
@@ -791,14 +856,19 @@ class TrackingApp(App[Optional[str]]):
             except (ValueError, TypeError):
                 sent_str = sent_at
 
-        self.query_one('#detail-subject', Static).update(subject_display)
+        status_raw = series.get('status', 'new')
+        symbol = _STATUS_SYMBOLS.get(status_raw, '?')
+        status_str = f'{symbol}  {status_raw}'
+
+        self.query_one('#detail-subject', Static).update(subject)
         self.query_one('#detail-from', Static).update(from_str)
         self.query_one('#detail-sent', Static).update(sent_str)
+        self.query_one('#detail-status', Static).update(status_str)
         self.query_one('#detail-changeid', Static).update(change_id)
         self.query_one('#detail-link', Static).update(link_url)
 
         # Show known revisions from SQLite
-        height = 7
+        height = 8
         revision = series.get('revision', 1)
         revisions_row = self.query_one('#detail-revisions-row', Horizontal)
         try:
@@ -829,18 +899,6 @@ class TrackingApp(App[Optional[str]]):
                 revisions_row.display = False
         except Exception:
             revisions_row.display = False
-
-        # Show A/R/T trailer counts for series with review branches
-        art_row = self.query_one('#detail-art-row', Horizontal)
-        art = series.get('art')
-        if art:
-            a, r, t = art
-            art_str = ' / '.join(str(x) if x else '-' for x in (a, r, t))
-            self.query_one('#detail-art', Static).update(art_str)
-            art_row.display = True
-            height += 1
-        else:
-            art_row.display = False
 
         # Show branch name for series being reviewed
         status = series.get('status', 'new')
@@ -1116,9 +1174,7 @@ class TrackingApp(App[Optional[str]]):
 
         # Clean subject: strip [PATCH vN M/N] prefix
         subject = series.get('subject', '')
-        clean_subject = re.sub(r'^\s*\[.*?]\s*', '', subject).strip()
-        if not clean_subject:
-            clean_subject = subject
+        clean_subject = b4.LoreSubject(subject).subject or subject
 
         # Determine number of patches
         num_patches = len(tracking.get('patches', []))
@@ -2279,8 +2335,7 @@ class TrackingApp(App[Optional[str]]):
         has_untaken = False
         for pi, pmeta in enumerate(trk_patches):
             title = pmeta.get('title', '')
-            # Strip [PATCH ...] prefix to get the clean subject
-            clean_subject = re.sub(r'^\[.*?]\s*', '', title)
+            clean_subject = b4.LoreSubject(title).subject or title
             msgid = pmeta.get('header-info', {}).get('msgid', '')
             prefix = '%s/%s' % (str(pi + 1).zfill(padlen), expected)
             patches_tuples.append((clean_subject, '', msgid, prefix))

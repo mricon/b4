@@ -7,16 +7,18 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
 import datetime
+import gzip
 import json
 import os
 import pathlib
 import sqlite3
 import sys
+import urllib.parse
 
 import b4
 import b4.mbox
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = b4.logger
 
@@ -45,6 +47,10 @@ CREATE TABLE IF NOT EXISTS series (
     status TEXT DEFAULT 'new',
     fingerprint TEXT,
     branch_sha TEXT,
+    followup_count INT,
+    seen_followup_count INT,
+    last_update_check TEXT,
+    last_activity_at TEXT,
     UNIQUE (change_id, revision)
 );
 
@@ -97,6 +103,10 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
         return
     if version < 2:
         conn.execute('ALTER TABLE series ADD COLUMN branch_sha TEXT')
+        conn.execute('ALTER TABLE series ADD COLUMN followup_count INT')
+        conn.execute('ALTER TABLE series ADD COLUMN seen_followup_count INT')
+        conn.execute('ALTER TABLE series ADD COLUMN last_update_check TEXT')
+        conn.execute('ALTER TABLE series ADD COLUMN last_activity_at TEXT')
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -453,7 +463,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
 
     Returns a list of dicts with keys: track_id, change_id, revision, subject,
     sender_name, sender_email, sent_at, added_at, status, num_patches,
-    message_id, pw_series_id.
+    message_id, pw_series_id, followup_count, seen_followup_count.
     """
     if not db_exists(identifier):
         return []
@@ -461,7 +471,8 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
         conn = get_db(identifier)
         cursor = conn.execute('''
             SELECT track_id, change_id, revision, subject, sender_name, sender_email,
-                   sent_at, added_at, status, num_patches, message_id, pw_series_id
+                   sent_at, added_at, status, num_patches, message_id, pw_series_id,
+                   followup_count, seen_followup_count, last_activity_at
             FROM series
             ORDER BY added_at DESC
         ''')
@@ -480,6 +491,9 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                 'num_patches': row[9] or 0,
                 'message_id': row[10] or '',
                 'pw_series_id': row[11],
+                'followup_count': row[12],
+                'seen_followup_count': row[13],
+                'last_activity_at': row[14],
             })
         conn.close()
         return result
@@ -527,12 +541,21 @@ def update_series_status(conn: sqlite3.Connection, change_id: str, status: str,
     When *revision* is given only that specific revision is updated;
     otherwise all revisions sharing the *change_id* are updated (legacy
     behaviour kept for backwards compatibility).
+
+    Always stamps last_activity_at with the current UTC time so that
+    within-group sort reflects maintainer activity as well as thread activity.
     """
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     if revision is not None:
-        conn.execute('UPDATE series SET status = ? WHERE change_id = ? AND revision = ?',
-                     (status, change_id, revision))
+        conn.execute(
+            'UPDATE series SET status = ?, last_activity_at = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (status, now, change_id, revision))
     else:
-        conn.execute('UPDATE series SET status = ? WHERE change_id = ?', (status, change_id))
+        conn.execute(
+            'UPDATE series SET status = ?, last_activity_at = ?'
+            ' WHERE change_id = ?',
+            (status, now, change_id))
     conn.commit()
 
 
@@ -540,6 +563,233 @@ def get_review_branches(topdir: Optional[str] = None) -> list[str]:
     """List all b4/review/* branch names."""
     gitargs = ['for-each-ref', '--format=%(refname:short)', 'refs/heads/b4/review/']
     return b4.git_get_command_lines(topdir, gitargs)
+
+
+def _resolve_canonical_url(message_id: str) -> Optional[str]:
+    """Resolve the canonical public-inbox URL for a message ID.
+
+    Performs a HEAD request via midmask and follows any redirect to find the
+    list-specific canonical URL (e.g. https://lore.kernel.org/linux-kernel/msgid/).
+
+    Returns the canonical URL (with trailing slash stripped), or None on failure.
+    """
+    if not b4.can_network:
+        return None
+    config = b4.get_main_config()
+    midmask = config.get('midmask', b4.LOREADDR + '/r/%s')
+    if not isinstance(midmask, str) or '%s' not in midmask:
+        return None
+    qmsgid = urllib.parse.quote_plus(message_id, safe='@')
+    midurl = (midmask % qmsgid).rstrip('/')
+    try:
+        session = b4.get_requests_session()
+        resp = session.head(midurl + '/', allow_redirects=False, timeout=10)
+        if resp.status_code in (301, 302) and 'Location' in resp.headers:
+            return resp.headers['Location'].rstrip('/')
+        if resp.status_code < 400:
+            return midurl
+        return None
+    except Exception as ex:
+        logger.debug('Could not resolve canonical URL for %s: %s', message_id, ex)
+        return None
+
+
+def _fetch_mbox_bytes(canonical_url: str) -> Optional[bytes]:
+    """Fetch and decompress the full thread mbox from public-inbox t.mbox.gz."""
+    try:
+        session = b4.get_requests_session()
+        resp = session.get(f'{canonical_url}/t.mbox.gz', timeout=30)
+        if resp.status_code != 200:
+            return None
+        return gzip.decompress(resp.content)
+    except Exception as ex:
+        logger.debug('Could not fetch mbox for %s: %s', canonical_url, ex)
+        return None
+
+
+def _latest_date_from_mbox(mbox_bytes: bytes) -> Optional[str]:
+    """Return the most recent Date: header from mbox bytes as an ISO timestamp."""
+    import email.utils as eu
+    latest: Optional[datetime.datetime] = None
+    for line in mbox_bytes.split(b'\n'):
+        if not line.lower().startswith(b'date:'):
+            continue
+        date_str = line[5:].strip().decode('utf-8', errors='replace')
+        try:
+            dt = eu.parsedate_to_datetime(date_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            if latest is None or dt > latest:
+                latest = dt
+        except Exception:
+            continue
+    if latest is None:
+        return None
+    return latest.astimezone(datetime.timezone.utc).isoformat()
+
+
+def fetch_thread_reply_count(message_id: str, num_patches: int) -> Optional[int]:
+    """Fetch the full followup reply count for a thread via public-inbox t.mbox.gz.
+
+    This is the first-fetch path: downloads the full thread mbox and counts
+    the messages, then subtracts the original series messages (cover + patches)
+    to get the followup count.
+
+    Returns the followup count (>= 0), or None on failure or when offline.
+    """
+    canonical_url = _resolve_canonical_url(message_id)
+    if canonical_url is None:
+        return None
+    mbox_bytes = _fetch_mbox_bytes(canonical_url)
+    if mbox_bytes is None:
+        return None
+    total = sum(1 for line in mbox_bytes.split(b'\n') if line.startswith(b'From '))
+    return max(0, total - num_patches - 1)
+
+
+def _fetch_new_since(canonical_url: str, since: str) -> Optional[Tuple[int, Optional[str]]]:
+    """Fetch new thread messages since a timestamp via public-inbox dt: query.
+
+    Uses the public-inbox ``dt:`` date-range query — a POST to
+    ``{canonical_url}/?x=m&q=dt:{since}..``.  Returns an empty gzipped mbox
+    when nothing has arrived, making the no-op case very cheap.
+
+    *since* is an ISO-format timestamp stored in the database.
+
+    Returns ``(count, latest_date_iso)`` where *count* is the number of new
+    messages (0 if none) and *latest_date_iso* is the most recent Date: header
+    found (None if no messages or no parseable date).  Returns None on error.
+    """
+    try:
+        dt = datetime.datetime.fromisoformat(since)
+        since_fmt = dt.strftime('%Y%m%d%H%M%S')
+    except (ValueError, TypeError) as ex:
+        logger.debug('Could not parse last_update_check timestamp %r: %s', since, ex)
+        return None
+
+    query = urllib.parse.quote_plus(f'dt:{since_fmt}..')
+    query_url = f'{canonical_url}/?x=m&q={query}'
+    try:
+        session = b4.get_requests_session()
+        resp = session.post(query_url, data='', timeout=15)
+        if resp.status_code != 200:
+            return None
+        if not resp.content:
+            return (0, None)
+        try:
+            mbox_bytes = gzip.decompress(resp.content)
+        except Exception:
+            mbox_bytes = resp.content
+        if not mbox_bytes.strip():
+            return (0, None)
+        count = sum(1 for line in mbox_bytes.split(b'\n') if line.startswith(b'From '))
+        latest_date = _latest_date_from_mbox(mbox_bytes)
+        return (count, latest_date)
+    except Exception as ex:
+        logger.debug('dt: query failed for %s: %s', canonical_url, ex)
+        return None
+
+
+def update_followup_counts(identifier: str,
+                           series_list: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Fetch and store followup reply counts for a list of series.
+
+    For each active series in *series_list* that has a message_id:
+
+    - **First fetch** (``followup_count IS NULL``): downloads the full t.json
+      thread index and stores the count.  ``seen_followup_count`` is initialised
+      to the same value so no badge appears until *new* activity arrives.
+    - **Incremental** (``followup_count IS NOT NULL``): POSTs a ``dt:`` query
+      for messages newer than ``last_update_check``.  An empty response (nothing
+      new) produces **zero database writes**, keeping the DB mtime stable and
+      suppressing spurious list reloads in the TUI.
+
+    Returns ``{'updated': n, 'errors': n}`` where *updated* counts series whose
+    ``followup_count`` actually changed.
+    """
+    updated = 0
+    errors = 0
+    skip_statuses = frozenset(('archived', 'taken', 'thanked'))
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    try:
+        conn = get_db(identifier)
+    except FileNotFoundError:
+        return {'updated': 0, 'errors': 0}
+
+    for series in series_list:
+        if series.get('status') in skip_statuses:
+            continue
+        message_id = series.get('message_id', '')
+        if not message_id:
+            continue
+        num_patches = int(series.get('num_patches') or 0)
+        change_id = series.get('change_id', '')
+        revision = series.get('revision', 1)
+        if not change_id:
+            continue
+
+        row = conn.execute(
+            'SELECT followup_count, seen_followup_count, last_update_check'
+            ' FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, revision)).fetchone()
+
+        existing_count = row['followup_count'] if row else None
+        last_check = row['last_update_check'] if row else None
+
+        canonical_url = _resolve_canonical_url(message_id)
+        if canonical_url is None:
+            errors += 1
+            continue
+
+        if existing_count is None or last_check is None:
+            # ── First fetch: download full thread mbox ───────────────────────
+            mbox_bytes = _fetch_mbox_bytes(canonical_url)
+            if mbox_bytes is None:
+                errors += 1
+                continue
+            total = sum(1 for line in mbox_bytes.split(b'\n') if line.startswith(b'From '))
+            count = max(0, total - num_patches - 1)
+            last_activity = _latest_date_from_mbox(mbox_bytes)
+            conn.execute(
+                'UPDATE series'
+                ' SET followup_count = ?, seen_followup_count = ?,'
+                '     last_update_check = ?, last_activity_at = ?'
+                ' WHERE change_id = ? AND revision = ?',
+                (count, count, now, last_activity, change_id, revision))
+            conn.commit()
+            updated += 1
+        else:
+            # ── Incremental: dt: query for messages since last check ─────────
+            result = _fetch_new_since(canonical_url, last_check)
+            if result is None:
+                errors += 1
+                continue
+            new_count, new_activity = result
+            if new_count > 0:
+                # New replies arrived — update count, timestamp, and latest activity
+                conn.execute(
+                    'UPDATE series'
+                    ' SET followup_count = followup_count + ?, last_update_check = ?,'
+                    '     last_activity_at = COALESCE(?, last_activity_at)'
+                    ' WHERE change_id = ? AND revision = ?',
+                    (new_count, now, new_activity, change_id, revision))
+                conn.commit()
+                updated += 1
+            # new_count == 0: nothing changed, no DB write at all
+
+    conn.close()
+    return {'updated': updated, 'errors': errors}
+
+
+def mark_followups_seen(conn: sqlite3.Connection, change_id: str,
+                        revision: int) -> None:
+    """Set seen_followup_count = followup_count, clearing the unread badge."""
+    conn.execute(
+        'UPDATE series SET seen_followup_count = followup_count'
+        ' WHERE change_id = ? AND revision = ?',
+        (change_id, revision))
+    conn.commit()
 
 
 def rescan_branches(identifier: str, topdir: str,

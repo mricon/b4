@@ -23,7 +23,7 @@ from rich.text import Text
 
 from b4.review_tui._common import (
     CI_CHECK_STYLES, CI_CHECK_LABELS,
-    JKListNavMixin,
+    JKListNavMixin, logger,
     _addrs_to_lines, _lines_to_header, _validate_addrs,
     _write_diff_line, _quiet_worker,
 )
@@ -220,6 +220,23 @@ def _review_help_lines(has_agent: bool = False, has_check: bool = False) -> List
 
 TRACKING_HELP_LINES = [
     '[bold]b4 review tracking — Keybindings[/bold]\n',
+    '\n',
+    '[bold]Status symbols[/bold]\n',
+    '  ★  new          Series not yet reviewed\n',
+    '  ✎  reviewing    Review branch checked out\n',
+    '  ↩  replied      Review reply sent\n',
+    '  ↻  waiting      Waiting for a new revision\n',
+    '  ∈  taken        Applied to a branch\n',
+    '  ✓  thanked      Thank-you sent\n',
+    '  ∅  gone         Branch no longer present\n',
+    '  *  (suffix)     Tracking data needs refresh (press u)\n',
+    '\n',
+    '[bold]Columns[/bold]\n',
+    '  Submitter     Patch author name\n',
+    '  A·R·T         Acked-by · Reviewed-by · Tested-by trailer counts\n',
+    '  Fups          Follow-up reply count (total, +new unseen in yellow)\n',
+    '  S             Status symbol (see above) + update flag\n',
+    '  Subject       Series subject line\n',
     '\n',
     '[bold]Navigation[/bold]\n',
     '  [bold]j[/bold] / [bold]↓[/bold]     Move cursor down\n',
@@ -1483,6 +1500,13 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
 
                 self.app.call_from_thread(self._update_progress, i + 1, subject)
 
+            if not self._cancelled:
+                self.app.call_from_thread(
+                    self._update_status_text, 'Fetching followup counts...')
+                followup_result = b4.review.tracking.update_followup_counts(
+                    self._identifier, self._series_list)
+                self._result['followup_updated'] = followup_result.get('updated', 0)
+
         return self._result
 
     def _update_progress(self, completed: int, subject: str) -> None:
@@ -1491,6 +1515,10 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
         )
         self.query_one('#updateall-series', Label).update(subject)
         self.query_one('#updateall-progress', ProgressBar).progress = completed
+
+    def _update_status_text(self, msg: str) -> None:
+        self.query_one('#updateall-status', Label).update(msg)
+        self.query_one('#updateall-series', Label).update('')
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.state == WorkerState.SUCCESS:
