@@ -56,6 +56,19 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
         try:
             session = b4.review._prepare_review_session(cmdargs)
             session['email_dryrun'] = email_dryrun
+            # Tell ReviewApp which branch to suggest so it can show a hint
+            config = b4.get_main_config()
+            cfg_branch = config.get('review-target-branch')
+            if cfg_branch:
+                switch_branch = str(cfg_branch)
+            elif topdir and b4.git_branch_exists(topdir, 'master'):
+                switch_branch = 'master'
+            elif topdir and b4.git_branch_exists(topdir, 'main'):
+                switch_branch = 'main'
+            else:
+                switch_branch = None
+            if switch_branch:
+                session['_switch_hint'] = switch_branch
             review_app = ReviewApp(session)
             review_app.run()
         except SystemExit:

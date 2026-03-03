@@ -262,6 +262,12 @@ class ReviewApp(App[None]):
         self._refresh_title_bar()
         self._populate_patch_list()
         self._show_content(self._selected_idx)
+        switch_hint = self._session.get('_switch_hint')
+        if switch_hint:
+            self.notify(
+                f'You\'re in a review branch. To see all tracked series, switch to {switch_hint}.',
+                timeout=10,
+            )
 
     def _refresh_title_bar(self) -> None:
         """Update the title bar to reflect current mode."""
