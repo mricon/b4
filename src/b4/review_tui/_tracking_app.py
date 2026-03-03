@@ -9,6 +9,7 @@ import email.message
 import email.parser
 import email.policy
 import email.utils
+import io
 import json
 import os
 import pathlib
@@ -1084,7 +1085,7 @@ class TrackingApp(App[Optional[str]]):
             return
         if take_screen.method_result == 'merge':
             with self.suspend():
-                self._do_take_merge(change_id, review_branch, take_screen)
+                self._do_take_merge(change_id, review_branch, take_screen, series)
             self._load_series()
         elif take_screen.method_result == 'linear':
             with self.suspend():
@@ -1179,7 +1180,8 @@ class TrackingApp(App[Optional[str]]):
             logger.warning('Could not save take metadata to tracking commit')
 
     def _do_take_merge(self, change_id: str, review_branch: str,
-                       take_screen: 'TakeScreen') -> None:
+                       take_screen: 'TakeScreen',
+                       series: Dict[str, Any]) -> None:
         """Perform a merge-based take operation."""
         target_branch = take_screen.target_result
 
@@ -1189,6 +1191,12 @@ class TrackingApp(App[Optional[str]]):
             logger.critical('Not in a git repository')
             return
 
+        # Prepare trailer-amended mbox bytes (retrieves from lore)
+        result = self._prepare_am_messages(review_branch, take_screen, series)
+        if result is None:
+            return
+        ambytes, _lser = result
+
         try:
             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
         except SystemExit:
@@ -1196,7 +1204,7 @@ class TrackingApp(App[Optional[str]]):
             _wait_for_enter()
             return
 
-        series = tracking.get('series', {})
+        t_series = tracking.get('series', {})
 
         # Build merge message from template
         config = b4.get_config_from_git('b4\\..*')
@@ -1219,7 +1227,7 @@ class TrackingApp(App[Optional[str]]):
             covermessage = '(no cover letter message)'
 
         # Clean subject: strip [PATCH vN M/N] prefix
-        subject = series.get('subject', '')
+        subject = t_series.get('subject', '')
         clean_subject = b4.LoreSubject(subject).subject or subject
 
         # Determine number of patches
@@ -1228,11 +1236,11 @@ class TrackingApp(App[Optional[str]]):
         # Populate template
         tptvals = {
             'seriestitle': clean_subject,
-            'authorname': series.get('fromname', ''),
-            'authoremail': series.get('fromemail', ''),
+            'authorname': t_series.get('fromname', ''),
+            'authoremail': t_series.get('fromemail', ''),
             'covermessage': covermessage,
-            'midurl': series.get('link', ''),
-            'mid': series.get('header-info', {}).get('msgid', ''),
+            'midurl': t_series.get('link', ''),
+            'mid': t_series.get('header-info', {}).get('msgid', ''),
             'patch_or_series': 'patch series' if num_patches > 1 else 'patch',
         }
         body = Template(merge_template).safe_substitute(tptvals)
@@ -1248,7 +1256,14 @@ class TrackingApp(App[Optional[str]]):
             uemail = usercfg.get('email', '')
             if uname and uemail:
                 sob = f'Signed-off-by: {uname} <{uemail}>'
-                body = body.rstrip('\n') + '\n\n' + sob + '\n'
+                stripped = body.rstrip('\n')
+                # If the body already ends with a trailer (e.g. Link:),
+                # keep them in the same block without a blank line.
+                last_line = stripped.rsplit('\n', 1)[-1]
+                if re.match(r'^[A-Za-z-]+:\s', last_line):
+                    body = stripped + '\n' + sob + '\n'
+                else:
+                    body = stripped + '\n\n' + sob + '\n'
 
         # Open editor
         try:
@@ -1260,6 +1275,24 @@ class TrackingApp(App[Optional[str]]):
         merge_msg = edited.decode(errors='replace').strip()
         if not merge_msg:
             logger.info('Empty merge message, aborting')
+            _wait_for_enter()
+            return
+
+        # Apply trailer-amended patches in a sparse worktree and fetch
+        # into FETCH_HEAD, so individual commits carry their trailers.
+        base_commit = t_series.get('base-commit', '')
+        if not base_commit:
+            # Fall back to target branch HEAD
+            ecode, out = b4.git_run_command(topdir, ['rev-parse', target_branch])
+            if ecode != 0:
+                logger.critical('Could not resolve %s', target_branch)
+                _wait_for_enter()
+                return
+            base_commit = out.strip()
+
+        try:
+            b4.git_fetch_am_into_repo(topdir, ambytes, at_base=base_commit)
+        except RuntimeError:
             _wait_for_enter()
             return
 
@@ -1289,8 +1322,9 @@ class TrackingApp(App[Optional[str]]):
         with open(mmf, 'w') as fh:
             fh.write(merge_msg)
 
-        # Perform merge: review_branch~1 excludes the tracking commit at tip
-        gitargs = ['merge', '--no-ff', '--no-edit', '-F', mmf, f'{review_branch}~1']
+        # Merge FETCH_HEAD (trailer-amended patches) instead of the
+        # review branch directly, so each commit carries its trailers.
+        gitargs = ['merge', '--no-ff', '--no-edit', '-F', mmf, 'FETCH_HEAD']
         ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
 
         # Clean up message file
@@ -1309,19 +1343,19 @@ class TrackingApp(App[Optional[str]]):
 
         logger.info('Merged %s into %s', review_branch, target_branch)
 
-        # Record per-patch commit IDs from the review branch
-        base_commit = series.get('base-commit', '')
-        if base_commit:
-            ecode, out = b4.git_run_command(
-                topdir, ['rev-list', '--reverse', f'{base_commit}..{review_branch}~1'])
-            if ecode == 0:
-                commit_ids = out.strip().splitlines()
-                self._record_take_metadata(topdir, review_branch, target_branch,
-                                           commit_ids)
+        # Record per-patch commit IDs from the merged branch.
+        # After --no-ff merge, HEAD^2 is the tip of the merged side;
+        # the individual patch commits are base_commit..HEAD^2.
+        ecode, out = b4.git_run_command(
+            topdir, ['rev-list', '--reverse', f'{base_commit}..HEAD^2'])
+        if ecode == 0 and out.strip():
+            commit_ids = out.strip().splitlines()
+            self._record_take_metadata(topdir, review_branch, target_branch,
+                                       commit_ids)
 
         # Record the series as taken in the tracking database
         if self._identifier and change_id:
-            revision = series.get('revision')
+            revision = t_series.get('revision')
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
                 b4.review.tracking.update_series_status(conn, change_id, 'taken',
@@ -1336,18 +1370,25 @@ class TrackingApp(App[Optional[str]]):
                 b4.review.pw_update_series_state(pw_sid, 'accepted')
         _wait_for_enter()
 
-    def _do_take_am(self, change_id: str, review_branch: str,
-                    take_screen: 'TakeScreen', series: Dict[str, Any],
-                    cherrypick: Optional[List[int]]) -> None:
-        """Perform a linear or cherry-pick take via git-am."""
-        import io
+    def _prepare_am_messages(
+        self,
+        review_branch: str,
+        take_screen: 'TakeScreen',
+        series: Dict[str, Any],
+        cherrypick: Optional[List[int]] = None,
+    ) -> Optional[Tuple[bytes, b4.LoreSeries]]:
+        """Retrieve series messages and prepare trailer-amended mbox bytes.
 
-        target_branch = take_screen.target_result
+        Loads tracking from the review branch, re-fetches original messages
+        from lore, applies follow-up trailers, and runs get_am_ready() to
+        produce mbox bytes suitable for git-am.
 
+        Returns (ambytes, lser) on success, or None on failure.
+        """
         topdir = b4.git_get_toplevel()
         if not topdir:
             logger.critical('Not in a git repository')
-            return
+            return None
 
         # Load tracking to get follow-up trailers
         try:
@@ -1355,7 +1396,7 @@ class TrackingApp(App[Optional[str]]):
         except SystemExit:
             logger.critical('Could not load tracking data from %s', review_branch)
             _wait_for_enter()
-            return
+            return None
 
         t_series = tracking.get('series', {})
 
@@ -1364,7 +1405,7 @@ class TrackingApp(App[Optional[str]]):
         if not message_id:
             logger.critical('No message-id available, cannot retrieve series')
             _wait_for_enter()
-            return
+            return None
 
         logger.info('Retrieving series: %s', message_id)
         try:
@@ -1372,11 +1413,11 @@ class TrackingApp(App[Optional[str]]):
         except LookupError as ex:
             logger.critical('%s', ex)
             _wait_for_enter()
-            return
+            return None
         except Exception as ex:
             logger.critical('Error retrieving series: %s', ex)
             _wait_for_enter()
-            return
+            return None
 
         # Build LoreSeries with follow-up trailers
         lmbx = b4.LoreMailbox()
@@ -1389,7 +1430,7 @@ class TrackingApp(App[Optional[str]]):
         if lser is None:
             logger.critical('Could not find series in retrieved messages')
             _wait_for_enter()
-            return
+            return None
 
         # Also apply any per-patch follow-up trailers from tracking data
         # that may have been collected outside the thread
@@ -1428,7 +1469,7 @@ class TrackingApp(App[Optional[str]]):
         if not am_msgs:
             logger.critical('No patches ready for applying')
             _wait_for_enter()
-            return
+            return None
 
         if cherrypick:
             logger.info('Prepared %d patch(es) (cherry-picked: %s)',
@@ -1440,6 +1481,25 @@ class TrackingApp(App[Optional[str]]):
         ifh = io.BytesIO()
         b4.save_git_am_mbox(am_msgs, ifh)
         ambytes = ifh.getvalue()
+
+        return ambytes, lser
+
+    def _do_take_am(self, change_id: str, review_branch: str,
+                    take_screen: 'TakeScreen', series: Dict[str, Any],
+                    cherrypick: Optional[List[int]]) -> None:
+        """Perform a linear or cherry-pick take via git-am."""
+        target_branch = take_screen.target_result
+
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            logger.critical('Not in a git repository')
+            return
+
+        result = self._prepare_am_messages(review_branch, take_screen, series,
+                                           cherrypick=cherrypick)
+        if result is None:
+            return
+        ambytes, _lser = result
 
         # Save current branch so we can report it on failure
         ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
@@ -1472,7 +1532,7 @@ class TrackingApp(App[Optional[str]]):
             return
 
         logger.info(out.strip())
-        logger.info('Applied %d patch(es) to %s', len(am_msgs), target_branch)
+        logger.info('Applied patches to %s', target_branch)
 
         # Record per-patch commit IDs in the tracking data
         if pre_am_head:
