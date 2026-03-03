@@ -229,7 +229,8 @@ TRACKING_HELP_LINES = [
     '  ✎  reviewing    Review branch checked out\n',
     '  ↩  replied      Review reply sent\n',
     '  ↻  waiting      Waiting for a new revision\n',
-    '  ∈  taken        Applied to a branch\n',
+    '  ∈  accepted     Series accepted\n',
+    '  ⏸  snoozed      Deferred until a date\n',
     '  ✓  thanked      Thank-you sent\n',
     '  ∅  gone         Branch no longer present\n',
     '  *  (suffix)     Tracking data needs refresh (press u)\n',
@@ -639,6 +640,7 @@ class TakeScreen(ModalScreen[bool]):
         self.method_result: str = self._default_method
         self.add_link: bool = True
         self.add_signoff: bool = True
+        self.accept_series: bool = True
 
     def compose(self) -> ComposeResult:
         method_options = [
@@ -656,6 +658,7 @@ class TakeScreen(ModalScreen[bool]):
             yield Select(method_options, value=self._default_method, id='take-method', allow_blank=False)
             yield Checkbox('add Link:', value=True, id='take-add-link', classes='take-checkbox')
             yield Checkbox('add Signed-off-by:', value=True, id='take-add-signoff', classes='take-checkbox')
+            yield Checkbox('mark as accepted', value=True, id='take-accept', classes='take-checkbox')
             yield Static('Ctrl-y confirm  |  Escape cancel', id='take-hint')
 
     def on_mount(self) -> None:
@@ -672,6 +675,7 @@ class TakeScreen(ModalScreen[bool]):
         self.method_result = str(self.query_one('#take-method', Select).value)
         self.add_link = self.query_one('#take-add-link', Checkbox).value
         self.add_signoff = self.query_one('#take-add-signoff', Checkbox).value
+        self.accept_series = self.query_one('#take-accept', Checkbox).value
         self.dismiss(True)
 
     def action_cancel(self) -> None:
@@ -754,6 +758,120 @@ class CherryPickScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+
+class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
+    """Modal dialog for snoozing a series until a future date/time.
+
+    Returns ``{'until': '<ISO datetime>', 'note': '...'}`` on confirm,
+    or ``None`` on cancel.
+    """
+
+    BINDINGS = [
+        Binding('ctrl+y', 'continue_snooze', 'Confirm', show=False),
+        Binding('escape', 'cancel', 'Cancel'),
+    ]
+
+    DEFAULT_CSS = """
+    SnoozeScreen {
+        align: center middle;
+    }
+    #snooze-dialog {
+        width: 60;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #snooze-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .snooze-label {
+        margin-top: 1;
+    }
+    #snooze-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    #snooze-error {
+        color: $error;
+        margin-top: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='snooze-dialog'):
+            yield Static('Snooze Series', id='snooze-title')
+            yield Static('Snooze for duration:', classes='snooze-label')
+            yield Input(placeholder='e.g. 30m, 3h, 1d, 2w', id='snooze-duration')
+            yield Static('— or until date (YYYY-MM-DD):', classes='snooze-label')
+            yield Input(placeholder='e.g. 2026-04-01', id='snooze-date')
+            yield Static('Note (optional):', classes='snooze-label')
+            yield Input(placeholder='e.g. apply after rc3', id='snooze-note')
+            yield Static('', id='snooze-error')
+            yield Static('Ctrl-y confirm  |  Escape cancel', id='snooze-hint')
+
+    def on_mount(self) -> None:
+        self.query_one('#snooze-duration', Input).focus()
+
+    # Regex for duration shorthand: number + optional unit (m/h/d/w)
+    _DURATION_RE = __import__('re').compile(r'^(\d+)\s*([mhdw]?)$', __import__('re').IGNORECASE)
+
+    def action_continue_snooze(self) -> None:
+        import datetime
+
+        dur_str = self.query_one('#snooze-duration', Input).value.strip()
+        date_str = self.query_one('#snooze-date', Input).value.strip()
+        note = self.query_one('#snooze-note', Input).value.strip()
+        error_widget = self.query_one('#snooze-error', Static)
+
+        has_dur = bool(dur_str)
+        has_date = bool(date_str)
+
+        if not has_dur and not has_date:
+            error_widget.update('Please enter a duration or a date')
+            return
+        if has_dur and has_date:
+            error_widget.update('Please enter only a duration or a date, not both')
+            return
+
+        until_date: str = ''
+        if has_dur:
+            m = self._DURATION_RE.match(dur_str)
+            if not m:
+                error_widget.update('Invalid duration (use e.g. 30m, 3h, 1d, 2w)')
+                return
+            value = int(m.group(1))
+            unit = m.group(2).lower() if m.group(2) else 'd'
+            if value < 1:
+                error_widget.update('Duration must be positive')
+                return
+            unit_map = {'m': 'minutes', 'h': 'hours', 'd': 'days', 'w': 'weeks'}
+            delta = datetime.timedelta(**{unit_map[unit]: value})
+            target = datetime.datetime.now(datetime.timezone.utc) + delta
+            # Store as YYYY-MM-DDTHH:MM:SS (no tz suffix) for SQLite compat
+            until_date = target.strftime('%Y-%m-%dT%H:%M:%S')
+        else:
+            try:
+                target_date = datetime.date.fromisoformat(date_str)
+            except ValueError:
+                error_widget.update('Invalid date format (use YYYY-MM-DD)')
+                return
+            if target_date <= datetime.date.today():
+                error_widget.update('Date must be in the future')
+                return
+            # Convert date to midnight UTC datetime
+            target = datetime.datetime(
+                target_date.year, target_date.month, target_date.day,
+                tzinfo=datetime.timezone.utc,
+            )
+            until_date = target.strftime('%Y-%m-%dT%H:%M:%S')
+
+        self.dismiss({'until': until_date, 'note': note})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class ThankScreen(ModalScreen[Optional[str]]):

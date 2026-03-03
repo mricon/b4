@@ -25,7 +25,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = '''
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS series (
     seen_followup_count INT,
     last_update_check TEXT,
     last_activity_at TEXT,
+    snoozed_until TEXT,
     UNIQUE (change_id, revision)
 );
 
@@ -107,6 +108,9 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
         conn.execute('ALTER TABLE series ADD COLUMN seen_followup_count INT')
         conn.execute('ALTER TABLE series ADD COLUMN last_update_check TEXT')
         conn.execute('ALTER TABLE series ADD COLUMN last_activity_at TEXT')
+    if version < 3:
+        conn.execute("UPDATE series SET status = 'accepted' WHERE status = 'taken'")
+        conn.execute('ALTER TABLE series ADD COLUMN snoozed_until TEXT')
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -601,6 +605,85 @@ def update_series_status(conn: sqlite3.Connection, change_id: str, status: str,
     conn.commit()
 
 
+def snooze_series(conn: sqlite3.Connection, change_id: str,
+                  until_date: str, revision: Optional[int] = None) -> None:
+    """Set a series to snoozed status with a wake-up date.
+
+    Args:
+        conn: Database connection.
+        change_id: The change-id of the series.
+        until_date: ISO date string (YYYY-MM-DD) when the series should wake up.
+        revision: If given, only snooze that specific revision.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if revision is not None:
+        conn.execute(
+            'UPDATE series SET status = ?, snoozed_until = ?, last_activity_at = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            ('snoozed', until_date, now, change_id, revision))
+    else:
+        conn.execute(
+            'UPDATE series SET status = ?, snoozed_until = ?, last_activity_at = ?'
+            ' WHERE change_id = ?',
+            ('snoozed', until_date, now, change_id))
+    conn.commit()
+
+
+def unsnooze_series(conn: sqlite3.Connection, change_id: str,
+                    previous_status: str, revision: Optional[int] = None) -> None:
+    """Restore a snoozed series to its previous status.
+
+    Args:
+        conn: Database connection.
+        change_id: The change-id of the series.
+        previous_status: The status to restore (e.g. 'reviewing').
+        revision: If given, only unsnooze that specific revision.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if revision is not None:
+        conn.execute(
+            'UPDATE series SET status = ?, snoozed_until = NULL, last_activity_at = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (previous_status, now, change_id, revision))
+    else:
+        conn.execute(
+            'UPDATE series SET status = ?, snoozed_until = NULL, last_activity_at = ?'
+            ' WHERE change_id = ?',
+            (previous_status, now, change_id))
+    conn.commit()
+
+
+def get_expired_snoozed(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """Return all snoozed series whose wake-up time has passed."""
+    cursor = conn.execute(
+        "SELECT change_id, revision, snoozed_until FROM series"
+        " WHERE status = 'snoozed'"
+        " AND snoozed_until <= strftime('%Y-%m-%dT%H:%M:%S', 'now')"
+    )
+    results = []
+    for row in cursor:
+        results.append({
+            'change_id': row[0],
+            'revision': row[1],
+            'snoozed_until': row[2],
+        })
+    return results
+
+
+def get_snoozed_until(conn: sqlite3.Connection, change_id: str,
+                      revision: Optional[int] = None) -> Optional[str]:
+    """Return the snoozed_until date for a series, or None."""
+    if revision is not None:
+        row = conn.execute(
+            'SELECT snoozed_until FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, revision)).fetchone()
+    else:
+        row = conn.execute(
+            'SELECT snoozed_until FROM series WHERE change_id = ?',
+            (change_id,)).fetchone()
+    return row[0] if row else None
+
+
 def get_review_branches(topdir: Optional[str] = None) -> list[str]:
     """List all b4/review/* branch names."""
     gitargs = ['for-each-ref', '--format=%(refname:short)', 'refs/heads/b4/review/']
@@ -1037,7 +1120,7 @@ def update_followup_counts(identifier: str,
     """
     updated = 0
     errors = 0
-    skip_statuses = frozenset(('archived', 'taken', 'thanked'))
+    skip_statuses = frozenset(('archived', 'accepted', 'thanked', 'snoozed'))
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     try:

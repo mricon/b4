@@ -2,6 +2,7 @@ import argparse
 import datetime
 import io
 import os
+import re
 from email.message import EmailMessage
 from typing import Any
 from unittest import mock
@@ -11,6 +12,8 @@ import pytest
 import b4
 import b4.review
 from b4.review import tracking as review_tracking
+from b4.review_tui._tracking_app import _format_snooze_until
+from b4.review_tui._modals import SnoozeScreen
 
 
 class TestGetReviewDataDir:
@@ -999,7 +1002,7 @@ class TestUpdateTrackingStatus:
         }
         branch = _create_review_branch(gitdir, 'roundtrip-test', tracking_data)
 
-        for new_status in ('replied', 'waiting', 'taken', 'thanked'):
+        for new_status in ('replied', 'waiting', 'accepted', 'thanked'):
             b4.review.update_tracking_status(gitdir, branch, new_status)
             _cover, trk = b4.review.load_tracking(gitdir, branch)
             assert trk['series']['status'] == new_status
@@ -1142,23 +1145,23 @@ class TestRescanBranches:
         conn.close()
 
     def test_rescan_preserves_non_active_statuses(self, gitdir: str) -> None:
-        """Verify full rescan does not mark taken/thanked series as gone."""
+        """Verify full rescan does not mark accepted/thanked series as gone."""
         identifier = 'rescan-preserve'
         conn = review_tracking.init_db(identifier)
-        # Add a 'taken' series with no branch — should NOT become 'gone'
+        # Add an 'accepted' series with no branch — should NOT become 'gone'
         review_tracking.add_series_to_db(
-            conn, 'taken-change', 1, 'Taken', 'Author', 'a@example.com',
+            conn, 'accepted-change', 1, 'Accepted', 'Author', 'a@example.com',
             '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3)
-        review_tracking.update_series_status(conn, 'taken-change', 'taken')
+        review_tracking.update_series_status(conn, 'accepted-change', 'accepted')
         conn.close()
 
         review_tracking.rescan_branches(identifier, gitdir)
 
         conn = review_tracking.get_db(identifier)
         cursor = conn.execute(
-            'SELECT status FROM series WHERE change_id = ?', ('taken-change',))
+            'SELECT status FROM series WHERE change_id = ?', ('accepted-change',))
         row = cursor.fetchone()
-        assert row['status'] == 'taken'
+        assert row['status'] == 'accepted'
         conn.close()
 
     def test_rescan_all_branches(self, gitdir: str) -> None:
@@ -1437,9 +1440,9 @@ class TestFollowupCounts:
     def test_update_followup_counts_skips_terminal_statuses(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
-        """update_followup_counts skips archived/taken/thanked series."""
+        """update_followup_counts skips archived/accepted/thanked series."""
         conn = review_tracking.init_db('fc-skip-test')
-        for status in ('archived', 'taken', 'thanked'):
+        for status in ('archived', 'accepted', 'thanked'):
             cid = f'fc-{status}'
             review_tracking.add_series_to_db(
                 conn, cid, 1, 'Subject', 'Author', 'a@example.com',
@@ -1450,7 +1453,7 @@ class TestFollowupCounts:
         series_list = [
             {'change_id': f'fc-{s}', 'revision': 1,
              'message_id': f'fc-{s}@example.com', 'num_patches': 3, 'status': s}
-            for s in ('archived', 'taken', 'thanked')
+            for s in ('archived', 'accepted', 'thanked')
         ]
         result = review_tracking.update_followup_counts('fc-skip-test', series_list)
         # None fetched — all skipped, no errors
@@ -1876,3 +1879,173 @@ class TestBuildReplyFromComments:
         quoted = [l for l in lines if l.startswith('> +')]
         # Each quoted diff line should appear exactly once
         assert len(quoted) == len(set(quoted))
+
+
+class TestFormatSnoozeUntil:
+    """Tests for the _format_snooze_until() display helper."""
+
+    def test_date_only_string(self) -> None:
+        """Date-only values get an 'until' prefix for backward compat."""
+        assert _format_snooze_until('2026-04-01') == 'until 2026-04-01'
+
+    def test_expired_datetime(self) -> None:
+        """A datetime in the past returns 'expired'."""
+        past = (datetime.datetime.now(datetime.timezone.utc)
+                - datetime.timedelta(hours=1)).isoformat()
+        assert _format_snooze_until(past) == 'expired'
+
+    def test_future_days_hours_minutes(self) -> None:
+        """A datetime ~1d 2h 30m in the future shows all three components."""
+        target = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(days=1, hours=2, minutes=30, seconds=30))
+        result = _format_snooze_until(target.isoformat())
+        assert result.startswith('wakes in 1d 2h 30m')
+        assert '(' in result  # contains the local date/time
+
+    def test_future_hours_only(self) -> None:
+        """A datetime exactly 3h in the future shows hours (and maybe minutes)."""
+        target = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(hours=3, seconds=30))
+        result = _format_snooze_until(target.isoformat())
+        assert 'wakes in' in result
+        assert '3h' in result
+        assert re.search(r'\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)', result)
+
+    def test_future_minutes_only(self) -> None:
+        """A datetime 45m in the future shows only minutes."""
+        target = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(minutes=45, seconds=30))
+        result = _format_snooze_until(target.isoformat())
+        assert 'wakes in 45m' in result
+        assert 'd' not in result.split('(')[0]
+        assert 'h' not in result.split('(')[0]
+
+    def test_future_less_than_one_minute(self) -> None:
+        """A datetime <1m away shows '<1m'."""
+        target = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(seconds=20))
+        result = _format_snooze_until(target.isoformat())
+        assert 'wakes in <1m' in result
+
+    def test_invalid_datetime_with_T(self) -> None:
+        """A string containing T that isn't a valid datetime returns as-is."""
+        assert _format_snooze_until('NOT_A_DATE') == 'NOT_A_DATE'
+
+    def test_local_time_shown(self) -> None:
+        """The parenthesised local time uses YYYY-MM-DD HH:MM format."""
+        target = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(hours=6))
+        result = _format_snooze_until(target.isoformat())
+        local_dt = target.astimezone()
+        expected_str = local_dt.strftime('%Y-%m-%d %H:%M')
+        assert expected_str in result
+
+
+class TestSnoozeDurationRegex:
+    """Tests for SnoozeScreen._DURATION_RE pattern matching."""
+
+    @pytest.mark.parametrize('input_str,expected_value,expected_unit', [
+        ('30m', 30, 'm'),
+        ('3h', 3, 'h'),
+        ('1d', 1, 'd'),
+        ('2w', 2, 'w'),
+        ('7', 7, ''),
+        ('30 m', 30, 'm'),
+        ('3H', 3, 'H'),
+        ('1D', 1, 'D'),
+        ('2W', 2, 'W'),
+        ('45M', 45, 'M'),
+    ])
+    def test_valid_durations(self, input_str: str,
+                             expected_value: int, expected_unit: str) -> None:
+        """Valid duration strings are parsed correctly."""
+        m = SnoozeScreen._DURATION_RE.match(input_str)
+        assert m is not None
+        assert int(m.group(1)) == expected_value
+        assert m.group(2) == expected_unit
+
+    @pytest.mark.parametrize('input_str', [
+        'abc', '3x', 'h3', 'm', '', '3.5h', '-1d', '3hh',
+    ])
+    def test_invalid_durations(self, input_str: str) -> None:
+        """Invalid duration strings are rejected."""
+        assert SnoozeScreen._DURATION_RE.match(input_str) is None
+
+
+class TestGetExpiredSnoozedDatetime:
+    """Verify get_expired_snoozed() works with full ISO datetimes."""
+
+    def _make_snoozed_series(self, conn, change_id: str,
+                             snoozed_until: str) -> None:
+        """Insert a snoozed series with a given wake-up time."""
+        review_tracking.add_series_to_db(
+            conn,
+            change_id=change_id,
+            revision=1,
+            subject='Test subject',
+            sender_name='Test Author',
+            sender_email='test@example.com',
+            sent_at='2026-01-01T10:00:00+00:00',
+            message_id=f'{change_id}@example.com',
+            num_patches=1,
+        )
+        review_tracking.snooze_series(conn, change_id, snoozed_until)
+
+    def test_past_datetime_is_expired(self) -> None:
+        """A series snoozed until a past datetime shows up as expired."""
+        conn = review_tracking.init_db('snooze-past-dt')
+        past = (datetime.datetime.now(datetime.timezone.utc)
+                - datetime.timedelta(minutes=5)).isoformat()
+        self._make_snoozed_series(conn, 'past-dt-id', past)
+        expired = review_tracking.get_expired_snoozed(conn)
+        assert len(expired) == 1
+        assert expired[0]['change_id'] == 'past-dt-id'
+        conn.close()
+
+    def test_future_datetime_not_expired(self) -> None:
+        """A series snoozed until a future datetime does not show up."""
+        conn = review_tracking.init_db('snooze-future-dt')
+        future = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(hours=2)).isoformat()
+        self._make_snoozed_series(conn, 'future-dt-id', future)
+        expired = review_tracking.get_expired_snoozed(conn)
+        assert len(expired) == 0
+        conn.close()
+
+    def test_past_date_only_is_expired(self) -> None:
+        """A legacy date-only value in the past still works."""
+        conn = review_tracking.init_db('snooze-past-date')
+        yesterday = (datetime.date.today()
+                     - datetime.timedelta(days=1)).isoformat()
+        self._make_snoozed_series(conn, 'past-date-id', yesterday)
+        expired = review_tracking.get_expired_snoozed(conn)
+        assert len(expired) == 1
+        assert expired[0]['change_id'] == 'past-date-id'
+        conn.close()
+
+    def test_future_date_only_not_expired(self) -> None:
+        """A legacy date-only value in the future still works."""
+        conn = review_tracking.init_db('snooze-future-date')
+        tomorrow = (datetime.date.today()
+                    + datetime.timedelta(days=2)).isoformat()
+        self._make_snoozed_series(conn, 'future-date-id', tomorrow)
+        expired = review_tracking.get_expired_snoozed(conn)
+        assert len(expired) == 0
+        conn.close()
+
+    def test_mixed_date_and_datetime(self) -> None:
+        """Both legacy date-only and new datetime values handled together."""
+        conn = review_tracking.init_db('snooze-mixed')
+        past_dt = (datetime.datetime.now(datetime.timezone.utc)
+                   - datetime.timedelta(minutes=30)).isoformat()
+        yesterday = (datetime.date.today()
+                     - datetime.timedelta(days=1)).isoformat()
+        future_dt = (datetime.datetime.now(datetime.timezone.utc)
+                     + datetime.timedelta(hours=5)).isoformat()
+        self._make_snoozed_series(conn, 'expired-dt', past_dt)
+        self._make_snoozed_series(conn, 'expired-date', yesterday)
+        self._make_snoozed_series(conn, 'still-sleeping', future_dt)
+        expired = review_tracking.get_expired_snoozed(conn)
+        expired_ids = {e['change_id'] for e in expired}
+        assert expired_ids == {'expired-dt', 'expired-date'}
+        conn.close()

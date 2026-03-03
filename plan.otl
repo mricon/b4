@@ -107,7 +107,15 @@ v0.15
 	[X] Per-patch signoffs and Link tags with merge take strategy
 		[X] Apply per-commit trailers (Signed-off-by, Link) during merge take
 		[X] Honour user-edited To/Cc fields instead of overriding with reply-composition
-	[_] "Applied but not taken" state for CI-testing workflows
+	[X] "Applied but not taken" state for CI-testing workflows
+		[X] Rename "taken" → "accepted" for clarity
+		[X] Decouple git take from accepted state via checkbox
+		[X] Record take history in tracking commit (takes list)
+	[X] Snooze/unsnooze feature for deferring series
+		[X] SnoozeScreen dialog with days/date/note inputs
+		[X] Auto-wake expired snoozed series on app load
+		[X] Skip snoozed series during update-all
+		[X] Database schema v3 with snoozed_until column
 	[_] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails

@@ -40,7 +40,7 @@ from b4.review_tui._modals import (
     RevisionChoiceScreen, RebaseScreen, AbandonConfirmScreen,
     ArchiveConfirmScreen, RangeDiffScreen, ThankScreen,
     LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
-    ActionScreen, HelpScreen, TRACKING_HELP_LINES,
+    ActionScreen, HelpScreen, SnoozeScreen, TRACKING_HELP_LINES,
 )
 
 
@@ -50,7 +50,8 @@ _STATUS_SYMBOLS: Dict[str, str] = {
     'reviewing': '✎',  # U+270E lower right pencil (matches review app)
     'replied':   '↩',  # U+21A9 leftwards arrow with hook
     'waiting':   '↻',  # U+21BB clockwise open circle arrow
-    'taken':     '∈',  # U+2208 element of
+    'accepted':  '∈',  # U+2208 element of
+    'snoozed':   '⏸',  # U+23F8 double vertical bar
     'thanked':   '✓',  # U+2713 check mark
     'gone':      '∅',  # U+2205 empty set
 }
@@ -58,9 +59,10 @@ _STATUS_SYMBOLS: Dict[str, str] = {
 # Ordered status groups for the series list display.
 # Each entry is (section_label, tuple_of_statuses).
 _STATUS_GROUPS: List[Tuple[str, Tuple[str, ...]]] = [
-    ('Active',  ('reviewing', 'replied', 'taken', 'thanked')),
+    ('Active',  ('reviewing', 'replied', 'accepted', 'thanked')),
     ('New',     ('new',)),
     ('Waiting', ('waiting',)),
+    ('Snoozed', ('snoozed',)),
     ('Gone',    ('gone',)),
 ]
 # Quick status → group-index lookup built from the above.
@@ -69,6 +71,44 @@ _STATUS_GROUP_INDEX: Dict[str, int] = {
     for i, (_, statuses) in enumerate(_STATUS_GROUPS)
     for status in statuses
 }
+
+
+def _format_snooze_until(value: str) -> str:
+    """Format a snoozed_until value for display.
+
+    If *value* contains ``T`` (a full ISO datetime), show a relative
+    duration like "in 2h 30m" plus the local date/time.  Otherwise
+    return the value as-is (backward compat for date-only strings).
+    """
+    import datetime
+
+    if 'T' not in value:
+        return f'until {value}'
+    try:
+        target = datetime.datetime.fromisoformat(value)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        delta = target - now
+        total_seconds = int(delta.total_seconds())
+        if total_seconds <= 0:
+            return 'expired'
+        parts: List[str] = []
+        days = total_seconds // 86400
+        remaining = total_seconds % 86400
+        hours = remaining // 3600
+        remaining %= 3600
+        minutes = remaining // 60
+        if days:
+            parts.append(f'{days}d')
+        if hours:
+            parts.append(f'{hours}h')
+        if minutes:
+            parts.append(f'{minutes}m')
+        relative = ' '.join(parts) if parts else '<1m'
+        local_dt = target.astimezone()
+        local_str = local_dt.strftime('%Y-%m-%d %H:%M')
+        return f'wakes in {relative} ({local_str})'
+    except (ValueError, TypeError):
+        return value
 
 
 def _get_art_counts(topdir: str, branch: str) -> Optional[Tuple[int, int, int]]:
@@ -112,6 +152,9 @@ class TrackedSeriesItem(ListItem):
     TrackedSeriesItem.waiting Label {
         text-style: dim;
     }
+    TrackedSeriesItem.snoozed Label {
+        text-style: dim;
+    }
     TrackedSeriesItem.gone Label {
         text-style: dim italic;
     }
@@ -125,6 +168,8 @@ class TrackedSeriesItem(ListItem):
             self.add_class('reviewing')
         elif status == 'waiting':
             self.add_class('waiting')
+        elif status == 'snoozed':
+            self.add_class('snoozed')
         elif status == 'gone':
             self.add_class('gone')
 
@@ -353,6 +398,35 @@ class TrackingApp(App[Optional[str]]):
                 self._load_series()
 
     def _load_series(self) -> None:
+        # Auto-wake any snoozed series whose wake-up date has passed
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            expired = b4.review.tracking.get_expired_snoozed(conn)
+            if expired:
+                topdir = b4.git_get_toplevel()
+                for exp in expired:
+                    cid = exp['change_id']
+                    rev = exp['revision']
+                    # Read previous state from tracking commit
+                    prev_status = 'reviewing'
+                    review_branch = f'b4/review/{cid}'
+                    if topdir and b4.git_branch_exists(topdir, review_branch):
+                        try:
+                            cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                            trk_series = tracking.get('series', {})
+                            snoozed_info = trk_series.get('snoozed', {})
+                            prev_status = snoozed_info.get('previous_state', 'reviewing')
+                            trk_series['status'] = prev_status
+                            trk_series.pop('snoozed', None)
+                            tracking['series'] = trk_series
+                            b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+                        except (SystemExit, Exception):
+                            pass
+                    b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
+            conn.close()
+        except (FileNotFoundError, Exception):
+            pass
+
         all_series = b4.review.tracking.get_all_tracked_series(self._identifier)
         self._all_series = [s for s in all_series if s.get('status') != 'archived']
         # Record the database mtime so the polling timer can detect changes
@@ -498,11 +572,12 @@ class TrackingApp(App[Optional[str]]):
             self.action_review()
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
-        'new': frozenset({'review', 'view', 'abandon'}),
-        'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting'}),
-        'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting'}),
-        'waiting': frozenset({'review', 'view', 'range_diff', 'abandon', 'archive'}),
-        'taken': frozenset({'thank', 'archive'}),
+        'new': frozenset({'review', 'view', 'abandon', 'snooze'}),
+        'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze'}),
+        'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze'}),
+        'waiting': frozenset({'review', 'view', 'range_diff', 'abandon', 'archive', 'snooze'}),
+        'accepted': frozenset({'thank', 'archive'}),
+        'snoozed': frozenset({'review', 'view', 'range_diff', 'unsnooze', 'abandon'}),
         'thanked': frozenset({'archive'}),
         'gone': frozenset({'abandon', 'review'}),
     }
@@ -537,14 +612,22 @@ class TrackingApp(App[Optional[str]]):
         if status in ('new', 'gone'):
             actions.append(('review', 'Review'))
             actions.append(('abandon', 'Abandon series'))
+            if status == 'new':
+                actions.append(('snooze', 'Snooze (defer until later)'))
+        elif status == 'snoozed':
+            actions.append(('unsnooze', 'Wake up (unsnooze)'))
+            actions.append(('abandon', 'Abandon series'))
         else:
             if status in ('reviewing', 'replied'):
                 actions.append(('take', 'Take (apply to branch)'))
                 actions.append(('rebase', 'Rebase review branch'))
                 actions.append(('waiting', 'Mark as waiting on new revision'))
+                actions.append(('snooze', 'Snooze (defer until later)'))
             if status == 'reviewing' and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
-            if status == 'taken':
+            if status == 'waiting':
+                actions.append(('snooze', 'Snooze (defer until later)'))
+            if status == 'accepted':
                 actions.append(('thank', 'Send thank-you'))
             if status != 'thanked':
                 actions.append(('abandon', 'Abandon series'))
@@ -567,6 +650,8 @@ class TrackingApp(App[Optional[str]]):
             'upgrade': self.action_update_revision,
             'archive': self.action_archive,
             'waiting': self.action_waiting,
+            'snooze': self.action_snooze,
+            'unsnooze': self.action_unsnooze,
         }.get(action)
         if handler:
             handler()
@@ -882,6 +967,17 @@ class TrackingApp(App[Optional[str]]):
         status_raw = series.get('status', 'new')
         symbol = _STATUS_SYMBOLS.get(status_raw, '?')
         status_str = f'{symbol}  {status_raw}'
+        if status_raw == 'snoozed':
+            try:
+                conn = b4.review.tracking.get_db(self._identifier)
+                snoozed_until = b4.review.tracking.get_snoozed_until(
+                    conn, series.get('change_id', ''),
+                    revision=series.get('revision'))
+                conn.close()
+                if snoozed_until:
+                    status_str += f' ({_format_snooze_until(snoozed_until)})'
+            except Exception:
+                pass
 
         self.query_one('#detail-subject', Static).update(subject)
         self.query_one('#detail-from', Static).update(from_str)
@@ -946,8 +1042,11 @@ class TrackingApp(App[Optional[str]]):
         linkmask = str(config.get('linkmask', 'https://lore.kernel.org/r/%s'))
         topdir = b4.git_get_toplevel()
 
+        # Skip snoozed series during update-all
+        update_list = [s for s in self._all_series if s.get('status') != 'snoozed']
+
         self.push_screen(
-            UpdateAllScreen(self._all_series, self._identifier, linkmask, topdir),
+            UpdateAllScreen(update_list, self._identifier, linkmask, topdir),
             callback=self._on_update_all_complete,
         )
 
@@ -1150,7 +1249,8 @@ class TrackingApp(App[Optional[str]]):
     @staticmethod
     def _record_take_metadata(topdir: str, review_branch: str,
                               target_branch: str, commit_ids: List[str],
-                              cherrypick: Optional[List[int]] = None) -> None:
+                              cherrypick: Optional[List[int]] = None,
+                              accepted: bool = True) -> None:
         """Record taken commit IDs in the tracking data on the review branch.
 
         Args:
@@ -1159,6 +1259,7 @@ class TrackingApp(App[Optional[str]]):
             target_branch: Branch the patches were applied to.
             commit_ids: Ordered list of commit SHAs that were applied.
             cherrypick: If set, the 1-based patch indices that were picked.
+            accepted: If True, mark the series status as 'accepted'.
         """
         import datetime
         try:
@@ -1168,11 +1269,15 @@ class TrackingApp(App[Optional[str]]):
             return
 
         series = tracking.get('series', {})
-        series['status'] = 'taken'
-        series['taken'] = {
+        if accepted:
+            series['status'] = 'accepted'
+        take_info = {
             'branch': target_branch,
             'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),
+            'accepted': accepted,
         }
+        series['taken'] = take_info
+        series.setdefault('takes', []).append(take_info)
         tracking['series'] = series
 
         patches = tracking.get('patches', [])
@@ -1363,25 +1468,26 @@ class TrackingApp(App[Optional[str]]):
         if ecode == 0 and out.strip():
             commit_ids = out.strip().splitlines()
             self._record_take_metadata(topdir, review_branch, target_branch,
-                                       commit_ids)
+                                       commit_ids,
+                                       accepted=take_screen.accept_series)
 
         # Record the branch for recent-take-branches suggestions
         common_dir = b4.git_get_common_dir(topdir)
         if common_dir:
             b4.review.tracking.record_take_branch(common_dir, target_branch)
 
-        # Record the series as taken in the tracking database
-        if self._identifier and change_id:
+        # Record the series as accepted in the tracking database
+        if take_screen.accept_series and self._identifier and change_id:
             revision = t_series.get('revision')
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
-                b4.review.tracking.update_series_status(conn, change_id, 'taken',
+                b4.review.tracking.update_series_status(conn, change_id, 'accepted',
                                                         revision=revision)
                 conn.close()
             except Exception as ex:
                 logger.warning('Could not update series status: %s', ex)
         # Update Patchwork state if series was tracked from Patchwork
-        if self._selected_series:
+        if take_screen.accept_series and self._selected_series:
             pw_sid = self._selected_series.get('pw_series_id')
             if pw_sid:
                 b4.review.pw_update_series_state(pw_sid, 'accepted')
@@ -1558,25 +1664,26 @@ class TrackingApp(App[Optional[str]]):
             if ecode == 0:
                 commit_ids = out.strip().splitlines()
                 self._record_take_metadata(topdir, review_branch, target_branch,
-                                           commit_ids, cherrypick=cherrypick)
+                                           commit_ids, cherrypick=cherrypick,
+                                           accepted=take_screen.accept_series)
 
         # Record the branch for recent-take-branches suggestions
         common_dir = b4.git_get_common_dir(topdir)
         if common_dir:
             b4.review.tracking.record_take_branch(common_dir, target_branch)
 
-        # Record the series as taken in the tracking database
-        if self._identifier and change_id:
+        # Record the series as accepted in the tracking database
+        if take_screen.accept_series and self._identifier and change_id:
             revision = series.get('revision')
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
-                b4.review.tracking.update_series_status(conn, change_id, 'taken',
+                b4.review.tracking.update_series_status(conn, change_id, 'accepted',
                                                         revision=revision)
                 conn.close()
             except Exception as ex:
                 logger.warning('Could not update series status: %s', ex)
         # Update Patchwork state if series was tracked from Patchwork
-        if self._selected_series:
+        if take_screen.accept_series and self._selected_series:
             pw_sid = self._selected_series.get('pw_series_id')
             if pw_sid:
                 b4.review.pw_update_series_state(pw_sid, 'accepted')
@@ -2289,6 +2396,103 @@ class TrackingApp(App[Optional[str]]):
         self.notify('Series moved to waiting')
         self._load_series()
 
+    def action_snooze(self) -> None:
+        """Snooze the selected series until a future date."""
+        if not self._selected_series:
+            return
+        status = self._selected_series.get('status', 'new')
+        if status not in ('new', 'reviewing', 'replied', 'waiting'):
+            self.notify('Cannot snooze a series in this state', severity='warning')
+            return
+        self.push_screen(SnoozeScreen(), callback=self._on_snooze_confirmed)
+
+    def _on_snooze_confirmed(self, result: Optional[Dict[str, str]]) -> None:
+        """Handle snooze dialog result."""
+        if result is None:
+            return
+        series = self._selected_series
+        if not series:
+            return
+        change_id = series.get('change_id', '')
+        revision = series.get('revision')
+        previous_status = series.get('status', 'new')
+        until_date = result['until']
+        note = result.get('note', '')
+
+        # Update tracking commit metadata
+        topdir = b4.git_get_toplevel()
+        review_branch = f'b4/review/{change_id}'
+        if topdir and b4.git_branch_exists(topdir, review_branch):
+            try:
+                cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                trk_series = tracking.get('series', {})
+                trk_series['status'] = 'snoozed'
+                trk_series['snoozed'] = {
+                    'until': until_date,
+                    'previous_state': previous_status,
+                    'note': note,
+                }
+                tracking['series'] = trk_series
+                b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+            except (SystemExit, Exception) as ex:
+                logger.warning('Could not update tracking commit: %s', ex)
+
+        # Update database
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            b4.review.tracking.snooze_series(conn, change_id, until_date,
+                                             revision=revision)
+            conn.close()
+        except Exception as ex:
+            self.notify(f'Error: {ex}', severity='error')
+            return
+
+        msg = f'Snoozed, {_format_snooze_until(until_date)}'
+        if note:
+            msg += f' ({note})'
+        self.notify(msg)
+        self._load_series()
+
+    def action_unsnooze(self) -> None:
+        """Wake up a snoozed series, restoring its previous state."""
+        if not self._selected_series:
+            return
+        if self._selected_series.get('status') != 'snoozed':
+            return
+        change_id = self._selected_series.get('change_id', '')
+        revision = self._selected_series.get('revision')
+
+        # Read previous state from tracking commit
+        previous_status = 'reviewing'  # default fallback
+        topdir = b4.git_get_toplevel()
+        review_branch = f'b4/review/{change_id}'
+        if topdir and b4.git_branch_exists(topdir, review_branch):
+            try:
+                cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                trk_series = tracking.get('series', {})
+                snoozed_info = trk_series.get('snoozed', {})
+                previous_status = snoozed_info.get('previous_state', 'reviewing')
+                # Clean up tracking commit
+                trk_series['status'] = previous_status
+                trk_series.pop('snoozed', None)
+                tracking['series'] = trk_series
+                b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+            except (SystemExit, Exception) as ex:
+                logger.warning('Could not update tracking commit: %s', ex)
+
+        # Update database
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            b4.review.tracking.unsnooze_series(conn, change_id, previous_status,
+                                               revision=revision)
+            conn.close()
+        except Exception as ex:
+            self.notify(f'Error: {ex}', severity='error')
+            return
+
+        self.notify(f'Unsnoozed, restored to {previous_status}')
+        self._load_series()
+
     def action_archive(self) -> None:
         """Archive a taken/thanked series."""
         if not self._selected_series:
@@ -2448,8 +2652,8 @@ class TrackingApp(App[Optional[str]]):
         series = self._selected_series
         if not series:
             return
-        if series.get('status', 'new') != 'taken':
-            self.notify('Series must be taken before sending thanks', severity='warning')
+        if series.get('status', 'new') != 'accepted':
+            self.notify('Series must be accepted before sending thanks', severity='warning')
             return
 
         change_id = series.get('change_id', '')
