@@ -403,60 +403,69 @@ class TrackingApp(App[Optional[str]]):
             if gone or result.get('changed', 0):
                 self._load_series()
 
-    def _load_series(self) -> None:
-        # Auto-wake any snoozed series whose wake-up date has passed
+    @staticmethod
+    def _restore_snoozed_tracking(topdir: str, review_branch: str) -> str:
+        """Restore previous state from snoozed tracking commit metadata.
+
+        Reads the snoozed dict from the tracking commit, restores the
+        previous status, removes the snoozed key, and saves the commit.
+        Returns the previous status (defaults to 'reviewing').
+        """
+        cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+        trk_series = tracking.get('series', {})
+        snoozed_info = trk_series.get('snoozed', {})
+        prev_status = snoozed_info.get('previous_state', 'reviewing')
+        trk_series['status'] = prev_status
+        trk_series.pop('snoozed', None)
+        tracking['series'] = trk_series
+        b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+        return prev_status
+
+    def _auto_wake_snoozed(self) -> None:
+        """Auto-wake snoozed series whose wake-up condition has been met.
+
+        Checks two conditions:
+        - Time-based: the snoozed_until date has passed.
+        - Tag-based: the target git tag now exists.
+
+        For each woken series, restores the previous status in both
+        the tracking commit and the database.
+        """
         try:
             conn = b4.review.tracking.get_db(self._identifier)
-            expired = b4.review.tracking.get_expired_snoozed(conn)
-            if expired:
-                topdir = b4.git_get_toplevel()
-                for exp in expired:
-                    cid = exp['change_id']
-                    rev = exp['revision']
-                    # Read previous state from tracking commit
-                    prev_status = 'reviewing'
-                    review_branch = f'b4/review/{cid}'
-                    if topdir and b4.git_branch_exists(topdir, review_branch):
-                        try:
-                            cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
-                            trk_series = tracking.get('series', {})
-                            snoozed_info = trk_series.get('snoozed', {})
-                            prev_status = snoozed_info.get('previous_state', 'reviewing')
-                            trk_series['status'] = prev_status
-                            trk_series.pop('snoozed', None)
-                            tracking['series'] = trk_series
-                            b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
-                        except (SystemExit, Exception):
-                            pass
-                    b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
-            # Auto-wake any snoozed series whose target tag now exists
-            topdir = b4.git_get_toplevel()
-            if topdir:
-                tag_snoozed = b4.review.tracking.get_tag_snoozed(conn)
-                for entry in tag_snoozed:
-                    cid = entry['change_id']
-                    rev = entry['revision']
-                    tagname = entry['snoozed_until'][4:]  # strip 'tag:' prefix
-                    if not b4.git_revparse_tag(topdir, tagname):
-                        continue
-                    prev_status = 'reviewing'
-                    review_branch = f'b4/review/{cid}'
-                    if b4.git_branch_exists(topdir, review_branch):
-                        try:
-                            cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
-                            trk_series = tracking.get('series', {})
-                            snoozed_info = trk_series.get('snoozed', {})
-                            prev_status = snoozed_info.get('previous_state', 'reviewing')
-                            trk_series['status'] = prev_status
-                            trk_series.pop('snoozed', None)
-                            tracking['series'] = trk_series
-                            b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
-                        except (SystemExit, Exception):
-                            pass
-                    b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
-            conn.close()
         except (FileNotFoundError, Exception):
-            pass
+            return
+        try:
+            topdir = b4.git_get_toplevel()
+            # Wake series whose snooze date has passed
+            for entry in b4.review.tracking.get_expired_snoozed(conn):
+                self._wake_one(conn, entry, topdir)
+            # Wake series whose target tag now exists
+            if topdir:
+                for entry in b4.review.tracking.get_tag_snoozed(conn):
+                    tagname = entry['snoozed_until'][4:]  # strip 'tag:' prefix
+                    if b4.git_revparse_tag(topdir, tagname):
+                        self._wake_one(conn, entry, topdir)
+        finally:
+            conn.close()
+
+    def _wake_one(self, conn: 'sqlite3.Connection',
+                  entry: Dict[str, Any],
+                  topdir: Optional[str]) -> None:
+        """Restore a single snoozed series to its previous state."""
+        cid = entry['change_id']
+        rev = entry['revision']
+        prev_status = 'reviewing'
+        review_branch = f'b4/review/{cid}'
+        if topdir and b4.git_branch_exists(topdir, review_branch):
+            try:
+                prev_status = self._restore_snoozed_tracking(topdir, review_branch)
+            except (SystemExit, Exception):
+                pass
+        b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
+
+    def _load_series(self) -> None:
+        self._auto_wake_snoozed()
 
         all_series = b4.review.tracking.get_all_tracked_series(self._identifier)
         self._all_series = [s for s in all_series if s.get('status') != 'archived']
@@ -1446,12 +1455,9 @@ class TrackingApp(App[Optional[str]]):
             return
 
         # Save current branch so we can restore on failure
-        ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
-        if ecode == 0:
-            prev_branch = out.strip()
-        else:
-            ecode, out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
-            prev_branch = out.strip()
+        prev_branch = b4.git_get_current_branch(topdir)
+        if prev_branch is None:
+            prev_branch = b4.git_revparse_obj('HEAD', gitdir=topdir)
 
         # Checkout target branch
         ecode, out = b4.git_run_command(topdir, ['checkout', target_branch], logstderr=True)
@@ -1657,12 +1663,9 @@ class TrackingApp(App[Optional[str]]):
         ambytes, _lser = result
 
         # Save current branch so we can report it on failure
-        ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
-        if ecode == 0:
-            prev_branch = out.strip()
-        else:
-            ecode, out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
-            prev_branch = out.strip()
+        prev_branch = b4.git_get_current_branch(topdir)
+        if prev_branch is None:
+            prev_branch = b4.git_revparse_obj('HEAD', gitdir=topdir)
 
         # Checkout target branch
         ecode, out = b4.git_run_command(topdir, ['checkout', target_branch], logstderr=True)
@@ -2041,6 +2044,38 @@ class TrackingApp(App[Optional[str]]):
 
         b4.view_in_pager(out.encode(), filehint='range-diff.txt')
 
+    def _delete_review_branch(self, topdir: str, review_branch: str,
+                              notify: bool = True) -> bool:
+        """Delete a review branch, switching away if currently on it.
+
+        Returns True on success, False on failure.
+        """
+        if b4.git_get_current_branch(topdir) == review_branch:
+            ecode, out = b4.git_run_command(
+                topdir, ['rev-parse', f'{review_branch}~1'],
+                logstderr=True)
+            if ecode > 0:
+                if notify:
+                    self.notify('Could not determine parent commit',
+                                severity='error')
+                return False
+            parent = out.strip()
+            ecode, out = b4.git_run_command(
+                topdir, ['checkout', parent], logstderr=True)
+            if ecode > 0:
+                if notify:
+                    self.notify(f'Could not switch away from {review_branch}',
+                                severity='error')
+                return False
+        ecode, out = b4.git_run_command(
+            topdir, ['branch', '-D', review_branch], logstderr=True)
+        if ecode > 0:
+            if notify:
+                self.notify(f'Failed to delete branch {review_branch}',
+                            severity='error')
+            return False
+        return True
+
     def action_abandon(self) -> None:
         """Abandon the selected series."""
         if not self._selected_series:
@@ -2067,29 +2102,7 @@ class TrackingApp(App[Optional[str]]):
             return
         # Delete the review branch if it exists
         if has_branch:
-            # If currently on that branch, switch away first
-            ecode, out = b4.git_run_command(
-                topdir, ['symbolic-ref', '--short', 'HEAD'])
-            if ecode == 0 and out.strip() == review_branch:
-                ecode, out = b4.git_run_command(
-                    topdir, ['rev-parse', f'{review_branch}~1'],
-                    logstderr=True)
-                if ecode > 0:
-                    self.notify('Could not determine parent commit',
-                                severity='error')
-                    return
-                parent = out.strip()
-                ecode, out = b4.git_run_command(
-                    topdir, ['checkout', parent], logstderr=True)
-                if ecode > 0:
-                    self.notify(f'Could not switch away from {review_branch}',
-                                severity='error')
-                    return
-            ecode, out = b4.git_run_command(
-                topdir, ['branch', '-D', review_branch], logstderr=True)
-            if ecode > 0:
-                self.notify(f'Failed to delete branch {review_branch}',
-                            severity='error')
+            if not self._delete_review_branch(topdir, review_branch):
                 return
         # Delete from tracking database
         try:
@@ -2503,15 +2516,7 @@ class TrackingApp(App[Optional[str]]):
         review_branch = f'b4/review/{change_id}'
         if topdir and b4.git_branch_exists(topdir, review_branch):
             try:
-                cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
-                trk_series = tracking.get('series', {})
-                snoozed_info = trk_series.get('snoozed', {})
-                previous_status = snoozed_info.get('previous_state', 'reviewing')
-                # Clean up tracking commit
-                trk_series['status'] = previous_status
-                trk_series.pop('snoozed', None)
-                tracking['series'] = trk_series
-                b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+                previous_status = self._restore_snoozed_tracking(topdir, review_branch)
             except (SystemExit, Exception) as ex:
                 logger.warning('Could not update tracking commit: %s', ex)
 
@@ -2615,32 +2620,7 @@ class TrackingApp(App[Optional[str]]):
                 tout.write(tio.getvalue())
 
             # Delete the review branch
-            ecode, out = b4.git_run_command(
-                topdir, ['symbolic-ref', '--short', 'HEAD'])
-            if ecode == 0 and out.strip() == review_branch:
-                ecode, out = b4.git_run_command(
-                    topdir, ['rev-parse', f'{review_branch}~1'],
-                    logstderr=True)
-                if ecode > 0:
-                    if notify:
-                        self.notify('Could not determine parent commit',
-                                    severity='error')
-                    return False
-                parent = out.strip()
-                ecode, out = b4.git_run_command(
-                    topdir, ['checkout', parent], logstderr=True)
-                if ecode > 0:
-                    if notify:
-                        self.notify(
-                            f'Could not switch away from {review_branch}',
-                            severity='error')
-                    return False
-            ecode, out = b4.git_run_command(
-                topdir, ['branch', '-D', review_branch], logstderr=True)
-            if ecode > 0:
-                if notify:
-                    self.notify(f'Failed to delete branch {review_branch}',
-                                severity='error')
+            if not self._delete_review_branch(topdir, review_branch, notify=notify):
                 return False
 
         # Update tracking database

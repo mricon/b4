@@ -43,11 +43,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
         return
 
     # Get current branch to restore later
-    ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
-    if ecode == 0:
-        original_branch = out.strip()
-    else:
-        original_branch = None
+    original_branch = b4.git_get_current_branch(topdir)
 
     # Check if we're already on a review branch
     if original_branch and original_branch.startswith(b4.review.REVIEW_BRANCH_PREFIX):
