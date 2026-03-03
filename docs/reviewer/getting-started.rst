@@ -152,6 +152,15 @@ When you press ``u`` to update all tracked series, b4 checks lore for
 newer revisions. If one is found, the series is highlighted and you
 can **Upgrade** to the new revision via the action menu.
 
+Snoozing a series
+~~~~~~~~~~~~~~~~~~
+If you want to defer a series — for example, until a release candidate
+tag appears — open the action menu (``a``) and select **Snooze**. You
+can snooze by duration (``2w``), date (``2026-04-01``), or git tag
+(``v6.15-rc3``). The series moves to a separate Snoozed group and
+wakes up automatically when the condition is met. See
+:ref:`snooze_details` in the reference for full details.
+
 Range-diff between revisions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Press ``d`` in the tracking list to compare two revisions of the
@@ -182,22 +191,26 @@ open the action menu (``a``). Select **Take** to apply the series.
 B4 presents a dialog where you choose:
 
 * **Merge strategy** — merge (creates a merge commit using the cover
-  letter as the message template), linear (``git am``), or cherry-pick
-  (select individual patches).
-* **Target branch** — the branch to apply to (defaults to ``master``
-  or ``main``).
+  letter as the message template, with per-commit trailers applied to
+  each patch), linear (``git am``), or cherry-pick (select individual
+  patches; skipped patches are pre-deselected).
+* **Target branch** — recently used branches are suggested, with the
+  configured :term:`b4.review-target-branch` always included. You can
+  also type a branch name directly.
 * **Optional trailers** — toggle adding a ``Signed-off-by`` or
   ``Link:`` trailer to each commit.
+* **Mark as accepted** — update the series status after applying.
 
 For the merge strategy, ``$EDITOR`` opens with the merge commit
 message for you to review and edit. Press ``Ctrl-y`` to confirm, or
 ``Escape`` to cancel.
 
-After taking, the series status changes to **taken**.
+After taking, the series status changes to **accepted** (if the
+"mark as accepted" checkbox is ticked).
 
 Sending a thank-you note
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
-Open the action menu (``a``) on a taken series and select **Thank**.
+Open the action menu (``a``) on an accepted series and select **Thank**.
 B4 composes a thank-you email listing each applied commit with its
 hash, and sends it to the submitter and relevant lists.
 

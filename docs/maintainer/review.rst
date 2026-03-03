@@ -10,7 +10,7 @@ review: TUI-based patch review workflow (alpha)
 The ``b4 review`` command provides a TUI-based workflow for maintainers
 who receive patches on mailing lists. It lets you track incoming patch
 series, review diffs with inline commenting, add code-review trailers,
-send review emails, and take (apply) patches — all from a single
+send review emails, and accept (apply) patches — all from a single
 terminal interface.
 
 The workflow is built around a lightweight SQLite tracking database that
@@ -91,16 +91,17 @@ Status         Meaning
 ``reviewing``  Review branch created, review in progress
 ``replied``    Review comments sent to the mailing list
 ``waiting``    Waiting for a new revision from the submitter
-``taken``      Patches applied to the target branch
+``snoozed``    Deferred until a date, duration, or git tag
+``accepted``   Patches applied to the target branch
 ``thanked``    Thank-you note sent to the contributor
 ``archived``   Review completed and archived
 ``gone``       Review branch deleted or missing (e.g. after a sync)
 =============  =========================================================
 
-Series are grouped by lifecycle stage — Active (reviewing/replied/taken/
-thanked), New, Waiting, and Gone — and sorted within each group by the
-most recent activity, whether that is a new mailing list reply or a local
-status change.
+Series are grouped by lifecycle stage — Active (reviewing/replied/
+accepted/thanked), New, Waiting, Snoozed, and Gone — and sorted within
+each group by the most recent activity, whether that is a new mailing
+list reply or a local status change.
 
 **Listing columns**
 
@@ -126,7 +127,8 @@ Symbol   Status
 ``✎``    reviewing
 ``↩``    replied
 ``↻``    waiting
-``∈``    taken
+``⏸``    snoozed
+``∈``    accepted
 ``✓``    thanked
 ``∅``    gone
 =======  =============
@@ -150,22 +152,44 @@ Key           Action
 ``q``         Quit
 ============  ===========================================================
 
-The ``a`` key opens a context-sensitive action menu. Available actions
-depend on the series status:
+The ``a`` key opens a context-sensitive action menu. Each action has a
+single-keypress shortcut shown in square brackets so you can act
+quickly — for example, ``a`` then ``T`` to take a series. Available
+actions depend on the series status:
 
-* **Take** — apply patches to the target branch (reviewing/replied)
-* **Rebase** — rebase review branch onto HEAD (reviewing/replied)
-* **Mark as waiting** — mark series as waiting on new revision
-  (reviewing/replied)
-* **Upgrade** — switch review branch to a newer revision (when
-  available)
-* **Thank** — send a thank-you note (taken)
-* **Abandon** — delete series and review branch
-* **Archive** — archive a completed series
+**Reviewing / replied:**
+
+* ``[T]`` **Take** — apply patches to the target branch
+* ``[R]`` **Rebase** — rebase review branch onto HEAD
+* ``[w]`` **Mark as waiting** — waiting on new revision
+* ``[s]`` **Snooze** — defer until a date, duration, or git tag
+* ``[U]`` **Upgrade** — switch to a newer revision (when available)
+* ``[A]`` **Abandon** / ``[x]`` **Archive**
+
+**New / gone:**
+
+* ``[r]`` **Review** — create or re-enter the review branch
+* ``[s]`` **Snooze** — defer until later (new only)
+* ``[A]`` **Abandon**
+
+**Waiting:**
+
+* ``[r]`` **Review** — return to reviewing
+* ``[A]`` **Abandon** / ``[x]`` **Archive**
+
+**Snoozed:**
+
+* ``[u]`` **Unsnooze** — wake up and restore previous status
+* ``[A]`` **Abandon** / ``[x]`` **Archive**
+
+**Accepted:**
+
+* ``[t]`` **Thank** — send a thank-you note
+* ``[A]`` **Abandon** / ``[x]`` **Archive**
 
 The details panel at the bottom shows the full original subject, sender,
 send date, status, change-ID, lore link, known revisions, and the
-review branch name for active series.
+review branch name for active and snoozed series.
 
 Review interface
 ~~~~~~~~~~~~~~~~
@@ -345,21 +369,26 @@ Open the action menu (``a``) and select **Take** to apply a reviewed series.
 B4 offers three methods:
 
 * **Merge** — creates a merge commit using the cover letter as the
-  commit message template.
+  commit message template. Per-commit ``Signed-off-by`` and ``Link:``
+  trailers are applied to each patch individually.
 * **Linear** (git-am) — applies patches linearly with ``git am``.
 * **Cherry-pick** — cherry-picks individual patches (you can select
-  which ones).
+  which ones). Skipped patches are pre-deselected.
 
-You can also choose the target branch, and optionally add a
-``Signed-off-by`` trailer or a ``Link:`` trailer to each commit.
-Press ``Ctrl-y`` to confirm, or ``Escape`` to cancel.
+The Take dialog suggests recently used target branches, with the
+configured :term:`b4.review-target-branch` always included. You can
+also type a branch name directly.
 
-After taking, the series moves to ``taken`` status.
+Optionally toggle the ``Signed-off-by`` and ``Link:`` checkboxes to
+add those trailers to each commit, and the ``Mark as accepted``
+checkbox to update the series status. Press ``Ctrl-y`` to confirm,
+or ``Escape`` to cancel.
 
 Rebasing
 ~~~~~~~~
 Open the action menu (``a``) and select **Rebase** to rebase the review
-branch onto the current HEAD. Press ``y`` to confirm, or ``Escape`` to
+branch onto a target branch. The dialog suggests recently used branches
+(same as the Take dialog). Press ``y`` to confirm, or ``Escape`` to
 cancel. B4 first tests applicability in a temporary worktree before
 performing the actual rebase.
 
@@ -370,8 +399,8 @@ range-diff``. B4 fetches the comparison revision from lore if needed.
 
 Thank-you
 ~~~~~~~~~
-Open the action menu (``a``) on a taken series and select **Thank** to
-compose and send a thank-you note to the contributor.
+Open the action menu (``a``) on an accepted series and select **Thank**
+to compose and send a thank-you note to the contributor.
 
 Archive and abandon
 ~~~~~~~~~~~~~~~~~~~
@@ -379,6 +408,33 @@ Open the action menu (``a``) and select **Archive** to archive a
 completed series (creates a ``.tar.gz`` in
 ``$XDG_DATA_HOME/b4/review-archived/``). Select **Abandon** to delete
 the series and review branch entirely.
+
+.. _snooze_details:
+
+Snoozing a series
+~~~~~~~~~~~~~~~~~
+When you want to defer a series — perhaps waiting for a release
+candidate or simply clearing your queue — open the action menu (``a``)
+and select **Snooze**. The snooze dialog offers three modes:
+
+* **Duration** — relative time like ``2w`` (2 weeks), ``30d`` (30 days),
+  or ``3m`` (3 months).
+* **Date** — an absolute date in ``YYYY-MM-DD`` format.
+* **Tag** — a git tag name such as ``v6.15-rc3``. The series wakes up
+  when that tag appears in the repository.
+
+Snoozed series move to a separate **Snoozed** group in the tracking
+list and are skipped during ``u`` (update-all). The review branch is
+preserved so you can pick up exactly where you left off.
+
+When the snooze condition is met — the date passes or the tag appears
+— the series automatically wakes up and returns to its previous status
+the next time the TUI loads. You can also wake a series manually via
+the action menu (**Unsnooze**).
+
+The snooze dialog remembers your last choice within a session, so if
+you are snoozing several series with the same settings the fields are
+pre-populated.
 
 Working across multiple machines
 --------------------------------
