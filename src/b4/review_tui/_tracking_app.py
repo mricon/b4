@@ -1060,10 +1060,10 @@ class TrackingApp(App[Optional[str]]):
         except Exception:
             revisions_row.display = False
 
-        # Show branch name for series being reviewed
+        # Show branch name for series with a review branch
         status = series.get('status', 'new')
         branch_row = self.query_one('#detail-branch-row', Horizontal)
-        if status in ('reviewing', 'replied', 'waiting'):
+        if status in ('reviewing', 'replied', 'waiting', 'snoozed'):
             branch_name = f'b4/review/{change_id}'
             self.query_one('#detail-branch', Static).update(branch_name)
             branch_row.display = True
