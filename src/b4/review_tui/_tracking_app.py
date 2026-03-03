@@ -29,8 +29,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
 from b4.review_tui._common import (
-    logger, _wait_for_enter, _suspend_to_shell,
+    logger, resolve_styles, _wait_for_enter, _suspend_to_shell,
     gather_attestation_info, SeparatedFooter, _quiet_worker,
+    _fix_ansi_theme,
 )
 from b4.review_tui._modals import (
     ViewSeriesScreen, AttestationScreen, TakeScreen,
@@ -108,11 +109,10 @@ class TrackedSeriesItem(ListItem):
         text-style: bold;
     }
     TrackedSeriesItem.waiting Label {
-        opacity: 50%;
+        text-style: dim;
     }
     TrackedSeriesItem.gone Label {
-        text-style: italic;
-        opacity: 50%;
+        text-style: dim italic;
     }
     """
 
@@ -162,7 +162,11 @@ class TrackedSeriesItem(ListItem):
         label.append(f'{submitter:<20s}  ')
         label.append(art_str.rjust(7))
         label.append(f'  {fu_base.rjust(3)}')
-        label.append(f'{fu_new:<3s}', style='bold yellow' if fu_new else '')
+        fu_style = ''
+        if fu_new:
+            ts = resolve_styles(self.app)
+            fu_style = f"bold {ts['warning']}"
+        label.append(f'{fu_new:<3s}', style=fu_style)
         label.append(f'  {symbol}{flag}  {subject_display}')
         yield Label(label)
 
@@ -223,7 +227,24 @@ class TrackingApp(App[Optional[str]]):
         color: ansi_bright_yellow;
         text-style: bold;
     }
-
+    TrackingApp:ansi #tracking-title {
+        background: ansi_bright_black;
+        color: ansi_default;
+        text-style: bold;
+    }
+    TrackingApp:ansi #tracking-header {
+        background: ansi_default;
+        color: ansi_default;
+        text-style: dim;
+    }
+    TrackingApp:ansi #details-panel {
+        background: ansi_default;
+        border-top: solid ansi_default;
+    }
+    TrackingApp:ansi .details-label {
+        color: ansi_default;
+        text-style: dim;
+    }
     """
 
     BINDING_GROUPS = {
@@ -303,6 +324,7 @@ class TrackingApp(App[Optional[str]]):
         yield SeparatedFooter()
 
     def on_mount(self) -> None:
+        _fix_ansi_theme(self)
         self._load_series()
         self.set_interval(1, self._check_db_changed)
         topdir = b4.git_get_toplevel()

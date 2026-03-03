@@ -21,18 +21,25 @@ from textual.worker import Worker, WorkerState
 
 from rich.text import Text
 
-from b4.review_tui._common import CI_COLOURS, CI_MARKUP, logger, SeparatedFooter
+from b4.review_tui._common import resolve_styles, ci_styles, logger, SeparatedFooter, _fix_ansi_theme
 from b4.review_tui._modals import (
     ViewSeriesScreen, CIChecksScreen, SetStateScreen, ApplyStateModal,
     LimitScreen, HelpScreen, PW_HELP_LINES,
 )
 
 
-def _format_series_label(series: Dict[str, Any], tracked: bool) -> Text:
-    """Build a Text label for a series row."""
+def _format_series_label(series: Dict[str, Any], tracked: bool,
+                         ts: Optional[Dict[str, str]] = None) -> Text:
+    """Build a Text label for a series row.
+
+    *ts* is a resolved theme styles dict from :func:`resolve_styles`.
+    """
     track_mark = 'T' if tracked else ' '
     ci_state = series.get('check') or 'pending'
-    ci_style = CI_COLOURS.get(ci_state, CI_COLOURS['pending'])
+    ci_map = ci_styles(ts) if ts else {
+        'pending': 'dim', 'success': 'green', 'warning': 'red', 'fail': 'bold red',
+    }
+    ci_style = ci_map.get(ci_state, ci_map['pending'])
     date = (series.get('date') or '')[:10]
     state = f"{(series.get('state') or 'new'):<15s}"
     submitter = f"{(series.get('submitter') or 'Unknown'):<30s}"
@@ -60,7 +67,8 @@ class PwSeriesItem(ListItem):
             self.add_class('--tracked')
 
     def compose(self) -> ComposeResult:
-        yield Label(_format_series_label(self.series, self.tracked))
+        ts = resolve_styles(self.app)
+        yield Label(_format_series_label(self.series, self.tracked, ts))
 
 
 class PwApp(App[None]):
@@ -108,6 +116,31 @@ class PwApp(App[None]):
     #pw-loading {
         height: 1fr;
         content-align: center middle;
+    }
+    PwApp:ansi #pw-title {
+        background: ansi_bright_black;
+        color: ansi_default;
+        text-style: bold;
+    }
+    PwApp:ansi #pw-header {
+        background: ansi_default;
+        color: ansi_default;
+        text-style: dim;
+    }
+    PwApp:ansi PwSeriesItem.--dimmed Label {
+        color: ansi_default;
+        text-style: dim;
+    }
+    PwApp:ansi PwSeriesItem.--hidden Label {
+        color: ansi_default;
+        text-style: dim italic;
+    }
+    PwApp:ansi PwSeriesItem.--tracked Label {
+        color: ansi_default;
+        text-style: bold;
+    }
+    PwApp:ansi PwSeriesItem.--tracked.--dimmed Label {
+        color: ansi_default;
     }
     """
 
@@ -198,6 +231,7 @@ class PwApp(App[None]):
         yield SeparatedFooter()
 
     def on_mount(self) -> None:
+        _fix_ansi_theme(self)
         self.run_worker(self._fetch_initial, name='_fetch_initial', thread=True)
 
     def _fetch_initial(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -374,7 +408,8 @@ class PwApp(App[None]):
             item.remove_class('--dimmed')
         else:
             item.add_class('--dimmed')
-        item.query_one(Label).update(_format_series_label(item.series, item.tracked))
+        ts = resolve_styles(self)
+        item.query_one(Label).update(_format_series_label(item.series, item.tracked, ts))
 
     def action_track_series(self) -> None:
         import uuid
@@ -453,7 +488,8 @@ class PwApp(App[None]):
         self._tracked_ids.add(pw_series_id)
         item.tracked = True
         item.add_class('--tracked')
-        item.query_one(Label).update(_format_series_label(item.series, True))
+        ts = resolve_styles(self)
+        item.query_one(Label).update(_format_series_label(item.series, True, ts))
         self.notify(f'Started tracking: {series_name}', severity='information', timeout=3)
 
     async def action_hide_series(self) -> None:

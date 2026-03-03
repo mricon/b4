@@ -43,35 +43,7 @@ PATCH_STATE_MARKERS: Dict[str, str] = {
     'skip':  '\u2715',  # ✕ multiplication x      (= gone)
 }
 
-# Rich markup for CI check indicators (● = \u25cf)
-CI_COLOURS = {
-    'pending': 'dim',
-    'success': 'green',
-    'warning': 'red',
-    'fail': 'bold red',
-}
-
-# Short dot indicator for series listings
-CI_MARKUP = {
-    state: f'[{style}]\u25cf[/{style}]'
-    for state, style in CI_COLOURS.items()
-}
-
-# Verbose label for CI check detail views
-CI_CHECK_MARKUP = {
-    'pending': '[dim]\u25cf pending[/dim]',
-    'success': '[green]\u25cf pass[/green]',
-    'warning': '[dark_orange]\u25cf warning[/dark_orange]',
-    'fail': '[bold red]\u25cf FAIL[/bold red]',
-}
-
-# Style and label dicts for building Text() objects (markup-free)
-CI_CHECK_STYLES = {
-    'pending': 'dim',
-    'success': 'green',
-    'warning': 'dark_orange',
-    'fail': 'bold red',
-}
+# CI check label text (colour-free constant — used with ci_check_styles())
 CI_CHECK_LABELS = {
     'pending': '\u25cf pending',
     'success': '\u25cf pass',
@@ -79,14 +51,98 @@ CI_CHECK_LABELS = {
     'fail': '\u25cf FAIL',
 }
 
-_REVIEWER_COLOURS = [
-    'dark_goldenrod',   # index 0: always the current user
-    'dark_green',
-    'dark_cyan',
-    'dark_magenta',
-    'dark_red',
-    'dark_blue',
-]
+
+def _fix_ansi_theme(app: Any) -> None:
+    """Work around Textual theme-watcher bug.
+
+    The ``theme`` reactive in Textual's ``App`` uses ``init=False``,
+    so ``_watch_theme()`` never fires for the initial theme set via
+    ``TEXTUAL_THEME`` env-var.  This leaves ``ansi_color`` as False
+    and all ``:ansi`` CSS pseudo-class overrides dead.  Call this
+    from ``on_mount()`` to force the watcher when needed.
+    """
+    if app.current_theme.name == 'textual-ansi' and not app.ansi_color:
+        app._watch_theme(app.theme)
+
+
+def _to_rich_color(textual_color: str) -> str:
+    """Convert a Textual CSS colour value to a Rich-compatible name.
+
+    Textual uses ``ansi_green``, ``ansi_bright_blue``, etc. in its CSS
+    variable system.  Rich expects ``green``, ``bright_blue``, etc.
+    Non-ansi values (hex codes, named CSS colours) pass through unchanged.
+    ``ansi_default`` maps to ``default``.
+    """
+    if textual_color.startswith('ansi_'):
+        return textual_color[5:]  # strip 'ansi_' prefix
+    return textual_color
+
+
+def resolve_styles(app: Any) -> Dict[str, str]:
+    """Resolve Textual CSS variables into Rich-compatible colour strings.
+
+    Call this once per render cycle and pass the resulting dict to
+    helper functions like ``_write_diff_line()`` and ``ci_styles()``.
+
+    The dict maps semantic names to colour strings that Rich ``Text``
+    objects can use directly in *style* parameters.
+    """
+    v = app.get_css_variables()
+    return {
+        'success': _to_rich_color(v.get('success', 'green')),
+        'error': _to_rich_color(v.get('error', 'red')),
+        'warning': _to_rich_color(v.get('warning', 'dark_orange')),
+        'accent': _to_rich_color(v.get('accent', 'cyan')),
+        'secondary': _to_rich_color(v.get('secondary-lighten-3', 'magenta')),
+        'foreground': _to_rich_color(v.get('foreground', 'bright_white')),
+        'panel': _to_rich_color(v.get('panel', 'grey11')),
+        'surface': _to_rich_color(v.get('surface', '#1e1e1e')),
+        'primary': _to_rich_color(v.get('primary', 'dark_blue')),
+        'syntax_theme': 'ansi_dark' if app.current_theme.dark else 'ansi_light',
+    }
+
+
+def ci_styles(ts: Dict[str, str]) -> Dict[str, str]:
+    """Return CI indicator styles from a resolved theme dict."""
+    return {
+        'pending': 'dim',
+        'success': ts['success'],
+        'warning': ts['warning'],
+        'fail': f"bold {ts['error']}",
+    }
+
+
+def ci_markup(ts: Dict[str, str]) -> Dict[str, str]:
+    """Return CI dot markup strings from a resolved theme dict."""
+    return {
+        state: f'[{style}]\u25cf[/{style}]'
+        for state, style in ci_styles(ts).items()
+    }
+
+
+def ci_check_styles(ts: Dict[str, str]) -> Dict[str, str]:
+    """Return CI check detail styles from a resolved theme dict."""
+    return {
+        'pending': 'dim',
+        'success': ts['success'],
+        'warning': ts['warning'],
+        'fail': f"bold {ts['error']}",
+    }
+
+
+def reviewer_colours(ts: Dict[str, str]) -> List[str]:
+    """Return the reviewer colour palette from a resolved theme dict.
+
+    Index 0 is always the current user; the rest cycle for others.
+    """
+    return [
+        ts['warning'],      # index 0: current user (warm/distinct)
+        ts['success'],
+        ts['accent'],
+        ts['secondary'],
+        ts['error'],
+        ts['primary'],
+    ]
 
 
 class _quiet_worker:
@@ -199,6 +255,7 @@ def _write_followup_comments(
     comment_positions: List[int],
     fc_author_positions: Optional[Dict[str, int]] = None,
     header_position_map: Optional[Dict[int, Dict[str, Any]]] = None,
+    ts: Optional[Dict[str, str]] = None,
 ) -> None:
     """Render follow-up comments at the bottom of the viewer.
 
@@ -209,19 +266,24 @@ def _write_followup_comments(
     first viewer line position for each unique fromemail.
     If *header_position_map* is provided, it is populated with
     {viewer_line: entry} for each panel header row, enabling click-to-reply.
+    *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
     if not fc_list:
         return
+    rev_palette = reviewer_colours(ts) if ts else [
+        'dark_goldenrod', 'dark_green', 'dark_cyan',
+        'dark_magenta', 'dark_red', 'dark_blue',
+    ]
     fc_emails = sorted({e['fromemail'] for e in fc_list})
     colour_map: Dict[str, str] = {}
     for ci, em in enumerate(fc_emails):
-        colour_map[em] = _REVIEWER_COLOURS[1 + (ci % (len(_REVIEWER_COLOURS) - 1))]
+        colour_map[em] = rev_palette[1 + (ci % (len(rev_palette) - 1))]
     viewer.write(Text(''))
     viewer.write(Rule(title='follow-ups', style='dim'))
     viewer.write(Text(''))
     for e in sorted(fc_list, key=lambda x: x['date']):
         initials = _make_initials(e['fromname'])
-        colour = colour_map.get(e['fromemail'], _REVIEWER_COLOURS[1])
+        colour = colour_map.get(e['fromemail'], rev_palette[1])
         line_pos = len(viewer.lines)
         comment_positions.append(line_pos)
         if header_position_map is not None:
@@ -313,12 +375,15 @@ def _resolve_patch_for_followup(
 def _write_comments(
     viewer: 'RichLog',
     entries: List[Tuple[str, str, str]],
+    ts: Optional[Dict[str, str]] = None,
 ) -> None:
     """Write review comment entries to *viewer* as bordered panels.
 
     Each entry is an (initials, colour, text) tuple.  Comments from
     the same diff line are rendered as separate panels.
+    *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
+    bg = f"on {ts['panel']}" if ts else 'on grey11'
     for initials, colour, text in entries:
         panel = Panel(
             Text(text),
@@ -328,7 +393,7 @@ def _write_comments(
             title_align='left',
             expand=False,
             padding=(0, 1),
-            style='on grey11',
+            style=bg,
         )
         viewer.write(panel)
 
@@ -337,14 +402,17 @@ def _write_followup_trailers(
     viewer: 'RichLog',
     followups: List[Dict[str, Any]],
     existing: Optional[Set[str]] = None,
+    ts: Optional[Dict[str, str]] = None,
 ) -> None:
     """Write follow-up trailers as a panel in the diff viewer.
 
     Each followup dict has 'link', 'fromname', 'fromemail', and 'trailers'.
     Trailers already present in *existing* (lowercased) are skipped.
+    *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
     if existing is None:
         existing = set()
+    trailer_color = ts['success'] if ts else 'green'
     lines = Text()
     for followup in followups:
         link = followup.get('link', '')
@@ -354,9 +422,9 @@ def _write_followup_trailers(
             existing.add(tstr.lower())
             if lines.plain:
                 lines.append('\n')
-            lines.append(tstr, style='bold green')
+            lines.append(tstr, style=f'bold {trailer_color}')
             if link:
-                lines.append(f'\n  {link}', style=f'dim green link {link}')
+                lines.append(f'\n  {link}', style=f'dim {trailer_color} link {link}')
     if not lines.plain:
         return
     viewer.write(Text(''))
@@ -365,33 +433,43 @@ def _write_followup_trailers(
         box=box.ROUNDED,
         title='+++',
         title_align='left',
-        border_style='green',
+        border_style=trailer_color,
         expand=False,
         padding=(0, 1),
     )
     viewer.write(panel)
 
 
-def _write_diff_line(viewer: 'RichLog', line: str) -> None:
-    """Write a single diff line to a RichLog with appropriate colouring."""
+def _write_diff_line(
+    viewer: 'RichLog', line: str,
+    ts: Optional[Dict[str, str]] = None,
+) -> None:
+    """Write a single diff line to a RichLog with appropriate colouring.
+
+    *ts* is a resolved theme styles dict from :func:`resolve_styles`.
+    """
     if line.startswith('diff --git ') or line.startswith('--- ') or line.startswith('+++ '):
         viewer.write(Text(line, style='bold'))
     elif line.startswith('@@'):
-        viewer.write(Text(line, style='bold cyan'))
+        viewer.write(Text(line, style=f"bold {ts['accent']}" if ts else 'bold cyan'))
     elif line.startswith('+'):
-        viewer.write(Text(line, style='green'))
+        viewer.write(Text(line, style=ts['success'] if ts else 'green'))
     elif line.startswith('-'):
-        viewer.write(Text(line, style='red'))
+        viewer.write(Text(line, style=ts['error'] if ts else 'red'))
     else:
         viewer.write(Text(line))
 
 
-def _render_email_to_viewer(viewer: 'RichLog', msg: email.message.EmailMessage) -> None:
+def _render_email_to_viewer(
+    viewer: 'RichLog', msg: email.message.EmailMessage,
+    ts: Optional[Dict[str, str]] = None,
+) -> None:
     """Render an EmailMessage into a RichLog, headers first then body.
 
     Subject, To and Cc labels are bold.  Address headers are word-wrapped
     using LoreMessage.wrap_header.  Quoted body lines (>) are dim cyan,
     separator lines (---) are dim.
+    *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
     for hdr in ('From', 'Subject', 'To', 'Cc'):
         val = msg[hdr]
@@ -423,7 +501,7 @@ def _render_email_to_viewer(viewer: 'RichLog', msg: email.message.EmailMessage) 
     body = payload.decode(errors='replace') if isinstance(payload, bytes) else str(payload or '')
     for line in body.splitlines():
         if line.startswith('>'):
-            viewer.write(Text(line, style='dim cyan'))
+            viewer.write(Text(line, style=f"dim {ts['accent']}" if ts else 'dim cyan'))
         elif line.startswith('---'):
             viewer.write(Text(line, style='dim'))
         else:
@@ -682,8 +760,17 @@ class SeparatedFooter(Footer):
     SeparatedFooter FooterKey.-group-first {
         border-left: vkey $foreground 20%;
     }
+    SeparatedFooter:ansi {
+        background: ansi_bright_black;
+        .footer-key--key {
+            background: ansi_bright_black;
+        }
+        .footer-key--description {
+            background: ansi_bright_black;
+        }
+    }
     SeparatedFooter:ansi FooterKey.-group-first {
-        border-left: vkey ansi_black;
+        border-left: vkey ansi_default;
     }
     """
 

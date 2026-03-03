@@ -22,7 +22,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from b4.review_tui._common import (
-    CI_CHECK_STYLES, CI_CHECK_LABELS,
+    CI_CHECK_LABELS, resolve_styles, ci_check_styles,
     JKListNavMixin, logger,
     _addrs_to_lines, _lines_to_header, _validate_addrs,
     _write_diff_line, _quiet_worker, _render_email_to_viewer,
@@ -407,7 +407,7 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
             body = body.rstrip('\n') + '\n\n-- \n' + sig
         msg = self._entry['lmsg'].make_reply(body)
         viewer = self.query_one('#followup-preview-viewer', RichLog)
-        _render_email_to_viewer(viewer, msg)
+        _render_email_to_viewer(viewer, msg, ts=resolve_styles(self.app))
 
     def action_send(self) -> None:
         self.dismiss('send')
@@ -918,6 +918,7 @@ class ViewSeriesScreen(_FetchViewerScreen):
         subject = lser.subject or '(no subject)'
         self.query_one('#fv-title', Static).update(subject)
         viewer = self.query_one('#fv-viewer', RichLog)
+        ts = resolve_styles(self.app)
 
         first = True
         for idx, lmsg in enumerate(lser.patches):
@@ -939,7 +940,7 @@ class ViewSeriesScreen(_FetchViewerScreen):
                     if line.startswith('diff --git '):
                         in_diff = True
                     if in_diff:
-                        _write_diff_line(viewer, line)
+                        _write_diff_line(viewer, line, ts=ts)
                     else:
                         viewer.write(Text(line))
 
@@ -973,6 +974,9 @@ class CIChecksScreen(_FetchViewerScreen):
             viewer.write(Text('No CI checks reported for this series.', style='dim'))
             return
 
+        ts = resolve_styles(self.app)
+        ci_map = ci_check_styles(ts)
+
         # Group checks by patch
         patch_names: Dict[int, str] = self._series.get('patch_names', {})
         by_patch: Dict[int, List[Dict[str, Any]]] = {}
@@ -996,7 +1000,7 @@ class CIChecksScreen(_FetchViewerScreen):
             viewer.write('')
             for check in by_patch[pid]:
                 state = check.get('state', 'pending')
-                ci_style = CI_CHECK_STYLES.get(state, CI_CHECK_STYLES['pending'])
+                ci_style = ci_map.get(state, ci_map['pending'])
                 ci_label = CI_CHECK_LABELS.get(state, CI_CHECK_LABELS['pending'])
                 context = check.get('context') or 'default'
                 line_text = Text()

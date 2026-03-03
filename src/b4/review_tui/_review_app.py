@@ -24,12 +24,13 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from b4.review_tui._common import (
-    logger, PATCH_STATE_MARKERS, _REVIEWER_COLOURS,
+    logger, PATCH_STATE_MARKERS,
+    resolve_styles, reviewer_colours,
     _has_review_data, _make_initials, _wait_for_enter,
     _write_comments, _write_followup_comments,
     _write_followup_trailers, _resolve_patch_for_followup,
     _get_followup_depth, _render_email_to_viewer,
-    _suspend_to_shell, SeparatedFooter,
+    _suspend_to_shell, SeparatedFooter, _fix_ansi_theme,
 )
 from b4.review_tui._modals import (
     TrailerScreen, HelpScreen, _review_help_lines,
@@ -54,13 +55,10 @@ class PatchListItem(ListItem):
     def _apply_state_style(self) -> None:
         lbl = self.query_one(Label)
         if self._state == 'skip':
-            lbl.styles.text_opacity = '40%'
-            lbl.styles.text_style = 'none'
+            lbl.styles.text_style = 'dim'
         elif self._state == 'done':
-            lbl.styles.text_opacity = '100%'
             lbl.styles.text_style = 'bold'
         else:
-            lbl.styles.text_opacity = '100%'
             lbl.styles.text_style = 'none'
 
     def update_label(self, label: str, state: str = '') -> None:
@@ -82,7 +80,7 @@ class FollowupItem(ListItem):
 
     def compose(self) -> ComposeResult:
         st = Static(f'\u00a0\u00a0\u00a0\u00a0{self._display_name}', markup=False)
-        st.styles.text_opacity = '60%'
+        st.styles.text_style = 'dim'
         yield st
 
 
@@ -148,6 +146,26 @@ class ReviewApp(App[None]):
         color: $text;
         text-style: bold;
         padding: 0 1;
+    }
+    ReviewApp:ansi #title-bar {
+        background: ansi_bright_black;
+        color: ansi_default;
+        text-style: bold;
+    }
+    ReviewApp:ansi #newer-warning {
+        background: ansi_bright_black;
+        color: ansi_default;
+        text-style: bold;
+    }
+    ReviewApp:ansi #left-pane {
+        border-right: solid ansi_default;
+    }
+    ReviewApp:ansi #trailer-overlay {
+        border-top: solid ansi_default;
+    }
+    ReviewApp:ansi .comment-block {
+        background: ansi_default;
+        border: solid ansi_default;
     }
     """
 
@@ -239,6 +257,7 @@ class ReviewApp(App[None]):
         yield SeparatedFooter()
 
     def on_mount(self) -> None:
+        _fix_ansi_theme(self)
         self._refresh_newer_warning()
         self._refresh_title_bar()
         self._populate_patch_list()
@@ -364,23 +383,25 @@ class ReviewApp(App[None]):
 
     def _show_cover(self, viewer: RichLog) -> None:
         """Render the cover letter in the diff viewer."""
+        ts = resolve_styles(self)
         body = self._cover_text.strip()
-        viewer.write(Syntax(body, 'markdown', theme='ansi_dark'))
+        viewer.write(Syntax(body, 'markdown', theme=ts['syntax_theme']))
         # Show cover-level follow-up trailers
-        _write_followup_trailers(viewer, self._tracking.get('followups', []))
+        _write_followup_trailers(viewer, self._tracking.get('followups', []), ts=ts)
         # Show cover-level follow-up comments
         fc_author_pos: Dict[str, int] = {}
         _write_followup_comments(
             viewer, self._followup_comments.get(0, []),
             self._comment_positions, fc_author_pos,
-            header_position_map=self._followup_header_map)
+            header_position_map=self._followup_header_map, ts=ts)
         for email, pos in fc_author_pos.items():
             self._followup_positions[(0, email)] = pos
 
     def _show_diff(self, viewer: RichLog, patch_idx: int) -> None:
         """Render a patch diff in the diff viewer with syntax colouring."""
+        ts = resolve_styles(self)
         if patch_idx >= len(self._commit_shas):
-            viewer.write('[red]Patch index out of range[/red]')
+            viewer.write(Text('Patch index out of range', style=ts['error']))
             return
         sha = self._commit_shas[patch_idx]
 
@@ -391,7 +412,7 @@ class ReviewApp(App[None]):
             msg_lines = commit_msg.strip().splitlines()
             # Render subject as a bright one-liner
             if msg_lines:
-                viewer.write(Text(msg_lines[0], style='bold bright_white'))
+                viewer.write(Text(msg_lines[0], style=f"bold {ts['foreground']}"))
                 viewer.write(Text(''))
             body = '\n'.join(msg_lines[1:]).lstrip('\n')
             if body:
@@ -405,7 +426,7 @@ class ReviewApp(App[None]):
                 if message:
                     if has_content:
                         viewer.write('')
-                    viewer.write(Syntax(message.rstrip('\n'), 'markdown', theme='ansi_dark'))
+                    viewer.write(Syntax(message.rstrip('\n'), 'markdown', theme=ts['syntax_theme']))
                     has_content = True
                 if btrailers:
                     if has_content:
@@ -421,7 +442,7 @@ class ReviewApp(App[None]):
                     existing = {lt.as_string().lower() for lt in btrailers}
                 all_followups = (self._tracking.get('followups', [])
                                  + patch_meta.get('followups', []))
-                _write_followup_trailers(viewer, all_followups, existing)
+                _write_followup_trailers(viewer, all_followups, existing, ts=ts)
                 if all_followups:
                     has_content = True
                 if has_content:
@@ -429,7 +450,7 @@ class ReviewApp(App[None]):
 
         ecode, diff_out = b4.git_run_command(self._topdir, ['diff', f'{sha}~1', sha])
         if ecode > 0:
-            viewer.write('[red]Could not generate diff[/red]')
+            viewer.write(Text('Could not generate diff', style=ts['error']))
             return
 
         # Get review comments from all reviewers
@@ -439,7 +460,7 @@ class ReviewApp(App[None]):
         for rev_email, rev_data in all_reviews.items():
             rev_name = rev_data.get('name', '')
             initials = _make_initials(rev_name)
-            colour = self._reviewer_colour(rev_email, patch_target)
+            colour = self._reviewer_colour(rev_email, patch_target, ts)
             for c in rev_data.get('comments', []):
                 key = (c['path'], c['line'])
                 comment_map.setdefault(key, []).append((initials, colour, c['text']))
@@ -471,24 +492,24 @@ class ReviewApp(App[None]):
             if hm:
                 a_line = int(hm.group(1))
                 b_line = int(hm.group(2))
-                viewer.write(Text(line, style='bold cyan'))
+                viewer.write(Text(line, style=f"bold {ts['accent']}"))
                 continue
 
             if line.startswith('+'):
-                viewer.write(Text(line, style='green'))
+                viewer.write(Text(line, style=ts['success']))
                 key = (current_b_file, b_line)
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
-                    _write_comments(viewer, entries)
+                    _write_comments(viewer, entries, ts=ts)
                 b_line += 1
             elif line.startswith('-'):
-                viewer.write(Text(line, style='red'))
+                viewer.write(Text(line, style=ts['error']))
                 key = (current_a_file, a_line)
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
-                    _write_comments(viewer, entries)
+                    _write_comments(viewer, entries, ts=ts)
                 a_line += 1
             elif line.startswith(' '):
                 viewer.write(Text(line))
@@ -496,7 +517,7 @@ class ReviewApp(App[None]):
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
-                    _write_comments(viewer, entries)
+                    _write_comments(viewer, entries, ts=ts)
                 a_line += 1
                 b_line += 1
             else:
@@ -507,7 +528,7 @@ class ReviewApp(App[None]):
         _write_followup_comments(
             viewer, self._followup_comments.get(patch_idx + 1, []),
             self._comment_positions, fc_author_pos,
-            header_position_map=self._followup_header_map)
+            header_position_map=self._followup_header_map, ts=ts)
         display_idx = patch_idx + 1
         for email, pos in fc_author_pos.items():
             self._followup_positions[(display_idx, email)] = pos
@@ -547,7 +568,7 @@ class ReviewApp(App[None]):
             viewer.write('[dim]No email to preview (missing message-id?).[/dim]')
             return
 
-        _render_email_to_viewer(viewer, msg)
+        _render_email_to_viewer(viewer, msg, ts=resolve_styles(self))
 
     def _refresh_trailer_overlay(self) -> None:
         """Update the review status overlay in the left pane."""
@@ -562,6 +583,7 @@ class ReviewApp(App[None]):
             overlay.display = False
             return
 
+        ts = resolve_styles(self)
         my_email = self._usercfg.get('email', '')
         # Build ordered list: current user first, then others sorted by email
         ordered: List[Tuple[str, Dict[str, Any]]] = []
@@ -578,7 +600,7 @@ class ReviewApp(App[None]):
                     or review.get('comments') or review.get('note', '')):
                 continue
 
-            colour = self._reviewer_colour(rev_email, target)
+            colour = self._reviewer_colour(rev_email, target, ts)
             if rev_email == my_email:
                 header = 'Your review'
             else:
@@ -586,29 +608,32 @@ class ReviewApp(App[None]):
 
             if has_content:
                 text.append('\n')
-            text.append(f' {header} ', style=f'bold on {colour}')
+            if self.app.ansi_color:
+                text.append(f' {header} ', style=f'bold reverse {colour}')
+            else:
+                text.append(f' {header} ', style=f'bold {ts["surface"]} on {colour}')
             has_content = True
 
             comments = review.get('comments', [])
             if comments:
                 files: set[str] = set(c.get('path', '') for c in comments)
                 text.append(f'\n    {len(comments)} comments across '
-                            f'{len(files)} files', style='yellow')
+                            f'{len(files)} files', style=ts['warning'])
             reply = review.get('reply', '')
             if reply:
                 non_quoted = sum(1 for ln in reply.splitlines()
                                  if ln.strip() and not ln.startswith('>'))
-                text.append(f'\n    {non_quoted} non-quoted reply lines', style='cyan')
+                text.append(f'\n    {non_quoted} non-quoted reply lines', style=ts['accent'])
             trailers = review.get('trailers', [])
             if trailers:
                 for t in trailers:
                     ttype = t.split(':', 1)[0] if ':' in t else t
-                    text.append(f'\n    {ttype}', style='green')
+                    text.append(f'\n    {ttype}', style=ts['success'])
             note = review.get('note', '')
             if note:
                 lines = note.splitlines()
                 summary = lines[0] if lines else ''
-                text.append(f'\n    {summary}', style='magenta')
+                text.append(f'\n    {summary}', style=ts['secondary'])
                 # Find body after blank-line separator
                 body_start = None
                 for i, ln in enumerate(lines[1:], 1):
@@ -618,7 +643,7 @@ class ReviewApp(App[None]):
                 if body_start is not None and body_start < len(lines):
                     body_words = ' '.join(lines[body_start:]).split()
                     if body_words:
-                        text.append('\n    (view full note with N)', style='magenta')
+                        text.append('\n    (view full note with N)', style=ts['secondary'])
 
         if not has_content:
             overlay.display = False
@@ -665,19 +690,25 @@ class ReviewApp(App[None]):
         """Return the current user's review sub-dict, creating it if needed."""
         return b4.review._ensure_my_review(target, self._usercfg)
 
-    def _reviewer_colour(self, email: str, target: Dict[str, Any]) -> str:
+    def _reviewer_colour(self, email: str, target: Dict[str, Any],
+                         ts: Optional[Dict[str, str]] = None) -> str:
         """Return a stable colour for a reviewer email.
 
         Current user always gets index 0; others are sorted by email
         and assigned cyclically from the rest of the palette.
+        *ts* is a resolved theme styles dict from :func:`resolve_styles`.
         """
+        palette = reviewer_colours(ts) if ts else [
+            'dark_goldenrod', 'dark_green', 'dark_cyan',
+            'dark_magenta', 'dark_red', 'dark_blue',
+        ]
         my_email = self._usercfg.get('email', '')
         if email == my_email:
-            return _REVIEWER_COLOURS[0]
+            return palette[0]
         reviews = target.get('reviews', {})
         others = sorted(e for e in reviews if e != my_email)
         idx = others.index(email) if email in others else 0
-        return _REVIEWER_COLOURS[1 + (idx % (len(_REVIEWER_COLOURS) - 1))]
+        return palette[1 + (idx % (len(palette) - 1))]
 
     def _is_diff_focused(self) -> bool:
         """Check if the diff viewer (right pane) has focus."""
@@ -1051,6 +1082,7 @@ class ReviewApp(App[None]):
             if email != my_email:
                 ordered.append((email, all_reviews[email]))
 
+        ts = resolve_styles(self)
         note_entries: List[Tuple[str, str, str]] = []
         for rev_email, review in ordered:
             note = review.get('note', '')
@@ -1061,7 +1093,7 @@ class ReviewApp(App[None]):
             else:
                 name = review.get('name', rev_email)
                 header = name
-            colour = self._reviewer_colour(rev_email, target)
+            colour = self._reviewer_colour(rev_email, target, ts)
             note_entries.append((header, colour, note))
 
         def _on_note(result: Optional[str]) -> None:
