@@ -1188,17 +1188,84 @@ class RevisionChoiceScreen(ModalScreen[Optional[int]]):
         self.dismiss(None)
 
 
-def RebaseConfirmScreen(current_branch: str, review_branch: str) -> ConfirmScreen:
-    """Build a confirmation screen for rebase operation."""
-    return ConfirmScreen(
-        title='Rebase Series',
-        body=[
-            f'Review branch: {review_branch}',
-            f'Rebase on top of: {current_branch}',
-            '',
-            'Proceed with rebase?',
-        ],
-    )
+class RebaseScreen(ModalScreen[bool]):
+    """Modal screen for rebasing a review branch onto a target branch."""
+
+    BINDINGS = [
+        Binding('ctrl+y', 'continue_rebase', 'Confirm', show=False),
+        Binding('escape', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    RebaseScreen {
+        align: center middle;
+    }
+    #rebase-dialog {
+        width: 60;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #rebase-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .rebase-label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    .rebase-value {
+        color: $text;
+    }
+    #rebase-target {
+        margin-bottom: 1;
+    }
+    #rebase-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, current_branch: str, review_branch: str,
+                 recent_branches: Optional[List[str]] = None) -> None:
+        """Initialize rebase screen.
+
+        Args:
+            current_branch: Pre-populated target branch name
+            review_branch: The review branch to rebase
+            recent_branches: Recently used branch names for auto-suggest
+        """
+        super().__init__()
+        self._current_branch = current_branch
+        self._review_branch = review_branch
+        self._recent_branches = recent_branches
+        self.target_result: str = ''
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='rebase-dialog'):
+            yield Static('Rebase Series', id='rebase-title')
+            yield Static(f'Review branch: {self._review_branch}', classes='rebase-value')
+            yield Static('Rebase on top of:', classes='rebase-label')
+            suggester = SuggestFromList(self._recent_branches, case_sensitive=True) if self._recent_branches else None
+            yield Input(value=self._current_branch, id='rebase-target', suggester=suggester)
+            yield Static('Ctrl-y confirm  |  Escape cancel', id='rebase-hint')
+
+    def on_mount(self) -> None:
+        self.query_one('#rebase-target', Input).focus()
+
+    def action_continue_rebase(self) -> None:
+        self.target_result = self.query_one('#rebase-target', Input).value.strip()
+        if not self.target_result:
+            self.notify('Target branch is required', severity='error')
+            return
+        if not b4.git_branch_exists(None, self.target_result):
+            self.notify(f'Branch does not exist: {self.target_result}', severity='error')
+            return
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
 def AbandonConfirmScreen(change_id: str, review_branch: str,

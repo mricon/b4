@@ -37,7 +37,7 @@ from b4.review_tui._common import (
 from b4.review_tui._modals import (
     ViewSeriesScreen, AttestationScreen, TakeScreen,
     CherryPickScreen, NewerRevisionWarningScreen,
-    RevisionChoiceScreen, RebaseConfirmScreen, AbandonConfirmScreen,
+    RevisionChoiceScreen, RebaseScreen, AbandonConfirmScreen,
     ArchiveConfirmScreen, RangeDiffScreen, ThankScreen,
     LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
     ActionScreen, HelpScreen, TRACKING_HELP_LINES,
@@ -1073,6 +1073,13 @@ class TrackingApp(App[Optional[str]]):
         gitdir = b4.git_get_common_dir(topdir) if topdir else None
         if gitdir:
             recent_branches = b4.review.tracking.get_recent_take_branches(gitdir)
+        if recent_branches:
+            target_branch = recent_branches[0]
+        # Ensure the configured target branch is always in the suggestion list
+        if target_branch and recent_branches is not None and target_branch not in recent_branches:
+            recent_branches.append(target_branch)
+        elif target_branch and recent_branches is None:
+            recent_branches = [target_branch]
         take_screen = TakeScreen(target_branch, review_branch, num_patches=num_patches,
                                  default_method=default_method,
                                  recent_branches=recent_branches)
@@ -1587,24 +1594,41 @@ class TrackingApp(App[Optional[str]]):
         change_id = self._selected_series.get('change_id', '')
         review_branch = f'b4/review/{change_id}'
 
-        # Get current branch name for confirmation dialog
+        # Load recent take branches for suggestions and default
         current_branch = self._original_branch or 'HEAD'
+        recent_branches = None
+        topdir = b4.git_get_toplevel()
+        if topdir:
+            gitdir = b4.git_get_common_dir(topdir)
+            if gitdir:
+                recent_branches = b4.review.tracking.get_recent_take_branches(gitdir)
+        if recent_branches:
+            current_branch = recent_branches[0]
+        # Ensure the original branch is always in the suggestion list
+        if current_branch and recent_branches is not None and current_branch not in recent_branches:
+            recent_branches.append(current_branch)
+        elif current_branch and recent_branches is None:
+            recent_branches = [current_branch]
 
+        rebase_screen = RebaseScreen(current_branch, review_branch,
+                                     recent_branches=recent_branches)
         self.push_screen(
-            RebaseConfirmScreen(current_branch, review_branch),
-            callback=lambda confirmed: self._on_rebase_confirmed(confirmed, review_branch),
+            rebase_screen,
+            callback=lambda confirmed: self._on_rebase_confirmed(
+                confirmed, review_branch, rebase_screen),
         )
 
-    def _on_rebase_confirmed(self, confirmed: bool, review_branch: str) -> None:
+    def _on_rebase_confirmed(self, confirmed: bool, review_branch: str,
+                             rebase_screen: 'RebaseScreen') -> None:
         """Handle rebase confirmation result."""
         if not confirmed:
             return
 
         # Run rebase in suspended mode to show output
         with self.suspend():
-            self._do_rebase(review_branch)
+            self._do_rebase(review_branch, rebase_screen.target_result)
 
-    def _do_rebase(self, review_branch: str) -> None:
+    def _do_rebase(self, review_branch: str, target_branch: str) -> None:
         """Perform the actual rebase operation."""
         topdir = b4.git_get_toplevel()
         if not topdir:
@@ -1622,19 +1646,18 @@ class TrackingApp(App[Optional[str]]):
         series = tracking.get('series', {})
         base_commit = series.get('base-commit', '')
 
-        # Get current HEAD
-        ecode, out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
+        # Resolve target branch to a commit SHA
+        ecode, out = b4.git_run_command(topdir, ['rev-parse', target_branch])
         if ecode != 0:
-            logger.critical('Could not resolve HEAD')
+            logger.critical('Could not resolve %s', target_branch)
             _wait_for_enter()
             return
-        current_head = out.strip()
+        target_head = out.strip()
 
-        # Check if series is already based on current HEAD
+        # Check if series is already based on target
         ecode, out = b4.git_run_command(topdir, ['rev-parse', base_commit])
-        if ecode == 0 and out.strip() == current_head:
-            # Base commit is already HEAD
-            logger.info('Series is already based on current HEAD')
+        if ecode == 0 and out.strip() == target_head:
+            logger.info('Series is already based on %s', target_branch)
             _wait_for_enter()
             return
 
@@ -1647,10 +1670,10 @@ class TrackingApp(App[Optional[str]]):
             return
         series_tip = out.strip()
 
-        # Check if series applies cleanly to current HEAD using sparse worktree
-        logger.info('Testing if series applies cleanly to HEAD...')
+        # Check if series applies cleanly to target using sparse worktree
+        logger.info('Testing if series applies cleanly to %s...', target_branch)
         try:
-            with b4.git_temp_worktree(topdir, current_head) as gwt:
+            with b4.git_temp_worktree(topdir, target_head) as gwt:
                 # Set up sparse checkout for minimal disk usage
                 ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'], logstderr=True)
                 if ecode != 0:
@@ -1663,7 +1686,7 @@ class TrackingApp(App[Optional[str]]):
                 gitargs = ['cherry-pick', f'{base_commit}..{series_tip}']
                 ecode, out = b4.git_run_command(gwt, gitargs, logstderr=True)
                 if ecode != 0:
-                    logger.critical('Series does not apply cleanly to current HEAD')
+                    logger.critical('Series does not apply cleanly to %s', target_branch)
                     logger.critical('Cherry-pick output:')
                     logger.critical(out.strip())
                     logger.critical('')
@@ -1677,7 +1700,7 @@ class TrackingApp(App[Optional[str]]):
             return
 
         # Perform the actual rebase
-        logger.info('Rebasing %s onto HEAD...', review_branch)
+        logger.info('Rebasing %s onto %s...', review_branch, target_branch)
 
         # First, checkout the review branch (at the tracking commit)
         ecode, out = b4.git_run_command(topdir, ['checkout', review_branch], logstderr=True)
@@ -1693,9 +1716,9 @@ class TrackingApp(App[Optional[str]]):
             _wait_for_enter()
             return
 
-        # Rebase the patches onto current_head
-        # --onto current_head base_commit means: take commits after base_commit and replay onto current_head
-        ecode, out = b4.git_run_command(topdir, ['rebase', '--onto', current_head, base_commit], logstderr=True)
+        # Rebase the patches onto target_head
+        # --onto target_head base_commit means: take commits after base_commit and replay onto target_head
+        ecode, out = b4.git_run_command(topdir, ['rebase', '--onto', target_head, base_commit], logstderr=True)
         if ecode != 0:
             logger.critical('Rebase failed: %s', out.strip())
             logger.critical('Aborting rebase...')
@@ -1706,11 +1729,11 @@ class TrackingApp(App[Optional[str]]):
             return
 
         # Update tracking data with new base commit
-        series['base-commit'] = current_head
+        series['base-commit'] = target_head
 
         # Enumerate new patch commit SHAs and update first-patch-commit
         ecode, out = b4.git_run_command(
-            topdir, ['rev-list', '--reverse', f'{current_head}..HEAD'])
+            topdir, ['rev-list', '--reverse', f'{target_head}..HEAD'])
         if ecode == 0 and out.strip():
             new_shas = out.strip().splitlines()
             series['first-patch-commit'] = new_shas[0]
@@ -1729,7 +1752,7 @@ class TrackingApp(App[Optional[str]]):
             _wait_for_enter()
             return
 
-        logger.info('Successfully rebased %s onto %s', review_branch, current_head[:12])
+        logger.info('Successfully rebased %s onto %s', review_branch, target_head[:12])
         _wait_for_enter()
 
     def action_range_diff(self) -> None:
