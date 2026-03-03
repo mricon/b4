@@ -177,7 +177,7 @@ class ReviewApp(App[None]):
     BINDING_GROUPS = {
         'trailer': 'Review', 'review_diff': 'Review', 'edit_note': 'Review',
         'edit_reply': 'Review', 'followups': 'Review', 'agent': 'Review',
-        'patch_done': 'Review', 'patch_skip': 'Review',
+        'patch_done': 'Review', 'patch_skip': 'Review', 'check': 'Review',
         'edit_tocc': 'Review', 'send': 'Review',
         'toggle_preview': 'App', 'suspend': 'App', 'quit': 'App', 'help': 'App',
     }
@@ -197,6 +197,7 @@ class ReviewApp(App[None]):
         Binding('a', 'agent', 'agent'),
         Binding('d', 'patch_done', 'done'),
         Binding('x', 'patch_skip', 'skip'),
+        Binding('C', 'check', 'check', key_display='C'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings

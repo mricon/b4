@@ -195,12 +195,14 @@ def _review_help_lines(has_agent: bool = False, has_check: bool = False) -> List
         '  [bold]c[/bold]         Open $EDITOR for inline comments\n',
         '  [bold]n[/bold]         View/edit notes\n',
         '  [bold]r[/bold]         Open $EDITOR for reply\n',
-        '  [bold]f[/bold]         Load follow-up comments from lore\n',
+        '  [bold]f[/bold]         Toggle follow-up comments from lore\n',
+        '  [bold]d[/bold]         Toggle patch done state\n',
+        '  [bold]x[/bold]         Toggle patch skip state\n',
     ]
     if has_agent:
         lines.append('  [bold]a[/bold]         Run review agent\n')
     if has_check:
-        lines.append('  [bold]x[/bold]         Run check command\n')
+        lines.append('  [bold]C[/bold]         Run check command\n')
     lines += [
         '  [bold]e[/bold]         Toggle email mode\n',
         '\n',

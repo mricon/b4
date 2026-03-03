@@ -66,8 +66,11 @@ Launch the TUI inside the repository with::
     b4 review tui [-i identifier]
 
 If you are already on a review branch (``b4/review/<change-id>``), the
-TUI opens the review interface directly. Otherwise it starts in the
-tracking list.
+TUI opens the review interface directly and shows a notification
+suggesting you switch to your target branch (configured via
+:term:`b4.review-target-branch`, or ``master``/``main`` by default)
+if you want to see the full tracking list instead. Otherwise it starts
+in the tracking list.
 
 You can leave the tui running. Any series added in another terminal will
 be automatically recognized and displayed.
@@ -185,9 +188,11 @@ Key                        Action
 ``c``                      Comment — open ``$EDITOR`` for inline comment
 ``n``                      Notes — view or edit review notes
 ``r``                      Reply — open ``$EDITOR`` for a general reply
-``f``                      Followups — fetch and display follow-up messages from lore
+``f``                      Followups — toggle follow-up messages from lore
 ``a``                      Agent — run review LLM agent (if configured)
-``x``                      Check — run configured per-patch check command
+``d``                      Done — toggle "done" state on the current patch
+``x``                      Skip — toggle "skip" state on the current patch
+``C``                      Check — run configured per-patch check command
 ``e``                      Toggle email mode
 ``s``                      Shell — suspend to an interactive sub-shell
 ``?``                      Help — show keybinding reference
@@ -249,10 +254,48 @@ When you send review emails, b4 automatically builds a standard
 quoted-reply for each patch: only hunks that contain comments are
 included, diff lines are quoted with ``>``, and your comments appear
 unquoted after the relevant line — matching the format expected on
-mailing lists.
+mailing lists. To keep replies concise, b4 shows at most 5 lines of
+diff context above each comment and collapses larger gaps with a
+``[ ... skip N lines ... ]`` marker.
 
 The left pane summarises the review state per reviewer using a trailer
 overlay.
+
+**Per-patch states**
+
+Each patch in the series can be marked with a state to help you track
+your review progress:
+
+==========  ======  =======================================================
+State       Key     Meaning
+==========  ======  =======================================================
+*(none)*    —       Not yet reviewed
+Done        ``d``   Review complete, include in outgoing emails
+Skip        ``x``   Intentionally skipped, exclude from outgoing emails
+==========  ======  =======================================================
+
+Pressing ``d`` or ``x`` toggles the state for the current patch. The
+patch list on the left shows the state visually: done patches appear in
+bold, skipped patches appear dimmed.
+
+Skipped patches are automatically excluded when sending review emails.
+When taking patches via cherry-pick, skipped patches are pre-deselected
+in the patch selection dialog.
+
+**Follow-up messages**
+
+Press ``f`` to fetch and display follow-up messages from lore for the
+series being reviewed. The ``f`` key is a toggle — pressing it again
+clears the follow-up display.
+
+Follow-up messages appear as coloured panels in the diff view, showing
+threading depth (replies indented visually), along with From, Date, and
+Message-ID headers for easy cross-referencing with your mail client.
+
+You can click a follow-up panel header (marked with ↩) to compose a
+quick reply directly from the review interface. B4 opens ``$EDITOR``
+with the quoted message and constructs a proper reply-to-all email with
+correct threading headers.
 
 Patchwork integration
 ~~~~~~~~~~~~~~~~~~~~~
@@ -485,3 +528,22 @@ for your project. A sample prompt is included in
 ``misc/agent-reviewer.md`` in the b4 source tree — copy it into your
 repository and adapt it to your project's coding standards and review
 guidelines.
+
+Customising the colour theme
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The review TUI uses Textual's built-in theming system. By default it
+picks colours from the active Textual theme. You can switch themes by
+setting the ``TEXTUAL_THEME`` environment variable before launching the
+TUI. For example, to use a dark theme::
+
+    TEXTUAL_THEME=textual-dark b4 review tui
+
+To use a 16-colour theme that works well on basic terminals::
+
+    TEXTUAL_THEME=textual-ansi b4 review tui
+
+The ``textual-ansi`` theme restricts rendering to the standard 16 ANSI
+colours, which makes it suitable for terminals that do not support 256
+or true-colour output. All UI elements — diff highlighting, reviewer
+badges, CI indicators, and comment panels — adapt automatically to the
+active theme.

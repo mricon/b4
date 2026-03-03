@@ -351,13 +351,32 @@ These settings control ``b4 review`` TUI behaviour.
 .. glossary::
    :sorted:
 
+   :term:`b4.review-default-take-method`
+     The default take method to pre-select in the Take dialog. Valid
+     values are ``merge``, ``linear``, and ``cherry-pick``. If not set,
+     no method is pre-selected.
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
    :term:`b4.review-perpatch-check-cmd`
      The command to run for per-patch checks in the review TUI (triggered
-     by the ``x`` keybinding). The patch is piped through stdin. If this
+     by the ``C`` keybinding). The patch is piped through stdin. If this
      option is defined multiple times, all commands will be run. If it is
      not defined and b4 finds ``scripts/checkpatch.pl`` at the top of
      your git tree, it uses the same default as
      :term:`b4.am-perpatch-check-cmd`.
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
+   :term:`b4.review-target-branch`
+     The default target branch to use when taking patches. This is also
+     used in the notification shown when the TUI is launched from a review
+     branch, to tell you which branch to switch to for the tracking list.
+     If not set, b4 falls back to ``master`` or ``main``.
 
      Default: ``None``
 
