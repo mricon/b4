@@ -2186,6 +2186,7 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
     """Modal presenting context-sensitive actions for a tracked series.
 
     Returns the action key string (e.g. 'take', 'archive') or None on cancel.
+    Shortcut keys allow single-keypress selection without navigating.
     """
 
     _list_id = '#action-list'
@@ -2196,6 +2197,19 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
         Binding('enter', 'confirm', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
     ]
+
+    _SHORTCUT_MAP = {
+        'review': 'r',
+        'take': 'T',
+        'rebase': 'R',
+        'waiting': 'w',
+        'snooze': 's',
+        'unsnooze': 'u',
+        'upgrade': 'U',
+        'thank': 't',
+        'abandon': 'A',
+        'archive': 'x',
+    }
 
     DEFAULT_CSS = """
     ActionScreen {
@@ -2218,17 +2232,36 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
     def __init__(self, actions: List[Tuple[str, str]]) -> None:
         super().__init__()
         self._actions = actions          # [(key, label), ...]
+        # Reverse map: shortcut char -> action key (for current actions only)
+        self._shortcut_to_action = {
+            self._SHORTCUT_MAP[key]: key
+            for key, _label in actions
+            if key in self._SHORTCUT_MAP
+        }
 
     def compose(self) -> ComposeResult:
         with Vertical(id='action-dialog'):
             yield Label('Select action:')
-            yield ListView(
-                *[ActionItem(key, label) for key, label in self._actions],
-                id='action-list',
-            )
+            items = []
+            for key, label in self._actions:
+                shortcut = self._SHORTCUT_MAP.get(key, '')
+                if shortcut:
+                    label = f'[{shortcut}] {label}'
+                items.append(ActionItem(key, label))
+            yield ListView(*items, id='action-list')
 
     def on_mount(self) -> None:
         self.query_one('#action-list', ListView).focus()
+
+    def on_key(self, event) -> None:
+        ch = event.character
+        if not ch:
+            return
+        action_key = self._shortcut_to_action.get(ch)
+        if action_key:
+            event.stop()
+            event.prevent_default()
+            self.dismiss(action_key)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         self._do_confirm()

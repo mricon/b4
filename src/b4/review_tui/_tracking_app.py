@@ -648,6 +648,7 @@ class TrackingApp(App[Optional[str]]):
         elif status == 'snoozed':
             actions.append(('unsnooze', 'Wake up (unsnooze)'))
             actions.append(('abandon', 'Abandon series'))
+            actions.append(('archive', 'Archive series'))
         else:
             if status in ('reviewing', 'replied'):
                 actions.append(('take', 'Take (apply to branch)'))
@@ -657,7 +658,7 @@ class TrackingApp(App[Optional[str]]):
             if status == 'reviewing' and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
             if status == 'waiting':
-                actions.append(('snooze', 'Snooze (defer until later)'))
+                actions.append(('review', 'Review'))
             if status == 'accepted':
                 actions.append(('thank', 'Send thank-you'))
             if status != 'thanked':
@@ -2432,7 +2433,7 @@ class TrackingApp(App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status not in ('new', 'reviewing', 'replied', 'waiting'):
+        if status not in ('new', 'reviewing', 'replied'):
             self.notify('Cannot snooze a series in this state', severity='warning')
             return
         self.push_screen(
