@@ -105,6 +105,20 @@ The array is ordered the same way as the patch commits on the branch,
 so `patches[0]` corresponds to `first-patch-commit` (the first commit
 after any prerequisite commits).
 
+### Skipped patches
+
+The maintainer may mark individual patches (or the cover letter) as
+**skipped** by setting `"patch-state": "skip"` inside the reviewer's
+entry in `reviews`. When a patch or cover letter carries this state, it
+means the maintainer has decided it does not need review — for example,
+because the patch is trivial, mechanical, or already reviewed by a human.
+
+Check each entry in the `patches` array (and the `series` dict for the
+cover letter) for a `reviews` sub-dict whose entries contain
+`"patch-state": "skip"`. **Do not review skipped patches** — do not
+produce a review file for them and do not include them in your
+series-level commentary.
+
 ## Thread discussion context (optional)
 
 The `series` dict may contain a `thread-context-blob` key.  If present, it
@@ -289,7 +303,10 @@ Examples:
    ```
 
 4. If you have a review of the series as a whole, write `series.txt`
-5. For each patch you want to review, generate its diff:
+   (skip this if the cover letter is marked as skipped — see above).
+5. For each patch you want to review, first check whether it is marked
+   as skipped (see "Skipped patches" above) and skip it if so.
+   For non-skipped patches, generate the diff:
 
    ```shell
    git diff <sha>~1 <sha>
