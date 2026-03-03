@@ -1208,6 +1208,7 @@ class ReviewApp(App[None]):
                 hi = t.setdefault('header-info', {})
                 hi['to'] = to_str
                 hi['cc'] = cc_str
+                hi['tocc-edited'] = True
                 if bcc_str:
                     hi['bcc'] = bcc_str
                 elif 'bcc' in hi:

@@ -1238,6 +1238,98 @@ class TestBuildReviewEmailHeaders:
         assert 'Reviewer' in msg['From']
 
 
+# -- Tests for _build_review_email() user-edited To/Cc -----------------------
+
+class TestBuildReviewEmailToCcEdited:
+    """Tests for user-edited To/Cc handling in _build_review_email()."""
+
+    @staticmethod
+    def _make_series(**header_overrides: str) -> Dict[str, Any]:
+        header_info: Dict[str, str] = {
+            'msgid': 'test-msgid@example.com',
+            'to': 'maintainer@example.com',
+            'cc': '',
+            'references': '',
+            'sentdate': 'Mon, 01 Jan 2024 00:00:00 +0000',
+        }
+        header_info.update(header_overrides)
+        return {
+            'subject': 'Test patch',
+            'fromname': 'Author',
+            'fromemail': 'author@example.com',
+            'header-info': header_info,
+        }
+
+    @staticmethod
+    def _make_review() -> Dict[str, Any]:
+        return {'trailers': ['Reviewed-by: Test <test@example.com>']}
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch('b4.get_user_config', return_value={
+        'name': 'Reviewer', 'email': 'reviewer@example.com'})
+    def test_default_to_is_author(self, _mock_cfg: mock.Mock,
+                                  _mock_sig: mock.Mock) -> None:
+        """Without tocc-edited, To should be the original author."""
+        msg = review._build_review_email(
+            self._make_series(), None, self._make_review(), 'cover', '', None)
+        assert msg is not None
+        assert 'author@example.com' in msg['To']
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch('b4.get_user_config', return_value={
+        'name': 'Reviewer', 'email': 'reviewer@example.com'})
+    def test_default_demotes_to_header_to_cc(self, _mock_cfg: mock.Mock,
+                                             _mock_sig: mock.Mock) -> None:
+        """Without tocc-edited, original To gets folded into Cc."""
+        series = self._make_series(to='list@lists.example.com')
+        msg = review._build_review_email(
+            series, None, self._make_review(), 'cover', '', None)
+        assert msg is not None
+        assert 'author@example.com' in msg['To']
+        assert 'list@lists.example.com' in msg['Cc']
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch('b4.get_user_config', return_value={
+        'name': 'Reviewer', 'email': 'reviewer@example.com'})
+    def test_edited_to_is_honoured(self, _mock_cfg: mock.Mock,
+                                   _mock_sig: mock.Mock) -> None:
+        """With tocc-edited, user's To choice should be used as-is."""
+        series = self._make_series(to='custom@example.com')
+        series['header-info']['tocc-edited'] = True
+        msg = review._build_review_email(
+            series, None, self._make_review(), 'cover', '', None)
+        assert msg is not None
+        assert 'custom@example.com' in msg['To']
+        assert 'author@example.com' not in (msg['To'] or '')
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch('b4.get_user_config', return_value={
+        'name': 'Reviewer', 'email': 'reviewer@example.com'})
+    def test_edited_cc_is_honoured(self, _mock_cfg: mock.Mock,
+                                   _mock_sig: mock.Mock) -> None:
+        """With tocc-edited, user's Cc choice should be used as-is."""
+        series = self._make_series(to='custom@example.com', cc='other@example.com')
+        series['header-info']['tocc-edited'] = True
+        msg = review._build_review_email(
+            series, None, self._make_review(), 'cover', '', None)
+        assert msg is not None
+        assert msg['To'] == 'custom@example.com'
+        assert msg['Cc'] == 'other@example.com'
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch('b4.get_user_config', return_value={
+        'name': 'Reviewer', 'email': 'reviewer@example.com'})
+    def test_edited_empty_cc_omitted(self, _mock_cfg: mock.Mock,
+                                     _mock_sig: mock.Mock) -> None:
+        """With tocc-edited, empty Cc should not produce a Cc header."""
+        series = self._make_series(to='custom@example.com', cc='')
+        series['header-info']['tocc-edited'] = True
+        msg = review._build_review_email(
+            series, None, self._make_review(), 'cover', '', None)
+        assert msg is not None
+        assert msg['Cc'] is None
+
+
 # -- Tests for get_reference_message() ---------------------------------------
 
 class TestGetReferenceMessage:

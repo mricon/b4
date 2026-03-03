@@ -1627,22 +1627,30 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
     msg['Subject'] = subject
     msg['From'] = f'{user_name} <{user_email}>'
 
-    # Build proper reply headers: Reply-To or From as To,
-    # original To folded into Cc
-    if header_info.get('reply-to'):
-        to_addrs = email.utils.getaddresses([header_info['reply-to']])
+    # Build reply headers.  When the user has explicitly edited the
+    # To/Cc fields via the ToCcScreen, honour their choices as-is.
+    # Otherwise, apply standard reply-composition: Reply-To or From
+    # as To, original To folded into Cc.
+    if header_info.get('tocc-edited'):
+        if header_info.get('to'):
+            msg['To'] = header_info['to']
+        if header_info.get('cc'):
+            msg['Cc'] = header_info['cc']
     else:
-        fromname = series.get('fromname', '')
-        fromemail = series.get('fromemail', '')
-        to_addrs = [(fromname, fromemail)]
-    orig_to = email.utils.getaddresses([header_info.get('to', '')])
-    orig_cc = email.utils.getaddresses([header_info.get('cc', '')])
-    cc_addrs = orig_to + orig_cc
+        if header_info.get('reply-to'):
+            to_addrs = email.utils.getaddresses([header_info['reply-to']])
+        else:
+            fromname = series.get('fromname', '')
+            fromemail = series.get('fromemail', '')
+            to_addrs = [(fromname, fromemail)]
+        orig_to = email.utils.getaddresses([header_info.get('to', '')])
+        orig_cc = email.utils.getaddresses([header_info.get('cc', '')])
+        cc_addrs = orig_to + orig_cc
 
-    deduped_to, deduped_cc = b4.LoreMessage.make_reply_addrs(to_addrs, cc_addrs)
-    msg['To'] = b4.format_addrs(deduped_to, clean=False)
-    if deduped_cc:
-        msg['Cc'] = b4.format_addrs(deduped_cc, clean=False)
+        deduped_to, deduped_cc = b4.LoreMessage.make_reply_addrs(to_addrs, cc_addrs)
+        msg['To'] = b4.format_addrs(deduped_to, clean=False)
+        if deduped_cc:
+            msg['Cc'] = b4.format_addrs(deduped_cc, clean=False)
     if header_info.get('bcc'):
         msg['Bcc'] = header_info['bcc']
     msg['In-Reply-To'] = f'<{header_info["msgid"]}>'
