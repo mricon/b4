@@ -339,6 +339,9 @@ class TrackingApp(App[Optional[str]]):
         self._pwkey = str(config.get('pw-key', ''))
         self._pwurl = str(config.get('pw-url', ''))
         self._pwproj = str(config.get('pw-project', ''))
+        # Remember last snooze choices within the session
+        self._last_snooze_source: str = ''
+        self._last_snooze_input: str = ''
 
     def compose(self) -> ComposeResult:
         title = f' Tracked Series — {self._identifier}'
@@ -2432,7 +2435,11 @@ class TrackingApp(App[Optional[str]]):
         if status not in ('new', 'reviewing', 'replied', 'waiting'):
             self.notify('Cannot snooze a series in this state', severity='warning')
             return
-        self.push_screen(SnoozeScreen(), callback=self._on_snooze_confirmed)
+        self.push_screen(
+            SnoozeScreen(last_source=self._last_snooze_source,
+                         last_input=self._last_snooze_input),
+            callback=self._on_snooze_confirmed,
+        )
 
     def _on_snooze_confirmed(self, result: Optional[Dict[str, str]]) -> None:
         """Handle snooze dialog result."""
@@ -2472,6 +2479,10 @@ class TrackingApp(App[Optional[str]]):
         except Exception as ex:
             self.notify(f'Error: {ex}', severity='error')
             return
+
+        # Remember snooze choices for next time
+        self._last_snooze_source = result.get('source', '')
+        self._last_snooze_input = result.get('input', '')
 
         self.notify(f'Snoozed, {_format_snooze_until(until_value)}')
         self._load_series()

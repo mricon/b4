@@ -801,6 +801,11 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
     }
     """
 
+    def __init__(self, last_source: str = '', last_input: str = '') -> None:
+        super().__init__()
+        self._last_source = last_source
+        self._last_input = last_input
+
     def compose(self) -> ComposeResult:
         with Vertical(id='snooze-dialog'):
             yield Static('Snooze Series', id='snooze-title')
@@ -814,7 +819,19 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
             yield Static('Ctrl-y confirm  |  Escape cancel', id='snooze-hint')
 
     def on_mount(self) -> None:
-        self.query_one('#snooze-duration', Input).focus()
+        # Pre-populate the field that was used last time
+        field_map = {
+            'duration': '#snooze-duration',
+            'date': '#snooze-date',
+            'tag': '#snooze-tag',
+        }
+        target_id = field_map.get(self._last_source, '')
+        if target_id and self._last_input:
+            widget = self.query_one(target_id, Input)
+            widget.value = self._last_input
+            widget.focus()
+        else:
+            self.query_one('#snooze-duration', Input).focus()
 
     # Regex for duration shorthand: number + optional unit (m/h/d/w)
     _DURATION_RE = __import__('re').compile(r'^(\d+)\s*([mhdw]?)$', __import__('re').IGNORECASE)
@@ -840,8 +857,12 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
             return
 
         until_value: str = ''
+        source: str = ''
+        raw_input: str = ''
         if has_tag:
             until_value = f'tag:{tag_str}'
+            source = 'tag'
+            raw_input = tag_str
         elif has_dur:
             m = self._DURATION_RE.match(dur_str)
             if not m:
@@ -857,6 +878,8 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
             target = datetime.datetime.now(datetime.timezone.utc) + delta
             # Store as YYYY-MM-DDTHH:MM:SS (no tz suffix) for SQLite compat
             until_value = target.strftime('%Y-%m-%dT%H:%M:%S')
+            source = 'duration'
+            raw_input = dur_str
         else:
             try:
                 target_date = datetime.date.fromisoformat(date_str)
@@ -872,8 +895,10 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
                 tzinfo=datetime.timezone.utc,
             )
             until_value = target.strftime('%Y-%m-%dT%H:%M:%S')
+            source = 'date'
+            raw_input = date_str
 
-        self.dismiss({'until': until_value})
+        self.dismiss({'until': until_value, 'source': source, 'input': raw_input})
 
     def action_cancel(self) -> None:
         self.dismiss(None)
