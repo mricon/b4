@@ -116,6 +116,11 @@ v0.15
 		[X] Auto-wake expired snoozed series on app load
 		[X] Skip snoozed series during update-all
 		[X] Database schema v3 with snoozed_until column
+		[X] Remember snooze choices across consecutive uses within a session
+	[X] Action screen keyboard shortcuts and state workflow fixes
+		[X] Single-keypress shortcuts on action modal (case-sensitive, no "a" binding)
+		[X] Waiting series: offer review instead of snooze
+		[X] Snoozed series: add archive option
 	[_] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails
