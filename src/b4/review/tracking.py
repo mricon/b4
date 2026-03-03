@@ -157,6 +157,48 @@ def save_repo_metadata(gitdir: str, identifier: str) -> None:
         f.write('\n')
 
 
+def get_recent_take_branches(gitdir: str, limit: int = 20) -> List[str]:
+    """Return recently used take branches, most recent first."""
+    metadata_path = get_repo_metadata_path(gitdir)
+    if not os.path.exists(metadata_path):
+        return []
+    try:
+        with open(metadata_path, 'r') as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    branches = data.get('recent-take-branches', [])
+    if not isinstance(branches, list):
+        return []
+    return [b for b in branches if isinstance(b, str)][:limit]
+
+
+def record_take_branch(gitdir: str, branch: str) -> None:
+    """Prepend branch to the recent-take-branches list in metadata.json."""
+    metadata_dir = os.path.join(gitdir, REVIEW_METADATA_DIR)
+    pathlib.Path(metadata_dir).mkdir(parents=True, exist_ok=True)
+    metadata_path = get_repo_metadata_path(gitdir)
+    data: Dict[str, Any] = {}
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, 'r') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    if not isinstance(data, dict):
+        data = {}
+    branches = data.get('recent-take-branches', [])
+    if not isinstance(branches, list):
+        branches = []
+    # Remove existing entry so we can move it to the front
+    branches = [b for b in branches if b != branch]
+    branches.insert(0, branch)
+    data['recent-take-branches'] = branches[:20]
+    with open(metadata_path, 'w') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+
+
 def resolve_identifier(cmdargs: argparse.Namespace, topdir: Optional[str] = None) -> Optional[str]:
     """Resolve project identifier from command args or repository metadata."""
     if hasattr(cmdargs, 'identifier') and cmdargs.identifier:

@@ -1069,8 +1069,13 @@ class TrackingApp(App[Optional[str]]):
                     default_method = 'cherry-pick'
             except Exception:
                 pass
+        recent_branches = None
+        gitdir = b4.git_get_common_dir(topdir) if topdir else None
+        if gitdir:
+            recent_branches = b4.review.tracking.get_recent_take_branches(gitdir)
         take_screen = TakeScreen(target_branch, review_branch, num_patches=num_patches,
-                                 default_method=default_method)
+                                 default_method=default_method,
+                                 recent_branches=recent_branches)
         self.push_screen(
             take_screen,
             callback=lambda confirmed: self._on_take_confirmed(
@@ -1353,6 +1358,11 @@ class TrackingApp(App[Optional[str]]):
             self._record_take_metadata(topdir, review_branch, target_branch,
                                        commit_ids)
 
+        # Record the branch for recent-take-branches suggestions
+        common_dir = b4.git_get_common_dir(topdir)
+        if common_dir:
+            b4.review.tracking.record_take_branch(common_dir, target_branch)
+
         # Record the series as taken in the tracking database
         if self._identifier and change_id:
             revision = t_series.get('revision')
@@ -1542,6 +1552,11 @@ class TrackingApp(App[Optional[str]]):
                 commit_ids = out.strip().splitlines()
                 self._record_take_metadata(topdir, review_branch, target_branch,
                                            commit_ids, cherrypick=cherrypick)
+
+        # Record the branch for recent-take-branches suggestions
+        common_dir = b4.git_get_common_dir(topdir)
+        if common_dir:
+            b4.review.tracking.record_take_branch(common_dir, target_branch)
 
         # Record the series as taken in the tracking database
         if self._identifier and change_id:

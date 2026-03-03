@@ -17,6 +17,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Checkbox, Input, Label, ListItem, ListView, LoadingIndicator, ProgressBar, RichLog, Select, Static, TextArea
 from textual.screen import ModalScreen
+from textual.suggester import SuggestFromList
 from textual.worker import Worker, WorkerState
 from rich.rule import Rule
 from rich.text import Text
@@ -617,7 +618,8 @@ class TakeScreen(ModalScreen[bool]):
 
     def __init__(self, target_branch: str, review_branch: str,
                  num_patches: int = 0,
-                 default_method: Optional[str] = None) -> None:
+                 default_method: Optional[str] = None,
+                 recent_branches: Optional[List[str]] = None) -> None:
         """Initialize take screen.
 
         Args:
@@ -625,11 +627,13 @@ class TakeScreen(ModalScreen[bool]):
             review_branch: The review branch to take
             num_patches: Number of patches in the series
             default_method: Override the default take method selection
+            recent_branches: Recently used branch names for auto-suggest
         """
         super().__init__()
         self._target_branch = target_branch
         self._review_branch = review_branch
         self._default_method = default_method or ('linear' if num_patches == 1 else 'merge')
+        self._recent_branches = recent_branches
         # Results set after continue
         self.target_result: str = ''
         self.method_result: str = self._default_method
@@ -646,7 +650,8 @@ class TakeScreen(ModalScreen[bool]):
             yield Static('Take Series', id='take-title')
             yield Static(f'Review branch: {self._review_branch}', classes='take-value')
             yield Static('Target branch:', classes='take-label')
-            yield Input(value=self._target_branch, id='take-target')
+            suggester = SuggestFromList(self._recent_branches, case_sensitive=True) if self._recent_branches else None
+            yield Input(value=self._target_branch, id='take-target', suggester=suggester)
             yield Static('Method:', classes='take-label')
             yield Select(method_options, value=self._default_method, id='take-method', allow_blank=False)
             yield Checkbox('add Link:', value=True, id='take-add-link', classes='take-checkbox')
@@ -660,6 +665,9 @@ class TakeScreen(ModalScreen[bool]):
         self.target_result = self.query_one('#take-target', Input).value.strip()
         if not self.target_result:
             self.notify('Target branch is required', severity='error')
+            return
+        if not b4.git_branch_exists(None, self.target_result):
+            self.notify(f'Branch does not exist: {self.target_result}', severity='error')
             return
         self.method_result = str(self.query_one('#take-method', Select).value)
         self.add_link = self.query_one('#take-add-link', Checkbox).value
