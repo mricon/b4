@@ -547,3 +547,15 @@ colours, which makes it suitable for terminals that do not support 256
 or true-colour output. All UI elements — diff highlighting, reviewer
 badges, CI indicators, and comment panels — adapt automatically to the
 active theme.
+
+Disabling colour entirely
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+If you prefer no colour at all — for example, when piping output to a file
+or when colours interfere with a screen reader — you can set the
+``NO_COLOR`` environment variable (see `no-color.org <https://no-color.org>`_
+for the broader convention)::
+
+    NO_COLOR=1 b4 review tui
+
+This tells Textual to strip all colour information from the rendered
+output while keeping the layout intact.
