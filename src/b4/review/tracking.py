@@ -670,6 +670,23 @@ def get_expired_snoozed(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     return results
 
 
+def get_tag_snoozed(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """Return all snoozed series waiting for a git tag to appear."""
+    cursor = conn.execute(
+        "SELECT change_id, revision, snoozed_until FROM series"
+        " WHERE status = 'snoozed'"
+        " AND snoozed_until LIKE 'tag:%'"
+    )
+    results = []
+    for row in cursor:
+        results.append({
+            'change_id': row[0],
+            'revision': row[1],
+            'snoozed_until': row[2],
+        })
+    return results
+
+
 def get_snoozed_until(conn: sqlite3.Connection, change_id: str,
                       revision: Optional[int] = None) -> Optional[str]:
     """Return the snoozed_until date for a series, or None."""

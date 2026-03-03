@@ -76,12 +76,15 @@ _STATUS_GROUP_INDEX: Dict[str, int] = {
 def _format_snooze_until(value: str) -> str:
     """Format a snoozed_until value for display.
 
+    If *value* starts with ``tag:`` return ``until tag <tagname>``.
     If *value* contains ``T`` (a full ISO datetime), show a relative
     duration like "in 2h 30m" plus the local date/time.  Otherwise
     return the value as-is (backward compat for date-only strings).
     """
     import datetime
 
+    if value.startswith('tag:'):
+        return f'until tag {value[4:]}'
     if 'T' not in value:
         return f'until {value}'
     try:
@@ -411,6 +414,31 @@ class TrackingApp(App[Optional[str]]):
                     prev_status = 'reviewing'
                     review_branch = f'b4/review/{cid}'
                     if topdir and b4.git_branch_exists(topdir, review_branch):
+                        try:
+                            cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                            trk_series = tracking.get('series', {})
+                            snoozed_info = trk_series.get('snoozed', {})
+                            prev_status = snoozed_info.get('previous_state', 'reviewing')
+                            trk_series['status'] = prev_status
+                            trk_series.pop('snoozed', None)
+                            tracking['series'] = trk_series
+                            b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+                        except (SystemExit, Exception):
+                            pass
+                    b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
+            # Auto-wake any snoozed series whose target tag now exists
+            topdir = b4.git_get_toplevel()
+            if topdir:
+                tag_snoozed = b4.review.tracking.get_tag_snoozed(conn)
+                for entry in tag_snoozed:
+                    cid = entry['change_id']
+                    rev = entry['revision']
+                    tagname = entry['snoozed_until'][4:]  # strip 'tag:' prefix
+                    if not b4.git_revparse_tag(topdir, tagname):
+                        continue
+                    prev_status = 'reviewing'
+                    review_branch = f'b4/review/{cid}'
+                    if b4.git_branch_exists(topdir, review_branch):
                         try:
                             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
                             trk_series = tracking.get('series', {})
@@ -2416,8 +2444,7 @@ class TrackingApp(App[Optional[str]]):
         change_id = series.get('change_id', '')
         revision = series.get('revision')
         previous_status = series.get('status', 'new')
-        until_date = result['until']
-        note = result.get('note', '')
+        until_value = result['until']
 
         # Update tracking commit metadata
         topdir = b4.git_get_toplevel()
@@ -2428,9 +2455,8 @@ class TrackingApp(App[Optional[str]]):
                 trk_series = tracking.get('series', {})
                 trk_series['status'] = 'snoozed'
                 trk_series['snoozed'] = {
-                    'until': until_date,
+                    'until': until_value,
                     'previous_state': previous_status,
-                    'note': note,
                 }
                 tracking['series'] = trk_series
                 b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
@@ -2440,17 +2466,14 @@ class TrackingApp(App[Optional[str]]):
         # Update database
         try:
             conn = b4.review.tracking.get_db(self._identifier)
-            b4.review.tracking.snooze_series(conn, change_id, until_date,
+            b4.review.tracking.snooze_series(conn, change_id, until_value,
                                              revision=revision)
             conn.close()
         except Exception as ex:
             self.notify(f'Error: {ex}', severity='error')
             return
 
-        msg = f'Snoozed, {_format_snooze_until(until_date)}'
-        if note:
-            msg += f' ({note})'
-        self.notify(msg)
+        self.notify(f'Snoozed, {_format_snooze_until(until_value)}')
         self._load_series()
 
     def action_unsnooze(self) -> None:

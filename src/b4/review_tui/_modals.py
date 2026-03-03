@@ -761,10 +761,11 @@ class CherryPickScreen(ModalScreen[bool]):
 
 
 class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
-    """Modal dialog for snoozing a series until a future date/time.
+    """Modal dialog for snoozing a series until a future date/time or tag.
 
-    Returns ``{'until': '<ISO datetime>', 'note': '...'}`` on confirm,
-    or ``None`` on cancel.
+    Returns ``{'until': '<value>'}`` on confirm, or ``None`` on cancel.
+    The *until* value is either an ISO datetime string (for duration/date
+    snoozes) or ``tag:<tagname>`` (for tag-based snoozes).
     """
 
     BINDINGS = [
@@ -807,8 +808,8 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
             yield Input(placeholder='e.g. 30m, 3h, 1d, 2w', id='snooze-duration')
             yield Static('— or until date (YYYY-MM-DD):', classes='snooze-label')
             yield Input(placeholder='e.g. 2026-04-01', id='snooze-date')
-            yield Static('Note (optional):', classes='snooze-label')
-            yield Input(placeholder='e.g. apply after rc3', id='snooze-note')
+            yield Static('— or until tag appears:', classes='snooze-label')
+            yield Input(placeholder='e.g. v6.15-rc3', id='snooze-tag')
             yield Static('', id='snooze-error')
             yield Static('Ctrl-y confirm  |  Escape cancel', id='snooze-hint')
 
@@ -823,21 +824,25 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
 
         dur_str = self.query_one('#snooze-duration', Input).value.strip()
         date_str = self.query_one('#snooze-date', Input).value.strip()
-        note = self.query_one('#snooze-note', Input).value.strip()
+        tag_str = self.query_one('#snooze-tag', Input).value.strip()
         error_widget = self.query_one('#snooze-error', Static)
 
         has_dur = bool(dur_str)
         has_date = bool(date_str)
+        has_tag = bool(tag_str)
 
-        if not has_dur and not has_date:
-            error_widget.update('Please enter a duration or a date')
+        filled = sum([has_dur, has_date, has_tag])
+        if filled == 0:
+            error_widget.update('Please enter a duration, date, or tag')
             return
-        if has_dur and has_date:
-            error_widget.update('Please enter only a duration or a date, not both')
+        if filled > 1:
+            error_widget.update('Please fill in only one field')
             return
 
-        until_date: str = ''
-        if has_dur:
+        until_value: str = ''
+        if has_tag:
+            until_value = f'tag:{tag_str}'
+        elif has_dur:
             m = self._DURATION_RE.match(dur_str)
             if not m:
                 error_widget.update('Invalid duration (use e.g. 30m, 3h, 1d, 2w)')
@@ -851,7 +856,7 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
             delta = datetime.timedelta(**{unit_map[unit]: value})
             target = datetime.datetime.now(datetime.timezone.utc) + delta
             # Store as YYYY-MM-DDTHH:MM:SS (no tz suffix) for SQLite compat
-            until_date = target.strftime('%Y-%m-%dT%H:%M:%S')
+            until_value = target.strftime('%Y-%m-%dT%H:%M:%S')
         else:
             try:
                 target_date = datetime.date.fromisoformat(date_str)
@@ -866,9 +871,9 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
                 target_date.year, target_date.month, target_date.day,
                 tzinfo=datetime.timezone.utc,
             )
-            until_date = target.strftime('%Y-%m-%dT%H:%M:%S')
+            until_value = target.strftime('%Y-%m-%dT%H:%M:%S')
 
-        self.dismiss({'until': until_date, 'note': note})
+        self.dismiss({'until': until_value})
 
     def action_cancel(self) -> None:
         self.dismiss(None)

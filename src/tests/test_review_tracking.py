@@ -1927,6 +1927,10 @@ class TestFormatSnoozeUntil:
         result = _format_snooze_until(target.isoformat())
         assert 'wakes in <1m' in result
 
+    def test_tag_value(self) -> None:
+        """A tag: prefixed value shows 'until tag <tagname>'."""
+        assert _format_snooze_until('tag:v6.15-rc3') == 'until tag v6.15-rc3'
+
     def test_invalid_datetime_with_T(self) -> None:
         """A string containing T that isn't a valid datetime returns as-is."""
         assert _format_snooze_until('NOT_A_DATE') == 'NOT_A_DATE'
@@ -2048,4 +2052,27 @@ class TestGetExpiredSnoozedDatetime:
         expired = review_tracking.get_expired_snoozed(conn)
         expired_ids = {e['change_id'] for e in expired}
         assert expired_ids == {'expired-dt', 'expired-date'}
+        conn.close()
+
+    def test_tag_snoozed_not_in_expired(self) -> None:
+        """Tag-based snoozed entries don't appear in time-based expiry results."""
+        conn = review_tracking.init_db('snooze-tag-not-expired')
+        self._make_snoozed_series(conn, 'tag-id', 'tag:v6.15-rc3')
+        expired = review_tracking.get_expired_snoozed(conn)
+        assert len(expired) == 0
+        conn.close()
+
+    def test_get_tag_snoozed(self) -> None:
+        """get_tag_snoozed returns only tag: prefixed entries."""
+        conn = review_tracking.init_db('snooze-tag-query')
+        # Add a tag-based snooze
+        self._make_snoozed_series(conn, 'tag-id', 'tag:v6.15-rc3')
+        # Add a time-based snooze
+        future = (datetime.datetime.now(datetime.timezone.utc)
+                  + datetime.timedelta(hours=2)).isoformat()
+        self._make_snoozed_series(conn, 'time-id', future)
+        tag_results = review_tracking.get_tag_snoozed(conn)
+        assert len(tag_results) == 1
+        assert tag_results[0]['change_id'] == 'tag-id'
+        assert tag_results[0]['snoozed_until'] == 'tag:v6.15-rc3'
         conn.close()
