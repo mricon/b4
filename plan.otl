@@ -85,7 +85,11 @@ v0.15
 		[X] Skipped patches excluded from collect_review_emails
 		[X] Cherry-pick auto-default and pre-deselection for skipped patches
 		[X] review-default-take-method config option (merge/linear/cherry-pick)
-	[_] Recently-used branch list in take dialog
+	[X] Recently-used branch list in take dialog
+		[X] Store recent branches in metadata.json, suggest via SuggestFromList
+		[X] Rebase screen with branch input and suggestions (replaces simple confirm)
+		[X] Default to most recently used branch; validate branch exists before proceeding
+		[X] Configured target branch always included in suggestion list
 	[X] Cherry-pick patch selection honours skip state
 		[X] Skipped patches auto-deselected in cherry-pick dialog
 		[X] Auto-defaults to cherry-pick method when any patch is skipped
@@ -100,7 +104,9 @@ v0.15
 		[X] _render_email_to_viewer() shared helper used by both preview screens
 		[X] From header shown in email preview to catch misconfigured identities
 		[X] Dry-run mode shows accurate "logged, not sent" notification
-	[_] Per-patch signoffs and Link tags with merge take strategy
+	[X] Per-patch signoffs and Link tags with merge take strategy
+		[X] Apply per-commit trailers (Signed-off-by, Link) during merge take
+		[X] Honour user-edited To/Cc fields instead of overriding with reply-composition
 	[_] "Applied but not taken" state for CI-testing workflows
 	[_] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
