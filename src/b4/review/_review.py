@@ -421,25 +421,25 @@ def save_tracking(topdir: str, cover_text: str, tracking: Dict[str, Any]) -> Non
         sys.exit(1)
 
 
-def _get_my_review(target: Dict[str, Any], usercfg: Dict[str, str]) -> Dict[str, Any]:
+def _get_my_review(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> Dict[str, Any]:
     """Return the current user's review sub-dict (read-only; may be empty)."""
-    email = usercfg.get('email', 'unknown@example.com')
+    email = str(usercfg.get('email', 'unknown@example.com'))
     reviews: Dict[str, Any] = target.get('reviews', {})
     result: Dict[str, Any] = reviews.get(email, {})
     return result
 
 
-def _ensure_my_review(target: Dict[str, Any], usercfg: Dict[str, str]) -> Dict[str, Any]:
+def _ensure_my_review(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> Dict[str, Any]:
     """Return the current user's review sub-dict, creating it if needed."""
-    email = usercfg.get('email', 'unknown@example.com')
-    name = usercfg.get('name', 'Unknown')
+    email = str(usercfg.get('email', 'unknown@example.com'))
+    name = str(usercfg.get('name', 'Unknown'))
     reviews: Dict[str, Any] = target.setdefault('reviews', {})
     entry: Dict[str, Any] = reviews.setdefault(email, {})
     entry['name'] = name
     return entry
 
 
-def _cleanup_review(target: Dict[str, Any], usercfg: Dict[str, str]) -> None:
+def _cleanup_review(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> None:
     """Remove the reviewer key when its dict becomes empty (only 'name' or less)."""
     email = usercfg.get('email', 'unknown@example.com')
     reviews = target.get('reviews', {})
@@ -457,7 +457,7 @@ _APPROVAL_TRAILER_KEYS = frozenset({'reviewed-by', 'acked-by'})
 _NACK_TRAILER_KEY = 'nacked-by'
 
 
-def _get_patch_state(target: Dict[str, Any], usercfg: Dict[str, str]) -> str:
+def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     """Derive the effective per-patch state for the current user.
 
     Returns 'done', 'draft', 'skip', or '' (no state).
@@ -480,7 +480,7 @@ def _get_patch_state(target: Dict[str, Any], usercfg: Dict[str, str]) -> str:
     return ''
 
 
-def _set_patch_state(target: Dict[str, Any], usercfg: Dict[str, str],
+def _set_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT,
                      state: str) -> None:
     """Store an explicit patch state ('done', 'skip', or '' to clear)."""
     if state:
