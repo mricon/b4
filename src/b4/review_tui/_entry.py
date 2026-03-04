@@ -29,7 +29,8 @@ def run_branch_tui(session: Dict[str, Any]) -> None:
     app.run()
 
 
-def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
+def run_tracking_tui(identifier: str, email_dryrun: bool = False,
+                     no_sign: bool = False) -> None:
     """Entry point called from b4.review.cmd_tui().
 
     Loops between TrackingApp and ReviewApp as needed.
@@ -42,6 +43,11 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
         logger.critical('Not in a git repository')
         return
 
+    # Compute effective patatt sign flag from CLI and config
+    config = b4.get_main_config()
+    _cnps = str(config.get('review-no-patatt-sign', ''))
+    patatt_sign = not (no_sign or _cnps.lower() in {'yes', 'true', 'y'})
+
     # Get current branch to restore later
     original_branch = b4.git_get_current_branch(topdir)
 
@@ -52,6 +58,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
         try:
             session = b4.review._prepare_review_session(cmdargs)
             session['email_dryrun'] = email_dryrun
+            session['patatt_sign'] = patatt_sign
             # Tell ReviewApp which branch to suggest so it can show a hint
             config = b4.get_main_config()
             cfg_branch = config.get('review-target-branch')
@@ -75,7 +82,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
     focus_change_id: Optional[str] = None
     while True:
         app = TrackingApp(identifier, original_branch, focus_change_id=focus_change_id,
-                          email_dryrun=email_dryrun)
+                          email_dryrun=email_dryrun, patatt_sign=patatt_sign)
         focus_change_id = None
         branch_name = app.run()
 
@@ -104,6 +111,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False) -> None:
             continue
 
         session['email_dryrun'] = email_dryrun
+        session['patatt_sign'] = patatt_sign
         review_app = ReviewApp(session)
         review_app.run()
 

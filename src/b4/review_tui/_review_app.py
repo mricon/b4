@@ -238,6 +238,7 @@ class ReviewApp(App[None]):
         self._reviewer_initials: str = _make_initials(session['usercfg'].get('name', ''))
         self._cover_subject_clean: str = session['cover_subject_clean']
         self._email_dryrun: bool = session.get('email_dryrun', False)
+        self._patatt_sign: bool = session.get('patatt_sign', True)
         self._has_cover: bool = 'NOTE: No cover letter provided by the author.' not in self._cover_text
         self._selected_idx: int = 0 if self._has_cover else 1  # 0 = cover, 1..N = patches
         self._preview_mode: bool = False
@@ -1284,7 +1285,7 @@ class ReviewApp(App[None]):
                 with self.suspend():
                     smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
                     sent = b4.send_mail(smtp, msgs, fromaddr=fromaddr,
-                                        patatt_sign=False, dryrun=self._email_dryrun,
+                                        patatt_sign=self._patatt_sign, dryrun=self._email_dryrun,
                                         output_dir=None, reflect=False)
                 if sent is None:
                     self.notify('Failed to send review emails.', severity='error')
@@ -1353,7 +1354,7 @@ class ReviewApp(App[None]):
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
                 sent = b4.send_mail(smtp, [msg], fromaddr=fromaddr,
-                                    patatt_sign=False, dryrun=self._email_dryrun,
+                                    patatt_sign=self._patatt_sign, dryrun=self._email_dryrun,
                                     output_dir=None, reflect=False)
             if sent is None:
                 self.notify('Failed to send reply.', severity='error')

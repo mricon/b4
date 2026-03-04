@@ -324,12 +324,14 @@ class TrackingApp(App[Optional[str]]):
 
     def __init__(self, identifier: str, original_branch: Optional[str] = None,
                  focus_change_id: Optional[str] = None,
-                 email_dryrun: bool = False) -> None:
+                 email_dryrun: bool = False,
+                 patatt_sign: bool = True) -> None:
         super().__init__()
         self._identifier = identifier
         self._original_branch = original_branch
         self._focus_change_id = focus_change_id
         self._email_dryrun = email_dryrun
+        self._patatt_sign = patatt_sign
         self._all_series: List[Dict[str, Any]] = []
         self._selected_series: Optional[Dict[str, Any]] = None
         self._limit_pattern: str = ''
@@ -2779,7 +2781,7 @@ class TrackingApp(App[Optional[str]]):
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
                 sent = b4.send_mail(smtp, [msg], fromaddr=fromaddr,
-                                    patatt_sign=False, dryrun=self._email_dryrun,
+                                    patatt_sign=self._patatt_sign, dryrun=self._email_dryrun,
                                     output_dir=None, reflect=False)
             if sent is None:
                 self.notify('Failed to send thank-you message', severity='error')

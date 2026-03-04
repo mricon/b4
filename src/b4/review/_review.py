@@ -1383,7 +1383,8 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
         logger.critical('Enroll with: b4 review enroll')
         sys.exit(1)
 
-    b4.review_tui.run_tracking_tui(identifier, email_dryrun=cmdargs.email_dryrun)
+    b4.review_tui.run_tracking_tui(identifier, email_dryrun=cmdargs.email_dryrun,
+                                   no_sign=cmdargs.no_sign)
 
 
 def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
