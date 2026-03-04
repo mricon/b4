@@ -382,6 +382,16 @@ These settings control ``b4 review`` TUI behaviour.
 
      .. versionadded:: v0.15
 
+   :term:`b4.review-no-patatt-sign`
+     Instructs b4 not to patatt-sign outgoing review emails (review replies,
+     follow-up replies, and thank-you messages). This mirrors the
+     :term:`b4.send-no-patatt-sign` option for ``b4 send``. Can also be
+     set per-session with the ``--no-sign`` flag on ``b4 review tui``.
+
+     Default: ``no``
+
+     .. versionadded:: v0.15
+
    :term:`b4.review-agent-command`
      The command to invoke for AI-assisted review (triggered by the ``a``
      keybinding). Both this option and :term:`b4.review-agent-prompt-path`

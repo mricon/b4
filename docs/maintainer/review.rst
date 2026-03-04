@@ -529,6 +529,13 @@ Optional flags
   print messages to stdout instead of sending them. Useful for testing
   the full review workflow without actually delivering emails.
 
+``--no-sign``
+  Do not patatt-sign outgoing review emails. By default, review replies,
+  follow-up replies, and thank-you messages are signed with your
+  configured attestation key (same as ``b4 send``). This flag disables
+  signing for the current session. Can also be set permanently via
+  :term:`b4.review-no-patatt-sign` (see :ref:`review_settings`).
+
 Configuration
 -------------
 The following configuration options are specific to ``b4 review``. Set

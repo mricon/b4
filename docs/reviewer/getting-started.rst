@@ -139,6 +139,11 @@ in the correct thread on the mailing list.
 
        b4 review tui --email-dry-run
 
+   To skip patatt signing (for example, if you do not have a key
+   configured), add ``--no-sign``::
+
+       b4 review tui --no-sign
+
 After sending, the series status changes to **replied**.
 
 Waiting for a new revision
