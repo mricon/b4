@@ -334,11 +334,23 @@ class ReviewApp(App[None]):
         fc_list = self._followup_comments.get(display_idx, [])
         if not fc_list:
             return
+        # Count messages per participant
+        counts: Dict[str, int] = {}
+        names: Dict[str, str] = {}
+        for e in fc_list:
+            email = e['fromemail']
+            counts[email] = counts.get(email, 0) + 1
+            if email not in names:
+                names[email] = e['fromname']
         seen: Set[str] = set()
         for e in sorted(fc_list, key=lambda x: x['date']):
             if e['fromemail'] not in seen:
                 seen.add(e['fromemail'])
-                lv.append(FollowupItem(e['fromname'], display_idx, e['fromemail']))
+                name = e['fromname']
+                n = counts[e['fromemail']]
+                if n > 1:
+                    name = f'{name} ({n})'
+                lv.append(FollowupItem(name, display_idx, e['fromemail']))
 
     def _refresh_patch_item(self, display_idx: int) -> None:
         """Refresh a single patch list item's label."""
@@ -1399,7 +1411,8 @@ class ReviewApp(App[None]):
         self._followup_comments = {}
         count = 0
 
-        for lmsg in sorted(lmbx.followups, key=lambda m: m.date):
+        all_followups = lmbx.followups + lmbx.unknowns
+        for lmsg in sorted(all_followups, key=lambda m: m.date):
             display_idx = _resolve_patch_for_followup(
                 lmsg.in_reply_to, patch_msgids, lmbx.msgid_map)
             if display_idx is None:
