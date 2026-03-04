@@ -217,7 +217,7 @@ class TrackedSeriesItem(ListItem):
             fu_style = f"bold {ts['warning']}"
         label.append(f'{fu_new:<3s}', style=fu_style)
         label.append(f'  {symbol}{flag}  {subject_display}')
-        yield Label(label)
+        yield Label(label, markup=False)
 
 
 class TrackingApp(App[Optional[str]]):

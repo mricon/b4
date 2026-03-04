@@ -1668,7 +1668,7 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
     def compose(self) -> ComposeResult:
         with Vertical(id='apply-dialog'):
             yield Label(f'Setting state to: {self._new_state}', id='apply-title')
-            yield Label(self._series_name, id='apply-series')
+            yield Label(self._series_name, id='apply-series', markup=False)
             yield Label(f'Processing 0/{len(self._patch_ids)} patches...', id='apply-status')
             yield ProgressBar(total=len(self._patch_ids), show_eta=False, id='apply-progress')
 

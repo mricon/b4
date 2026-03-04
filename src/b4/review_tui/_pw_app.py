@@ -68,7 +68,7 @@ class PwSeriesItem(ListItem):
 
     def compose(self) -> ComposeResult:
         ts = resolve_styles(self.app)
-        yield Label(_format_series_label(self.series, self.tracked, ts))
+        yield Label(_format_series_label(self.series, self.tracked, ts), markup=False)
 
 
 class PwApp(App[None]):
