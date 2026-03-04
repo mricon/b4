@@ -298,7 +298,7 @@ def _write_followup_comments(
             body_text.append(f'Msgid: <{msgid}>\n', style='bold')
         body_text.append('\n')
         for line in body.splitlines():
-            if line.startswith('> ') or line == '>':
+            if line.startswith('>'):
                 body_text.append(line, style='dim')
             else:
                 body_text.append(line)
