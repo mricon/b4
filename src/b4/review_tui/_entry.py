@@ -17,9 +17,12 @@ from b4.review_tui._tracking_app import TrackingApp
 from b4.review_tui._pw_app import PwApp
 
 
-def run_pw_tui(pwkey: str, pwurl: str, pwproj: str) -> None:
+def run_pw_tui(pwkey: str, pwurl: str, pwproj: str,
+               email_dryrun: bool = False,
+               patatt_sign: bool = True) -> None:
     """Launch the Patchwork series browser TUI."""
-    app = PwApp(pwkey, pwurl, pwproj)
+    app = PwApp(pwkey, pwurl, pwproj,
+                email_dryrun=email_dryrun, patatt_sign=patatt_sign)
     app.run()
 
 
@@ -97,7 +100,9 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             pwurl = str(config.get('pw-url', ''))
             pwproj = str(config.get('pw-project', ''))
             if pwkey and pwurl and pwproj:
-                run_pw_tui(pwkey, pwurl, pwproj)
+                run_pw_tui(pwkey, pwurl, pwproj,
+                           email_dryrun=email_dryrun,
+                           patatt_sign=patatt_sign)
             continue
 
         # User selected a branch to review - prepare session and run ReviewApp

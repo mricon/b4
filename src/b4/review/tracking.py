@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS revisions (
     found_at   TEXT,
     PRIMARY KEY (change_id, revision)
 );
+
 '''
 
 

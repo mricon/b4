@@ -131,6 +131,19 @@ v0.15
 		[X] Attestation status display in message view headers
 		[X] Link header using linkmask for lore archive URLs
 		[X] Address line packing for To/Cc headers
+	[X] Per-message flags (seen, flagged, answered)
+		[X] Standalone messages.sqlite3 database keyed by msgid (cross-project)
+		[X] IMAP-style flags: Seen, Flagged, Answered stored as space-separated string
+		[X] Visual indicators in thread index: N (unseen), star (flagged), reply-arrow (answered)
+		[X] Flag toggling with F in message viewer (mutt-style)
+		[X] Auto-mark patches + cover as Seen on review branch checkout
+		[X] Auto-mark follow-ups as Seen when loaded in review app
+		[X] Auto-mark patches as Answered when review emails sent
+		[X] Auto-mark messages as Answered on reply from lite thread viewer
+		[X] Detect maintainer replies from external email clients
+		[X] Automatic cleanup of flags older than 180 days via msg_date
+	[X] Full-width CJK character alignment in all TUI apps
+	[X] Tracking app UX: show 0 in Fups column when known, hint to update when data missing
 	[_] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails

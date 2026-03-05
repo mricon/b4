@@ -1305,6 +1305,7 @@ class ReviewApp(App[None]):
                     self._reply_sent = True
                     self._tracking['series']['status'] = 'replied'
                     self._save_tracking()
+                    self._mark_patches_answered(msgs)
                     self.notify(f'Sent {sent} review email(s).')
             except Exception as ex:
                 self.notify(f'Send failed: {ex}', severity='error')
@@ -1499,6 +1500,101 @@ class ReviewApp(App[None]):
                     self._series['thread-blob'] = new_sha
 
         self._load_followup_msgs(msgs)
+        self._mark_followup_msgs_seen(msgs)
+        self._detect_maintainer_replies(msgs)
+
+    def _mark_followup_msgs_seen(self, msgs: List[Any]) -> None:
+        """Mark all follow-up messages as Seen in the messages DB."""
+        import email.utils as _eu
+        entries = []
+        for msg in msgs:
+            mid = b4.LoreMessage.clean_header(msg.get('Message-ID', ''))
+            if mid:
+                mid = mid.strip('<>')
+                date_val = msg.get('Date', '')
+                msg_date = None
+                if date_val:
+                    try:
+                        msg_date = _eu.parsedate_to_datetime(str(date_val)).isoformat()
+                    except Exception:
+                        pass
+                entries.append({'msgid': mid, 'msg_date': msg_date})
+        if not entries:
+            return
+        try:
+            from b4.review import messages
+            conn = messages.get_db()
+            messages.set_flags_bulk(conn, entries, 'Seen')
+            conn.close()
+        except Exception:
+            pass
+
+    def _mark_patches_answered(self, msgs: List[Any]) -> None:
+        """Mark the original patches as Answered based on In-Reply-To."""
+        entries = []
+        for msg in msgs:
+            irt = msg.get('In-Reply-To', '')
+            if irt:
+                msgid = irt.strip('<>')
+                if msgid:
+                    entries.append({'msgid': msgid, 'msg_date': None})
+        if not entries:
+            return
+        try:
+            from b4.review import messages
+            conn = messages.get_db()
+            messages.set_flags_bulk(conn, entries, 'Answered')
+            conn.close()
+        except Exception:
+            pass
+
+    def _detect_maintainer_replies(self, msgs: List[Any]) -> None:
+        """Detect replies sent by the maintainer via their own email client.
+
+        Marks the immediate parent of each maintainer message as Answered.
+        (All messages are already marked Seen by _mark_followup_msgs_seen.)
+        """
+        try:
+            _, maintainer_email = b4.get_mailfrom()
+        except Exception:
+            return
+        if not maintainer_email:
+            return
+        maintainer_email = maintainer_email.lower()
+        # Build msgid map for ancestor lookups
+        msgid_map: Dict[str, Dict[str, str]] = {}
+        for msg in msgs:
+            mid = b4.LoreMessage.clean_header(msg.get('Message-ID', ''))
+            if mid:
+                mid = mid.strip('<>')
+                irt = b4.LoreMessage.clean_header(msg.get('In-Reply-To', ''))
+                if irt:
+                    irt = irt.strip('<>')
+                msgid_map[mid] = {'irt': irt, 'from': msg.get('From', '')}
+
+        answered_entries: List[Dict[str, Optional[str]]] = []
+        for mid, info in msgid_map.items():
+            from_hdr = info['from']
+            if not from_hdr:
+                continue
+            import email.utils as _eu
+            _, addr = _eu.parseaddr(str(from_hdr))
+            if addr.lower() != maintainer_email:
+                continue
+            # Immediate parent → Answered
+            parent_id = info['irt']
+            if parent_id and parent_id in msgid_map:
+                answered_entries.append({'msgid': parent_id, 'msg_date': None})
+
+        if not answered_entries:
+            return
+        try:
+            from b4.review import messages
+            conn = messages.get_db()
+            messages.set_flags_bulk(conn, answered_entries, 'Answered')
+            conn.close()
+        except Exception:
+            pass
 
     def action_agent(self) -> None:
         """Run the configured review agent command."""
