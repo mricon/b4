@@ -279,6 +279,7 @@ PW_HELP_LINES = [
     '  [bold]u[/bold]         Unhide series (when showing hidden)\n',
     '\n',
     '[bold]App[/bold]\n',
+    '  [bold]r[/bold]         Refresh series list\n',
     '  [bold]l[/bold]         Filter series by pattern\n',
     '  [bold]H[/bold]         Toggle showing hidden series\n',
     '  [bold]q[/bold]         Quit\n',

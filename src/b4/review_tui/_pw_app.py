@@ -147,7 +147,7 @@ class PwApp(App[None]):
     BINDING_GROUPS = {
         'view': 'Series', 'ci_checks': 'Series', 'track_series': 'Series',
         'set_state': 'Series', 'hide_series': 'Series',
-        'limit': 'App', 'toggle_show_hidden': 'App', 'quit': 'App', 'help': 'App',
+        'refresh': 'App', 'limit': 'App', 'toggle_show_hidden': 'App', 'quit': 'App', 'help': 'App',
     }
 
     BINDINGS = [
@@ -161,6 +161,7 @@ class PwApp(App[None]):
         Binding('s', 'set_state', 'set state'),
         Binding('h', 'hide_series', 'hide'),
         # App-global actions
+        Binding('r', 'refresh', 'refresh'),
         Binding('l', 'limit', 'limit'),
         Binding('H', 'toggle_show_hidden', 'show hidden', key_display='H'),
         Binding('q', 'quit', 'quit'),
@@ -250,12 +251,15 @@ class PwApp(App[None]):
                 self._states = states
                 await self._populate(series_list)
             elif event.state == WorkerState.ERROR:
-                await self.query_one('#pw-loading', LoadingIndicator).remove()
+                for widget in self.query('#pw-loading'):
+                    await widget.remove()
                 self.query_one('#pw-title', Static).update(' Patchwork — error fetching series')
                 self.notify(str(event.worker.error), severity='error')
 
     async def _populate(self, series_list: List[Dict[str, Any]]) -> None:
-        await self.query_one('#pw-loading', LoadingIndicator).remove()
+        loading = self.query('#pw-loading')
+        for widget in loading:
+            await widget.remove()
         self._all_series = series_list
         await self._refresh_list()
 
@@ -307,6 +311,14 @@ class PwApp(App[None]):
         await self.mount(header, before=self.query_one(Footer))
         await self.mount(lv, before=self.query_one(Footer))
         lv.focus()
+
+    async def action_refresh(self) -> None:
+        """Re-fetch series from Patchwork and rebuild the list."""
+        for widget in self.query('#pw-header, #pw-list'):
+            await widget.remove()
+        self.query_one('#pw-title', Static).update(' Patchwork — refreshing\u2026')
+        await self.mount(LoadingIndicator(id='pw-loading'), before=self.query_one(Footer))
+        self.run_worker(self._fetch_initial, name='_fetch_initial', thread=True)
 
     def action_limit(self) -> None:
         self.push_screen(LimitScreen(self._limit_pattern), callback=self._on_limit)

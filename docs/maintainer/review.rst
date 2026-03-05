@@ -385,6 +385,7 @@ there you can:
 * Set or change the Patchwork state for a series (``s``)
 * Hide and unhide series (``h``/``u``)
 * Toggle display of hidden series (``H``)
+* Refresh the series list from Patchwork (``r``)
 * Filter the list with a mutt-style pattern (``l``)
 * Show keybinding help (``?``)
 
