@@ -35,7 +35,7 @@ from b4.review_tui._common import (
     _fix_ansi_theme,
 )
 from b4.review_tui._modals import (
-    ViewSeriesScreen, AttestationScreen, TakeScreen,
+    AttestationScreen, TakeScreen,
     CherryPickScreen, NewerRevisionWarningScreen,
     RevisionChoiceScreen, RebaseScreen, AbandonConfirmScreen,
     ArchiveConfirmScreen, RangeDiffScreen, ThankScreen,
@@ -310,7 +310,6 @@ class TrackingApp(App[Optional[str]]):
         Binding('escape', 'hide_details', 'Close', show=False),
         # Series-specific actions
         Binding('r', 'review', 'review'),
-        Binding('v', 'view', 'view'),
         Binding('d', 'range_diff', 'range-diff'),
         Binding('a', 'action', 'action'),
         # App-global actions
@@ -611,15 +610,15 @@ class TrackingApp(App[Optional[str]]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == 'tracking-list':
-            self.action_review()
+            self.action_view()
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
-        'new': frozenset({'review', 'view', 'abandon', 'snooze'}),
+        'new': frozenset({'review', 'abandon', 'snooze'}),
         'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze'}),
         'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze'}),
-        'waiting': frozenset({'review', 'view', 'range_diff', 'abandon', 'archive', 'snooze'}),
+        'waiting': frozenset({'review', 'range_diff', 'abandon', 'archive', 'snooze'}),
         'accepted': frozenset({'thank', 'archive'}),
-        'snoozed': frozenset({'review', 'view', 'range_diff', 'unsnooze', 'abandon'}),
+        'snoozed': frozenset({'review', 'range_diff', 'unsnooze', 'abandon'}),
         'thanked': frozenset({'archive'}),
         'gone': frozenset({'abandon', 'review'}),
     }
@@ -780,14 +779,17 @@ class TrackingApp(App[Optional[str]]):
         self._checkout_new_series()
 
     def action_view(self) -> None:
-        """Preview a series in a modal dialog."""
+        """View a series thread in the lite thread viewer."""
         if not self._selected_series:
             return
         message_id = self._selected_series.get('message_id', '')
         if not message_id:
             self.notify('No message-id available for this series', severity='error')
             return
-        self.push_screen(ViewSeriesScreen(message_id))
+        from b4.review_tui._lite_app import LiteThreadScreen
+        self.push_screen(LiteThreadScreen(message_id,
+                                          email_dryrun=self._email_dryrun,
+                                          patatt_sign=self._patatt_sign))
 
     def _checkout_new_series(self) -> None:
         """Retrieve series, check attestation, and create review branch."""

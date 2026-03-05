@@ -121,6 +121,16 @@ v0.15
 		[X] Single-keypress shortcuts on action modal (case-sensitive, no "a" binding)
 		[X] Waiting series: offer review instead of snooze
 		[X] Snoozed series: add archive option
+	[X] Mutt-style lite thread viewer
+		[X] Two-level modal UI: thread index with tree art and message viewer
+		[X] Enter opens lite viewer from both tracking and patchwork apps
+		[X] Message viewer with mutt-style keybindings (j/k, Enter, Space, S, ^, $)
+		[X] Skip-quoted (S) scrolls past quoted blocks with trailing context
+		[X] j/k navigates between messages without returning to thread index
+		[X] Reply flow reuses FollowupReplyPreviewScreen and b4.send_mail()
+		[X] Attestation status display in message view headers
+		[X] Link header using linkmask for lore archive URLs
+		[X] Address line packing for To/Cc headers
 	[_] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails

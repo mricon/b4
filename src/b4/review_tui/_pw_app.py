@@ -23,7 +23,7 @@ from rich.text import Text
 
 from b4.review_tui._common import resolve_styles, ci_styles, logger, SeparatedFooter, _fix_ansi_theme
 from b4.review_tui._modals import (
-    ViewSeriesScreen, CIChecksScreen, SetStateScreen, ApplyStateModal,
+    CIChecksScreen, SetStateScreen, ApplyStateModal,
     LimitScreen, HelpScreen, PW_HELP_LINES,
 )
 
@@ -154,10 +154,8 @@ class PwApp(App[None]):
         # Hidden navigation bindings
         Binding('j', 'cursor_down', 'Down', show=False),
         Binding('k', 'cursor_up', 'Up', show=False),
-        Binding('enter', 'select_series', 'Select', show=False),
         Binding('u', 'unhide_series', 'unhide', show=False),
         # Series-specific actions
-        Binding('v', 'view', 'view'),
         Binding('c', 'ci_checks', 'ci checks'),
         Binding('t', 'track_series', 'track'),
         Binding('s', 'set_state', 'set state'),
@@ -331,11 +329,8 @@ class PwApp(App[None]):
         except Exception:
             pass
 
-    def action_select_series(self) -> None:
-        self.notify('Not implemented', severity='information')
-
     def action_view(self) -> None:
-        """Preview a Patchwork series in a modal dialog."""
+        """View a Patchwork series thread in the lite thread viewer."""
         item = self._get_highlighted_item()
         if item is None:
             return
@@ -343,7 +338,8 @@ class PwApp(App[None]):
         if not msgid:
             self.notify('No message-id available for this series', severity='error')
             return
-        self.push_screen(ViewSeriesScreen(msgid))
+        from b4.review_tui._lite_app import LiteThreadScreen
+        self.push_screen(LiteThreadScreen(msgid))
 
     def action_ci_checks(self) -> None:
         """View CI check details for the highlighted series."""
@@ -560,6 +556,9 @@ class PwApp(App[None]):
             sid = item.series.get('id')
             return sid not in self._hidden_ids
         return True
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        self.action_view()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         self.refresh_bindings()

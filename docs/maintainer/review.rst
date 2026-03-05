@@ -138,8 +138,8 @@ Symbol   Status
 ============  ===========================================================
 Key           Action
 ============  ===========================================================
+``Enter``     View thread — open the lite thread viewer (see below)
 ``r``         Review — open the review interface for the selected series
-``v``         View series in a modal (fetches from lore)
 ``d``         Range-diff between revisions
 ``a``         Action menu — context-sensitive actions (see below)
 ``u``         Update — fetch latest trailers, check for newer revisions,
@@ -190,6 +190,57 @@ actions depend on the series status:
 The details panel at the bottom shows the full original subject, sender,
 send date, status, change-ID, lore link, known revisions, and the
 review branch name for active and snoozed series.
+
+Lite thread viewer
+~~~~~~~~~~~~~~~~~~
+Pressing ``Enter`` on any series opens a mutt-style thread viewer that
+fetches the full mailing list thread from lore and displays it in two
+levels:
+
+**Thread index** — a flat list of all messages (patches and follow-ups)
+with date, author, mutt-style threading tree art, and subject. Reply
+messages are dimmed to make patches stand out.
+
+**Message view** — full headers (Date, From, To, Cc, Subject, Link,
+Attestation) and message body with diff syntax highlighting and
+quoted-line dimming. Addresses are packed horizontally to make good use
+of available terminal width.
+
+The thread viewer is available from both the tracking list and the
+Patchwork browser, providing a quick way to read a thread and fire off
+a reply without creating a review branch.
+
+*Thread index keybindings*
+
+===============  =========================================================
+Key              Action
+===============  =========================================================
+``Enter``        Open the selected message in the message viewer
+``j``/``k``      Move cursor down/up
+``q``            Close the thread viewer
+===============  =========================================================
+
+*Message view keybindings*
+
+================  ========================================================
+Key               Action
+================  ========================================================
+``j``/``k``       Next/previous message in thread
+``Enter``         Scroll down one line
+``Backspace``     Scroll up one line
+``Space``         Page down
+``-``             Page up
+``S``             Skip past the next block of quoted text
+``^``             Jump to top of message
+``$``             Jump to bottom of message
+``r``             Reply to the current message
+``q``/``Escape``  Return to the thread index
+================  ========================================================
+
+The ``S`` key works like mutt's skip-quoted: it scans forward from the
+current scroll position, finds the next block of quoted lines (``>``
+prefixed), skips past it, and scrolls to the first non-quoted line with
+a couple of trailing quote lines visible for context.
 
 Review interface
 ~~~~~~~~~~~~~~~~
@@ -328,7 +379,7 @@ press ``p`` in the tracking list to open the Patchwork browser. From
 there you can:
 
 * Browse series from your Patchwork project
-* View a series in a modal (``v``)
+* View a series thread (``Enter``)
 * View CI check details for a series (``c``)
 * Track a series directly from the Patchwork list (``t``)
 * Set or change the Patchwork state for a series (``s``)
