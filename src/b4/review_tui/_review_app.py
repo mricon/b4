@@ -234,7 +234,7 @@ class ReviewApp(App[None]):
         self._abbrev_len: int = session['abbrev_len']
         self._check_cmds: List[List[str]] = session['check_cmds']
         self._default_identity: str = session['default_identity']
-        self._usercfg: Dict[str, str] = session['usercfg']
+        self._usercfg: b4.ConfigDictT = session['usercfg']
         self._reviewer_initials: str = _make_initials(session['usercfg'].get('name', ''))
         self._cover_subject_clean: str = session['cover_subject_clean']
         self._email_dryrun: bool = session.get('email_dryrun', False)
@@ -604,7 +604,7 @@ class ReviewApp(App[None]):
             return
 
         ts = resolve_styles(self)
-        my_email = self._usercfg.get('email', '')
+        my_email = str(self._usercfg.get('email', ''))
         # Build ordered list: current user first, then others sorted by email
         ordered: List[Tuple[str, Dict[str, Any]]] = []
         if my_email in all_reviews:
@@ -1018,7 +1018,7 @@ class ReviewApp(App[None]):
             r.get('comments') for r in all_reviews.values()
         )
         if has_any_comments:
-            my_email = self._usercfg.get('email', '')
+            my_email = str(self._usercfg.get('email', ''))
             diff_out = b4.review._reinsert_all_comments(
                 diff_out, all_reviews, my_email)
 
@@ -1094,7 +1094,7 @@ class ReviewApp(App[None]):
             return
 
         # Build formatted text showing all reviewers' notes
-        my_email = self._usercfg.get('email', '')
+        my_email = str(self._usercfg.get('email', ''))
         ordered: List[Tuple[str, Dict[str, Any]]] = []
         if my_email in all_reviews:
             ordered.append((my_email, all_reviews[my_email]))

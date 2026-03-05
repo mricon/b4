@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import sqlite3
 
 from string import Template
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -418,7 +419,7 @@ class TrackingApp(App[Optional[str]]):
         cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
         trk_series = tracking.get('series', {})
         snoozed_info = trk_series.get('snoozed', {})
-        prev_status = snoozed_info.get('previous_state', 'reviewing')
+        prev_status = str(snoozed_info.get('previous_state', 'reviewing'))
         trk_series['status'] = prev_status
         trk_series.pop('snoozed', None)
         tracking['series'] = trk_series
