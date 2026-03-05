@@ -330,7 +330,7 @@ class MessageViewScreen(ModalScreen[None]):
     @staticmethod
     def _write_addr_header(
         viewer: RichLog, hdr_name: str,
-        pairs: list, width: int,
+        pairs: List[Any], width: int,
     ) -> None:
         """Write an address header, packing addresses to fill each line."""
         indent_len = len(hdr_name) + 2  # "Cc: "
@@ -584,8 +584,8 @@ class LiteThreadScreen(ModalScreen[None]):
             return
         maintainer_email = maintainer_email.lower()
         node_map = {n.lmsg.msgid: n for n in self._thread_nodes if n.lmsg.msgid}
-        seen_entries: list = []
-        answered_entries: list = []
+        seen_entries: List[Dict[str, Optional[str]]] = []
+        answered_entries: List[Dict[str, Optional[str]]] = []
 
         for node in self._thread_nodes:
             if not node.lmsg.fromemail:

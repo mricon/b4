@@ -1529,7 +1529,7 @@ class ReviewApp(App[None]):
         except Exception:
             pass
 
-    def _mark_patches_answered(self, msgs: list) -> None:
+    def _mark_patches_answered(self, msgs: List[Any]) -> None:
         """Mark the original patches as Answered based on In-Reply-To."""
         entries = []
         for msg in msgs:
@@ -1562,7 +1562,7 @@ class ReviewApp(App[None]):
             return
         maintainer_email = maintainer_email.lower()
         # Build msgid map for ancestor lookups
-        msgid_map: dict = {}
+        msgid_map: Dict[str, Dict[str, str]] = {}
         for msg in msgs:
             mid = b4.LoreMessage.clean_header(msg.get('Message-ID', ''))
             if mid:
@@ -1572,7 +1572,7 @@ class ReviewApp(App[None]):
                     irt = irt.strip('<>')
                 msgid_map[mid] = {'irt': irt, 'from': msg.get('From', '')}
 
-        answered_entries: list = []
+        answered_entries: List[Dict[str, Optional[str]]] = []
         for mid, info in msgid_map.items():
             from_hdr = info['from']
             if not from_hdr:
