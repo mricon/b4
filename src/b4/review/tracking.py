@@ -785,8 +785,8 @@ def fetch_thread_reply_count(message_id: str, num_patches: int) -> Optional[int]
     mbox_bytes = _fetch_mbox_bytes(canonical_url)
     if mbox_bytes is None:
         return None
-    total = sum(1 for line in mbox_bytes.split(b'\n') if line.startswith(b'From '))
-    return max(0, total - num_patches - 1)
+    parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
+    return max(0, len(parsed) - num_patches - 1)
 
 
 def _fetch_new_since(canonical_url: str, since: str) -> Optional[Tuple[int, Optional[str]]]:
@@ -824,7 +824,8 @@ def _fetch_new_since(canonical_url: str, since: str) -> Optional[Tuple[int, Opti
             mbox_bytes = resp.content
         if not mbox_bytes.strip():
             return (0, None)
-        count = sum(1 for line in mbox_bytes.split(b'\n') if line.startswith(b'From '))
+        parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
+        count = len(parsed)
         latest_date = _latest_date_from_mbox(mbox_bytes)
         return (count, latest_date)
     except Exception as ex:
@@ -1176,8 +1177,8 @@ def update_followup_counts(identifier: str,
             if mbox_bytes is None:
                 errors += 1
                 continue
-            total = sum(1 for line in mbox_bytes.split(b'\n') if line.startswith(b'From '))
-            count = max(0, total - num_patches - 1)
+            parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
+            count = max(0, len(parsed) - num_patches - 1)
             last_activity = _latest_date_from_mbox(mbox_bytes)
             conn.execute(
                 'UPDATE series'
@@ -1187,10 +1188,8 @@ def update_followup_counts(identifier: str,
                 (count, count, now, last_activity, change_id, revision))
             conn.commit()
             updated += 1
-            if topdir:
-                parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
-                if parsed:
-                    _store_thread_blob(topdir, change_id, parsed)
+            if topdir and parsed:
+                _store_thread_blob(topdir, change_id, parsed)
         else:
             # ── Incremental: dt: query for messages since last check ─────────
             result = _fetch_new_since(canonical_url, last_check)

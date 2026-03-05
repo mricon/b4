@@ -1235,6 +1235,18 @@ class TestRescanBranches:
         conn.close()
 
 
+def _make_test_mbox(n: int, date: str = 'Mon, 15 Jan 2024 10:00:00 +0000') -> bytes:
+    """Build a minimal mbox with *n* unique messages (each has a distinct Message-ID)."""
+    parts = []
+    for i in range(n):
+        parts.append(
+            f'From foo@example.com Mon Jan 01 00:00:00 2024\n'
+            f'Message-ID: <msg{i}@example.com>\n'
+            f'Date: {date}\n\n'.encode()
+        )
+    return b''.join(parts)
+
+
 class TestFollowupCounts:
     """Tests for followup_count / seen_followup_count tracking."""
 
@@ -1290,12 +1302,9 @@ class TestFollowupCounts:
     ) -> None:
         """First update_followup_counts sets seen = count (no badge shown yet)."""
         mock_resolve.return_value = 'https://lore.kernel.org/linux-kernel/cover@example.com'
-        # 9 From lines: num_patches=3 → count = 9 - 3 - 1 = 5
+        # 9 unique messages: num_patches=3 → count = 9 - 3 - 1 = 5
         # Single known date so last_activity_at is predictable
-        mock_mbox_bytes.return_value = (
-            b'From foo@example.com Mon Jan 01 00:00:00 2024\n'
-            b'Date: Mon, 15 Jan 2024 10:00:00 +0000\n\n'
-        ) * 9
+        mock_mbox_bytes.return_value = _make_test_mbox(9)
 
         conn = review_tracking.init_db('fc-first-test')
         review_tracking.add_series_to_db(
@@ -1331,11 +1340,8 @@ class TestFollowupCounts:
         """Incremental update adds new message count and keeps seen unchanged."""
         canonical = 'https://lore.kernel.org/linux-kernel/cover2@example.com'
         mock_resolve.return_value = canonical
-        # 9 From lines: num_patches=3 → count = 9 - 3 - 1 = 5
-        mock_fetch.return_value = (
-            b'From foo@example.com Mon Jan 01 00:00:00 2024\n'
-            b'Date: Mon, 15 Jan 2024 10:00:00 +0000\n\n'
-        ) * 9
+        # 9 unique messages: num_patches=3 → count = 9 - 3 - 1 = 5
+        mock_fetch.return_value = _make_test_mbox(9)
         # incremental: 3 new replies, with a newer activity date
         mock_new_since.return_value = (3, '2024-02-01T00:00:00+00:00')
 
@@ -1375,11 +1381,8 @@ class TestFollowupCounts:
         """Incremental update with zero new messages writes nothing to the DB."""
         canonical = 'https://lore.kernel.org/linux-kernel/cover3@example.com'
         mock_resolve.return_value = canonical
-        # 9 From lines: num_patches=3 → count = 9 - 3 - 1 = 5
-        mock_fetch.return_value = (
-            b'From foo@example.com Mon Jan 01 00:00:00 2024\n'
-            b'Date: Mon, 15 Jan 2024 10:00:00 +0000\n\n'
-        ) * 9
+        # 9 unique messages: num_patches=3 → count = 9 - 3 - 1 = 5
+        mock_fetch.return_value = _make_test_mbox(9)
         mock_new_since.return_value = (0, None)   # no new replies
 
         conn = review_tracking.init_db('fc-noop-test')
