@@ -283,6 +283,22 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
         b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
         sys.exit(1)
 
+    # Mark cover + patch messages as Seen in the messages DB
+    try:
+        from b4.review import messages
+        entries = []
+        for pmsg in lser.patches:
+            if pmsg is None or not pmsg.msgid:
+                continue
+            msg_date = pmsg.date.isoformat() if pmsg.date else None
+            entries.append({'msgid': pmsg.msgid, 'msg_date': msg_date})
+        if entries:
+            conn = messages.get_db()
+            messages.set_flags_bulk(conn, entries, 'Seen')
+            conn.close()
+    except Exception:
+        pass
+
     logger.info('Review branch %s created successfully', branch_name)
 
 

@@ -21,7 +21,7 @@ from textual.worker import Worker, WorkerState
 
 from rich.text import Text
 
-from b4.review_tui._common import resolve_styles, ci_styles, logger, SeparatedFooter, _fix_ansi_theme
+from b4.review_tui._common import resolve_styles, ci_styles, logger, SeparatedFooter, _fix_ansi_theme, pad_display
 from b4.review_tui._modals import (
     CIChecksScreen, SetStateScreen, ApplyStateModal,
     LimitScreen, HelpScreen, PW_HELP_LINES,
@@ -42,7 +42,7 @@ def _format_series_label(series: Dict[str, Any], tracked: bool,
     ci_style = ci_map.get(ci_state, ci_map['pending'])
     date = (series.get('date') or '')[:10]
     state = f"{(series.get('state') or 'new'):<15s}"
-    submitter = f"{(series.get('submitter') or 'Unknown'):<30s}"
+    submitter = pad_display(series.get('submitter') or 'Unknown', 30)
     name = series.get('name') or '(no subject)'
     text = Text()
     text.append(track_mark)
@@ -168,11 +168,14 @@ class PwApp(App[None]):
         Binding('question_mark', 'help', 'help', key_display='?'),
     ]
 
-    def __init__(self, pwkey: str, pwurl: str, pwproj: str) -> None:
+    def __init__(self, pwkey: str, pwurl: str, pwproj: str,
+                 email_dryrun: bool = False, patatt_sign: bool = True) -> None:
         super().__init__()
         self._pwkey = pwkey
         self._pwurl = pwurl
         self._pwproj = pwproj
+        self._email_dryrun = email_dryrun
+        self._patatt_sign = patatt_sign
         self._states: List[Dict[str, Any]] = []
         self._hidden_ids: Set[int] = set()
         self._tracked_ids: Set[int] = set()
@@ -351,7 +354,9 @@ class PwApp(App[None]):
             self.notify('No message-id available for this series', severity='error')
             return
         from b4.review_tui._lite_app import LiteThreadScreen
-        self.push_screen(LiteThreadScreen(msgid))
+        self.push_screen(LiteThreadScreen(msgid,
+                                          email_dryrun=self._email_dryrun,
+                                          patatt_sign=self._patatt_sign))
 
     def action_ci_checks(self) -> None:
         """View CI check details for the highlighted series."""

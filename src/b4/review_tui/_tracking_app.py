@@ -32,7 +32,7 @@ from textual.worker import Worker, WorkerState
 from b4.review_tui._common import (
     logger, resolve_styles, _wait_for_enter, _suspend_to_shell,
     gather_attestation_info, SeparatedFooter, _quiet_worker,
-    _fix_ansi_theme,
+    _fix_ansi_theme, display_width, pad_display,
 )
 from b4.review_tui._modals import (
     AttestationScreen, TakeScreen,
@@ -192,7 +192,7 @@ class TrackedSeriesItem(ListItem):
             art_str = '-'
         fc = self.series.get('followup_count')
         sc = self.series.get('seen_followup_count')
-        if fc is not None and fc > 0:
+        if fc is not None:
             delta = (fc - sc) if (sc is not None and fc > sc) else 0
             fu_base = str(fc)
             fu_new = f'+{delta}' if delta > 0 else ''
@@ -205,10 +205,13 @@ class TrackedSeriesItem(ListItem):
         width = len(str(num_patches)) if num_patches > 0 else 1
         parts = extras + [f'v{revision}', f'{"0" * width}/{num_patches:0{width}d}']
         subject_display = f'[{",".join(parts)}] {ls.subject}'
-        if len(submitter) > 20:
-            submitter = submitter[:19] + '…'
+        if display_width(submitter) > 20:
+            while display_width(submitter) > 19:
+                submitter = submitter[:-1]
+            submitter += '…'
+        submitter = pad_display(submitter, 20)
         label = RichText(no_wrap=True, overflow='ellipsis')
-        label.append(f'{submitter:<20s}  ')
+        label.append(f'{submitter}  ')
         label.append(art_str.rjust(7))
         label.append(f'  {fu_base.rjust(3)}')
         fu_style = ''
@@ -1060,7 +1063,14 @@ class TrackingApp(App[Optional[str]]):
                 revisions_row.display = True
                 height += 1
             else:
-                revisions_row.display = False
+                if series.get('needs_update'):
+                    rev_widget = self.query_one('#detail-revisions', Static)
+                    rev_widget.add_class('has-upgrade')
+                    rev_widget.update('run [u]pdate to load revision data')
+                    revisions_row.display = True
+                    height += 1
+                else:
+                    revisions_row.display = False
         except Exception:
             revisions_row.display = False
 

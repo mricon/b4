@@ -198,8 +198,26 @@ fetches the full mailing list thread from lore and displays it in two
 levels:
 
 **Thread index** — a flat list of all messages (patches and follow-ups)
-with date, author, mutt-style threading tree art, and subject. Reply
-messages are dimmed to make patches stand out.
+with a flag column, date, author, mutt-style threading tree art, and
+subject. Each message has one of four visual states:
+
+- **Unseen** (``N``) — not yet opened in the message viewer. Shown in
+  the warning colour.
+- **Flagged** (``★``) — marked as important by the maintainer. Shown in
+  bold accent colour for the entire row. Toggle with ``F`` in the
+  message viewer.
+- **Answered** (``↩``) — the maintainer has replied to the parent of
+  this message (either from b4 or detected from their own email client).
+  Shown with a dim accent.
+- **Seen** — previously opened. The row is dimmed.
+
+Flag state is stored in a cross-project ``messages.sqlite3`` database
+(under ``$XDG_DATA_HOME/b4/review/``) keyed by message-id, so flags
+persist across sessions and work from both the tracking list and the
+Patchwork browser. When a review branch is checked out, all patches
+in the series are automatically marked as seen. Replies sent by the
+maintainer from an external email client are detected when the thread
+is loaded, and the parent messages are marked as answered.
 
 **Message view** — full headers (Date, From, To, Cc, Subject, Link,
 Attestation) and message body with diff syntax highlighting and
@@ -234,6 +252,7 @@ Key               Action
 ``^``             Jump to top of message
 ``$``             Jump to bottom of message
 ``r``             Reply to the current message
+``F``             Toggle flagged (important) state
 ``q``/``Escape``  Return to the thread index
 ================  ========================================================
 

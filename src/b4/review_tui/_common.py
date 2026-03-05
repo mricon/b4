@@ -12,6 +12,7 @@ import email.utils
 import os
 import subprocess
 import tempfile
+import unicodedata
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -50,6 +51,22 @@ CI_CHECK_LABELS = {
     'warning': '\u25cf warning',
     'fail': '\u25cf FAIL',
 }
+
+
+def display_width(s: str) -> int:
+    """Return the terminal display width of *s*, accounting for full-width chars."""
+    w = 0
+    for ch in s:
+        w += 2 if unicodedata.east_asian_width(ch) in ('F', 'W') else 1
+    return w
+
+
+def pad_display(s: str, width: int) -> str:
+    """Pad *s* to *width* terminal columns, accounting for full-width chars."""
+    dw = display_width(s)
+    if dw >= width:
+        return s
+    return s + ' ' * (width - dw)
 
 
 def _fix_ansi_theme(app: Any) -> None:
