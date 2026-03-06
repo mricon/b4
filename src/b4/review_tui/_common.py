@@ -115,6 +115,7 @@ def resolve_styles(app: Any) -> Dict[str, str]:
         'panel': _to_rich_color(v.get('panel', 'grey11')),
         'surface': _to_rich_color(v.get('surface', '#1e1e1e')),
         'primary': _to_rich_color(v.get('primary', 'dark_blue')),
+        'text-muted': _to_rich_color(v.get('text-muted', 'grey70')),
         'syntax_theme': 'ansi_dark' if app.current_theme.dark else 'ansi_light',
     }
 

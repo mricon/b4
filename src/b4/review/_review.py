@@ -222,8 +222,7 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
     clmsg: Optional[b4.LoreMessage] = None
     if lser.has_cover and lser.patches[0] is not None:
         clmsg = lser.patches[0]
-        parts = b4.LoreMessage.get_body_parts(clmsg.body)
-        cover_content = clmsg.subject + '\n\n' + parts[1]
+        cover_content = clmsg.subject + '\n\n' + clmsg.body
     elif lser.patches[1] is not None:
         clmsg = lser.patches[1]
         cover_content = (clmsg.subject + '\n\n'
@@ -240,12 +239,20 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
     for pmsg in lser.patches[1:]:
         if pmsg is None:
             continue
-        patches_meta.append({
+        _gh, _msg, _tr, pbasement, _sig = b4.LoreMessage.get_body_parts(pmsg.body)
+        pmeta: Dict[str, Any] = {
             'title': pmsg.full_subject,
             'link': linkmask % pmsg.msgid,
             'header-info': _collect_reply_headers(pmsg),
             'followups': _collect_followups(pmsg, linkmask),
-        })
+        }
+        if pbasement.strip():
+            # Keep only the notes before the diff (diffstat, changelog, etc.)
+            diff_start = b4.DIFF_RE.search(pbasement)
+            notes = pbasement[:diff_start.start()] if diff_start else pbasement
+            if notes.strip():
+                pmeta['basement'] = notes
+        patches_meta.append(pmeta)
 
     # Build tracking metadata
     tracking: Dict[str, Any] = {

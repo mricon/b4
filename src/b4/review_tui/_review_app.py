@@ -113,7 +113,7 @@ class ReviewApp(App[None]):
         color: $error;
     }
     .diff-hunk {
-        color: $accent;
+        color: $secondary;
         text-style: bold;
     }
     .comment-block {
@@ -404,8 +404,14 @@ class ReviewApp(App[None]):
     def _show_cover(self, viewer: RichLog) -> None:
         """Render the cover letter in the diff viewer."""
         ts = resolve_styles(self)
-        body = self._cover_text.strip()
-        viewer.write(Syntax(body, 'markdown', theme=ts['syntax_theme']))
+        cover_lines = self._cover_text.strip().splitlines()
+        # Render subject in accent colour, same as patches
+        if cover_lines:
+            viewer.write(Text(cover_lines[0], style=f"bold {ts['accent']}"))
+            viewer.write(Text(''))
+        body = '\n'.join(cover_lines[1:]).lstrip('\n')
+        if body:
+            viewer.write(Syntax(body, 'markdown', theme=ts['syntax_theme']))
         # Show cover-level follow-up trailers
         _write_followup_trailers(viewer, self._tracking.get('followups', []), ts=ts)
         # Show cover-level follow-up comments
@@ -430,9 +436,9 @@ class ReviewApp(App[None]):
             self._topdir, ['show', '--format=%B', '--no-patch', sha])
         if ecode == 0 and commit_msg.strip():
             msg_lines = commit_msg.strip().splitlines()
-            # Render subject as a bright one-liner
+            # Render subject in accent colour
             if msg_lines:
-                viewer.write(Text(msg_lines[0], style=f"bold {ts['foreground']}"))
+                viewer.write(Text(msg_lines[0], style=f"bold {ts['accent']}"))
                 viewer.write(Text(''))
             body = '\n'.join(msg_lines[1:]).lstrip('\n')
             if body:
@@ -452,7 +458,7 @@ class ReviewApp(App[None]):
                     if has_content:
                         viewer.write('')
                     for lt in btrailers:
-                        viewer.write(Text(lt.as_string(), style='dim'))
+                        viewer.write(Text(lt.as_string(), style=ts['accent']))
                     has_content = True
                 # Show follow-up trailers not already in the commit,
                 # including cover-letter trailers that apply to all patches
@@ -464,6 +470,15 @@ class ReviewApp(App[None]):
                                  + patch_meta.get('followups', []))
                 _write_followup_trailers(viewer, all_followups, existing, ts=ts)
                 if all_followups:
+                    has_content = True
+                # Show basement (content below ---) from the original email
+                email_basement = patch_meta.get('basement', '')
+                if email_basement.strip():
+                    if has_content:
+                        viewer.write(Text(''))
+                    viewer.write(Text('---', style='dim'))
+                    for bline in email_basement.strip().splitlines():
+                        viewer.write(Text(bline, style='dim'))
                     has_content = True
                 if has_content:
                     viewer.write(Text(''))
@@ -512,7 +527,13 @@ class ReviewApp(App[None]):
             if hm:
                 a_line = int(hm.group(1))
                 b_line = int(hm.group(2))
-                viewer.write(Text(line, style=f"bold {ts['accent']}"))
+                # Colour only the @@...@@ marker, leave context in default
+                end = line.index(' @@', 3) + 3
+                hunk_text = Text()
+                hunk_text.append(line[:end], style=f"bold {ts['secondary']}")
+                if len(line) > end:
+                    hunk_text.append(line[end:])
+                viewer.write(hunk_text)
                 continue
 
             if line.startswith('+'):
