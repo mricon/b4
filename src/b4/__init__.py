@@ -1148,7 +1148,15 @@ class LoreTrailer:
                     # This was inserted by a mail client that back-converted from html mail
                     # Remove the <mailto:...> part
                     self.value = re.sub(r'<mailto:[^>]+>', '', value)
-                self.addr = email.utils.parseaddr(self.value)
+                # Trailers are plain text, not email headers, so we
+                # extract name and email ourselves.  parseaddr
+                # applies RFC 2822 semantics that mangle display
+                # names containing quotes, commas, or parentheses.
+                am = re.match(r'^(.*?)\s*<([^>]+)>\s*$', self.value)
+                if am:
+                    self.addr = (am.group(1).strip(), am.group(2).strip())
+                else:
+                    self.addr = email.utils.parseaddr(self.value)
                 # Normalize the value with parsed data
                 if self.addr[0] or self.addr[1]:
                     self.value = format_addrs([self.addr], header_safe=False)

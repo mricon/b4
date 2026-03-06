@@ -66,7 +66,7 @@ def test_save_git_am_mbox(sampledir: Optional[str], tmp_path: pathlib.Path, sour
       ('utility', 'Link', 'https://msgid.link/some@msgid.here', None),
       ]),
     ('trailers-test-extinfo',
-     [('unknown', 'Reported-by', 'Some, One <somewhere@example.com>', None),
+     [('person', 'Reported-by', 'Some, One <somewhere@example.com>', None),
       ('person', 'Reviewed-by', 'Bogus Bupkes <bogus@example.com>', '[for the parts that are bogus]'),
       ('utility', 'Fixes', 'abcdef01234567890', None),
       ('person', 'Tested-by', 'Some Person <bogus2@example.com>', '           [this person visually indented theirs]'),
@@ -90,6 +90,44 @@ def test_parse_trailers(sampledir: str, source: str, expected: List[Tuple[str, s
             mytr = b4.LoreTrailer(name=myname, value=myvalue, extinfo=myextinfo)
             assert tr == mytr
             assert tr.extinfo == mytr.extinfo
+
+
+@pytest.mark.parametrize('name,value,exp_type,exp_addr,exp_value', [
+    # Simple name
+    ('Signed-off-by', 'Simple Name <simple@example.com>',
+     'person', ('Simple Name', 'simple@example.com'),
+     'Simple Name <simple@example.com>'),
+    # Double quotes in display name must be preserved
+    ('Signed-off-by', 'Jane "JD" Doe <jd@example.com>',
+     'person', ('Jane "JD" Doe', 'jd@example.com'),
+     'Jane "JD" Doe <jd@example.com>'),
+    # Outer RFC 2822 quotes around a name with comma
+    ('Reported-by', '"Doe, Jane" <jane@example.com>',
+     'person', ('"Doe, Jane"', 'jane@example.com'),
+     '"Doe, Jane" <jane@example.com>'),
+    # Comma in name without quotes
+    ('Reported-by', 'Some, One <somewhere@example.com>',
+     'person', ('Some, One', 'somewhere@example.com'),
+     'Some, One <somewhere@example.com>'),
+    # Parentheses in display name
+    ('Tested-by', 'Developer Foo (EXAMPLECORP) <dev@example.com>',
+     'person', ('Developer Foo (EXAMPLECORP)', 'dev@example.com'),
+     'Developer Foo (EXAMPLECORP) <dev@example.com>'),
+    # Bare angle-bracket email
+    ('Cc', '<bare@example.com>',
+     'person', ('', 'bare@example.com'),
+     'bare@example.com'),
+    # Bare email without angle brackets
+    ('Cc', 'bare@example.com',
+     'person', ('', 'bare@example.com'),
+     'bare@example.com'),
+])
+def test_trailer_addr_parsing(name: str, value: str, exp_type: str,
+                              exp_addr: Tuple[str, str], exp_value: str) -> None:
+    tr = b4.LoreTrailer(name=name, value=value)
+    assert tr.type == exp_type
+    assert tr.addr == exp_addr
+    assert tr.value == exp_value
 
 
 @pytest.mark.parametrize('source,serargs,amargs,reference,b4cfg', [
