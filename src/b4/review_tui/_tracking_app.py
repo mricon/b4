@@ -90,6 +90,8 @@ def _format_snooze_until(value: str) -> str:
         return f'until {value}'
     try:
         target = datetime.datetime.fromisoformat(value)
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=datetime.timezone.utc)
         now = datetime.datetime.now(datetime.timezone.utc)
         delta = target - now
         total_seconds = int(delta.total_seconds())
