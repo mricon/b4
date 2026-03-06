@@ -191,7 +191,7 @@ class ReviewApp(App[None]):
         # Review mode bindings
         Binding('t', 'trailer', 'trailers'),
         Binding('c', 'review_diff', 'comment'),
-        Binding('n', 'edit_note', 'note'),
+        Binding('N', 'edit_note', 'note', key_display='N'),
         Binding('r', 'edit_reply', 'reply'),
         Binding('f', 'followups', 'followups'),
         Binding('a', 'agent', 'agent'),
@@ -213,6 +213,8 @@ class ReviewApp(App[None]):
         Binding('backspace', 'page_up', 'Page up', show=False),
         Binding('pagedown', 'page_down', 'Page down', show=False),
         Binding('pageup', 'page_up', 'Page up', show=False),
+        Binding('n', 'next_patch', 'Next patch', show=False),
+        Binding('p', 'prev_patch', 'Prev patch', show=False),
         Binding('left_square_bracket', 'prev_patch', 'Prev patch', show=False),
         Binding('right_square_bracket', 'next_patch', 'Next patch', show=False),
         Binding('h', 'scroll_left', 'Scroll left', show=False),
@@ -797,12 +799,15 @@ class ReviewApp(App[None]):
             return
         viewer = self.query_one('#diff-viewer', RichLog)
         current_y = int(viewer.scroll_y)
+        # Show a few lines of diff context above the comment
+        context = 5
+        # Account for the context offset when determining current position
+        viewed_pos = current_y + context
         for pos in self._comment_positions:
-            if pos > current_y + 1:
-                viewer.scroll_to(y=pos, animate=False)
+            if pos > viewed_pos:
+                viewer.scroll_to(y=max(0, pos - context), animate=False)
                 return
-        # Wrap around to first comment
-        viewer.scroll_to(y=self._comment_positions[0], animate=False)
+        self.notify('No more comments below', severity='information')
 
     def action_prev_comment(self) -> None:
         """Scroll to the previous review comment in the diff view."""
@@ -811,12 +816,15 @@ class ReviewApp(App[None]):
             return
         viewer = self.query_one('#diff-viewer', RichLog)
         current_y = int(viewer.scroll_y)
+        # Show a few lines of diff context above the comment
+        context = 5
+        # Account for the context offset when determining current position
+        viewed_pos = current_y + context
         for pos in reversed(self._comment_positions):
-            if pos < current_y - 1:
-                viewer.scroll_to(y=pos, animate=False)
+            if pos < viewed_pos:
+                viewer.scroll_to(y=max(0, pos - context), animate=False)
                 return
-        # Wrap around to last comment
-        viewer.scroll_to(y=self._comment_positions[-1], animate=False)
+        self.notify('No more comments above', severity='information')
 
     def check_action(self, action: str, parameters: Tuple[Any, ...]) -> Optional[bool]:
         """Show/hide mode-specific bindings in the footer."""
