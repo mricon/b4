@@ -4337,8 +4337,8 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
 
         # If we got to this point, we should do authentication,
         # unless smtpauth is set to a special "none" value
-        smtpauth = str(sconfig.get('smtpauth', ''))
-        if smtpauth.lower() == 'none':
+        smtpauth = str(sconfig.get('smtpauth', '')).lower()
+        if smtpauth == 'none':
             return smtp, fromaddr
 
         auser = str(sconfig.get('smtpuser', ''))
@@ -4356,7 +4356,11 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
                 raise smtplib.SMTPException('No password specified for connecting to %s', server)
         if auser and apass:
             # Let any exceptions bubble up
-            smtp.login(auser, apass)
+            if smtpauth in ('oauth', 'oauth2', 'xoauth2'):
+                auth_str = f'user={auser}\x01auth=Bearer {apass}\x01\x01'
+                smtp.auth('XOAUTH2', lambda: auth_str)
+            else:
+                smtp.login(auser, apass)
     else:
         # We assume you know what you're doing if you don't need encryption
         smtp = smtplib.SMTP(server, port)
