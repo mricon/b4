@@ -2307,7 +2307,7 @@ class LoreMessage:
 
     @staticmethod
     def find_trailers(body: str, followup: bool = False) -> Tuple[List[LoreTrailer], List[str]]:
-        ignores = {'phone', 'email', 'e-mail', 'prerequisite-message-id'}
+        ignores = {'phone', 'mail', 'email', 'e-mail', 'prerequisite-message-id'}
         headers = {'subject', 'date', 'from'}
         links = {'link', 'buglink', 'closes'}
         nonperson = links | {'fixes', 'subject', 'date', 'obsoleted-by', 'change-id', 'base-commit'}
