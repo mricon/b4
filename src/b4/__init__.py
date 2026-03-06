@@ -2434,7 +2434,7 @@ class LoreMessage:
             signature = sparts[1]
             body = sparts[0]
 
-        parts = re.split('^---\n', body, maxsplit=1, flags=re.M)
+        parts = re.split(r'^---\s*\n', body, maxsplit=1, flags=re.M)
         if len(parts) == 2:
             basement = parts[1]
         elif body.find('\ndiff ') >= 0:
