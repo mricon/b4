@@ -381,12 +381,21 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
 
         base_commit = get_base_commit(topdir, first_body, lser, cmdargs)
         linkurl = linkmask % top_msgid
+
+        am_flags = ['-3']
+        amflags_cfg = str(config.get('shazam-am-flags', ''))
+        if amflags_cfg:
+            sp = shlex.shlex(amflags_cfg, posix=True)
+            sp.whitespace_split = True
+            am_flags.extend(list(sp))
+
         try:
             if cmdargs.mergebase:
                 logger.info(' Base: %s', base_commit)
             else:
                 logger.info(' Base: %s (use --merge-base to override)', base_commit)
-            b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit, origin=linkurl)
+            b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit,
+                                       origin=linkurl, am_flags=am_flags)
         except b4.AmConflictError as cex:
             b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
             logger.critical('Unable to cleanly apply series, see failure log below')
