@@ -352,6 +352,57 @@ class NoteScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+class PriorReviewScreen(ModalScreen[None]):
+    """Read-only modal showing prior revision review context."""
+
+    BINDINGS = [
+        Binding('escape', 'cancel', 'Close'),
+    ]
+
+    DEFAULT_CSS = """
+    PriorReviewScreen {
+        align: center middle;
+    }
+    #prior-review-dialog {
+        width: 90%;
+        height: 80%;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #prior-review-viewer {
+        height: 1fr;
+    }
+    #prior-review-hint {
+        height: 1;
+        dock: bottom;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, context_text: str) -> None:
+        super().__init__()
+        self._context_text = context_text
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='prior-review-dialog'):
+            yield RichLog(id='prior-review-viewer', highlight=False, wrap=True,
+                          markup=False, auto_scroll=False)
+            yield Static('Escape close', id='prior-review-hint')
+
+    def on_mount(self) -> None:
+        ts = resolve_styles(self)
+        viewer = self.query_one('#prior-review-viewer', RichLog)
+        for line in self._context_text.splitlines():
+            if line.startswith('== ') and line.endswith(' =='):
+                viewer.write(Text(line, style=f"bold {ts['accent']}"))
+            else:
+                viewer.write(Text(line))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
     """Preview a composed follow-up reply before sending.
 

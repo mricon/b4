@@ -34,7 +34,8 @@ from b4.review_tui._common import (
 )
 from b4.review_tui._modals import (
     TrailerScreen, HelpScreen, _review_help_lines,
-    NoteScreen, ToCcScreen, SendScreen, FollowupReplyPreviewScreen,
+    NoteScreen, PriorReviewScreen, ToCcScreen, SendScreen,
+    FollowupReplyPreviewScreen,
 )
 
 class PatchListItem(ListItem):
@@ -177,6 +178,7 @@ class ReviewApp(App[None]):
     BINDING_GROUPS = {
         'trailer': 'Review', 'review_diff': 'Review', 'edit_note': 'Review',
         'edit_reply': 'Review', 'followups': 'Review', 'agent': 'Review',
+        'prior_review': 'Review',
         'patch_done': 'Review', 'patch_skip': 'Review', 'check': 'Review',
         'edit_tocc': 'Review', 'send': 'Review',
         'toggle_preview': 'App', 'suspend': 'App', 'quit': 'App', 'help': 'App',
@@ -197,6 +199,7 @@ class ReviewApp(App[None]):
         Binding('a', 'agent', 'agent'),
         Binding('d', 'patch_done', 'done'),
         Binding('x', 'patch_skip', 'skip'),
+        Binding('P', 'prior_review', 'prior', key_display='P'),
         Binding('C', 'check', 'check', key_display='C'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
@@ -837,6 +840,10 @@ class ReviewApp(App[None]):
             if not config.get('review-agent-command') or not config.get('review-agent-prompt-path'):
                 return False
             return not self._preview_mode
+        if action == 'prior_review':
+            if not self._series.get('prior-review-context'):
+                return False
+            return not self._preview_mode
         if action in self._REVIEW_ACTIONS:
             return not self._preview_mode
         if action in self._EMAIL_ACTIONS:
@@ -1107,6 +1114,15 @@ class ReviewApp(App[None]):
             self.notify(f'{len(new_comments)} comments across {len(files)} files')
         else:
             self.notify('Inline comments deleted')
+
+    def action_prior_review(self) -> None:
+        """Show prior revision review context."""
+        context = self._series.get('prior-review-context', '')
+        if not context:
+            self.notify('No prior review context available',
+                        severity='information')
+            return
+        self.push_screen(PriorReviewScreen(context))
 
     def action_edit_note(self) -> None:
         """View notes or jump straight to editor if none exist."""

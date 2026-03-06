@@ -2239,6 +2239,15 @@ class TrackingApp(App[Optional[str]]):
 
             logger.info('Saved review data for %d patch(es)', len(saved_reviews))
 
+            # --- 1b. Render prior review context ---
+            old_series = tracking.get('series', {})
+            usercfg = b4.get_user_config()
+            maintainer_email = str(usercfg.get('email', ''))
+            prior_context = b4.review.tracking.render_prior_review_context(
+                maintainer_email, current_rev, old_series, patches)
+            prior_thread_blob = old_series.get('thread-context-blob', '')
+            prior_msgid = old_series.get('header-info', {}).get('msgid', '')
+
             # --- 2. Archive the old revision ---
             logger.info('Archiving v%d...', current_rev)
             pw_series_id = None
@@ -2422,6 +2431,12 @@ class TrackingApp(App[Optional[str]]):
             b4.review.reanchor_patch_comments(topdir, new_shas, new_patches)
 
             new_tracking['series']['status'] = 'reviewing'
+            if prior_context:
+                new_tracking['series']['prior-review-context'] = prior_context
+            if prior_thread_blob:
+                new_tracking['series']['prior-thread-context-blob'] = prior_thread_blob
+            if prior_msgid:
+                new_tracking['series']['prior-revision-msgid'] = prior_msgid
             b4.review.save_tracking_ref(topdir, review_branch,
                                         new_cover_text, new_tracking)
             logger.info('Restored reviews for %d of %d patch(es)',

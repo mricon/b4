@@ -134,6 +134,40 @@ raised by other reviewers, design feedback, questions the author has already
 answered, and approval or objection signals.  Use it to avoid duplicating
 feedback and to focus your review on gaps the community has not yet addressed.
 
+## Prior review context (optional)
+
+The `series` dict may contain a `prior-review-context` key.  If present, it
+is a plain-text summary of the maintainer's own notes and replies from the
+previous revision of this series.
+
+Read this when present.  It tells you what the maintainer asked the submitter
+to fix.  When this context exists, check whether each concern from the prior
+review was addressed in the current revision.  Call out issues that remain
+unfixed and acknowledge issues that were properly resolved.
+
+## Prior revision discussion (optional)
+
+The `series` dict may contain a `prior-thread-context-blob` key.  If present,
+it holds the SHA of a git blob containing a plain-text rendering of the
+community discussion from the previous revision.  Always try the local blob
+first:
+
+```shell
+git cat-file blob <prior-thread-context-blob>
+```
+
+If the blob is not available (it may have been pruned by git gc) and the
+`prior-revision-msgid` key is present, fall back to fetching the discussion
+from lore as an Atom feed:
+
+```shell
+curl -s 'https://lore.kernel.org/all/<prior-revision-msgid>/t.atom'
+```
+
+Read this context when available.  It captures discussions between
+co-maintainers, reviewers, and the submitter on the previous revision that
+the maintainer may not have directly participated in.
+
 ## Finding the cover letter and diffs
 
 **Cover letter text** -- The portion of the tracking commit message

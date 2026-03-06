@@ -144,6 +144,13 @@ v0.15
 		[X] Automatic cleanup of flags older than 180 days via msg_date
 	[X] Full-width CJK character alignment in all TUI apps
 	[X] Tracking app UX: show 0 in Fups column when known, hint to update when data missing
+	[X] Carry prior review context across revision upgrades
+		[X] Render maintainer's notes and replies into plain-text summary
+		[X] Store as series['prior-review-context'] in tracking dict (survives git gc)
+		[X] Carry forward prior thread-context-blob and revision msgid for agent
+		[X] PriorReviewScreen modal for maintainer to review own prior feedback
+		[X] P keybinding (hidden when no context available)
+		[X] Agent prompt: prior-review-context and prior-thread-context-blob sections
 	[_] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails

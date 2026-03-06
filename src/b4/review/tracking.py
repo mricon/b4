@@ -1060,6 +1060,65 @@ def _render_thread_context(
     return '\n'.join(lines)
 
 
+def render_prior_review_context(
+    maintainer_email: str,
+    revision: int,
+    series: Dict[str, Any],
+    patches: List[Dict[str, Any]],
+) -> str:
+    """Render the maintainer's notes and replies into a plain-text summary.
+
+    Only includes the maintainer's own review data (notes and replies),
+    not agent or community feedback. This is stored in the tracking dict
+    during revision upgrades so it survives git gc (unlike loose blobs).
+    """
+    lines: List[str] = []
+    n_patches = len(patches)
+
+    lines.append(f'== Prior review feedback from v{revision} ==')
+    lines.append('')
+
+    # Cover letter feedback
+    cover_review = series.get('reviews', {}).get(maintainer_email, {})
+    cover_note = cover_review.get('note', '').strip()
+    cover_reply = cover_review.get('reply', '').strip()
+    if cover_note or cover_reply:
+        cover_subject = series.get('subject', 'cover letter')
+        lines.append(f'== Cover letter: {cover_subject} ==')
+        if cover_note:
+            lines.append('Private note:')
+            lines.append(cover_note)
+            lines.append('')
+        if cover_reply:
+            lines.append('Public reply:')
+            lines.append(cover_reply)
+            lines.append('')
+
+    # Per-patch feedback
+    for idx, patch in enumerate(patches):
+        patch_num = idx + 1
+        title = patch.get('title', f'patch {patch_num}')
+        review = patch.get('reviews', {}).get(maintainer_email, {})
+        note = review.get('note', '').strip()
+        reply = review.get('reply', '').strip()
+
+        lines.append(f'== Patch {patch_num}/{n_patches} — {title} ==')
+        if not note and not reply:
+            lines.append('[No feedback]')
+            lines.append('')
+            continue
+        if note:
+            lines.append('Private note:')
+            lines.append(note)
+            lines.append('')
+        if reply:
+            lines.append('Public reply:')
+            lines.append(reply)
+            lines.append('')
+
+    return '\n'.join(lines)
+
+
 def ensure_thread_context_blob(topdir: str, change_id: str,
                                 series: Dict[str, Any],
                                 patches: List[Dict[str, Any]]) -> Optional[str]:
