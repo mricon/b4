@@ -627,7 +627,7 @@ set both :term:`b4.review-agent-command` and
 to use Claude Code with access to the repository::
 
     [b4]
-      review-agent-command = claude --add-dir .git --allowedTools 'Bash(git:*) Read Glob Grep Write(.git/b4-review/**) Edit(.git/b4-review/**)'
+      review-agent-command = claude --add-dir .git --allowedTools 'Bash(git:*) Read Glob Grep Write(.git/b4-review/**) Edit(.git/b4-review/**)' --
       review-agent-prompt-path = .git/agent-reviewer.md
 
 To use Gemini CLI instead::

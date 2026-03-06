@@ -253,7 +253,7 @@ Configuring the agent
 Set two keys in your git config::
 
     [b4]
-      review-agent-command = claude --add-dir .git --allowedTools 'Bash(git:*) Read Glob Grep Write(.git/b4-review/**) Edit(.git/b4-review/**)'
+      review-agent-command = claude --add-dir .git --allowedTools 'Bash(git:*) Read Glob Grep Write(.git/b4-review/**) Edit(.git/b4-review/**)' --
       review-agent-prompt-path = .git/agent-reviewer.md
 
 A sample prompt is included in ``misc/agent-reviewer.md`` in the b4
