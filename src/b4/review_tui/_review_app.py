@@ -1639,7 +1639,7 @@ class ReviewApp(App[None]):
             self.notify(f'Agent prompt file not found: {agent_prompt}',
                         severity='error')
             return
-        cmdargs += ['--', f'Read the prompt from {prompt_path}']
+        cmdargs += [f'Read and execute the prompt from {prompt_path}']
 
         with self.suspend():
             logger.info('Running review agent: %s', ' '.join(cmdargs))
