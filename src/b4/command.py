@@ -231,6 +231,12 @@ def setup_parser() -> argparse.ArgumentParser:
                              '(default: 3 weeks)'))
     sp_sh.add_argument('--merge-base', dest='mergebase', type=str, default=None,
                        help='(use with -H or -M) Force this base when merging')
+    sp_sh.add_argument('--resolve', dest='shazam_resolve', action='store_true', default=False,
+                       help='(use with -H or -M) Enable conflict resolution if patches fail to apply')
+    sp_sh.add_argument('--continue', dest='shazam_continue', action='store_true', default=False,
+                       help='Continue after resolving merge conflicts from --resolve')
+    sp_sh.add_argument('--abort', dest='shazam_abort', action='store_true', default=False,
+                       help='Abort a conflicted shazam and clean up')
     sp_sh.set_defaults(func=cmd_shazam)
 
     # b4 review
