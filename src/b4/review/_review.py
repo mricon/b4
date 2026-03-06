@@ -1696,37 +1696,33 @@ def collect_review_emails(
     topdir: str,
     commit_shas: List[str],
 ) -> List[email.message.EmailMessage]:
-    """Collect all review emails to send for the given series.
+    """Collect review emails to send for the given series.
 
-    Iterates cover reviews and per-patch reviews, calls
-    _build_review_email() for each, and returns the flat list of
-    messages.
+    Only sends the maintainer's own reviews, not agent or other
+    reviewers' data.
     """
+    usercfg = b4.get_user_config()
+    my_email = str(usercfg.get('email', 'unknown@example.com'))
     msgs: List[email.message.EmailMessage] = []
 
-    # Cover letter reviews (iterate all reviewers)
-    for _reviewer_email, cover_review in series.get('reviews', {}).items():
-        if not cover_review:
-            continue
-        if cover_review.get('patch-state') == 'skip':
-            continue
+    # Cover letter review (maintainer only)
+    cover_review = series.get('reviews', {}).get(my_email, {})
+    if cover_review and cover_review.get('patch-state') != 'skip':
         msg = _build_review_email(series, None, cover_review, cover_text,
                                   topdir, None)
         if msg is not None:
             msgs.append(msg)
 
-    # Per-patch reviews (iterate all reviewers per patch)
+    # Per-patch reviews (maintainer only)
     for idx, patch_meta in enumerate(patches):
-        for _reviewer_email, patch_review in patch_meta.get('reviews', {}).items():
-            if not patch_review:
-                continue
-            if patch_review.get('patch-state') == 'skip':
-                continue
-            commit_sha = commit_shas[idx] if idx < len(commit_shas) else None
-            msg = _build_review_email(series, patch_meta, patch_review, cover_text,
-                                      topdir, commit_sha)
-            if msg is not None:
-                msgs.append(msg)
+        patch_review = patch_meta.get('reviews', {}).get(my_email, {})
+        if not patch_review or patch_review.get('patch-state') == 'skip':
+            continue
+        commit_sha = commit_shas[idx] if idx < len(commit_shas) else None
+        msg = _build_review_email(series, patch_meta, patch_review, cover_text,
+                                  topdir, commit_sha)
+        if msg is not None:
+            msgs.append(msg)
 
     return msgs
 
