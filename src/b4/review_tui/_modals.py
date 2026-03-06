@@ -8,7 +8,10 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import email.message
 import email.utils
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
+
+if TYPE_CHECKING:
+    from textual.events import Key
 
 import b4
 
@@ -2305,7 +2308,7 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
     def on_mount(self) -> None:
         self.query_one('#action-list', ListView).focus()
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: "Key") -> None:
         ch = event.character
         if not ch:
             return

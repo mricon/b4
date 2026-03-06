@@ -909,7 +909,7 @@ def get_thread_mbox(topdir: str, blob_sha: str) -> Optional[bytes]:
     if ecode != 0:
         logger.debug("Followup blob %s not found (may have been GC'd)", blob_sha)
         return None
-    return out  # type: ignore[return-value]  — bytes when decode=False
+    return out
 
 
 def _resolve_patch_for_followup_local(
@@ -922,7 +922,7 @@ def _resolve_patch_for_followup_local(
     Returns the display index (0=cover, 1..N=patches) or None.
     Duplicated from review_tui._common to avoid a cross-layer import.
     """
-    seen: set = set()
+    seen: set[str] = set()
     current = in_reply_to
     while current and current not in seen:
         if current in patch_msgids:
@@ -1135,7 +1135,7 @@ def ensure_thread_context_blob(topdir: str, change_id: str,
     import b4.review as _b4_review
 
     if series.get('thread-context-blob'):
-        return series['thread-context-blob']
+        return str(series['thread-context-blob'])
 
     blob_sha = series.get('thread-blob')
     if not blob_sha:
