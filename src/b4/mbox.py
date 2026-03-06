@@ -387,6 +387,14 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             else:
                 logger.info(' Base: %s (use --merge-base to override)', base_commit)
             b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit, origin=linkurl)
+        except b4.AmConflictError as cex:
+            b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
+            logger.critical('Unable to cleanly apply series, see failure log below')
+            logger.critical('---')
+            logger.critical(cex.output)
+            logger.critical('---')
+            logger.critical('Not fetching into FETCH_HEAD')
+            sys.exit(1)
         except RuntimeError:
             sys.exit(1)
 
