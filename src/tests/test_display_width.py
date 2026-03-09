@@ -45,9 +45,21 @@ class TestPadDisplay:
         result = pad_display('hello', 5)
         assert result == 'hello'
 
-    def test_no_padding_when_over(self) -> None:
+    def test_truncate_when_over(self) -> None:
         result = pad_display('hello world', 5)
-        assert result == 'hello world'
+        assert result == 'hell\u2026'
+        assert display_width(result) == 5
+
+    def test_truncate_long_name(self) -> None:
+        result = pad_display('Bastien Curutchet (Schneider Electric)', 30)
+        assert display_width(result) == 30
+        assert result.endswith('\u2026')
+
+    def test_truncate_cjk(self) -> None:
+        # '戸田晃太' = 8 display cols, truncate to 5: '戸田' (4) + ellipsis (1)
+        result = pad_display('戸田晃太', 5)
+        assert display_width(result) == 5
+        assert result.endswith('\u2026')
 
     def test_mixed_padding(self) -> None:
         # 'K 戸田' = 1 + 1 + 2 + 2 = 6 display cols, pad to 10 = 4 spaces

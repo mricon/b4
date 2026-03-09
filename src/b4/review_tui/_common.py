@@ -62,11 +62,22 @@ def display_width(s: str) -> int:
 
 
 def pad_display(s: str, width: int) -> str:
-    """Pad *s* to *width* terminal columns, accounting for full-width chars."""
+    """Pad or truncate *s* to *width* terminal columns, accounting for full-width chars."""
     dw = display_width(s)
-    if dw >= width:
-        return s
-    return s + ' ' * (width - dw)
+    if dw > width:
+        # Truncate with ellipsis
+        truncated: List[str] = []
+        tw = 0
+        for ch in s:
+            cw = 2 if unicodedata.east_asian_width(ch) in ('F', 'W') else 1
+            if tw + cw > width - 1:
+                break
+            truncated.append(ch)
+            tw += cw
+        return ''.join(truncated) + '\u2026' + ' ' * (width - tw - 1)
+    if dw < width:
+        return s + ' ' * (width - dw)
+    return s
 
 
 def _fix_ansi_theme(app: Any) -> None:
