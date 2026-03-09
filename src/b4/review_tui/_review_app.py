@@ -1516,33 +1516,24 @@ class ReviewApp(App[None]):
             self._show_content(self._selected_idx)
             return
 
-        # ── Try local blob first ──────────────────────────────────────────────
-        blob_sha = self._series.get('thread-blob')
-        msgs = None
-        if blob_sha:
-            mbox_bytes = b4.review.tracking.get_thread_mbox(self._topdir, blob_sha)
-            if mbox_bytes is not None:
-                msgs = b4.split_and_dedupe_pi_results(mbox_bytes)
-
-        # ── Fallback: live lore fetch ─────────────────────────────────────────
-        if msgs is None:
-            cover_msgid = self._series.get('header-info', {}).get('msgid')
-            if not cover_msgid:
-                self.notify('No message-id for cover letter', severity='error')
-                return
-            with self.suspend():
-                logger.info('Fetching thread for %s ...', cover_msgid)
-                msgs = b4.get_pi_thread_by_msgid(cover_msgid)
-            if not msgs:
-                self.notify('Could not fetch thread from lore', severity='error')
-                return
-            # Cache the thread locally so future 'f' presses are instant.
-            change_id = self._series.get('change-id')
-            if change_id:
-                new_sha = b4.review.tracking._store_thread_blob(
-                    self._topdir, change_id, msgs)
-                if new_sha:
-                    self._series['thread-blob'] = new_sha
+        # ── Always fetch live from lore for up-to-date follow-ups ────────────
+        cover_msgid = self._series.get('header-info', {}).get('msgid')
+        if not cover_msgid:
+            self.notify('No message-id for cover letter', severity='error')
+            return
+        with self.suspend():
+            logger.info('Fetching thread for %s ...', cover_msgid)
+            msgs = b4.get_pi_thread_by_msgid(cover_msgid)
+        if not msgs:
+            self.notify('Could not fetch thread from lore', severity='error')
+            return
+        # Cache the thread locally for other consumers.
+        change_id = self._series.get('change-id')
+        if change_id:
+            new_sha = b4.review.tracking._store_thread_blob(
+                self._topdir, change_id, msgs)
+            if new_sha:
+                self._series['thread-blob'] = new_sha
 
         self._load_followup_msgs(msgs)
         self._mark_followup_msgs_seen(msgs)

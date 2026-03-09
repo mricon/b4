@@ -1402,9 +1402,17 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     if not b4.review.tracking.db_exists(identifier):
-        logger.critical('Project not enrolled: %s', identifier)
-        logger.critical('Enroll with: b4 review enroll')
-        sys.exit(1)
+        topdir = b4.git_get_toplevel()
+        if topdir and b4.review.tracking.get_repo_identifier(topdir) == identifier:
+            # The metadata.json exists but the DB is gone — recreate it.
+            logger.info('Recreating missing database for %s', identifier)
+            conn = b4.review.tracking.init_db(identifier)
+            conn.close()
+            b4.review.tracking.rescan_branches(identifier, topdir)
+        else:
+            logger.critical('Project not enrolled: %s', identifier)
+            logger.critical('Enroll with: b4 review enroll')
+            sys.exit(1)
 
     b4.review_tui.run_tracking_tui(identifier, email_dryrun=cmdargs.email_dryrun,
                                    no_sign=cmdargs.no_sign)

@@ -1248,15 +1248,15 @@ def _make_test_mbox(n: int, date: str = 'Mon, 15 Jan 2024 10:00:00 +0000') -> by
 
 
 class TestFollowupCounts:
-    """Tests for followup_count / seen_followup_count tracking."""
+    """Tests for message_count / seen_message_count tracking."""
 
     def test_schema_has_followup_columns(self, tmp_path: pytest.TempPathFactory) -> None:
-        """Verify fresh DB has followup_count, seen_followup_count, last_update_check, last_activity_at."""
+        """Verify fresh DB has message_count, seen_message_count, last_update_check, last_activity_at."""
         conn = review_tracking.init_db('fc-schema-test')
         cursor = conn.execute('PRAGMA table_info(series)')
         col_names = {row[1] for row in cursor.fetchall()}
-        assert 'followup_count' in col_names
-        assert 'seen_followup_count' in col_names
+        assert 'message_count' in col_names
+        assert 'seen_message_count' in col_names
         assert 'last_update_check' in col_names
         assert 'last_activity_at' in col_names
         conn.close()
@@ -1286,10 +1286,11 @@ class TestFollowupCounts:
         cursor = conn.execute('PRAGMA table_info(series)')
         col_names = {row[1] for row in cursor.fetchall()}
         assert 'branch_sha' in col_names
-        assert 'followup_count' in col_names
-        assert 'seen_followup_count' in col_names
+        assert 'message_count' in col_names
+        assert 'seen_message_count' in col_names
         assert 'last_update_check' in col_names
         assert 'last_activity_at' in col_names
+        assert 'has_cover' not in col_names
         row = conn.execute('SELECT version FROM schema_version').fetchone()
         assert row[0] == review_tracking.SCHEMA_VERSION
         conn.close()
@@ -1300,10 +1301,9 @@ class TestFollowupCounts:
         self, mock_mbox_bytes: mock.Mock, mock_resolve: mock.Mock,
         tmp_path: pytest.TempPathFactory
     ) -> None:
-        """First update_followup_counts sets seen = count (no badge shown yet)."""
+        """First update_message_counts sets seen = count (no badge shown yet)."""
         mock_resolve.return_value = 'https://lore.kernel.org/linux-kernel/cover@example.com'
-        # 9 unique messages: num_patches=3 → count = 9 - 3 - 1 = 5
-        # Single known date so last_activity_at is predictable
+        # 9 unique messages in the thread
         mock_mbox_bytes.return_value = _make_test_mbox(9)
 
         conn = review_tracking.init_db('fc-first-test')
@@ -1315,17 +1315,17 @@ class TestFollowupCounts:
         series_list = [{'change_id': 'fc-change', 'revision': 1,
                         'message_id': 'cover@example.com', 'num_patches': 3,
                         'status': 'new'}]
-        result = review_tracking.update_followup_counts('fc-first-test', series_list)
+        result = review_tracking.update_message_counts('fc-first-test', series_list)
         assert result['updated'] == 1
         assert result['errors'] == 0
 
         conn = review_tracking.get_db('fc-first-test')
         row = conn.execute(
-            'SELECT followup_count, seen_followup_count, last_update_check, last_activity_at'
+            'SELECT message_count, seen_message_count, last_update_check, last_activity_at'
             ' FROM series WHERE change_id = ?', ('fc-change',)).fetchone()
-        assert row['followup_count'] == 5
+        assert row['message_count'] == 9
         # First fetch: seen initialised to same value — no badge yet
-        assert row['seen_followup_count'] == 5
+        assert row['seen_message_count'] == 9
         assert row['last_update_check'] is not None
         assert row['last_activity_at'] == '2024-01-15T10:00:00+00:00'
         conn.close()
@@ -1340,9 +1340,9 @@ class TestFollowupCounts:
         """Incremental update adds new message count and keeps seen unchanged."""
         canonical = 'https://lore.kernel.org/linux-kernel/cover2@example.com'
         mock_resolve.return_value = canonical
-        # 9 unique messages: num_patches=3 → count = 9 - 3 - 1 = 5
+        # 9 unique messages in the thread
         mock_fetch.return_value = _make_test_mbox(9)
-        # incremental: 3 new replies, with a newer activity date
+        # incremental: 3 new messages, with a newer activity date
         mock_new_since.return_value = (3, '2024-02-01T00:00:00+00:00')
 
         conn = review_tracking.init_db('fc-incr-test')
@@ -1355,19 +1355,19 @@ class TestFollowupCounts:
                         'message_id': 'cover2@example.com', 'num_patches': 3,
                         'status': 'reviewing'}]
 
-        # First fetch: seen = count = 5, last_update_check set
-        review_tracking.update_followup_counts('fc-incr-test', series_list)
+        # First fetch: seen = count = 9, last_update_check set
+        review_tracking.update_message_counts('fc-incr-test', series_list)
 
-        # Incremental: 3 new replies since last check
-        result = review_tracking.update_followup_counts('fc-incr-test', series_list)
+        # Incremental: 3 new messages since last check
+        result = review_tracking.update_message_counts('fc-incr-test', series_list)
         assert result['updated'] == 1
 
         conn = review_tracking.get_db('fc-incr-test')
         row = conn.execute(
-            'SELECT followup_count, seen_followup_count, last_activity_at FROM series'
+            'SELECT message_count, seen_message_count, last_activity_at FROM series'
             ' WHERE change_id = ?', ('fc-change2',)).fetchone()
-        assert row['followup_count'] == 8   # 5 + 3
-        assert row['seen_followup_count'] == 5  # badge shows +3
+        assert row['message_count'] == 12  # 9 + 3
+        assert row['seen_message_count'] == 9  # badge shows +3
         assert row['last_activity_at'] == '2024-02-01T00:00:00+00:00'
         conn.close()
 
@@ -1381,9 +1381,9 @@ class TestFollowupCounts:
         """Incremental update with zero new messages writes nothing to the DB."""
         canonical = 'https://lore.kernel.org/linux-kernel/cover3@example.com'
         mock_resolve.return_value = canonical
-        # 9 unique messages: num_patches=3 → count = 9 - 3 - 1 = 5
+        # 9 unique messages in the thread
         mock_fetch.return_value = _make_test_mbox(9)
-        mock_new_since.return_value = (0, None)   # no new replies
+        mock_new_since.return_value = (0, None)   # no new messages
 
         conn = review_tracking.init_db('fc-noop-test')
         review_tracking.add_series_to_db(
@@ -1396,54 +1396,54 @@ class TestFollowupCounts:
                         'status': 'reviewing'}]
 
         # First fetch sets the baseline
-        review_tracking.update_followup_counts('fc-noop-test', series_list)
+        review_tracking.update_message_counts('fc-noop-test', series_list)
 
         import os
         db_path = review_tracking.get_db_path('fc-noop-test')
         mtime_before = os.path.getmtime(db_path)
 
         # Incremental no-op — should not touch the DB at all
-        result = review_tracking.update_followup_counts('fc-noop-test', series_list)
+        result = review_tracking.update_message_counts('fc-noop-test', series_list)
         assert result['updated'] == 0
         assert result['errors'] == 0
         assert os.path.getmtime(db_path) == mtime_before
 
-    def test_mark_followups_seen_clears_badge(
+    def test_mark_all_messages_seen_clears_badge(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
-        """mark_followups_seen sets seen_followup_count = followup_count."""
+        """mark_all_messages_seen sets seen_message_count = message_count."""
         conn = review_tracking.init_db('fc-seen-test')
         review_tracking.add_series_to_db(
             conn, 'fc-seen', 1, 'Subject', 'Author', 'a@example.com',
             '2024-01-15T10:00:00+00:00', 'cover3@example.com', 3)
         # Manually set a delta
-        conn.execute('UPDATE series SET followup_count = 10, seen_followup_count = 6'
+        conn.execute('UPDATE series SET message_count = 10, seen_message_count = 6'
                      ' WHERE change_id = ?', ('fc-seen',))
         conn.commit()
 
-        review_tracking.mark_followups_seen(conn, 'fc-seen', 1)
+        review_tracking.mark_all_messages_seen(conn, 'fc-seen', 1)
         conn.close()
 
         # Reopen with get_db to get row_factory for named column access
         conn = review_tracking.get_db('fc-seen-test')
-        row = conn.execute('SELECT followup_count, seen_followup_count FROM series'
+        row = conn.execute('SELECT message_count, seen_message_count FROM series'
                            ' WHERE change_id = ?', ('fc-seen',)).fetchone()
-        assert row['followup_count'] == 10
-        assert row['seen_followup_count'] == 10
+        assert row['message_count'] == 10
+        assert row['seen_message_count'] == 10
         conn.close()
 
     def test_followup_fetch_skips_offline(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
-        """fetch_thread_reply_count and _resolve_canonical_url return None offline."""
+        """fetch_thread_message_count and _resolve_canonical_url return None offline."""
         # can_network is False in test fixture — no mock needed
         assert review_tracking._resolve_canonical_url('any@example.com') is None
-        assert review_tracking.fetch_thread_reply_count('any@example.com', 3) is None
+        assert review_tracking.fetch_thread_message_count('any@example.com') is None
 
-    def test_update_followup_counts_skips_terminal_statuses(
+    def test_update_message_counts_skips_terminal_statuses(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
-        """update_followup_counts skips archived/accepted/thanked series."""
+        """update_message_counts skips archived/accepted/thanked series."""
         conn = review_tracking.init_db('fc-skip-test')
         for status in ('archived', 'accepted', 'thanked'):
             cid = f'fc-{status}'
@@ -1458,7 +1458,7 @@ class TestFollowupCounts:
              'message_id': f'fc-{s}@example.com', 'num_patches': 3, 'status': s}
             for s in ('archived', 'accepted', 'thanked')
         ]
-        result = review_tracking.update_followup_counts('fc-skip-test', series_list)
+        result = review_tracking.update_message_counts('fc-skip-test', series_list)
         # None fetched — all skipped, no errors
         assert result['updated'] == 0
         assert result['errors'] == 0
@@ -1592,11 +1592,11 @@ class TestFollowupBlob:
 
     @mock.patch('b4.review.tracking._resolve_canonical_url')
     @mock.patch('b4.review.tracking._fetch_mbox_bytes')
-    def test_update_followup_counts_stores_blob_on_first_fetch(
+    def test_update_message_counts_stores_blob_on_first_fetch(
         self, mock_mbox: mock.Mock, mock_resolve: mock.Mock,
         gitdir: str
     ) -> None:
-        """update_followup_counts writes a thread blob on the first fetch."""
+        """update_message_counts writes a thread blob on the first fetch."""
         mock_resolve.return_value = 'https://lore.kernel.org/linux-kernel/blob-first@example.com'
         # 9 unique messages → count = 9 - 3 - 1 = 5
         mock_mbox.return_value = _make_mbox_bytes(9, prefix='ff')
@@ -1614,7 +1614,7 @@ class TestFollowupBlob:
         series_list = [{'change_id': change_id, 'revision': 1,
                         'message_id': 'blob-first@example.com',
                         'num_patches': 3, 'status': 'reviewing'}]
-        review_tracking.update_followup_counts(
+        review_tracking.update_message_counts(
             'blob-ff-proj', series_list, topdir=gitdir)
 
         _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
@@ -1628,11 +1628,11 @@ class TestFollowupBlob:
     @mock.patch('b4.review.tracking._fetch_new_since')
     @mock.patch('b4.review.tracking._resolve_canonical_url')
     @mock.patch('b4.review.tracking._fetch_mbox_bytes')
-    def test_update_followup_counts_updates_blob_on_incremental(
+    def test_update_message_counts_updates_blob_on_incremental(
         self, mock_fetch: mock.Mock, mock_resolve: mock.Mock,
         mock_new_since: mock.Mock, gitdir: str
     ) -> None:
-        """update_followup_counts replaces the blob when new replies arrive."""
+        """update_message_counts replaces the blob when new replies arrive."""
         canonical = 'https://lore.kernel.org/linux-kernel/blob-incr@example.com'
         mock_resolve.return_value = canonical
         # Different prefixes → different Message-IDs → different blobs
@@ -1656,7 +1656,7 @@ class TestFollowupBlob:
                         'num_patches': 3, 'status': 'reviewing'}]
 
         # First fetch — stores initial blob
-        review_tracking.update_followup_counts(
+        review_tracking.update_message_counts(
             'blob-incr-proj', series_list, topdir=gitdir)
         _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
         sha_initial = loaded['series'].get('thread-blob')
@@ -1664,7 +1664,7 @@ class TestFollowupBlob:
 
         # Incremental — _fetch_mbox_bytes now returns the larger mbox
         mock_fetch.return_value = larger_mbox
-        review_tracking.update_followup_counts(
+        review_tracking.update_message_counts(
             'blob-incr-proj', series_list, topdir=gitdir)
         _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
         sha_updated = loaded['series'].get('thread-blob')

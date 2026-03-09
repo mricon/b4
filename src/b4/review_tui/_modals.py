@@ -241,7 +241,7 @@ TRACKING_HELP_LINES = [
     '[bold]Columns[/bold]\n',
     '  Submitter     Patch author name\n',
     '  A·R·T         Acked-by · Reviewed-by · Tested-by trailer counts\n',
-    '  Fups          Follow-up reply count (total, +new unseen in yellow)\n',
+    '  Msgs          Thread message count (total, unseen in yellow)\n',
     '  S             Status symbol (see above) + update flag\n',
     '  Subject       Series subject line\n',
     '\n',
@@ -1871,10 +1871,10 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
 
             if not self._cancelled:
                 self.app.call_from_thread(
-                    self._update_status_text, 'Fetching followup counts...')
-                followup_result = b4.review.tracking.update_followup_counts(
+                    self._update_status_text, 'Fetching message counts...')
+                msg_result = b4.review.tracking.update_message_counts(
                     self._identifier, self._series_list, topdir=self._topdir)
-                self._result['followup_updated'] = followup_result.get('updated', 0)
+                self._result['followup_updated'] = msg_result.get('updated', 0)
 
         return self._result
 

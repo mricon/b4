@@ -193,13 +193,13 @@ class TrackedSeriesItem(ListItem):
             art_str = f'{a}·{r}·{t}'
         else:
             art_str = '-'
-        fc = self.series.get('followup_count')
-        sc = self.series.get('seen_followup_count')
+        fc = self.series.get('message_count')
+        sc = self.series.get('seen_message_count')
         if fc is not None:
             delta = (fc - sc) if (sc is not None and fc > sc) else 0
         else:
             delta = 0
-        # Fups display: "0" (none), "3" accent (all new), "3(2)" mixed, "5" (all seen)
+        # Msgs display: "1" (all seen), "6" accent (all new), "6(3)" mixed
         if fc is None:
             fu_base = '-'
             fu_badge = ''
@@ -376,16 +376,15 @@ class TrackingApp(App[Optional[str]]):
         self._last_snooze_source: str = ''
         self._last_snooze_input: str = ''
 
-    def _refresh_followups(self, series: Dict[str, Any],
+    def _refresh_msg_count(self, series: Dict[str, Any],
                            total_messages: int) -> None:
-        """Opportunistically refresh followup count after fetching messages."""
+        """Opportunistically refresh message count after fetching messages."""
         if not self._identifier:
             return
-        b4.review.tracking.refresh_followup_count(
+        b4.review.tracking.refresh_message_count(
             self._identifier,
             series.get('change_id', ''),
             series.get('revision', 1),
-            series.get('num_patches', 0),
             total_messages,
         )
 
@@ -608,7 +607,7 @@ class TrackingApp(App[Optional[str]]):
             await self.mount(empty, before=self.query_one(Footer))
             return
 
-        header_text = f'{"Submitter":<20s}  {"A·R·T":>7s}  {"Fups":>6s}  {"S":<4s}{"Subject"}'
+        header_text = f'{"Submitter":<20s}  {"A·R·T":>7s}  {"Msgs":>6s}  {"S":<4s}{"Subject"}'
         header = Static(header_text, id='tracking-header')
 
         list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
@@ -783,7 +782,7 @@ class TrackingApp(App[Optional[str]]):
             if self._identifier and isinstance(revision, int):
                 try:
                     conn = b4.review.tracking.get_db(self._identifier)
-                    b4.review.tracking.mark_followups_seen(conn, change_id, revision)
+                    b4.review.tracking.mark_all_messages_seen(conn, change_id, revision)
                     conn.close()
                 except Exception:
                     pass
@@ -852,7 +851,6 @@ class TrackingApp(App[Optional[str]]):
                 'identifier': self._identifier,
                 'change_id': self._selected_series.get('change_id', ''),
                 'revision': self._selected_series.get('revision', 1),
-                'num_patches': self._selected_series.get('num_patches', 0),
             }
         from b4.review_tui._lite_app import LiteThreadScreen
         self.push_screen(LiteThreadScreen(message_id,
@@ -878,7 +876,7 @@ class TrackingApp(App[Optional[str]]):
             logger.info('Retrieving series: %s', message_id)
             try:
                 msgs = b4.review._retrieve_messages(message_id)
-                self._refresh_followups(series, len(msgs))
+                self._refresh_msg_count(series, len(msgs))
                 wantver = series.get('revision')
                 lser = b4.review._get_lore_series(msgs, wantver=wantver)
             except LookupError as ex:
@@ -1036,7 +1034,7 @@ class TrackingApp(App[Optional[str]]):
         if self._identifier and _co_change_id and isinstance(_co_revision, int):
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
-                b4.review.tracking.mark_followups_seen(conn, _co_change_id, _co_revision)
+                b4.review.tracking.mark_all_messages_seen(conn, _co_change_id, _co_revision)
                 conn.close()
             except Exception:
                 pass
@@ -1652,7 +1650,7 @@ class TrackingApp(App[Optional[str]]):
         logger.info('Retrieving series: %s', message_id)
         try:
             msgs = b4.review._retrieve_messages(message_id)
-            self._refresh_followups(series, len(msgs))
+            self._refresh_msg_count(series, len(msgs))
         except LookupError as ex:
             logger.critical('%s', ex)
             _wait_for_enter()
@@ -2469,8 +2467,7 @@ class TrackingApp(App[Optional[str]]):
                         conn, change_id, target_rev,
                         target_subject, sender_name, sender_email,
                         sent_at, target_msgid,
-                        lser.expected or len(am_msgs),
-                        has_cover=lser.has_cover)
+                        lser.expected or len(am_msgs))
                     b4.review.tracking.update_series_status(
                         conn, change_id, 'reviewing', revision=target_rev)
                     conn.close()

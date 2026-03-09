@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import b4
 import b4.review
+import b4.review.tracking
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -471,11 +472,13 @@ class LiteThreadScreen(ModalScreen[None]):
         message_id: str,
         email_dryrun: bool = False,
         patatt_sign: bool = True,
+        tracking_info: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
         self._message_id = message_id
         self._email_dryrun = email_dryrun
         self._patatt_sign = patatt_sign
+        self._tracking_info = tracking_info
         self._thread_nodes: List[ThreadNode] = []
 
     def compose(self) -> ComposeResult:
@@ -490,9 +493,38 @@ class LiteThreadScreen(ModalScreen[None]):
         _fix_ansi_theme(self.app)
         self.run_worker(self._fetch_thread, name='_fetch_thread', thread=True)
 
+    def _refresh_msg_count(self, total_messages: int) -> None:
+        """Opportunistically refresh message count from fetched messages."""
+        if not self._tracking_info:
+            return
+        try:
+            b4.review.tracking.refresh_message_count(
+                self._tracking_info['identifier'],
+                self._tracking_info['change_id'],
+                self._tracking_info['revision'],
+                total_messages,
+            )
+        except Exception:
+            pass
+
+    def _sync_unseen(self, unseen_count: int) -> None:
+        """Sync seen_message_count in the tracking DB from unseen count."""
+        if not self._tracking_info:
+            return
+        try:
+            b4.review.tracking.sync_seen_from_unseen_count(
+                self._tracking_info['identifier'],
+                self._tracking_info['change_id'],
+                self._tracking_info['revision'],
+                unseen_count,
+            )
+        except Exception:
+            pass
+
     def _fetch_thread(self) -> List[ThreadNode]:
         with _quiet_worker():
             msgs = b4.review._retrieve_messages(self._message_id)
+            self._refresh_msg_count(len(msgs))
             lmbx = b4.LoreMailbox()
             for msg in msgs:
                 lmbx.add_message(msg)
@@ -521,11 +553,16 @@ class LiteThreadScreen(ModalScreen[None]):
             msgids = [n.lmsg.msgid for n in self._thread_nodes if n.lmsg.msgid]
             flags_map = messages.get_flags_bulk(conn, msgids)
             conn.close()
+            unseen_count = 0
             for node in self._thread_nodes:
                 flags = flags_map.get(node.lmsg.msgid, '').split()
                 node.is_unseen = 'Seen' not in flags
                 node.is_flagged = 'Flagged' in flags
                 node.is_answered = 'Answered' in flags
+                if node.is_unseen:
+                    unseen_count += 1
+            # Sync the tracking DB so the Fups column matches the N markers
+            self._sync_unseen(unseen_count)
         except Exception:
             pass
         self._detect_maintainer_replies()
@@ -735,4 +772,7 @@ class LiteThreadScreen(ModalScreen[None]):
             self.app.notify(f'Send failed: {ex}', severity='error')
 
     def action_back(self) -> None:
+        if self._thread_nodes:
+            unseen = sum(1 for n in self._thread_nodes if n.is_unseen)
+            self._sync_unseen(unseen)
         self.dismiss(None)

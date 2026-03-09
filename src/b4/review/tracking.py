@@ -25,7 +25,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = '''
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -47,8 +47,8 @@ CREATE TABLE IF NOT EXISTS series (
     status TEXT DEFAULT 'new',
     fingerprint TEXT,
     branch_sha TEXT,
-    followup_count INT,
-    seen_followup_count INT,
+    message_count INT,
+    seen_message_count INT,
     last_update_check TEXT,
     last_activity_at TEXT,
     snoozed_until TEXT,
@@ -112,6 +112,9 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
     if version < 3:
         conn.execute("UPDATE series SET status = 'accepted' WHERE status = 'taken'")
         conn.execute('ALTER TABLE series ADD COLUMN snoozed_until TEXT')
+    if version < 4:
+        conn.execute('ALTER TABLE series RENAME COLUMN followup_count TO message_count')
+        conn.execute('ALTER TABLE series RENAME COLUMN seen_followup_count TO seen_message_count')
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -322,9 +325,15 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     if not db_exists(identifier):
-        logger.critical('Project not enrolled: %s', identifier)
-        logger.critical('Run "b4 review enroll" first')
-        sys.exit(1)
+        if topdir and get_repo_identifier(topdir) == identifier:
+            logger.info('Recreating missing database for %s', identifier)
+            conn = init_db(identifier)
+            conn.close()
+            rescan_branches(identifier, topdir)
+        else:
+            logger.critical('Project not enrolled: %s', identifier)
+            logger.critical('Run "b4 review enroll" first')
+            sys.exit(1)
 
     # Parse the series identifier (message-id, URL, or change-id)
     # Support reading from stdin if no series_id provided
@@ -510,7 +519,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
 
     Returns a list of dicts with keys: track_id, change_id, revision, subject,
     sender_name, sender_email, sent_at, added_at, status, num_patches,
-    message_id, pw_series_id, followup_count, seen_followup_count.
+    message_id, pw_series_id, message_count, seen_message_count.
     """
     if not db_exists(identifier):
         return []
@@ -519,7 +528,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
         cursor = conn.execute('''
             SELECT track_id, change_id, revision, subject, sender_name, sender_email,
                    sent_at, added_at, status, num_patches, message_id, pw_series_id,
-                   followup_count, seen_followup_count, last_activity_at
+                   message_count, seen_message_count, last_activity_at
             FROM series
             ORDER BY added_at DESC
         ''')
@@ -538,8 +547,8 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                 'num_patches': row[9] or 0,
                 'message_id': row[10] or '',
                 'pw_series_id': row[11],
-                'followup_count': row[12],
-                'seen_followup_count': row[13],
+                'message_count': row[12],
+                'seen_message_count': row[13],
                 'last_activity_at': row[14],
             })
         conn.close()
@@ -771,14 +780,11 @@ def _latest_date_from_mbox(mbox_bytes: bytes) -> Optional[str]:
     return latest.astimezone(datetime.timezone.utc).isoformat()
 
 
-def fetch_thread_reply_count(message_id: str, num_patches: int) -> Optional[int]:
-    """Fetch the full followup reply count for a thread via public-inbox t.mbox.gz.
+def fetch_thread_message_count(message_id: str) -> Optional[int]:
+    """Fetch the total message count for a thread via public-inbox t.mbox.gz.
 
-    This is the first-fetch path: downloads the full thread mbox and counts
-    the messages, then subtracts the original series messages (cover + patches)
-    to get the followup count.
-
-    Returns the followup count (>= 0), or None on failure or when offline.
+    Returns the total number of messages in the thread, or None on failure
+    or when offline.
     """
     canonical_url = _resolve_canonical_url(message_id)
     if canonical_url is None:
@@ -787,7 +793,7 @@ def fetch_thread_reply_count(message_id: str, num_patches: int) -> Optional[int]
     if mbox_bytes is None:
         return None
     parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
-    return max(0, len(parsed) - num_patches - 1)
+    return len(parsed)
 
 
 def _fetch_new_since(canonical_url: str, since: str) -> Optional[Tuple[int, Optional[str]]]:
@@ -1178,23 +1184,23 @@ def ensure_thread_context_blob(topdir: str, change_id: str,
     return ctx_sha
 
 
-def update_followup_counts(identifier: str,
+def update_message_counts(identifier: str,
                            series_list: List[Dict[str, Any]],
                            topdir: Optional[str] = None) -> Dict[str, int]:
-    """Fetch and store followup reply counts for a list of series.
+    """Fetch and store thread message counts for a list of series.
 
     For each active series in *series_list* that has a message_id:
 
-    - **First fetch** (``followup_count IS NULL``): downloads the full t.json
-      thread index and stores the count.  ``seen_followup_count`` is initialised
+    - **First fetch** (``message_count IS NULL``): downloads the full t.json
+      thread index and stores the count.  ``seen_message_count`` is initialised
       to the same value so no badge appears until *new* activity arrives.
-    - **Incremental** (``followup_count IS NOT NULL``): POSTs a ``dt:`` query
+    - **Incremental** (``message_count IS NOT NULL``): POSTs a ``dt:`` query
       for messages newer than ``last_update_check``.  An empty response (nothing
       new) produces **zero database writes**, keeping the DB mtime stable and
       suppressing spurious list reloads in the TUI.
 
     Returns ``{'updated': n, 'errors': n}`` where *updated* counts series whose
-    ``followup_count`` actually changed.
+    ``message_count`` actually changed.
     """
     updated = 0
     errors = 0
@@ -1212,18 +1218,17 @@ def update_followup_counts(identifier: str,
         message_id = series.get('message_id', '')
         if not message_id:
             continue
-        num_patches = int(series.get('num_patches') or 0)
         change_id = series.get('change_id', '')
         revision = series.get('revision', 1)
         if not change_id:
             continue
 
         row = conn.execute(
-            'SELECT followup_count, seen_followup_count, last_update_check'
+            'SELECT message_count, seen_message_count, last_update_check'
             ' FROM series WHERE change_id = ? AND revision = ?',
             (change_id, revision)).fetchone()
 
-        existing_count = row['followup_count'] if row else None
+        existing_count = row['message_count'] if row else None
         last_check = row['last_update_check'] if row else None
 
         canonical_url = _resolve_canonical_url(message_id)
@@ -1238,11 +1243,11 @@ def update_followup_counts(identifier: str,
                 errors += 1
                 continue
             parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
-            count = max(0, len(parsed) - num_patches - 1)
+            count = len(parsed)
             last_activity = _latest_date_from_mbox(mbox_bytes)
             conn.execute(
                 'UPDATE series'
-                ' SET followup_count = ?, seen_followup_count = ?,'
+                ' SET message_count = ?, seen_message_count = ?,'
                 '     last_update_check = ?, last_activity_at = ?'
                 ' WHERE change_id = ? AND revision = ?',
                 (count, count, now, last_activity, change_id, revision))
@@ -1261,7 +1266,7 @@ def update_followup_counts(identifier: str,
                 # New replies arrived — update count, timestamp, and latest activity
                 conn.execute(
                     'UPDATE series'
-                    ' SET followup_count = followup_count + ?, last_update_check = ?,'
+                    ' SET message_count = message_count + ?, last_update_check = ?,'
                     '     last_activity_at = COALESCE(?, last_activity_at)'
                     ' WHERE change_id = ? AND revision = ?',
                     (new_count, now, new_activity, change_id, revision))
@@ -1279,14 +1284,124 @@ def update_followup_counts(identifier: str,
     return {'updated': updated, 'errors': errors}
 
 
-def mark_followups_seen(conn: sqlite3.Connection, change_id: str,
+def mark_all_messages_seen(conn: sqlite3.Connection, change_id: str,
                         revision: int) -> None:
-    """Set seen_followup_count = followup_count, clearing the unread badge."""
+    """Set seen_message_count = message_count, clearing the unread badge."""
     conn.execute(
-        'UPDATE series SET seen_followup_count = followup_count'
+        'UPDATE series SET seen_message_count = message_count'
         ' WHERE change_id = ? AND revision = ?',
         (change_id, revision))
     conn.commit()
+
+
+def sync_seen_from_unseen_count(identifier: str, change_id: str,
+                                revision: int, unseen_count: int) -> bool:
+    """Sync seen_message_count so the unread badge matches the messages DB.
+
+    Sets ``seen_message_count = message_count - unseen_count``, clamped
+    to [0, message_count].  Only writes when the value actually changes.
+
+    Returns True if the database was updated, False otherwise.
+    """
+    try:
+        conn = get_db(identifier)
+    except FileNotFoundError:
+        return False
+
+    row = conn.execute(
+        'SELECT message_count, seen_message_count FROM series'
+        ' WHERE change_id = ? AND revision = ?',
+        (change_id, revision)).fetchone()
+    if row is None:
+        conn.close()
+        return False
+
+    fc = row['message_count']
+    if fc is None:
+        conn.close()
+        return False
+
+    new_seen = max(0, min(fc, fc - unseen_count))
+    if new_seen == row['seen_message_count']:
+        conn.close()
+        return False
+
+    conn.execute(
+        'UPDATE series SET seen_message_count = ?'
+        ' WHERE change_id = ? AND revision = ?',
+        (new_seen, change_id, revision))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def refresh_message_count(identifier: str, change_id: str, revision: int,
+                           total_messages: int) -> bool:
+    """Opportunistically refresh the message count from already-fetched messages.
+
+    Called when thread messages have been fetched for another purpose (e.g.
+    viewing in the lite email viewer, checking out for review, or
+    taking/accepting a series).
+
+    Only ``message_count`` and ``last_update_check`` are updated;
+    ``seen_message_count`` is left unchanged so the unread badge
+    continues to reflect the actual read state from the messages DB.
+    When ``message_count`` was NULL (first fetch), ``seen_message_count``
+    is initialised to the same value (no badge) as a safe default.
+
+    Only writes to the database when the count differs from the stored
+    value, keeping the DB mtime stable when nothing changed.
+
+    Returns True if the database was updated, False otherwise.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        conn = get_db(identifier)
+    except FileNotFoundError:
+        return False
+
+    row = conn.execute(
+        'SELECT message_count, seen_message_count FROM series'
+        ' WHERE change_id = ? AND revision = ?',
+        (change_id, revision)).fetchone()
+    if row is None:
+        conn.close()
+        return False
+
+    count = total_messages
+    old_count = row['message_count']
+
+    if old_count is not None and count == old_count:
+        # Nothing changed — skip the write to keep the DB mtime stable.
+        conn.close()
+        return False
+
+    if old_count is None:
+        # First fetch: initialise both counts equally (no badge).
+        conn.execute(
+            'UPDATE series SET message_count = ?, seen_message_count = ?,'
+            '  last_update_check = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (count, count, now, change_id, revision))
+    else:
+        # Count changed: update only message_count; cap seen if it
+        # exceeds the new count (possible when dedup reduces the total).
+        seen = row['seen_message_count']
+        if seen is not None and seen > count:
+            conn.execute(
+                'UPDATE series SET message_count = ?, seen_message_count = ?,'
+                '  last_update_check = ?'
+                ' WHERE change_id = ? AND revision = ?',
+                (count, count, now, change_id, revision))
+        else:
+            conn.execute(
+                'UPDATE series SET message_count = ?, last_update_check = ?'
+                ' WHERE change_id = ? AND revision = ?',
+                (count, now, change_id, revision))
+
+    conn.commit()
+    conn.close()
+    return True
 
 
 def rescan_branches(identifier: str, topdir: str,

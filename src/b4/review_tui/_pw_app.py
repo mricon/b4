@@ -493,8 +493,8 @@ class PwApp(App[None]):
         conn = b4.review.tracking.get_db(self._tracking_identifier)
         b4.review.tracking.add_series_to_db(
             conn, change_id, revision, subject, sender_name, sender_email,
-            sent_at, message_id, num_patches, pw_series_id
-        )
+            sent_at, message_id, num_patches, pw_series_id)
+
         conn.close()
 
         # Update UI
