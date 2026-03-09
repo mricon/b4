@@ -542,7 +542,7 @@ class TrackingApp(App[Optional[str]]):
                     revs = b4.review.tracking.get_revisions(conn, change_id)
                     if len(revs) > 1:
                         series['has_multiple_revisions'] = True
-                    if not revs and series.get('status') not in ('new', 'gone'):
+                    if not revs and series.get('status') not in ('new', 'gone', 'snoozed'):
                         series['needs_update'] = True
                 except Exception:
                     pass
