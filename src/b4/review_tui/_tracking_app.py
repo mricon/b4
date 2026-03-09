@@ -197,11 +197,32 @@ class TrackedSeriesItem(ListItem):
         sc = self.series.get('seen_followup_count')
         if fc is not None:
             delta = (fc - sc) if (sc is not None and fc > sc) else 0
-            fu_base = str(fc)
-            fu_new = f'+{delta}' if delta > 0 else ''
         else:
+            delta = 0
+        # Fups display: "0" (none), "3" accent (all new), "3(2)" mixed, "5" (all seen)
+        if fc is None:
             fu_base = '-'
-            fu_new = ''
+            fu_badge = ''
+            base_accent = False
+        elif fc == 0:
+            fu_base = '0'
+            fu_badge = ''
+            base_accent = False
+        elif delta == fc:
+            # All follow-ups are new
+            fu_base = str(fc)
+            fu_badge = ''
+            base_accent = True
+        elif delta > 0:
+            # Mixed: total + (unseen)
+            fu_base = str(fc)
+            fu_badge = f'({delta})'
+            base_accent = False
+        else:
+            # All seen
+            fu_base = str(fc)
+            fu_badge = ''
+            base_accent = False
         # Build compact prefix using LoreSubject to extract subsystem/modifier tokens
         ls = b4.LoreSubject(subject)
         extras = ls.get_extra_prefixes(exclude=['patch'])
@@ -216,12 +237,17 @@ class TrackedSeriesItem(ListItem):
         label = RichText(no_wrap=True, overflow='ellipsis')
         label.append(f'{submitter}  ')
         label.append(art_str.rjust(7))
-        label.append(f'  {fu_base.rjust(3)}')
-        fu_style = ''
-        if fu_new:
+        base_style = ''
+        badge_style = ''
+        if base_accent or fu_badge:
             ts = resolve_styles(self.app)
-            fu_style = f"bold {ts['warning']}"
-        label.append(f'{fu_new:<3s}', style=fu_style)
+            accent = f"bold {ts['warning']}"
+            if base_accent:
+                base_style = accent
+            if fu_badge:
+                badge_style = accent
+        label.append(f'  {fu_base.rjust(3)}', style=base_style)
+        label.append(f'{fu_badge:<3s}', style=badge_style)
         label.append(f'  {symbol}{flag}  {subject_display}')
         yield Label(label, markup=False)
 
@@ -349,6 +375,19 @@ class TrackingApp(App[Optional[str]]):
         # Remember last snooze choices within the session
         self._last_snooze_source: str = ''
         self._last_snooze_input: str = ''
+
+    def _refresh_followups(self, series: Dict[str, Any],
+                           total_messages: int) -> None:
+        """Opportunistically refresh followup count after fetching messages."""
+        if not self._identifier:
+            return
+        b4.review.tracking.refresh_followup_count(
+            self._identifier,
+            series.get('change_id', ''),
+            series.get('revision', 1),
+            series.get('num_patches', 0),
+            total_messages,
+        )
 
     def compose(self) -> ComposeResult:
         title = f' Tracked Series — {self._identifier}'
@@ -708,12 +747,27 @@ class TrackingApp(App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status in ('reviewing', 'replied', 'waiting'):
+        if status in ('reviewing', 'replied', 'waiting', 'snoozed'):
             # Already checked out - go to review mode
             change_id = self._selected_series.get('change_id', '')
             revision = self._selected_series.get('revision')
             branch_name = f'b4/review/{change_id}'
-            if status == 'waiting':
+            if status == 'snoozed':
+                # Unsnooze: clear snoozed_until + restore tracking commit
+                topdir = b4.git_get_toplevel()
+                if topdir and b4.git_branch_exists(topdir, branch_name):
+                    try:
+                        self._restore_snoozed_tracking(topdir, branch_name)
+                    except (SystemExit, Exception):
+                        pass
+                try:
+                    conn = b4.review.tracking.get_db(self._identifier)
+                    b4.review.tracking.unsnooze_series(
+                        conn, change_id, 'reviewing', revision=revision)
+                    conn.close()
+                except Exception:
+                    pass
+            elif status == 'waiting':
                 # Bring back to reviewing on re-entry
                 try:
                     conn = b4.review.tracking.get_db(self._identifier)
@@ -792,10 +846,19 @@ class TrackingApp(App[Optional[str]]):
         if not message_id:
             self.notify('No message-id available for this series', severity='error')
             return
+        tracking_info = None
+        if self._identifier:
+            tracking_info = {
+                'identifier': self._identifier,
+                'change_id': self._selected_series.get('change_id', ''),
+                'revision': self._selected_series.get('revision', 1),
+                'num_patches': self._selected_series.get('num_patches', 0),
+            }
         from b4.review_tui._lite_app import LiteThreadScreen
         self.push_screen(LiteThreadScreen(message_id,
                                           email_dryrun=self._email_dryrun,
-                                          patatt_sign=self._patatt_sign))
+                                          patatt_sign=self._patatt_sign,
+                                          tracking_info=tracking_info))
 
     def _checkout_new_series(self) -> None:
         """Retrieve series, check attestation, and create review branch."""
@@ -815,6 +878,7 @@ class TrackingApp(App[Optional[str]]):
             logger.info('Retrieving series: %s', message_id)
             try:
                 msgs = b4.review._retrieve_messages(message_id)
+                self._refresh_followups(series, len(msgs))
                 wantver = series.get('revision')
                 lser = b4.review._get_lore_series(msgs, wantver=wantver)
             except LookupError as ex:
@@ -1588,6 +1652,7 @@ class TrackingApp(App[Optional[str]]):
         logger.info('Retrieving series: %s', message_id)
         try:
             msgs = b4.review._retrieve_messages(message_id)
+            self._refresh_followups(series, len(msgs))
         except LookupError as ex:
             logger.critical('%s', ex)
             _wait_for_enter()
@@ -2404,7 +2469,8 @@ class TrackingApp(App[Optional[str]]):
                         conn, change_id, target_rev,
                         target_subject, sender_name, sender_email,
                         sent_at, target_msgid,
-                        lser.expected or len(am_msgs))
+                        lser.expected or len(am_msgs),
+                        has_cover=lser.has_cover)
                     b4.review.tracking.update_series_status(
                         conn, change_id, 'reviewing', revision=target_rev)
                     conn.close()
