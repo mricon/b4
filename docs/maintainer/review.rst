@@ -110,9 +110,8 @@ Each row in the tracking list shows:
 * **Submitter** — patch author name (truncated if necessary)
 * **A·R·T** — Acked-by · Reviewed-by · Tested-by trailer counts
   collected from the review branch
-* **Fups** — total follow-up reply count for the thread, with any
-  unseen replies shown as ``+N`` in yellow (populated after pressing
-  ``u``)
+* **Msgs** — total message count for the thread, with any unseen
+  messages shown as ``+N`` in yellow (populated after pressing ``u``)
 * **S** — single-character status symbol; ``*`` suffix means the
   tracking data needs a refresh
 * **Subject** — compact ``[subsystem,vN,0/M]`` prefix followed by the
@@ -143,7 +142,7 @@ Key           Action
 ``d``         Range-diff between revisions
 ``a``         Action menu — context-sensitive actions (see below)
 ``u``         Update — fetch latest trailers, check for newer revisions,
-              and refresh follow-up reply counts
+              and refresh message counts
 ``l``         Limit — filter the list of displayed series
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)

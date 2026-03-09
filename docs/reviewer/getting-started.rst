@@ -62,7 +62,7 @@ B4 fetches the series from lore, discovers all available revisions
 **Quick actions in the tracking list:**
 
 - ``v`` — view the series (cover letter + patches) in a modal
-- ``u`` — update: fetch latest trailers, check for newer revisions, and refresh follow-up counts
+- ``u`` — update: fetch latest trailers, check for newer revisions, and refresh message counts
 - ``a`` — open the action menu (context-sensitive)
 - ``q`` — quit
 
