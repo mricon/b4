@@ -7,6 +7,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.message
 import email.utils
+import json
 
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
 
@@ -22,6 +23,8 @@ from textual.widgets import Checkbox, Input, Label, ListItem, ListView, LoadingI
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.worker import Worker, WorkerState
+from rich import box
+from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
@@ -178,7 +181,7 @@ class HelpScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
-def _review_help_lines(has_agent: bool = False, has_check: bool = False) -> List[str]:
+def _review_help_lines(has_agent: bool = False) -> List[str]:
     """Build help text for the review TUI."""
     lines = [
         '[bold]b4 review TUI — Keybindings[/bold]\n',
@@ -205,8 +208,6 @@ def _review_help_lines(has_agent: bool = False, has_check: bool = False) -> List
     ]
     if has_agent:
         lines.append('  [bold]a[/bold]         Run review agent\n')
-    if has_check:
-        lines.append('  [bold]C[/bold]         Run check command\n')
     lines += [
         '  [bold]e[/bold]         Toggle email mode\n',
         '\n',
@@ -2333,3 +2334,327 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class CheckLoadingScreen(ModalScreen[None]):
+    """Lightweight loading overlay shown while CI checks are running."""
+
+    BINDINGS = [
+        Binding('escape', 'dismiss', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    CheckLoadingScreen {
+        align: center middle;
+    }
+    #cl-dialog {
+        width: 50;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #cl-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, title: str = 'Running checks\u2026') -> None:
+        super().__init__()
+        self._title = title
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='cl-dialog'):
+            yield Static(self._title, id='cl-title', markup=False)
+            yield LoadingIndicator()
+
+    def update_status(self, text: str) -> None:
+        """Update the title text from outside the modal."""
+        self.query_one('#cl-title', Static).update(text)
+
+
+class TrackingCheckResultsScreen(ModalScreen[str]):
+    """Modal for displaying CI check results in a matrix view.
+
+    The matrix shows patches as rows and check tools as columns, with
+    colour-coded status indicators.  Press Enter on a row to see
+    detailed results in a scrollable view.
+
+    Dismiss result: ``'close'`` for normal close, ``'rerun'`` to re-run
+    all checks ignoring the cache.
+    """
+
+    BINDINGS = [
+        Binding('escape', 'close_or_back', 'Close'),
+        Binding('q', 'close_or_back', 'Close', show=False),
+        Binding('enter', 'details', 'Details'),
+        Binding('R', 'rerun', 'Rerun', key_display='R'),
+        Binding('j', 'cursor_down', 'Down', show=False),
+        Binding('k', 'cursor_up', 'Up', show=False),
+        Binding('space', 'page_down', 'Page down', show=False),
+        Binding('backspace', 'page_up', 'Page up', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    TrackingCheckResultsScreen {
+        align: center middle;
+    }
+    #tcr-dialog {
+        width: 90%;
+        height: 80%;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #tcr-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #tcr-matrix {
+        height: 1fr;
+    }
+    #tcr-detail {
+        height: 1fr;
+    }
+    #tcr-hint {
+        height: 1;
+        dock: bottom;
+        color: $text;
+        background: $panel;
+    }
+    """
+
+    _STATUS_DOTS = {
+        'pass': ('\u25cf', 'green'),
+        'warn': ('\u25cf', 'yellow'),
+        'fail': ('\u25cf', 'red'),
+    }
+
+    def __init__(
+            self,
+            title: str,
+            patch_labels: List[str],
+            patch_subjects: List[str],
+            tools: List[str],
+            matrix: Dict[Tuple[int, str], Dict[str, str]],
+    ) -> None:
+        """Create a check results modal.
+
+        *patch_labels*: display labels like ``['0/3', '1/3', '2/3', '3/3']``.
+        *patch_subjects*: clean subject for each patch (same order as labels).
+        *tools*: column headers (tool names).
+        *matrix*: ``{(patch_idx, tool): {status, summary, url, details}}``.
+        """
+        super().__init__()
+        self._title = title
+        self._patch_labels = patch_labels
+        self._patch_subjects = patch_subjects
+        self._tools = tools
+        self._matrix = matrix
+        self._in_detail = False
+        self._cursor_row = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='tcr-dialog'):
+            yield Static(self._title, id='tcr-title', markup=False)
+            yield RichLog(id='tcr-matrix', highlight=False, wrap=False,
+                          markup=True, auto_scroll=False)
+            yield RichLog(id='tcr-detail', highlight=False, wrap=True,
+                          markup=True, auto_scroll=False)
+            yield Static(Text('[j/k] navigate  [Enter] details  [R] rerun  [q] close'),
+                         id='tcr-hint')
+
+    def on_mount(self) -> None:
+        self.query_one('#tcr-detail', RichLog).display = False
+        self.call_after_refresh(self._render_matrix)
+
+    def _render_matrix(self) -> None:
+        viewer = self.query_one('#tcr-matrix', RichLog)
+        viewer.clear()
+        viewer.scroll_home(animate=False)
+
+        if not self._tools:
+            viewer.write(Text('No check results to display.', style='dim'))
+            return
+
+        # Compute column widths
+        label_w = max(len(lbl) for lbl in self._patch_labels) if self._patch_labels else 5
+        col_w = max(max(len(t) for t in self._tools), 8)
+        ci_total = (col_w + 2) * len(self._tools)
+        # pointer(2) + label + gap(2) + subject + gap(2) + ci_columns
+        fixed_w = 2 + label_w + 2 + 2 + ci_total
+        avail_w = viewer.size.width - 2 if viewer.size.width else 80
+        subj_w = max(avail_w - fixed_w, 10)
+
+        # Header row
+        header = Text()
+        header.append(' ' * (2 + label_w + 2))
+        header.append(f'{"Subject":<{subj_w}s}  ', style='bold')
+        for tool in self._tools:
+            header.append(f'{tool:^{col_w}s}  ', style='bold')
+        viewer.write(header)
+        viewer.write(Text('\u2500' * (fixed_w + subj_w)))
+
+        # Data rows with cursor highlight
+        for pidx, label in enumerate(self._patch_labels):
+            is_selected = (pidx == self._cursor_row)
+            row = Text(style='on grey27' if is_selected else '')
+            pointer = '\u25b6 ' if is_selected else '  '
+            row.append(pointer)
+            row.append(f'{label:>{label_w}s}', style='bold' if is_selected else '')
+            row.append('  ')
+            # Truncated subject
+            subj = self._patch_subjects[pidx] if pidx < len(self._patch_subjects) else ''
+            if len(subj) > subj_w:
+                subj = subj[:subj_w - 1] + '\u2026'
+            row.append(f'{subj:<{subj_w}s}  ', style='' if is_selected else 'dim')
+            for tool in self._tools:
+                cell = self._matrix.get((pidx, tool))
+                if cell:
+                    status = cell.get('status', '')
+                    dot, colour = self._STATUS_DOTS.get(status, ('\u2013', 'dim'))
+                    cell_text = f'{dot} {status:<{col_w - 2}s}'
+                    row.append(cell_text, style=colour)
+                    row.append('  ')
+                else:
+                    dash = '\u2013'
+                    row.append(f'{dash:^{col_w}s}  ', style='dim')
+            viewer.write(row)
+
+    def _render_detail(self, pidx: int) -> None:
+        detail = self.query_one('#tcr-detail', RichLog)
+        detail.clear()
+        detail.scroll_home(animate=False)
+
+        label = self._patch_labels[pidx] if pidx < len(self._patch_labels) else '?'
+        detail.write(Text(f'Details for {label}', style='bold'))
+        detail.write('')
+
+        found_any = False
+        for tool in self._tools:
+            cell = self._matrix.get((pidx, tool))
+            if not cell:
+                continue
+            found_any = True
+            status = cell.get('status', '')
+            dot, colour = self._STATUS_DOTS.get(status, ('\u2022', 'dim'))
+            # Build panel body
+            body = Text()
+            summary = cell.get('summary', '')
+            if summary:
+                body.append(f'{summary}\n')
+            details_text = cell.get('details', '')
+            if details_text:
+                body.append('\n')
+                self._render_detail_lines(body, details_text)
+            url = cell.get('url', '')
+            if url:
+                body.append(f'\n\u2192 {url}', style='dim')
+            # Title: "● tool — STATUS"
+            title = Text()
+            title.append(f'{dot} ', style=colour)
+            title.append(f'{tool}', style='bold')
+            title.append(f' \u2014 {status.upper()}', style=colour)
+            panel = Panel(
+                body,
+                box=box.ROUNDED,
+                border_style=colour,
+                title=title,
+                title_align='left',
+                expand=True,
+                padding=(0, 1),
+            )
+            detail.write(panel)
+
+        if not found_any:
+            detail.write(Text('No results for this patch.', style='dim'))
+
+    def _render_detail_lines(self, body: Text, details: str) -> None:
+        """Append detail lines to *body*, handling JSON check lists specially."""
+        try:
+            check_list = json.loads(details)
+            if not isinstance(check_list, list):
+                raise ValueError
+        except (json.JSONDecodeError, ValueError):
+            # Plain text fallback
+            for line in details.splitlines():
+                body.append(f'{line}\n')
+            return
+        # Structured check list (from patchwork or checkpatch)
+        for entry in check_list:
+            if not isinstance(entry, dict):
+                continue
+            status = entry.get('status', '')
+            dot, colour = self._STATUS_DOTS.get(status, ('\u2022', 'dim'))
+            context = entry.get('context', '')
+            state = entry.get('state', status)
+            desc = entry.get('description', '')
+            url = entry.get('url', '')
+            body.append(f'{dot} ', style=colour)
+            if context:
+                # Patchwork-style: state + context + description
+                body.append(f'{state}  ', style=colour)
+                parts = [context]
+                if desc:
+                    parts.append(desc)
+                body.append(' \u2014 '.join(parts))
+            else:
+                # Checkpatch-style: just the finding text
+                body.append(desc)
+            body.append('\n')
+            if url:
+                body.append(f'  \u2192 {url}\n', style='dim')
+
+    def action_details(self) -> None:
+        if self._in_detail:
+            return
+        pidx = self._cursor_row
+        self._in_detail = True
+        self.query_one('#tcr-matrix', RichLog).display = False
+        self.query_one('#tcr-detail', RichLog).display = True
+        self.query_one('#tcr-hint', Static).update(Text('[q] back to matrix'))
+        self._render_detail(pidx)
+
+    def action_close_or_back(self) -> None:
+        if self._in_detail:
+            self._in_detail = False
+            self.query_one('#tcr-detail', RichLog).display = False
+            self.query_one('#tcr-matrix', RichLog).display = True
+            self.query_one('#tcr-hint', Static).update(
+                Text('[j/k] navigate  [Enter] details  [R] rerun  [q] close'))
+            return
+        self.dismiss('close')
+
+    def action_rerun(self) -> None:
+        self.dismiss('rerun')
+
+    def action_cursor_down(self) -> None:
+        if self._in_detail:
+            self.query_one('#tcr-detail', RichLog).scroll_down()
+            return
+        if self._cursor_row < len(self._patch_labels) - 1:
+            self._cursor_row += 1
+            self._render_matrix()
+
+    def action_cursor_up(self) -> None:
+        if self._in_detail:
+            self.query_one('#tcr-detail', RichLog).scroll_up()
+            return
+        if self._cursor_row > 0:
+            self._cursor_row -= 1
+            self._render_matrix()
+
+    def action_page_down(self) -> None:
+        if self._in_detail:
+            self.query_one('#tcr-detail', RichLog).scroll_page_down()
+            return
+        self._cursor_row = len(self._patch_labels) - 1
+        self._render_matrix()
+
+    def action_page_up(self) -> None:
+        if self._in_detail:
+            self.query_one('#tcr-detail', RichLog).scroll_page_up()
+            return
+        self._cursor_row = 0
+        self._render_matrix()

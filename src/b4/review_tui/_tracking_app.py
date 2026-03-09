@@ -42,6 +42,7 @@ from b4.review_tui._modals import (
     ArchiveConfirmScreen, RangeDiffScreen, ThankScreen,
     LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
     ActionScreen, HelpScreen, SnoozeScreen, TRACKING_HELP_LINES,
+    CheckLoadingScreen, TrackingCheckResultsScreen,
 )
 
 
@@ -329,8 +330,8 @@ class TrackingApp(App[Optional[str]]):
     """
 
     BINDING_GROUPS = {
-        'review': 'Series', 'view': 'Series', 'range_diff': 'Series',
-        'action': 'Series',
+        'review': 'Series', 'check': 'Series', 'view': 'Series',
+        'range_diff': 'Series', 'action': 'Series',
         'update': 'App', 'limit': 'App', 'suspend': 'App',
         'patchwork': 'App', 'quit': 'App', 'help': 'App',
     }
@@ -342,8 +343,9 @@ class TrackingApp(App[Optional[str]]):
         Binding('escape', 'hide_details', 'Close', show=False),
         # Series-specific actions
         Binding('r', 'review', 'review'),
-        Binding('d', 'range_diff', 'range-diff'),
+        Binding('c', 'check', 'ci'),
         Binding('a', 'action', 'action'),
+        Binding('d', 'range_diff', 'range-diff'),
         # App-global actions
         Binding('u', 'update', 'update'),
         Binding('l', 'limit', 'limit'),
@@ -375,6 +377,8 @@ class TrackingApp(App[Optional[str]]):
         # Remember last snooze choices within the session
         self._last_snooze_source: str = ''
         self._last_snooze_input: str = ''
+        # CI check modal state
+        self._check_loading: Optional['CheckLoadingScreen'] = None
 
     def _refresh_msg_count(self, series: Dict[str, Any],
                            total_messages: int) -> None:
@@ -1398,6 +1402,18 @@ class TrackingApp(App[Optional[str]]):
         }
         series['taken'] = take_info
         series.setdefault('takes', []).append(take_info)
+
+        # Record the branch tip commit for CI lookups (e.g. KernelCI).
+        # HEAD is still on target_branch at this point.
+        ecode, tip_out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
+        if ecode == 0 and tip_out.strip():
+            tip_entry = {
+                'date': take_info['date'],
+                'branch': target_branch,
+                'sha': tip_out.strip(),
+            }
+            series.setdefault('branch-tips', []).append(tip_entry)
+
         tracking['series'] = series
 
         patches = tracking.get('patches', [])
@@ -1976,6 +1992,216 @@ class TrackingApp(App[Optional[str]]):
 
         logger.info('Successfully rebased %s onto %s', review_branch, target_head[:12])
         _wait_for_enter()
+
+    def action_check(self) -> None:
+        """Run CI checks on the selected series and show results."""
+        self._run_checks(force=False)
+
+    def _run_checks(self, force: bool = False) -> None:
+        """Launch CI check worker for the selected series."""
+        if not self._selected_series:
+            return
+        message_id = self._selected_series.get('message_id', '')
+        if not message_id:
+            self.notify('No message-id for this series', severity='error')
+            return
+        series_subject = self._selected_series.get('subject', '(no subject)')
+        change_id = self._selected_series.get('change_id', '')
+        self._check_loading = CheckLoadingScreen()
+        self.push_screen(self._check_loading)
+        self.run_worker(
+            lambda: self._fetch_and_check(message_id, series_subject,
+                                          change_id=change_id, force=force),
+            name='_check_worker', thread=True)
+
+    def _dismiss_loading(self, msg: str = '', severity: str = '') -> None:
+        """Dismiss the check loading screen and optionally notify."""
+        def _do() -> None:
+            if self._check_loading is not None and self._check_loading.is_attached:
+                self._check_loading.dismiss(None)
+            if msg:
+                self.notify(msg, severity=severity)  # type: ignore[arg-type]
+        self.app.call_from_thread(_do)
+
+    def _update_loading(self, text: str) -> None:
+        """Update the loading screen status text."""
+        def _do() -> None:
+            if self._check_loading is not None and self._check_loading.is_attached:
+                self._check_loading.update_status(text)
+        self.app.call_from_thread(_do)
+
+    def _fetch_and_check(self, message_id: str, series_subject: str,
+                         change_id: str = '', force: bool = False) -> None:
+        """Fetch thread, run checks, and push results modal (worker thread)."""
+        import b4.review.checks as checks
+
+        perpatch_cmds, series_cmds = checks.load_check_cmds()
+        if not perpatch_cmds and not series_cmds:
+            self._dismiss_loading('No check commands configured', 'warning')
+            return
+
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            self._dismiss_loading('Not in a git repository', 'error')
+            return
+
+        # Patchwork config for _builtin_patchwork
+        config = b4.get_main_config()
+        pwkey = str(config.get('pw-key', ''))
+        pwurl = str(config.get('pw-url', ''))
+
+        # Dump tracking data to a temp file for external scripts
+        extra_env: Dict[str, str] = {}
+        tracking_file: Optional[str] = None
+        if change_id:
+            review_branch = f'b4/review/{change_id}'
+            try:
+                _cover, tracking = b4.review.load_tracking(topdir, review_branch)
+                import tempfile
+                fd, tracking_file = tempfile.mkstemp(prefix='b4-tracking-', suffix='.json')
+                with os.fdopen(fd, 'w') as fp:
+                    json.dump(tracking, fp, indent=2)
+                extra_env['B4_TRACKING_FILE'] = tracking_file
+            except SystemExit:
+                pass
+
+        # Fetch the thread
+        self._update_loading('Fetching thread\u2026')
+        with _quiet_worker():
+            msgs = b4.get_pi_thread_by_msgid(message_id, quiet=True)
+        if not msgs:
+            self._dismiss_loading('Could not fetch thread from lore', 'error')
+            return
+
+        # Separate patches from non-patches using LoreSubject
+        cover_msg: Optional[tuple[str, email.message.EmailMessage]] = None
+        patches: list[tuple[str, email.message.EmailMessage]] = []
+        for msg in msgs:
+            subject = msg.get('subject', '')
+            if not subject:
+                continue
+            lsubj = b4.LoreSubject(subject)
+            msgid = msg.get('message-id', '').strip('<> ')
+            if not msgid:
+                continue
+            if lsubj.counter == 0 and lsubj.expected > 0:
+                cover_msg = (msgid, msg)
+            elif lsubj.patch and not lsubj.reply:
+                patches.append((msgid, msg))
+
+        if not patches and not cover_msg:
+            self._dismiss_loading('No patches found in thread', 'error')
+            return
+
+        # Sort patches by counter
+        patches.sort(key=lambda p: b4.LoreSubject(p[1].get('subject', '')).counter)
+
+        # Open or create cache DB
+        conn = checks.get_db()
+        checks.cleanup_old(conn)
+
+        expected = patches[0][1].get('subject', '') if patches else ''
+        lsubj0 = b4.LoreSubject(expected)
+        num_patches = lsubj0.expected if lsubj0.expected > 0 else len(patches)
+
+        # Build patch labels and subjects
+        patch_labels: list[str] = []
+        patch_subjects: list[str] = []
+        ordered_msgs: list[tuple[str, email.message.EmailMessage]] = []
+        if cover_msg:
+            patch_labels.append(f'0/{num_patches}')
+            patch_subjects.append(b4.LoreSubject(cover_msg[1].get('subject', '')).subject)
+            ordered_msgs.append(cover_msg)
+        for idx, (mid, msg) in enumerate(patches, 1):
+            patch_labels.append(f'{idx}/{num_patches}')
+            patch_subjects.append(b4.LoreSubject(msg.get('subject', '')).subject)
+            ordered_msgs.append((mid, msg))
+
+        # Check cache first (clear and skip when force-rerunning)
+        all_msgids = [mid for mid, _ in ordered_msgs]
+        cached: dict[str, list[dict[str, str]]] = {}
+        if force:
+            checks.delete_results(conn, all_msgids)
+        else:
+            cached = checks.get_cached_results(conn, all_msgids)
+
+        all_tools: set[str] = set()
+        matrix: dict[tuple[int, str], dict[str, str]] = {}
+
+        # Populate matrix from cache
+        for pidx, (mid, _msg) in enumerate(ordered_msgs):
+            for result in cached.get(mid, []):
+                tool = result['tool']
+                all_tools.add(tool)
+                matrix[(pidx, tool)] = result
+
+        # Collect new results for batch DB storage
+        new_results: dict[str, list[dict[str, str]]] = {}
+
+        # Determine which patches still need checking
+        if perpatch_cmds:
+            start_idx = 1 if cover_msg else 0
+            unchecked: list[tuple[int, str, email.message.EmailMessage]] = []
+            for pidx_offset, (mid, _msg) in enumerate(ordered_msgs[start_idx:]):
+                pidx = pidx_offset + start_idx
+                if mid not in cached:
+                    unchecked.append((pidx, mid, _msg))
+
+            for pidx, mid, _msg in unchecked:
+                label = patch_labels[pidx]
+                self._update_loading(f'Running checks\u2026 {label}')
+                single_results = checks.run_perpatch_checks(
+                    [(mid, _msg)], perpatch_cmds, topdir, pwkey, pwurl,
+                    extra_env=extra_env)
+                for result in single_results.get(mid, []):
+                    tool = result['tool']
+                    all_tools.add(tool)
+                    matrix[(pidx, tool)] = result
+                    new_results.setdefault(mid, []).append(result)
+
+        # Run per-series checks (only if not cached)
+        if series_cmds:
+            target = cover_msg if cover_msg else (ordered_msgs[0] if ordered_msgs else None)
+            if target and target[0] not in cached:
+                self._update_loading('Running series checks\u2026')
+                series_results = checks.run_series_checks(
+                    target, series_cmds, topdir, pwkey, pwurl,
+                    extra_env=extra_env)
+                cover_idx = 0
+                for result in series_results:
+                    tool = result['tool']
+                    all_tools.add(tool)
+                    matrix[(cover_idx, tool)] = result
+                    new_results.setdefault(target[0], []).append(result)
+
+        # Batch-store all new results
+        for mid, results in new_results.items():
+            checks.store_results(conn, mid, results)
+        conn.close()
+
+        # Clean up the tracking data temp file
+        if tracking_file:
+            try:
+                os.unlink(tracking_file)
+            except OSError:
+                pass
+
+        # Build title and swap loading screen for results
+        title = f'CI Check Results: {series_subject}'
+        tools_sorted = sorted(all_tools)
+
+        def _on_result(result: Optional[str]) -> None:
+            if result == 'rerun':
+                self._run_checks(force=True)
+
+        def _push_modal() -> None:
+            if self._check_loading is not None and self._check_loading.is_attached:
+                self._check_loading.dismiss(None)
+            self.push_screen(TrackingCheckResultsScreen(
+                title, patch_labels, patch_subjects, tools_sorted, matrix),
+                callback=_on_result)
+
+        self.app.call_from_thread(_push_modal)
 
     def action_range_diff(self) -> None:
         """Show range-diff between the current review and another revision."""

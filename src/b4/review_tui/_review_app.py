@@ -200,7 +200,6 @@ class ReviewApp(App[None]):
         Binding('d', 'patch_done', 'done'),
         Binding('x', 'patch_skip', 'skip'),
         Binding('P', 'prior_review', 'prior', key_display='P'),
-        Binding('C', 'check', 'check', key_display='C'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings
@@ -237,7 +236,6 @@ class ReviewApp(App[None]):
         self._commit_subjects: List[str] = session['commit_subjects']
         self._sha_map: Dict[str, Tuple[str, int]] = session['sha_map']
         self._abbrev_len: int = session['abbrev_len']
-        self._check_cmds: List[List[str]] = session['check_cmds']
         self._default_identity: str = session['default_identity']
         self._usercfg: b4.ConfigDictT = session['usercfg']
         self._reviewer_initials: str = _make_initials(session['usercfg'].get('name', ''))
@@ -831,10 +829,6 @@ class ReviewApp(App[None]):
 
     def check_action(self, action: str, parameters: Tuple[Any, ...]) -> Optional[bool]:
         """Show/hide mode-specific bindings in the footer."""
-        if action == 'check':
-            if not self._check_cmds:
-                return False
-            return not self._preview_mode
         if action == 'agent':
             config = b4.get_main_config()
             if not config.get('review-agent-command') or not config.get('review-agent-prompt-path'):
@@ -1684,63 +1678,6 @@ class ReviewApp(App[None]):
             self._show_content(self._selected_idx)
             self.notify('Agent review data loaded')
 
-    def action_check(self) -> None:
-        """Run per-patch check commands."""
-        if not self._check_cmds:
-            self.notify('No check command configured', severity='warning')
-            return
-
-        if self._selected_idx == 0:
-            shas_to_check = list(self._commit_shas)
-        else:
-            patch_idx = self._selected_idx - 1
-            if patch_idx >= len(self._commit_shas):
-                return
-            shas_to_check = [self._commit_shas[patch_idx]]
-
-        with self.suspend():
-            for check_sha in shas_to_check:
-                short = check_sha[:self._abbrev_len]
-                sha_entry = self._sha_map.get(short)
-                if sha_entry:
-                    cidx = sha_entry[1]
-                    subj = self._commit_subjects[cidx] if cidx < len(self._commit_subjects) else ''
-                    logger.info('%s', subj)
-                ecode, patch_email = b4.git_run_command(
-                    self._topdir, ['format-patch', '--stdout', '-1', check_sha])
-                if ecode > 0:
-                    logger.warning('Could not generate patch for %s', short)
-                    continue
-                patch_bytes = patch_email.encode()
-                for check_cmd in self._check_cmds:
-                    mycmd = os.path.basename(check_cmd[0])
-                    cecode, cout, cerr = b4._run_command(check_cmd, stdin=patch_bytes,
-                                                          rundir=self._topdir)
-                    out_str = cout.strip().decode(errors='replace') if cout.strip() else ''
-                    err_str = cerr.strip().decode(errors='replace') if cerr.strip() else ''
-                    if out_str:
-                        for oline in out_str.splitlines():
-                            if oline.startswith('-:'):
-                                oline = oline[2:]
-                            flag = 'fail' if 'ERROR:' in oline else 'warning'
-                            logger.info('    %s %s: %s',
-                                        b4.CI_FLAGS_FANCY.get(flag, ''), mycmd, oline)
-                    if err_str:
-                        for eline in err_str.splitlines():
-                            if eline.startswith('-:'):
-                                eline = eline[2:]
-                            logger.info('    %s %s: %s',
-                                        b4.CI_FLAGS_FANCY.get('fail', ''), mycmd, eline)
-                    if not out_str and not err_str:
-                        if cecode:
-                            logger.info('    %s %s: exited with error code %d',
-                                        b4.CI_FLAGS_FANCY.get('fail', ''), mycmd, cecode)
-                        else:
-                            logger.info('    %s %s: passed all checks',
-                                        b4.CI_FLAGS_FANCY.get('success', ''), mycmd)
-            logger.info('---')
-            _wait_for_enter()
-
     def _save_tracking(self) -> None:
         """Save tracking data to the review branch."""
         b4.review.save_tracking(self._topdir, self._cover_text, self._tracking)
@@ -1758,6 +1695,5 @@ class ReviewApp(App[None]):
         """Show help overlay."""
         config = b4.get_main_config()
         has_agent = bool(config.get('review-agent-command') and config.get('review-agent-prompt-path'))
-        has_check = bool(self._check_cmds)
-        self.push_screen(HelpScreen(_review_help_lines(has_agent=has_agent, has_check=has_check)))
+        self.push_screen(HelpScreen(_review_help_lines(has_agent=has_agent)))
 

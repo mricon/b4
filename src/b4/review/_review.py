@@ -12,7 +12,6 @@ import email.utils
 import json
 import os
 import re
-import shlex
 import shutil
 import textwrap
 import sys
@@ -1423,8 +1422,7 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
 
     Returns dict with: topdir, branch, cover_text, tracking, series,
     patches, base_commit, commit_shas, commit_subjects, sha_map,
-    abbrev_len, check_cmds, default_identity, usercfg,
-    cover_subject_clean
+    abbrev_len, default_identity, usercfg, cover_subject_clean
     """
     topdir = b4.git_get_toplevel()
     if not topdir:
@@ -1502,25 +1500,6 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     user_email = usercfg.get('email', 'unknown@example.com')
     default_identity = f'{user_name} <{user_email}>'
 
-    # Set up per-patch check commands
-    config = b4.get_main_config()
-    _checkcfg = config.get('review-perpatch-check-cmd')
-    checkcmds: List[str] = []
-    if isinstance(_checkcfg, str):
-        checkcmds = [_checkcfg]
-    elif isinstance(_checkcfg, list):
-        checkcmds = _checkcfg
-    if not checkcmds:
-        # Use recommended checkpatch defaults if we find checkpatch
-        checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
-        if os.access(checkpatch, os.X_OK):
-            checkcmds = [f'{checkpatch} -q --terse --no-summary --mailback']
-    check_cmds: List[List[str]] = []
-    for cmdstr in checkcmds:
-        sp = shlex.shlex(cmdstr, posix=True)
-        sp.whitespace_split = True
-        check_cmds.append(list(sp))
-
     # Integrate agent reviews from .git/b4-review/
     _integrate_agent_reviews(topdir, cover_text, tracking, commit_shas, patches)
 
@@ -1543,7 +1522,6 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
         'commit_subjects': commit_subjects,
         'sha_map': sha_map,
         'abbrev_len': abbrev_len,
-        'check_cmds': check_cmds,
         'default_identity': default_identity,
         'usercfg': usercfg,
         'cover_subject_clean': cover_subject_clean,

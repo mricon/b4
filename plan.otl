@@ -62,7 +62,7 @@ v0.15
 		[X] Single-char Unicode status symbols column replacing verbose status text
 		[X] Four status groups in listing: Active, New, Waiting, Gone
 		[X] Compact [subsystem,vN,0/M] subject prefix in listing via LoreSubject
-		[X] Fups column in listing showing total+new followup count
+		[X] Msgs column in listing showing total+unseen message count
 		[X] A·R·T trailer count column in listing
 	[X] Cache thread mbox as git blob; pass community context to AI agent
 		[X] _store_thread_blob() serializes via save_mboxrd_mbox() and writes git blob
@@ -151,9 +151,19 @@ v0.15
 		[X] PriorReviewScreen modal for maintainer to review own prior feedback
 		[X] P keybinding (hidden when no context available)
 		[X] Agent prompt: prior-review-context and prior-thread-context-blob sections
-	[_] Non-Patchwork CI integration for external tool results
+	[X] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails
+[ ] General improvements
+	[_] Consolidate duplicated base-commit guessing logic in _tracking_app.py (~30 lines at _do_checkout and _do_update_revision)
+	[_] Consolidate duplicated post-take finalization in _tracking_app.py (~15 lines at _do_take_merge and _do_take_am)
+	[_] Consolidate duplicated newer_versions discovery in _tracking_app.py (~18 lines at action_take and action_update_revision)
+	[_] Consolidate multiple DB connection opens in action_review (_tracking_app.py)
+	[_] Fix potential conn leak in _load_series — use try/finally pattern (_tracking_app.py)
+	[_] Move deferred imports to top-level: datetime (_tracking_app.py), re (_review_app.py), email.utils (_review_app.py)
+	[_] Replace __import__('re') hack with top-level import re in _modals.py
+	[_] Remove redundant local import io statements in _tracking_app.py
+	[_] Move inline from typing import Set to top-level in _review.py
 [ ] `b4 ty` interactive mode
 	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
 [ ] `b4 trailers` interactive mode

@@ -3253,8 +3253,9 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
     # some options can be provided via the toplevel .b4-config file,
     # so load them up and use as defaults
     topdir = git_get_toplevel()
-    wtglobs = ['prep-*-check-cmd', 'send-*', '*mask', '*template*', 'trailer*', 'pw-*']
-    multivals = ['keyringsrc', 'am-perpatch-check-cmd', 'prep-perpatch-check-cmd']
+    wtglobs = ['prep-*-check-cmd', 'review-*-check-cmd', 'send-*', '*mask', '*template*', 'trailer*', 'pw-*']
+    multivals = ['keyringsrc', 'am-perpatch-check-cmd', 'prep-perpatch-check-cmd',
+                  'review-perpatch-check-cmd', 'review-series-check-cmd']
     if topdir:
         wtcfg = os.path.join(topdir, '.b4-config')
         if os.access(wtcfg, os.R_OK):

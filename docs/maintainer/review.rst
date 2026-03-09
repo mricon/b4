@@ -141,6 +141,8 @@ Key           Action
 ``r``         Review — open the review interface for the selected series
 ``d``         Range-diff between revisions
 ``a``         Action menu — context-sensitive actions (see below)
+``c``         CI checks — run configured check commands and show results
+              (see :ref:`ci_check_protocol`)
 ``u``         Update — fetch latest trailers, check for newer revisions,
               and refresh message counts
 ``l``         Limit — filter the list of displayed series
@@ -285,7 +287,6 @@ Key                        Action
 ``a``                      Agent — run review LLM agent (if configured)
 ``d``                      Done — toggle "done" state on the current patch
 ``x``                      Skip — toggle "skip" state on the current patch
-``C``                      Check — run configured per-patch check command
 ``e``                      Toggle email mode
 ``s``                      Shell — suspend to an interactive sub-shell
 ``?``                      Help — show keybinding reference
@@ -605,6 +606,122 @@ Optional flags
   configured attestation key (same as ``b4 send``). This flag disables
   signing for the current session. Can also be set permanently via
   :term:`b4.review-no-patatt-sign` (see :ref:`review_settings`).
+
+.. _ci_check_protocol:
+
+CI check integration
+--------------------
+
+The tracking list supports running CI checks on any series via the
+``c`` keybinding. Results are displayed in a matrix modal showing each
+patch as a row and each check tool as a column, with colour-coded
+status indicators. Press ``Enter`` on a row to drill into detailed
+results, or ``R`` to force a re-run that bypasses the cache.
+
+Check results are cached in a SQLite database
+(``$XDG_DATA_HOME/b4/review/ci.sqlite3``) keyed by message-id and
+tool name, so pressing ``c`` again shows cached results instantly.
+
+Built-in handlers
+~~~~~~~~~~~~~~~~~
+
+B4 includes two built-in check handlers that require no external
+scripts:
+
+``_builtin_checkpatch``
+  Runs ``scripts/checkpatch.pl`` from your source tree against each
+  patch. Auto-detected when no :term:`b4.review-perpatch-check-cmd` is
+  configured and ``scripts/checkpatch.pl`` exists and is executable.
+
+``_builtin_patchwork``
+  Queries the Patchwork REST API for CI check results on each patch.
+  Auto-enabled when :term:`b4.pw-url` and :term:`b4.pw-project` are
+  configured. Individual check contexts (e.g. ``tree_selection``,
+  ``build_32bit``) are aggregated into a single ``patchwork`` column
+  showing the worst-case status; the detail view lists each check
+  individually with coloured status indicators.
+
+Writing an external check script
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+External check commands receive a single RFC 2822 email message on
+stdin (one patch for per-patch commands, or the cover letter for
+per-series commands) and must print a JSON array to stdout::
+
+    [
+      {
+        "tool": "my-ci",
+        "status": "pass",
+        "summary": "Build succeeded",
+        "url": "https://ci.example.com/builds/12345",
+        "details": "Optional multi-line details"
+      }
+    ]
+
+Each object in the array represents one check result:
+
+============  ==========  ================================================
+Field         Required    Description
+============  ==========  ================================================
+``tool``      yes         Column header name in the results matrix
+``status``    yes         One of ``pass``, ``warn``, ``fail``
+``summary``   no          One-line summary shown in the detail view
+``url``       no          Link for the maintainer to open in a browser
+``details``   no          Multi-line text for the scrollable detail view
+============  ==========  ================================================
+
+An empty array ``[]`` means the tool has nothing to report for this
+message.
+
+A non-zero exit code with no JSON output on stdout is treated as an
+execution error and displayed as a failure in the results matrix.
+
+A script can return multiple result objects to report results from
+several tools in one invocation.
+
+Environment variables
+^^^^^^^^^^^^^^^^^^^^^
+
+The following environment variables are set when an external check
+command runs:
+
+``B4_TRACKING_FILE``
+  Path to a temporary JSON file containing the full tracking data for
+  the series being checked. This includes revision info, patch
+  metadata, take history, branch tips, and any other state recorded by
+  b4. The file is removed after checks complete. Not set if the series
+  has no tracking data (e.g. not yet checked out).
+
+  Scripts can query this file with ``jq`` or parse it in Python to
+  extract whatever context they need — for example, looking up branch
+  tip commits for KernelCI queries::
+
+      import json, os
+      tracking = json.load(open(os.environ['B4_TRACKING_FILE']))
+      tips = tracking.get('series', {}).get('branch-tips', [])
+      for tip in tips:
+          # tip has 'date', 'branch', 'sha'
+          query_kernelci(tip['sha'], tip['branch'])
+
+Example configuration
+~~~~~~~~~~~~~~~~~~~~~
+
+::
+
+    [b4]
+        # Built-in checkpatch (auto-detected, but can be set explicitly)
+        review-perpatch-check-cmd = _builtin_checkpatch
+
+        # Custom per-patch check
+        review-perpatch-check-cmd = /path/to/my-perpatch-check.py
+
+        # Per-series check (cover letter piped to stdin)
+        review-series-check-cmd = /path/to/my-series-check.py
+
+An example script demonstrating the JSON protocol is included in the
+b4 source tree at ``misc/review-ci-example.py``. It produces random
+pass/warn/fail results and can be used for testing and as a starting
+point for your own check scripts.
 
 Configuration
 -------------

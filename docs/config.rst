@@ -361,12 +361,29 @@ These settings control ``b4 review`` TUI behaviour.
      .. versionadded:: v0.15
 
    :term:`b4.review-perpatch-check-cmd`
-     The command to run for per-patch checks in the review TUI (triggered
-     by the ``C`` keybinding). The patch is piped through stdin. If this
-     option is defined multiple times, all commands will be run. If it is
-     not defined and b4 finds ``scripts/checkpatch.pl`` at the top of
-     your git tree, it uses the same default as
-     :term:`b4.am-perpatch-check-cmd`.
+     Command to run once per patch when CI checks are triggered (``c`` in
+     the tracking list). Each patch is piped to stdin as an RFC 2822
+     message. The command must print a JSON array of result objects to
+     stdout (see :ref:`ci_check_protocol`). If this option is defined
+     multiple times, all commands are run. If it is not defined and b4
+     finds ``scripts/checkpatch.pl`` at the top of your git tree,
+     ``checkpatch.pl`` is used automatically. When Patchwork is
+     configured (:term:`b4.pw-url` and :term:`b4.pw-project`), Patchwork
+     CI results are also fetched automatically.
+
+     The special value ``_builtin_checkpatch`` invokes the built-in
+     checkpatch handler without forking a subprocess.
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
+   :term:`b4.review-series-check-cmd`
+     Command to run once per series when CI checks are triggered (``c``
+     in the tracking list). The cover letter (or first patch if there is
+     no cover) is piped to stdin as an RFC 2822 message. Same JSON
+     protocol as :term:`b4.review-perpatch-check-cmd`. If defined
+     multiple times, all commands are run.
 
      Default: ``None``
 
