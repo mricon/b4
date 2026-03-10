@@ -2111,6 +2111,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
             'promoted': 0,
             'errors': 0,
             'gone': 0,
+            'followup_updated': 0,
         }
 
     def compose(self) -> ComposeResult:
@@ -2130,8 +2131,6 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
 
     def _do_updates(self) -> Dict[str, int]:
         import b4.review
-
-        prefetched: Dict[Tuple[str, int], List[Any]] = {}
 
         with _quiet_worker():
             # Rescan local review branches first so the DB reflects current
@@ -2162,24 +2161,10 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
                     self._result['promoted'] += 1
                 if r.get('error'):
                     self._result['errors'] += 1
-
-                # Collect pre-fetched thread messages so
-                # update_message_counts can skip duplicate lore lookups.
-                change_id = series.get('change_id', '')
-                revision = series.get('revision', 1)
-                thread_msgs = r.pop('_thread_msgs', None)
-                if thread_msgs is not None and change_id:
-                    prefetched[(change_id, revision)] = thread_msgs
+                if r.get('counts_updated'):
+                    self._result['followup_updated'] += 1
 
                 self.app.call_from_thread(self._update_progress, i + 1, subject)
-
-            if not self._cancelled:
-                self.app.call_from_thread(
-                    self._update_status_text, 'Fetching message counts...')
-                msg_result = b4.review.tracking.update_message_counts(
-                    self._identifier, self._series_list, topdir=self._topdir,
-                    prefetched=prefetched)
-                self._result['followup_updated'] = msg_result.get('updated', 0)
 
         return self._result
 

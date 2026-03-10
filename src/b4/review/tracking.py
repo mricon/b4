@@ -818,6 +818,64 @@ def _latest_date_from_msgs(msgs: List[Any]) -> Optional[str]:
     return latest.astimezone(datetime.timezone.utc).isoformat()
 
 
+def update_message_count_from_msgs(
+        conn: sqlite3.Connection,
+        change_id: str,
+        revision: int,
+        msgs: List[Any],
+        topdir: Optional[str] = None,
+) -> bool:
+    """Update message count and thread blob from already-fetched messages.
+
+    On the first call (``message_count IS NULL``), initialises both
+    ``message_count`` and ``seen_message_count`` to the same value so
+    no unread badge appears until *new* activity arrives.  On subsequent
+    calls only ``message_count`` is updated (so the badge reflects new
+    replies).
+
+    Returns True if the database was changed, False otherwise.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    count = len(msgs)
+    last_activity = _latest_date_from_msgs(msgs)
+
+    row = conn.execute(
+        'SELECT message_count FROM series'
+        ' WHERE change_id = ? AND revision = ?',
+        (change_id, revision)).fetchone()
+    existing_count = row['message_count'] if row else None
+
+    if existing_count is None:
+        # First fetch — initialise seen = count (no badge yet)
+        conn.execute(
+            'UPDATE series'
+            ' SET message_count = ?, seen_message_count = ?,'
+            '     last_update_check = ?, last_activity_at = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (count, count, now, last_activity, change_id, revision))
+    elif count != existing_count:
+        # Count changed — update count but not seen (badge will appear)
+        conn.execute(
+            'UPDATE series'
+            ' SET message_count = ?, last_update_check = ?,'
+            '     last_activity_at = COALESCE(?, last_activity_at)'
+            ' WHERE change_id = ? AND revision = ?',
+            (count, now, last_activity, change_id, revision))
+    else:
+        # No change — just stamp the check time, skip commit
+        conn.execute(
+            'UPDATE series SET last_update_check = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (now, change_id, revision))
+        conn.commit()
+        return False
+
+    conn.commit()
+    if topdir and msgs:
+        _store_thread_blob(topdir, change_id, msgs)
+    return True
+
+
 def fetch_thread_message_count(message_id: str) -> Optional[int]:
     """Fetch the total message count for a thread via public-inbox t.mbox.gz.
 

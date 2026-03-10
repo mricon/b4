@@ -1306,9 +1306,8 @@ def update_series_tracking(
         return result
 
     # Save thread messages before get_extra_series adds cross-version
-    # messages.  update_message_counts() can reuse these to avoid a
-    # duplicate lore fetch.
-    result['_thread_msgs'] = list(msgs)
+    # messages — used below for message count + thread blob updates.
+    thread_msgs = list(msgs)
 
     # Discover other revisions.  On the first update (no revisions in DB
     # yet) search both directions so older versions are recorded.  On
@@ -1448,6 +1447,20 @@ def update_series_tracking(
         if not save_tracking_ref(topdir, branch, cover_text, tracking):
             result['error'] = 'Error saving tracking data'
             return result
+
+    # Update message count and thread blob from the already-fetched
+    # thread messages.  This replaces the old separate Stage 2 call to
+    # update_message_counts(), avoiding duplicate lore lookups entirely.
+    skip_counts = frozenset(('archived', 'accepted', 'thanked', 'snoozed'))
+    if status not in skip_counts and thread_msgs and change_id:
+        try:
+            conn = b4.review.tracking.get_db(identifier)
+            b4.review.tracking.update_message_count_from_msgs(
+                conn, change_id, current_rev, thread_msgs, topdir=topdir)
+            conn.close()
+            result['counts_updated'] = True
+        except Exception as ex:
+            logger.warning('Could not update message counts: %s', ex)
 
     return result
 
