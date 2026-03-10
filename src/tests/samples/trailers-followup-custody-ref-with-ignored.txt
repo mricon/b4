@@ -14,7 +14,7 @@ Reviewed-by: Original Reviewer <original-reviewer@example.com>
 Signed-off-by: Original Submitter <original-submitter@example.com>
 Suggested-by: Friendly Suggester <suggested-by@example.com>
 Fixes: abcdef01234567890
-Link: https://lore.kernel.org/some@msgid.here  # bug discussion
+Link: https://lore.kernel.org/other@msgid.here  # bug discussion
 Tested-by: Followup Reviewer2 <followup-reviewer2@example.com>
 Cc: Dev Eloper1 <dev-eloper1@example.com>
 Cc: Dev Eloper2 <dev-eloper2@example.com>

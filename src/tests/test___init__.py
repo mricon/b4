@@ -286,9 +286,15 @@ def test_parse_int_range(intrange: str, upper: int, expected: List[int]) -> None
     # Same URL, different case — should still dedup
     ('https://patch.msgid.link/20240101-TEST-V1-1-ABC123@example.com',
      'https://patch.msgid.link/20240101-test-v1-1-abc123@example.com', 1),
-    # Different URLs — both should survive
+    # Different domains, same message-id — should dedup to one
     ('https://lore.kernel.org/r/20240101-test-v1-1-abc123@example.com',
-     'https://patch.msgid.link/20240101-test-v1-1-abc123@example.com', 2),
+     'https://patch.msgid.link/20240101-test-v1-1-abc123@example.com', 1),
+    # URL-encoded message-id — should match decoded form
+    ('https://lore.kernel.org/r/20240101-test-v1-1-abc123%40example.com',
+     'https://patch.msgid.link/20240101-test-v1-1-abc123@example.com', 1),
+    # Different message-ids — both should survive
+    ('https://lore.kernel.org/r/20240101-foo-v1-1-aaa@example.com',
+     'https://patch.msgid.link/20240101-bar-v1-1-bbb@example.com', 2),
 ])
 def test_link_trailer_dedup(body_link: str, extra_link: str, expect_count: int) -> None:
     """Link: trailers already in the body should not be duplicated by extras."""
@@ -566,9 +572,10 @@ class TestTakeFlow:
         assert 'Tested-by: Alice Author <alice@example.com>' in result
         assert 'Link:' not in result
 
-    def test_different_link_domains_both_kept(self, gitdir: str) -> None:
+    def test_different_link_domains_same_msgid_deduped(self, gitdir: str) -> None:
         """If the patch body has a lore.kernel.org Link: and addlink
-        generates a patch.msgid.link one, both should be kept."""
+        generates a patch.msgid.link one for the same message-id,
+        only the original should survive (dedup by message-id)."""
         patch_msgid = '20240101-drm-v1-1-aabbcc@example.com'
         lore_link = f'https://lore.kernel.org/r/{patch_msgid}'
 
@@ -615,10 +622,9 @@ class TestTakeFlow:
             gitdir, ['log', '-1', '--format=%B'])
         assert ecode == 0
 
-        expected_patch_link = f'https://patch.msgid.link/{patch_msgid}'
+        # Same message-id in both URLs, so deduped to one Link:
         assert lore_link in result
-        assert expected_patch_link in result
-        assert result.count('Link:') == 2
+        assert result.count('Link:') == 1
 
 
 @pytest.mark.parametrize('subject,extras,expected', [

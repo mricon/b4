@@ -14,7 +14,7 @@ Reviewed-by: Original Reviewer <original-reviewer@example.com>
 Signed-off-by: Original Submitter <original-submitter@example.com>
 Suggested-by: Friendly Suggester <suggested-by@example.com>
 Fixes: abcdef01234567890
-Link: https://lore.kernel.org/some@msgid.here  # bug discussion
+Link: https://lore.kernel.org/other@msgid.here  # bug discussion
 Signed-off-by: Test Override <test-override@example.com>
 ---
 

@@ -1220,13 +1220,44 @@ class LoreTrailer:
 
         return False
 
+    @staticmethod
+    def _extract_link_msgid(url: str) -> Optional[str]:
+        """Extract a message-id from a Link: URL, if present.
+
+        Handles common public-inbox and patch.msgid.link URLs by
+        looking for a path component that contains '@', which is the
+        standard message-id format.  Returns the URL-decoded,
+        lowercased message-id, or None if no message-id is found.
+        """
+        decoded = urllib.parse.unquote(url)
+        match = re.search(r'^https?://[^@]+/([^/]+@[^/]+)', decoded, re.IGNORECASE)
+        if match:
+            return match.group(1).lower()
+        return None
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, LoreTrailer):
             return NotImplemented
+        if self.lname != other.lname:
+            return False
         # We never compare extinfo, we just tack it if we find a match
-        return self.lname == other.lname and self.value.lower() == other.value.lower()
+        if self.value.lower() == other.value.lower():
+            return True
+        # For Link: trailers, compare by extracted message-id so that
+        # e.g. lore.kernel.org/r/msgid and patch.msgid.link/msgid
+        # are treated as duplicates.
+        if self.lname == 'link':
+            our_msgid = self._extract_link_msgid(self.value)
+            their_msgid = self._extract_link_msgid(other.value)
+            if our_msgid and their_msgid:
+                return our_msgid == their_msgid
+        return False
 
     def __hash__(self) -> int:
+        if self.lname == 'link':
+            msgid = self._extract_link_msgid(self.value)
+            if msgid:
+                return hash(f'link: {msgid}')
         return hash(f'{self.lname}: {self.value}')
 
     def __repr__(self) -> str:
