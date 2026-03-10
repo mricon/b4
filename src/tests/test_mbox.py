@@ -14,6 +14,12 @@ from typing import Any, Dict, List
      ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD..FETCH_HEAD'], 'shazam-git1-just-series-defaults', {}),
     ('shazam-git1-just-series', ['-M'],
      ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD^..'], 'shazam-git1-just-series-merged', {}),
+    # --add-link: Link: trailers are appended to each patch
+    ('shazam-git1-just-series', ['--add-link'],
+     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-addlink', {}),
+    # --add-link with pre-existing Link: in patch bodies: no duplicates
+    ('shazam-git1-with-link', ['--add-link'],
+     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-addlink', {}),
 ])
 def test_shazam(sampledir: str, gitdir: str, mboxf: str, shazamargs: List[str], compareargs: List[str], compareout: str, b4cfg: Dict[str, Any]) -> None:
     b4.MAIN_CONFIG.update(b4cfg)
