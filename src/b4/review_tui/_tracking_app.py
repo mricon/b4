@@ -1199,7 +1199,14 @@ class TrackingApp(App[Optional[str]]):
         panel = self.query_one('#details-panel', Vertical)
         panel.styles.height = 7
 
-        subject = series.get('subject', '(no subject)')
+        raw_subject = series.get('subject', '(no subject)')
+        revision = series.get('revision', 1)
+        num_patches = series.get('num_patches', 0) or 0
+        ls = b4.LoreSubject(raw_subject)
+        extras = ls.get_extra_prefixes(exclude=['patch'])
+        width = len(str(num_patches)) if num_patches > 0 else 1
+        parts = extras + [f'v{revision}', f'{"0" * width}/{num_patches:0{width}d}']
+        subject = f'[{",".join(parts)}] {ls.subject}'
 
         sender_name = series.get('sender_name', 'Unknown')
         sender_email = series.get('sender_email', '')
