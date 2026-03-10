@@ -153,6 +153,15 @@ class HelpScreen(ModalScreen[None]):
     BINDINGS = [
         Binding('escape', 'close', 'Close'),
         Binding('question_mark', 'close', 'Close'),
+        Binding('q', 'close', 'Close', show=False),
+        Binding('j', 'scroll_down', 'Scroll down', show=False),
+        Binding('k', 'scroll_up', 'Scroll up', show=False),
+        Binding('down', 'scroll_down', 'Scroll down', show=False),
+        Binding('up', 'scroll_up', 'Scroll up', show=False),
+        Binding('space', 'page_down', 'Page down', show=False),
+        Binding('backspace', 'page_up', 'Page up', show=False),
+        Binding('pagedown', 'page_down', 'Page down', show=False),
+        Binding('pageup', 'page_up', 'Page up', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -178,8 +187,23 @@ class HelpScreen(ModalScreen[None]):
         with Vertical(id='help-dialog'):
             yield Static(''.join(self._lines))
 
+    def _get_dialog(self) -> Vertical:
+        return self.query_one('#help-dialog', Vertical)
+
     def action_close(self) -> None:
         self.dismiss(None)
+
+    def action_scroll_down(self) -> None:
+        self._get_dialog().scroll_down()
+
+    def action_scroll_up(self) -> None:
+        self._get_dialog().scroll_up()
+
+    def action_page_down(self) -> None:
+        self._get_dialog().scroll_page_down()
+
+    def action_page_up(self) -> None:
+        self._get_dialog().scroll_page_up()
 
 
 def _review_help_lines(has_agent: bool = False) -> List[str]:
@@ -237,7 +261,7 @@ TRACKING_HELP_LINES = [
     '  ∈  accepted     Series accepted\n',
     '  ⏸  snoozed      Deferred until a date\n',
     '  ✓  thanked      Thank-you sent\n',
-    '  ∅  gone         Branch no longer present\n',
+    '  ø  gone         Branch no longer present\n',
     '  *  (suffix)     Tracking data needs refresh (press u)\n',
     '\n',
     '[bold]Columns[/bold]\n',

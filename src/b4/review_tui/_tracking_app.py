@@ -56,7 +56,7 @@ _STATUS_SYMBOLS: Dict[str, str] = {
     'accepted':  '∈',  # U+2208 element of
     'snoozed':   '⏸',  # U+23F8 double vertical bar
     'thanked':   '✓',  # U+2713 check mark
-    'gone':      '∅',  # U+2205 empty set
+    'gone':      'ø',  # U+00F8 latin small letter o with stroke
 }
 
 # Ordered status groups for the series list display.
