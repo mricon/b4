@@ -897,6 +897,7 @@ class TrackingApp(App[Optional[str]]):
                 'change_id': self._selected_series.get('change_id', ''),
                 'revision': self._selected_series.get('revision', 1),
             }
+        self._focus_change_id = self._selected_series.get('change_id')
         from b4.review_tui._lite_app import LiteThreadScreen
         self.push_screen(LiteThreadScreen(message_id,
                                           email_dryrun=self._email_dryrun,
