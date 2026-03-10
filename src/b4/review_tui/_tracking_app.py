@@ -530,33 +530,35 @@ class TrackingApp(App[Optional[str]]):
             conn = b4.review.tracking.get_db(self._identifier)
         except Exception:
             conn = None
-        for series in self._all_series:
-            change_id = series.get('change_id', '')
-            if series.get('status') == 'new':
-                branch_name = f'b4/review/{change_id}'
-                if b4.git_branch_exists(None, branch_name):
-                    series['status'] = 'reviewing'
+        try:
+            for series in self._all_series:
+                change_id = series.get('change_id', '')
+                if series.get('status') == 'new':
+                    branch_name = f'b4/review/{change_id}'
+                    if b4.git_branch_exists(None, branch_name):
+                        series['status'] = 'reviewing'
+                if conn:
+                    current_rev = series.get('revision', 1)
+                    try:
+                        newest = b4.review.tracking.get_newest_revision(conn, change_id)
+                        if newest is not None and newest > current_rev:
+                            series['has_newer'] = True
+                        revs = b4.review.tracking.get_revisions(conn, change_id)
+                        if len(revs) > 1:
+                            series['has_multiple_revisions'] = True
+                        if not revs and series.get('status') not in ('new', 'gone', 'snoozed'):
+                            series['needs_update'] = True
+                    except Exception:
+                        pass
+                # Load A/R/T trailer counts from the review branch
+                if topdir and series.get('status') in ('reviewing', 'replied', 'waiting'):
+                    branch_name = f'b4/review/{change_id}'
+                    art = _get_art_counts(topdir, branch_name)
+                    if art:
+                        series['art'] = art
+        finally:
             if conn:
-                current_rev = series.get('revision', 1)
-                try:
-                    newest = b4.review.tracking.get_newest_revision(conn, change_id)
-                    if newest is not None and newest > current_rev:
-                        series['has_newer'] = True
-                    revs = b4.review.tracking.get_revisions(conn, change_id)
-                    if len(revs) > 1:
-                        series['has_multiple_revisions'] = True
-                    if not revs and series.get('status') not in ('new', 'gone', 'snoozed'):
-                        series['needs_update'] = True
-                except Exception:
-                    pass
-            # Load A/R/T trailer counts from the review branch
-            if topdir and series.get('status') in ('reviewing', 'replied', 'waiting'):
-                branch_name = f'b4/review/{change_id}'
-                art = _get_art_counts(topdir, branch_name)
-                if art:
-                    series['art'] = art
-        if conn:
-            conn.close()
+                conn.close()
         # Sort: latest activity descending first (stable), then group index ascending (stable).
         # last_activity_at is the date of the most recent message in the thread; fall back
         # to sent_at for series that haven't been updated yet.
@@ -754,41 +756,38 @@ class TrackingApp(App[Optional[str]]):
             change_id = self._selected_series.get('change_id', '')
             revision = self._selected_series.get('revision')
             branch_name = f'b4/review/{change_id}'
-            if status == 'snoozed':
-                # Unsnooze: clear snoozed_until + restore tracking commit
-                topdir = b4.git_get_toplevel()
-                if topdir and b4.git_branch_exists(topdir, branch_name):
-                    try:
-                        self._restore_snoozed_tracking(topdir, branch_name)
-                    except (SystemExit, Exception):
-                        pass
-                try:
-                    conn = b4.review.tracking.get_db(self._identifier)
-                    b4.review.tracking.unsnooze_series(
-                        conn, change_id, 'reviewing', revision=revision)
-                    conn.close()
-                except Exception:
-                    pass
-            elif status == 'waiting':
-                # Bring back to reviewing on re-entry
-                try:
-                    conn = b4.review.tracking.get_db(self._identifier)
-                    b4.review.tracking.update_series_status(
-                        conn, change_id, 'reviewing', revision=revision)
-                    conn.close()
-                except Exception:
-                    pass
-                topdir = b4.git_get_toplevel()
-                if topdir:
-                    b4.review.update_tracking_status(topdir, branch_name, 'reviewing')
-            # Clear the followup badge — user is about to read this series
-            if self._identifier and isinstance(revision, int):
-                try:
-                    conn = b4.review.tracking.get_db(self._identifier)
+            try:
+                conn = b4.review.tracking.get_db(self._identifier)
+            except Exception:
+                conn = None
+            try:
+                if status == 'snoozed':
+                    # Unsnooze: clear snoozed_until + restore tracking commit
+                    topdir = b4.git_get_toplevel()
+                    if topdir and b4.git_branch_exists(topdir, branch_name):
+                        try:
+                            self._restore_snoozed_tracking(topdir, branch_name)
+                        except (SystemExit, Exception):
+                            pass
+                    if conn:
+                        b4.review.tracking.unsnooze_series(
+                            conn, change_id, 'reviewing', revision=revision)
+                elif status == 'waiting':
+                    # Bring back to reviewing on re-entry
+                    if conn:
+                        b4.review.tracking.update_series_status(
+                            conn, change_id, 'reviewing', revision=revision)
+                    topdir = b4.git_get_toplevel()
+                    if topdir:
+                        b4.review.update_tracking_status(topdir, branch_name, 'reviewing')
+                # Clear the followup badge — user is about to read this series
+                if conn and self._identifier and isinstance(revision, int):
                     b4.review.tracking.mark_all_messages_seen(conn, change_id, revision)
+            except Exception:
+                pass
+            finally:
+                if conn:
                     conn.close()
-                except Exception:
-                    pass
             self.exit(branch_name)
         elif self._selected_series.get('has_newer'):
             # New series with a newer revision available — ask which to review
