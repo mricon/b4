@@ -909,6 +909,65 @@ class TrackingApp(App[Optional[str]]):
         # Proceed with checkout
         self._do_checkout(lser, series)
 
+    def _discover_newer_versions(self, change_id: str,
+                                 current_rev: int,
+                                 review_branch: str) -> List[int]:
+        """Look up newer revision numbers from tracking data and DB."""
+        newer_versions: List[int] = []
+        topdir = b4.git_get_toplevel()
+        if topdir:
+            try:
+                _ct, trk = b4.review.load_tracking(topdir, review_branch)
+                newer_versions = trk.get('series', {}).get('newer-versions', [])
+            except SystemExit:
+                pass
+        if not newer_versions and self._identifier and change_id:
+            try:
+                conn = b4.review.tracking.get_db(self._identifier)
+                newest = b4.review.tracking.get_newest_revision(conn, change_id)
+                conn.close()
+                if newest is not None and newest > current_rev:
+                    newer_versions = list(range(current_rev + 1, newest + 1))
+            except Exception:
+                pass
+        return newer_versions
+
+    @staticmethod
+    def _resolve_base_commit(topdir: str,
+                             lser: 'b4.LoreSeries') -> Optional[str]:
+        """Determine the base commit for a series, guessing if needed.
+
+        Returns the base commit SHA or None if it cannot be determined.
+        """
+        base_commit = lser.base_commit
+        need_guess = False
+        if base_commit:
+            if not b4.git_commit_exists(topdir, base_commit):
+                logger.warning('Base commit %s not found in repository, will try to guess',
+                               base_commit)
+                need_guess = True
+        else:
+            need_guess = True
+
+        if need_guess:
+            logger.info('Guessing base commit...')
+            try:
+                base_commit, nblobs, mismatches = lser.find_base(
+                    topdir, branches=None, maxdays=30)
+                if mismatches == 0:
+                    logger.info('Base: %s (exact match)', base_commit)
+                elif nblobs == mismatches:
+                    logger.warning('Base: failed to find matching base')
+                    base_commit = None
+                else:
+                    logger.info('Base: %s (best guess, %s/%s blobs matched)',
+                                base_commit, nblobs - mismatches, nblobs)
+            except IndexError as ex:
+                logger.warning('Base: failed to guess (%s)', ex)
+                base_commit = None
+
+        return base_commit
+
     def _do_checkout(self, lser: b4.LoreSeries, series: Dict[str, Any]) -> None:
         """Create the review branch for the series."""
         topdir = b4.git_get_toplevel()
@@ -947,33 +1006,7 @@ class TrackingApp(App[Optional[str]]):
                 return
 
             # Determine base commit
-            base_commit = lser.base_commit
-            need_guess = False
-
-            if base_commit:
-                # Check if the specified base-commit exists in this repo
-                if not b4.git_commit_exists(topdir, base_commit):
-                    logger.warning('Base commit %s not found in repository, will try to guess', base_commit)
-                    need_guess = True
-            else:
-                need_guess = True
-
-            if need_guess:
-                logger.info('Guessing base commit...')
-                try:
-                    base_commit, nblobs, mismatches = lser.find_base(topdir, branches=None, maxdays=30)
-                    if mismatches == 0:
-                        logger.info('Base: %s (exact match)', base_commit)
-                    elif nblobs == mismatches:
-                        logger.warning('Base: failed to find matching base')
-                        base_commit = None
-                    else:
-                        logger.info('Base: %s (best guess, %s/%s blobs matched)',
-                                    base_commit, nblobs - mismatches, nblobs)
-                except IndexError as ex:
-                    logger.warning('Base: failed to guess (%s)', ex)
-                    base_commit = None
-
+            base_commit = self._resolve_base_commit(topdir, lser)
             if not base_commit:
                 logger.critical('Could not determine base commit')
                 _wait_for_enter()
@@ -1231,23 +1264,8 @@ class TrackingApp(App[Optional[str]]):
 
         # Check if a newer revision is known to exist
         current_rev = series.get('revision', 1)
-        newer_versions: List[int] = []
-        topdir_take = b4.git_get_toplevel()
-        if topdir_take:
-            try:
-                _ct, trk = b4.review.load_tracking(topdir_take, review_branch)
-                newer_versions = trk.get('series', {}).get('newer-versions', [])
-            except SystemExit:
-                pass
-        if not newer_versions and self._identifier and change_id:
-            try:
-                conn = b4.review.tracking.get_db(self._identifier)
-                newest = b4.review.tracking.get_newest_revision(conn, change_id)
-                conn.close()
-                if newest is not None and newest > current_rev:
-                    newer_versions = list(range(current_rev + 1, newest + 1))
-            except Exception:
-                pass
+        newer_versions = self._discover_newer_versions(
+            change_id, current_rev, review_branch)
 
         if newer_versions:
             # Require explicit confirmation before taking an older revision
@@ -1597,14 +1615,20 @@ class TrackingApp(App[Optional[str]]):
                                        commit_ids,
                                        accepted=take_screen.accept_series)
 
-        # Record the branch for recent-take-branches suggestions
+        self._finalize_take(topdir, target_branch, change_id, t_series,
+                            take_screen.accept_series)
+        _wait_for_enter()
+
+    def _finalize_take(self, topdir: str, target_branch: str,
+                       change_id: str, series: Dict[str, Any],
+                       accepted: bool) -> None:
+        """Common post-take steps: record branch, update DB, update Patchwork."""
         common_dir = b4.git_get_common_dir(topdir)
         if common_dir:
             b4.review.tracking.record_take_branch(common_dir, target_branch)
 
-        # Record the series as accepted in the tracking database
-        if take_screen.accept_series and self._identifier and change_id:
-            revision = t_series.get('revision')
+        if accepted and self._identifier and change_id:
+            revision = series.get('revision')
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
                 b4.review.tracking.update_series_status(conn, change_id, 'accepted',
@@ -1612,12 +1636,11 @@ class TrackingApp(App[Optional[str]]):
                 conn.close()
             except Exception as ex:
                 logger.warning('Could not update series status: %s', ex)
-        # Update Patchwork state if series was tracked from Patchwork
-        if take_screen.accept_series and self._selected_series:
+
+        if accepted and self._selected_series:
             pw_sid = self._selected_series.get('pw_series_id')
             if pw_sid:
                 b4.review.pw_update_series_state(pw_sid, 'accepted')
-        _wait_for_enter()
 
     def _prepare_am_messages(
         self,
@@ -1791,26 +1814,8 @@ class TrackingApp(App[Optional[str]]):
                                            commit_ids, cherrypick=cherrypick,
                                            accepted=take_screen.accept_series)
 
-        # Record the branch for recent-take-branches suggestions
-        common_dir = b4.git_get_common_dir(topdir)
-        if common_dir:
-            b4.review.tracking.record_take_branch(common_dir, target_branch)
-
-        # Record the series as accepted in the tracking database
-        if take_screen.accept_series and self._identifier and change_id:
-            revision = series.get('revision')
-            try:
-                conn = b4.review.tracking.get_db(self._identifier)
-                b4.review.tracking.update_series_status(conn, change_id, 'accepted',
-                                                        revision=revision)
-                conn.close()
-            except Exception as ex:
-                logger.warning('Could not update series status: %s', ex)
-        # Update Patchwork state if series was tracked from Patchwork
-        if take_screen.accept_series and self._selected_series:
-            pw_sid = self._selected_series.get('pw_series_id')
-            if pw_sid:
-                b4.review.pw_update_series_state(pw_sid, 'accepted')
+        self._finalize_take(topdir, target_branch, change_id, series,
+                            take_screen.accept_series)
         _wait_for_enter()
 
     def action_rebase(self) -> None:
@@ -2432,23 +2437,8 @@ class TrackingApp(App[Optional[str]]):
         review_branch = f'b4/review/{change_id}'
 
         # Discover newer revisions from tracking data and DB
-        newer_versions: List[int] = []
-        topdir = b4.git_get_toplevel()
-        if topdir:
-            try:
-                _ct, trk = b4.review.load_tracking(topdir, review_branch)
-                newer_versions = trk.get('series', {}).get('newer-versions', [])
-            except SystemExit:
-                pass
-        if not newer_versions and self._identifier and change_id:
-            try:
-                conn = b4.review.tracking.get_db(self._identifier)
-                newest = b4.review.tracking.get_newest_revision(conn, change_id)
-                conn.close()
-                if newest is not None and newest > current_rev:
-                    newer_versions = list(range(current_rev + 1, newest + 1))
-            except Exception:
-                pass
+        newer_versions = self._discover_newer_versions(
+            change_id, current_rev, review_branch)
 
         if not newer_versions:
             self.notify(
@@ -2603,36 +2593,7 @@ class TrackingApp(App[Optional[str]]):
                 return
 
             # Determine base commit
-            base_commit = lser.base_commit
-            need_guess = False
-
-            if base_commit:
-                if not b4.git_commit_exists(topdir, base_commit):
-                    logger.warning(
-                        'Base commit %s not found, will try to guess',
-                        base_commit)
-                    need_guess = True
-            else:
-                need_guess = True
-
-            if need_guess:
-                logger.info('Guessing base commit...')
-                try:
-                    base_commit, nblobs, mismatches = lser.find_base(
-                        topdir, branches=None, maxdays=30)
-                    if mismatches == 0:
-                        logger.info('Base: %s (exact match)', base_commit)
-                    elif nblobs == mismatches:
-                        logger.warning('Base: failed to find matching base')
-                        base_commit = None
-                    else:
-                        logger.info(
-                            'Base: %s (best guess, %s/%s blobs matched)',
-                            base_commit, nblobs - mismatches, nblobs)
-                except IndexError as ex:
-                    logger.warning('Base: failed to guess (%s)', ex)
-                    base_commit = None
-
+            base_commit = self._resolve_base_commit(topdir, lser)
             if not base_commit:
                 logger.critical('Could not determine base commit')
                 _wait_for_enter()
