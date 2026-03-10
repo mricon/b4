@@ -1365,34 +1365,6 @@ class TestGetReferenceMessage:
             review.get_reference_message(lser)
 
 
-# -- Tests for determine_review_branch() ------------------------------------
-
-class TestDetermineReviewBranch:
-    """Tests for determine_review_branch()."""
-
-    def test_uses_change_id(self) -> None:
-        lser = mock.Mock()
-        lser.change_id = 'my-change-id-123'
-        cmdargs = argparse.Namespace()
-        result = review.determine_review_branch(lser, cmdargs)
-        assert result == 'b4/review/my-change-id-123'
-
-    def test_generates_fallback_without_change_id(self) -> None:
-        lser = mock.Mock()
-        lser.change_id = None
-        lser.get_slug.return_value = 'test-series'
-        cmdargs = argparse.Namespace()
-        result = review.determine_review_branch(lser, cmdargs)
-        assert result.startswith('b4/review/')
-        # Should contain date, slug, and hex
-        parts = result[len('b4/review/'):].split('-')
-        # First part is YYYYMMDD date
-        assert len(parts[0]) == 8
-        assert parts[0].isdigit()
-        # Slug is in the middle
-        assert 'test' in result
-        assert 'series' in result
-
 
 # -- Tests for _collect_reply_headers() --------------------------------------
 

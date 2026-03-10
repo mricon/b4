@@ -15,7 +15,6 @@ import re
 import shutil
 import textwrap
 import sys
-import uuid
 
 import b4
 import b4.mbox
@@ -189,18 +188,6 @@ def get_reference_message(lser: 'b4.LoreSeries') -> 'b4.LoreMessage':
     if ref_msg is None:
         raise LookupError('Could not find a reference message in the series')
     return ref_msg
-
-
-def determine_review_branch(lser: b4.LoreSeries, cmdargs: argparse.Namespace) -> str:
-    if lser.change_id:
-        change_id = lser.change_id
-    else:
-        slug = lser.get_slug(extended=False)
-        hex12 = uuid.uuid4().hex[:12]
-        today = datetime.date.today().strftime('%Y%m%d')
-        change_id = f'{today}-{slug}-{hex12}'
-
-    return f'{REVIEW_BRANCH_PREFIX}{change_id}'
 
 
 def create_review_branch(topdir: str, branch_name: str, base_commit: str,

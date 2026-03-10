@@ -425,8 +425,6 @@ class PwApp(App[None]):
         item.query_one(Label).update(_format_series_label(item.series, item.tracked, ts))
 
     def action_track_series(self) -> None:
-        import uuid
-
         if not self._tracking_enabled:
             self.notify('Repository not enrolled. Enroll with: b4 review enroll', severity='warning')
             return
@@ -465,11 +463,6 @@ class PwApp(App[None]):
             return
 
         # Extract series metadata
-        if lser.change_id:
-            change_id = lser.change_id
-        else:
-            change_id = str(uuid.uuid4())
-
         revision = lser.revision
         sender_name = lser.fromname
         sender_email = lser.fromemail
@@ -482,6 +475,14 @@ class PwApp(App[None]):
         except LookupError:
             self.notify('Could not find cover letter or first patch', severity='error')
             return
+
+        if lser.change_id:
+            change_id = lser.change_id
+        else:
+            date_prefix = ref_msg.date.strftime('%Y%m%d')
+            slug = ref_msg.lsubject.get_slug(sep='-', with_counter=False)[:60]
+            change_id = f'{date_prefix}-{slug}-{lser.fingerprint[:12]}'
+            logger.info('No change-id found, generated: %s', change_id)
 
         message_id = ref_msg.msgid
         sent_at: Optional[str] = None
