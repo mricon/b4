@@ -708,6 +708,8 @@ class TrackingApp(App[Optional[str]]):
             status = self._selected_series.get('status', 'new')
             if status == 'reviewing':
                 self.action_review()
+            else:
+                self.action_action()
 
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {

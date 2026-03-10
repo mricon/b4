@@ -139,7 +139,7 @@ Symbol   Status
 ============  ===========================================================
 Key           Action
 ============  ===========================================================
-``Enter``     Enter series — open the review interface (reviewing state)
+``Enter``     Enter series (reviewing) or open action menu (other states)
 ``r``         Review — create or re-enter the review branch
 ``c``         CI checks — run configured check commands and show results
               (see :ref:`ci_check_protocol`)

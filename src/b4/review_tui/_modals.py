@@ -253,7 +253,7 @@ TRACKING_HELP_LINES = [
     '  [bold]Escape[/bold]   Close details panel\n',
     '\n',
     '[bold]Series[/bold]\n',
-    '  [bold]Enter[/bold]     Enter series (reviewing state)\n',
+    '  [bold]Enter[/bold]     Enter series (reviewing) or action menu\n',
     '  [bold]r[/bold]         Review selected series\n',
     '  [bold]c[/bold]         Show CI check results\n',
     '  [bold]e[/bold]         View email thread\n',
