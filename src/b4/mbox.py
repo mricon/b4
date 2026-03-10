@@ -680,7 +680,11 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         datelim = 'd:%s..' % startdate
     else:
         logger.critical('Checking for older revisions')
-        datelim = 'd:..%s' % startdate
+        # Cap backward search to 12 months to avoid matching years of
+        # identically-named series (common with subject+from fallback).
+        earliest = time.strftime('%Y%m%d', time.gmtime(
+            time.mktime(msgdate[:9]) - 365 * 86400))
+        datelim = 'd:%s..%s' % (earliest, startdate)
 
     q = '(%s) AND %s' % (' OR '.join(queries), datelim)
     logger.debug('Query: %s', q)

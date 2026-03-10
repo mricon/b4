@@ -7,6 +7,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
 import datetime
+import email.utils
 import gzip
 import json
 import os
@@ -779,14 +780,33 @@ def _fetch_mbox_bytes(canonical_url: str) -> Optional[bytes]:
 
 def _latest_date_from_mbox(mbox_bytes: bytes) -> Optional[str]:
     """Return the most recent Date: header from mbox bytes as an ISO timestamp."""
-    import email.utils as eu
     latest: Optional[datetime.datetime] = None
     for line in mbox_bytes.split(b'\n'):
         if not line.lower().startswith(b'date:'):
             continue
         date_str = line[5:].strip().decode('utf-8', errors='replace')
         try:
-            dt = eu.parsedate_to_datetime(date_str)
+            dt = email.utils.parsedate_to_datetime(date_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            if latest is None or dt > latest:
+                latest = dt
+        except Exception:
+            continue
+    if latest is None:
+        return None
+    return latest.astimezone(datetime.timezone.utc).isoformat()
+
+
+def _latest_date_from_msgs(msgs: List[Any]) -> Optional[str]:
+    """Return the most recent Date header from EmailMessage objects as ISO timestamp."""
+    latest: Optional[datetime.datetime] = None
+    for msg in msgs:
+        date_hdr = msg.get('Date')
+        if not date_hdr:
+            continue
+        try:
+            dt = email.utils.parsedate_to_datetime(str(date_hdr))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=datetime.timezone.utc)
             if latest is None or dt > latest:
@@ -1204,7 +1224,9 @@ def ensure_thread_context_blob(topdir: str, change_id: str,
 
 def update_message_counts(identifier: str,
                            series_list: List[Dict[str, Any]],
-                           topdir: Optional[str] = None) -> Dict[str, int]:
+                           topdir: Optional[str] = None,
+                           prefetched: Optional[Dict[Tuple[str, int], List[Any]]] = None,
+                           ) -> Dict[str, int]:
     """Fetch and store thread message counts for a list of series.
 
     For each active series in *series_list* that has a message_id:
@@ -1216,6 +1238,12 @@ def update_message_counts(identifier: str,
       for messages newer than ``last_update_check``.  An empty response (nothing
       new) produces **zero database writes**, keeping the DB mtime stable and
       suppressing spurious list reloads in the TUI.
+
+    When *prefetched* is provided (a dict mapping ``(change_id, revision)`` to
+    a list of already-fetched ``EmailMessage`` objects), the first-fetch path
+    reuses those messages instead of re-downloading the thread from lore.  This
+    avoids duplicate HEAD + GET requests when called right after
+    ``update_series_tracking()``.
 
     Returns ``{'updated': n, 'errors': n}`` where *updated* counts series whose
     ``message_count`` actually changed.
@@ -1249,32 +1277,52 @@ def update_message_counts(identifier: str,
         existing_count = row['message_count'] if row else None
         last_check = row['last_update_check'] if row else None
 
-        canonical_url = _resolve_canonical_url(message_id)
-        if canonical_url is None:
-            errors += 1
-            continue
-
         if existing_count is None or last_check is None:
-            # ── First fetch: download full thread mbox ───────────────────────
-            mbox_bytes = _fetch_mbox_bytes(canonical_url)
-            if mbox_bytes is None:
-                errors += 1
-                continue
-            parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
-            count = len(parsed)
-            last_activity = _latest_date_from_mbox(mbox_bytes)
-            conn.execute(
-                'UPDATE series'
-                ' SET message_count = ?, seen_message_count = ?,'
-                '     last_update_check = ?, last_activity_at = ?'
-                ' WHERE change_id = ? AND revision = ?',
-                (count, count, now, last_activity, change_id, revision))
-            conn.commit()
-            updated += 1
-            if topdir and parsed:
-                _store_thread_blob(topdir, change_id, parsed)
+            # ── First fetch ──────────────────────────────────────────────────
+            # Reuse pre-fetched messages from update_series_tracking when
+            # available, otherwise fall back to a full lore download.
+            pre_msgs = prefetched.get((change_id, revision)) if prefetched else None
+            if pre_msgs is not None:
+                count = len(pre_msgs)
+                last_activity = _latest_date_from_msgs(pre_msgs)
+                conn.execute(
+                    'UPDATE series'
+                    ' SET message_count = ?, seen_message_count = ?,'
+                    '     last_update_check = ?, last_activity_at = ?'
+                    ' WHERE change_id = ? AND revision = ?',
+                    (count, count, now, last_activity, change_id, revision))
+                conn.commit()
+                updated += 1
+                if topdir and pre_msgs:
+                    _store_thread_blob(topdir, change_id, pre_msgs)
+            else:
+                canonical_url = _resolve_canonical_url(message_id)
+                if canonical_url is None:
+                    errors += 1
+                    continue
+                mbox_bytes = _fetch_mbox_bytes(canonical_url)
+                if mbox_bytes is None:
+                    errors += 1
+                    continue
+                parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
+                count = len(parsed)
+                last_activity = _latest_date_from_mbox(mbox_bytes)
+                conn.execute(
+                    'UPDATE series'
+                    ' SET message_count = ?, seen_message_count = ?,'
+                    '     last_update_check = ?, last_activity_at = ?'
+                    ' WHERE change_id = ? AND revision = ?',
+                    (count, count, now, last_activity, change_id, revision))
+                conn.commit()
+                updated += 1
+                if topdir and parsed:
+                    _store_thread_blob(topdir, change_id, parsed)
         else:
             # ── Incremental: dt: query for messages since last check ─────────
+            canonical_url = _resolve_canonical_url(message_id)
+            if canonical_url is None:
+                errors += 1
+                continue
             result = _fetch_new_since(canonical_url, last_check)
             if result is None:
                 errors += 1
@@ -1436,7 +1484,6 @@ def rescan_branches(identifier: str, topdir: str,
     Returns ``{'gone': n, 'changed': n}`` where ``changed`` is the number of
     branches whose SHA differed and were re-processed.
     """
-    import email.utils
     import b4.review
 
     if branch:

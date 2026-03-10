@@ -1305,10 +1305,26 @@ def update_series_tracking(
         result['error'] = str(ex)
         return result
 
-    # Discover all available revisions (newer and older)
+    # Save thread messages before get_extra_series adds cross-version
+    # messages.  update_message_counts() can reuse these to avoid a
+    # duplicate lore fetch.
+    result['_thread_msgs'] = list(msgs)
+
+    # Discover other revisions.  On the first update (no revisions in DB
+    # yet) search both directions so older versions are recorded.  On
+    # subsequent updates only look forward — re-fetching older versions
+    # every time is very expensive for prolific senders whose subject
+    # lines match many unrelated series.
     if b4.can_network:
+        try:
+            _conn = b4.review.tracking.get_db(identifier)
+            _known = set(r['revision'] for r in b4.review.tracking.get_revisions(_conn, change_id))
+            _conn.close()
+        except Exception:
+            _known = set()
+
         msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
-        if current_rev > 1:
+        if current_rev > 1 and not _known:
             msgs = b4.mbox.get_extra_series(msgs, direction=-1,
                                             wantvers=list(range(1, current_rev)),
                                             nocache=True)
