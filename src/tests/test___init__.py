@@ -279,6 +279,348 @@ def test_parse_int_range(intrange: str, upper: int, expected: List[int]) -> None
     assert list(b4.parse_int_range(intrange, upper)) == expected
 
 
+@pytest.mark.parametrize('body_link,extra_link,expect_count', [
+    # Exact same URL — should dedup to one
+    ('https://patch.msgid.link/20240101-test-v1-1-abc123@example.com',
+     'https://patch.msgid.link/20240101-test-v1-1-abc123@example.com', 1),
+    # Same URL, different case — should still dedup
+    ('https://patch.msgid.link/20240101-TEST-V1-1-ABC123@example.com',
+     'https://patch.msgid.link/20240101-test-v1-1-abc123@example.com', 1),
+    # Different URLs — both should survive
+    ('https://lore.kernel.org/r/20240101-test-v1-1-abc123@example.com',
+     'https://patch.msgid.link/20240101-test-v1-1-abc123@example.com', 2),
+])
+def test_link_trailer_dedup(body_link: str, extra_link: str, expect_count: int) -> None:
+    """Link: trailers already in the body should not be duplicated by extras."""
+    raw = (
+        f'From: Test Author <test@example.com>\n'
+        f'Subject: [PATCH] test link dedup\n'
+        f'Date: Mon, 1 Jan 2024 00:00:00 +0000\n'
+        f'Message-Id: <20240101-test-v1-1-abc123@example.com>\n'
+        f'\n'
+        f'Commit body here.\n'
+        f'\n'
+        f'Signed-off-by: Test Author <test@example.com>\n'
+        f'Link: {body_link}\n'
+    )
+    msg = email.message_from_string(raw, policy=email.policy.EmailPolicy(utf8=True))
+    lmsg = b4.LoreMessage(msg)
+    extra = b4.LoreTrailer(name='Link', value=extra_link)
+    lmsg.fix_trailers(extras=[extra])
+    # Count Link: trailers in the result
+    _, _, trailers, _, _ = b4.LoreMessage.get_body_parts(lmsg.body)
+    link_trailers = [t for t in trailers if t.lname == 'link']
+    assert len(link_trailers) == expect_count
+
+
+class TestTakeFlow:
+    """Simulate the 'take' flow using the actual code path: build email
+    messages (as if fetched from lore), feed through LoreMailbox →
+    LoreSeries → get_am_ready(addlink=True) → git am.
+
+    No network access — messages are constructed in-memory.
+    """
+
+    @staticmethod
+    def _make_patch_msg(msgid: str, subject: str, body: str,
+                        diff: str, counter: int = 1, expected: int = 1,
+                        in_reply_to: Optional[str] = None) -> email.message.EmailMessage:
+        """Build a realistic patch email like what lore returns.
+
+        The *body* should contain the full commit message including
+        trailers (Signed-off-by, Link, etc.) — just like a real patch
+        email from a mailing list.
+        """
+        if expected > 1:
+            prefix = f'[PATCH {counter}/{expected}]'
+        else:
+            prefix = '[PATCH]'
+        raw = (
+            f'From: Test Author <test@example.com>\n'
+            f'Subject: {prefix} {subject}\n'
+            f'Date: Mon, 1 Jan 2024 00:00:00 +0000\n'
+            f'Message-Id: <{msgid}>\n'
+        )
+        if in_reply_to:
+            raw += f'In-Reply-To: <{in_reply_to}>\n'
+            raw += f'References: <{in_reply_to}>\n'
+        raw += (
+            f'\n'
+            f'{body}\n'
+            f'---\n'
+            f'{diff}\n'
+        )
+        return email.message_from_string(
+            raw, policy=email.policy.EmailPolicy(utf8=True))
+
+    @staticmethod
+    def _make_reply_msg(msgid: str, in_reply_to: str,
+                        from_name: str, from_email: str,
+                        trailer_lines: List[str]) -> email.message.EmailMessage:
+        """Build a followup reply with trailers."""
+        trailers = '\n'.join(trailer_lines)
+        raw = (
+            f'From: {from_name} <{from_email}>\n'
+            f'Subject: Re: [PATCH] test\n'
+            f'Date: Mon, 1 Jan 2024 01:00:00 +0000\n'
+            f'Message-Id: <{msgid}>\n'
+            f'In-Reply-To: <{in_reply_to}>\n'
+            f'References: <{in_reply_to}>\n'
+            f'\n'
+            f'> Some quoted text\n'
+            f'\n'
+            f'{trailers}\n'
+        )
+        return email.message_from_string(
+            raw, policy=email.policy.EmailPolicy(utf8=True))
+
+    def test_link_dedup_with_followups(self, gitdir: str) -> None:
+        """Patch already has Link: in body, get_am_ready(addlink=True)
+        should not duplicate it.  Followup trailers should be added."""
+        patch_msgid = '20240101-widget-v1-1-abc123@example.com'
+        link_url = f'https://patch.msgid.link/{patch_msgid}'
+
+        patch_msg = self._make_patch_msg(
+            msgid=patch_msgid,
+            subject='Add widget support',
+            body=(
+                'This adds a fancy widget.\n'
+                '\n'
+                'Signed-off-by: Test Author <test@example.com>\n'
+                f'Link: {link_url}\n'
+            ),
+            diff=(
+                ' file1.txt | 1 +\n'
+                ' 1 file changed, 1 insertion(+)\n'
+                '\n'
+                'diff --git a/file1.txt b/file1.txt\n'
+                'index b352682..6713e9f 100644\n'
+                '--- a/file1.txt\n'
+                '+++ b/file1.txt\n'
+                '@@ -1,3 +1,4 @@\n'
+                ' This is file 1.\n'
+                ' It has a single line.\n'
+                ' This is a second line I added.\n'
+                '+widget\n'
+            ),
+        )
+
+        reply_msg = self._make_reply_msg(
+            msgid='reply-1@example.com',
+            in_reply_to=patch_msgid,
+            from_name='Reviewer One',
+            from_email='reviewer@example.com',
+            trailer_lines=[
+                'Reviewed-by: Reviewer One <reviewer@example.com>',
+            ],
+        )
+
+        reply_msg2 = self._make_reply_msg(
+            msgid='reply-2@example.com',
+            in_reply_to=patch_msgid,
+            from_name='Acker Two',
+            from_email='acker@example.com',
+            trailer_lines=[
+                'Acked-by: Acker Two <acker@example.com>',
+            ],
+        )
+
+        # Feed through LoreMailbox → LoreSeries (actual take code path)
+        lmbx = b4.LoreMailbox()
+        for msg in [patch_msg, reply_msg, reply_msg2]:
+            lmbx.add_message(msg)
+
+        lser = lmbx.get_series()
+        assert lser is not None
+
+        am_msgs = lser.get_am_ready(addlink=True)
+        assert len(am_msgs) == 1
+
+        # Apply to master via git am
+        ifh = io.BytesIO()
+        b4.save_git_am_mbox(am_msgs, ifh)
+        ecode, out = b4.git_run_command(
+            gitdir, ['am'], stdin=ifh.getvalue())
+        assert ecode == 0, f'git am failed: {out}'
+
+        ecode, result = b4.git_run_command(
+            gitdir, ['log', '-1', '--format=%B'])
+        assert ecode == 0
+
+        # Exactly one Link: trailer, not two
+        assert result.count(f'Link: {link_url}') == 1, \
+            f'Duplicate Link: found:\n{result}'
+        # Followup trailers applied
+        assert 'Reviewed-by: Reviewer One <reviewer@example.com>' in result
+        assert 'Acked-by: Acker Two <acker@example.com>' in result
+
+    def test_link_added_when_not_present(self, gitdir: str) -> None:
+        """Patch without Link: should get one added by addlink=True."""
+        patch_msgid = '20240101-cursor-v1-1-def456@example.com'
+
+        patch_msg = self._make_patch_msg(
+            msgid=patch_msgid,
+            subject='Fix cursor rendering',
+            body=(
+                'This fixes a cursor bug.\n'
+                '\n'
+                'Signed-off-by: Test Author <test@example.com>\n'
+            ),
+            diff=(
+                ' file1.txt | 1 +\n'
+                ' 1 file changed, 1 insertion(+)\n'
+                '\n'
+                'diff --git a/file1.txt b/file1.txt\n'
+                'index b352682..e147dad 100644\n'
+                '--- a/file1.txt\n'
+                '+++ b/file1.txt\n'
+                '@@ -1,3 +1,4 @@\n'
+                ' This is file 1.\n'
+                ' It has a single line.\n'
+                ' This is a second line I added.\n'
+                '+cursor fix\n'
+            ),
+        )
+
+        lmbx = b4.LoreMailbox()
+        lmbx.add_message(patch_msg)
+        lser = lmbx.get_series()
+        assert lser is not None
+
+        am_msgs = lser.get_am_ready(addlink=True)
+        assert len(am_msgs) == 1
+
+        ifh = io.BytesIO()
+        b4.save_git_am_mbox(am_msgs, ifh)
+        ecode, out = b4.git_run_command(
+            gitdir, ['am'], stdin=ifh.getvalue())
+        assert ecode == 0, f'git am failed: {out}'
+
+        ecode, result = b4.git_run_command(
+            gitdir, ['log', '-1', '--format=%B'])
+        assert ecode == 0
+
+        expected_link = f'https://patch.msgid.link/{patch_msgid}'
+        assert f'Link: {expected_link}' in result
+        assert result.count('Link:') == 1
+
+    def test_followup_trailers_without_addlink(self, gitdir: str) -> None:
+        """Followups should be applied even with addlink=False."""
+        patch_msgid = '20240101-verifier-v1-1-789abc@example.com'
+
+        patch_msg = self._make_patch_msg(
+            msgid=patch_msgid,
+            subject='Refactor verifier',
+            body=(
+                'Clean up the verifier logic.\n'
+                '\n'
+                'Signed-off-by: Test Author <test@example.com>\n'
+            ),
+            diff=(
+                ' file1.txt | 1 +\n'
+                ' 1 file changed, 1 insertion(+)\n'
+                '\n'
+                'diff --git a/file1.txt b/file1.txt\n'
+                'index b352682..6a8b771 100644\n'
+                '--- a/file1.txt\n'
+                '+++ b/file1.txt\n'
+                '@@ -1,3 +1,4 @@\n'
+                ' This is file 1.\n'
+                ' It has a single line.\n'
+                ' This is a second line I added.\n'
+                '+verifier\n'
+            ),
+        )
+
+        reply_msg = self._make_reply_msg(
+            msgid='reply-v-1@example.com',
+            in_reply_to=patch_msgid,
+            from_name='Alice Author',
+            from_email='alice@example.com',
+            trailer_lines=[
+                'Reviewed-by: Alice Author <alice@example.com>',
+                'Tested-by: Alice Author <alice@example.com>',
+            ],
+        )
+
+        lmbx = b4.LoreMailbox()
+        for msg in [patch_msg, reply_msg]:
+            lmbx.add_message(msg)
+        lser = lmbx.get_series()
+        assert lser is not None
+
+        am_msgs = lser.get_am_ready(addlink=False)
+        assert len(am_msgs) == 1
+
+        ifh = io.BytesIO()
+        b4.save_git_am_mbox(am_msgs, ifh)
+        ecode, out = b4.git_run_command(
+            gitdir, ['am'], stdin=ifh.getvalue())
+        assert ecode == 0, f'git am failed: {out}'
+
+        ecode, result = b4.git_run_command(
+            gitdir, ['log', '-1', '--format=%B'])
+        assert ecode == 0
+
+        assert 'Reviewed-by: Alice Author <alice@example.com>' in result
+        assert 'Tested-by: Alice Author <alice@example.com>' in result
+        assert 'Link:' not in result
+
+    def test_different_link_domains_both_kept(self, gitdir: str) -> None:
+        """If the patch body has a lore.kernel.org Link: and addlink
+        generates a patch.msgid.link one, both should be kept."""
+        patch_msgid = '20240101-drm-v1-1-aabbcc@example.com'
+        lore_link = f'https://lore.kernel.org/r/{patch_msgid}'
+
+        patch_msg = self._make_patch_msg(
+            msgid=patch_msgid,
+            subject='Fix DRM issue',
+            body=(
+                'Fix the DRM subsystem.\n'
+                '\n'
+                'Signed-off-by: Test Author <test@example.com>\n'
+                f'Link: {lore_link}\n'
+            ),
+            diff=(
+                ' file1.txt | 1 +\n'
+                ' 1 file changed, 1 insertion(+)\n'
+                '\n'
+                'diff --git a/file1.txt b/file1.txt\n'
+                'index b352682..4a2161b 100644\n'
+                '--- a/file1.txt\n'
+                '+++ b/file1.txt\n'
+                '@@ -1,3 +1,4 @@\n'
+                ' This is file 1.\n'
+                ' It has a single line.\n'
+                ' This is a second line I added.\n'
+                '+drm fix\n'
+            ),
+        )
+
+        lmbx = b4.LoreMailbox()
+        lmbx.add_message(patch_msg)
+        lser = lmbx.get_series()
+        assert lser is not None
+
+        am_msgs = lser.get_am_ready(addlink=True)
+        assert len(am_msgs) == 1
+
+        ifh = io.BytesIO()
+        b4.save_git_am_mbox(am_msgs, ifh)
+        ecode, out = b4.git_run_command(
+            gitdir, ['am'], stdin=ifh.getvalue())
+        assert ecode == 0, f'git am failed: {out}'
+
+        ecode, result = b4.git_run_command(
+            gitdir, ['log', '-1', '--format=%B'])
+        assert ecode == 0
+
+        expected_patch_link = f'https://patch.msgid.link/{patch_msgid}'
+        assert lore_link in result
+        assert expected_patch_link in result
+        assert result.count('Link:') == 2
+
+
 @pytest.mark.parametrize('subject,extras,expected', [
     ('[PATCH] This is a patch', None, '[PATCH] This is a patch'),
     ('[PATCH v3] This is a patch', None, '[PATCH v3] This is a patch'),

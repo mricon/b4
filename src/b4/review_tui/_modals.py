@@ -423,7 +423,7 @@ class PriorReviewScreen(ModalScreen[None]):
             yield Static('Escape close', id='prior-review-hint')
 
     def on_mount(self) -> None:
-        ts = resolve_styles(self)
+        ts = resolve_styles(self.app)
         viewer = self.query_one('#prior-review-viewer', RichLog)
         for line in self._context_text.splitlines():
             if line.startswith('== ') and line.endswith(' =='):
