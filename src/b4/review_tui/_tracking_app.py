@@ -1027,7 +1027,8 @@ class TrackingApp(App[Optional[str]]):
         self.push_screen(
             BaseSelectionScreen(initial_base, lser, ambytes,
                                 base_suggestions=base_suggestions,
-                                base_hint=base_hint),
+                                base_hint=base_hint,
+                                subject=series.get('subject', '')),
             callback=lambda base_sha: self._on_base_selected(
                 base_sha, lser, series, ambytes),
         )
@@ -1485,7 +1486,8 @@ class TrackingApp(App[Optional[str]]):
             recent_branches = [target_branch]
         take_screen = TakeScreen(target_branch, review_branch, num_patches=num_patches,
                                  default_method=default_method,
-                                 recent_branches=recent_branches)
+                                 recent_branches=recent_branches,
+                                 subject=series.get('subject', ''))
         self.push_screen(
             take_screen,
             callback=lambda confirmed: self._on_take_confirmed(
@@ -2047,7 +2049,8 @@ class TrackingApp(App[Optional[str]]):
             recent_branches = [current_branch]
 
         rebase_screen = RebaseScreen(current_branch, review_branch,
-                                     recent_branches=recent_branches)
+                                     recent_branches=recent_branches,
+                                     subject=self._selected_series.get('subject', ''))
         self.push_screen(
             rebase_screen,
             callback=lambda confirmed: self._on_rebase_confirmed(
@@ -2589,7 +2592,8 @@ class TrackingApp(App[Optional[str]]):
         review_branch = f'b4/review/{change_id}'
         has_branch = b4.git_branch_exists(None, review_branch)
         self.push_screen(
-            AbandonConfirmScreen(change_id, review_branch, has_branch),
+            AbandonConfirmScreen(change_id, review_branch, has_branch,
+                                 subject=self._selected_series.get('subject', '')),
             callback=lambda confirmed: self._on_abandon_confirmed(
                 confirmed, change_id, review_branch, has_branch,
                 revision=revision),
@@ -2924,7 +2928,8 @@ class TrackingApp(App[Optional[str]]):
             return
         self.push_screen(
             SnoozeScreen(last_source=self._last_snooze_source,
-                         last_input=self._last_snooze_input),
+                         last_input=self._last_snooze_input,
+                         subject=self._selected_series.get('subject', '')),
             callback=self._on_snooze_confirmed,
         )
 
@@ -3016,7 +3021,8 @@ class TrackingApp(App[Optional[str]]):
         review_branch = f'b4/review/{change_id}'
         has_branch = b4.git_branch_exists(None, review_branch)
         self.push_screen(
-            ArchiveConfirmScreen(change_id, review_branch, has_branch),
+            ArchiveConfirmScreen(change_id, review_branch, has_branch,
+                                 subject=self._selected_series.get('subject', '')),
             callback=lambda confirmed: self._on_archive_confirmed(
                 confirmed, change_id, review_branch, has_branch, pw_series_id,
                 revision=revision),

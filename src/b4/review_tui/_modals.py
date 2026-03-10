@@ -680,7 +680,8 @@ class TakeScreen(ModalScreen[bool]):
     def __init__(self, target_branch: str, review_branch: str,
                  num_patches: int = 0,
                  default_method: Optional[str] = None,
-                 recent_branches: Optional[List[str]] = None) -> None:
+                 recent_branches: Optional[List[str]] = None,
+                 subject: str = '') -> None:
         """Initialize take screen.
 
         Args:
@@ -689,12 +690,14 @@ class TakeScreen(ModalScreen[bool]):
             num_patches: Number of patches in the series
             default_method: Override the default take method selection
             recent_branches: Recently used branch names for auto-suggest
+            subject: Series subject to display for context
         """
         super().__init__()
         self._target_branch = target_branch
         self._review_branch = review_branch
         self._default_method = default_method or ('linear' if num_patches == 1 else 'merge')
         self._recent_branches = recent_branches
+        self._subject = subject
         # Results set after continue
         self.target_result: str = ''
         self.method_result: str = self._default_method
@@ -707,8 +710,10 @@ class TakeScreen(ModalScreen[bool]):
             ('linear', 'linear'),
             ('cherry-pick', 'cherry-pick'),
         ]
-        with Vertical(id='take-dialog'):
-            yield Static('Take Series', id='take-title')
+        with Vertical(id='take-dialog') as dialog:
+            dialog.border_title = 'Take Series'
+            if self._subject:
+                yield Static(self._subject, id='take-title', markup=False)
             yield Static(f'Review branch: {self._review_branch}', classes='take-value')
             yield Static('Target branch:', classes='take-label')
             suggester = SuggestFromList(self._recent_branches, case_sensitive=True) if self._recent_branches else None
@@ -877,10 +882,10 @@ class TakeConfirmScreen(ModalScreen[bool]):
         self.accept_series: bool = True
 
     def compose(self) -> ComposeResult:
-        with Vertical(id='takeconfirm-dialog'):
-            yield Static('Confirm Take', id='takeconfirm-title')
+        with Vertical(id='takeconfirm-dialog') as dialog:
+            dialog.border_title = 'Confirm Take'
             if self._subject:
-                yield Static(f'Series:  {self._subject}', markup=False)
+                yield Static(self._subject, id='takeconfirm-title', markup=False)
             yield Static(f'Method:  {self._method}', markup=False)
             yield Static(f'Target:  {self._target_branch}', markup=False)
             if self._cherrypick:
@@ -1064,14 +1069,18 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
     }
     """
 
-    def __init__(self, last_source: str = '', last_input: str = '') -> None:
+    def __init__(self, last_source: str = '', last_input: str = '',
+                 subject: str = '') -> None:
         super().__init__()
         self._last_source = last_source
         self._last_input = last_input
+        self._subject = subject
 
     def compose(self) -> ComposeResult:
-        with Vertical(id='snooze-dialog'):
-            yield Static('Snooze Series', id='snooze-title')
+        with Vertical(id='snooze-dialog') as dialog:
+            dialog.border_title = 'Snooze Series'
+            if self._subject:
+                yield Static(self._subject, id='snooze-title', markup=False)
             yield Static('Snooze for duration:', classes='snooze-label')
             yield Input(placeholder='e.g. 30m, 3h, 1d, 2w', id='snooze-duration')
             yield Static('— or until date (YYYY-MM-DD):', classes='snooze-label')
@@ -1559,12 +1568,14 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def __init__(self, title: str, body: List[str],
                  border: str = '$accent',
-                 title_colour: Optional[str] = None) -> None:
+                 title_colour: Optional[str] = None,
+                 subject: str = '') -> None:
         super().__init__()
         self._title = title
         self._body = body
         self._border = border
         self._title_colour = title_colour
+        self._subject = subject
 
     def compose(self) -> ComposeResult:
         dialog = Vertical(id='confirm-dialog')
@@ -1572,11 +1583,9 @@ class ConfirmScreen(ModalScreen[bool]):
         if border_cls:
             dialog.add_class(f'--border-{border_cls}')
         with dialog:
-            title = Static(self._title, id='confirm-title', markup=False)
-            colour_cls = self._COLOUR_CLASSES.get(self._title_colour or '')
-            if colour_cls:
-                title.add_class(f'--color-{colour_cls}')
-            yield title
+            dialog.border_title = self._title
+            if self._subject:
+                yield Static(self._subject, id='confirm-title', markup=False)
             for line in self._body:
                 yield Static(line, markup=False)
             yield Static('y confirm  |  Escape cancel', id='confirm-hint')
@@ -1704,23 +1713,28 @@ class RebaseScreen(ModalScreen[bool]):
     """
 
     def __init__(self, current_branch: str, review_branch: str,
-                 recent_branches: Optional[List[str]] = None) -> None:
+                 recent_branches: Optional[List[str]] = None,
+                 subject: str = '') -> None:
         """Initialize rebase screen.
 
         Args:
             current_branch: Pre-populated target branch name
             review_branch: The review branch to rebase
             recent_branches: Recently used branch names for auto-suggest
+            subject: Series subject to display for context
         """
         super().__init__()
         self._current_branch = current_branch
         self._review_branch = review_branch
         self._recent_branches = recent_branches
+        self._subject = subject
         self.target_result: str = ''
 
     def compose(self) -> ComposeResult:
-        with Vertical(id='rebase-dialog'):
-            yield Static('Rebase Series', id='rebase-title')
+        with Vertical(id='rebase-dialog') as dialog:
+            dialog.border_title = 'Rebase Series'
+            if self._subject:
+                yield Static(self._subject, id='rebase-title', markup=False)
             yield Static(f'Review branch: {self._review_branch}', classes='rebase-value')
             yield Static('Rebase on top of:', classes='rebase-label')
             suggester = SuggestFromList(self._recent_branches, case_sensitive=True) if self._recent_branches else None
@@ -1745,7 +1759,8 @@ class RebaseScreen(ModalScreen[bool]):
 
 
 def AbandonConfirmScreen(change_id: str, review_branch: str,
-                         has_branch: bool) -> ConfirmScreen:
+                         has_branch: bool,
+                         subject: str = '') -> ConfirmScreen:
     """Build a confirmation screen for abandon operation."""
     body = [f'Change-ID: {change_id}']
     if has_branch:
@@ -1760,11 +1775,13 @@ def AbandonConfirmScreen(change_id: str, review_branch: str,
         body=body,
         border='$error',
         title_colour='$error',
+        subject=subject,
     )
 
 
 def ArchiveConfirmScreen(change_id: str, review_branch: str,
-                         has_branch: bool) -> ConfirmScreen:
+                         has_branch: bool,
+                         subject: str = '') -> ConfirmScreen:
     """Build a confirmation screen for archive operation."""
     body = [f'Change-ID: {change_id}']
     if has_branch:
@@ -1779,6 +1796,7 @@ def ArchiveConfirmScreen(change_id: str, review_branch: str,
         body=body,
         border='$warning',
         title_colour='$warning',
+        subject=subject,
     )
 
 
@@ -2227,7 +2245,8 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
                  lser: 'b4.LoreSeries',
                  ambytes: bytes,
                  base_suggestions: Optional[List[str]] = None,
-                 base_hint: str = '') -> None:
+                 base_hint: str = '',
+                 subject: str = '') -> None:
         """Initialize the base selection screen.
 
         Args:
@@ -2236,6 +2255,7 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
             ambytes: Pre-built mbox bytes for test apply
             base_suggestions: Branch/ref names for the input suggester
             base_hint: Informational line about the guessed/specified base
+            subject: Series subject to display for context
         """
         super().__init__()
         self._initial_base = initial_base
@@ -2243,11 +2263,14 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         self._ambytes = ambytes
         self._base_suggestions = base_suggestions
         self._base_hint = base_hint
+        self._subject = subject
         self._resolved_base: Optional[str] = None
 
     def compose(self) -> ComposeResult:
-        with Vertical(id='base-dialog'):
-            yield Static('Select Base Commit', id='base-title', markup=False)
+        with Vertical(id='base-dialog') as dialog:
+            dialog.border_title = 'Select Base Commit'
+            if self._subject:
+                yield Static(self._subject, id='base-title', markup=False)
             if self._base_hint:
                 yield Static(self._base_hint, id='base-hint',
                              classes='base-warn', markup=False)
