@@ -368,7 +368,7 @@ class TrackingApp(App[Optional[str]]):
     """
 
     BINDING_GROUPS = {
-        'review': 'Series', 'check': 'Series', 'view': 'Series',
+        'review': 'Series', 'check': 'Series', 'thread': 'Series',
         'range_diff': 'Series', 'action': 'Series', 'update_one': 'Series',
         'update_all': 'App', 'limit': 'App', 'suspend': 'App',
         'patchwork': 'App', 'quit': 'App', 'help': 'App',
@@ -382,6 +382,7 @@ class TrackingApp(App[Optional[str]]):
         # Series-specific actions
         Binding('r', 'review', 'review'),
         Binding('c', 'check', 'ci'),
+        Binding('e', 'thread', 'thread'),
         Binding('a', 'action', 'action'),
         Binding('u', 'update_one', 'update'),
         Binding('d', 'range_diff', 'range-diff'),
@@ -702,7 +703,12 @@ class TrackingApp(App[Optional[str]]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == 'tracking-list':
-            self.action_view()
+            if not self._selected_series:
+                return
+            status = self._selected_series.get('status', 'new')
+            if status == 'reviewing':
+                self.action_review()
+
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
         'new': frozenset({'review', 'abandon', 'snooze'}),
@@ -882,7 +888,7 @@ class TrackingApp(App[Optional[str]]):
                 return
         self._checkout_new_series()
 
-    def action_view(self) -> None:
+    def action_thread(self) -> None:
         """View a series thread in the lite thread viewer."""
         if not self._selected_series:
             return
