@@ -17,23 +17,33 @@ from b4.review_tui._tracking_app import TrackingApp
 from b4.review_tui._pw_app import PwApp
 
 
+def _tui_use_mouse() -> bool:
+    """Check if mouse support should be enabled for the TUI."""
+    config = b4.get_main_config()
+    try:
+        return not b4.get_git_bool(str(config.get('review-tui-disable-mouse', '')))
+    except ValueError:
+        return True
+
+
 def run_pw_tui(pwkey: str, pwurl: str, pwproj: str,
                email_dryrun: bool = False,
                patatt_sign: bool = True) -> None:
     """Launch the Patchwork series browser TUI."""
     app = PwApp(pwkey, pwurl, pwproj,
                 email_dryrun=email_dryrun, patatt_sign=patatt_sign)
-    app.run()
+    app.run(mouse=_tui_use_mouse())
 
 
 def run_branch_tui(session: Dict[str, Any]) -> None:
     """Launch the review TUI for a single branch."""
     app = ReviewApp(session)
-    app.run()
+    app.run(mouse=_tui_use_mouse())
 
 
 def run_tracking_tui(identifier: str, email_dryrun: bool = False,
-                     no_sign: bool = False) -> None:
+                     no_sign: bool = False,
+                     no_mouse: bool = False) -> None:
     """Entry point called from b4.review.cmd_tui().
 
     Loops between TrackingApp and ReviewApp as needed.
@@ -50,6 +60,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
     config = b4.get_main_config()
     _cnps = str(config.get('review-no-patatt-sign', ''))
     patatt_sign = not (no_sign or _cnps.lower() in {'yes', 'true', 'y'})
+    use_mouse = not no_mouse and _tui_use_mouse()
 
     # Get current branch to restore later
     original_branch = b4.git_get_current_branch(topdir)
@@ -76,7 +87,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             if switch_branch:
                 session['_switch_hint'] = switch_branch
             review_app = ReviewApp(session)
-            review_app.run()
+            review_app.run(mouse=use_mouse)
         except SystemExit:
             logger.warning('Could not prepare review session for branch: %s', original_branch)
         return
@@ -87,7 +98,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
         app = TrackingApp(identifier, original_branch, focus_change_id=focus_change_id,
                           email_dryrun=email_dryrun, patatt_sign=patatt_sign)
         focus_change_id = None
-        branch_name = app.run()
+        branch_name = app.run(mouse=use_mouse)
 
         if not branch_name:
             # User quit - exit the loop
@@ -118,7 +129,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
         session['email_dryrun'] = email_dryrun
         session['patatt_sign'] = patatt_sign
         review_app = ReviewApp(session)
-        review_app.run()
+        review_app.run(mouse=use_mouse)
 
         # Remember which series was just reviewed so the tracking list
         # can position the cursor on it.

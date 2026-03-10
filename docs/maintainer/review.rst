@@ -139,12 +139,13 @@ Symbol   Status
 ============  ===========================================================
 Key           Action
 ============  ===========================================================
-``Enter``     View thread — open the lite thread viewer (see below)
-``r``         Review — open the review interface for the selected series
-``d``         Range-diff between revisions
-``a``         Action menu — context-sensitive actions (see below)
+``Enter``     Enter series — open the review interface (reviewing state)
+``r``         Review — create or re-enter the review branch
 ``c``         CI checks — run configured check commands and show results
               (see :ref:`ci_check_protocol`)
+``e``         Thread — open the lite thread viewer (see below)
+``a``         Action menu — context-sensitive actions (see below)
+``d``         Range-diff between revisions
 ``u``         Update — fetch latest trailers and check for newer
               revisions for the selected series
 ``U``         Update all — same as ``u`` but for all tracked series
@@ -217,7 +218,7 @@ and :term:`b4.attestation-staleness-days` configuration options.
 
 Lite thread viewer
 ~~~~~~~~~~~~~~~~~~
-Pressing ``Enter`` on any series opens a mutt-style thread viewer that
+Pressing ``e`` on any series opens a mutt-style thread viewer that
 fetches the full mailing list thread from lore and displays it in two
 levels:
 
@@ -641,6 +642,11 @@ Optional flags
   configured attestation key (same as ``b4 send``). This flag disables
   signing for the current session. Can also be set permanently via
   :term:`b4.review-no-patatt-sign` (see :ref:`review_settings`).
+
+``--no-mouse``
+  Disable mouse support in the TUI. This allows the terminal's native
+  text selection to work normally. Can also be set permanently via
+  :term:`b4.review-tui-disable-mouse` (see :ref:`review_settings`).
 
 .. _ci_check_protocol:
 

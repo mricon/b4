@@ -409,6 +409,16 @@ These settings control ``b4 review`` TUI behaviour.
 
      .. versionadded:: v0.15
 
+   :term:`b4.review-tui-disable-mouse`
+     Disable mouse support in the review TUI. When set, the terminal's
+     native text selection works normally instead of being captured by the
+     TUI. Can also be set per-session with ``--no-mouse`` on
+     ``b4 review tui``.
+
+     Default: ``no``
+
+     .. versionadded:: v0.15
+
    :term:`b4.review-agent-command`
      The command to invoke for AI-assisted review (triggered by the ``a``
      keybinding). Both this option and :term:`b4.review-agent-prompt-path`

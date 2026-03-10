@@ -246,6 +246,8 @@ def setup_parser() -> argparse.ArgumentParser:
                             help='Show all email dialogs but print messages to stdout instead of sending')
     sp_rev_tui.add_argument('--no-sign', dest='no_sign', action='store_true', default=False,
                             help='Do not patatt-sign outgoing review emails')
+    sp_rev_tui.add_argument('--no-mouse', dest='no_mouse', action='store_true', default=False,
+                            help='Disable mouse support in the TUI')
 
     # b4 review enroll
     sp_rev_enroll = rev_subparsers.add_parser('enroll', help='Enroll a repository for review tracking')
