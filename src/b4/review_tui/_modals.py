@@ -8,6 +8,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import email.message
 import email.utils
 import json
+import re
 
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
 
@@ -890,7 +891,7 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
             self.query_one('#snooze-duration', Input).focus()
 
     # Regex for duration shorthand: number + optional unit (m/h/d/w)
-    _DURATION_RE = __import__('re').compile(r'^(\d+)\s*([mhdw]?)$', __import__('re').IGNORECASE)
+    _DURATION_RE = re.compile(r'^(\d+)\s*([mhdw]?)$', re.IGNORECASE)
 
     def action_continue_snooze(self) -> None:
         import datetime

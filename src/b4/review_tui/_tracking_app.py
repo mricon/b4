@@ -5,6 +5,7 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import datetime
 import email.message
 import email.parser
 import email.policy
@@ -83,8 +84,6 @@ def _format_snooze_until(value: str) -> str:
     duration like "in 2h 30m" plus the local date/time.  Otherwise
     return the value as-is (backward compat for date-only strings).
     """
-    import datetime
-
     if value.startswith('tag:'):
         return f'until tag {value[4:]}'
     if 'T' not in value:
@@ -913,8 +912,6 @@ class TrackingApp(App[Optional[str]]):
 
     def _do_checkout(self, lser: b4.LoreSeries, series: Dict[str, Any]) -> None:
         """Create the review branch for the series."""
-        import io
-
         topdir = b4.git_get_toplevel()
         if not topdir:
             self.notify('Not in a git repository', severity='error')
@@ -1047,8 +1044,6 @@ class TrackingApp(App[Optional[str]]):
         self.exit(branch_name)
 
     def _show_details(self, series: Dict[str, Any]) -> None:
-        import datetime
-        import email.utils
 
         panel = self.query_one('#details-panel', Vertical)
         panel.styles.height = 7
@@ -1385,7 +1380,6 @@ class TrackingApp(App[Optional[str]]):
             cherrypick: If set, the 1-based patch indices that were picked.
             accepted: If True, mark the series status as 'accepted'.
         """
-        import datetime
         try:
             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
         except SystemExit:
@@ -2501,8 +2495,6 @@ class TrackingApp(App[Optional[str]]):
         branch, checks out the new revision, then restores reviews onto
         patches whose patch-id matches.
         """
-        import io
-
         review_branch = f'b4/review/{change_id}'
 
         with self.suspend():
@@ -2882,7 +2874,6 @@ class TrackingApp(App[Optional[str]]):
         When *notify* is False, TUI notifications are suppressed (useful
         when called from within ``suspend()``).
         """
-        import io
         import tarfile
         import time
         import b4.ez

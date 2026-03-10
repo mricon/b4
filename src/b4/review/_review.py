@@ -21,7 +21,7 @@ import b4
 import b4.mbox
 import b4.review.tracking
 
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Set, Tuple
 
 logger = b4.logger
 
@@ -1242,8 +1242,6 @@ def update_series_tracking(
     Returns {'new_revisions': int, 'new_trailers': int,
              'error': Optional[str]}.
     """
-    from typing import Set
-
     result: Dict[str, Any] = {
         'new_revisions': 0,
         'new_trailers': 0,

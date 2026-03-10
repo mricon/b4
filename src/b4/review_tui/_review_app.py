@@ -5,7 +5,9 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import email.utils
 import os
+import re
 import subprocess
 
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -504,7 +506,6 @@ class ReviewApp(App[None]):
                 comment_map.setdefault(key, []).append((initials, colour, c['text']))
 
         # Parse and render diff with line tracking
-        import re
         hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
         current_a_file = ''
         current_b_file = ''
@@ -1535,7 +1536,6 @@ class ReviewApp(App[None]):
 
     def _mark_followup_msgs_seen(self, msgs: List[Any]) -> None:
         """Mark all follow-up messages as Seen in the messages DB."""
-        import email.utils as _eu
         entries = []
         for msg in msgs:
             mid = b4.LoreMessage.clean_header(msg.get('Message-ID', ''))
@@ -1545,7 +1545,7 @@ class ReviewApp(App[None]):
                 msg_date = None
                 if date_val:
                     try:
-                        msg_date = _eu.parsedate_to_datetime(str(date_val)).isoformat()
+                        msg_date = email.utils.parsedate_to_datetime(str(date_val)).isoformat()
                     except Exception:
                         pass
                 entries.append({'msgid': mid, 'msg_date': msg_date})
@@ -1607,8 +1607,7 @@ class ReviewApp(App[None]):
             from_hdr = info['from']
             if not from_hdr:
                 continue
-            import email.utils as _eu
-            _, addr = _eu.parseaddr(str(from_hdr))
+            _, addr = email.utils.parseaddr(str(from_hdr))
             if addr.lower() != maintainer_email:
                 continue
             # Immediate parent → Answered
