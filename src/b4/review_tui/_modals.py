@@ -703,6 +703,7 @@ class TakeScreen(ModalScreen[bool]):
         self.method_result: str = self._default_method
         self.add_link: bool = True
         self.add_signoff: bool = True
+        self.accept_series: bool = True
 
     def compose(self) -> ComposeResult:
         method_options = [
@@ -963,15 +964,15 @@ class TakeConfirmScreen(ModalScreen[bool]):
                     return False, 'no matching commits for selection'
 
             # Build mbox from selected commits
-            mbox_parts = []
+            mbox_parts: list[bytes] = []
             for commit in commits:
-                ecode, out = b4.git_run_command(
+                ecode, patch_bytes = b4.git_run_command(
                     topdir,
                     ['format-patch', '--stdout', '-1', commit],
                     decode=False)
                 if ecode != 0:
                     return False, f'format-patch failed for {commit[:12]}'
-                mbox_parts.append(out)
+                mbox_parts.append(patch_bytes)
             ambytes = b''.join(mbox_parts)
 
             # Test apply in a temporary sparse worktree
