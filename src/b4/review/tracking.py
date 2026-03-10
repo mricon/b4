@@ -25,7 +25,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = '''
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS series (
     last_update_check TEXT,
     last_activity_at TEXT,
     snoozed_until TEXT,
+    attestation TEXT DEFAULT 'pending',
     UNIQUE (change_id, revision)
 );
 
@@ -115,6 +116,8 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
     if version < 4:
         conn.execute('ALTER TABLE series RENAME COLUMN followup_count TO message_count')
         conn.execute('ALTER TABLE series RENAME COLUMN seen_followup_count TO seen_message_count')
+    if version < 5:
+        conn.execute("ALTER TABLE series ADD COLUMN attestation TEXT DEFAULT 'pending'")
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -528,7 +531,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
         cursor = conn.execute('''
             SELECT track_id, change_id, revision, subject, sender_name, sender_email,
                    sent_at, added_at, status, num_patches, message_id, pw_series_id,
-                   message_count, seen_message_count, last_activity_at
+                   message_count, seen_message_count, last_activity_at, attestation
             FROM series
             ORDER BY added_at DESC
         ''')
@@ -550,6 +553,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                 'message_count': row[12],
                 'seen_message_count': row[13],
                 'last_activity_at': row[14],
+                'attestation': row[15],
             })
         conn.close()
         return result
@@ -588,6 +592,20 @@ def get_newest_revision(conn: sqlite3.Connection, change_id: str) -> Optional[in
     if row and row[0] is not None:
         return int(row[0])
     return None
+
+
+def update_attestation(identifier: str, change_id: str,
+                       revision: int, attestation: Optional[str]) -> None:
+    """Store attestation result for a tracked series."""
+    try:
+        conn = get_db(identifier)
+        conn.execute(
+            'UPDATE series SET attestation = ? WHERE change_id = ? AND revision = ?',
+            (attestation, change_id, revision))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def update_series_status(conn: sqlite3.Connection, change_id: str, status: str,

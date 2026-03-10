@@ -9,7 +9,7 @@ import pytest
 import b4
 from b4 import review
 from b4 import review_tui
-from b4.review._review import REVIEW_MAGIC_MARKER
+from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
 
 
 # -- Helper diffs used across tests ------------------------------------------
@@ -1688,3 +1688,126 @@ class TestNoteCommentStripping:
     def test_mixed_content(self) -> None:
         raw = '# TODO: revisit\nNeed to check NULL path\n# end'
         assert self._strip_comments(raw) == 'Need to check NULL path'
+
+
+# -- Helpers for attestation tests -------------------------------------------
+
+def _make_mock_attestation(status: str, identity: str, passing: bool) -> Dict[str, Any]:
+    """Build an attestation dict as returned by LoreMessage.get_attestation_status()."""
+    return {'status': status, 'identity': identity, 'passing': passing}
+
+
+def _make_mock_lmsg(attestations: list, passing: bool = True, critical: bool = False) -> mock.Mock:
+    """Build a mock LoreMessage with a canned get_attestation_status() response."""
+    lmsg = mock.Mock()
+    lmsg.get_attestation_status = mock.Mock(return_value=(attestations, passing, critical))
+    return lmsg
+
+
+# -- Tests for check_series_attestation() ------------------------------------
+
+class TestCheckSeriesAttestation:
+    """Tests for check_series_attestation()."""
+
+    def _make_series(self, patch_msgs: list) -> mock.Mock:
+        """Build a mock LoreSeries with given patch messages (index 0 = cover)."""
+        lser = mock.Mock()
+        lser.patches = [None] + patch_msgs  # patches[0] is the cover letter
+        return lser
+
+    def test_policy_off_returns_none(self) -> None:
+        """When attestation-policy is 'off', returns None immediately."""
+        lser = self._make_series([_make_mock_lmsg([])])
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'off'}):
+            assert check_series_attestation(lser) is None
+
+    def test_no_signatures_returns_none_string(self) -> None:
+        """When no attestors found on any patch, returns 'none'."""
+        lser = self._make_series([_make_mock_lmsg([]), _make_mock_lmsg([])])
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+            assert check_series_attestation(lser) == 'none'
+
+    def test_single_signed_dkim(self) -> None:
+        """A single passing DKIM attestor is reported correctly."""
+        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
+        lser = self._make_series([_make_mock_lmsg(att)])
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+            result = check_series_attestation(lser)
+        assert result == 'signed:DKIM/kernel.org'
+
+    def test_nokey_attestor(self) -> None:
+        """A nokey attestor is reported with status 'nokey'."""
+        att = [_make_mock_attestation('nokey', 'ed25519/user@example.com', False)]
+        lser = self._make_series([_make_mock_lmsg(att)])
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+            result = check_series_attestation(lser)
+        assert result == 'nokey:ed25519/user@example.com'
+
+    def test_badsig_attestor(self) -> None:
+        """A badsig attestor is reported with status 'badsig'."""
+        att = [_make_mock_attestation('badsig', 'ed25519/user@example.com', False)]
+        lser = self._make_series([_make_mock_lmsg(att)])
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+            result = check_series_attestation(lser)
+        assert result == 'badsig:ed25519/user@example.com'
+
+    def test_mixed_attestors(self) -> None:
+        """Mixed signed and nokey attestors are semicolon-separated and sorted."""
+        att = [
+            _make_mock_attestation('signed', 'DKIM/kernel.org', True),
+            _make_mock_attestation('nokey', 'ed25519/user@example.com', False),
+        ]
+        lser = self._make_series([_make_mock_lmsg(att)])
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+            result = check_series_attestation(lser)
+        # Sorted by (status, identity): nokey < signed alphabetically
+        parts = result.split(';')
+        assert len(parts) == 2
+        assert 'signed:DKIM/kernel.org' in parts
+        assert 'nokey:ed25519/user@example.com' in parts
+
+    def test_deduplicates_across_patches(self) -> None:
+        """Same attestor on multiple patches is only reported once."""
+        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
+        lser = self._make_series([_make_mock_lmsg(att), _make_mock_lmsg(att)])
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+            result = check_series_attestation(lser)
+        assert result == 'signed:DKIM/kernel.org'
+
+    def test_none_patches_skipped(self) -> None:
+        """None entries in patches list are skipped gracefully."""
+        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
+        lser = mock.Mock()
+        lser.patches = [None, None, _make_mock_lmsg(att), None]
+        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+            result = check_series_attestation(lser)
+        assert result == 'signed:DKIM/kernel.org'
+
+    def test_staleness_days_passed_to_attestation(self) -> None:
+        """attestation-staleness-days config is passed through correctly."""
+        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
+        lmsg = _make_mock_lmsg(att)
+        lser = self._make_series([lmsg])
+        config = {'attestation-policy': 'softfail', 'attestation-staleness-days': '30'}
+        with mock.patch('b4.get_main_config', return_value=config):
+            check_series_attestation(lser)
+        lmsg.get_attestation_status.assert_called_once_with('softfail', 30)
+
+    def test_invalid_staleness_days_defaults_to_zero(self) -> None:
+        """Non-numeric staleness-days falls back to 0."""
+        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
+        lmsg = _make_mock_lmsg(att)
+        lser = self._make_series([lmsg])
+        config = {'attestation-policy': 'softfail', 'attestation-staleness-days': 'garbage'}
+        with mock.patch('b4.get_main_config', return_value=config):
+            check_series_attestation(lser)
+        lmsg.get_attestation_status.assert_called_once_with('softfail', 0)
+
+    def test_default_policy_softfail(self) -> None:
+        """When no attestation-policy set, defaults to softfail (not off)."""
+        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
+        lmsg = _make_mock_lmsg(att)
+        lser = self._make_series([lmsg])
+        with mock.patch('b4.get_main_config', return_value={}):
+            result = check_series_attestation(lser)
+        assert result == 'signed:DKIM/kernel.org'

@@ -33,11 +33,11 @@ from textual.widgets import Footer, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
 from b4.review_tui._common import (
     logger, resolve_styles, _wait_for_enter, _suspend_to_shell,
-    gather_attestation_info, SeparatedFooter, _quiet_worker,
+    SeparatedFooter, _quiet_worker,
     _fix_ansi_theme, display_width, pad_display,
 )
 from b4.review_tui._modals import (
-    AttestationScreen, TakeScreen,
+    BaseSelectionScreen, WorkerScreen, TakeScreen, TakeConfirmScreen,
     CherryPickScreen, NewerRevisionWarningScreen,
     RevisionChoiceScreen, RebaseScreen, AbandonConfirmScreen,
     ArchiveConfirmScreen, RangeDiffScreen, ThankScreen,
@@ -148,6 +148,37 @@ def _get_art_counts(topdir: str, branch: str) -> Optional[Tuple[int, int, int]]:
     return (acked, reviewed, tested)
 
 
+def _format_attestation(att: str, app: Any = None) -> Optional[RichText]:
+    """Format an attestation DB value into a Rich text snippet.
+
+    Returns None when there is nothing to display (e.g. 'pending', 'none').
+    """
+    entries = att.split(';') if att and att not in ('pending', 'none') else []
+    if not entries:
+        return None
+    # resolve_styles needs the app; fall back to plain colours if unavailable
+    if app is not None:
+        ts = resolve_styles(app)
+    else:
+        ts = {'success': 'green', 'error': 'red', 'warning': 'dark_orange'}
+    text = RichText()
+    for i, entry in enumerate(entries):
+        if i > 0:
+            text.append(', ')
+        status, identity = entry.split(':', 1) if ':' in entry else (entry, '')
+        if status == 'signed':
+            text.append(f'\u2714 {identity}', style=ts['success'])
+        elif status == 'nokey':
+            text.append(f'? {identity}', style=ts['warning'])
+            text.append(' (no key)', style='dim')
+        elif status == 'badsig':
+            text.append(f'\u2718 {identity}', style=ts['error'])
+            text.append(' (signature failed)', style='dim')
+        else:
+            text.append(entry)
+    return text
+
+
 class TrackedSeriesItem(ListItem):
     """A single tracked series entry in the listing."""
 
@@ -234,8 +265,16 @@ class TrackedSeriesItem(ListItem):
                 submitter = submitter[:-1]
             submitter += '…'
         submitter = pad_display(submitter, 20)
+        att = self.series.get('attestation') or ''
+        att_entries = att.split(';') if att and att not in ('pending', 'none') else []
         label = RichText(no_wrap=True, overflow='ellipsis')
-        label.append(f'{submitter}  ')
+        label.append(submitter)
+        if att_entries and all(e.startswith('signed:') for e in att_entries):
+            ts = resolve_styles(self.app)
+            label.append('\u2714', style=ts['success'])  # ✔
+        else:
+            label.append(' ')
+        label.append(' ')
         label.append(art_str.rjust(7))
         base_style = ''
         badge_style = ''
@@ -299,7 +338,7 @@ class TrackingApp(App[Optional[str]]):
     }
     .details-label {
         color: $text-muted;
-        width: 12;
+        width: 13;
     }
     .details-row {
         height: 1;
@@ -330,8 +369,8 @@ class TrackingApp(App[Optional[str]]):
 
     BINDING_GROUPS = {
         'review': 'Series', 'check': 'Series', 'view': 'Series',
-        'range_diff': 'Series', 'action': 'Series',
-        'update': 'App', 'limit': 'App', 'suspend': 'App',
+        'range_diff': 'Series', 'action': 'Series', 'update_one': 'Series',
+        'update_all': 'App', 'limit': 'App', 'suspend': 'App',
         'patchwork': 'App', 'quit': 'App', 'help': 'App',
     }
 
@@ -344,12 +383,13 @@ class TrackingApp(App[Optional[str]]):
         Binding('r', 'review', 'review'),
         Binding('c', 'check', 'ci'),
         Binding('a', 'action', 'action'),
+        Binding('u', 'update_one', 'update'),
         Binding('d', 'range_diff', 'range-diff'),
         # App-global actions
-        Binding('u', 'update', 'update'),
         Binding('l', 'limit', 'limit'),
         Binding('s', 'suspend', 'shell'),
         Binding('p', 'patchwork', 'patchwork'),
+        Binding('U', 'update_all', 'Update all', key_display='U'),
         Binding('q', 'quit', 'quit'),
         Binding('question_mark', 'help', 'help', key_display='?'),
     ]
@@ -403,6 +443,9 @@ class TrackingApp(App[Optional[str]]):
             with Horizontal(classes='details-row'):
                 yield Static('From:', classes='details-label')
                 yield Static('', id='detail-from', markup=False)
+            with Horizontal(classes='details-row', id='detail-attestation-row'):
+                yield Static('Attestation:', classes='details-label')
+                yield Static('', id='detail-attestation')
             with Horizontal(classes='details-row'):
                 yield Static('Sent:', classes='details-label')
                 yield Static('', id='detail-sent', markup=False)
@@ -612,7 +655,7 @@ class TrackingApp(App[Optional[str]]):
             await self.mount(empty, before=self.query_one(Footer))
             return
 
-        header_text = f'{"Submitter":<20s}  {"A·R·T":>7s}  {"Msgs":>6s}  {"S":<4s}{"Subject"}'
+        header_text = f'{"Submitter":<20s}{"A":>1s} {"A·R·T":>7s}  {"Msgs":>6s}  {"S":<4s}{"Subject"}'
         header = Static(header_text, id='tracking-header')
 
         list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
@@ -861,7 +904,7 @@ class TrackingApp(App[Optional[str]]):
                                           tracking_info=tracking_info))
 
     def _checkout_new_series(self) -> None:
-        """Retrieve series, check attestation, and create review branch."""
+        """Retrieve series, build am-ready mbox, and show base selection."""
         series = self._selected_series
         if not series:
             return
@@ -871,43 +914,125 @@ class TrackingApp(App[Optional[str]]):
             self.notify('No message-id available for this series', severity='error')
             return
 
-        # Suspend UI for all retrieval and processing that might log
-        lser = None
-        att_result = None
-        with self.suspend():
-            logger.info('Retrieving series: %s', message_id)
-            try:
+        def _fetch_and_prepare() -> Tuple[b4.LoreSeries, bytes, str, str]:
+            with _quiet_worker():
                 msgs = b4.review._retrieve_messages(message_id)
                 self._refresh_msg_count(series, len(msgs))
                 wantver = series.get('revision')
                 lser = b4.review._get_lore_series(msgs, wantver=wantver)
-            except LookupError as ex:
-                logger.critical('%s', ex)
-                _wait_for_enter()
-                return
-            except Exception as ex:
-                logger.critical('Error retrieving series: %s', ex)
-                _wait_for_enter()
-                return
 
-            # Gather attestation info
-            att_result = gather_attestation_info(lser)
+                am_msgs = lser.get_am_ready(
+                    noaddtrailers=True, addmysob=False, addlink=False,
+                    cherrypick=None, copyccs=False, allowbadchars=False,
+                    showchecks=False)
+                if not am_msgs:
+                    raise LookupError('No patches ready for applying')
 
-        # Show attestation screen (TUI resumed)
+                ifh = io.BytesIO()
+                b4.save_git_am_mbox(am_msgs, ifh)
+                ambytes = ifh.getvalue()
+
+                # Determine best base: series-specified or guessed
+                initial_base = 'HEAD'
+                base_hint = ''
+                topdir = b4.git_get_toplevel()
+                if lser.base_commit and topdir:
+                    bc = lser.base_commit
+                    short = bc[:12] if len(bc) > 12 else bc
+                    if b4.git_commit_exists(topdir, bc):
+                        initial_base = short
+                        base_hint = f'Series base: {short}'
+                    else:
+                        base_hint = f'Series base: {short} (not in repo)'
+                if topdir and initial_base == 'HEAD':
+                    # No usable series base — try guessing.
+                    # Exclude b4 review branches — they are never
+                    # useful as a base for applying new series.
+                    try:
+                        guessed, nblobs, mismatches = lser.find_base(
+                            topdir,
+                            branches=['--exclude=refs/heads/b4/review/*',
+                                      '--all'],
+                            maxdays=30)
+                        if guessed:
+                            # find_base returns a describe name (e.g. heads/foo);
+                            # resolve it to a SHA for the input field
+                            ecode, sha_out = b4.git_run_command(
+                                topdir, ['rev-parse', '--verify', guessed])
+                            sha = sha_out.strip() if ecode == 0 else ''
+                            short_sha = sha[:12] if sha else guessed
+                            if mismatches == 0:
+                                initial_base = short_sha
+                                base_hint = (f'Guessed base: {guessed}'
+                                             f' (exact match)')
+                            elif nblobs != mismatches:
+                                matched = nblobs - mismatches
+                                initial_base = short_sha
+                                base_hint = (f'Guessed base: {guessed}'
+                                             f' ({matched}/{nblobs} blobs)')
+                            else:
+                                base_hint = 'Could not find a matching base'
+                    except (IndexError, Exception):
+                        pass
+
+                # Check attestation while we have the messages
+                att = b4.review.check_series_attestation(lser)
+                if att and self._identifier:
+                    b4.review.tracking.update_attestation(
+                        self._identifier,
+                        series.get('change_id', ''),
+                        series.get('revision', 1),
+                        att)
+
+                return lser, ambytes, initial_base, base_hint
+
         self.push_screen(
-            AttestationScreen(att_result),
-            callback=lambda proceed: self._on_attestation_complete(proceed, lser, series),
+            WorkerScreen('Retrieving series\u2026', _fetch_and_prepare),
+            callback=lambda result: self._on_series_fetched(result, series),
         )
 
-    def _on_attestation_complete(self, proceed: bool, lser: b4.LoreSeries,
-                                  series: Dict[str, Any]) -> None:
-        """Handle attestation screen result."""
-        if not proceed:
-            self.notify('Checkout cancelled', severity='information')
+    def _on_series_fetched(self, result: Any,
+                            series: Dict[str, Any]) -> None:
+        """Handle the result from the series fetch worker."""
+        if result is None:
             return
 
-        # Proceed with checkout
-        self._do_checkout(lser, series)
+        lser, ambytes, initial_base, base_hint = result
+
+        # Build base commit suggestions: HEAD, configured target, recent branches
+        base_suggestions: List[str] = ['HEAD']
+        config = b4.get_main_config()
+        cfg_branch = config.get('review-target-branch')
+        if cfg_branch and str(cfg_branch) not in base_suggestions:
+            base_suggestions.append(str(cfg_branch))
+        topdir = b4.git_get_toplevel()
+        if topdir:
+            gitdir = b4.git_get_common_dir(topdir)
+            if gitdir:
+                recent = b4.review.tracking.get_recent_take_branches(gitdir)
+                if recent:
+                    for rb in recent:
+                        if rb not in base_suggestions:
+                            base_suggestions.append(rb)
+
+        self.push_screen(
+            BaseSelectionScreen(initial_base, lser, ambytes,
+                                base_suggestions=base_suggestions,
+                                base_hint=base_hint),
+            callback=lambda base_sha: self._on_base_selected(
+                base_sha, lser, series, ambytes),
+        )
+
+    def _on_base_selected(self, base_sha: Optional[str],
+                           lser: b4.LoreSeries,
+                           series: Dict[str, Any],
+                           ambytes: bytes) -> None:
+        """Handle base selection screen result."""
+        if base_sha is None:
+            self.notify('Checkout cancelled', severity='information')
+            return
+        self._do_checkout(lser, series, base_commit=base_sha,
+                          ambytes=ambytes)
 
     def _discover_newer_versions(self, change_id: str,
                                  current_rev: int,
@@ -968,8 +1093,16 @@ class TrackingApp(App[Optional[str]]):
 
         return base_commit
 
-    def _do_checkout(self, lser: b4.LoreSeries, series: Dict[str, Any]) -> None:
-        """Create the review branch for the series."""
+    def _do_checkout(self, lser: b4.LoreSeries, series: Dict[str, Any],
+                     base_commit: str, ambytes: bytes) -> None:
+        """Create the review branch for the series.
+
+        Args:
+            lser: The LoreSeries to check out
+            series: Tracking database series dict
+            base_commit: Resolved base commit SHA (from BaseSelectionScreen)
+            ambytes: Pre-built mbox bytes for git-am
+        """
         topdir = b4.git_get_toplevel()
         if not topdir:
             self.notify('Not in a git repository', severity='error')
@@ -982,15 +1115,6 @@ class TrackingApp(App[Optional[str]]):
         # Suspend UI for all checkout operations that might log
         checkout_success = False
         with self.suspend():
-            # Get am-ready messages
-            am_msgs = lser.get_am_ready(noaddtrailers=True, addmysob=False, addlink=False,
-                                        cherrypick=None, copyccs=False, allowbadchars=False,
-                                        showchecks=False)
-            if not am_msgs:
-                logger.critical('No patches ready for applying')
-                _wait_for_enter()
-                return
-
             # Find the top msgid
             top_msgid = None
             first_body = None
@@ -1004,18 +1128,6 @@ class TrackingApp(App[Optional[str]]):
                 logger.critical('Could not find any patches in the series')
                 _wait_for_enter()
                 return
-
-            # Determine base commit
-            base_commit = self._resolve_base_commit(topdir, lser)
-            if not base_commit:
-                logger.critical('Could not determine base commit')
-                _wait_for_enter()
-                return
-
-            # Build mbox for git-am
-            ifh = io.BytesIO()
-            b4.save_git_am_mbox(am_msgs, ifh)
-            ambytes = ifh.getvalue()
 
             # Get linkmask
             config = b4.get_main_config()
@@ -1130,8 +1242,29 @@ class TrackingApp(App[Optional[str]]):
         self.query_one('#detail-changeid', Static).update(change_id)
         self.query_one('#detail-link', Static).update(link_url)
 
+        # Attestation row
+        att = series.get('attestation') or ''
+        att_row = self.query_one('#detail-attestation-row', Horizontal)
+        att_widget = self.query_one('#detail-attestation', Static)
+        height = 7
+        if att == 'pending' or att == '':
+            att_widget.update(RichText('pending (run [u]pdate)', style='dim'))
+            att_row.display = True
+            height += 1
+        elif att == 'none':
+            att_widget.update(RichText('no signatures', style='dim'))
+            att_row.display = True
+            height += 1
+        else:
+            att_text = _format_attestation(att, app=self)
+            if att_text is not None:
+                att_widget.update(att_text)
+                att_row.display = True
+                height += 1
+            else:
+                att_row.display = False
+
         # Show known revisions from SQLite
-        height = 8
         revision = series.get('revision', 1)
         revisions_row = self.query_one('#detail-revisions-row', Horizontal)
         try:
@@ -1183,7 +1316,24 @@ class TrackingApp(App[Optional[str]]):
 
         panel.styles.height = height
 
-    def action_update(self) -> None:
+    def action_update_one(self) -> None:
+        """Fetch thread and update revisions/trailers for the selected series."""
+        if not self._selected_series:
+            self.notify('No series selected', severity='warning')
+            return
+
+        config = b4.get_main_config()
+        linkmask = str(config.get('linkmask', 'https://lore.kernel.org/r/%s'))
+        topdir = b4.git_get_toplevel()
+
+        self._focus_change_id = self._selected_series.get('change_id')
+        self.push_screen(
+            UpdateAllScreen([self._selected_series], self._identifier,
+                            linkmask, topdir),
+            callback=self._on_update_complete,
+        )
+
+    def action_update_all(self) -> None:
         """Fetch threads and update revisions/trailers for all tracked series."""
         if not self._all_series:
             self.notify('No tracked series to update', severity='warning')
@@ -1196,13 +1346,15 @@ class TrackingApp(App[Optional[str]]):
         # Skip snoozed series during update-all
         update_list = [s for s in self._all_series if s.get('status') != 'snoozed']
 
+        if self._selected_series:
+            self._focus_change_id = self._selected_series.get('change_id')
         self.push_screen(
             UpdateAllScreen(update_list, self._identifier, linkmask, topdir),
-            callback=self._on_update_all_complete,
+            callback=self._on_update_complete,
         )
 
-    def _on_update_all_complete(self, result: Optional[Dict[str, int]]) -> None:
-        """Build a summary notification from the update-all result."""
+    def _on_update_complete(self, result: Optional[Dict[str, int]]) -> None:
+        """Build a summary notification from an update result."""
         if result is None:
             return
         checked = result.get('series_checked', 0)
@@ -1327,19 +1479,10 @@ class TrackingApp(App[Optional[str]]):
     def _on_take_confirmed(self, confirmed: bool, change_id: str,
                            review_branch: str, take_screen: 'TakeScreen',
                            series: Dict[str, Any]) -> None:
-        """Handle take confirmation result."""
+        """Handle take screen result — proceed to cherry-pick or confirm."""
         if not confirmed:
             return
-        if take_screen.method_result == 'merge':
-            with self.suspend():
-                self._do_take_merge(change_id, review_branch, take_screen, series)
-            self._load_series()
-        elif take_screen.method_result == 'linear':
-            with self.suspend():
-                self._do_take_am(change_id, review_branch, take_screen, series,
-                                 cherrypick=None)
-            self._load_series()
-        elif take_screen.method_result == 'cherry-pick':
+        if take_screen.method_result == 'cherry-pick':
             # Load tracking to get the patch list for cherry-pick selection
             topdir = b4.git_get_toplevel()
             if not topdir:
@@ -1369,18 +1512,59 @@ class TrackingApp(App[Optional[str]]):
                     picked, change_id, review_branch, take_screen, series,
                     pick_screen),
             )
+        else:
+            self._show_take_confirm(
+                take_screen.method_result, take_screen.target_result,
+                change_id, review_branch, take_screen, series)
 
     def _on_cherrypick_confirmed(self, confirmed: bool, change_id: str,
                                  review_branch: str, take_screen: 'TakeScreen',
                                  series: Dict[str, Any],
                                  pick_screen: 'CherryPickScreen') -> None:
-        """Handle cherry-pick selection result."""
+        """Handle cherry-pick selection — proceed to confirm screen."""
         if not confirmed:
             return
-        with self.suspend():
-            self._do_take_am(change_id, review_branch, take_screen, series,
-                             cherrypick=pick_screen.selected_indices)
-        self._load_series()
+        self._show_take_confirm(
+            'cherry-pick', take_screen.target_result,
+            change_id, review_branch, take_screen, series,
+            cherrypick=pick_screen.selected_indices)
+
+    def _show_take_confirm(self, method: str, target_branch: str,
+                           change_id: str, review_branch: str,
+                           take_screen: 'TakeScreen',
+                           series: Dict[str, Any],
+                           cherrypick: Optional[List[int]] = None) -> None:
+        """Push the TakeConfirmScreen for final confirmation."""
+        subject = series.get('subject', '')
+        confirm_screen = TakeConfirmScreen(
+            method, target_branch, review_branch, subject=subject,
+            cherrypick=cherrypick)
+        self.push_screen(
+            confirm_screen,
+            callback=lambda ok: self._on_take_final(
+                ok, method, change_id, review_branch, take_screen,
+                series, confirm_screen, cherrypick),
+        )
+
+    def _on_take_final(self, confirmed: bool, method: str,
+                       change_id: str, review_branch: str,
+                       take_screen: 'TakeScreen',
+                       series: Dict[str, Any],
+                       confirm_screen: 'TakeConfirmScreen',
+                       cherrypick: Optional[List[int]] = None) -> None:
+        """Execute the actual take after final confirmation."""
+        if not confirmed:
+            return
+        take_screen.accept_series = confirm_screen.accept_series
+        if method == 'merge':
+            with self.suspend():
+                self._do_take_merge(change_id, review_branch, take_screen, series)
+            self._load_series()
+        else:
+            with self.suspend():
+                self._do_take_am(change_id, review_branch, take_screen, series,
+                                 cherrypick=cherrypick)
+            self._load_series()
 
     @staticmethod
     def _record_take_metadata(topdir: str, review_branch: str,

@@ -89,6 +89,48 @@ def _collect_reply_headers(lmsg: b4.LoreMessage) -> Dict[str, str]:
     return headers
 
 
+def check_series_attestation(lser: b4.LoreSeries) -> Optional[str]:
+    """Check attestation status for a series.
+
+    Returns a semicolon-separated string of per-attestor results.
+    Each entry is ``status:identity`` where status is one of:
+        signed  — signature verified successfully
+        nokey   — signed but we don't have the key
+        badsig  — we have the key and verification failed
+
+    Examples:
+        'signed:DKIM/kernel.org'
+        'signed:DKIM/kernel.org;nokey:ed25519/user@example.com'
+        'badsig:ed25519/user@example.com'
+        'none'     — checked, no signatures found
+        None       — attestation policy is off
+    """
+    config = b4.get_main_config()
+    attpolicy = str(config.get('attestation-policy', 'softfail'))
+    if attpolicy == 'off':
+        return None
+
+    try:
+        maxdays = int(str(config.get('attestation-staleness-days', '0')))
+    except ValueError:
+        maxdays = 0
+
+    # Collect unique attestor entries across all patches.
+    # Use (status, identity) as key to deduplicate.
+    seen: Set[Tuple[str, str]] = set()
+    for lmsg in lser.patches[1:]:
+        if lmsg is None:
+            continue
+        attestations, passing, critical = lmsg.get_attestation_status(attpolicy, maxdays)
+        for att in attestations:
+            key = (att.get('status', ''), att.get('identity', ''))
+            seen.add(key)
+
+    if not seen:
+        return 'none'
+    return ';'.join(f'{s}:{i}' for s, i in sorted(seen))
+
+
 def _retrieve_messages(message_id: str) -> List[email.message.EmailMessage]:
     """Fetch messages for a series from lore by message-id.
 
@@ -1274,6 +1316,16 @@ def update_series_tracking(
     lmbx = b4.LoreMailbox()
     for msg in msgs:
         lmbx.add_message(msg)
+
+    # Re-check attestation on every update (key imports, policy changes, etc.)
+    # Try the tracked revision first; fall back to the latest available.
+    lser_att = lmbx.get_series(current_rev, sloppytrailers=False)
+    if lser_att is None:
+        lser_att = lmbx.get_series(sloppytrailers=False)
+    if lser_att is not None:
+        att = check_series_attestation(lser_att)
+        b4.review.tracking.update_attestation(
+            identifier, change_id, current_rev, att)
 
     # Record all discovered revisions in SQLite
     try:

@@ -257,9 +257,10 @@ TRACKING_HELP_LINES = [
     '  [bold]v[/bold]         View series in modal\n',
     '  [bold]d[/bold]         Range-diff between revisions\n',
     '  [bold]a[/bold]         Open action menu (take, rebase, etc.)\n',
+    '  [bold]u[/bold]         Update selected series\n',
     '\n',
     '[bold]App[/bold]\n',
-    '  [bold]u[/bold]         Update all tracked series\n',
+    '  [bold]U[/bold]         Update all tracked series\n',
     '  [bold]l[/bold]         Filter series by pattern\n',
     '  [bold]s[/bold]         Suspend to shell\n',
     '  [bold]p[/bold]         Switch to Patchwork TUI\n',
@@ -697,7 +698,6 @@ class TakeScreen(ModalScreen[bool]):
         self.method_result: str = self._default_method
         self.add_link: bool = True
         self.add_signoff: bool = True
-        self.accept_series: bool = True
 
     def compose(self) -> ComposeResult:
         method_options = [
@@ -715,8 +715,7 @@ class TakeScreen(ModalScreen[bool]):
             yield Select(method_options, value=self._default_method, id='take-method', allow_blank=False)
             yield Checkbox('add Link:', value=True, id='take-add-link', classes='take-checkbox')
             yield Checkbox('add Signed-off-by:', value=True, id='take-add-signoff', classes='take-checkbox')
-            yield Checkbox('mark as accepted', value=True, id='take-accept', classes='take-checkbox')
-            yield Static('Ctrl-y confirm  |  Escape cancel', id='take-hint')
+            yield Static('Ctrl-y continue  |  Escape cancel', id='take-hint')
 
     def on_mount(self) -> None:
         self.query_one('#take-target', Input).focus()
@@ -732,7 +731,6 @@ class TakeScreen(ModalScreen[bool]):
         self.method_result = str(self.query_one('#take-method', Select).value)
         self.add_link = self.query_one('#take-add-link', Checkbox).value
         self.add_signoff = self.query_one('#take-add-signoff', Checkbox).value
-        self.accept_series = self.query_one('#take-accept', Checkbox).value
         self.dismiss(True)
 
     def action_cancel(self) -> None:
@@ -743,7 +741,7 @@ class CherryPickScreen(ModalScreen[bool]):
     """Modal screen for selecting individual patches to cherry-pick."""
 
     BINDINGS = [
-        Binding('y', 'continue_pick', 'Confirm'),
+        Binding('ctrl+y', 'continue_pick', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
     ]
 
@@ -800,7 +798,7 @@ class CherryPickScreen(ModalScreen[bool]):
                     checked = (i + 1) in self._preselected if has_preselected else False
                     yield Checkbox(Text(f' {i + 1:3d}. {title}'), value=checked,
                                    id=f'cherrypick-{i}', classes='cherrypick-checkbox')
-            yield Static('y confirm  |  Escape cancel', id='cherrypick-hint')
+            yield Static('Ctrl-y continue  |  Escape cancel', id='cherrypick-hint')
 
     def action_continue_pick(self) -> None:
         self.selected_indices = []
@@ -811,6 +809,212 @@ class CherryPickScreen(ModalScreen[bool]):
         if not self.selected_indices:
             self.notify('No patches selected', severity='error')
             return
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+class TakeConfirmScreen(ModalScreen[bool]):
+    """Final confirmation screen before executing a take.
+
+    Runs a test apply in a background worker and shows the result.
+    The maintainer can confirm (proceed) or back out (cancel).
+    """
+
+    BINDINGS = [
+        Binding('ctrl+y', 'confirm_take', 'Confirm'),
+        Binding('escape', 'cancel', 'Cancel'),
+    ]
+
+    DEFAULT_CSS = """
+    TakeConfirmScreen {
+        align: center middle;
+    }
+    #takeconfirm-dialog {
+        width: 70;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #takeconfirm-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .takeconfirm-pass {
+        color: $success;
+    }
+    .takeconfirm-fail {
+        color: $error;
+    }
+    .takeconfirm-warn {
+        color: $warning;
+    }
+    #takeconfirm-status {
+        margin-top: 1;
+    }
+    #takeconfirm-accept {
+        margin-top: 1;
+    }
+    #takeconfirm-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, method: str, target_branch: str,
+                 review_branch: str, subject: str = '',
+                 cherrypick: Optional[List[int]] = None) -> None:
+        super().__init__()
+        self._method = method
+        self._target_branch = target_branch
+        self._review_branch = review_branch
+        self._subject = subject
+        self._cherrypick = cherrypick
+        self.accept_series: bool = True
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='takeconfirm-dialog'):
+            yield Static('Confirm Take', id='takeconfirm-title')
+            if self._subject:
+                yield Static(f'Series:  {self._subject}', markup=False)
+            yield Static(f'Method:  {self._method}', markup=False)
+            yield Static(f'Target:  {self._target_branch}', markup=False)
+            if self._cherrypick:
+                yield Static(
+                    f'Patches: {", ".join(str(i) for i in self._cherrypick)}',
+                    markup=False)
+            yield Static('Testing apply\u2026', id='takeconfirm-status')
+            yield LoadingIndicator(id='takeconfirm-loading')
+            yield Checkbox('mark as accepted', value=True,
+                           id='takeconfirm-accept')
+            yield Static(
+                'Ctrl-y confirm  |  Escape cancel',
+                id='takeconfirm-hint')
+
+    def on_mount(self) -> None:
+        self.run_worker(self._test_take, name='_test_take', thread=True)
+
+    def _test_take(self) -> Tuple[bool, str]:
+        """Test-apply review branch patches at the target base."""
+        import b4.review
+
+        with _quiet_worker():
+            topdir = b4.git_get_toplevel()
+            if not topdir:
+                return False, 'not in a git repository'
+
+            # Load tracking to find base-commit and patch count
+            try:
+                _cover, tracking = b4.review.load_tracking(
+                    topdir, self._review_branch)
+            except SystemExit:
+                return False, 'could not load tracking data'
+
+            num_patches = len(tracking.get('patches', []))
+            if num_patches == 0:
+                return False, 'no patches in tracking data'
+
+            # The review branch structure is:
+            #   base -> patch1 -> ... -> patchN -> tracking_commit
+            patch_base = f'{self._review_branch}~{num_patches + 1}'
+            patch_tip = f'{self._review_branch}~1'
+
+            # For merge, test at the series base-commit (or target branch);
+            # for linear/cherry-pick, test at target branch HEAD.
+            if self._method == 'merge':
+                t_series = tracking.get('series', {})
+                test_base = t_series.get('base-commit', '')
+                if not test_base:
+                    test_base = self._target_branch
+            else:
+                test_base = self._target_branch
+
+            # Resolve the test base
+            ecode, out = b4.git_run_command(
+                topdir, ['rev-parse', '--verify', test_base])
+            if ecode != 0:
+                return False, f'cannot resolve base: {test_base}'
+            resolved_base = out.strip()
+
+            # Get patch commits
+            commits = b4.git_get_command_lines(
+                topdir, ['rev-list', '--reverse',
+                         f'{patch_base}..{patch_tip}'])
+            if not commits:
+                return False, 'no commits found on review branch'
+
+            # For cherry-pick, select only the chosen patches
+            if self._cherrypick:
+                selected = []
+                for idx in self._cherrypick:
+                    if 0 < idx <= len(commits):
+                        selected.append(commits[idx - 1])
+                commits = selected
+                if not commits:
+                    return False, 'no matching commits for selection'
+
+            # Build mbox from selected commits
+            mbox_parts = []
+            for commit in commits:
+                ecode, out = b4.git_run_command(
+                    topdir,
+                    ['format-patch', '--stdout', '-1', commit],
+                    decode=False)
+                if ecode != 0:
+                    return False, f'format-patch failed for {commit[:12]}'
+                mbox_parts.append(out)
+            ambytes = b''.join(mbox_parts)
+
+            # Test apply in a temporary sparse worktree
+            try:
+                with b4.git_temp_worktree(topdir, resolved_base) as gwt:
+                    ecode, out = b4.git_run_command(
+                        gwt, ['sparse-checkout', 'set'])
+                    if ecode > 0:
+                        return False, 'failed to set up worktree'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['checkout', '-f'])
+                    if ecode > 0:
+                        return False, 'failed to checkout base'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['am'], stdin=ambytes)
+                    if ecode > 0:
+                        for line in out.splitlines():
+                            if line.startswith('Patch failed at '):
+                                return False, line
+                        return False, 'apply failed'
+                    return True, f'clean ({resolved_base[:12]})'
+            except Exception as ex:
+                return False, str(ex)
+
+    def _update_status(self, text: str, level: str) -> None:
+        widget = self.query_one('#takeconfirm-status', Static)
+        widget.update(text)
+        widget.remove_class('takeconfirm-pass', 'takeconfirm-warn',
+                            'takeconfirm-fail')
+        widget.add_class(f'takeconfirm-{level}')
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != '_test_take':
+            return
+        if event.state == WorkerState.SUCCESS and event.worker.result:
+            await self.query_one('#takeconfirm-loading', LoadingIndicator
+                                 ).remove()
+            ok, detail = event.worker.result
+            if ok:
+                self._update_status(f'Test apply: {detail}', 'pass')
+            else:
+                self._update_status(f'Test apply: {detail}', 'fail')
+        elif event.state == WorkerState.ERROR:
+            await self.query_one('#takeconfirm-loading', LoadingIndicator
+                                 ).remove()
+            self._update_status('test apply error', 'fail')
+
+    def action_confirm_take(self) -> None:
+        self.accept_series = self.query_one(
+            '#takeconfirm-accept', Checkbox).value
         self.dismiss(True)
 
     def action_cancel(self) -> None:
@@ -1022,6 +1226,71 @@ class ThankScreen(ModalScreen[Optional[str]]):
 
     def action_send(self) -> None:
         self.dismiss('__SEND__')
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class WorkerScreen(ModalScreen[Any]):
+    """Generic modal that runs a callable in a worker thread.
+
+    Shows a loading indicator while the callable runs.  Dismisses with
+    the return value on success or None on error.
+
+    Usage::
+
+        def _do_work():
+            ...
+            return result
+
+        self.push_screen(
+            WorkerScreen('Fetching series\u2026', _do_work),
+            callback=self._on_result,
+        )
+    """
+
+    BINDINGS = [
+        Binding('escape', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    WorkerScreen {
+        align: center middle;
+    }
+    #ws-dialog {
+        width: 50;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #ws-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, title: str, fn: Any) -> None:
+        super().__init__()
+        self._title = title
+        self._fn = fn
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='ws-dialog'):
+            yield Static(self._title, id='ws-title', markup=False)
+            yield LoadingIndicator()
+
+    def on_mount(self) -> None:
+        self.run_worker(self._fn, name='_ws_work', thread=True)
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != '_ws_work':
+            return
+        if event.state == WorkerState.SUCCESS:
+            self.dismiss(event.worker.result)
+        elif event.state == WorkerState.ERROR:
+            self.app.notify(str(event.worker.error), severity='error')
+            self.dismiss(None)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1825,7 +2094,9 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='updateall-dialog'):
-            yield Label('Updating all tracked series', id='updateall-title')
+            count = len(self._series_list)
+            title = 'Updating series' if count == 1 else 'Updating all tracked series'
+            yield Label(title, id='updateall-title')
             yield Label(f'Checking 0/{len(self._series_list)} series...', id='updateall-status')
             yield Label('', id='updateall-series', markup=False)
             yield ProgressBar(total=len(self._series_list), show_eta=False, id='updateall-progress')
@@ -1898,23 +2169,25 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
             self.dismiss(self._result)
 
 
-class AttestationScreen(ModalScreen[bool]):
-    """Modal showing attestation status before checking out a series.
+class BaseSelectionScreen(ModalScreen[Optional[str]]):
+    """Modal for selecting the base commit before checking out a series.
 
-    Displays attestation status and asks the user to confirm
-    before proceeding. Returns True to continue, False to cancel.
+    Lets the maintainer pick a base, checks whether a/b blobs match,
+    and optionally runs a test apply when they don't.
+
+    Returns None if cancelled, or the resolved base commit SHA.
     """
 
     BINDINGS = [
-        Binding('y', 'continue', 'Confirm'),
+        Binding('ctrl+y', 'continue', 'Confirm', show=False),
         Binding('escape', 'cancel', 'Cancel'),
     ]
 
     DEFAULT_CSS = """
-    AttestationScreen {
+    BaseSelectionScreen {
         align: center middle;
     }
-    #att-dialog {
+    #base-dialog {
         width: 60;
         height: auto;
         max-height: 80%;
@@ -1923,171 +2196,202 @@ class AttestationScreen(ModalScreen[bool]):
         padding: 1 2;
         overflow: hidden;
     }
-    #att-title {
+    #base-title {
         text-style: bold;
         margin-bottom: 1;
     }
-    .att-line {
-        overflow: hidden;
-        width: 100%;
-    }
-    .att-pass {
+    .base-pass {
         color: $success;
     }
-    .att-fail {
+    .base-fail {
         color: $error;
     }
-    .att-warn {
+    .base-warn {
         color: $warning;
     }
-    #att-critical {
-        color: $error;
-        text-style: bold;
+    #base-hint {
+        margin-bottom: 1;
+    }
+    #base-status {
         margin-top: 1;
     }
-    #att-footer {
+    #base-footer {
         color: $text-muted;
         margin-top: 1;
     }
     """
 
-    def __init__(self, attestation_result: Dict[str, Any]) -> None:
-        """Initialize the attestation screen.
+    def __init__(self, initial_base: str,
+                 lser: 'b4.LoreSeries',
+                 ambytes: bytes,
+                 base_suggestions: Optional[List[str]] = None,
+                 base_hint: str = '') -> None:
+        """Initialize the base selection screen.
 
         Args:
-            attestation_result: Dict with keys:
-                - total: Total number of patches
-                - passing: Number of passing patches
-                - critical: If True, hardfail policy triggered
-                - same_attestation: If True, all patches have same trailers
-                - trailers: Common trailers (if same_attestation) or None
-                - per_patch: List of per-patch info (if not same_attestation)
+            initial_base: Pre-filled base ref (short SHA, branch, or "HEAD")
+            lser: The LoreSeries, used for check_applies_clean()
+            ambytes: Pre-built mbox bytes for test apply
+            base_suggestions: Branch/ref names for the input suggester
+            base_hint: Informational line about the guessed/specified base
         """
         super().__init__()
-        self._result = attestation_result
+        self._initial_base = initial_base
+        self._lser = lser
+        self._ambytes = ambytes
+        self._base_suggestions = base_suggestions
+        self._base_hint = base_hint
+        self._resolved_base: Optional[str] = None
 
     def compose(self) -> ComposeResult:
-        total = self._result.get('total', 0)
-        passing = self._result.get('passing', 0)
-        failing = total - passing
-        critical = self._result.get('critical', False)
-        same_att = self._result.get('same_attestation', False)
-        attestations = self._result.get('attestations', [])
-        per_patch = self._result.get('per_patch', [])
+        with Vertical(id='base-dialog'):
+            yield Static('Select Base Commit', id='base-title', markup=False)
+            if self._base_hint:
+                yield Static(self._base_hint, id='base-hint',
+                             classes='base-warn', markup=False)
+            yield Static('Base:', markup=False)
+            suggester = SuggestFromList(
+                self._base_suggestions, case_sensitive=True,
+            ) if self._base_suggestions else None
+            yield Input(value=self._initial_base, id='base-input',
+                        suggester=suggester)
+            yield Static('', id='base-status', markup=False)
+            yield Static(
+                'Enter check  |  Ctrl-y confirm  |  Escape cancel',
+                id='base-footer', markup=False,
+            )
 
-        with Vertical(id='att-dialog'):
-            yield Static('Attestation Check', id='att-title', markup=False)
+    def on_mount(self) -> None:
+        self.query_one('#base-input', Input).focus()
+        # Run initial applicability check for the pre-filled value
+        self._check_base(self._initial_base)
 
-            # Summary line and details
-            if total == 0:
-                yield Static('No patches to check', classes='att-warn', markup=False)
-            elif same_att:
-                # All patches have the same attestation - show summary with details
-                if not attestations:
-                    yield Static(f'{total} patches, no attestations found', classes='att-warn', markup=False)
-                elif failing == 0:
-                    yield Static(f'All {total} patches have valid attestations', classes='att-pass', markup=False)
+    def _update_status(self, text: str, level: str) -> None:
+        """Update the status line below the input."""
+        widget = self.query_one('#base-status', Static)
+        widget.update(text)
+        widget.remove_class('base-pass', 'base-warn', 'base-fail')
+        widget.add_class(f'base-{level}')
+
+    def _check_base(self, value: str) -> None:
+        """Resolve a ref and run check_applies_clean against it."""
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            self._update_status('not in a git repository', 'fail')
+            return
+
+        ecode, out = b4.git_run_command(
+            topdir, ['rev-parse', '--verify', value])
+        if ecode != 0:
+            self._update_status(f'not a valid ref: {value}', 'fail')
+            self._resolved_base = None
+            return
+
+        self._resolved_base = out.strip()
+
+        if self._lser.indexes:
+            try:
+                checked, mismatches = self._lser.check_applies_clean(
+                    topdir, at=self._resolved_base)
+                if len(mismatches) == 0:
+                    self._update_status(
+                        f'Apply results: clean ({self._resolved_base[:12]})',
+                        'pass')
                 else:
-                    yield Static(f'All {total} patches have attestation issues', classes='att-fail', markup=False)
-                # Show each attestation with its own status colour
-                for att in attestations:
-                    text = self._format_attestation(att)
-                    if att.get('passing', False):
-                        yield Static(f'  {text}', classes='att-line att-pass', markup=False)
-                    else:
-                        yield Static(f'  {text}', classes='att-line att-fail', markup=False)
+                    matched = checked - len(mismatches)
+                    self._update_status(
+                        f'Apply results: {matched}/{checked} a/b blobs match'
+                        f' — testing\u2026', 'warn')
+                    self._run_test_apply()
+            except Exception:
+                self._update_status('could not check applicability', 'warn')
+        else:
+            self._update_status(
+                f'will use {self._resolved_base[:12]}', 'pass')
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Validate the entered base ref."""
+        if event.input.id != 'base-input':
+            return
+        value = event.value.strip()
+        if not value:
+            self.notify('Base commit is required', severity='error')
+            return
+        self._check_base(value)
+
+    def _run_test_apply(self) -> None:
+        """Test-apply patches in a temp worktree (worker thread)."""
+        base = self._resolved_base
+        if not base:
+            return
+        self.run_worker(
+            lambda: self._test_apply_at(self._ambytes, base),
+            name='_test_apply', thread=True,
+        )
+
+    @staticmethod
+    def _test_apply_at(ambytes: bytes,
+                       base: str) -> Tuple[bool, str]:
+        """Run git-am in a throwaway sparse worktree. Returns (ok, detail)."""
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            return False, 'not in a git repository'
+        with _quiet_worker():
+            try:
+                with b4.git_temp_worktree(topdir, base) as gwt:
+                    ecode, out = b4.git_run_command(
+                        gwt, ['sparse-checkout', 'set'])
+                    if ecode > 0:
+                        return False, 'failed to set up worktree'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['checkout', '-f'])
+                    if ecode > 0:
+                        return False, 'failed to checkout base'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['am'], stdin=ambytes)
+                    if ecode > 0:
+                        # Extract just the "Patch failed" line
+                        for line in out.splitlines():
+                            if line.startswith('Patch failed at '):
+                                return False, line
+                        return False, 'apply failed'
+                    return True, 'success'
+            except Exception as ex:
+                return False, str(ex)
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != '_test_apply':
+            return
+        if event.state == WorkerState.SUCCESS and event.worker.result:
+            ok, detail = event.worker.result
+            if ok:
+                self._update_status('Apply results: success', 'pass')
             else:
-                # Different attestation per patch - show summary and per-patch breakdown
-                if failing == 0:
-                    yield Static(f'All {total} patches have valid attestations', classes='att-pass', markup=False)
-                else:
-                    yield Static(f'{failing}/{total} patches have attestation issues', classes='att-fail', markup=False)
-                # Only show patches with issues (limit to avoid overflow)
-                shown = 0
-                for pinfo in per_patch:
-                    if pinfo.get('passing', True):
-                        continue
-                    if shown >= 5:
-                        remaining = failing - shown
-                        yield Static(f'  ... and {remaining} more', classes='att-fail', markup=False)
-                        break
-                    idx = pinfo.get('index', '??/??')
-                    yield Static(f'  patch {idx}:', classes='att-fail', markup=False)
-                    for att in pinfo.get('attestations', []):
-                        if not att.get('passing', False):
-                            text = self._format_attestation(att)
-                            yield Static(f'    {text}', classes='att-line att-fail', markup=False)
-                    shown += 1
-
-            # Show applicability information
-            base_commit = self._result.get('base_commit')
-            base_exists = self._result.get('base_exists', False)
-            applies_clean = self._result.get('applies_clean')
-            apply_checked = self._result.get('apply_checked', 0)
-            apply_mismatches = self._result.get('apply_mismatches', 0)
-
-            yield Static('', markup=False)  # Blank line separator
-
-            if base_commit:
-                short_base = base_commit[:12] if len(base_commit) > 12 else base_commit
-                if base_exists:
-                    if applies_clean is True:
-                        yield Static(f'Base: {short_base} (applies clean)', classes='att-pass', markup=False)
-                    elif applies_clean is False:
-                        yield Static(f'Base: {short_base} ({apply_checked - apply_mismatches}/{apply_checked} blobs match)',
-                                     classes='att-warn', markup=False)
-                    else:
-                        yield Static(f'Base: {short_base}', markup=False)
-                else:
-                    # Base commit not in repo - show HEAD applicability
-                    if applies_clean is True:
-                        yield Static(f'Base: {short_base} (not in repo, applies clean to HEAD)',
-                                     classes='att-warn', markup=False)
-                    elif applies_clean is False:
-                        yield Static(f'Base: {short_base} (not in repo, {apply_checked - apply_mismatches}/{apply_checked} blobs match HEAD)',
-                                     classes='att-warn', markup=False)
-                    else:
-                        yield Static(f'Base: {short_base} (not in repo)', classes='att-warn', markup=False)
-            else:
-                if applies_clean is True:
-                    yield Static('Base: not specified (applies clean to HEAD)', classes='att-pass', markup=False)
-                elif applies_clean is False:
-                    yield Static(f'Base: not specified ({apply_checked - apply_mismatches}/{apply_checked} blobs match HEAD)',
-                                 classes='att-warn', markup=False)
-                else:
-                    yield Static('Base: not specified', classes='att-warn', markup=False)
-
-            if critical:
-                yield Static('Cannot continue: attestation-policy is hardfail', id='att-critical', markup=False)
-                yield Static('Escape cancel', id='att-footer', markup=False)
-            else:
-                yield Static('y confirm  |  Escape cancel', id='att-footer', markup=False)
-
-    def _format_attestation(self, att: Dict[str, Any]) -> str:
-        """Format an attestation dict for display."""
-        status = att.get('status', 'unknown')
-        identity = att.get('identity', 'unknown')
-
-        if status == 'signed':
-            if 'mismatch' in att:
-                return f'Signed: {identity} (From: {att["mismatch"]})'
-            return f'Signed: {identity}'
-        elif status == 'badsig':
-            return f'BADSIG: {identity}'
-        elif status == 'nokey':
-            return f'No key: {identity}'
-        elif status == 'missing':
-            return str(identity)
-        return f'{status}: {identity}'
+                self._update_status(f'Apply results: {detail}', 'fail')
+        elif event.state == WorkerState.ERROR:
+            self._update_status('test apply error', 'fail')
 
     def action_continue(self) -> None:
-        if self._result.get('critical', False):
-            self.notify('Cannot continue due to hardfail policy', severity='error')
+        if self._resolved_base:
+            self.dismiss(self._resolved_base)
             return
-        self.dismiss(True)
+        # Try to resolve whatever is in the input
+        value = self.query_one('#base-input', Input).value.strip()
+        if not value:
+            self.notify('Base commit is required', severity='error')
+            return
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            return
+        ecode, out = b4.git_run_command(
+            topdir, ['rev-parse', '--verify', value])
+        if ecode != 0:
+            self.notify(f'Not a valid ref: {value}', severity='error')
+            return
+        self.dismiss(out.strip())
 
     def action_cancel(self) -> None:
-        self.dismiss(False)
+        self.dismiss(None)
 
 
 class LimitScreen(ModalScreen[Optional[str]]):

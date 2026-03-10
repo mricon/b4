@@ -108,6 +108,8 @@ list reply or a local status change.
 Each row in the tracking list shows:
 
 * **Submitter** — patch author name (truncated if necessary)
+* **A** — attestation indicator: ``✔`` when all signatures verify,
+  blank otherwise (details shown in the bottom panel)
 * **A·R·T** — Acked-by · Reviewed-by · Tested-by trailer counts
   collected from the review branch
 * **Msgs** — total message count for the thread, with any unseen
@@ -143,8 +145,10 @@ Key           Action
 ``a``         Action menu — context-sensitive actions (see below)
 ``c``         CI checks — run configured check commands and show results
               (see :ref:`ci_check_protocol`)
-``u``         Update — fetch latest trailers, check for newer revisions,
-              and refresh message counts
+``u``         Update — fetch latest trailers and check for newer
+              revisions for the selected series
+``U``         Update all — same as ``u`` but for all tracked series
+              (skipping snoozed)
 ``l``         Limit — filter the list of displayed series
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)
@@ -189,8 +193,27 @@ actions depend on the series status:
 * ``[A]`` **Abandon** / ``[x]`` **Archive**
 
 The details panel at the bottom shows the full original subject, sender,
-send date, status, change-ID, lore link, known revisions, and the
-review branch name for active and snoozed series.
+attestation status, send date, status, change-ID, lore link, known
+revisions, and the review branch name for active and snoozed series.
+
+**Attestation display**
+
+The attestation row shows the DKIM and patatt signature verification
+results for the series. Possible states:
+
+* **pending** — not yet checked; press ``u`` to update
+* **no signatures** — checked, but no DKIM or patatt signatures found
+* **✔ identity** (green) — signature verified successfully
+* **? identity (no key)** (orange) — signed, but the verifying key is
+  not available locally
+* **✘ identity (signature failed)** (red) — key is available but
+  verification failed
+
+Attestation is checked automatically when a series is updated (``u`` or
+``U``) and when a review branch is checked out. Results are stored in
+the tracking database and displayed without re-checking on subsequent
+views. The attestation check honours the :term:`b4.attestation-policy`
+and :term:`b4.attestation-staleness-days` configuration options.
 
 Lite thread viewer
 ~~~~~~~~~~~~~~~~~~
@@ -421,9 +444,9 @@ Upgrading to a newer revision
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 When a submitter sends a new revision of a series you are reviewing, the
 Revisions line in the details panel is highlighted to let you know.
-Press ``u`` to fetch the latest thread and discover new revisions, then
-use the action menu (``a``) and select **Upgrade** to switch the review
-branch. B4 will:
+Press ``u`` to update the selected series (or ``U`` for all series) and
+discover new revisions, then use the action menu (``a``) and select
+**Upgrade** to switch the review branch. B4 will:
 
 1. Save your review comments on each patch, keyed by stable patch-id.
 2. Archive the current revision (creating a ``.tar.gz`` backup).
@@ -437,30 +460,42 @@ also not carried over, as they are specific to the previous revision.
 Applying patches (take)
 ~~~~~~~~~~~~~~~~~~~~~~~
 Open the action menu (``a``) and select **Take** to apply a reviewed series.
-B4 offers three methods:
+The take flow has three steps:
+
+**Step 1 — Choose method and options.** B4 offers three take methods:
 
 * **Merge** — creates a merge commit using the cover letter as the
   commit message template. Per-commit ``Signed-off-by`` and ``Link:``
   trailers are applied to each patch individually.
 * **Linear** (git-am) — applies patches linearly with ``git am``.
 * **Cherry-pick** — cherry-picks individual patches (you can select
-  which ones). Skipped patches are pre-deselected.
+  which ones in the next step). Skipped patches are pre-deselected.
 
-The Take dialog suggests recently used target branches, with the
-configured :term:`b4.review-target-branch` always included. You can
-also type a branch name directly.
+The dialog suggests recently used target branches, with the configured
+:term:`b4.review-target-branch` always included. You can also type a
+branch name directly. Toggle the ``Signed-off-by`` and ``Link:``
+checkboxes to add those trailers to each commit. Press ``Ctrl-y`` to
+continue, or ``Escape`` to cancel.
 
-Optionally toggle the ``Signed-off-by`` and ``Link:`` checkboxes to
-add those trailers to each commit, and the ``Mark as accepted``
-checkbox to update the series status. Press ``Ctrl-y`` to confirm,
-or ``Escape`` to cancel.
+**Step 2 — Select patches** (cherry-pick only). When cherry-pick is
+selected, a patch selection dialog lets you choose which patches to
+apply. Skipped patches are pre-deselected. Press ``Ctrl-y`` to
+continue.
+
+**Step 3 — Confirm.** A confirmation screen runs a test apply in the
+background (using a temporary sparse worktree) and shows the result:
+green for clean, red with details if it fails. The screen also shows
+the series subject, method, and target branch as a final sanity check.
+Toggle ``Mark as accepted`` to update the series status after the take.
+Press ``Ctrl-y`` to proceed with the actual take, or ``Escape`` to back
+out without making any changes.
 
 Rebasing
 ~~~~~~~~
 Open the action menu (``a``) and select **Rebase** to rebase the review
 branch onto a target branch. The dialog suggests recently used branches
-(same as the Take dialog). Press ``y`` to confirm, or ``Escape`` to
-cancel. B4 first tests applicability in a temporary worktree before
+(same as the Take dialog). Press ``Ctrl-y`` to confirm, or ``Escape``
+to cancel. B4 first tests applicability in a temporary worktree before
 performing the actual rebase.
 
 Range-diff
@@ -495,7 +530,7 @@ and select **Snooze**. The snooze dialog offers three modes:
   when that tag appears in the repository.
 
 Snoozed series move to a separate **Snoozed** group in the tracking
-list and are skipped during ``u`` (update-all). The review branch is
+list and are skipped during ``U`` (update-all). The review branch is
 preserved so you can pick up exactly where you left off.
 
 When the snooze condition is met — the date passes or the tag appears

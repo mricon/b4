@@ -12,7 +12,7 @@ import pytest
 import b4
 import b4.review
 from b4.review import tracking as review_tracking
-from b4.review_tui._tracking_app import _format_snooze_until
+from b4.review_tui._tracking_app import _format_snooze_until, _format_attestation
 from b4.review_tui._modals import SnoozeScreen
 
 
@@ -2079,3 +2079,219 @@ class TestGetExpiredSnoozedDatetime:
         assert tag_results[0]['change_id'] == 'tag-id'
         assert tag_results[0]['snoozed_until'] == 'tag:v6.15-rc3'
         conn.close()
+
+
+# -- Tests for attestation DB operations -------------------------------------
+
+class TestAttestationDb:
+    """Tests for attestation storage and schema migration."""
+
+    def _add_test_series(self, conn: Any, change_id: str = 'att-test-id',
+                         revision: int = 1) -> int:
+        """Insert a minimal series row and return its track_id."""
+        return review_tracking.add_series_to_db(
+            conn,
+            change_id=change_id,
+            revision=revision,
+            subject='Test attestation series',
+            sender_name='Test Author',
+            sender_email='author@example.com',
+            sent_at='2024-06-01T10:00:00+00:00',
+            message_id='att-test@example.com',
+            num_patches=2,
+        )
+
+    def test_new_series_has_pending_attestation(self) -> None:
+        """Newly added series default to 'pending' attestation."""
+        conn = review_tracking.init_db('att-default')
+        self._add_test_series(conn)
+        row = conn.execute(
+            "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
+        ).fetchone()
+        assert row[0] == 'pending'
+        conn.close()
+
+    def test_update_attestation_stores_value(self) -> None:
+        """update_attestation() writes the value to the DB."""
+        ident = 'att-update'
+        conn = review_tracking.init_db(ident)
+        self._add_test_series(conn)
+        conn.close()
+        review_tracking.update_attestation(ident, 'att-test-id', 1,
+                                           'signed:DKIM/kernel.org')
+        conn = review_tracking.get_db(ident)
+        row = conn.execute(
+            "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
+        ).fetchone()
+        assert row[0] == 'signed:DKIM/kernel.org'
+        conn.close()
+
+    def test_update_attestation_none_value(self) -> None:
+        """update_attestation() can store None (policy off)."""
+        ident = 'att-none'
+        conn = review_tracking.init_db(ident)
+        self._add_test_series(conn)
+        conn.close()
+        review_tracking.update_attestation(ident, 'att-test-id', 1, None)
+        conn = review_tracking.get_db(ident)
+        row = conn.execute(
+            "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
+        ).fetchone()
+        assert row[0] is None
+        conn.close()
+
+    def test_update_attestation_overwrite(self) -> None:
+        """update_attestation() overwrites a previous value."""
+        ident = 'att-overwrite'
+        conn = review_tracking.init_db(ident)
+        self._add_test_series(conn)
+        conn.close()
+        review_tracking.update_attestation(ident, 'att-test-id', 1, 'none')
+        review_tracking.update_attestation(ident, 'att-test-id', 1,
+                                           'signed:DKIM/kernel.org')
+        conn = review_tracking.get_db(ident)
+        row = conn.execute(
+            "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
+        ).fetchone()
+        assert row[0] == 'signed:DKIM/kernel.org'
+        conn.close()
+
+    def test_update_attestation_wrong_revision_no_crash(self) -> None:
+        """update_attestation() for a non-existent revision silently does nothing."""
+        ident = 'att-wrong-rev'
+        conn = review_tracking.init_db(ident)
+        self._add_test_series(conn)
+        conn.close()
+        # revision 99 doesn't exist — should not raise
+        review_tracking.update_attestation(ident, 'att-test-id', 99,
+                                           'signed:DKIM/kernel.org')
+        conn = review_tracking.get_db(ident)
+        row = conn.execute(
+            "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
+        ).fetchone()
+        assert row[0] == 'pending'  # unchanged
+        conn.close()
+
+    def test_get_all_tracked_series_includes_attestation(self) -> None:
+        """get_all_tracked_series() includes the attestation field."""
+        ident = 'att-listing'
+        conn = review_tracking.init_db(ident)
+        self._add_test_series(conn)
+        conn.close()
+        review_tracking.update_attestation(ident, 'att-test-id', 1,
+                                           'nokey:ed25519/dev@example.com')
+        series_list = review_tracking.get_all_tracked_series(ident)
+        assert len(series_list) == 1
+        assert series_list[0]['attestation'] == 'nokey:ed25519/dev@example.com'
+
+    def test_schema_v4_migration_adds_attestation(self) -> None:
+        """Migrating from schema v4 adds the attestation column."""
+        import sqlite3
+        ident = 'att-migrate-v4'
+        # Create a v4-style database manually
+        db_path = review_tracking.get_db_path(ident)
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        conn = sqlite3.connect(db_path)
+        # Create the tables without the attestation column
+        conn.executescript('''
+            CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+            INSERT INTO schema_version VALUES (4);
+            CREATE TABLE series (
+                track_id INTEGER PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                subject TEXT,
+                sender_name TEXT,
+                sender_email TEXT,
+                sent_at TEXT,
+                added_at TEXT,
+                message_id TEXT,
+                num_patches INTEGER,
+                pw_series_id INTEGER,
+                status TEXT DEFAULT 'new',
+                fingerprint TEXT,
+                branch_sha TEXT,
+                message_count INT,
+                seen_message_count INT,
+                last_update_check TEXT,
+                last_activity_at TEXT,
+                snoozed_until TEXT,
+                UNIQUE (change_id, revision)
+            );
+            INSERT INTO series (change_id, revision, subject) VALUES ('migrate-id', 1, 'Test');
+        ''')
+        conn.close()
+        # Opening via get_db triggers migration
+        conn = review_tracking.get_db(ident)
+        row = conn.execute(
+            "SELECT attestation FROM series WHERE change_id = 'migrate-id'"
+        ).fetchone()
+        assert row[0] == 'pending'
+        version = conn.execute('SELECT version FROM schema_version').fetchone()[0]
+        assert version == review_tracking.SCHEMA_VERSION
+        conn.close()
+
+
+# -- Tests for _format_attestation() display helper --------------------------
+
+class TestFormatAttestation:
+    """Tests for the _format_attestation() display helper."""
+
+    def test_pending_returns_none(self) -> None:
+        """'pending' produces no display text."""
+        assert _format_attestation('pending') is None
+
+    def test_none_string_returns_none(self) -> None:
+        """'none' (no signatures) produces no display text."""
+        assert _format_attestation('none') is None
+
+    def test_empty_string_returns_none(self) -> None:
+        """Empty string produces no display text."""
+        assert _format_attestation('') is None
+
+    def test_signed_dkim(self) -> None:
+        """A signed DKIM entry shows a checkmark and identity."""
+        text = _format_attestation('signed:DKIM/kernel.org')
+        assert text is not None
+        plain = text.plain
+        assert '\u2714' in plain  # ✔
+        assert 'DKIM/kernel.org' in plain
+
+    def test_nokey_shows_question_mark(self) -> None:
+        """A nokey entry shows a question mark, identity and '(no key)' hint."""
+        text = _format_attestation('nokey:ed25519/user@example.com')
+        assert text is not None
+        plain = text.plain
+        assert '?' in plain
+        assert 'ed25519/user@example.com' in plain
+        assert '(no key)' in plain
+
+    def test_badsig_shows_cross(self) -> None:
+        """A badsig entry shows a cross mark, identity and failure hint."""
+        text = _format_attestation('badsig:ed25519/user@example.com')
+        assert text is not None
+        plain = text.plain
+        assert '\u2718' in plain  # ✘
+        assert 'ed25519/user@example.com' in plain
+        assert '(signature failed)' in plain
+
+    def test_multiple_attestors_comma_separated(self) -> None:
+        """Multiple attestors are comma-separated in the output."""
+        text = _format_attestation('signed:DKIM/kernel.org;nokey:ed25519/dev@example.com')
+        assert text is not None
+        plain = text.plain
+        assert ', ' in plain
+        assert 'DKIM/kernel.org' in plain
+        assert 'ed25519/dev@example.com' in plain
+
+    def test_unknown_status_shown_as_is(self) -> None:
+        """An unrecognised status entry is shown verbatim."""
+        text = _format_attestation('mystery:foo/bar')
+        assert text is not None
+        assert 'mystery:foo/bar' in text.plain
+
+    def test_entry_without_colon_shown_as_is(self) -> None:
+        """An entry with no colon separator is shown verbatim."""
+        text = _format_attestation('weirdvalue')
+        assert text is not None
+        assert 'weirdvalue' in text.plain
