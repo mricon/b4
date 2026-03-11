@@ -630,10 +630,6 @@ class TrackingApp(App[Optional[str]]):
             self._load_series()
 
     async def _refresh_list(self) -> None:
-        # Remove existing list/empty widgets
-        for widget in list(self.query('#tracking-header, #tracking-list, #tracking-empty')):
-            await widget.remove()
-
         display_series = self._all_series
         if self._limit_pattern:
             pat = self._limit_pattern.lower()
@@ -651,18 +647,28 @@ class TrackingApp(App[Optional[str]]):
             title_parts += f' ({len(self._all_series)} series)'
         title.update(title_parts)
 
-        if not display_series:
-            empty = Static('No tracked series. Use "b4 review track" to add series.', id='tracking-empty')
-            await self.mount(empty, before=self.query_one(Footer))
-            return
+        # Suppress rendering while we swap old widgets for new ones.
+        # Without this, the remove-then-mount sequence can produce a
+        # single intermediate frame showing only the title bar before
+        # the new list is mounted.
+        with self.app.batch_update():
+            # Remove existing list/empty widgets
+            for widget in list(self.query('#tracking-header, #tracking-list, #tracking-empty')):
+                await widget.remove()
 
-        header_text = f'{"Submitter":<20s}{"A":>1s} {"A·R·T":>7s}  {"Msgs":>6s}  {"S":<4s}{"Subject"}'
-        header = Static(header_text, id='tracking-header')
+            if not display_series:
+                empty = Static('No tracked series. Use "b4 review track" to add series.', id='tracking-empty')
+                await self.mount(empty, before=self.query_one(Footer))
+                return
 
-        list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
-        lv = ListView(*list_items, id='tracking-list')
-        await self.mount(header, before=self.query_one(Footer))
-        await self.mount(lv, before=self.query_one(Footer))
+            header_text = f'{"Submitter":<20s}{"A":>1s} {"A·R·T":>7s}  {"Msgs":>6s}  {"S":<4s}{"Subject"}'
+            header = Static(header_text, id='tracking-header')
+
+            list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
+            lv = ListView(*list_items, id='tracking-list')
+            await self.mount(header, before=self.query_one(Footer))
+            await self.mount(lv, before=self.query_one(Footer))
+
         if self._focus_change_id:
             for idx, item in enumerate(list_items):
                 if isinstance(item, TrackedSeriesItem) and item.series.get('change_id') == self._focus_change_id:
