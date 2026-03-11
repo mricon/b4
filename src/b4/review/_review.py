@@ -20,7 +20,7 @@ import b4
 import b4.mbox
 import b4.review.tracking
 
-from typing import Dict, Any, List, Optional, Set, Tuple
+from typing import Dict, Any, List, Optional, Set, Tuple, Union
 
 logger = b4.logger
 
@@ -348,6 +348,8 @@ def main(cmdargs: argparse.Namespace) -> None:
         b4.review.tracking.cmd_enroll(cmdargs)
     elif cmdargs.review_subcmd == 'track':
         b4.review.tracking.cmd_track(cmdargs)
+    elif cmdargs.review_subcmd == 'show-info':
+        cmd_show_info(cmdargs)
 
 
 def get_review_branch_patch_ids(topdir: str, branch: str) -> List[Tuple[int, str, Optional[str]]]:
@@ -417,6 +419,154 @@ def load_tracking(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
         json_clean.append(line)
     tracking = json.loads('\n'.join(json_clean))
     return cover_text, tracking
+
+
+def get_review_info(topdir: str, branch: str) -> Dict[str, Union[str, int, bool, None]]:
+    """Collect review branch metadata in a flat dict suitable for scripting.
+
+    Returns key-value pairs describing the branch, its series metadata, and
+    dynamic ``commit-{short}`` entries for each patch commit.
+    """
+    _cover_text, tracking = load_tracking(topdir, branch)
+    series = tracking['series']
+
+    sender = ''
+    if series.get('fromname') or series.get('fromemail'):
+        sender = f"{series.get('fromname', '')} <{series.get('fromemail', '')}>"
+
+    first_patch = series.get('first-patch-commit')
+    prereqs = series.get('prerequisite-commits', [])
+
+    info: Dict[str, Union[str, int, bool, None]] = {
+        'branch': branch,
+        'change-id': series.get('change-id'),
+        'revision': series.get('revision'),
+        'status': series.get('status'),
+        'identifier': series.get('identifier'),
+        'subject': series.get('subject'),
+        'sender': sender,
+        'link': series.get('link'),
+        'base-commit': series.get('base-commit'),
+        'first-patch-commit': first_patch,
+        'series-range': None,
+        'num-patches': 0,
+        'num-prereqs': len(prereqs),
+        'complete': series.get('complete'),
+    }
+
+    # Enumerate patch commits
+    if first_patch:
+        # Range: first-patch-commit~1..branch~1 (excludes the tracking commit at tip)
+        commit_range = f'{first_patch}~1..{branch}~1'
+        lines = b4.git_get_command_lines(topdir, [
+            'log', '--reverse', '--format=%h %s', commit_range,
+        ])
+        info['series-range'] = f'{first_patch}..{branch}~1'
+        info['num-patches'] = len(lines)
+        for line in lines:
+            short, subject = line.split(maxsplit=1)
+            info[f'commit-{short}'] = subject
+
+    return info
+
+
+def show_review_info(param: str, as_json: bool = False) -> None:
+    """Parse *param* and print review branch info.
+
+    Mirrors ``ez.show_info()`` param parsing: ``[branch:]key``.
+    """
+    mybranch: Optional[str] = None
+    topdir = b4.git_get_toplevel()
+    if not topdir:
+        logger.critical('Not in a git repository.')
+        sys.exit(1)
+
+    if ':' in param:
+        chunks = param.split(':', maxsplit=1)
+        if len(chunks[0]):
+            if b4.git_branch_exists(topdir, chunks[0]):
+                mybranch = chunks[0]
+            elif b4.git_branch_exists(topdir, f'{REVIEW_BRANCH_PREFIX}{chunks[0]}'):
+                mybranch = f'{REVIEW_BRANCH_PREFIX}{chunks[0]}'
+            else:
+                logger.critical('No such branch: %s', chunks[0])
+                sys.exit(1)
+        else:
+            mybranch = b4.git_get_current_branch(topdir)
+        getval = chunks[1] if len(chunks[1]) else '_all'
+    elif b4.git_branch_exists(topdir, param):
+        mybranch = param
+        getval = '_all'
+    else:
+        mybranch = b4.git_get_current_branch(topdir)
+        getval = param
+
+    if mybranch is None:
+        logger.critical('No branch specified and no current branch found')
+        sys.exit(1)
+
+    if not mybranch.startswith(REVIEW_BRANCH_PREFIX):
+        logger.critical('Branch %s does not look like a review branch (expected prefix %s)',
+                        mybranch, REVIEW_BRANCH_PREFIX)
+        sys.exit(1)
+
+    info = get_review_info(topdir, mybranch)
+
+    if as_json:
+        print(json.dumps(info, indent=2))
+        return
+
+    if getval == '_all':
+        for key, val in info.items():
+            if val is not None:
+                print(f'{key}: {val}')
+    elif getval in info:
+        print(info[getval])
+    else:
+        logger.critical('No info about %s', getval)
+        sys.exit(1)
+
+
+def list_review_branches(as_json: bool = False) -> None:
+    """List all review branches with summary info."""
+    topdir = b4.git_get_toplevel()
+    if not topdir:
+        logger.critical('Not in a git repository.')
+        sys.exit(1)
+
+    branches = b4.review.tracking.get_review_branches(topdir)
+    if not branches:
+        logger.info('No review branches found')
+        return
+
+    all_info: List[Dict[str, Union[str, int, bool, None]]] = []
+    for branch in branches:
+        try:
+            info = get_review_info(topdir, branch)
+            all_info.append(info)
+        except (SystemExit, Exception) as ex:
+            logger.warning('Skipping %s: %s', branch, ex)
+
+    if as_json:
+        print(json.dumps(all_info, indent=2))
+        return
+
+    for idx, info in enumerate(all_info):
+        if idx > 0:
+            print()
+        for key in ('branch', 'change-id', 'status', 'subject', 'sender',
+                     'revision', 'num-patches', 'complete'):
+            val = info.get(key)
+            if val is not None:
+                print(f'{key}: {val}')
+
+
+def cmd_show_info(cmdargs: argparse.Namespace) -> None:
+    """Dispatcher for ``b4 review show-info``."""
+    if cmdargs.list_branches:
+        list_review_branches(as_json=cmdargs.json_output)
+    else:
+        show_review_info(cmdargs.param, as_json=cmdargs.json_output)
 
 
 def save_tracking_ref(topdir: str, branch: str,

@@ -648,6 +648,86 @@ Optional flags
   text selection to work normally. Can also be set permanently via
   :term:`b4.review-tui-disable-mouse` (see :ref:`review_settings`).
 
+``b4 review show-info``
+~~~~~~~~~~~~~~~~~~~~~~~
+Displays review branch metadata in a format suitable for scripting
+and CI integration. The output includes change-id, revision, status,
+commit SHAs, and other tracking data.
+
+``PARAM``
+  Optional parameter in the form ``[branch:]key``. The parameter can
+  be one of the following:
+
+  - **key name** to show just a specific value from the current branch
+  - **branch name** to show all info about a specific branch
+  - **branch name:key name** to show a specific value from a specific
+    branch
+
+  Branch names can be given in full (``b4/review/change-id``) or as a
+  shorthand (``change-id``), which is automatically expanded to
+  ``b4/review/change-id``.
+
+  For example, to show the ``base-commit`` of a specific review
+  branch::
+
+      b4 review show-info b4/review/20250310-foo-bar:base-commit
+
+  Or using the shorthand::
+
+      b4 review show-info 20250310-foo-bar:base-commit
+
+  To show all values for a specific branch::
+
+      b4 review show-info b4/review/20250310-foo-bar
+
+  To show the ``series-range`` for the current branch::
+
+      b4 review show-info :series-range
+
+  To show all values for the current branch::
+
+      b4 review show-info
+
+``-l, --list``
+  List all review branches with a summary of each (branch name,
+  change-id, status, subject, sender, revision, patch count, and
+  completeness).
+
+  ::
+
+      b4 review show-info --list
+
+``-j, --json``
+  Output in JSON format. Can be combined with ``--list`` to produce a
+  JSON array of all branches, or used alone for a single branch::
+
+      b4 review show-info --json
+      b4 review show-info --list --json
+
+The available keys are:
+
+====================  ================================================
+Key                   Description
+====================  ================================================
+``branch``            Full branch name
+``change-id``         Series change-id
+``revision``          Current revision number
+``status``            Review status (new, reviewing, accepted, etc.)
+``identifier``        Project identifier
+``subject``           Series subject line
+``sender``            Author in ``Name <email>`` format
+``link``              Link to the series on the mailing list
+``base-commit``       Base commit SHA
+``first-patch-commit``  SHA of the first patch commit
+``series-range``      Commit range of the patch commits
+``num-patches``       Number of patch commits
+``num-prereqs``       Number of prerequisite commits
+``complete``          Whether all expected patches were received
+``commit-HASH``       Subject of each patch commit (dynamic keys)
+====================  ================================================
+
+.. versionadded:: v0.15
+
 .. _ci_check_protocol:
 
 CI check integration

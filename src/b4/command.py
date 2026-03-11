@@ -263,6 +263,19 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_rev_track.add_argument('-i', '--identifier', dest='identifier', default=None,
                               help='Project identifier (required if not in an enrolled repository)')
 
+    # b4 review show-info
+    sp_rev_showinfo = rev_subparsers.add_parser('show-info',
+        help='Show review branch info in a format suitable for scripting')
+    sp_rev_showinfo.add_argument('param', metavar='PARAM', nargs='?',
+        default=':_all',
+        help='[branch:]key — branch and/or key to display (default: all)')
+    sp_rev_showinfo.add_argument('-l', '--list', dest='list_branches',
+        action='store_true', default=False,
+        help='List all review branches with summary info')
+    sp_rev_showinfo.add_argument('-j', '--json', dest='json_output',
+        action='store_true', default=False,
+        help='Output in JSON format')
+
 
     # b4 pr
     sp_pr = subparsers.add_parser('pr', help='Fetch a pull request found in a message ID')
