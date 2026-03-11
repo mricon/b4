@@ -1013,6 +1013,36 @@ class TestTrackingWaiting:
                 gitdir, f'b4/review/{change_id}')
             assert trk['series']['status'] == 'waiting'
 
+    @pytest.mark.asyncio
+    async def test_mark_new_as_waiting(self, gitdir: str) -> None:
+        """Marking a new (unimported) series as waiting should update DB only."""
+        identifier = 'test-new-waiting'
+        change_id = 'new-waiting-1'
+        _seed_db(identifier, [{
+            'change_id': change_id,
+            'subject': '[PATCH] needs v2',
+            'message_id': 'newwait@ex.com',
+        }])
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+
+            await pilot.press('w')  # shortcut for waiting
+            await pilot.pause()
+
+            # Verify DB status changed
+            conn = tracking.get_db(identifier)
+            cursor = conn.execute(
+                'SELECT status FROM series WHERE change_id = ?',
+                (change_id,))
+            row = cursor.fetchone()
+            conn.close()
+            assert row[0] == 'waiting'
+
 
 class TestTrackingDetailPanel:
     """Tests for the detail panel shown on series highlight."""

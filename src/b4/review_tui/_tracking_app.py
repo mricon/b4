@@ -713,7 +713,7 @@ class TrackingApp(App[Optional[str]]):
 
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
-        'new': frozenset({'review', 'abandon', 'snooze'}),
+        'new': frozenset({'review', 'abandon', 'snooze', 'waiting'}),
         'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze'}),
         'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze'}),
         'waiting': frozenset({'review', 'range_diff', 'abandon', 'archive', 'snooze'}),
@@ -754,6 +754,7 @@ class TrackingApp(App[Optional[str]]):
             actions.append(('review', 'Review'))
             actions.append(('abandon', 'Abandon series'))
             if status == 'new':
+                actions.append(('waiting', 'Mark as waiting on new revision'))
                 actions.append(('snooze', 'Snooze (defer until later)'))
         elif status == 'snoozed':
             actions.append(('unsnooze', 'Wake up (unsnooze)'))
@@ -2899,7 +2900,7 @@ class TrackingApp(App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status not in ('reviewing', 'replied'):
+        if status not in ('new', 'reviewing', 'replied'):
             return
         change_id = self._selected_series.get('change_id', '')
         revision = self._selected_series.get('revision')
@@ -2912,7 +2913,7 @@ class TrackingApp(App[Optional[str]]):
             self.notify(f'Error: {ex}', severity='error')
             return
         topdir = b4.git_get_toplevel()
-        if topdir:
+        if topdir and status != 'new':
             branch_name = f'b4/review/{change_id}'
             b4.review.update_tracking_status(topdir, branch_name, 'waiting')
         self.notify('Series moved to waiting')
