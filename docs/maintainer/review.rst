@@ -23,7 +23,7 @@ Getting started
 
 Enrolling a repository
 ~~~~~~~~~~~~~~~~~~~~~~
-Before you can track series, you need to enrol the repository::
+Before you can track series, you need to enroll the repository::
 
     b4 review enroll [path] [-i identifier]
 
