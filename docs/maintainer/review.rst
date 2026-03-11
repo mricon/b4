@@ -141,6 +141,7 @@ Key           Action
 ============  ===========================================================
 ``Enter``     Enter series (reviewing) or open action menu (other states)
 ``r``         Review — create or re-enter the review branch
+``t``         Target branch — set or clear the per-series target branch
 ``c``         CI checks — run configured check commands and show results
               (see :ref:`ci_check_protocol`)
 ``e``         Thread — open the lite thread viewer (see below)
@@ -157,6 +158,14 @@ Key           Action
 ``?``         Help — show keybinding reference
 ``q``         Quit
 ============  ===========================================================
+
+Press ``t`` to open the target branch dialog. Type a branch name
+(recently used branches are suggested) and press ``Enter`` to run an
+applicability check — b4 will test-apply the series patches against the
+chosen branch and report whether they apply cleanly. Press ``Ctrl-y``
+to confirm without checking, ``Ctrl-d`` to clear the per-series target
+and fall back to the configured default, or ``Escape`` to cancel
+without changes.
 
 The ``a`` key opens a context-sensitive action menu. Each action has a
 single-keypress shortcut shown in square brackets so you can act
@@ -725,6 +734,7 @@ Key                   Description
 ``num-patches``       Number of patch commits
 ``num-prereqs``       Number of prerequisite commits
 ``complete``          Whether all expected patches were received
+``target-branch``     Per-series target branch (or config default)
 ``commit-HASH``       Subject of each patch commit (dynamic keys)
 ====================  ================================================
 

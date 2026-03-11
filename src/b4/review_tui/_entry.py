@@ -75,9 +75,9 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             session['patatt_sign'] = patatt_sign
             # Tell ReviewApp which branch to suggest so it can show a hint
             config = b4.get_main_config()
-            cfg_branch = config.get('review-target-branch')
+            cfg_branch = b4.review.tracking.get_review_target_branch_default()
             if cfg_branch:
-                switch_branch = str(cfg_branch)
+                switch_branch = cfg_branch
             elif topdir and b4.git_branch_exists(topdir, 'master'):
                 switch_branch = 'master'
             elif topdir and b4.git_branch_exists(topdir, 'main'):

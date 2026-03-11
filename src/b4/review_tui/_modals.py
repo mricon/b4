@@ -7,6 +7,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.message
 import email.utils
+import io
 import json
 import re
 
@@ -280,6 +281,7 @@ TRACKING_HELP_LINES = [
     '[bold]Series[/bold]\n',
     '  [bold]Enter[/bold]     Enter series (reviewing) or action menu\n',
     '  [bold]r[/bold]         Review selected series\n',
+    '  [bold]t[/bold]         Set target branch for selected series\n',
     '  [bold]c[/bold]         Show CI check results\n',
     '  [bold]e[/bold]         View email thread\n',
     '  [bold]d[/bold]         Range-diff between revisions\n',
@@ -1782,6 +1784,266 @@ class RebaseScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+
+class TargetBranchScreen(ModalScreen[Optional[str]]):
+    """Modal screen for setting the per-series target branch.
+
+    Enter runs applicability checks (uses local review branch patches when
+    available, otherwise fetches from lore).
+    Ctrl-y confirms without checking.  Ctrl-d clears.  Escape cancels.
+    """
+
+    BINDINGS = [
+        Binding('ctrl+y', 'confirm', 'Confirm', show=False),
+        Binding('ctrl+d', 'clear', 'Clear', show=False, priority=True),
+        Binding('escape', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    TargetBranchScreen {
+        align: center middle;
+    }
+    #target-branch-dialog {
+        width: 60;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #target-branch-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .target-branch-label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    #target-branch-input {
+        margin-bottom: 1;
+    }
+    #target-branch-status {
+        margin-top: 1;
+    }
+    .target-pass {
+        color: $success;
+    }
+    .target-fail {
+        color: $error;
+    }
+    .target-warn {
+        color: $warning;
+    }
+    #target-branch-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, current_target: str = '',
+                 suggestions: Optional[List[str]] = None,
+                 subject: str = '',
+                 message_id: str = '',
+                 revision: Optional[int] = None,
+                 review_branch: Optional[str] = None) -> None:
+        super().__init__()
+        self._current_target = current_target
+        self._suggestions = suggestions
+        self._subject = subject
+        self._message_id = message_id
+        self._revision = revision
+        self._review_branch = review_branch
+        self._lser: Optional[Any] = None
+        self._ambytes: Optional[bytes] = None
+        self._check_branch: Optional[str] = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='target-branch-dialog') as dialog:
+            dialog.border_title = 'Set Target Branch'
+            if self._subject:
+                yield Static(self._subject, id='target-branch-title', markup=False)
+            yield Static('Target branch for this series:', classes='target-branch-label')
+            suggester = SuggestFromList(self._suggestions, case_sensitive=True) if self._suggestions else None
+            yield Input(value=self._current_target, id='target-branch-input', suggester=suggester)
+            yield Static('', id='target-branch-status', markup=False)
+            yield Static(
+                'Enter check  |  Ctrl-y confirm  |  Ctrl-d clear  |  Escape cancel',
+                id='target-branch-hint',
+            )
+
+    def on_mount(self) -> None:
+        self.query_one('#target-branch-input', Input).focus()
+
+    def _update_status(self, text: str, level: str) -> None:
+        widget = self.query_one('#target-branch-status', Static)
+        widget.update(text)
+        widget.remove_class('target-pass', 'target-warn', 'target-fail')
+        widget.add_class(f'target-{level}')
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != 'target-branch-input':
+            return
+        value = event.value.strip()
+        if not value:
+            self._update_status('Branch name is required', 'fail')
+            return
+        if not b4.git_branch_exists(None, value):
+            self._update_status(f'Branch does not exist: {value}', 'fail')
+            return
+        self._check_branch = value
+        if self._ambytes is not None:
+            # Already have patch data cached — reuse for new target
+            self._check_applicability(value)
+        elif self._review_branch:
+            self._update_status('Testing applicability\u2026', 'warn')
+            self.run_worker(
+                self._prepare_local, name='_prepare', thread=True)
+        elif self._message_id:
+            self._update_status('Fetching series\u2026', 'warn')
+            self.run_worker(
+                self._prepare_remote, name='_prepare', thread=True)
+        else:
+            self._update_status(f'Branch exists: {value}', 'pass')
+
+    def _prepare_local(self) -> Tuple[Optional[Any], bytes]:
+        """Build ambytes from the local review branch patches."""
+        assert self._review_branch is not None
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            raise RuntimeError('Not in a git repository')
+        with _quiet_worker():
+            _cover, tracking = b4.review.load_tracking(
+                topdir, self._review_branch)
+            series_data = tracking.get('series', {})
+            base_commit = series_data.get('base-commit', '')
+            first_patch = series_data.get('first-patch-commit', '')
+            if first_patch:
+                range_start = f'{first_patch}~1'
+            else:
+                range_start = base_commit
+            range_end = f'{self._review_branch}~1'
+            ecode, ambytes = b4.git_run_command(
+                topdir, ['format-patch', '--stdout',
+                         f'{range_start}..{range_end}'],
+                decode=False)
+            if ecode > 0:
+                raise RuntimeError('Could not generate patches from review branch')
+            return None, ambytes
+
+    def _prepare_remote(self) -> Tuple[Any, bytes]:
+        """Fetch series from lore and build LoreSeries + ambytes."""
+        with _quiet_worker():
+            msgs = b4.review._retrieve_messages(self._message_id)
+            lser = b4.review._get_lore_series(
+                msgs, wantver=self._revision)
+            am_msgs = lser.get_am_ready(
+                noaddtrailers=True, addmysob=False, addlink=False,
+                cherrypick=None, copyccs=False, allowbadchars=False,
+                showchecks=False)
+            if not am_msgs:
+                raise LookupError('No patches ready for applying')
+            ifh = io.BytesIO()
+            b4.save_git_am_mbox(am_msgs, ifh)
+            ambytes = ifh.getvalue()
+            if lser.indexes is None:
+                lser.populate_indexes()
+            return lser, ambytes
+
+    def _check_applicability(self, branch: str) -> None:
+        """Run applicability check: fast blob check if possible, then test-apply."""
+        topdir = b4.git_get_toplevel()
+        if not topdir or not self._ambytes:
+            self._update_status(f'Branch exists: {branch}', 'pass')
+            return
+        # Fast blob check if we have a LoreSeries with indexes (remote fetch)
+        if self._lser and self._lser.indexes:
+            try:
+                checked, mismatches = self._lser.check_applies_clean(
+                    topdir, at=branch)
+                if len(mismatches) == 0:
+                    self._update_status(
+                        f'Apply results: clean ({branch})', 'pass')
+                    return
+                matched = checked - len(mismatches)
+                self._update_status(
+                    f'Apply results: {matched}/{checked} a/b blobs match'
+                    f' \u2014 testing\u2026', 'warn')
+            except Exception:
+                self._update_status('Testing applicability\u2026', 'warn')
+        else:
+            self._update_status('Testing applicability\u2026', 'warn')
+        self._run_test_apply(branch)
+
+    def _run_test_apply(self, branch: str) -> None:
+        if not self._ambytes:
+            return
+        ambytes = self._ambytes
+        self.run_worker(
+            lambda: self._test_apply_at(ambytes, branch),
+            name='_test_apply', thread=True,
+        )
+
+    @staticmethod
+    def _test_apply_at(ambytes: bytes,
+                       branch: str) -> Tuple[bool, str]:
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            return False, 'not in a git repository'
+        with _quiet_worker():
+            try:
+                with b4.git_temp_worktree(topdir, branch) as gwt:
+                    ecode, out = b4.git_run_command(
+                        gwt, ['sparse-checkout', 'set'])
+                    if ecode > 0:
+                        return False, 'failed to set up worktree'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['checkout', '-f'])
+                    if ecode > 0:
+                        return False, 'failed to checkout base'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['am'], stdin=ambytes)
+                    if ecode > 0:
+                        for line in out.splitlines():
+                            if line.startswith('Patch failed at '):
+                                return False, line
+                        return False, 'apply failed'
+                    return True, 'success'
+            except Exception as ex:
+                return False, str(ex)
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name == '_prepare':
+            if event.state == WorkerState.SUCCESS and event.worker.result:
+                self._lser, self._ambytes = event.worker.result
+                if self._check_branch:
+                    self._check_applicability(self._check_branch)
+            elif event.state == WorkerState.ERROR:
+                self._update_status('Could not prepare series data', 'fail')
+        elif event.worker.name == '_test_apply':
+            if event.state == WorkerState.SUCCESS and event.worker.result:
+                ok, detail = event.worker.result
+                if ok:
+                    self._update_status('Apply results: success', 'pass')
+                else:
+                    self._update_status(f'Apply results: {detail}', 'fail')
+            elif event.state == WorkerState.ERROR:
+                self._update_status('Test apply error', 'fail')
+
+    def action_confirm(self) -> None:
+        value = self.query_one('#target-branch-input', Input).value.strip()
+        if not value:
+            self.notify('Branch name is required (use Ctrl-d to clear)', severity='error')
+            return
+        if not b4.git_branch_exists(None, value):
+            self.notify(f'Branch does not exist: {value}', severity='error')
+            return
+        self.dismiss(value)
+
+    def action_clear(self) -> None:
+        self.dismiss('')
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 def AbandonConfirmScreen(change_id: str, review_branch: str,

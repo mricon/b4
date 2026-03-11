@@ -39,7 +39,8 @@ from b4.review_tui._common import (
 from b4.review_tui._modals import (
     BaseSelectionScreen, WorkerScreen, TakeScreen, TakeConfirmScreen,
     CherryPickScreen, NewerRevisionWarningScreen,
-    RevisionChoiceScreen, RebaseScreen, AbandonConfirmScreen,
+    RevisionChoiceScreen, RebaseScreen, TargetBranchScreen,
+    AbandonConfirmScreen,
     ArchiveConfirmScreen, RangeDiffScreen, ThankScreen,
     LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
     ActionScreen, HelpScreen, SnoozeScreen, TRACKING_HELP_LINES,
@@ -369,6 +370,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     BINDING_GROUPS = {
         'review': 'Series', 'check': 'Series', 'thread': 'Series',
         'range_diff': 'Series', 'action': 'Series', 'update_one': 'Series',
+        'target_branch': 'Series',
         'update_all': 'App', 'limit': 'App', 'suspend': 'App',
         'patchwork': 'App', 'quit': 'App', 'help': 'App',
     }
@@ -380,6 +382,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         Binding('escape', 'hide_details', 'Close', show=False),
         # Series-specific actions
         Binding('r', 'review', 'review'),
+        Binding('t', 'target_branch', 'target'),
         Binding('c', 'check', 'ci'),
         Binding('e', 'thread', 'thread'),
         Binding('a', 'action', 'action'),
@@ -418,6 +421,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._last_snooze_input: str = ''
         # CI check modal state
         self._check_loading: Optional[Any] = None
+        # Show target branch binding only when configured
+        self._has_target_branches = bool(
+            b4.review.tracking.get_review_target_branches())
 
     def _refresh_msg_count(self, series: Dict[str, Any],
                            total_messages: int) -> None:
@@ -464,6 +470,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             with Horizontal(classes='details-row', id='detail-branch-row'):
                 yield Static('Branch:', classes='details-label')
                 yield Static('', id='detail-branch', markup=False)
+            with Horizontal(classes='details-row', id='detail-target-row'):
+                yield Static('Target:', classes='details-label')
+                yield Static('', id='detail-target', markup=False)
         yield SeparatedFooter()
 
     def on_mount(self) -> None:
@@ -718,12 +727,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
-        'new': frozenset({'review', 'abandon', 'snooze', 'waiting'}),
-        'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze'}),
-        'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze'}),
-        'waiting': frozenset({'review', 'range_diff', 'abandon', 'archive', 'snooze'}),
+        'new': frozenset({'review', 'abandon', 'snooze', 'waiting', 'target_branch'}),
+        'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze', 'target_branch'}),
+        'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze', 'target_branch'}),
+        'waiting': frozenset({'review', 'range_diff', 'abandon', 'archive', 'snooze', 'target_branch'}),
         'accepted': frozenset({'thank', 'archive'}),
-        'snoozed': frozenset({'review', 'range_diff', 'unsnooze', 'abandon'}),
+        'snoozed': frozenset({'review', 'range_diff', 'unsnooze', 'abandon', 'target_branch'}),
         'thanked': frozenset({'archive'}),
         'gone': frozenset({'abandon', 'review'}),
     }
@@ -746,6 +755,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return bool(self._selected_series.get('has_newer'))
             if action == 'range_diff':
                 return bool(self._selected_series.get('has_multiple_revisions'))
+            if action == 'target_branch':
+                return self._has_target_branches
             return True
         return True
 
@@ -1014,12 +1025,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         lser, ambytes, initial_base, base_hint = result
 
-        # Build base commit suggestions: HEAD, configured target, recent branches
+        # Build base commit suggestions: HEAD, configured targets, recent branches
         base_suggestions: List[str] = ['HEAD']
-        config = b4.get_main_config()
-        cfg_branch = config.get('review-target-branch')
-        if cfg_branch and str(cfg_branch) not in base_suggestions:
-            base_suggestions.append(str(cfg_branch))
+        for cb in b4.review.tracking.get_review_target_branches():
+            if cb not in base_suggestions:
+                base_suggestions.append(cb)
         topdir = b4.git_get_toplevel()
         if topdir:
             gitdir = b4.git_get_common_dir(topdir)
@@ -1184,6 +1194,24 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             except Exception as ex:
                 logger.warning('Failed to update series status: %s', ex)
 
+        # Carry per-series target branch from DB to tracking commit
+        _co_change_id = series.get('change_id', '')
+        if self._identifier and _co_change_id and topdir:
+            try:
+                conn = b4.review.tracking.get_db(self._identifier)
+                db_target = b4.review.tracking.get_target_branch(
+                    conn, _co_change_id, revision=series.get('revision'))
+                conn.close()
+                if db_target and b4.git_branch_exists(topdir, branch_name):
+                    cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
+                    trk_series = tracking.get('series', {})
+                    if not trk_series.get('target-branch'):
+                        trk_series['target-branch'] = db_target
+                        tracking['series'] = trk_series
+                        b4.review.save_tracking_ref(topdir, branch_name, cover_text, tracking)
+            except (SystemExit, Exception):
+                pass
+
         # Update Patchwork state if series was tracked from Patchwork
         pw_series_id = series.get('pw_series_id')
         if pw_series_id:
@@ -1206,7 +1234,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def _show_details(self, series: Dict[str, Any]) -> None:
 
         panel = self.query_one('#details-panel', Vertical)
-        panel.styles.height = 7
 
         raw_subject = series.get('subject', '(no subject)')
         revision = series.get('revision', 1)
@@ -1269,21 +1296,17 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         att = series.get('attestation') or ''
         att_row = self.query_one('#detail-attestation-row', Horizontal)
         att_widget = self.query_one('#detail-attestation', Static)
-        height = 7
         if att == 'pending' or att == '':
             att_widget.update(RichText('pending (run [u]pdate)', style='dim'))
             att_row.display = True
-            height += 1
         elif att == 'none':
             att_widget.update(RichText('no signatures', style='dim'))
             att_row.display = True
-            height += 1
         else:
             att_text = _format_attestation(att, app=self)
             if att_text is not None:
                 att_widget.update(att_text)
                 att_row.display = True
-                height += 1
             else:
                 att_row.display = False
 
@@ -1313,14 +1336,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     rev_widget.remove_class('has-upgrade')
                 rev_widget.update(rev_str)
                 revisions_row.display = True
-                height += 1
             else:
                 if series.get('needs_update'):
                     rev_widget = self.query_one('#detail-revisions', Static)
                     rev_widget.add_class('has-upgrade')
                     rev_widget.update('run [u]pdate to load revision data')
                     revisions_row.display = True
-                    height += 1
                 else:
                     revisions_row.display = False
         except Exception:
@@ -1333,11 +1354,142 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             branch_name = f'b4/review/{change_id}'
             self.query_one('#detail-branch', Static).update(branch_name)
             branch_row.display = True
-            height += 1
         else:
             branch_row.display = False
 
-        panel.styles.height = height
+        # Show target branch if set (per-series, tracking commit, or config default)
+        target_row = self.query_one('#detail-target-row', Horizontal)
+        target_branch = self._resolve_target_branch(series)
+        if target_branch:
+            self.query_one('#detail-target', Static).update(target_branch)
+            target_row.display = True
+        else:
+            target_row.display = False
+
+        visible_rows = sum(1 for child in panel.children if child.display)
+        panel.styles.height = visible_rows + 2  # +1 border-top, +1 footer
+
+    def _resolve_target_branch(self, series: Dict[str, Any]) -> Optional[str]:
+        """Resolve the target branch for a series.
+
+        Priority: tracking commit > DB > config default.
+        """
+        change_id = series.get('change_id', '')
+        status = series.get('status', 'new')
+        topdir = b4.git_get_toplevel()
+
+        # Check tracking commit for states with a review branch
+        if status in ('reviewing', 'replied', 'waiting', 'snoozed') and topdir:
+            review_branch = f'b4/review/{change_id}'
+            if b4.git_branch_exists(topdir, review_branch):
+                try:
+                    _cover, tracking = b4.review.load_tracking(topdir, review_branch)
+                    trk_target = tracking.get('series', {}).get('target-branch')
+                    if trk_target:
+                        return str(trk_target)
+                except (SystemExit, Exception):
+                    pass
+
+        # Check DB
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            db_target = b4.review.tracking.get_target_branch(
+                conn, change_id, revision=series.get('revision'))
+            conn.close()
+            if db_target:
+                return db_target
+        except Exception:
+            pass
+
+        # Fall back to config default
+        return b4.review.tracking.get_review_target_branch_default()
+
+    def action_target_branch(self) -> None:
+        """Set the target branch for the selected series."""
+        if not self._selected_series:
+            return
+        series = self._selected_series
+        change_id = series.get('change_id', '')
+
+        # Load current target
+        current_target = self._resolve_target_branch(series) or ''
+
+        # Build suggestion list from config branches + recent take branches
+        suggestions: List[str] = list(b4.review.tracking.get_review_target_branches())
+        topdir = b4.git_get_toplevel()
+        if topdir:
+            gitdir = b4.git_get_common_dir(topdir)
+            if gitdir:
+                recent = b4.review.tracking.get_recent_take_branches(gitdir)
+                for rb in recent:
+                    if rb not in suggestions:
+                        suggestions.append(rb)
+
+        # Pass review branch for local applicability checks, or
+        # message_id for lore fetch if no local branch
+        status = series.get('status', 'new')
+        review_branch: Optional[str] = None
+        if status in ('reviewing', 'replied', 'waiting', 'snoozed'):
+            rb = f'b4/review/{change_id}'
+            if topdir and b4.git_branch_exists(topdir, rb):
+                review_branch = rb
+
+        self.push_screen(
+            TargetBranchScreen(current_target, suggestions=suggestions or None,
+                               subject=series.get('subject', ''),
+                               message_id=series.get('message_id', ''),
+                               revision=series.get('revision'),
+                               review_branch=review_branch),
+            callback=self._on_target_branch_set,
+        )
+
+    def _on_target_branch_set(self, result: Optional[str]) -> None:
+        """Handle target branch dialog result."""
+        if result is None:
+            # Cancelled
+            return
+        series = self._selected_series
+        if not series:
+            return
+        change_id = series.get('change_id', '')
+        revision = series.get('revision')
+        # Empty string means clear
+        target_value = result if result else None
+
+        # Update tracking commit if review branch exists
+        topdir = b4.git_get_toplevel()
+        status = series.get('status', 'new')
+        review_branch = f'b4/review/{change_id}'
+        if topdir and status in ('reviewing', 'replied', 'waiting', 'snoozed'):
+            if b4.git_branch_exists(topdir, review_branch):
+                try:
+                    cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                    trk_series = tracking.get('series', {})
+                    if target_value:
+                        trk_series['target-branch'] = target_value
+                    else:
+                        trk_series.pop('target-branch', None)
+                    tracking['series'] = trk_series
+                    b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+                except (SystemExit, Exception) as ex:
+                    logger.warning('Could not update tracking commit: %s', ex)
+
+        # Update database
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            b4.review.tracking.update_target_branch(conn, change_id, target_value,
+                                                    revision=revision)
+            conn.close()
+        except Exception as ex:
+            logger.warning('Could not update target branch in DB: %s', ex)
+
+        if target_value:
+            self.notify(f'Target branch set to {target_value}')
+        else:
+            self.notify('Target branch cleared')
+
+        # Refresh details panel
+        self._show_details(series)
 
     def action_update_one(self) -> None:
         """Fetch thread and update revisions/trailers for the selected series."""
@@ -1403,7 +1555,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def action_hide_details(self) -> None:
         panel = self.query_one('#details-panel', Vertical)
-        if panel.styles.height and panel.styles.height.value > 0:
+        if self._selected_series is not None:
             panel.styles.height = 0
             self._selected_series = None
 
@@ -1416,24 +1568,24 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.notify('Series must be checked out before taking', severity='warning')
             return
 
-        # Determine the target branch suggestion
-        config = b4.get_main_config()
-        cfg_branch = config.get('review-target-branch')
-        if cfg_branch:
-            target_branch = str(cfg_branch)
+        series = self._selected_series
+
+        # Determine the target branch suggestion.
+        # Priority: per-series target > recent take branch > config default >
+        # original branch > master/main
+        per_series_target = self._resolve_target_branch(series)
+        target_branch = ''
+        if per_series_target:
+            target_branch = per_series_target
         elif self._original_branch:
             target_branch = self._original_branch
         else:
-            # Fall back: check for master, main, or empty
             topdir = b4.git_get_toplevel()
             if topdir and b4.git_branch_exists(topdir, 'master'):
                 target_branch = 'master'
             elif topdir and b4.git_branch_exists(topdir, 'main'):
                 target_branch = 'main'
-            else:
-                target_branch = ''
 
-        series = self._selected_series
         change_id = series.get('change_id', '')
         review_branch = f'b4/review/{change_id}'
 
@@ -1483,13 +1635,19 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         gitdir = b4.git_get_common_dir(topdir) if topdir else None
         if gitdir:
             recent_branches = b4.review.tracking.get_recent_take_branches(gitdir)
-        if recent_branches:
+        # Only use recent-take as default if no per-series target was provided
+        per_series_target = self._resolve_target_branch(series)
+        if recent_branches and not per_series_target:
             target_branch = recent_branches[0]
-        # Ensure the configured target branch is always in the suggestion list
-        if target_branch and recent_branches is not None and target_branch not in recent_branches:
-            recent_branches.append(target_branch)
-        elif target_branch and recent_branches is None:
-            recent_branches = [target_branch]
+        # Build the suggestion list: config branches + recent take branches
+        all_suggestions: List[str] = list(b4.review.tracking.get_review_target_branches())
+        if recent_branches:
+            for rb in recent_branches:
+                if rb not in all_suggestions:
+                    all_suggestions.append(rb)
+        if target_branch and target_branch not in all_suggestions:
+            all_suggestions.append(target_branch)
+        recent_branches = all_suggestions or None
         take_screen = TakeScreen(target_branch, review_branch, num_patches=num_patches,
                                  default_method=default_method,
                                  recent_branches=recent_branches,
@@ -1837,13 +1995,33 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         if accepted and self._identifier and change_id:
             revision = series.get('revision')
+            existing_target = None
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
                 b4.review.tracking.update_series_status(conn, change_id, 'accepted',
                                                         revision=revision)
+                # Record the take target as the series target branch if not already set
+                existing_target = b4.review.tracking.get_target_branch(
+                    conn, change_id, revision=revision)
+                if not existing_target:
+                    b4.review.tracking.update_target_branch(
+                        conn, change_id, target_branch, revision=revision)
                 conn.close()
             except Exception as ex:
                 logger.warning('Could not update series status: %s', ex)
+            # Also update the tracking commit
+            review_branch = f'b4/review/{change_id}'
+            if not existing_target and b4.git_branch_exists(topdir, review_branch):
+                try:
+                    cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                    trk_series = tracking.get('series', {})
+                    if not trk_series.get('target-branch'):
+                        trk_series['target-branch'] = target_branch
+                        tracking['series'] = trk_series
+                        b4.review.save_tracking_ref(topdir, review_branch,
+                                                    cover_text, tracking)
+                except (SystemExit, Exception):
+                    pass
 
         if accepted and self._selected_series:
             pw_sid = self._selected_series.get('pw_series_id')

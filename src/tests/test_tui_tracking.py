@@ -33,6 +33,7 @@ from b4.review_tui._modals import (
     LimitScreen,
     SetStateScreen,
     SnoozeScreen,
+    TargetBranchScreen,
 )
 
 
@@ -1617,3 +1618,138 @@ class TestSeriesLifecycle:
             branch_name = f'b4/review/{change_id}'
             assert not b4.git_branch_exists(gitdir, branch_name), \
                 f'Branch should be deleted after abandon from {status}'
+
+
+@patch('b4.review.tracking.get_review_target_branches', return_value=['master'])
+class TestTargetBranch:
+    """Tests for per-series target branch tracking."""
+
+    @pytest.mark.asyncio
+    async def test_set_target_branch_from_new(self, _mock_branches: Any, gitdir: str) -> None:
+        """Press t on a new series, type a branch, confirm — DB is updated."""
+        identifier = 'test-target-new'
+        change_id = 'target-new-1'
+        _seed_db(identifier, [{
+            'change_id': change_id,
+            'subject': '[PATCH] target branch test',
+            'message_id': 'target-new@ex.com',
+        }])
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            # Press t to open target branch dialog
+            await pilot.press('t')
+            await pilot.pause()
+            assert isinstance(app.screen, TargetBranchScreen)
+
+            # Type branch name and confirm
+            inp = app.screen.query_one('#target-branch-input', Input)
+            inp.value = 'master'
+            await pilot.pause()
+            # Use ctrl+y to confirm
+            with patch('b4.git_branch_exists', return_value=True):
+                await pilot.press('ctrl+y')
+            await pilot.pause()
+
+            # Verify DB updated
+            conn = tracking.get_db(identifier)
+            target = tracking.get_target_branch(conn, change_id)
+            conn.close()
+            assert target == 'master'
+
+    @pytest.mark.asyncio
+    async def test_set_target_branch_from_reviewing(self, _mock_branches: Any, gitdir: str) -> None:
+        """Set target on a reviewing series — tracking commit updated too."""
+        identifier = 'test-target-rev'
+        change_id = 'target-rev-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(identifier, [{
+            'change_id': change_id,
+            'subject': '[PATCH] target reviewing test',
+            'status': 'reviewing',
+            'message_id': 'target-rev@ex.com',
+        }])
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('t')
+            await pilot.pause()
+            assert isinstance(app.screen, TargetBranchScreen)
+
+            inp = app.screen.query_one('#target-branch-input', Input)
+            inp.value = 'master'
+            await pilot.pause()
+            with patch('b4.git_branch_exists', return_value=True):
+                await pilot.press('ctrl+y')
+            await pilot.pause()
+
+            # Verify DB updated
+            conn = tracking.get_db(identifier)
+            target = tracking.get_target_branch(conn, change_id)
+            conn.close()
+            assert target == 'master'
+
+            # Verify tracking commit updated
+            review_branch = f'b4/review/{change_id}'
+            _cover, trk = b4.review.load_tracking(gitdir, review_branch)
+            assert trk['series'].get('target-branch') == 'master'
+
+    @pytest.mark.asyncio
+    async def test_target_branch_in_details(self, gitdir: str) -> None:
+        """Verify detail panel shows Target: row when target is set."""
+        identifier = 'test-target-detail'
+        change_id = 'target-detail-1'
+        _seed_db(identifier, [{
+            'change_id': change_id,
+            'subject': '[PATCH] target detail test',
+            'message_id': 'target-detail@ex.com',
+        }])
+        # Set target in DB
+        conn = tracking.get_db(identifier)
+        tracking.update_target_branch(conn, change_id, 'sound/for-next')
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            # Detail panel should be visible after selecting series
+            target_widget = app.query_one('#detail-target', Static)
+            text = _static_text(target_widget)
+            assert 'sound/for-next' in text
+
+    @pytest.mark.asyncio
+    async def test_clear_target_branch(self, _mock_branches: Any, gitdir: str) -> None:
+        """Ctrl+d in modal clears the target branch."""
+        identifier = 'test-target-clear'
+        change_id = 'target-clear-1'
+        _seed_db(identifier, [{
+            'change_id': change_id,
+            'subject': '[PATCH] clear target test',
+            'message_id': 'target-clear@ex.com',
+        }])
+        # Set target first
+        conn = tracking.get_db(identifier)
+        tracking.update_target_branch(conn, change_id, 'old-branch')
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('t')
+            await pilot.pause()
+            assert isinstance(app.screen, TargetBranchScreen)
+            # Ctrl+d to clear
+            await pilot.press('ctrl+d')
+            await pilot.pause()
+            await pilot.pause()
+
+            # Screen should be dismissed
+            assert not isinstance(app.screen, TargetBranchScreen)
+
+            # Verify DB cleared
+            conn = tracking.get_db(identifier)
+            target = tracking.get_target_branch(conn, change_id)
+            conn.close()
+            assert target is None

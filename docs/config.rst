@@ -395,6 +395,14 @@ These settings control ``b4 review`` TUI behaviour.
      branch, to tell you which branch to switch to for the tracking list.
      If not set, b4 falls back to ``master`` or ``main``.
 
+     This option supports multiple values. When multiple branches are
+     configured (e.g. ``sound/for-next`` and ``regulator/for-next``),
+     all of them appear in the suggestion list for the take dialog and
+     the ``t`` keybinding in the tracking TUI. When exactly one value
+     is configured, it is used as the automatic default; when two or
+     more are configured, the per-series target (set via ``t``) takes
+     priority instead.
+
      Default: ``None``
 
      .. versionadded:: v0.15

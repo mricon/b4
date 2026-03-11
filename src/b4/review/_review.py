@@ -6,7 +6,6 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
-import datetime
 import email.message
 import email.utils
 import json
@@ -437,6 +436,11 @@ def get_review_info(topdir: str, branch: str) -> Dict[str, Union[str, int, bool,
     first_patch = series.get('first-patch-commit')
     prereqs = series.get('prerequisite-commits', [])
 
+    # Resolve target branch: per-series tracking data, then config default
+    target_branch = series.get('target-branch')
+    if not target_branch:
+        target_branch = b4.review.tracking.get_review_target_branch_default()
+
     info: Dict[str, Union[str, int, bool, None]] = {
         'branch': branch,
         'change-id': series.get('change-id'),
@@ -452,6 +456,7 @@ def get_review_info(topdir: str, branch: str) -> Dict[str, Union[str, int, bool,
         'num-patches': 0,
         'num-prereqs': len(prereqs),
         'complete': series.get('complete'),
+        'target-branch': target_branch,
     }
 
     # Enumerate patch commits

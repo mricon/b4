@@ -26,7 +26,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = '''
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS series (
     last_activity_at TEXT,
     snoozed_until TEXT,
     attestation TEXT DEFAULT 'pending',
+    target_branch TEXT,
     UNIQUE (change_id, revision)
 );
 
@@ -119,6 +120,8 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
         conn.execute('ALTER TABLE series RENAME COLUMN seen_followup_count TO seen_message_count')
     if version < 5:
         conn.execute("ALTER TABLE series ADD COLUMN attestation TEXT DEFAULT 'pending'")
+    if version < 6:
+        conn.execute('ALTER TABLE series ADD COLUMN target_branch TEXT')
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -532,7 +535,8 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
         cursor = conn.execute('''
             SELECT track_id, change_id, revision, subject, sender_name, sender_email,
                    sent_at, added_at, status, num_patches, message_id, pw_series_id,
-                   message_count, seen_message_count, last_activity_at, attestation
+                   message_count, seen_message_count, last_activity_at, attestation,
+                   target_branch
             FROM series
             ORDER BY added_at DESC
         ''')
@@ -555,6 +559,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                 'seen_message_count': row[13],
                 'last_activity_at': row[14],
                 'attestation': row[15],
+                'target_branch': row[16],
             })
         conn.close()
         return result
@@ -728,6 +733,59 @@ def get_snoozed_until(conn: sqlite3.Connection, change_id: str,
             'SELECT snoozed_until FROM series WHERE change_id = ?',
             (change_id,)).fetchone()
     return row[0] if row else None
+
+
+def update_target_branch(conn: sqlite3.Connection, change_id: str,
+                         target_branch: Optional[str],
+                         revision: Optional[int] = None) -> None:
+    """Set or clear the per-series target branch in the database."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if revision is not None:
+        conn.execute(
+            'UPDATE series SET target_branch = ?, last_activity_at = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (target_branch, now, change_id, revision))
+    else:
+        conn.execute(
+            'UPDATE series SET target_branch = ?, last_activity_at = ?'
+            ' WHERE change_id = ?',
+            (target_branch, now, change_id))
+    conn.commit()
+
+
+def get_target_branch(conn: sqlite3.Connection, change_id: str,
+                      revision: Optional[int] = None) -> Optional[str]:
+    """Return the per-series target branch, or None."""
+    if revision is not None:
+        row = conn.execute(
+            'SELECT target_branch FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, revision)).fetchone()
+    else:
+        row = conn.execute(
+            'SELECT target_branch FROM series WHERE change_id = ?',
+            (change_id,)).fetchone()
+    return row[0] if row else None
+
+
+def get_review_target_branches() -> list[str]:
+    """Return all configured review-target-branch values."""
+    config = b4.get_main_config()
+    val = config.get('review-target-branch')
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return [str(v) for v in val if v]
+    if isinstance(val, str) and val:
+        return [val]
+    return []
+
+
+def get_review_target_branch_default() -> Optional[str]:
+    """Return the single configured target branch, or None if 0 or 2+."""
+    branches = get_review_target_branches()
+    if len(branches) == 1:
+        return branches[0]
+    return None
 
 
 def get_review_branches(topdir: Optional[str] = None) -> list[str]:
