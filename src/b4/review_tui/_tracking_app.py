@@ -730,11 +730,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
 
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
-        'new': frozenset({'review', 'abandon', 'snooze', 'waiting', 'target_branch'}),
+        'new': frozenset({'review', 'range_diff', 'abandon', 'snooze', 'waiting', 'target_branch'}),
         'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze', 'target_branch'}),
         'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze', 'target_branch'}),
         'waiting': frozenset({'review', 'range_diff', 'abandon', 'archive', 'snooze', 'target_branch'}),
-        'accepted': frozenset({'review', 'thank', 'archive'}),
+        'accepted': frozenset({'review', 'range_diff', 'thank', 'archive'}),
         'snoozed': frozenset({'review', 'range_diff', 'unsnooze', 'abandon', 'target_branch'}),
         'thanked': frozenset({'archive'}),
         'gone': frozenset({'abandon', 'review'}),
@@ -2415,10 +2415,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         """Show range-diff between the current review and another revision."""
         if not self._selected_series:
             return
-        status = self._selected_series.get('status', 'new')
-        if status not in ('reviewing', 'replied', 'waiting'):
-            self.notify('Series must be checked out before range-diff', severity='warning')
-            return
 
         change_id = self._selected_series.get('change_id', '')
         current_rev = self._selected_series.get('revision', 1)
@@ -2449,6 +2445,65 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         with self.suspend():
             self._do_range_diff(change_id, current_rev, chosen)
 
+    @staticmethod
+    def _fetch_fake_am_range(
+        topdir: str, revisions: List[Dict[str, Any]], rev: int,
+        blob_sha: str = '',
+    ) -> Optional[Tuple[str, str]]:
+        """Fetch a revision and create a fake-am commit range.
+
+        If *blob_sha* is provided, tries the cached thread blob first
+        before falling back to a lore fetch.
+
+        Returns (range_start, range_end) on success, or None on failure.
+        """
+        msgs = None
+
+        # Try cached thread blob first
+        if blob_sha:
+            mbox_bytes = b4.review.tracking.get_thread_mbox(topdir, blob_sha)
+            if mbox_bytes:
+                logger.info('Using cached thread blob for v%d', rev)
+                msgs = b4.split_and_dedupe_pi_results(mbox_bytes)
+
+        # Fall back to lore fetch
+        if not msgs:
+            msgid = ''
+            for r in revisions:
+                if r['revision'] == rev:
+                    msgid = r.get('message_id', '')
+                    break
+            if not msgid:
+                logger.critical('No message-id recorded for v%d', rev)
+                return None
+
+            logger.info('Fetching v%d from lore...', rev)
+            msgs = b4.get_pi_thread_by_msgid(msgid)
+            if not msgs:
+                logger.critical('Could not retrieve thread for v%d', rev)
+                return None
+
+            msgs = b4.mbox.get_extra_series(msgs, direction=1, wantvers=[rev])
+            msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=[rev])
+
+        lmbx = b4.LoreMailbox()
+        for msg in msgs:
+            lmbx.add_message(msg)
+
+        lser = lmbx.get_series(rev, sloppytrailers=False,
+                               codereview_trailers=False)
+        if lser is None:
+            logger.critical('Could not find series v%d in retrieved messages', rev)
+            return None
+
+        logger.info('Preparing fake-am range for v%d...', rev)
+        start, end = lser.make_fake_am_range(gitdir=topdir)
+        if start is None or end is None:
+            logger.critical('Could not create fake-am range for v%d', rev)
+            return None
+
+        return start, end
+
     def _do_range_diff(self, change_id: str, current_rev: int, other_rev: int) -> None:
         """Compute and display range-diff between two revisions."""
         topdir = b4.git_get_toplevel()
@@ -2457,29 +2512,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             _wait_for_enter()
             return
 
-        # --- Resolve the current review branch range ---
-        branch = f'b4/review/{change_id}'
-        try:
-            cover_text, tracking = b4.review.load_tracking(topdir, branch)
-        except SystemExit:
-            logger.critical('Could not load tracking data from %s', branch)
-            _wait_for_enter()
-            return
-
-        t_series = tracking.get('series', {})
-        first_patch = t_series.get('first-patch-commit', '')
-        if first_patch:
-            cur_start = f'{first_patch}~1'
-        else:
-            cur_start = t_series.get('base-commit', '')
-        cur_end = f'{branch}~1'
-
-        if not cur_start:
-            logger.critical('Cannot determine patch range for %s', branch)
-            _wait_for_enter()
-            return
-
-        # --- Fetch the comparison version ---
+        # --- Load revisions from the tracking database ---
         try:
             conn = b4.review.tracking.get_db(self._identifier)
             revisions = b4.review.tracking.get_revisions(conn, change_id)
@@ -2489,45 +2522,41 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             _wait_for_enter()
             return
 
-        other_msgid = ''
-        for r in revisions:
-            if r['revision'] == other_rev:
-                other_msgid = r.get('message_id', '')
-                break
+        # --- Resolve the current revision range ---
+        # Use local review branch if available, otherwise fetch from lore
+        branch = f'b4/review/{change_id}'
+        cur_start: Optional[str] = None
+        cur_end: Optional[str] = None
+        blob_sha = ''
+        if b4.git_branch_exists(topdir, branch):
+            try:
+                _cover_text, tracking = b4.review.load_tracking(topdir, branch)
+                t_series = tracking.get('series', {})
+                first_patch = t_series.get('first-patch-commit', '')
+                if first_patch:
+                    cur_start = f'{first_patch}~1'
+                else:
+                    cur_start = t_series.get('base-commit', '')
+                cur_end = f'{branch}~1'
+                blob_sha = t_series.get('thread-blob', '')
+            except SystemExit:
+                pass
 
-        if not other_msgid:
-            logger.critical('No message-id recorded for v%d', other_rev)
+        if not cur_start or not cur_end:
+            # No local branch — fetch from lore
+            result = self._fetch_fake_am_range(topdir, revisions, current_rev)
+            if result is None:
+                _wait_for_enter()
+                return
+            cur_start, cur_end = result
+
+        # --- Fetch the other version (try cached blob, fall back to lore) ---
+        result = self._fetch_fake_am_range(topdir, revisions, other_rev,
+                                           blob_sha=blob_sha)
+        if result is None:
             _wait_for_enter()
             return
-
-        logger.info('Fetching v%d from lore...', other_rev)
-        msgs = b4.get_pi_thread_by_msgid(other_msgid)
-        if not msgs:
-            logger.critical('Could not retrieve thread for v%d', other_rev)
-            _wait_for_enter()
-            return
-
-        msgs = b4.mbox.get_extra_series(msgs, direction=1, wantvers=[other_rev])
-        if current_rev != other_rev:
-            msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=[other_rev])
-
-        lmbx = b4.LoreMailbox()
-        for msg in msgs:
-            lmbx.add_message(msg)
-
-        lser = lmbx.get_series(other_rev, sloppytrailers=False,
-                               codereview_trailers=False)
-        if lser is None:
-            logger.critical('Could not find series v%d in retrieved messages', other_rev)
-            _wait_for_enter()
-            return
-
-        logger.info('Preparing fake-am range for v%d...', other_rev)
-        other_start, other_end = lser.make_fake_am_range(gitdir=topdir)
-        if other_start is None or other_end is None:
-            logger.critical('Could not create fake-am range for v%d', other_rev)
-            _wait_for_enter()
-            return
+        other_start, other_end = result
 
         # --- Order sides: older on left, newer on right ---
         if other_rev < current_rev:
