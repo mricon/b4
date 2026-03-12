@@ -465,6 +465,7 @@ class LiteThreadScreen(ModalScreen[None]):
         Binding('j', 'cursor_down', 'down', show=False),
         Binding('k', 'cursor_up', 'up', show=False),
         Binding('q', 'back', 'back'),
+        Binding('escape', 'back', 'back', show=False),
     ]
 
     def __init__(

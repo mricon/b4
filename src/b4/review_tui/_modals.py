@@ -333,6 +333,7 @@ class NoteScreen(ModalScreen[Optional[str]]):
 
     BINDINGS = [
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
         Binding('e', 'edit', 'Edit'),
         Binding('d', 'delete', 'Delete all'),
     ]
@@ -392,6 +393,7 @@ class PriorReviewScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding('escape', 'cancel', 'Close'),
+        Binding('q', 'cancel', 'Close', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -455,6 +457,7 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
         Binding('S', 'send', 'Send'),
         Binding('e', 'edit', 'Edit'),
         Binding('escape', 'abandon', 'Abandon'),
+        Binding('q', 'abandon', 'Abandon', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -516,6 +519,7 @@ class ToCcScreen(ModalScreen[bool]):
     BINDINGS = [
         Binding('ctrl+s', 'save', 'Save'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -666,6 +670,7 @@ class TakeScreen(ModalScreen[bool]):
     BINDINGS = [
         Binding('ctrl+y', 'continue_take', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -778,6 +783,7 @@ class CherryPickScreen(ModalScreen[bool]):
     BINDINGS = [
         Binding('ctrl+y', 'continue_pick', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -860,6 +866,7 @@ class TakeConfirmScreen(ModalScreen[bool]):
     BINDINGS = [
         Binding('ctrl+y', 'confirm_take', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -1067,6 +1074,7 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
     BINDINGS = [
         Binding('ctrl+y', 'continue_snooze', 'Confirm', show=False),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -1212,6 +1220,7 @@ class ThankScreen(ModalScreen[Optional[str]]):
         Binding('e', 'edit', '[e]dit'),
         Binding('S', 'send', '[S]end', key_display='S'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -1274,7 +1283,7 @@ class WorkerScreen(ModalScreen[Any]):
     """Generic modal that runs a callable in a worker thread.
 
     Shows a loading indicator while the callable runs.  Dismisses with
-    the return value on success or None on error.
+    the return value on success or None on error/cancel.
 
     Usage::
 
@@ -1290,6 +1299,7 @@ class WorkerScreen(ModalScreen[Any]):
 
     BINDINGS = [
         Binding('escape', 'cancel', 'Cancel', show=False),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -1556,6 +1566,7 @@ class ConfirmScreen(ModalScreen[bool]):
     BINDINGS = [
         Binding('y', 'confirm', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -1670,6 +1681,7 @@ class RevisionChoiceScreen(ModalScreen[Optional[int]]):
         Binding('n', 'newer', 'Newer'),
         Binding('o', 'older', 'Older'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     def __init__(self, current_rev: int, newest_rev: int) -> None:
@@ -1707,6 +1719,7 @@ class RebaseScreen(ModalScreen[bool]):
     BINDINGS = [
         Binding('ctrl+y', 'continue_rebase', 'Confirm', show=False),
         Binding('escape', 'cancel', 'Cancel', show=False),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -1798,6 +1811,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         Binding('ctrl+y', 'confirm', 'Confirm', show=False),
         Binding('ctrl+d', 'clear', 'Clear', show=False, priority=True),
         Binding('escape', 'cancel', 'Cancel', show=False),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -2101,6 +2115,7 @@ class RangeDiffScreen(JKListNavMixin, ModalScreen[Optional[int]]):
         Binding('k', 'cursor_up', 'Up', show=False),
         Binding('enter', 'confirm', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -2186,6 +2201,7 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
         Binding('a', 'toggle_archived', 'Archive'),
         Binding('enter', 'confirm', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -2352,7 +2368,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
     """Modal showing progress while updating all tracked series.
 
     Iterates every non-archived series, fetching threads and updating
-    revisions/trailers.  Returns a summary dict on completion.
+    revisions/trailers.  Returns a summary dict on completion/cancel.
     """
 
     DEFAULT_CSS = """
@@ -2381,6 +2397,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
 
     BINDINGS = [
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     def __init__(self, series_list: List[Dict[str, Any]],
@@ -2485,6 +2502,7 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
     BINDINGS = [
         Binding('ctrl+y', 'continue', 'Confirm', show=False),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -2708,6 +2726,7 @@ class LimitScreen(ModalScreen[Optional[str]]):
 
     BINDINGS = [
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -2756,7 +2775,7 @@ class UpdateRevisionScreen(JKListNavMixin, ModalScreen[Optional[int]]):
     """Modal to select a newer revision to upgrade to.
 
     Shows available newer revisions and a confirmation message.
-    Returns the chosen revision number, or None on cancel.
+    Returns the chosen revision number, or None on cancel/q.
     """
 
     _list_id = '#update-rev-list'
@@ -2766,6 +2785,7 @@ class UpdateRevisionScreen(JKListNavMixin, ModalScreen[Optional[int]]):
         Binding('k', 'cursor_up', 'Up', show=False),
         Binding('enter', 'confirm', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -2866,6 +2886,7 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
         Binding('k', 'cursor_up', 'Up', show=False),
         Binding('enter', 'confirm', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     _SHORTCUT_MAP = {
@@ -2955,6 +2976,7 @@ class CheckLoadingScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding('escape', 'dismiss', 'Cancel', show=False),
+        Binding('q', 'dismiss', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
