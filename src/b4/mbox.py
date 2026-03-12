@@ -835,7 +835,7 @@ def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
                 chunks.append((current, chunk))
 
             body = ''
-            for quoted, chunk in chunks:
+            for _quoted, chunk in chunks:
                 # Should we offer a way to trim the quote in some fashion?
                 body += '\n'.join(chunk).strip() + '\n\n'
             if not body.strip():

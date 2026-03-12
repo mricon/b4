@@ -226,7 +226,7 @@ def auto_locate_series(gitdir: Optional[str], jsondata: JsonDictT, branch: str,
         else:
             # try to locate by subject
             success = False
-            for pwhash, commit in commits.items():
+            for _pwhash, commit in commits.items():
                 if commit[1] == patch[0]:
                     logger.debug('Matched using subject')
                     found.append((at, commit[0]))
@@ -237,7 +237,7 @@ def auto_locate_series(gitdir: Optional[str], jsondata: JsonDictT, branch: str,
                 continue
 
             # try to locate by tracker
-            for pwhash, commit in commits.items():
+            for _pwhash, commit in commits.items():
                 if len(patch) > 2 and len(patch[2]) and len(commit[2]):
                     for tracker in commit[2]:
                         if tracker.find(patch[2]) >= 0:

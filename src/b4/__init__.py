@@ -195,7 +195,7 @@ class LoreMailbox:
 
     def __repr__(self) -> str:
         out = list()
-        for key, lser in self.series.items():
+        for _key, lser in self.series.items():
             out.append(str(lser))
         out.append('--- Followups ---')
         for lmsg in self.followups:
@@ -278,7 +278,7 @@ class LoreMailbox:
 
     def load_codereview_trailers(self) -> None:
         q = list()
-        for lver, lser in self.series.items():
+        for _lver, lser in self.series.items():
             for lmsg in lser.patches:
                 if lmsg is None:
                     continue
@@ -1779,7 +1779,7 @@ class LoreMessage:
             rsp.close()
         except requests.exceptions.RequestException as ex:
             logger.debug('Patchwork REST error: %s', ex)
-            raise LookupError('Error looking up %s in patchwork' % msgid)
+            raise LookupError('Error looking up %s in patchwork' % msgid) from ex
         if not pwdata:
             logger.debug('Not able to look up patchwork data for %s', msgid)
             raise LookupError('Error looking up %s in patchwork' % msgid)
@@ -3935,7 +3935,7 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
         gitver = None
 
     expected = len(patches)
-    for counter, (commit, msg) in enumerate(patches):
+    for counter, (_commit, msg) in enumerate(patches):
         msg.set_charset('utf-8')
         # Clean From to remove any 7bit-safe encoding
         origfrom = LoreMessage.clean_header(msg.get('From'))
@@ -4303,8 +4303,8 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
     server = str(sconfig.get('smtpserver', 'localhost'))
     try:
         port = int(str(sconfig.get('smtpserverport', '0')))
-    except ValueError:
-        raise smtplib.SMTPException('Invalid smtpport entry in config: %s' % sconfig.get('smtpserverport'))
+    except ValueError as exc:
+        raise smtplib.SMTPException('Invalid smtpport entry in config: %s' % sconfig.get('smtpserverport')) from exc
 
     # If server contains slashes, then it's a local command
     if '/' in server:
@@ -4472,9 +4472,9 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], msgs
                 logger.critical('CRITICAL: Error signing: no key configured')
                 logger.critical('          Run "patatt genkey" or configure "user.signingKey" to use PGP')
                 logger.critical('          As a last resort, rerun with --no-sign')
-                raise RuntimeError(str(ex))
+                raise RuntimeError(str(ex)) from ex
             except patatt.SigningError as ex:  # type: ignore[attr-defined]
-                raise RuntimeError('Failure trying to patatt-sign: %s' % str(ex))
+                raise RuntimeError('Failure trying to patatt-sign: %s' % str(ex)) from ex
         if dryrun:
             if output_dir:
                 filen = '%s.eml' % ls.get_slug(sep='-')
@@ -4977,7 +4977,7 @@ def map_codereview_trailers(qmsgs: List[EmailMessage],
     # find all patches directly below these covers
     for cmsgid, fwmsgids in covers.items():
         logger.debug('Looking at cover: %s', cmsgid)
-        for qmid, qlmsg in qmid_map.items():
+        for _qmid, qlmsg in qmid_map.items():
             if qlmsg.in_reply_to == cmsgid and qlmsg.git_patch_id:
                 pqpid = qlmsg.git_patch_id
                 for fwmsgid in fwmsgids:

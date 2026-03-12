@@ -332,7 +332,7 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
         lmsg.lsubject.prefixes = prefixes
         b4.ez.add_cover(lmsg.lsubject, msgid_tpt, pmsgs, cbody, int(lmsg.date.timestamp()))
 
-    for at, (commit, msg) in enumerate(pmsgs):
+    for _at, (_commit, msg) in enumerate(pmsgs):
         msg.add_header('To', b4.format_addrs(allto))
         if allcc:
             msg.add_header('Cc', b4.format_addrs(allcc))

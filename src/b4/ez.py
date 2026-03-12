@@ -945,7 +945,7 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
             if patch_id not in known_patches:
                 lmbx = b4.get_series_by_patch_id(patch_id, nocache=cmdargs.nocache)
                 if lmbx:
-                    for rev, lser in lmbx.series.items():
+                    for _rev, lser in lmbx.series.items():
                         for lmsg in lser.patches[1:]:
                             if not lmsg:
                                 continue
@@ -1549,7 +1549,7 @@ def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
 def rethread(patches: List[Tuple[str, EmailMessage]]) -> None:
     refto = patches[0][1].get('message-id')
     if refto is not None:
-        for commit, msg in patches[1:]:
+        for _commit, msg in patches[1:]:
             msg.add_header('References', refto)
             msg.add_header('In-Reply-To', refto)
 
@@ -1661,7 +1661,7 @@ def get_prep_branch_as_patches(movefrom: bool = True, thread: bool = True, addtr
                 try:
                     _, _, ppatches = get_sent_tag_as_patches(tagname, revision=revision,
                                                              presubject=presubject)
-                    for psha, ppatch in ppatches:
+                    for _psha, ppatch in ppatches:
                         spatches.append(ppatch)
                 except RuntimeError:
                     logger.debug('Nothing matched tagname=%s, checking remotely', tagname)
@@ -1793,7 +1793,7 @@ def format_patch(output_dir: str) -> None:
 
     logger.info('Writing %s messages into %s', len(patches), output_dir)
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
-    for commit, msg in patches:
+    for _commit, msg in patches:
         if not msg:
             continue
         msg.policy = email.policy.EmailPolicy(utf8=True, cte_type='8bit')
@@ -1868,7 +1868,7 @@ def check(cmdargs: argparse.Namespace) -> None:
         lsubject = b4.LoreSubject(msg.get('Subject', ''))
         csubject = f'{commit[:12]}: {lsubject.subject}'
         worst = 'success'
-        for flag, status in report:
+        for flag, _status in report:
             if flag == 'warning':
                 worst = 'warning'
                 continue
@@ -2539,7 +2539,7 @@ def _cleanup_branch(branch: str) -> None:
     logger.info('---')
     logger.info('branch: %s', branch)
     if 'history' in ts:
-        for rn, links in ts['history'].items():
+        for rn, _links in ts['history'].items():
             tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
             tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
@@ -2946,7 +2946,7 @@ def get_preflight_hash(usebranch: Optional[str] = None) -> str:
         tos, ccs, tstr, patches = get_prep_branch_as_patches(movefrom=False, thread=False, addtracking=False,
                                                              usebranch=usebranch, expandprereqs=False)
         hashed = hashlib.sha1()
-        for commit, msg in patches:
+        for _commit, msg in patches:
             body, charset = b4.LoreMessage.get_payload(msg)
             patchid = b4.LoreMessage.get_patch_id(body)
             hashed.update(f'{patchid}\n'.encode('utf-8'))

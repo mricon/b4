@@ -1413,7 +1413,6 @@ class _FetchViewerScreen(ModalScreen[None]):
         if event.state == WorkerState.SUCCESS:
             await self.query_one('#fv-loading', LoadingIndicator).remove()
             if event.worker.result is not None:
-                title = self.query_one('#fv-title', Static)
                 viewer = self.query_one('#fv-viewer', RichLog)
                 hint = self.query_one('#fv-hint', Static)
                 viewer.display = True

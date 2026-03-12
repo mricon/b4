@@ -270,7 +270,7 @@ def cmd_enroll(cmdargs: argparse.Namespace) -> None:
     if db_exists(identifier):
         logger.info('Database already exists: %s', get_db_path(identifier))
         try:
-            answer = input(f'Use existing database for this repository? (y/N) ')
+            answer = input('Use existing database for this repository? (y/N) ')
         except KeyboardInterrupt:
             logger.info('')
             sys.exit(130)

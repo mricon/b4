@@ -325,7 +325,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             self._append_followup_items(lv, 0)
 
         # Patch entries
-        for idx, sha in enumerate(self._commit_shas):
+        for idx, _sha in enumerate(self._commit_shas):
             patch_num = idx + 1
             subject = self._commit_subjects[idx] if idx < len(self._commit_subjects) else '(unknown)'
             patch_meta = self._patches[idx] if idx < len(self._patches) else {}
@@ -433,8 +433,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             viewer, self._followup_comments.get(0, []),
             self._comment_positions, fc_author_pos,
             header_position_map=self._followup_header_map, ts=ts)
-        for email, pos in fc_author_pos.items():
-            self._followup_positions[(0, email)] = pos
+        for addr, pos in fc_author_pos.items():
+            self._followup_positions[(0, addr)] = pos
 
     def _show_diff(self, viewer: RichLog, patch_idx: int) -> None:
         """Render a patch diff in the diff viewer with syntax colouring."""
@@ -583,8 +583,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             self._comment_positions, fc_author_pos,
             header_position_map=self._followup_header_map, ts=ts)
         display_idx = patch_idx + 1
-        for email, pos in fc_author_pos.items():
-            self._followup_positions[(display_idx, email)] = pos
+        for addr, pos in fc_author_pos.items():
+            self._followup_positions[(display_idx, addr)] = pos
 
     def _show_email_preview(self, viewer: RichLog, display_idx: int) -> None:
         """Render the email that would be sent for the selected patch/cover."""
@@ -642,9 +642,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         ordered: List[Tuple[str, Dict[str, Any]]] = []
         if my_email in all_reviews:
             ordered.append((my_email, all_reviews[my_email]))
-        for email in sorted(all_reviews):
-            if email != my_email:
-                ordered.append((email, all_reviews[email]))
+        for addr in sorted(all_reviews):
+            if addr != my_email:
+                ordered.append((addr, all_reviews[addr]))
 
         text = Text()
         has_content = False
@@ -1148,9 +1148,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         ordered: List[Tuple[str, Dict[str, Any]]] = []
         if my_email in all_reviews:
             ordered.append((my_email, all_reviews[my_email]))
-        for email in sorted(all_reviews):
-            if email != my_email:
-                ordered.append((email, all_reviews[email]))
+        for addr in sorted(all_reviews):
+            if addr != my_email:
+                ordered.append((addr, all_reviews[addr]))
 
         ts = resolve_styles(self)
         note_entries: List[Tuple[str, str, str]] = []
@@ -1225,14 +1225,14 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if changed:
             # Clean up any reviewers that now have empty data
             my_email = self._usercfg.get('email', '')
-            for email in list(all_reviews):
-                rev = all_reviews[email]
+            for addr in list(all_reviews):
+                rev = all_reviews[addr]
                 if not (rev.get('trailers') or rev.get('reply', '')
                         or rev.get('comments') or rev.get('note', '')):
-                    if email == my_email:
+                    if addr == my_email:
                         b4.review._cleanup_review(target, self._usercfg)
                     else:
-                        del all_reviews[email]
+                        del all_reviews[addr]
             self._save_tracking()
             self._refresh_patch_item(self._selected_idx)
             self._show_content(self._selected_idx)
@@ -1613,7 +1613,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 msgid_map[mid] = {'irt': irt, 'from': msg.get('From', '')}
 
         answered_entries: List[Dict[str, Optional[str]]] = []
-        for mid, info in msgid_map.items():
+        for _mid, info in msgid_map.items():
             from_hdr = info['from']
             if not from_hdr:
                 continue

@@ -81,7 +81,9 @@ files = [
 
 [tool.ruff.lint]
 select = [
-    "F401",   # https://docs.astral.sh/ruff/rules/unused-import/
+    "F",      # https://docs.astral.sh/ruff/rules/#pyflakes-f
+    "B007",   # https://docs.astral.sh/ruff/rules/unused-loop-control-variable/
+    "B904",   # https://docs.astral.sh/ruff/rules/raise-without-from-err/
     "PGH004", # https://docs.astral.sh/ruff/rules/blanket-noqa/
 ]
 flake8-quotes.inline-quotes = "single"

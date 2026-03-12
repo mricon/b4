@@ -317,7 +317,6 @@ class PwApp(App[None]):
             header_text = f'   {"Date":<12s}{"State":<15s} {"Submitter":<30s} {"Series"}'
         header = Static(header_text, id='pw-header')
         items = []
-        ts = resolve_styles(self)
         for s, is_hidden in visible:
             sid = s.get('id')
             is_tracked = sid in self._tracked_ids if sid else False
@@ -492,7 +491,6 @@ class PwApp(App[None]):
             self.notify('No message-id available for this series', severity='error')
             return
 
-        s = item.series
         pw_series_id: int = sid
 
         # Suspend UI while retrieving from lore (produces logging output)

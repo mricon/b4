@@ -1241,9 +1241,9 @@ def _reinsert_all_comments(
     all_comments: List[Dict[str, Any]] = []
     if my_email in all_reviews:
         all_comments.extend(all_reviews[my_email].get('comments', []))
-    for email in sorted(all_reviews):
-        if email != my_email:
-            all_comments.extend(all_reviews[email].get('comments', []))
+    for addr in sorted(all_reviews):
+        if addr != my_email:
+            all_comments.extend(all_reviews[addr].get('comments', []))
 
     return _reinsert_comments(diff_text, all_comments)
 
@@ -1303,7 +1303,7 @@ def _build_reply_from_comments(diff_text: str,
     hunk_buf: List[str] = []
     hunk_comments: List[Tuple[int, str]] = []
     in_hunk = False
-    hunk_has_file_header = False
+    _hunk_has_file_header = False
     file_header_buf: List[str] = []
     file_header_emitted = False
 
