@@ -311,6 +311,8 @@ Key                        Action
 ``a``                      Agent — run review LLM agent (if configured)
 ``d``                      Done — toggle "done" state on the current patch
 ``x``                      Skip — toggle "skip" state on the current patch
+``C``                      CI checks — run check commands and show results
+                           (see :ref:`ci_check_protocol`)
 ``e``                      Toggle email mode
 ``s``                      Shell — suspend to an interactive sub-shell
 ``?``                      Help — show keybinding reference
@@ -733,15 +735,15 @@ Key                   Description
 CI check integration
 --------------------
 
-The tracking list supports running CI checks on any series via the
-``c`` keybinding. Results are displayed in a matrix modal showing each
+Both the tracking list (``c``) and the review app (``C``) support
+running CI checks on a series. Results are displayed in a matrix modal showing each
 patch as a row and each check tool as a column, with colour-coded
 status indicators. Press ``Enter`` on a row to drill into detailed
 results, or ``R`` to force a re-run that bypasses the cache.
 
 Check results are cached in a SQLite database
 (``$XDG_DATA_HOME/b4/review/ci.sqlite3``) keyed by message-id and
-tool name, so pressing ``c`` again shows cached results instantly.
+tool name, so re-running checks shows cached results instantly.
 
 Built-in handlers
 ~~~~~~~~~~~~~~~~~

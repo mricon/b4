@@ -27,7 +27,7 @@ from rich.text import Text
 
 from b4.review_tui._common import (
     logger, PATCH_STATE_MARKERS,
-    resolve_styles, reviewer_colours,
+    resolve_styles, reviewer_colours, CheckRunnerMixin,
     _has_review_data, _make_initials, _wait_for_enter,
     _write_comments, _write_followup_comments,
     _write_followup_trailers, _resolve_patch_for_followup,
@@ -88,7 +88,7 @@ class FollowupItem(ListItem):
 
 
 
-class ReviewApp(App[None]):
+class ReviewApp(CheckRunnerMixin, App[None]):
     """Textual app for b4 review TUI."""
 
     TITLE = 'b4 review'
@@ -202,6 +202,7 @@ class ReviewApp(App[None]):
         Binding('d', 'patch_done', 'done'),
         Binding('x', 'patch_skip', 'skip'),
         Binding('P', 'prior_review', 'prior', key_display='P'),
+        Binding('C', 'check', 'checks', key_display='C'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings
@@ -252,6 +253,13 @@ class ReviewApp(App[None]):
         self._followup_comments: Dict[int, List[Dict[str, Any]]] = {}
         self._followup_header_map: Dict[int, Dict[str, Any]] = {}
         self._reply_sent: bool = False
+        self._check_loading: Optional[Any] = None
+
+    def _get_check_context(self) -> Optional[Tuple[str, str, str]]:
+        message_id = self._series.get('header-info', {}).get('msgid', '')
+        subject = self._cover_subject_clean
+        change_id = self._series.get('change-id', '')
+        return (message_id, subject, change_id)
 
     def compose(self) -> ComposeResult:
         yield Static(id='newer-warning', markup=False)
@@ -838,6 +846,8 @@ class ReviewApp(App[None]):
         if action == 'prior_review':
             if not self._series.get('prior-review-context'):
                 return False
+            return not self._preview_mode
+        if action == 'check':
             return not self._preview_mode
         if action in self._REVIEW_ACTIONS:
             return not self._preview_mode

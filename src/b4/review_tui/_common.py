@@ -9,6 +9,7 @@ import email.message
 import email.parser
 import email.policy
 import email.utils
+import json
 import os
 import subprocess
 import tempfile
@@ -201,6 +202,240 @@ class _quiet_worker:
     def __exit__(self, *exc: object) -> None:
         for h in self._logger.handlers:
             h.removeFilter(self._filt)
+
+
+class CheckRunnerMixin:
+    """Mixin providing CI check execution for Textual App subclasses.
+
+    Subclasses must implement :meth:`_get_check_context` to supply the
+    message-id, subject, and change-id for the series to check.  All UI
+    interaction (loading overlay, results modal) is handled here.
+    """
+
+    _check_loading: Optional[Any] = None
+
+    # -- interface for subclasses ------------------------------------------
+
+    def _get_check_context(self) -> Optional[Tuple[str, str, str]]:
+        """Return ``(message_id, series_subject, change_id)`` or *None*.
+
+        Return *None* when no series is selected or checks cannot run.
+        """
+        raise NotImplementedError
+
+    # -- public action -----------------------------------------------------
+
+    def action_check(self) -> None:
+        """Run CI checks on the current series."""
+        self._run_checks(force=False)
+
+    # -- helpers -----------------------------------------------------------
+
+    def _run_checks(self, force: bool = False) -> None:
+        """Show loading overlay and launch the check worker thread."""
+        ctx = self._get_check_context()
+        if ctx is None:
+            return
+        message_id, series_subject, change_id = ctx
+        if not message_id:
+            self.notify('No message-id for this series', severity='error')  # type: ignore[attr-defined]
+            return
+        from b4.review_tui._modals import CheckLoadingScreen
+        self._check_loading = CheckLoadingScreen()
+        self.push_screen(self._check_loading)  # type: ignore[attr-defined]
+        self.run_worker(  # type: ignore[attr-defined]
+            lambda: self._fetch_and_check(message_id, series_subject,
+                                          change_id=change_id, force=force),
+            name='_check_worker', thread=True)
+
+    def _dismiss_loading(self, msg: str = '', severity: str = '') -> None:
+        """Dismiss the check loading screen and optionally notify."""
+        def _do() -> None:
+            if self._check_loading is not None and self._check_loading.is_attached:
+                self._check_loading.dismiss(None)
+            if msg:
+                self.notify(msg, severity=severity)  # type: ignore[attr-defined]
+        self.app.call_from_thread(_do)  # type: ignore[attr-defined]
+
+    def _update_loading(self, text: str) -> None:
+        """Update the loading screen status text."""
+        def _do() -> None:
+            if self._check_loading is not None and self._check_loading.is_attached:
+                self._check_loading.update_status(text)
+        self.app.call_from_thread(_do)  # type: ignore[attr-defined]
+
+    def _fetch_and_check(self, message_id: str, series_subject: str,
+                         change_id: str = '', force: bool = False) -> None:
+        """Fetch thread, run checks, and push results modal (worker thread)."""
+        import b4.review.checks as checks
+        from b4.review_tui._modals import TrackingCheckResultsScreen
+
+        perpatch_cmds, series_cmds = checks.load_check_cmds()
+        if not perpatch_cmds and not series_cmds:
+            self._dismiss_loading('No check commands configured', 'warning')
+            return
+
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            self._dismiss_loading('Not in a git repository', 'error')
+            return
+
+        # Patchwork config for _builtin_patchwork
+        config = b4.get_main_config()
+        pwkey = str(config.get('pw-key', ''))
+        pwurl = str(config.get('pw-url', ''))
+
+        # Dump tracking data to a temp file for external scripts
+        extra_env: Dict[str, str] = {}
+        tracking_file: Optional[str] = None
+        if change_id:
+            review_branch = f'b4/review/{change_id}'
+            try:
+                _cover, tracking = b4.review.load_tracking(topdir, review_branch)
+                fd, tracking_file = tempfile.mkstemp(prefix='b4-tracking-', suffix='.json')
+                with os.fdopen(fd, 'w') as fp:
+                    json.dump(tracking, fp, indent=2)
+                extra_env['B4_TRACKING_FILE'] = tracking_file
+            except SystemExit:
+                pass
+
+        # Fetch the thread
+        self._update_loading('Fetching thread\u2026')
+        with _quiet_worker():
+            msgs = b4.get_pi_thread_by_msgid(message_id, quiet=True)
+        if not msgs:
+            self._dismiss_loading('Could not fetch thread from lore', 'error')
+            return
+
+        # Separate patches from non-patches using LoreSubject
+        cover_msg: Optional[Tuple[str, email.message.EmailMessage]] = None
+        patches: List[Tuple[str, email.message.EmailMessage]] = []
+        for msg in msgs:
+            subject = msg.get('subject', '')
+            if not subject:
+                continue
+            lsubj = b4.LoreSubject(subject)
+            msgid = msg.get('message-id', '').strip('<> ')
+            if not msgid:
+                continue
+            if lsubj.counter == 0 and lsubj.expected > 0:
+                cover_msg = (msgid, msg)
+            elif lsubj.patch and not lsubj.reply:
+                patches.append((msgid, msg))
+
+        if not patches and not cover_msg:
+            self._dismiss_loading('No patches found in thread', 'error')
+            return
+
+        # Sort patches by counter
+        patches.sort(key=lambda p: b4.LoreSubject(p[1].get('subject', '')).counter)
+
+        # Open or create cache DB
+        conn = checks.get_db()
+        checks.cleanup_old(conn)
+
+        expected = patches[0][1].get('subject', '') if patches else ''
+        lsubj0 = b4.LoreSubject(expected)
+        num_patches = lsubj0.expected if lsubj0.expected > 0 else len(patches)
+
+        # Build patch labels and subjects
+        patch_labels: List[str] = []
+        patch_subjects: List[str] = []
+        ordered_msgs: List[Tuple[str, email.message.EmailMessage]] = []
+        if cover_msg:
+            patch_labels.append(f'0/{num_patches}')
+            patch_subjects.append(b4.LoreSubject(cover_msg[1].get('subject', '')).subject)
+            ordered_msgs.append(cover_msg)
+        for idx, (mid, msg) in enumerate(patches, 1):
+            patch_labels.append(f'{idx}/{num_patches}')
+            patch_subjects.append(b4.LoreSubject(msg.get('subject', '')).subject)
+            ordered_msgs.append((mid, msg))
+
+        # Check cache first (clear and skip when force-rerunning)
+        all_msgids = [mid for mid, _ in ordered_msgs]
+        cached: Dict[str, List[Dict[str, str]]] = {}
+        if force:
+            checks.delete_results(conn, all_msgids)
+        else:
+            cached = checks.get_cached_results(conn, all_msgids)
+
+        all_tools: set[str] = set()
+        matrix: Dict[Tuple[int, str], Dict[str, str]] = {}
+
+        # Populate matrix from cache
+        for pidx, (mid, _msg) in enumerate(ordered_msgs):
+            for result in cached.get(mid, []):
+                tool = result['tool']
+                all_tools.add(tool)
+                matrix[(pidx, tool)] = result
+
+        # Collect new results for batch DB storage
+        new_results: Dict[str, List[Dict[str, str]]] = {}
+
+        # Determine which patches still need checking
+        if perpatch_cmds:
+            start_idx = 1 if cover_msg else 0
+            unchecked: List[Tuple[int, str, email.message.EmailMessage]] = []
+            for pidx_offset, (mid, _msg) in enumerate(ordered_msgs[start_idx:]):
+                pidx = pidx_offset + start_idx
+                if mid not in cached:
+                    unchecked.append((pidx, mid, _msg))
+
+            for pidx, mid, _msg in unchecked:
+                label = patch_labels[pidx]
+                self._update_loading(f'Running checks\u2026 {label}')
+                single_results = checks.run_perpatch_checks(
+                    [(mid, _msg)], perpatch_cmds, topdir, pwkey, pwurl,
+                    extra_env=extra_env)
+                for result in single_results.get(mid, []):
+                    tool = result['tool']
+                    all_tools.add(tool)
+                    matrix[(pidx, tool)] = result
+                    new_results.setdefault(mid, []).append(result)
+
+        # Run per-series checks (only if not cached)
+        if series_cmds:
+            target = cover_msg if cover_msg else (ordered_msgs[0] if ordered_msgs else None)
+            if target and target[0] not in cached:
+                self._update_loading('Running series checks\u2026')
+                series_results = checks.run_series_checks(
+                    target, series_cmds, topdir, pwkey, pwurl,
+                    extra_env=extra_env)
+                cover_idx = 0
+                for result in series_results:
+                    tool = result['tool']
+                    all_tools.add(tool)
+                    matrix[(cover_idx, tool)] = result
+                    new_results.setdefault(target[0], []).append(result)
+
+        # Batch-store all new results
+        for mid, results in new_results.items():
+            checks.store_results(conn, mid, results)
+        conn.close()
+
+        # Clean up the tracking data temp file
+        if tracking_file:
+            try:
+                os.unlink(tracking_file)
+            except OSError:
+                pass
+
+        # Build title and swap loading screen for results
+        title = f'CI Check Results: {series_subject}'
+        tools_sorted = sorted(all_tools)
+
+        def _on_result(result: Optional[str]) -> None:
+            if result == 'rerun':
+                self._run_checks(force=True)
+
+        def _push_modal() -> None:
+            if self._check_loading is not None and self._check_loading.is_attached:
+                self._check_loading.dismiss(None)
+            self.push_screen(TrackingCheckResultsScreen(  # type: ignore[attr-defined]
+                title, patch_labels, patch_subjects, tools_sorted, matrix),
+                callback=_on_result)
+
+        self.app.call_from_thread(_push_modal)  # type: ignore[attr-defined]
 
 
 def _wait_for_enter() -> None:

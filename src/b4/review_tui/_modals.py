@@ -234,6 +234,7 @@ def _review_help_lines(has_agent: bool = False) -> List[str]:
     if has_agent:
         lines.append('  [bold]a[/bold]         Run review agent\n')
     lines += [
+        '  [bold]C[/bold]         Run CI checks\n',
         '  [bold]e[/bold]         Toggle email mode\n',
         '\n',
         '[bold]Email mode[/bold]\n',
@@ -2742,7 +2743,9 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
         Binding('enter', 'details', 'Details'),
         Binding('R', 'rerun', 'Rerun', key_display='R'),
         Binding('j', 'cursor_down', 'Down', show=False),
+        Binding('down', 'cursor_down', 'Down', show=False, priority=True),
         Binding('k', 'cursor_up', 'Up', show=False),
+        Binding('up', 'cursor_up', 'Up', show=False, priority=True),
         Binding('space', 'page_down', 'Page down', show=False),
         Binding('backspace', 'page_up', 'Page up', show=False),
     ]

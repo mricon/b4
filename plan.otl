@@ -154,6 +154,21 @@ v0.15
 	[X] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
 	[X] Respect sendemail.from in review emails
+	[_] Mark Brown review feedback (2026-03-11)
+		[_] Commit-level CI hooks — extend check framework to pass commit SHAs
+		    on the review branch, not just patch emails; native KUnit as one option
+		    but a general mechanism is better
+		[X] CLI for listing review branches and their commits/bases
+		    (`b4 review show-info` with --list and --json for scripted CI and indexing)
+		[_] Per-series target vs base branch tracking — separate "based on v6.x-rcN"
+		    from "targeted at subsys/next"; store both in tracking commit metadata
+		[X] Allow "waiting for new version" from new/unimported series — currently
+		    requires opening a review first; add new → waiting state transition
+		[_] Expose CI/checkpatch action inside the review TUI (currently only
+		    available in tracking and patchwork views)
+		[_] Thanks integration for review workflow — treename for review branches
+		    so thanks mails don't say "applied to local branch b4/review/foo";
+		    also ability to send thanks based on a published branch
 [X] General improvements
 	[X] Consolidate duplicated base-commit guessing logic in _tracking_app.py (~30 lines at _do_checkout and _do_update_revision)
 	[X] Consolidate duplicated post-take finalization in _tracking_app.py (~15 lines at _do_take_merge and _do_take_am)
