@@ -1576,10 +1576,10 @@ class TestSeriesLifecycle:
             assert 'thank' in actions
             assert 'abandon' in actions
             assert 'archive' in actions
-            # Should NOT have review/take/snooze/etc
+            # Should NOT have take/snooze/etc, but review is allowed
+            assert 'review' in actions
             assert 'take' not in actions
             assert 'snooze' not in actions
-            assert 'review' not in actions
             assert 'waiting' not in actions
             await pilot.press('escape')
 
@@ -1666,7 +1666,7 @@ class TestSeriesLifecycle:
 
     @pytest.mark.asyncio
     async def test_accepted_action_menu(self, gitdir: str) -> None:
-        """Accepted series should show thank, abandon, and archive."""
+        """Accepted series should show review, thank, abandon, and archive."""
         identifier = 'test-lifecycle-accepted'
         change_id = 'accepted-menu-1'
         _create_review_branch(gitdir, change_id, identifier=identifier,
@@ -1684,7 +1684,7 @@ class TestSeriesLifecycle:
             await pilot.press('a')
             await pilot.pause()
             actions = _get_action_keys(app)
-            assert set(actions) == {'thank', 'abandon', 'archive'}
+            assert set(actions) == {'review', 'thank', 'abandon', 'archive'}
             await pilot.press('escape')
 
     @pytest.mark.asyncio

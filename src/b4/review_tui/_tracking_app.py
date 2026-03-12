@@ -734,7 +734,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze', 'target_branch'}),
         'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze', 'target_branch'}),
         'waiting': frozenset({'review', 'range_diff', 'abandon', 'archive', 'snooze', 'target_branch'}),
-        'accepted': frozenset({'thank', 'archive'}),
+        'accepted': frozenset({'review', 'thank', 'archive'}),
         'snoozed': frozenset({'review', 'range_diff', 'unsnooze', 'abandon', 'target_branch'}),
         'thanked': frozenset({'archive'}),
         'gone': frozenset({'abandon', 'review'}),
@@ -792,6 +792,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             if status == 'waiting':
                 actions.append(('review', 'Review'))
             if status == 'accepted':
+                actions.append(('review', 'Return to reviewing'))
                 actions.append(('thank', 'Send thank-you'))
             if status != 'thanked':
                 actions.append(('abandon', 'Abandon series'))
@@ -824,7 +825,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status in ('reviewing', 'replied', 'waiting', 'snoozed'):
+        if status in ('reviewing', 'replied', 'waiting', 'accepted', 'snoozed'):
             # Already checked out - go to review mode
             change_id = self._selected_series.get('change_id', '')
             revision = self._selected_series.get('revision')
@@ -845,7 +846,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     if conn:
                         b4.review.tracking.unsnooze_series(
                             conn, change_id, 'reviewing', revision=revision)
-                elif status == 'waiting':
+                elif status in ('waiting', 'accepted'):
                     # Bring back to reviewing on re-entry
                     if conn:
                         b4.review.tracking.update_series_status(
