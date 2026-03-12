@@ -1693,8 +1693,85 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
     def action_suspend(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
+        old_shas = list(self._commit_shas)
         with self.suspend():
             _suspend_to_shell()
+        self._reconcile_after_shell(old_shas)
+
+    def _reconcile_after_shell(self, old_shas: List[str]) -> None:
+        """Reconcile tracking data after returning from shell.
+
+        Detects whether patch commits were rewritten (e.g. via
+        ``git rebase -i`` to reword subjects) and updates the
+        tracking metadata to match.  Assumes the number of patches
+        has not changed and their order is preserved.
+        """
+        series = self._tracking.get('series', {})
+        first_patch = series.get('first-patch-commit', '')
+        if first_patch:
+            range_spec = f'{first_patch}~1..HEAD~1'
+        else:
+            range_spec = f'{self._base_commit}..HEAD~1'
+
+        ecode, out = b4.git_run_command(
+            self._topdir, ['rev-list', '--reverse', range_spec])
+        if ecode != 0 or not out.strip():
+            # Could not enumerate — tracking commit may be damaged
+            self.notify('Could not enumerate patch commits after shell',
+                        severity='warning')
+            return
+
+        new_shas = out.strip().splitlines()
+
+        if new_shas == old_shas:
+            return
+
+        if len(new_shas) != len(old_shas):
+            self.notify(
+                f'Patch count changed ({len(old_shas)} → {len(new_shas)}). '
+                'Please exit and re-enter the review.',
+                severity='warning')
+            return
+
+        # Reload tracking from the (possibly rewritten) tip commit
+        try:
+            self._cover_text, self._tracking = b4.review.load_tracking(
+                self._topdir, 'HEAD')
+        except SystemExit:
+            self.notify('Could not reload tracking data after shell',
+                        severity='warning')
+            return
+
+        series = self._tracking.get('series', {})
+        self._series = series
+        self._patches = self._tracking.get('patches', [])
+
+        # Update first-patch-commit
+        series['first-patch-commit'] = new_shas[0]
+
+        # Re-anchor inline comments against the rebased diffs
+        b4.review.reanchor_patch_comments(
+            self._topdir, new_shas, self._patches)
+
+        # Persist updated tracking
+        self._tracking['series'] = series
+        b4.review.save_tracking(
+            self._topdir, self._cover_text, self._tracking)
+
+        # Refresh in-memory state
+        self._commit_shas = new_shas
+        ecode, out = b4.git_run_command(
+            self._topdir, ['log', '--reverse', '--format=%s', range_spec])
+        if ecode == 0 and out.strip():
+            self._commit_subjects = out.strip().splitlines()
+        self._sha_map = {}
+        for idx, full_sha in enumerate(new_shas):
+            self._sha_map[full_sha[:self._abbrev_len]] = (full_sha, idx)
+
+        # Refresh the patch list display
+        self._populate_patch_list()
+
+        self.notify('Tracking data reconciled after commit edits')
 
     async def action_quit(self) -> None:
         """Quit the TUI."""

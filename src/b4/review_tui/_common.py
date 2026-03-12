@@ -782,7 +782,9 @@ def _suspend_to_shell(hint: str = 'b4 review') -> None:
     """
     logger.info('---')
     logger.info('You are now in shell mode. You can execute git commands or run checks.')
-    logger.info('DO NOT rebase or modify commits, as b4 will get confused.')
+    logger.info('Cosmetic commit edits (reword subjects, fix trailers) are fine;')
+    logger.info('b4 will reconcile tracking data when you return.')
+    logger.info('Do NOT add, remove, squash, or reorder commits.')
     logger.info('When done, Ctrl-d to return to review UI.')
     logger.info('---')
 
