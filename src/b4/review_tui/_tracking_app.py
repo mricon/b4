@@ -616,14 +616,36 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if mtime != self._db_mtime:
             self._load_series()
 
+    @staticmethod
+    def _matches_limit(series: Dict[str, Any], pattern: str) -> bool:
+        """Test whether *series* matches the limit *pattern*.
+
+        The pattern is split on whitespace.  Tokens starting with
+        ``s:`` filter by status substring, ``t:`` by target-branch
+        substring, and bare tokens by subject or sender name.  All
+        tokens must match (AND logic).
+        """
+        for token in pattern.lower().split():
+            if token.startswith('s:'):
+                needle = token[2:]
+                if needle not in (series.get('status', '') or '').lower():
+                    return False
+            elif token.startswith('t:'):
+                needle = token[2:]
+                if needle not in (series.get('target_branch', '') or '').lower():
+                    return False
+            else:
+                if (token not in (series.get('subject', '') or '').lower()
+                        and token not in (series.get('sender_name', '') or '').lower()):
+                    return False
+        return True
+
     async def _refresh_list(self) -> None:
         display_series = self._all_series
         if self._limit_pattern:
-            pat = self._limit_pattern.lower()
             display_series = [
                 s for s in display_series
-                if pat in (s.get('subject', '') or '').lower()
-                or pat in (s.get('sender_name', '') or '').lower()
+                if self._matches_limit(s, self._limit_pattern)
             ]
 
         title = self.query_one('#tracking-title', Static)
@@ -665,7 +687,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         lv.focus()
 
     def action_limit(self) -> None:
-        self.push_screen(LimitScreen(self._limit_pattern), callback=self._on_limit)
+        self.push_screen(LimitScreen(self._limit_pattern,
+                                     hint='Prefixes: s:<status>  t:<target-branch>'),
+                         callback=self._on_limit)
 
     def _on_limit(self, result: Optional[str]) -> None:
         if result is None:

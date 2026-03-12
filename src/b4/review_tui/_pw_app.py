@@ -29,10 +29,12 @@ from b4.review_tui._modals import (
 
 
 def _format_series_label(series: Dict[str, Any], tracked: bool,
-                         ts: Optional[Dict[str, str]] = None) -> Text:
+                         ts: Optional[Dict[str, str]] = None,
+                         show_delegate: bool = True) -> Text:
     """Build a Text label for a series row.
 
     *ts* is a resolved theme styles dict from :func:`resolve_styles`.
+    When *show_delegate* is ``False`` the delegate column is omitted.
     """
     track_mark = 'T' if tracked else ' '
     ci_state = series.get('check') or 'pending'
@@ -47,7 +49,11 @@ def _format_series_label(series: Dict[str, Any], tracked: bool,
     text = Text()
     text.append(track_mark)
     text.append('\u25cf', style=ci_style)
-    text.append(f' {date}  {state} {submitter} {name}')
+    if show_delegate:
+        delegate = pad_display(series.get('delegate') or '', 15)
+        text.append(f' {date}  {state} {submitter} {delegate} {name}')
+    else:
+        text.append(f' {date}  {state} {submitter} {name}')
     return text
 
 
@@ -56,10 +62,12 @@ class PwSeriesItem(ListItem):
 
     ACTION_REQUIRED_STATES = ('new', 'under-review')
 
-    def __init__(self, series: Dict[str, Any], tracked: bool = False) -> None:
+    def __init__(self, series: Dict[str, Any], tracked: bool = False,
+                 show_delegate: bool = True) -> None:
         super().__init__()
         self.series = series
         self.tracked = tracked
+        self.show_delegate = show_delegate
         state = series.get('state', 'new')
         if state not in self.ACTION_REQUIRED_STATES:
             self.add_class('--dimmed')
@@ -68,7 +76,9 @@ class PwSeriesItem(ListItem):
 
     def compose(self) -> ComposeResult:
         ts = resolve_styles(self.app)
-        yield Label(_format_series_label(self.series, self.tracked, ts), markup=False)
+        yield Label(_format_series_label(self.series, self.tracked, ts,
+                                         show_delegate=self.show_delegate),
+                    markup=False)
 
 
 class PwApp(App[None]):
@@ -283,11 +293,9 @@ class PwApp(App[None]):
             else:
                 visible.append((s, False))
         if self._limit_pattern:
-            pat = self._limit_pattern.lower()
             visible = [
                 (s, h) for s, h in visible
-                if pat in (s.get('name', '') or '').lower()
-                or pat in (s.get('submitter', '') or '').lower()
+                if self._matches_limit(s, self._limit_pattern)
             ]
         limit_suffix = f', limit: {self._limit_pattern}' if self._limit_pattern else ''
         if hidden_count and not self._show_hidden:
@@ -300,13 +308,21 @@ class PwApp(App[None]):
             title.update(f' Patchwork — {len(visible)} action-required series')
         if not visible:
             return
-        header_text = f'   {"Date":<12s}{"State":<15s} {"Submitter":<30s} {"Series"}'
+        # Hide the delegate column when all values are empty or identical
+        delegates = {s.get('delegate', '') or '' for s, _h in visible}
+        show_delegate = len(delegates) > 1
+        if show_delegate:
+            header_text = f'   {"Date":<12s}{"State":<15s} {"Submitter":<30s} {"Delegate":<15s} {"Series"}'
+        else:
+            header_text = f'   {"Date":<12s}{"State":<15s} {"Submitter":<30s} {"Series"}'
         header = Static(header_text, id='pw-header')
         items = []
+        ts = resolve_styles(self)
         for s, is_hidden in visible:
             sid = s.get('id')
             is_tracked = sid in self._tracked_ids if sid else False
-            item = PwSeriesItem(s, tracked=is_tracked)
+            item = PwSeriesItem(s, tracked=is_tracked,
+                                show_delegate=show_delegate)
             if is_hidden:
                 item.add_class('--hidden')
             items.append(item)
@@ -323,8 +339,38 @@ class PwApp(App[None]):
         await self.mount(LoadingIndicator(id='pw-loading'), before=self.query_one(Footer))
         self.run_worker(self._fetch_initial, name='_fetch_initial', thread=True)
 
+    @staticmethod
+    def _matches_limit(series: Dict[str, Any], pattern: str) -> bool:
+        """Check whether *series* matches the limit *pattern*.
+
+        Tokens are split on whitespace and combined with AND logic:
+        - ``s:<substring>`` matches against the state field
+        - ``d:<substring>`` matches against the delegate field
+        - bare text matches against name or submitter
+        """
+        for token in pattern.lower().split():
+            if token.startswith('s:'):
+                needle = token[2:]
+                if needle not in (series.get('state', '') or '').lower():
+                    return False
+            elif token.startswith('d:'):
+                needle = token[2:]
+                if needle not in (series.get('delegate', '') or '').lower():
+                    return False
+            else:
+                if (token not in (series.get('name', '') or '').lower()
+                        and token not in (series.get('submitter', '') or '').lower()):
+                    return False
+        return True
+
     def action_limit(self) -> None:
-        self.push_screen(LimitScreen(self._limit_pattern), callback=self._on_limit)
+        delegates = {s.get('delegate', '') or '' for s in self._all_series}
+        if len(delegates) > 1:
+            hint = 'Prefixes: s:<state>  d:<delegate>'
+        else:
+            hint = 'Prefixes: s:<state>'
+        self.push_screen(LimitScreen(self._limit_pattern, hint=hint),
+                         callback=self._on_limit)
 
     async def _on_limit(self, result: Optional[str]) -> None:
         if result is None:
@@ -422,7 +468,9 @@ class PwApp(App[None]):
         else:
             item.add_class('--dimmed')
         ts = resolve_styles(self)
-        item.query_one(Label).update(_format_series_label(item.series, item.tracked, ts))
+        item.query_one(Label).update(_format_series_label(
+            item.series, item.tracked, ts,
+            show_delegate=item.show_delegate))
 
     def action_track_series(self) -> None:
         if not self._tracking_enabled:
@@ -503,7 +551,9 @@ class PwApp(App[None]):
         item.tracked = True
         item.add_class('--tracked')
         ts = resolve_styles(self)
-        item.query_one(Label).update(_format_series_label(item.series, True, ts))
+        item.query_one(Label).update(_format_series_label(
+            item.series, True, ts,
+            show_delegate=item.show_delegate))
         self.notify(f'Started tracking: {series_name}', severity='information', timeout=3)
 
     async def action_hide_series(self) -> None:

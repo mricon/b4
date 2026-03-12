@@ -384,6 +384,70 @@ class TestTrackingLimit:
             assert 'alpha' in _static_text(title)
 
 
+class TestTrackingLimitPrefixes:
+    """Tests for s: and t: prefix filters in the limit dialog."""
+
+    @pytest.mark.asyncio
+    async def test_limit_by_status(self, tmp_path: pathlib.Path) -> None:
+        """s:snoozed should show only snoozed series."""
+        _seed_db('test-limit-status', [
+            {
+                'change_id': 'ls-new',
+                'subject': '[PATCH] new one',
+                'message_id': 'lsn@ex.com',
+            },
+            {
+                'change_id': 'ls-snoozed',
+                'subject': '[PATCH] snoozed one',
+                'status': 'snoozed',
+                'message_id': 'lss@ex.com',
+            },
+        ])
+
+        app = TrackingApp('test-limit-status')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('l')
+            await pilot.pause()
+            from textual.widgets import Input
+            inp = app.screen.query_one('#limit-input', Input)
+            inp.value = 's:snoozed'
+            await pilot.press('enter')
+            await pilot.pause()
+
+            lv = app.query_one('#tracking-list', ListView)
+            items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
+            assert len(items) == 1
+            assert items[0].series['status'] == 'snoozed'
+
+    def test_matches_limit_status_substring(self) -> None:
+        """s:re should match both reviewing and replied."""
+        m = TrackingApp._matches_limit
+        assert m({'status': 'reviewing'}, 's:re')
+        assert m({'status': 'replied'}, 's:re')
+        assert not m({'status': 'new'}, 's:re')
+        assert not m({'status': 'snoozed'}, 's:re')
+
+    def test_matches_limit_target_branch(self) -> None:
+        """t:next should match series with target_branch containing 'next'."""
+        m = TrackingApp._matches_limit
+        assert m({'target_branch': 'net-next'}, 't:next')
+        assert m({'target_branch': 'bpf-next'}, 't:next')
+        assert not m({'target_branch': 'bpf'}, 't:next')
+        assert not m({'target_branch': None}, 't:next')
+        assert not m({}, 't:next')
+
+    def test_matches_limit_combined(self) -> None:
+        """s:new bpf should match new series with 'bpf' in subject."""
+        m = TrackingApp._matches_limit
+        series_new_bpf = {'status': 'new', 'subject': '[PATCH bpf] fix verifier'}
+        series_new_net = {'status': 'new', 'subject': '[PATCH net] fix routing'}
+        series_snoozed_bpf = {'status': 'snoozed', 'subject': '[PATCH bpf] old'}
+        assert m(series_new_bpf, 's:new bpf')
+        assert not m(series_new_net, 's:new bpf')
+        assert not m(series_snoozed_bpf, 's:new bpf')
+
+
 class TestTrackingStatusGroups:
     """Tests for status grouping and display."""
 

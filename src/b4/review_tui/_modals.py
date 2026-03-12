@@ -2722,7 +2722,13 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
 
 
 class LimitScreen(ModalScreen[Optional[str]]):
-    """Modal screen for mutt-style limit (filter) by author/subject."""
+    """Modal screen for mutt-style limit (filter) by author/subject.
+
+    Supports prefix filters that can be combined with plain text:
+    - ``s:<substring>`` filters by status (e.g. ``s:new``, ``s:rev``)
+    - ``t:<substring>`` filters by target branch (e.g. ``t:next``)
+    - plain text filters by subject or sender name
+    """
 
     BINDINGS = [
         Binding('escape', 'cancel', 'Cancel'),
@@ -2750,16 +2756,22 @@ class LimitScreen(ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, current_pattern: str = '') -> None:
+    def __init__(self, current_pattern: str = '',
+                 hint: Optional[str] = None) -> None:
         super().__init__()
         self._current_pattern = current_pattern
+        self._hint = hint
 
     def compose(self) -> ComposeResult:
         with Vertical(id='limit-dialog'):
-            yield Static('Limit by author/subject:', id='limit-title')
+            yield Static('Limit series:', id='limit-title')
             yield Input(value=self._current_pattern, id='limit-input',
                         placeholder='substring to match (empty to clear)')
-            yield Static('Enter apply  |  Escape cancel', id='limit-hint')
+            hint_lines = ''
+            if self._hint:
+                hint_lines = self._hint + '\n'
+            hint_lines += 'Enter apply  |  Escape cancel'
+            yield Static(hint_lines, id='limit-hint')
 
     def on_mount(self) -> None:
         self.query_one('#limit-input', Input).focus()

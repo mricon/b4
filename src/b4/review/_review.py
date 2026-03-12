@@ -1981,11 +1981,13 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
                 continue
             if sid not in series_map:
                 submitter = patch.get('submitter', {})
+                delegate = patch.get('delegate') or {}
                 series_map[sid] = {
                     'id': sid,
                     'name': s.get('name', '(no subject)'),
                     'submitter': submitter.get('name', submitter.get('email', 'Unknown')),
                     'submitter_email': submitter.get('email', ''),
+                    'delegate': delegate.get('username', ''),
                     'date': patch.get('date', ''),
                     'state': patch.get('state', 'new'),
                     'patch_ids': [],
