@@ -768,6 +768,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         actions: list[tuple[str, str]] = []
         if status in ('new', 'gone'):
             actions.append(('review', 'Review'))
+            if status == 'new' and self._selected_series.get('has_newer'):
+                actions.append(('upgrade', 'Upgrade to newer revision'))
             actions.append(('abandon', 'Abandon series'))
             if status == 'new':
                 actions.append(('waiting', 'Mark as waiting on new revision'))
@@ -2613,8 +2615,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status != 'reviewing':
-            self.notify('Series must be checked out before upgrading',
+        if status not in ('reviewing', 'new'):
+            self.notify('Series must be checked out or new to upgrade',
                         severity='warning')
             return
 
@@ -2648,6 +2650,22 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 severity='warning')
             return
 
+        if status == 'new':
+            # No review branch — just update the DB record
+            if len(newer_revs) == 1:
+                self._do_switch_revision(change_id, current_rev,
+                                         newer_revs[0])
+                return
+            self.push_screen(
+                UpdateRevisionScreen(current_rev, revisions),
+                callback=lambda chosen: (
+                    self._switch_revision_by_number(
+                        change_id, current_rev, chosen, revisions)
+                    if chosen is not None else None
+                ),
+            )
+            return
+
         if len(newer_revs) == 1:
             # Only one newer revision — go straight to the upgrade
             self._do_update_revision(change_id, current_rev,
@@ -2661,6 +2679,38 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 if chosen is not None else None
             ),
         )
+
+    def _do_switch_revision(self, change_id: str, current_rev: int,
+                            rev_info: Dict[str, Any]) -> None:
+        """Switch a not-yet-checked-out series to a different revision.
+
+        Simply updates the database record — no branch operations needed.
+        """
+        target_rev = rev_info['revision']
+        new_msgid = rev_info.get('message_id', '')
+        new_subject = rev_info.get('subject')
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            b4.review.tracking.update_series_revision(
+                conn, change_id, current_rev, target_rev,
+                new_msgid, new_subject)
+            conn.close()
+        except Exception as ex:
+            self.notify(f'Could not update revision: {ex}', severity='error')
+            return
+        self.notify(f'Now tracking v{target_rev}')
+        self._focus_change_id = change_id
+        self._load_series()
+
+    def _switch_revision_by_number(self, change_id: str, current_rev: int,
+                                   chosen: int,
+                                   revisions: List[Dict[str, Any]]) -> None:
+        """Callback wrapper: find the revision dict and call _do_switch_revision."""
+        for rev in revisions:
+            if rev['revision'] == chosen:
+                self._do_switch_revision(change_id, current_rev, rev)
+                return
+        self.notify(f'Revision v{chosen} not found', severity='error')
 
     def _do_update_revision(self, change_id: str, current_rev: int,
                             target_rev: int) -> None:

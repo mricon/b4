@@ -639,6 +639,38 @@ def update_series_status(conn: sqlite3.Connection, change_id: str, status: str,
     conn.commit()
 
 
+def update_series_revision(conn: sqlite3.Connection, change_id: str,
+                           old_revision: int, new_revision: int,
+                           new_message_id: str,
+                           new_subject: Optional[str] = None) -> None:
+    """Switch a tracked series to a different revision number.
+
+    Used when a not-yet-checked-out series should track a different
+    revision without going through the full review checkout flow.
+    Updates the revision, message_id, and optionally subject columns.
+    Resets message_count and seen_message_count so the next update
+    fetches fresh counts for the new revision's thread.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if new_subject is not None:
+        conn.execute(
+            'UPDATE series SET revision = ?, message_id = ?, subject = ?,'
+            ' message_count = NULL, seen_message_count = NULL,'
+            ' last_activity_at = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (new_revision, new_message_id, new_subject, now,
+             change_id, old_revision))
+    else:
+        conn.execute(
+            'UPDATE series SET revision = ?, message_id = ?,'
+            ' message_count = NULL, seen_message_count = NULL,'
+            ' last_activity_at = ?'
+            ' WHERE change_id = ? AND revision = ?',
+            (new_revision, new_message_id, now,
+             change_id, old_revision))
+    conn.commit()
+
+
 def snooze_series(conn: sqlite3.Connection, change_id: str,
                   until_date: str, revision: Optional[int] = None) -> None:
     """Set a series to snoozed status with a wake-up date.

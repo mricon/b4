@@ -730,6 +730,116 @@ class TestTrackingActionMenu:
             await pilot.press('escape')
 
 
+class TestTrackingUpgradeNewSeries:
+    """Tests for upgrading a new (not checked-out) series to a newer revision."""
+
+    @pytest.mark.asyncio
+    async def test_action_menu_shows_upgrade_for_new_with_newer(
+            self, tmp_path: pathlib.Path) -> None:
+        """New series with a newer revision available should offer upgrade."""
+        identifier = 'test-upgrade-new'
+        change_id = 'upgrade-new-1'
+        conn = tracking.init_db(identifier)
+        tracking.add_series_to_db(
+            conn, change_id=change_id, revision=12,
+            subject='[PATCH v12] test upgrade',
+            sender_name='Test', sender_email='t@ex.com',
+            sent_at='2026-01-15T10:00:00+00:00',
+            message_id='v12@ex.com', num_patches=2)
+        # Add v13 to the revisions table so has_newer is set
+        tracking.add_revision(conn, change_id, 13, 'v13@ex.com',
+                              subject='[PATCH v13] test upgrade')
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' in actions
+            assert 'review' in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_action_menu_no_upgrade_without_newer(
+            self, tmp_path: pathlib.Path) -> None:
+        """New series without newer revisions should not offer upgrade."""
+        _seed_db('test-upgrade-none', [{
+            'change_id': 'upgrade-none-1',
+            'subject': '[PATCH] no newer test',
+            'message_id': 'only@ex.com',
+        }])
+
+        app = TrackingApp('test-upgrade-none')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' not in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_upgrade_switches_revision(
+            self, tmp_path: pathlib.Path) -> None:
+        """Upgrade on a new series should update the DB to the newer revision."""
+        identifier = 'test-upgrade-switch'
+        change_id = 'upgrade-switch-1'
+        conn = tracking.init_db(identifier)
+        tracking.add_series_to_db(
+            conn, change_id=change_id, revision=12,
+            subject='[PATCH v12] switch test',
+            sender_name='Test', sender_email='t@ex.com',
+            sent_at='2026-01-15T10:00:00+00:00',
+            message_id='v12@ex.com', num_patches=2)
+        # Set message counts so we can verify they get reset
+        conn.execute(
+            'UPDATE series SET message_count = 6, seen_message_count = 4'
+            ' WHERE change_id = ?', (change_id,))
+        conn.commit()
+        tracking.add_revision(conn, change_id, 13, 'v13@ex.com',
+                              subject='[PATCH v13] switch test')
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+
+            # Select 'upgrade' — it should be in the list
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+            for child in lv.children:
+                if isinstance(child, ActionItem) and child.key == 'upgrade':
+                    lv.index = lv.children.index(child)
+                    break
+            await pilot.press('enter')
+            await pilot.pause()
+
+            # Verify the DB was updated to v13 with counts reset
+            conn = tracking.get_db(identifier)
+            cursor = conn.execute(
+                'SELECT revision, message_id, message_count,'
+                ' seen_message_count FROM series'
+                ' WHERE change_id = ?', (change_id,))
+            row = cursor.fetchone()
+            conn.close()
+            assert row is not None
+            assert row[0] == 13
+            assert row[1] == 'v13@ex.com'
+            assert row[2] is None  # message_count reset
+            assert row[3] is None  # seen_message_count reset
+
+
 class TestTrackingSnooze:
     """Tests for the snooze workflow."""
 
