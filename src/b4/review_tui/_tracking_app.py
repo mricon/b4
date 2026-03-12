@@ -1827,11 +1827,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             logger.critical('Not in a git repository')
             return
 
-        # Prepare trailer-amended mbox bytes (retrieves from lore)
-        result = self._prepare_am_messages(review_branch, take_screen, series)
-        if result is None:
+        # Prepare trailer-amended mbox bytes from local review branch
+        ambytes = self._prepare_am_messages(review_branch, take_screen, series)
+        if ambytes is None:
             return
-        ambytes, _lser = result
 
         try:
             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
@@ -2040,14 +2039,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         take_screen: 'TakeScreen',
         series: Dict[str, Any],
         cherrypick: Optional[List[int]] = None,
-    ) -> Optional[Tuple[bytes, b4.LoreSeries]]:
-        """Retrieve series messages and prepare trailer-amended mbox bytes.
+    ) -> Optional[bytes]:
+        """Generate patches from local review branch and prepare trailer-amended mbox bytes.
 
-        Loads tracking from the review branch, re-fetches original messages
-        from lore, applies follow-up trailers, and runs get_am_ready() to
+        Loads tracking from the review branch, generates patches from local
+        commits (instead of re-fetching from lore), injects original
+        Message-IDs and follow-up trailers, and runs get_am_ready() to
         produce mbox bytes suitable for git-am.
 
-        Returns (ambytes, lser) on success, or None on failure.
+        Returns mbox bytes on success, or None on failure.
         """
         topdir = b4.git_get_toplevel()
         if not topdir:
@@ -2064,42 +2064,56 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         t_series = tracking.get('series', {})
 
-        # Re-fetch original messages from lore
-        message_id = series.get('message_id', '')
-        if not message_id:
-            logger.critical('No message-id available, cannot retrieve series')
+        # Determine patch range from local review branch
+        first_patch = t_series.get('first-patch-commit', '')
+        if first_patch:
+            range_start = f'{first_patch}~1'
+        else:
+            range_start = t_series.get('base-commit', '')
+        range_end = f'{review_branch}~1'  # exclude tracking commit
+
+        if not range_start:
+            logger.critical('Cannot determine patch range for %s', review_branch)
             _wait_for_enter()
             return None
 
-        logger.info('Retrieving series: %s', message_id)
+        # Generate patches from local commits
+        revision = t_series.get('revision', 1)
         try:
-            msgs = b4.review._retrieve_messages(message_id)
-            self._refresh_msg_count(series, len(msgs))
-        except LookupError as ex:
-            logger.critical('%s', ex)
-            _wait_for_enter()
-            return None
-        except Exception as ex:
-            logger.critical('Error retrieving series: %s', ex)
+            local_patches = b4.git_range_to_patches(topdir, range_start, range_end,
+                                                    revision=revision)
+        except RuntimeError as ex:
+            logger.critical('Could not generate patches: %s', ex)
             _wait_for_enter()
             return None
 
-        # Build LoreSeries with follow-up trailers
+        if not local_patches:
+            logger.critical('No patches found in range %s..%s', range_start, range_end)
+            _wait_for_enter()
+            return None
+
+        # Inject original Message-IDs so Link trailers point to lore
+        patches_meta = tracking.get('patches', [])
+        for i, (_commit, msg) in enumerate(local_patches):
+            if i < len(patches_meta):
+                orig_msgid = patches_meta[i].get('header-info', {}).get('msgid', '')
+                if orig_msgid:
+                    msg.add_header('Message-Id', f'<{orig_msgid}>')
+
+        # Build LoreSeries from local patches
         lmbx = b4.LoreMailbox()
-        for msg in msgs:
+        for _commit, msg in local_patches:
             lmbx.add_message(msg)
 
-        wantver = t_series.get('revision', None)
-        lser = lmbx.get_series(wantver, sloppytrailers=False,
+        lser = lmbx.get_series(revision, sloppytrailers=False,
                                codereview_trailers=False)
         if lser is None:
-            logger.critical('Could not find series in retrieved messages')
+            logger.critical('Could not build series from local patches')
             _wait_for_enter()
             return None
 
-        # Also apply any per-patch follow-up trailers from tracking data
-        # that may have been collected outside the thread
-        patches_meta = tracking.get('patches', [])
+        # Apply cover follow-up trailers to every patch (no cover letter
+        # in local patches, so distribute to all)
         cover_followups = tracking.get('followups', [])
         for followup in cover_followups:
             for tstr in followup.get('trailers', []):
@@ -2107,8 +2121,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     continue
                 tname, tval = tstr.split(': ', maxsplit=1)
                 fltr = b4.LoreTrailer(name=tname, value=tval)
-                if lser.patches[0] is not None and fltr not in lser.patches[0].followup_trailers:
-                    lser.patches[0].followup_trailers.append(fltr)
+                for lmsg in lser.patches[1:]:
+                    if lmsg is not None and fltr not in lmsg.followup_trailers:
+                        lmsg.followup_trailers.append(fltr)
+
+        # Apply per-patch follow-up trailers
         for i, pmeta in enumerate(patches_meta):
             pidx = i + 1  # patches[0] is cover letter
             if pidx >= len(lser.patches) or lser.patches[pidx] is None:
@@ -2145,9 +2162,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Build mbox bytes for git-am
         ifh = io.BytesIO()
         b4.save_git_am_mbox(am_msgs, ifh)
-        ambytes = ifh.getvalue()
-
-        return ambytes, lser
+        return ifh.getvalue()
 
     def _do_take_am(self, change_id: str, review_branch: str,
                     take_screen: 'TakeScreen', series: Dict[str, Any],
@@ -2160,11 +2175,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             logger.critical('Not in a git repository')
             return
 
-        result = self._prepare_am_messages(review_branch, take_screen, series,
-                                           cherrypick=cherrypick)
-        if result is None:
+        ambytes = self._prepare_am_messages(review_branch, take_screen, series,
+                                            cherrypick=cherrypick)
+        if ambytes is None:
             return
-        ambytes, _lser = result
 
         # Save current branch so we can report it on failure
         prev_branch = b4.git_get_current_branch(topdir)
