@@ -94,6 +94,10 @@ select = [
     "RET508",  # https://docs.astral.sh/ruff/rules/superfluous-else-break/
     "RUF059",  # https://docs.astral.sh/ruff/rules/unused-unpacked-variable/
     "RUF100",  # https://docs.astral.sh/ruff/rules/unused-noqa/
+    "SIM103",  # https://docs.astral.sh/ruff/rules/needless-bool/
+    "SIM113",  # https://docs.astral.sh/ruff/rules/enumerate-for-loop/
+    "SIM118",  # https://docs.astral.sh/ruff/rules/in-dict-keys/
+    "SIM201",  # https://docs.astral.sh/ruff/rules/negate-equal-op/
 ]
 flake8-quotes.inline-quotes = "single"
 

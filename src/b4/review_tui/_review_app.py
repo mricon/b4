@@ -1091,8 +1091,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             self.notify('Editor returned no content')
             return
         edited_text = result.decode(errors='replace')
-        if edited_text == patch_text:
-            if not has_any_comments:
+        if edited_text == patch_text and not has_any_comments:
                 self.notify('No changes made')
                 return
             # The maintainer opened the editor with existing comments

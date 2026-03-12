@@ -319,7 +319,7 @@ class LoreMailbox:
             revision = self.get_latest_revision()
             if revision is None:
                 return None
-        elif revision not in self.series.keys():
+        elif revision not in self.series:
             return None
 
         lser = self.series[revision]
@@ -551,13 +551,11 @@ class LoreSeries:
         out.append('  change_id: %s' % self.change_id)
         out.append('  partial_reroll: %s' % self.partial_reroll)
         out.append('  patches:')
-        at = 0
-        for member in self.patches:
+        for at, member in enumerate(self.patches):
             if member is not None:
                 out.append('    [%s/%s] %s' % (at, self.expected, member.subject))
             else:
                 out.append('    [%s/%s] MISSING' % (at, self.expected))
-            at += 1
 
         return '\n'.join(out)
 
@@ -1045,7 +1043,7 @@ class LoreSeries:
                         # New file creation, nothing to do here
                         logger.debug('  New file: %s', ofn)
                         continue
-                    if not ofn == nfn:
+                    if ofn != nfn:
                         # renamed file, make sure to not add the new name later on
                         logger.debug('  Renamed file: %s -> %s', ofn, nfn)
                         seenfiles.add(nfn)
@@ -1213,11 +1211,8 @@ class LoreTrailer:
         if olocal != tlocal:
             return False
 
-        if (abs(odomain.count('.') - tdomain.count('.')) == 1
-                and (odomain.endswith(f'.{tdomain}') or tdomain.endswith(f'.{odomain}'))):
-            return True
-
-        return False
+        return (abs(odomain.count('.') - tdomain.count('.')) == 1
+                and (odomain.endswith(f'.{tdomain}') or tdomain.endswith(f'.{odomain}')))
 
     @staticmethod
     def _extract_link_msgid(url: str) -> Optional[str]:
@@ -2238,21 +2233,17 @@ class LoreMessage:
 
         listid1 = LoreMessage.get_clean_msgid(msg1, 'list-id')
         if listid1:
-            prefidx1 = 0
-            for listglob in listidpref:
+            for prefidx1, listglob in enumerate(listidpref):  # noqa: B007
                 if fnmatch.fnmatch(listid1, listglob):
                     break
-                prefidx1 += 1
         else:
             prefidx1 = listidpref.index('*')
 
         listid2 = LoreMessage.get_clean_msgid(msg2, 'list-id')
         if listid2:
-            prefidx2 = 0
-            for listglob in listidpref:
+            for prefidx2, listglob in enumerate(listidpref):  # noqa: B007
                 if fnmatch.fnmatch(listid2, listglob):
                     break
-                prefidx2 += 1
         else:
             prefidx2 = listidpref.index('*')
 
@@ -2710,8 +2701,7 @@ class LoreMessage:
                 # indicating a language other than latin, then there's likely something funky going on
                 if 'Cf' in ucats and 'Lo' not in ucats:
                     # find the offending char
-                    at = 0
-                    for c in line.rstrip('\r'):
+                    for at, c in enumerate(line.rstrip('\r')):
                         if unicodedata.category(c) == 'Cf':
                             logger.critical('---')
                             logger.critical('WARNING: Message contains suspicious unicode control characters!')
@@ -2721,7 +2711,6 @@ class LoreMessage:
                             logger.critical('            Char: %s (%s)', unicodedata.name(c), hex(ord(c)))
                             logger.critical('         If you are sure about this, rerun with the right flag to allow.')
                             sys.exit(1)
-                        at += 1
 
         # Remove anything cut off by scissors
         mi_msg = EmailMessage()
@@ -4083,15 +4072,13 @@ def make_quote(body: str, maxlines: int = 5) -> str:
     # Remove common greetings
     message = re.sub(r'^(hi|hello|greetings|dear)\W.*\n+', '', message, flags=re.I)
     quotelines = list()
-    qcount = 0
-    for line in message.split('\n'):
+    for qcount, line in enumerate(message.split('\n')):
         # Quote the first paragraph only and then [snip] if we quoted more than maxlines
         if qcount > maxlines and not len(line.strip()):
             quotelines.append('> ')
             quotelines.append('> [...]')
             break
         quotelines.append('> %s' % line.rstrip())
-        qcount += 1
     # Remove any trailing lines that are just '> '
     while len(quotelines) and quotelines[-1].strip() == '>':
         quotelines.pop()
@@ -5019,8 +5006,6 @@ def get_mailfrom() -> Tuple[str, str]:
 
 
 def is_maildir(dest: str) -> bool:
-    if (os.path.isdir(os.path.join(dest, 'new'))
+    return (os.path.isdir(os.path.join(dest, 'new'))
             and os.path.isdir(os.path.join(dest, 'cur'))
-            and os.path.isdir(os.path.join(dest, 'tmp'))):
-        return True
-    return False
+            and os.path.isdir(os.path.join(dest, 'tmp')))

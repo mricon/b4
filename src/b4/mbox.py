@@ -210,9 +210,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 if followup.has_diff:
                     lser.add_patch(followup)
             # Only grab the exact msgid provided
-            at = 0
-            for lmsg in lser.patches[1:]:
-                at += 1
+            for at, lmsg in enumerate(lser.patches[1:], 1):
                 if lmsg and lmsg.msgid == msgid:
                     cherrypick = [at]
                     cmdargs.cherrypick = f'<{msgid}>'

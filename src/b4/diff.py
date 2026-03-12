@@ -55,11 +55,9 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
         if os.path.exists(cachedir):
             shutil.rmtree(cachedir)
         pathlib.Path(cachedir).mkdir(parents=True)
-        at = 0
-        for msg in msgs:
+        for at, msg in enumerate(msgs):
             with open(os.path.join(cachedir, '%04d' % at), 'wb') as fh:
                 fh.write(msg.as_bytes(policy=b4.emlpolicy))
-            at += 1
 
     count = len(msgs)
     logger.info('---')

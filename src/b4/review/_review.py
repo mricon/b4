@@ -848,13 +848,7 @@ def _extract_patch_comments(edited: str, track_content: bool = False,
                 last_diff_line = b_line
                 last_diff_content = line
                 b_line += 1
-            elif line == '':
-                last_diff_path = current_b_file
-                last_diff_line = b_line
-                last_diff_content = line
-                a_line += 1
-                b_line += 1
-            elif line.startswith(' '):
+            elif line == '' or line.startswith(' '):
                 last_diff_path = current_b_file
                 last_diff_line = b_line
                 last_diff_content = line
@@ -1199,9 +1193,7 @@ def _reinsert_comments(diff_text: str, comments: List[Dict[str, Any]]) -> str:
             current_a_file = line[4:]
         elif line.startswith(('+++ b/', '+++ /dev/null')):
             current_b_file = line[4:]
-        elif line.startswith(('--- ', '+++ ')):
-            pass
-        elif line.startswith('diff --git '):
+        elif line.startswith(('--- ', '+++ ', 'diff --git ')):
             pass
         else:
             hm = hunk_re.match(line)

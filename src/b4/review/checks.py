@@ -157,9 +157,8 @@ def load_check_cmds() -> Tuple[List[str], List[str]]:
             if os.access(checkpatch, os.X_OK):
                 perpatch = ['_builtin_checkpatch']
     # Auto-wire patchwork CI when project is configured
-    if '_builtin_patchwork' not in perpatch:
-        if config.get('pw-project') and config.get('pw-url'):
-            perpatch.append('_builtin_patchwork')
+    if '_builtin_patchwork' not in perpatch and config.get('pw-project') and config.get('pw-url'):
+        perpatch.append('_builtin_patchwork')
     series = _as_list(config.get('review-series-check-cmd'))
     return perpatch, series
 

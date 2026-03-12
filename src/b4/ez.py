@@ -2103,7 +2103,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         logger.debug('Disabling pre-flight check %s', pfcheck)
                         del pfchecks[pfcheck]
             failing = False
-            for pfcheck in pfchecks.keys():
+            for pfcheck in pfchecks:
                 pfdata = sinfo[pfcheck]
                 if not isinstance(pfdata, bool):
                     logger.debug('Pre-flight check %s is not a boolean, got %s', pfcheck, type(pfdata).__name__)
@@ -2539,7 +2539,7 @@ def _cleanup_branch(branch: str) -> None:
     logger.info('---')
     logger.info('branch: %s', branch)
     if 'history' in ts:
-        for rn in ts['history'].keys():
+        for rn in ts['history']:
             tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
             tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
