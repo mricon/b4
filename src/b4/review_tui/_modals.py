@@ -129,6 +129,7 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Enter key on ListView triggers Selected — use it to confirm."""
+        event.stop()
         self._confirm()
 
     def _confirm(self) -> None:
@@ -2157,6 +2158,7 @@ class RangeDiffScreen(JKListNavMixin, ModalScreen[Optional[int]]):
         self.query_one('#rangediff-list', ListView).focus()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
         self._do_confirm()
 
     def action_confirm(self) -> None:
@@ -2257,6 +2259,7 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
         self._do_confirm()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
         self._do_confirm()
 
     def _do_confirm(self) -> None:
@@ -2323,7 +2326,7 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
             yield ProgressBar(total=len(self._patch_ids), show_eta=False, id='apply-progress')
 
     def on_mount(self) -> None:
-        self.run_worker(self._apply_states, thread=True)
+        self.run_worker(self._apply_states, name='_apply_states', thread=True)
 
     def _apply_states(self) -> Tuple[int, int, str]:
         import b4
@@ -2357,6 +2360,8 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
         self.query_one('#apply-progress', ProgressBar).progress = completed
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != '_apply_states':
+            return
         if event.state == WorkerState.SUCCESS:
             self.dismiss(event.worker.result)
         elif event.state == WorkerState.ERROR:
@@ -2428,7 +2433,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
             yield ProgressBar(total=len(self._series_list), show_eta=False, id='updateall-progress')
 
     def on_mount(self) -> None:
-        self.run_worker(self._do_updates, thread=True)
+        self.run_worker(self._do_updates, name='_do_updates', thread=True)
 
     def action_cancel(self) -> None:
         self._cancelled = True
@@ -2484,6 +2489,8 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
         self.query_one('#updateall-series', Label).update('')
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != '_do_updates':
+            return
         if event.state == WorkerState.SUCCESS:
             self.dismiss(event.worker.result)
         elif event.state == WorkerState.ERROR:
@@ -2856,6 +2863,7 @@ class UpdateRevisionScreen(JKListNavMixin, ModalScreen[Optional[int]]):
         self.query_one('#update-rev-list', ListView).focus()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
         self._do_confirm()
 
     def action_confirm(self) -> None:
@@ -2967,6 +2975,7 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
             self.dismiss(action_key)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
         self._do_confirm()
 
     def action_confirm(self) -> None:
