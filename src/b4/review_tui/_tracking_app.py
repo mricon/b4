@@ -2218,10 +2218,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.notify('Series must be checked out before rebasing', severity='warning')
             return
 
-        change_id = self._selected_series.get('change_id', '')
+        series = self._selected_series
+        change_id = series.get('change_id', '')
         review_branch = f'b4/review/{change_id}'
 
-        # Load recent take branches for suggestions and default
+        # Determine the default target branch.
+        # Priority: per-series target > recent take branch > original branch
+        per_series_target = self._resolve_target_branch(series)
         current_branch = self._original_branch or 'HEAD'
         recent_branches = None
         topdir = b4.git_get_toplevel()
@@ -2229,7 +2232,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             gitdir = b4.git_get_common_dir(topdir)
             if gitdir:
                 recent_branches = b4.review.tracking.get_recent_take_branches(gitdir)
-        if recent_branches:
+        if per_series_target:
+            current_branch = per_series_target
+        elif recent_branches:
             current_branch = recent_branches[0]
         # Ensure the original branch is always in the suggestion list
         if current_branch and recent_branches is not None and current_branch not in recent_branches:

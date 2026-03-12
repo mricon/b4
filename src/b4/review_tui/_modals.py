@@ -1715,7 +1715,11 @@ class RevisionChoiceScreen(ModalScreen[Optional[int]]):
 
 
 class RebaseScreen(ModalScreen[bool]):
-    """Modal screen for rebasing a review branch onto a target branch."""
+    """Modal screen for rebasing a review branch onto a target branch.
+
+    Enter runs applicability checks (test-applies the review branch
+    patches at the chosen target).  Ctrl-y confirms without checking.
+    """
 
     BINDINGS = [
         Binding('ctrl+y', 'continue_rebase', 'Confirm', show=False),
@@ -1748,6 +1752,18 @@ class RebaseScreen(ModalScreen[bool]):
     #rebase-target {
         margin-bottom: 1;
     }
+    #rebase-status {
+        margin-top: 1;
+    }
+    .rebase-pass {
+        color: $success;
+    }
+    .rebase-fail {
+        color: $error;
+    }
+    .rebase-warn {
+        color: $warning;
+    }
     #rebase-hint {
         margin-top: 1;
         color: $text-muted;
@@ -1757,20 +1773,14 @@ class RebaseScreen(ModalScreen[bool]):
     def __init__(self, current_branch: str, review_branch: str,
                  recent_branches: Optional[List[str]] = None,
                  subject: str = '') -> None:
-        """Initialize rebase screen.
-
-        Args:
-            current_branch: Pre-populated target branch name
-            review_branch: The review branch to rebase
-            recent_branches: Recently used branch names for auto-suggest
-            subject: Series subject to display for context
-        """
         super().__init__()
         self._current_branch = current_branch
         self._review_branch = review_branch
         self._recent_branches = recent_branches
         self._subject = subject
         self.target_result: str = ''
+        self._ambytes: Optional[bytes] = None
+        self._check_branch: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id='rebase-dialog') as dialog:
@@ -1781,10 +1791,117 @@ class RebaseScreen(ModalScreen[bool]):
             yield Static('Rebase on top of:', classes='rebase-label')
             suggester = SuggestFromList(self._recent_branches, case_sensitive=True) if self._recent_branches else None
             yield Input(value=self._current_branch, id='rebase-target', suggester=suggester)
-            yield Static('Ctrl-y confirm  |  Escape cancel', id='rebase-hint')
+            yield Static('', id='rebase-status', markup=False)
+            yield Static(
+                'Enter check  |  Ctrl-y confirm  |  Escape cancel',
+                id='rebase-hint')
 
     def on_mount(self) -> None:
         self.query_one('#rebase-target', Input).focus()
+
+    def _update_status(self, text: str, level: str) -> None:
+        widget = self.query_one('#rebase-status', Static)
+        widget.update(text)
+        widget.remove_class('rebase-pass', 'rebase-warn', 'rebase-fail')
+        widget.add_class(f'rebase-{level}')
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != 'rebase-target':
+            return
+        value = event.value.strip()
+        if not value:
+            self._update_status('Target branch is required', 'fail')
+            return
+        if not b4.git_branch_exists(None, value):
+            self._update_status(f'Branch does not exist: {value}', 'fail')
+            return
+        self._check_branch = value
+        if self._ambytes is not None:
+            self._run_test_apply(value)
+        else:
+            self._update_status('Testing applicability\u2026', 'warn')
+            self.run_worker(
+                self._prepare_local, name='_prepare', thread=True)
+
+    def _prepare_local(self) -> bytes:
+        """Build mbox from the local review branch patches."""
+        import b4.review
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            raise RuntimeError('Not in a git repository')
+        with _quiet_worker():
+            _cover, tracking = b4.review.load_tracking(
+                topdir, self._review_branch)
+            series_data = tracking.get('series', {})
+            base_commit = series_data.get('base-commit', '')
+            first_patch = series_data.get('first-patch-commit', '')
+            if first_patch:
+                range_start = f'{first_patch}~1'
+            else:
+                range_start = base_commit
+            range_end = f'{self._review_branch}~1'
+            ecode, ambytes = b4.git_run_command(
+                topdir, ['format-patch', '--stdout',
+                         f'{range_start}..{range_end}'],
+                decode=False)
+            if ecode > 0:
+                raise RuntimeError('Could not generate patches from review branch')
+            return ambytes
+
+    def _run_test_apply(self, branch: str) -> None:
+        self._update_status('Testing applicability\u2026', 'warn')
+        ambytes = self._ambytes
+        assert ambytes is not None
+        self.run_worker(
+            lambda: self._test_apply_at(ambytes, branch),
+            name='_test_apply', thread=True,
+        )
+
+    @staticmethod
+    def _test_apply_at(ambytes: bytes,
+                       branch: str) -> Tuple[bool, str]:
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            return False, 'not in a git repository'
+        with _quiet_worker():
+            try:
+                with b4.git_temp_worktree(topdir, branch) as gwt:
+                    ecode, out = b4.git_run_command(
+                        gwt, ['sparse-checkout', 'set'])
+                    if ecode > 0:
+                        return False, 'failed to set up worktree'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['checkout', '-f'])
+                    if ecode > 0:
+                        return False, 'failed to checkout base'
+                    ecode, out = b4.git_run_command(
+                        gwt, ['am'], stdin=ambytes)
+                    if ecode > 0:
+                        for line in out.splitlines():
+                            if line.startswith('Patch failed at '):
+                                return False, line
+                        return False, 'apply failed'
+                    return True, 'success'
+            except Exception as ex:
+                return False, str(ex)
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name == '_prepare':
+            if event.state == WorkerState.SUCCESS and event.worker.result:
+                self._ambytes = event.worker.result
+                if self._check_branch:
+                    self._run_test_apply(self._check_branch)
+            elif event.state == WorkerState.ERROR:
+                self._update_status('Could not prepare series data', 'fail')
+        elif event.worker.name == '_test_apply':
+            if event.state == WorkerState.SUCCESS and event.worker.result:
+                ok, detail = event.worker.result
+                if ok:
+                    self._update_status(f'Apply results: {detail}', 'pass')
+                else:
+                    self._update_status(f'Apply results: {detail}', 'fail')
+            elif event.state == WorkerState.ERROR:
+                self._update_status('Test apply error', 'fail')
 
     def action_continue_rebase(self) -> None:
         self.target_result = self.query_one('#rebase-target', Input).value.strip()
