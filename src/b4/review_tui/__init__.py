@@ -1,13 +1,13 @@
-from b4.review_tui._common import (  # noqa: F401
+from b4.review_tui._common import (
     logger, PATCH_STATE_MARKERS,
     resolve_styles, reviewer_colours,
     gather_attestation_info,
     _addrs_to_lines, _lines_to_header, _validate_addrs,
 )
-from b4.review_tui._review_app import ReviewApp  # noqa: F401
-from b4.review_tui._tracking_app import TrackingApp  # noqa: F401
-from b4.review_tui._pw_app import PwApp  # noqa: F401
-from b4.review_tui._entry import (  # noqa: F401
+from b4.review_tui._review_app import ReviewApp
+from b4.review_tui._tracking_app import TrackingApp
+from b4.review_tui._pw_app import PwApp
+from b4.review_tui._entry import (
     run_branch_tui, run_pw_tui, run_tracking_tui,
 )
 

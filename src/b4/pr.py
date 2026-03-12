@@ -138,11 +138,11 @@ def attest_fetch_head(gitdir: Optional[str], lmsg: b4.LoreMessage) -> None:
     if len(htype):
         otype = htype[0]
     if otype == 'tag':
-        ecode, out = b4.git_run_command(gitdir, ['verify-tag', '--raw', 'FETCH_HEAD'], logstderr=True)
+        _ecode, out = b4.git_run_command(gitdir, ['verify-tag', '--raw', 'FETCH_HEAD'], logstderr=True)
     elif otype == 'commit':
-        ecode, out = b4.git_run_command(gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True)
+        _ecode, out = b4.git_run_command(gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True)
 
-    good, valid, trusted, keyid, sigtime = b4.check_gpg_status(out)
+    good, valid, _trusted, keyid, _sigtime = b4.check_gpg_status(out)
     signer = None
     if keyid:
         try:

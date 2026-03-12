@@ -455,7 +455,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 viewer.write(Text(''))
             body = '\n'.join(msg_lines[1:]).lstrip('\n')
             if body:
-                bheaders, message, btrailers, basement, signature = \
+                bheaders, message, btrailers, _basement, _signature = \
                     b4.LoreMessage.get_body_parts(body)
                 has_content = False
                 if bheaders:
@@ -525,12 +525,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 viewer.write(Text(line, style='bold'))
                 continue
             if line.startswith('--- '):
-                if line.startswith('--- a/') or line.startswith('--- /dev/null'):
+                if line.startswith(('--- a/', '--- /dev/null')):
                     current_a_file = line[4:]
                 viewer.write(Text(line, style='bold'))
                 continue
             if line.startswith('+++ '):
-                if line.startswith('+++ b/') or line.startswith('+++ /dev/null'):
+                if line.startswith(('+++ b/', '+++ /dev/null')):
                     current_b_file = line[4:]
                 viewer.write(Text(line, style='bold'))
                 continue
@@ -1613,7 +1613,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 msgid_map[mid] = {'irt': irt, 'from': msg.get('From', '')}
 
         answered_entries: List[Dict[str, Optional[str]]] = []
-        for _mid, info in msgid_map.items():
+        for info in msgid_map.values():
             from_hdr = info['from']
             if not from_hdr:
                 continue

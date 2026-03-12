@@ -442,7 +442,7 @@ def run_series_checks(
 
     Returns ``[result, ...]``.
     """
-    msgid, msg = cover_msg
+    _msgid, msg = cover_msg
     results: List[Dict[str, str]] = []
     for cmdstr in cmds:
         try:

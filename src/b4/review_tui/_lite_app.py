@@ -96,7 +96,7 @@ def build_thread_tree(lmbx: b4.LoreMailbox) -> List[ThreadNode]:
         )
 
     roots: List[ThreadNode] = []
-    for _msgid, node in nodes.items():
+    for node in nodes.values():
         parent_id = node.lmsg.in_reply_to
         if parent_id and parent_id in nodes:
             nodes[parent_id].children.append(node)

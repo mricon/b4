@@ -180,7 +180,7 @@ def auth_new() -> None:
 
     if algo == 'openpgp':
         gpgargs = ['--export', '--export-options', 'export-minimal', '-a', keydata]
-        ecode, out, err = b4.gpg_run_command(gpgargs)
+        ecode, out, _err = b4.gpg_run_command(gpgargs)
         if ecode > 0:
             logger.critical('CRITICAL: unable to get PGP public key for %s:%s', algo, keydata)
             sys.exit(1)
@@ -410,7 +410,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         if not cmdargs.fork_point:
             if is_prep_branch():
                 logger.debug('Will use current branch as dependency.')
-                pcover, ptracking = load_cover(strip_comments=True)
+                _pcover, ptracking = load_cover(strip_comments=True)
                 depends_on = f"change-id: {ptracking['series']['change-id']}:v{ptracking['series']['revision']}"
 
             cmdargs.fork_point = 'HEAD'
@@ -541,7 +541,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
                 sys.exit(1)
 
         # Try loading existing cover info
-        cover, jdata = load_cover()
+        cover, _jdata = load_cover()
 
     else:
         logger.critical('CRITICAL: unknown operation requested')
@@ -670,7 +670,7 @@ def load_cover(strip_comments: bool = False, usebranch: Optional[str] = None) ->
             # Split on MAGIC_MARKER
             cover, magic_json = contents.split(MAGIC_MARKER)
             # drop everything until the first {
-            junk, mdata = magic_json.split('{', maxsplit=1)
+            _junk, mdata = magic_json.split('{', maxsplit=1)
             tracking = json.loads('{' + mdata)
 
     elif strategy == 'branch-description':
@@ -888,7 +888,7 @@ def edit_deps() -> None:
 
 def check_deps(cmdargs: argparse.Namespace) -> None:
     is_prep_branch(mustbe=True)
-    cover, tracking = load_cover()
+    _cover, tracking = load_cover()
     prereqs = tracking['series'].get('prerequisites', list())
     if not prereqs:
         logger.info('This series has no defined dependencies.')
@@ -945,7 +945,7 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
             if patch_id not in known_patches:
                 lmbx = b4.get_series_by_patch_id(patch_id, nocache=cmdargs.nocache)
                 if lmbx:
-                    for _rev, lser in lmbx.series.items():
+                    for lser in lmbx.series.values():
                         for lmsg in lser.patches[1:]:
                             if not lmsg:
                                 continue
@@ -1070,7 +1070,7 @@ def get_series_start(usebranch: Optional[str] = None) -> Optional[str]:
             sys.exit(1)
         logger.debug('series_start: %s, commitcount=%s', forkpoint, commitcount)
     if strategy == 'tip-commit':
-        cover, tracking = load_cover(usebranch=mybranch)
+        _cover, tracking = load_cover(usebranch=mybranch)
         basebranch = tracking['series']['base-branch']
         try:
             forkpoint = get_base_forkpoint(basebranch)
@@ -1411,7 +1411,7 @@ def get_base_changeid_from_tag(tagname: str) -> Tuple[str, str, str]:
     if ecode > 0:
         raise RuntimeError('No such tag: %s' % tagname)
     # junk the headers
-    junk, cover = tagmsg.split('\n\n', maxsplit=1)
+    _junk, cover = tagmsg.split('\n\n', maxsplit=1)
     # Check that we have base-commit: in the body
     matches = re.search(r'^base-commit:\s*(.*)$', cover, flags=re.I | re.M)
     if not matches:
@@ -1488,9 +1488,9 @@ def add_cover(csubject: b4.LoreSubject, msgid_tpt: str, patches: List[Tuple[str,
 
 def mixin_cover(cbody: str, patches: List[Tuple[str, EmailMessage]]) -> None:
     msg = patches[0][1]
-    pbody, pcharset = b4.LoreMessage.get_payload(msg)
-    pheaders, pmessage, ptrailers, pbasement, psignature = b4.LoreMessage.get_body_parts(pbody)
-    cheaders, cmessage, ctrailers, cbasement, csignature = b4.LoreMessage.get_body_parts(cbody)
+    pbody, _pcharset = b4.LoreMessage.get_payload(msg)
+    pheaders, pmessage, ptrailers, pbasement, _psignature = b4.LoreMessage.get_body_parts(pbody)
+    _cheaders, cmessage, ctrailers, cbasement, csignature = b4.LoreMessage.get_body_parts(cbody)
     nbparts = list()
     nmessage = cmessage.rstrip('\r\n') + '\n'
 
@@ -1830,7 +1830,7 @@ def get_check_cmds() -> Tuple[List[str], List[str]]:
 
 def check(cmdargs: argparse.Namespace) -> None:
     is_prep_branch(mustbe=True)
-    ppcmds, scmds = get_check_cmds()
+    ppcmds, _scmds = get_check_cmds()
 
     if not ppcmds:
         logger.critical('Not able to find checkpatch and no custom command defined.')
@@ -2232,7 +2232,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         elif not commit and len(pccs):
             # the cover letter gets sent to folks with individual patch cc's
             _seen = set(seen)
-            for _commit, _ccs in pccs.items():
+            for _ccs in pccs.values():
                 for pair in _ccs:
                     if pair[1] not in _seen:
                         mycc.append(pair)
@@ -2470,7 +2470,7 @@ def check_can_gfr() -> None:
 
 def show_revision() -> None:
     is_prep_branch(mustbe=True)
-    cover, tracking = load_cover()
+    _cover, tracking = load_cover()
     ts = tracking['series']
     logger.info('v%s', ts.get('revision'))
     if 'history' in ts:
@@ -2539,7 +2539,7 @@ def _cleanup_branch(branch: str) -> None:
     logger.info('---')
     logger.info('branch: %s', branch)
     if 'history' in ts:
-        for rn, _links in ts['history'].items():
+        for rn in ts['history'].keys():
             tagname, revision = get_sent_tagname(ts.get('change-id'), SENT_TAG_PREFIX, rn)
             tag_commit = b4.git_revparse_tag(None, tagname)
             if not tag_commit:
@@ -2715,7 +2715,7 @@ def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
     cover, tracking = load_cover(usebranch=usebranch)
     csubject, _ = get_cover_subject_body(cover)
     ts = tracking['series']
-    base_commit, start_commit, end_commit, oneline, shortlog, diffstat = get_series_details(usebranch=usebranch)
+    base_commit, start_commit, end_commit, oneline, _shortlog, _diffstat = get_series_details(usebranch=usebranch)
     todests, ccdests, _, patches = get_prep_branch_as_patches(usebranch=usebranch, expandprereqs=False)
     prereqs = tracking['series'].get('prerequisites', list())
     tocmd, cccmd = get_auto_to_cc_cmds()
@@ -2769,7 +2769,7 @@ def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
                 logger.debug('No tag matching revision %s', revision)
                 continue
             try:
-                cover, base_commit, change_id = get_base_changeid_from_tag(tagname)
+                cover, base_commit, _change_id = get_base_changeid_from_tag(tagname)
                 info[f'series-{rn}'] = '%s..%s %s' % (base_commit[:12], tag_commit[:12], links[0])
             except RuntimeError as ex:
                 logger.debug('Could not get base-commit info from %s: %s', tagname, ex)
@@ -2943,11 +2943,11 @@ def get_preflight_hash(usebranch: Optional[str] = None) -> str:
     global PFHASH_CACHE
     cachebranch = usebranch if usebranch is not None else '_current_'
     if cachebranch not in PFHASH_CACHE:
-        tos, ccs, tstr, patches = get_prep_branch_as_patches(movefrom=False, thread=False, addtracking=False,
+        _tos, _ccs, _tstr, patches = get_prep_branch_as_patches(movefrom=False, thread=False, addtracking=False,
                                                              usebranch=usebranch, expandprereqs=False)
         hashed = hashlib.sha1()
         for _commit, msg in patches:
-            body, charset = b4.LoreMessage.get_payload(msg)
+            body, _charset = b4.LoreMessage.get_payload(msg)
             patchid = b4.LoreMessage.get_patch_id(body)
             hashed.update(f'{patchid}\n'.encode('utf-8'))
 

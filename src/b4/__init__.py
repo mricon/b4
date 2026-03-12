@@ -195,7 +195,7 @@ class LoreMailbox:
 
     def __repr__(self) -> str:
         out = list()
-        for _key, lser in self.series.items():
+        for lser in self.series.values():
             out.append(str(lser))
         out.append('--- Followups ---')
         for lmsg in self.followups:
@@ -278,7 +278,7 @@ class LoreMailbox:
 
     def load_codereview_trailers(self) -> None:
         q = list()
-        for _lver, lser in self.series.items():
+        for lser in self.series.values():
             for lmsg in lser.patches:
                 if lmsg is None:
                     continue
@@ -901,8 +901,7 @@ class LoreSeries:
                 if chunks[2].startswith(bh):
                     logger.debug('%s hash: matched', fn)
                     continue
-                else:
-                    logger.debug('%s hash: %s (expected: %s)', fn, chunks[2], bh)
+                logger.debug('%s hash: %s (expected: %s)', fn, chunks[2], bh)
             else:
                 # Couldn't get this file, continue
                 logger.debug('Could not look up %s:%s', at, fn)
@@ -932,7 +931,7 @@ class LoreSeries:
         if not lines:
             raise IndexError('No commits found before %s' % guntil)
         commit = lines[0].split()[0]
-        checked, mismatches = self.check_applies_clean(gitdir, commit)
+        _checked, mismatches = self.check_applies_clean(gitdir, commit)
         fewest = len(mismatches)
         if fewest > 0:
             since = pdate - datetime.timedelta(days=maxdays)
@@ -1423,7 +1422,7 @@ class LoreMessage:
         if DIFF_RE.search(self.body):
             self.has_diff = True
 
-        trailers, others = LoreMessage.find_trailers(self.body, followup=True)
+        trailers, _others = LoreMessage.find_trailers(self.body, followup=True)
         # We only pay attention to trailers that are sent in reply
         if trailers and self.references and not self.has_diff and not self.reply:
             logger.debug('A follow-up missing a Re: but containing a trailer with no patch diff')
@@ -1910,7 +1909,7 @@ class LoreMessage:
             - trailers: List of formatted trailer strings with checkmarks
             - critical: True if hardfail policy triggered
         """
-        attestations, overall_passing, critical = self.get_attestation_status(attpolicy, maxdays)
+        attestations, _overall_passing, critical = self.get_attestation_status(attpolicy, maxdays)
 
         config = get_main_config()
         if config['attestation-checkmarks'] == 'fancy':
@@ -2321,7 +2320,7 @@ class LoreMessage:
         newfile = None
         fmod = None
         for line in diff.split('\n'):
-            if not (line.startswith('diff ') or line.startswith('index ') or line.startswith('new file mode ')):
+            if not (line.startswith(('diff ', 'index ', 'new file mode '))):
                 continue
             matches = re.search(r'^diff\s+--git\s+\w/(.*)\s+\w/(.*)$', line)
             if matches:
@@ -2835,9 +2834,9 @@ class LoreSubject:
         for _prf in self.prefixes:
             if _exclude and _prf.lower() in _exclude:
                 continue
-            elif re.search(r'v\d+', _prf, flags=re.I):
+            if re.search(r'v\d+', _prf, flags=re.I):
                 continue
-            elif re.search(r'\d+/\d+', _prf):
+            if re.search(r'\d+/\d+', _prf):
                 continue
             ret.append(_prf)
 
@@ -3115,7 +3114,7 @@ def git_run_command(gitdir: Optional[Union[str, Path]], args: List[str], stdin: 
 
 
 def git_check_minimal_version(min_version: str) -> bool:
-    ecode, out = git_run_command(None, ["version"])
+    _ecode, out = git_run_command(None, ["version"])
     current_version = re.sub(r"git version (\d+\.\d+)\..*", r"\1", out)
     return tuple(map(int, current_version.split(".")[:2])) >= tuple(map(int, min_version.split(".")[:2]))
 
@@ -3134,7 +3133,7 @@ def git_credential_fill(gitdir: Optional[str], protocol: str, host: str, usernam
 
 
 def git_get_command_lines(gitdir: Optional[str], args: List[str]) -> List[str]:
-    ecode, out = git_run_command(gitdir, args)
+    _ecode, out = git_run_command(gitdir, args)
     lines = list()
     if out:
         for line in out.split('\n'):
@@ -3228,7 +3227,7 @@ def _cmdline_config_override(cmdargs: argparse.Namespace, config: Dict[str, Any]
 
 def git_set_config(fullpath: Optional[str], param: str, value: str, operation: str = '--replace-all') -> int:
     args = ['config', operation, param, value]
-    ecode, out = git_run_command(fullpath, args)
+    ecode, _out = git_run_command(fullpath, args)
     return ecode
 
 
@@ -3240,7 +3239,7 @@ def get_config_from_git(regexp: str, defaults: Optional[Dict[str, Any]] = None,
     if source:
         args += ['--file', source]
     args += ['-z', '--get-regexp', regexp]
-    ecode, out = git_run_command(None, args)
+    _ecode, out = git_run_command(None, args)
     gitconfig = defaults
     if not gitconfig:
         gitconfig = dict()
@@ -3273,8 +3272,7 @@ def _val_to_path(topdir: str, val: str) -> str:
     if val.startswith('./'):
         # replace it with full topdir path
         return os.path.abspath(os.path.join(topdir, val))
-    else:
-        return val
+    return val
 
 
 def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
@@ -3323,7 +3321,6 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
                 dns.resolver.default_resolver.nameservers = resolvers
         except ImportError:
             logger.debug('Unable to load dns.resolver')
-            pass
 
     if cmdargs:
         _cmdline_config_override(cmdargs, config, 'b4')
@@ -3645,7 +3642,7 @@ def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) ->
 
     logger.debug('Mailsplitting the mbox into %s', outdir)
     args = ['mailsplit', '--mboxrd', '-o%s' % outdir]
-    ecode, out = git_run_command(None, args, stdin=bmbox)
+    ecode, _out = git_run_command(None, args, stdin=bmbox)
     if ecode > 0:
         logger.critical('Unable to parse mbox received from the server')
         return msgs
@@ -3749,7 +3746,7 @@ def get_series_by_change_id(change_id: str, nocache: bool = False) -> Optional['
         return None
     lmbx = LoreMailbox()
     for q_msg in q_msgs:
-        body, bcharset = LoreMessage.get_payload(q_msg)
+        body, _bcharset = LoreMessage.get_payload(q_msg)
         if not re.search(rf'^\s*change-id:\s*{change_id}$', body, flags=re.M | re.I):
             logger.debug('No change-id match for %s', q_msg.get('Subject', '(no subject)'))
             continue
@@ -3993,13 +3990,13 @@ def git_range_to_patches(gitdir: Optional[str], start: str, end: str,
 
 def git_commit_exists(gitdir: Optional[str], commit_id: str) -> bool:
     gitargs = ['cat-file', '-e', commit_id]
-    ecode, out = git_run_command(gitdir, gitargs)
+    ecode, _out = git_run_command(gitdir, gitargs)
     return ecode == 0
 
 
 def git_branch_exists(gitdir: Optional[str], branch_name: str) -> bool:
     gitargs = ['rev-parse', branch_name]
-    ecode, out = git_run_command(gitdir, gitargs)
+    ecode, _out = git_run_command(gitdir, gitargs)
     return ecode == 0
 
 
@@ -4079,7 +4076,7 @@ def print_pretty_addrs(addrs: List[Tuple[str, str]], hdrname: str) -> None:
 
 
 def make_quote(body: str, maxlines: int = 5) -> str:
-    headers, message, trailers, basement, signature = LoreMessage.get_body_parts(body)
+    _headers, message, _trailers, _basement, _signature = LoreMessage.get_body_parts(body)
     if not len(message):
         # Sometimes there is no message, just trailers
         return '> \n'
@@ -4164,7 +4161,7 @@ def check_gpg_status(status: str) -> Tuple[bool, bool, bool, Optional[str], Opti
 
 def get_gpg_uids(keyid: str) -> List[str]:
     gpgargs = ['--with-colons', '--list-keys', keyid]
-    ecode, out, err = gpg_run_command(gpgargs)
+    ecode, out, _err = gpg_run_command(gpgargs)
     if ecode > 0:
         raise KeyError('Unable to get UIDs list matching key %s' % keyid)
 
@@ -4225,7 +4222,7 @@ def get_mailinfo(bmsg: bytes, scissors: bool = False) -> Tuple[Dict[str, str], b
         else:
             cmdargs = ['mailinfo', '--encoding=UTF-8', '--no-scissors', m_out, p_out]
 
-        ecode, info = git_run_command(None, cmdargs, bmsg)
+        _ecode, info = git_run_command(None, cmdargs, bmsg)
         if not len(info.strip()):
             raise ValueError('Could not get mailinfo')
 
@@ -4544,7 +4541,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], msgs
                 cmdargs = list(smtp) + [envpair[1]]
             else:
                 cmdargs = list(smtp) + list(destaddrs)
-            ecode, out, err = _run_command(cmdargs, stdin=bdata)
+            ecode, _out, err = _run_command(cmdargs, stdin=bdata)
             if ecode > 0:
                 raise RuntimeError('Error running %s: %s' % (' '.join(smtp), err.decode()))
             sent += 1
@@ -4858,8 +4855,7 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
                             read_branch, write_branch)
             logger.critical('To avoid a collision, your text was saved in %s', save_file.name)
         raise RuntimeError(f"Branch changed during file editing, the temporary file was saved at {save_file.name}")
-    else:
-        return bdata
+    return bdata
 
 
 def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
@@ -4951,7 +4947,7 @@ def map_codereview_trailers(qmsgs: List[EmailMessage],
                     covers[_qmsg.msgid] = set()
                 covers[_qmsg.msgid].add(qlmsg.msgid)
                 break
-            elif _qmsg.has_diff:
+            if _qmsg.has_diff:
                 pqpid = _qmsg.git_patch_id
                 if pqpid:
                     logger.debug('  pqpid: %s', pqpid)
@@ -4977,7 +4973,7 @@ def map_codereview_trailers(qmsgs: List[EmailMessage],
     # find all patches directly below these covers
     for cmsgid, fwmsgids in covers.items():
         logger.debug('Looking at cover: %s', cmsgid)
-        for _qmid, qlmsg in qmid_map.items():
+        for qlmsg in qmid_map.values():
             if qlmsg.in_reply_to == cmsgid and qlmsg.git_patch_id:
                 pqpid = qlmsg.git_patch_id
                 for fwmsgid in fwmsgids:
@@ -4992,7 +4988,7 @@ def map_codereview_trailers(qmsgs: List[EmailMessage],
 def get_git_bool(gitbool: str) -> bool:
     if gitbool.lower() in ('true', 'yes', '1', 'on', 'y'):
         return True
-    elif gitbool.lower() in ('false', 'no', '0', 'off', 'n'):
+    if gitbool.lower() in ('false', 'no', '0', 'off', 'n'):
         return False
     raise ValueError('Invalid git boolean value: %s' % gitbool)
 

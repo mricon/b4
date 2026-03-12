@@ -192,11 +192,11 @@ def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
     # Get patch hash of each commit
     for line in lines:
         commit_id, subject = line.split(maxsplit=1)
-        ecode, out = git_get_rev_diff(gitdir, commit_id)
+        _ecode, out = git_get_rev_diff(gitdir, commit_id)
         pwhash = b4.LoreMessage.get_patchwork_hash(out)
         logger.debug('phash=%s', pwhash)
         # get all message-id or link trailers
-        ecode, out = git_get_commit_message(gitdir, commit_id)
+        _ecode, out = git_get_commit_message(gitdir, commit_id)
         matches = re.findall(r'^\s*(?:message-id|link):[ \t]+(\S+)\s*$', out, flags=re.I | re.M)
         trackers: List[str] = list()
         if matches:
@@ -226,7 +226,7 @@ def auto_locate_series(gitdir: Optional[str], jsondata: JsonDictT, branch: str,
         else:
             # try to locate by subject
             success = False
-            for _pwhash, commit in commits.items():
+            for commit in commits.values():
                 if commit[1] == patch[0]:
                     logger.debug('Matched using subject')
                     found.append((at, commit[0]))
@@ -237,7 +237,7 @@ def auto_locate_series(gitdir: Optional[str], jsondata: JsonDictT, branch: str,
                 continue
 
             # try to locate by tracker
-            for _pwhash, commit in commits.items():
+            for commit in commits.values():
                 if len(patch) > 2 and len(patch[2]) and len(commit[2]):
                     for tracker in commit[2]:
                         if tracker.find(patch[2]) >= 0:

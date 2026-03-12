@@ -713,10 +713,10 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         if direction > 0 and lsub.revision <= latest_revision:
             logger.debug('Ignoring result (not new revision): %s', lsub.full_subject)
             continue
-        elif direction < 0 and lsub.revision >= latest_revision:
+        if direction < 0 and lsub.revision >= latest_revision:
             logger.debug('Ignoring result (not old revision): %s', lsub.full_subject)
             continue
-        elif direction < 0 and wantvers and lsub.revision not in wantvers:
+        if direction < 0 and wantvers and lsub.revision not in wantvers:
             logger.debug('Ignoring result (not revision we want): %s', lsub.full_subject)
             continue
 
@@ -796,9 +796,9 @@ def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
             if cleanhdr:
                 mmsg[wanthdr] = cleanhdr
 
-        body, charset = b4.LoreMessage.get_payload(msg)
+        body, _charset = b4.LoreMessage.get_payload(msg)
         if not (b4.DIFF_RE.search(body) or b4.DIFFSTAT_RE.search(body)):
-            htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(body)
+            _htrs, cmsg, _mtrs, _basement, _sig = b4.LoreMessage.get_body_parts(body)
             # split the message into quoted and unquoted chunks
             chunks: List[Tuple[bool, List[str]]] = list()
             chunk: List[str] = list()

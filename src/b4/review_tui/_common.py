@@ -712,7 +712,7 @@ def _write_diff_line(
 
     *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
-    if line.startswith('diff --git ') or line.startswith('--- ') or line.startswith('+++ '):
+    if line.startswith(('diff --git ', '--- ', '+++ ')):
         viewer.write(Text(line, style='bold'))
     elif line.startswith('@@'):
         viewer.write(Text(line, style=f"bold {ts['accent']}" if ts else 'bold cyan'))

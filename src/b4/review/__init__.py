@@ -1,6 +1,6 @@
 # Re-export everything from the original review module
-from b4.review._review import *  # noqa: F401,F403
-from b4.review._review import (  # noqa: F401 — explicit re-export of private symbols
+from b4.review._review import *  # noqa: F403
+from b4.review._review import (
     _retrieve_messages, _get_lore_series,
     _collect_followups, _collect_reply_headers,
     _get_my_review, _ensure_my_review, _cleanup_review,
@@ -15,7 +15,7 @@ from b4.review._review import (  # noqa: F401 — explicit re-export of private 
 )
 
 # Tell mypy these private symbols are intentionally re-exported
-__all__ = [  # noqa: F405
+__all__ = [
     '_retrieve_messages', '_get_lore_series',
     '_collect_followups', '_collect_reply_headers',
     '_get_my_review', '_ensure_my_review', '_cleanup_review',

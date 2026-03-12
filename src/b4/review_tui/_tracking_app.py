@@ -2784,7 +2784,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             # --- 1. Save maintainer review data keyed by patch-id ---
             logger.info('Saving review data from v%d...', current_rev)
             patch_ids = b4.review.get_review_branch_patch_ids(topdir, review_branch)
-            cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+            _cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
             patches = tracking.get('patches', [])
 
             saved_reviews: Dict[str, Dict[str, Any]] = {}

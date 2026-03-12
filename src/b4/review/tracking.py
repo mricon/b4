@@ -365,7 +365,7 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     # Retrieve the series
     logger.info('Retrieving series: %s', series_id)
     cmdargs.nocache = True
-    msgid, msgs = b4.retrieve_messages(cmdargs)
+    _msgid, msgs = b4.retrieve_messages(cmdargs)
     if not msgs:
         logger.critical('Could not retrieve series: %s', series_id)
         sys.exit(1)

@@ -120,7 +120,7 @@ def check_series_attestation(lser: b4.LoreSeries) -> Optional[str]:
     for lmsg in lser.patches[1:]:
         if lmsg is None:
             continue
-        attestations, passing, critical = lmsg.get_attestation_status(attpolicy, maxdays)
+        attestations, _passing, _critical = lmsg.get_attestation_status(attpolicy, maxdays)
         for att in attestations:
             key = (att.get('status', ''), att.get('identity', ''))
             seen.add(key)
@@ -363,7 +363,7 @@ def get_review_branch_patch_ids(topdir: str, branch: str) -> List[Tuple[int, str
     Returns a list of ``(index, sha, patch_id)`` tuples where *index*
     is zero-based and *patch_id* may be ``None`` if computation failed.
     """
-    cover_text, tracking = load_tracking(topdir, branch)
+    _cover_text, tracking = load_tracking(topdir, branch)
     series_info = tracking.get('series', {})
     first_patch = series_info.get('first-patch-commit', '')
     if not first_patch:
@@ -777,7 +777,7 @@ def _extract_patch_comments(edited: str, track_content: bool = False,
 
         # Comment header: skip decorative > lines until body starts
         if state == COMMENT_HEADER:
-            if stripped.startswith('>') or stripped.startswith('+>'):
+            if stripped.startswith(('>', '+>')):
                 continue
             state = COMMENT_BODY
             # Fall through to COMMENT_BODY handling below
@@ -796,7 +796,7 @@ def _extract_patch_comments(edited: str, track_content: bool = False,
 
         # Comment trailer: skip decorative < lines until normal resumes
         if state == COMMENT_TRAILER:
-            if stripped.startswith('<') or stripped.startswith('+<'):
+            if stripped.startswith(('<', '+<')):
                 continue
             state = NORMAL
             # Fall through to normal processing of this line
@@ -813,15 +813,15 @@ def _extract_patch_comments(edited: str, track_content: bool = False,
             _flush_comment()
             in_hunk = False
             continue
-        if line.startswith('--- a/') or line.startswith('--- /dev/null'):
+        if line.startswith(('--- a/', '--- /dev/null')):
             _flush_comment()
             current_a_file = line[4:]
             continue
-        if line.startswith('+++ b/') or line.startswith('+++ /dev/null'):
+        if line.startswith(('+++ b/', '+++ /dev/null')):
             _flush_comment()
             current_b_file = line[4:]
             continue
-        if line.startswith('--- ') or line.startswith('+++ '):
+        if line.startswith(('--- ', '+++ ')):
             _flush_comment()
             continue
 
@@ -835,9 +835,7 @@ def _extract_patch_comments(edited: str, track_content: bool = False,
             in_hunk = True
             continue
 
-        if in_hunk and (line.startswith(' ') or line.startswith('+')
-                        or line.startswith('-') or line.startswith('\\')
-                        or line == ''):
+        if in_hunk and (line.startswith((' ', '+', '-', '\\')) or line == ''):
             # Valid diff line — flush any pending comment first
             _flush_comment()
             if line.startswith('-'):
@@ -911,13 +909,13 @@ def _resolve_comment_positions(
     content_map: Dict[str, Tuple[str, int]] = {}
 
     for line in diff_text.splitlines():
-        if line.startswith('--- a/') or line.startswith('--- /dev/null'):
+        if line.startswith(('--- a/', '--- /dev/null')):
             current_a_file = line[4:]
             continue
-        if line.startswith('+++ b/') or line.startswith('+++ /dev/null'):
+        if line.startswith(('+++ b/', '+++ /dev/null')):
             current_b_file = line[4:]
             continue
-        if line.startswith('--- ') or line.startswith('+++ '):
+        if line.startswith(('--- ', '+++ ')):
             continue
         if line.startswith('diff --git '):
             continue
@@ -1197,11 +1195,11 @@ def _reinsert_comments(diff_text: str, comments: List[Dict[str, Any]]) -> str:
         result.append(line)
 
         # Track file and hunk structure to determine position
-        if line.startswith('--- a/') or line.startswith('--- /dev/null'):
+        if line.startswith(('--- a/', '--- /dev/null')):
             current_a_file = line[4:]
-        elif line.startswith('+++ b/') or line.startswith('+++ /dev/null'):
+        elif line.startswith(('+++ b/', '+++ /dev/null')):
             current_b_file = line[4:]
-        elif line.startswith('--- ') or line.startswith('+++ '):
+        elif line.startswith(('--- ', '+++ ')):
             pass
         elif line.startswith('diff --git '):
             pass
@@ -1361,15 +1359,15 @@ def _build_reply_from_comments(diff_text: str,
             file_header_emitted = False
             continue
 
-        if line.startswith('--- a/') or line.startswith('--- /dev/null'):
+        if line.startswith(('--- a/', '--- /dev/null')):
             current_a_file = line[4:]
             file_header_buf.append(line)
             continue
-        if line.startswith('+++ b/') or line.startswith('+++ /dev/null'):
+        if line.startswith(('+++ b/', '+++ /dev/null')):
             current_b_file = line[4:]
             file_header_buf.append(line)
             continue
-        if line.startswith('--- ') or line.startswith('+++ '):
+        if line.startswith(('--- ', '+++ ')):
             file_header_buf.append(line)
             continue
 
@@ -1612,7 +1610,7 @@ def update_series_tracking(
 
 def cmd_tui(cmdargs: argparse.Namespace) -> None:
     try:
-        import b4.review_tui  # noqa: F401
+        import b4.review_tui
     except ImportError:
         logger.critical('The TUI requires the textual library.')
         logger.critical('Install it with: pip install b4[tui]')

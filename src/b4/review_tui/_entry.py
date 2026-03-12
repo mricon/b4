@@ -139,7 +139,7 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
         # status changes (e.g. 'replied') into the tracking commit JSON,
         # so we read it back here and propagate to the SQLite database.
         try:
-            cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
+            _cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
             tracking_status = tracking.get('series', {}).get('status')
             revision = session['series'].get('revision')
             if tracking_status and focus_change_id:
@@ -153,6 +153,6 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
         # Restore original branch after exiting ReviewApp
         if original_branch:
             logger.info('Checking out %s and starting tracking UI...', original_branch)
-            ecode, out = b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+            ecode, _out = b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
             if ecode != 0:
                 logger.warning('Could not restore original branch: %s', original_branch)
