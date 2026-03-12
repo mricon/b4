@@ -84,6 +84,8 @@ select = [
     "F",       # https://docs.astral.sh/ruff/rules/#pyflakes-f
     "B007",    # https://docs.astral.sh/ruff/rules/unused-loop-control-variable/
     "B904",    # https://docs.astral.sh/ruff/rules/raise-without-from-err/
+    "DTZ",     # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
+    "G",       # https://docs.astral.sh/ruff/rules/#flake8-logging-format-g
     "PERF102", # https://docs.astral.sh/ruff/rules/incorrect-dict-iterator/
     "PGH004",  # https://docs.astral.sh/ruff/rules/blanket-noqa/
     "PIE790",  # https://docs.astral.sh/ruff/rules/unnecessary-placeholder/

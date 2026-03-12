@@ -1195,7 +1195,7 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
             except ValueError:
                 error_widget.update('Invalid date format (use YYYY-MM-DD)')
                 return
-            if target_date <= datetime.date.today():
+            if target_date <= datetime.date.today():  # noqa: DTZ011
                 error_widget.update('Date must be in the future')
                 return
             # Convert date to midnight UTC datetime

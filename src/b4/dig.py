@@ -111,7 +111,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     logger.debug('cdate=%s, fromeml=%s, csubj=%s', cdate, fromeml, csubj)
     # Add 24 hours to the date to account for timezones
     # First, parse YYYY-MM-DD into datetime
-    cdate_dt = datetime.datetime.strptime(cdate, '%Y-%m-%d')
+    cdate_dt = datetime.datetime.strptime(cdate, '%Y-%m-%d')  # noqa: DTZ007
     cdate_dt += datetime.timedelta(days=1)
     # Convert into YYYYMMDD format for xapian range search
     pidate = cdate_dt.strftime('%Y%m%d')

@@ -21,7 +21,7 @@ import argparse
 import urllib.parse
 import requests
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from email import utils, charset
 from typing import Optional, List
@@ -393,7 +393,7 @@ def get_pr_from_github(ghurl: str) -> Optional[b4.LoreMessage]:
     title = prdata.get('title', '')
     msg['Subject'] = f'[GIT PULL] {title}'
     msg['Message-Id'] = utils.make_msgid(idstring=f'{rproj}-{rrepo}-pr-{rpull}', domain='github.com')
-    created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ'))
+    created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc))
     msg['Date'] = created_at
     msg.set_charset('utf-8')
     body = prdata.get('body')

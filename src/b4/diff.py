@@ -163,7 +163,7 @@ def main(cmdargs: argparse.Namespace) -> None:
         lsc, lec, usc, uec)
     if cmdargs.nodiff:
         logger.info('Success, to compare v%s and v%s:', lser.revision, user.revision)
-        logger.info(f'    {grdcmd}')
+        logger.info('    %s', grdcmd)
         sys.exit(0)
     logger.info('---')
     logger.info('Diffing v%s and v%s', lser.revision, user.revision)
@@ -175,7 +175,7 @@ def main(cmdargs: argparse.Namespace) -> None:
     if ecode > 0:
         logger.critical('Unable to generate diff')
         logger.critical('Try running it yourself:')
-        logger.critical(f'    {grdcmd}')
+        logger.critical('    %s', grdcmd)
         sys.exit(1)
     if cmdargs.outdiff is not None:
         logger.info('Writing %s', cmdargs.outdiff)

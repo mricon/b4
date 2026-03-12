@@ -583,7 +583,7 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
 
     if not tracking:
         # We don't need all the entropy of uuid, just some of it
-        changeid = '%s-%s-%s' % (datetime.date.today().strftime('%Y%m%d'), slug, uuid.uuid4().hex[:12])
+        changeid = '%s-%s-%s' % (datetime.date.today().strftime('%Y%m%d'), slug, uuid.uuid4().hex[:12])  # noqa: DTZ011
         if revision is None:
             revision = 1
         prefixes = list()
@@ -1440,7 +1440,7 @@ def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) 
     chunks = stablepart.split('-', maxsplit=1)
     if len(chunks) == 2 and len(chunks[0]) == 8:
         # If someone uses b4 in year 10000, look me up.
-        stablepart = '%s-%s' % (datetime.date.today().strftime('%Y%m%d'), chunks[1])
+        stablepart = '%s-%s' % (datetime.date.today().strftime('%Y%m%d'), chunks[1])  # noqa: DTZ011
 
     # Message-IDs must not be predictable to avoid stuffing attacks
     randompart = uuid.uuid4().hex[:12]
@@ -1845,7 +1845,7 @@ def check(cmdargs: argparse.Namespace) -> None:
     logger.info('Checking patches using:')
     local_check_cmds = list()
     for ppcmdstr in ppcmds:
-        logger.info(f'  {ppcmdstr}')
+        logger.info('  %s', ppcmdstr)
         sp = shlex.shlex(ppcmdstr, posix=True)
         sp.whitespace_split = True
         local_check_cmds.append(list(sp))
@@ -2967,7 +2967,7 @@ def get_preflight_checks(usebranch: Optional[str] = None) -> Dict[str, str]:
 
 def store_preflight_check(identity: str) -> None:
     pf_checks = get_preflight_checks()
-    pf_checks[identity] = datetime.date.today().isoformat()
+    pf_checks[identity] = datetime.date.today().isoformat()  # noqa: DTZ011
     pfhash = get_preflight_hash()
     cacheid = f'{pfhash}-pre-flight-checks'
     b4.save_cache(pf_checks, cacheid, suffix='checks', is_json=True)
@@ -3015,7 +3015,7 @@ def set_presubject(presubject: str) -> None:
     if tracking['series']['presubject'] != old_presubject:
         store_cover(cover, tracking)
         if tracking['series']['presubject'] != "":
-            logger.info(f'Updated pre-subject to: {presubject}')
+            logger.info('Updated pre-subject to: %s', presubject)
         else:
             logger.info('Removed pre-subject.')
     else:

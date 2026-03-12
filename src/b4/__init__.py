@@ -915,7 +915,7 @@ class LoreSeries:
 
         pdate = self.submission_date
         if not pdate:
-            pdate = datetime.datetime.now()
+            pdate = datetime.datetime.now(tz=datetime.timezone.utc)
 
         # Find the latest commit on that date
         guntil = pdate.strftime('%Y-%m-%d')
@@ -1390,15 +1390,15 @@ class LoreMessage:
             if dtuple is None:
                 # If we can't parse the date, use the current time
                 logger.warning('Could not parse Date: %s', msgdate)
-                self.date = datetime.datetime.now()
+                self.date = datetime.datetime.now(tz=datetime.timezone.utc)
             # Invalid timezone (e.g. -9900)
             elif dtuple[-1] is not None and abs(dtuple[-1]) > 86400:
-                self.date = datetime.datetime(*dtuple[:6])
+                self.date = datetime.datetime(*dtuple[:6], tzinfo=datetime.timezone.utc)
             else:
                 self.date = email.utils.parsedate_to_datetime(str(msgdate))
         else:
             # An email without a Date: field?
-            self.date = datetime.datetime.now()
+            self.date = datetime.datetime.now(tz=datetime.timezone.utc)
         # Force it to UTC if it's naive
         if self.date.tzinfo is None:
             self.date = self.date.replace(tzinfo=datetime.timezone.utc)
@@ -3033,7 +3033,7 @@ def _run_command(cmdargs: List[str], stdin: Optional[bytes] = None,
     else:
         curdir = None
 
-    logger.debug('Running %s' % ' '.join(cmdargs))
+    logger.debug('Running %s', ' '.join(cmdargs))
     sp = subprocess.Popen(cmdargs, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     (output, error) = sp.communicate(input=stdin)
     if curdir:
@@ -4468,7 +4468,7 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], msgs
                     fh.write(bdata)
                 continue
             logger.info('    --- DRYRUN: message follows ---')
-            logger.info('    | ' + bdata.decode().rstrip().replace('\n', '\n    | '))
+            logger.info('    | %s', bdata.decode().rstrip().replace('\n', '\n    | '))
             logger.info('    --- DRYRUN: message ends ---')
             continue
         if not destaddrs:
@@ -4826,7 +4826,7 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
         sp = shlex.shlex(editor, posix=True)
         sp.whitespace_split = True
         cmdargs = list(sp) + [temp_fpath]
-        logger.debug('Running %s' % ' '.join(cmdargs))
+        logger.debug('Running %s', ' '.join(cmdargs))
         spop = subprocess.Popen(cmdargs)
         spop.wait()
 
@@ -4863,7 +4863,7 @@ def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
         sp = shlex.shlex(pager, posix=True)
         sp.whitespace_split = True
         cmdargs = list(sp) + [temp_fpath]
-        logger.debug('Running %s' % ' '.join(cmdargs))
+        logger.debug('Running %s', ' '.join(cmdargs))
         # Strip -F (quit-if-one-screen) from LESS so the pager always
         # stays open, even when the output fits on a single screen.
         env = dict(os.environ)
