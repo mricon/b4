@@ -153,7 +153,7 @@ v0.15
 		[X] Agent prompt: prior-review-context and prior-thread-context-blob sections
 	[X] Non-Patchwork CI integration for external tool results
 	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
-	[_] Per-series target vs base branch tracking
+	[X] Per-series target vs base branch tracking
 	[X] Respect sendemail.from in review emails
 	[X] CLI for listing review branches and their commits/bases
 		[X] b4 review show-info (similar to b4 prep --show-info)
