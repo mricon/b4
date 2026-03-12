@@ -59,21 +59,10 @@ _STATUS_SYMBOLS: Dict[str, str] = {
     'gone':      'ø',  # U+00F8 latin small letter o with stroke
 }
 
-# Ordered status groups for the series list display.
-# Each entry is (section_label, tuple_of_statuses).
-_STATUS_GROUPS: List[Tuple[str, Tuple[str, ...]]] = [
-    ('Active',  ('reviewing', 'replied', 'accepted', 'thanked')),
-    ('New',     ('new',)),
-    ('Waiting', ('waiting',)),
-    ('Snoozed', ('snoozed',)),
-    ('Gone',    ('gone',)),
-]
-# Quick status → group-index lookup built from the above.
-_STATUS_GROUP_INDEX: Dict[str, int] = {
-    status: i
-    for i, (_, statuses) in enumerate(_STATUS_GROUPS)
-    for status in statuses
-}
+# Statuses where the maintainer can take action right now.
+_ACTIONABLE_STATUSES: frozenset[str] = frozenset({
+    'new', 'reviewing', 'replied', 'accepted', 'thanked',
+})
 
 
 def _format_snooze_until(value: str) -> str:
@@ -183,13 +172,7 @@ class TrackedSeriesItem(ListItem):
     """A single tracked series entry in the listing."""
 
     DEFAULT_CSS = """
-    TrackedSeriesItem.reviewing Label {
-        text-style: bold;
-    }
-    TrackedSeriesItem.waiting Label {
-        text-style: dim;
-    }
-    TrackedSeriesItem.snoozed Label {
+    TrackedSeriesItem.non-actionable Label {
         text-style: dim;
     }
     TrackedSeriesItem.gone Label {
@@ -200,14 +183,10 @@ class TrackedSeriesItem(ListItem):
     def __init__(self, series: Dict[str, Any]) -> None:
         super().__init__()
         self.series = series
-        status = series.get('status')
-        if status in ('reviewing', 'replied'):
-            self.add_class('reviewing')
-        elif status == 'waiting':
-            self.add_class('waiting')
-        elif status == 'snoozed':
-            self.add_class('snoozed')
-        elif status == 'gone':
+        status = series.get('status', 'new')
+        if status not in _ACTIONABLE_STATUSES:
+            self.add_class('non-actionable')
+        if status == 'gone':
             self.add_class('gone')
 
     def compose(self) -> ComposeResult:
@@ -611,15 +590,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         finally:
             if conn:
                 conn.close()
-        # Sort: latest activity descending first (stable), then group index ascending (stable).
-        # last_activity_at is the date of the most recent message in the thread; fall back
-        # to sent_at for series that haven't been updated yet.
+        # Sort: actionable series first, non-actionable at the bottom.
+        # Within each group, sort by when the maintainer started tracking
+        # (added_at descending) — newest-tracked at the top, like an inbox.
         self._all_series.sort(
-            key=lambda s: s.get('last_activity_at') or s.get('sent_at') or '',
+            key=lambda s: s.get('added_at') or s.get('sent_at') or '',
             reverse=True,
         )
         self._all_series.sort(
-            key=lambda s: _STATUS_GROUP_INDEX.get(s.get('status', 'new'), len(_STATUS_GROUPS))
+            key=lambda s: 0 if s.get('status', 'new') in _ACTIONABLE_STATUSES else 1
         )
         self.call_later(self._refresh_list)
 

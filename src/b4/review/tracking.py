@@ -296,9 +296,11 @@ def add_series_to_db(conn: sqlite3.Connection, change_id: str, revision: int,
                      sender_email: Optional[str], sent_at: Optional[str],
                      message_id: str, num_patches: int,
                      pw_series_id: Optional[int] = None,
-                     fingerprint: Optional[str] = None) -> int:
+                     fingerprint: Optional[str] = None,
+                     added_at: Optional[str] = None) -> int:
     """Add a series to the tracking database. Returns the track_id."""
-    added_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if added_at is None:
+        added_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     cursor = conn.execute('''
         INSERT INTO series
         (change_id, revision, subject, sender_name, sender_email, sent_at, added_at, message_id, num_patches, pw_series_id, fingerprint)
@@ -308,7 +310,7 @@ def add_series_to_db(conn: sqlite3.Connection, change_id: str, revision: int,
             sender_name = excluded.sender_name,
             sender_email = excluded.sender_email,
             sent_at = excluded.sent_at,
-            added_at = excluded.added_at,
+            added_at = COALESCE(series.added_at, excluded.added_at),
             message_id = excluded.message_id,
             num_patches = excluded.num_patches,
             pw_series_id = excluded.pw_series_id,
@@ -1702,6 +1704,7 @@ def rescan_branches(identifier: str, topdir: str,
         message_id = series.get('header-info', {}).get('msgid', '')
 
         # Upsert metadata and sync status from the tracking commit.
+        tracked_at = series.get('tracked-at')
         add_series_to_db(conn, change_id,
                          revision=revision,
                          subject=series.get('subject'),
@@ -1709,7 +1712,8 @@ def rescan_branches(identifier: str, topdir: str,
                          sender_email=series.get('fromemail'),
                          sent_at=sent_at,
                          message_id=message_id,
-                         num_patches=series.get('expected', 0))
+                         num_patches=series.get('expected', 0),
+                         added_at=tracked_at)
         update_series_status(conn, change_id, status, revision=revision)
 
         # Persist the new HEAD SHA so future rescans can skip this branch.

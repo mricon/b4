@@ -6,6 +6,7 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
+import datetime
 import email.message
 import email.utils
 import json
@@ -282,6 +283,7 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
         patches_meta.append(pmeta)
 
     # Build tracking metadata
+    tracked_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     tracking: Dict[str, Any] = {
         'series': {
             'identifier': identifier,
@@ -298,6 +300,7 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
             'prerequisite-commits': prereq_commits,
             'first-patch-commit': first_patch_commit,
             'header-info': cover_reply_headers,
+            'tracked-at': tracked_at,
         },
         'followups': cover_followups,
         'patches': patches_meta,

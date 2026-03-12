@@ -221,8 +221,8 @@ class TestTrackingAppStartup:
             assert '3 series' in _static_text(title)
 
     @pytest.mark.asyncio
-    async def test_series_sorted_by_activity(self, tmp_path: pathlib.Path) -> None:
-        """Series should appear newest-first (by sent_at since no last_activity_at)."""
+    async def test_series_sorted_by_added_at(self, tmp_path: pathlib.Path) -> None:
+        """Series should appear newest-tracked-first (by added_at)."""
         _seed_db('test-sort', SAMPLE_SERIES)
 
         app = TrackingApp('test-sort')
@@ -230,11 +230,12 @@ class TestTrackingAppStartup:
             await pilot.pause()
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
-            # All are 'new' status so same group; sorted by sent_at desc
+            # All are 'new' (actionable); sorted by added_at desc — last
+            # inserted (charlie) appears first, first inserted (alpha) last.
             subjects = [i.series['subject'] for i in items]
-            assert 'alpha' in subjects[0]
+            assert 'charlie' in subjects[0]
             assert 'bravo' in subjects[1]
-            assert 'charlie' in subjects[2]
+            assert 'alpha' in subjects[2]
 
 
 class TestTrackingNavigation:
@@ -387,8 +388,8 @@ class TestTrackingStatusGroups:
     """Tests for status grouping and display."""
 
     @pytest.mark.asyncio
-    async def test_status_groups_sorted(self, tmp_path: pathlib.Path) -> None:
-        """Series should be grouped by status: new before snoozed.
+    async def test_actionable_before_non_actionable(self, tmp_path: pathlib.Path) -> None:
+        """Actionable series (new) should appear before non-actionable (snoozed).
 
         We use only statuses that don't require a real review branch
         (new, snoozed) to avoid the background rescan worker marking
@@ -423,7 +424,7 @@ class TestTrackingStatusGroups:
             lv = app.query_one('#tracking-list', ListView)
             items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
             statuses = [i.series['status'] for i in items]
-            # new group comes before snoozed; within new, sorted by date desc
+            # actionable (new) before non-actionable (snoozed); within new, by added_at desc
             assert statuses == ['new', 'new', 'snoozed']
             assert 'new series A' in items[0].series['subject']
             assert 'new series B' in items[1].series['subject']
@@ -466,7 +467,7 @@ class TestTrackingFocusChangeId:
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             lv = app.query_one('#tracking-list', ListView)
-            assert lv.index == 2  # charlie is 3rd (sorted by date desc)
+            assert lv.index == 0  # charlie is 1st (last inserted, added_at desc)
 
 
 class TestTrackingQuit:
@@ -970,23 +971,23 @@ class TestTrackingAbandon:
         identifier = 'test-abandon'
         _seed_db(identifier, [
             {
-                'change_id': 'abandon-1',
-                'subject': '[PATCH] abandon me',
-                'sent_at': '2026-03-10T12:00:00+00:00',
-                'message_id': 'abandon@ex.com',
-            },
-            {
                 'change_id': 'keep-1',
                 'subject': '[PATCH] keep me',
                 'sent_at': '2026-03-10T11:00:00+00:00',
                 'message_id': 'keep@ex.com',
+            },
+            {
+                'change_id': 'abandon-1',
+                'subject': '[PATCH] abandon me',
+                'sent_at': '2026-03-10T12:00:00+00:00',
+                'message_id': 'abandon@ex.com',
             },
         ])
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            # First series is 'abandon-1' (newest by date, highlighted)
+            # First series is 'abandon-1' (last inserted, added_at desc)
             assert app._selected_series is not None
             assert app._selected_series['change_id'] == 'abandon-1'
 
@@ -1194,9 +1195,9 @@ class TestTrackingDetailPanel:
         app = TrackingApp('test-detail-nav')
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            # Should be showing alpha details
+            # Should be showing charlie details (last inserted, added_at desc)
             assert app._selected_series is not None
-            assert 'alpha' in app._selected_series.get('subject', '')
+            assert 'charlie' in app._selected_series.get('subject', '')
 
             await pilot.press('j')
             await pilot.pause()
@@ -1206,7 +1207,7 @@ class TestTrackingDetailPanel:
             await pilot.press('j')
             await pilot.pause()
             assert app._selected_series is not None
-            assert 'charlie' in app._selected_series.get('subject', '')
+            assert 'alpha' in app._selected_series.get('subject', '')
 
 
 class TestTrackingMultipleSeries:
@@ -1250,9 +1251,10 @@ class TestTrackingMultipleSeries:
             assert len(items) == 3
 
             statuses = [i.series['status'] for i in items]
-            # Active (reviewing) < New < Snoozed
-            assert statuses[0] == 'reviewing'
-            assert statuses[1] == 'new'
+            # Both reviewing and new are actionable (top), snoozed is not (bottom).
+            # Within actionable, sorted by added_at desc (new inserted after reviewing).
+            assert statuses[0] == 'new'
+            assert statuses[1] == 'reviewing'
             assert statuses[2] == 'snoozed'
 
     @pytest.mark.asyncio
