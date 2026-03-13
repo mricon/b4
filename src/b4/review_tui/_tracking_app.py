@@ -3294,7 +3294,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             if cid:
                 commits.append((pi + 1, cid))
             else:
-                commits.append((pi + 1, None))
                 has_untaken = True
 
         # Assemble jsondata for ty.generate_am_thanks

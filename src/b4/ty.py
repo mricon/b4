@@ -699,7 +699,9 @@ def _parse_queue_file(filepath: str) -> Optional[EmailMessage]:
     """Parse an RFC 2822 .msg file, returning None on error."""
     try:
         with open(filepath, 'rb') as fh:
-            return email.parser.BytesParser(policy=b4.emlpolicy).parse(fh)
+            msg = email.parser.BytesParser(policy=b4.emlpolicy).parse(fh)
+            assert isinstance(msg, EmailMessage)
+            return msg
     except Exception:
         return None
 
