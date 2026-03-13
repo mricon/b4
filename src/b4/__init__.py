@@ -3248,7 +3248,7 @@ def get_config_from_git(regexp: str, defaults: Optional[Dict[str, Any]] = None,
             chunks = key.split('.')
             cfgkey = chunks[-1].lower()
             if cfgkey in multivals:
-                if cfgkey not in gitconfig:
+                if cfgkey not in gitconfig or gitconfig[cfgkey] is None:
                     gitconfig[cfgkey] = list()
                 gitconfig[cfgkey].append(value)
             else:
