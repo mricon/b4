@@ -1215,13 +1215,22 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
 
 class ThankScreen(ModalScreen[Optional[str]]):
     """Modal preview of a thank-you email.  Dismisses with '__EDIT__',
-    '__SEND__', or None (cancelled)."""
+    '__SEND__', '__QUEUE__', or None (cancelled)."""
 
     BINDINGS = [
         Binding('e', 'edit', '[e]dit'),
         Binding('S', 'send', '[S]end', key_display='S'),
+        Binding('W', 'queue', '[W] queue', key_display='W', show=False),
         Binding('escape', 'cancel', 'Cancel'),
         Binding('q', 'cancel', 'Cancel', show=False),
+        Binding('j', 'scroll_down', 'Scroll down', show=False),
+        Binding('k', 'scroll_up', 'Scroll up', show=False),
+        Binding('down', 'scroll_down', 'Scroll down', show=False),
+        Binding('up', 'scroll_up', 'Scroll up', show=False),
+        Binding('space', 'page_down', 'Page down', show=False),
+        Binding('backspace', 'page_up', 'Page up', show=False),
+        Binding('pagedown', 'page_down', 'Page down', show=False),
+        Binding('pageup', 'page_up', 'Page up', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -1245,15 +1254,26 @@ class ThankScreen(ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, msg: email.message.EmailMessage) -> None:
+    def __init__(self, msg: email.message.EmailMessage,
+                 checkurl: Optional[str] = None) -> None:
         super().__init__()
         self._msg = msg
+        self._checkurl = checkurl
 
     def compose(self) -> ComposeResult:
         with Vertical(id='thank-dialog'):
             yield RichLog(id='thank-viewer', highlight=False, wrap=True,
                           markup=False, auto_scroll=False)
-            yield Static('e edit  |  S send  |  Escape cancel', id='thank-hint')
+            if self._checkurl:
+                hint = 'e edit  |  S send now  |  W queue  |  Escape cancel'
+            else:
+                hint = 'e edit  |  S send  |  Escape cancel'
+            yield Static(hint, id='thank-hint')
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == 'queue':
+            return self._checkurl is not None
+        return True
 
     def on_mount(self) -> None:
         viewer = self.query_one('#thank-viewer', RichLog)
@@ -1276,8 +1296,170 @@ class ThankScreen(ModalScreen[Optional[str]]):
     def action_send(self) -> None:
         self.dismiss('__SEND__')
 
+    def action_queue(self) -> None:
+        if self._checkurl:
+            self.dismiss('__QUEUE__')
+        else:
+            self.dismiss('__SEND__')
+
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def _get_viewer(self) -> RichLog:
+        return self.query_one('#thank-viewer', RichLog)
+
+    def action_scroll_down(self) -> None:
+        self._get_viewer().scroll_down()
+
+    def action_scroll_up(self) -> None:
+        self._get_viewer().scroll_up()
+
+    def action_page_down(self) -> None:
+        self._get_viewer().scroll_page_down()
+
+    def action_page_up(self) -> None:
+        self._get_viewer().scroll_page_up()
+
+
+class QueueScreen(ModalScreen[Optional[str]]):
+    """Modal listing queued thanks messages.
+
+    Dismisses with ``'__DELIVER__'`` when the user presses Q to
+    attempt delivery, or ``None`` on close.
+    """
+
+    BINDINGS = [
+        Binding('Q', 'deliver', '[Q] deliver', key_display='Q'),
+        Binding('escape', 'close', 'Close'),
+        Binding('q', 'close', 'Close', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    QueueScreen {
+        align: center middle;
+    }
+    #queue-dialog {
+        width: 90%;
+        height: 80%;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #queue-viewer {
+        height: 1fr;
+    }
+    #queue-hint {
+        height: 1;
+        dock: bottom;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, entries: List[Dict[str, str]]) -> None:
+        super().__init__()
+        self._entries = entries
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='queue-dialog'):
+            yield RichLog(id='queue-viewer', highlight=False, wrap=True,
+                          markup=False, auto_scroll=False)
+            yield Static('Q deliver  |  Escape close', id='queue-hint')
+
+    def on_mount(self) -> None:
+        viewer = self.query_one('#queue-viewer', RichLog)
+        if not self._entries:
+            viewer.write('No queued messages.')
+            return
+        viewer.write(f'{len(self._entries)} queued thanks message(s):')
+        viewer.write('')
+        for i, entry in enumerate(self._entries, 1):
+            viewer.write(f'  {i}. {entry["subject"]}')
+            viewer.write(f'     Check: {entry["checkurl"]}')
+            viewer.write('')
+
+    def action_deliver(self) -> None:
+        self.dismiss('__DELIVER__')
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
+class QueueDeliveryScreen(ModalScreen[Optional[Tuple[int, int, List[Tuple[str, int]]]]]):
+    """Modal that processes the thanks queue with a progress bar.
+
+    Dismisses with ``(delivered, still_pending, delivered_series)``
+    on completion, or ``None`` on cancel.
+    """
+
+    BINDINGS = [
+        Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    QueueDeliveryScreen {
+        align: center middle;
+    }
+    #qdeliver-dialog {
+        width: 70;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    """
+
+    def __init__(self, identifier: str, total: int,
+                 dryrun: bool = False,
+                 patatt_sign: bool = True) -> None:
+        super().__init__()
+        self._identifier = identifier
+        self._total = total
+        self._dryrun = dryrun
+        self._patatt_sign = patatt_sign
+        self._cancelled = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='qdeliver-dialog'):
+            yield Label('Delivering queued thanks messages...', id='qdeliver-title')
+            yield Label(f'Checking 0/{self._total}...', id='qdeliver-status')
+            yield Label('', id='qdeliver-subject', markup=False)
+            yield ProgressBar(total=self._total, show_eta=False, id='qdeliver-progress')
+
+    def on_mount(self) -> None:
+        self.run_worker(self._do_deliver, name='_do_deliver', thread=True)
+
+    def action_cancel(self) -> None:
+        self._cancelled = True
+
+    def _do_deliver(self) -> Tuple[int, int, List[Tuple[str, int]]]:
+        import b4.ty
+
+        def _on_progress(completed: int, total: int, status: str) -> None:
+            if not self._cancelled:
+                self.app.call_from_thread(self._update_progress, completed, total, status)
+
+        return b4.ty.process_queue(
+            self._identifier,
+            dryrun=self._dryrun,
+            patatt_sign=self._patatt_sign,
+            progress_cb=_on_progress,
+        )
+
+    def _update_progress(self, completed: int, total: int, status: str) -> None:
+        self.query_one('#qdeliver-status', Label).update(
+            f'Checking {completed}/{total}...'
+        )
+        self.query_one('#qdeliver-subject', Label).update(status)
+        self.query_one('#qdeliver-progress', ProgressBar).progress = completed
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != '_do_deliver':
+            return
+        if event.state == WorkerState.SUCCESS:
+            self.dismiss(event.worker.result)
+        elif event.state == WorkerState.ERROR:
+            self.dismiss(None)
 
 
 class WorkerScreen(ModalScreen[Any]):

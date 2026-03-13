@@ -154,6 +154,8 @@ Key           Action
 ``l``         Limit — filter the list of displayed series
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)
+``Q``         Queue — view and deliver queued thank-you messages (visible
+              only when the queue is non-empty; see :ref:`thanks_queue`)
 ``j``/``k``   Move cursor down/up
 ``?``         Help — show keybinding reference
 ``q``         Quit
@@ -518,7 +520,36 @@ range-diff``. B4 fetches the comparison revision from lore if needed.
 Thank-you
 ~~~~~~~~~
 Open the action menu (``a``) on an accepted series and select **Thank**
-to compose and send a thank-you note to the contributor.
+to compose and send a thank-you note to the contributor. A preview
+screen shows the generated message with keybindings to **Send** (``S``),
+**Edit** (``e``), or **Cancel** (``Escape``).
+
+.. _thanks_queue:
+
+**Queuing thanks for delayed delivery**
+
+When :term:`b4.thanks-commit-url-mask` is configured, the thank-you
+preview also offers a **Queue** option (``W``). Queuing stores the
+message in a local database (``mailqueue.sqlite3`` in
+``$XDG_DATA_HOME/b4/``) instead of sending it immediately. This is
+useful when you want to push your commits to a public tree before
+sending thank-you messages — the message references commit URLs that
+may not resolve until the push is complete.
+
+The series remains in ``accepted`` status while its thank-you message is
+queued. The title bar shows a queue count indicator on the right side
+(e.g. ``3 queued``) and the ``Q`` keybinding appears in the footer.
+
+Press ``Q`` to open the queue viewer, which lists all pending messages
+for the current project with their subjects and target URLs. From
+this screen, press ``Q`` again to attempt delivery: b4 checks each
+queued message's commit URL with an HTTP HEAD request, and delivers
+the message via SMTP once the URL resolves. Successfully delivered
+series are automatically marked as ``thanked``.
+
+When running with ``--email-dry-run``, queued messages are tagged as
+dry-run in the database and the commit URL check is skipped, allowing
+end-to-end testing of the queue workflow without sending real email.
 
 Archive and abandon
 ~~~~~~~~~~~~~~~~~~~

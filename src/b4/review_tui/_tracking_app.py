@@ -41,7 +41,7 @@ from b4.review_tui._modals import (
     CherryPickScreen, NewerRevisionWarningScreen,
     RevisionChoiceScreen, RebaseScreen, TargetBranchScreen,
     AbandonConfirmScreen,
-    ArchiveConfirmScreen, RangeDiffScreen, ThankScreen,
+    ArchiveConfirmScreen, RangeDiffScreen, ThankScreen, QueueScreen, QueueDeliveryScreen,
     LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
     ActionScreen, HelpScreen, SnoozeScreen, TRACKING_HELP_LINES,
 )
@@ -289,7 +289,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         background: $primary-darken-2;
         color: $text;
         text-style: bold;
+    }
+    #title-left {
+        width: 1fr;
         content-align: left middle;
+    }
+    #title-right {
+        width: auto;
+        content-align: right middle;
+        padding: 0 1;
     }
     #tracking-header {
         width: 100%;
@@ -330,6 +338,16 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         color: ansi_default;
         text-style: bold;
     }
+    TrackingApp:ansi #title-left {
+        background: ansi_bright_black;
+        color: ansi_default;
+        text-style: bold;
+    }
+    TrackingApp:ansi #title-right {
+        background: ansi_bright_black;
+        color: ansi_default;
+        text-style: bold;
+    }
     TrackingApp:ansi #tracking-header {
         background: ansi_default;
         color: ansi_default;
@@ -349,8 +367,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         'review': 'Series', 'check': 'Series', 'thread': 'Series',
         'range_diff': 'Series', 'action': 'Series', 'update_one': 'Series',
         'target_branch': 'Series',
-        'update_all': 'App', 'limit': 'App', 'suspend': 'App',
-        'patchwork': 'App', 'quit': 'App', 'help': 'App',
+        'update_all': 'App', 'process_queue': 'App', 'limit': 'App',
+        'suspend': 'App', 'patchwork': 'App', 'quit': 'App', 'help': 'App',
     }
 
     BINDINGS = [
@@ -371,6 +389,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         Binding('s', 'suspend', 'shell'),
         Binding('p', 'patchwork', 'patchwork'),
         Binding('U', 'update_all', 'Update all', key_display='U'),
+        Binding('Q', 'process_queue', 'Queue', key_display='Q'),
         Binding('q', 'quit', 'quit'),
         Binding('question_mark', 'help', 'help', key_display='?'),
     ]
@@ -399,6 +418,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._last_snooze_input: str = ''
         # CI check modal state
         self._check_loading: Optional[Any] = None
+        # Thanks queue count
+        self._queue_count: int = 0
         # Show target branch binding only when configured
         self._has_target_branches = bool(
             b4.review.tracking.get_review_target_branches())
@@ -418,8 +439,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def compose(self) -> ComposeResult:
         title = f' Tracked Series — {self._identifier}'
         if self._email_dryrun:
-            title += ' (email dry-run)'
-        yield Static(title, id='tracking-title')
+            title += ' (DRY-RUN)'
+        with Horizontal(id='tracking-title'):
+            yield Static(title, id='title-left')
+            yield Static('', id='title-right')
         with Vertical(id='details-panel'):
             with Horizontal(classes='details-row'):
                 yield Static('Subject:', classes='details-label')
@@ -455,6 +478,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def on_mount(self) -> None:
         _fix_ansi_theme(self)
+        self._refresh_queue_indicator()
         self._load_series()
         self.set_interval(1, self._check_db_changed)
         topdir = b4.git_get_toplevel()
@@ -647,13 +671,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 if self._matches_limit(s, self._limit_pattern)
             ]
 
-        title = self.query_one('#tracking-title', Static)
-        title_parts = f' Tracked Series — {self._identifier}'
+        left = self.query_one('#title-left', Static)
+        title_text = f' Tracked Series — {self._identifier}'
+        if self._email_dryrun:
+            title_text += ' (DRY-RUN)'
         if self._limit_pattern:
-            title_parts += f' ({len(display_series)}/{len(self._all_series)} series, limit: {self._limit_pattern})'
-        else:
-            title_parts += f' ({len(self._all_series)} series)'
-        title.update(title_parts)
+            title_text += f' (limit: {self._limit_pattern})'
+        left.update(title_text)
 
         # Suppress rendering while we swap old widgets for new ones.
         # Without this, the remove-then-mount sequence can produce a
@@ -743,6 +767,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def check_action(self, action: str, parameters: Tuple[Any, ...]) -> Optional[bool]:
         """Hide status-specific actions based on the selected series."""
+        if action == 'process_queue':
+            return self._queue_count > 0
         if action == 'patchwork':
             return bool(self._pwkey and self._pwurl and self._pwproj)
         if action == 'action':
@@ -3304,22 +3330,38 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.notify(f'Failed to generate thank-you: {ex}', severity='error')
             return
 
-        self._show_thank_preview(msg)
+        # Compute checkurl from last taken commit for queue support
+        checkurl: Optional[str] = None
+        cidmask = config.get('thanks-commit-url-mask')
+        if isinstance(cidmask, str) and cidmask and '%' in cidmask:
+            # Find the last commit ID (highest patch index with a commit)
+            last_cid: Optional[str] = None
+            for _idx, cid in commits:
+                if cid is not None:
+                    last_cid = cid
+            if last_cid:
+                checkurl = cidmask % last_cid
 
-    def _show_thank_preview(self, msg: email.message.EmailMessage) -> None:
-        """Push the ThankScreen modal and handle edit/send/cancel."""
+        self._show_thank_preview(msg, checkurl=checkurl)
+
+    def _show_thank_preview(self, msg: email.message.EmailMessage,
+                            checkurl: Optional[str] = None) -> None:
+        """Push the ThankScreen modal and handle edit/send/queue/cancel."""
 
         def _on_thank_result(result: Optional[str]) -> None:
             if result is None:
                 return
             if result == '__EDIT__':
-                self._edit_thank_message(msg)
+                self._edit_thank_message(msg, checkurl=checkurl)
             elif result == '__SEND__':
                 self._send_thank_message(msg)
+            elif result == '__QUEUE__' and checkurl:
+                self._queue_thank_message(msg, checkurl)
 
-        self.push_screen(ThankScreen(msg), _on_thank_result)
+        self.push_screen(ThankScreen(msg, checkurl=checkurl), _on_thank_result)
 
-    def _edit_thank_message(self, msg: email.message.EmailMessage) -> None:
+    def _edit_thank_message(self, msg: email.message.EmailMessage,
+                            checkurl: Optional[str] = None) -> None:
         """Open the thank-you message in $EDITOR and re-show preview."""
         msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
         try:
@@ -3329,7 +3371,27 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.notify(f'Editor error: {ex}', severity='error')
             return
         new_msg = email.parser.BytesParser(policy=b4.emlpolicy).parsebytes(edited)
-        self._show_thank_preview(new_msg)
+        self._show_thank_preview(new_msg, checkurl=checkurl)
+
+    def _queue_thank_message(self, msg: email.message.EmailMessage, checkurl: str) -> None:
+        """Queue the thanks message for delivery once commits are public."""
+        import b4.ty
+
+        series = self._selected_series
+        if not series:
+            return
+        change_id = series.get('change_id', '')
+        revision = series.get('revision', 1)
+        try:
+            b4.ty.queue_message(msg, checkurl, self._identifier,
+                                change_id, revision,
+                                dryrun=self._email_dryrun)
+        except Exception as ex:
+            self.notify(f'Failed to queue message: {ex}', severity='error')
+            return
+
+        self.notify('Queued — will send when commits are published')
+        self._refresh_queue_indicator()
 
     def _send_thank_message(self, msg: email.message.EmailMessage) -> None:
         """Send the thank-you message via SMTP."""
@@ -3364,6 +3426,78 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self._load_series()
         except Exception as ex:
             self.notify(f'Send failed: {ex}', severity='error')
+
+    def _refresh_queue_indicator(self) -> None:
+        """Update the title-bar queue count and Q binding visibility."""
+        import b4.ty
+        self._queue_count = b4.ty.get_queued_count(self._identifier,
+                                                    dryrun=self._email_dryrun)
+        try:
+            right = self.query_one('#title-right', Static)
+        except Exception:
+            return
+        if self._queue_count:
+            right.update(f'{self._queue_count} queued ')
+        else:
+            right.update('')
+        self.refresh_bindings()
+
+    def action_process_queue(self) -> None:
+        """Show the queue modal and optionally deliver."""
+        import b4.ty
+        entries = b4.ty.get_queued_messages(self._identifier,
+                                             dryrun=self._email_dryrun)
+        if not entries:
+            self.notify('No queued thanks messages')
+            return
+
+        def _on_queue_result(result: Optional[str]) -> None:
+            if result == '__DELIVER__':
+                self._deliver_queue()
+
+        self.push_screen(QueueScreen(entries), _on_queue_result)
+
+    def _deliver_queue(self) -> None:
+        """Push a delivery modal with progress bar."""
+
+        def _on_delivery_result(result: Optional[Tuple[int, int, List[Tuple[str, int]]]]) -> None:
+            if result is None:
+                self.notify('Queue delivery cancelled or failed', severity='warning')
+                self._refresh_queue_indicator()
+                return
+            delivered, pending, delivered_series = result
+            # Mark delivered series as thanked
+            for change_id, revision in delivered_series:
+                if self._identifier and change_id:
+                    try:
+                        conn = b4.review.tracking.get_db(self._identifier)
+                        b4.review.tracking.update_series_status(
+                            conn, change_id, 'thanked', revision=revision)
+                        conn.close()
+                    except Exception as ex:
+                        logger.warning('Could not update series status: %s', ex)
+                    topdir = b4.git_get_toplevel()
+                    if topdir:
+                        review_branch = f'b4/review/{change_id}'
+                        b4.review.update_tracking_status(topdir, review_branch, 'thanked')
+            parts = []
+            if delivered:
+                parts.append(f'{delivered} delivered')
+            if pending:
+                parts.append(f'{pending} still pending')
+            self.notify(', '.join(parts) if parts else 'Queue empty')
+            self._refresh_queue_indicator()
+            if delivered_series:
+                self._load_series()
+
+        self.push_screen(
+            QueueDeliveryScreen(
+                self._identifier, self._queue_count,
+                dryrun=self._email_dryrun,
+                patatt_sign=self._patatt_sign,
+            ),
+            _on_delivery_result,
+        )
 
     #: Sentinel return value indicating the user wants to open PwApp.
     PATCHWORK_SENTINEL = '__patchwork__'

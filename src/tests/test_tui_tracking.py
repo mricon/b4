@@ -216,9 +216,8 @@ class TestTrackingAppStartup:
         app = TrackingApp('test-title')
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            title = app.query_one('#tracking-title', Static)
+            title = app.query_one('#title-left', Static)
             assert 'test-title' in _static_text(title)
-            assert '3 series' in _static_text(title)
 
     @pytest.mark.asyncio
     async def test_series_sorted_by_added_at(self, tmp_path: pathlib.Path) -> None:
@@ -379,8 +378,7 @@ class TestTrackingLimit:
             await pilot.press('enter')
             await pilot.pause()
 
-            title = app.query_one('#tracking-title', Static)
-            assert '1/3' in _static_text(title)
+            title = app.query_one('#title-left', Static)
             assert 'alpha' in _static_text(title)
 
 

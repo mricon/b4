@@ -283,11 +283,18 @@ Attestation settings
      Default: ``None``
 
    :term:`b4.thanks-commit-url-mask`
-     Used when creating summaries for ``b4 ty``, and can be a value like::
+     Used when creating summaries for ``b4 ty`` and the review TUI
+     thank-you flow. Can be a value like::
 
          thanks-commit-url-mask = https://git.kernel.org/username/c/%.12s
 
      If not set, b4 falls back to using commit hashes.
+
+     When this option is set, the review TUI's thank-you preview offers
+     a **Queue** option that stores the message for delayed delivery.
+     Queued messages are held until their commit URL resolves (via HTTP
+     HEAD), so you can push your commits before the thank-you is sent.
+     See :ref:`thanks_queue` for details.
 
      .. note::
 

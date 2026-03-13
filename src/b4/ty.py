@@ -5,12 +5,15 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import datetime
 import os
+import sqlite3
 import sys
 
 import b4
 import re
 import email
+import email.parser
 import email.utils
 import json
 import argparse
@@ -20,7 +23,7 @@ from pathlib import Path
 
 from email.message import EmailMessage
 
-from typing import cast, Optional, Tuple, Union, List, Dict, Any
+from typing import Callable, cast, Optional, Tuple, Union, List, Dict, Any
 
 ConfigDictT = b4.ConfigDictT
 JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
@@ -323,6 +326,8 @@ def generate_pr_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, 
 
 
 def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace) -> EmailMessage:
+    global BRANCH_INFO
+    BRANCH_INFO = None
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_AM_TEMPLATE
@@ -670,6 +675,171 @@ def get_wanted_branch(cmdargs: argparse.Namespace) -> str:
         wantbranch = cmdargs.branch
 
     return wantbranch
+
+
+QUEUE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS queue (
+    id INTEGER PRIMARY KEY,
+    added TEXT NOT NULL,
+    identifier TEXT NOT NULL,
+    change_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    checkurl TEXT NOT NULL,
+    message TEXT NOT NULL,
+    dryrun INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+
+def get_queue_db() -> sqlite3.Connection:
+    """Open (or create) the thanks queue database."""
+    datadir = b4.get_data_dir()
+    db_path = os.path.join(datadir, 'mailqueue.sqlite3')
+    is_new = not os.path.exists(db_path)
+    conn = sqlite3.connect(db_path)
+    if is_new:
+        conn.executescript(QUEUE_SCHEMA)
+        conn.commit()
+    return conn
+
+
+def queue_message(msg: EmailMessage, checkurl: str, identifier: str,
+                  change_id: str, revision: int,
+                  dryrun: bool = False) -> None:
+    """Insert a thanks message into the queue for later delivery."""
+    conn = get_queue_db()
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
+    conn.execute(
+        'INSERT INTO queue (added, identifier, change_id, revision, checkurl, message, dryrun)'
+        ' VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (now, identifier, change_id, revision,
+         checkurl, msg_bytes.decode('utf-8', errors='replace'),
+         1 if dryrun else 0),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_queued_count(identifier: str, dryrun: bool = False) -> int:
+    """Return the number of queued thanks messages for an identifier."""
+    try:
+        conn = get_queue_db()
+    except Exception:
+        return 0
+    row = conn.execute(
+        'SELECT COUNT(*) FROM queue WHERE identifier = ? AND dryrun = ?',
+        (identifier, 1 if dryrun else 0),
+    ).fetchone()
+    count = row[0] if row else 0
+    conn.close()
+    return count
+
+
+def get_queued_messages(identifier: str,
+                        dryrun: bool = False) -> List[Dict[str, str]]:
+    """Return queued message details for display.
+
+    Each entry has keys: added, subject, checkurl.
+    """
+    try:
+        conn = get_queue_db()
+    except Exception:
+        return []
+    rows = conn.execute(
+        'SELECT added, checkurl, message FROM queue'
+        ' WHERE identifier = ? AND dryrun = ? ORDER BY added',
+        (identifier, 1 if dryrun else 0),
+    ).fetchall()
+    conn.close()
+    results: List[Dict[str, str]] = []
+    for added, checkurl, msg_text in rows:
+        subject = ''
+        msg = email.parser.Parser(policy=b4.emlpolicy).parsestr(msg_text)
+        subj = msg.get('Subject')
+        if subj:
+            subject = str(subj)
+        results.append({
+            'added': added,
+            'subject': subject,
+            'checkurl': checkurl,
+        })
+    return results
+
+
+ProgressCallbackT = Optional[Callable[[int, int, str], None]]
+
+
+QueueResultT = Tuple[int, int, List[Tuple[str, int]]]
+
+
+def process_queue(identifier: str, dryrun: bool = False,
+                  patatt_sign: bool = True,
+                  progress_cb: ProgressCallbackT = None) -> QueueResultT:
+    """Check queued messages and deliver those whose commits are visible.
+
+    Only processes messages matching *identifier*.
+    *progress_cb*, when provided, is called as
+    ``progress_cb(completed, total, status_text)`` after each message.
+    Returns (delivered, still_pending, delivered_series) where
+    delivered_series is a list of (change_id, revision) tuples.
+    """
+    conn = get_queue_db()
+    rows = conn.execute(
+        'SELECT id, change_id, revision, checkurl, message'
+        ' FROM queue WHERE identifier = ? AND dryrun = ?',
+        (identifier, 1 if dryrun else 0),
+    ).fetchall()
+    if not rows:
+        conn.close()
+        return (0, 0, [])
+
+    total = len(rows)
+    delivered = 0
+    still_pending = 0
+    delivered_series: List[Tuple[str, int]] = []
+    for i, (row_id, change_id, revision, checkurl, msg_text) in enumerate(rows):
+        msg = email.parser.Parser(policy=b4.emlpolicy).parsestr(msg_text)
+        subject = str(msg.get('Subject', '(no subject)'))
+        if progress_cb:
+            progress_cb(i, total, f'Checking: {subject}')
+
+        # Check if the commit is publicly visible
+        if not dryrun:
+            try:
+                session = b4.get_requests_session()
+                resp = session.head(checkurl, timeout=15,
+                                    allow_redirects=True)
+                if resp.status_code >= 300:
+                    still_pending += 1
+                    if progress_cb:
+                        progress_cb(i + 1, total, f'Not yet visible: {subject}')
+                    continue
+            except Exception:
+                still_pending += 1
+                if progress_cb:
+                    progress_cb(i + 1, total, f'Check failed: {subject}')
+                continue
+
+        # Commit is visible — deliver the message
+        try:
+            smtp, fromaddr = b4.get_smtp(dryrun=dryrun)
+            b4.send_mail(smtp, [msg], fromaddr=fromaddr,
+                         patatt_sign=patatt_sign, dryrun=dryrun,
+                         output_dir=None, reflect=False)
+            conn.execute('DELETE FROM queue WHERE id = ?', (row_id,))
+            conn.commit()
+            delivered += 1
+            delivered_series.append((change_id, revision))
+        except Exception as ex:
+            logger.warning('Failed to send queued message %d: %s', row_id, ex)
+            still_pending += 1
+
+        if progress_cb:
+            progress_cb(i + 1, total, subject)
+
+    conn.close()
+    return (delivered, still_pending, delivered_series)
 
 
 def get_branch_info(gitdir: Optional[str], branch: str) -> Dict[str, str]:

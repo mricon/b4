@@ -144,6 +144,8 @@ DEFAULT_CONFIG: ConfigDictT = {
     'cache-expire': '10',
     # Used when creating summaries for b4 ty
     'thanks-commit-url-mask': None,
+    # Override the tree name used in thank-you messages
+    'thanks-treename': None,
     # See thanks-pr-template.example
     'thanks-pr-template': None,
     # See thanks-am-template.example
