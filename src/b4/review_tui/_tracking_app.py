@@ -65,6 +65,62 @@ _ACTIONABLE_STATUSES: frozenset[str] = frozenset({
 })
 
 
+def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
+    """Handle an AmConflictError by dropping the user into a shell.
+
+    Disables sparse checkout in the worktree, suspends to an interactive
+    shell for conflict resolution, then checks the outcome:
+
+    - If the user completed ``git am --continue``, fetches the result
+      into FETCH_HEAD and removes the worktree.  Returns True.
+    - If the user aborted (``git am --abort``) or exited without
+      finishing, cleans up the worktree and returns False.
+    """
+    logger.critical('---')
+    logger.critical(cex.output)
+    logger.critical('---')
+    logger.critical('Patch did not apply cleanly.')
+    # Disable sparse checkout so user can see and edit files
+    b4.git_run_command(cex.worktree_path, ['sparse-checkout', 'disable'],
+                       logstderr=True, rundir=cex.worktree_path)
+    # Save worktree HEAD before shell so we can detect abort
+    _ecode, wt_head_before = b4.git_run_command(
+        cex.worktree_path, ['rev-parse', 'HEAD'],
+        logstderr=True, rundir=cex.worktree_path)
+    wt_head_before = wt_head_before.strip()
+    logger.info('You can resolve the conflict in the worktree.')
+    logger.info('Use "git am --continue" after resolving, or "git am --abort" to give up.')
+    _suspend_to_shell(hint='b4 conflict', cwd=cex.worktree_path)
+    # Check if am is still in progress (user exited without finishing)
+    ecode, wt_gitdir = b4.git_run_command(
+        cex.worktree_path, ['rev-parse', '--git-dir'],
+        logstderr=True, rundir=cex.worktree_path)
+    if ecode == 0:
+        rebase_apply = os.path.join(wt_gitdir.strip(), 'rebase-apply')
+    else:
+        rebase_apply = ''
+    if rebase_apply and os.path.isdir(rebase_apply):
+        logger.warning('Conflict resolution incomplete, aborting')
+        b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
+        return False
+    # Check if am was aborted (HEAD unchanged from before shell)
+    _ecode, wt_head_after = b4.git_run_command(
+        cex.worktree_path, ['rev-parse', 'HEAD'],
+        logstderr=True, rundir=cex.worktree_path)
+    if wt_head_after.strip() == wt_head_before:
+        logger.warning('Conflict resolution aborted')
+        b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
+        return False
+    # am completed -- fetch result into FETCH_HEAD
+    logger.info('Conflict resolved, fetching result...')
+    ecode, _out = b4.git_run_command(topdir, ['fetch', cex.worktree_path], logstderr=True)
+    b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
+    if ecode > 0:
+        logger.critical('Unable to fetch from resolved worktree')
+        return False
+    return True
+
+
 def _format_snooze_until(value: str) -> str:
     """Format a snoozed_until value for display.
 
@@ -1195,11 +1251,32 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return
             linkurl = linkmask % top_msgid
 
+            # Prepare blob ancestors for three-way merge if needed
+            if lser.complete:
+                _checked, mismatches = lser.check_applies_clean(gitdir=topdir)
+                if mismatches:
+                    rstart, rend = lser.make_fake_am_range(gitdir=topdir)
+                    if rstart and rend:
+                        logger.info('Prepared fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+
             try:
                 logger.info('Base: %s', base_commit)
-                b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit, origin=linkurl)
+                b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit,
+                                          origin=linkurl, am_flags=['-3'])
 
                 # Create the review branch
+                b4.review.create_review_branch(topdir, branch_name, base_commit, lser,
+                                               linkurl, linkmask, num_prereqs=0,
+                                               identifier=self._identifier,
+                                               status='reviewing')
+                logger.info('Review branch created: %s', branch_name)
+                checkout_success = True
+            except b4.AmConflictError as cex:
+                if not _resolve_worktree_am_conflict(topdir, cex):
+                    _wait_for_enter()
+                    return
+                b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
+                # Create the review branch from resolved result
                 b4.review.create_review_branch(topdir, branch_name, base_commit, lser,
                                                linkurl, linkmask, num_prereqs=0,
                                                identifier=self._identifier,
@@ -1951,7 +2028,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             base_commit = out.strip()
 
         try:
-            b4.git_fetch_am_into_repo(topdir, ambytes, at_base=base_commit)
+            b4.git_fetch_am_into_repo(topdir, ambytes, at_base=base_commit, am_flags=['-3'])
+        except b4.AmConflictError as cex:
+            if not _resolve_worktree_am_conflict(topdir, cex):
+                _wait_for_enter()
+                return
         except RuntimeError:
             _wait_for_enter()
             return
@@ -2221,16 +2302,28 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         ecode, out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
         pre_am_head = out.strip() if ecode == 0 else ''
 
-        # Run git-am
-        ecode, out = b4.git_run_command(topdir, ['am'], stdin=ambytes, logstderr=True)
+        # Run git-am with three-way merge
+        ecode, out = b4.git_run_command(topdir, ['am', '-3'], stdin=ambytes, logstderr=True)
         if ecode != 0:
             logger.critical('git-am failed:')
             logger.critical(out.strip())
-            logger.critical('---')
-            logger.critical('Resolve the conflict, then run: git am --continue')
-            logger.critical('Or abort with: git am --abort')
-            _wait_for_enter()
-            return
+            logger.info('You can resolve the conflict now.')
+            logger.info('Use "git am --continue" after resolving, or "git am --abort" to give up.')
+            _suspend_to_shell(hint='b4 conflict')
+            # Check if am is still in progress (user exited without finishing)
+            rebase_apply_path = os.path.join(topdir, '.git', 'rebase-apply')
+            if os.path.isdir(rebase_apply_path):
+                logger.warning('Conflict resolution incomplete')
+                logger.warning('Run "git am --abort" to clean up')
+                _wait_for_enter()
+                return
+            # Check if am was aborted (HEAD unchanged)
+            ecode, current_head = b4.git_run_command(topdir, ['rev-parse', 'HEAD'], logstderr=True)
+            if ecode != 0 or current_head.strip() == pre_am_head:
+                logger.warning('Conflict resolution aborted')
+                _wait_for_enter()
+                return
+            logger.info('Conflict resolved, patches applied.')
 
         logger.info(out.strip())
         logger.info('Applied patches to %s', target_branch)
@@ -2345,6 +2438,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # Check if series applies cleanly to target using sparse worktree
         logger.info('Testing if series applies cleanly to %s...', target_branch)
+        applies_clean = False
         try:
             with b4.git_temp_worktree(topdir, target_head) as gwt:
                 # Set up sparse checkout for minimal disk usage
@@ -2359,14 +2453,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 gitargs = ['cherry-pick', f'{base_commit}..{series_tip}']
                 ecode, out = b4.git_run_command(gwt, gitargs, logstderr=True)
                 if ecode != 0:
-                    logger.critical('Series does not apply cleanly to %s', target_branch)
-                    logger.critical('Cherry-pick output:')
-                    logger.critical(out.strip())
-                    logger.critical('')
-                    logger.critical('Please rebase manually')
-                    _wait_for_enter()
-                    return
-                logger.info('Series applies cleanly')
+                    logger.warning('Series does not apply cleanly to %s', target_branch)
+                    logger.warning('Will attempt rebase with conflict resolution')
+                else:
+                    applies_clean = True
+                    logger.info('Series applies cleanly')
         except Exception as ex:
             logger.critical('Error testing series applicability: %s', ex)
             _wait_for_enter()
@@ -2375,6 +2466,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Perform the actual rebase
         logger.info('Rebasing %s onto %s...', review_branch, target_branch)
 
+        # Remember where we are so we can restore on failure
+        ecode, original_branch = b4.git_run_command(topdir, ['rev-parse', '--abbrev-ref', 'HEAD'],
+                                                     logstderr=True)
+        if ecode != 0:
+            logger.critical('Could not determine current branch')
+            _wait_for_enter()
+            return
+        original_branch = original_branch.strip()
+
         # First, checkout the review branch (at the tracking commit)
         ecode, out = b4.git_run_command(topdir, ['checkout', review_branch], logstderr=True)
         if ecode != 0:
@@ -2382,10 +2482,21 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             _wait_for_enter()
             return
 
+        # Save the tracking commit SHA so we can restore on failure
+        ecode, tracking_commit = b4.git_run_command(topdir, ['rev-parse', 'HEAD'], logstderr=True)
+        if ecode != 0:
+            logger.critical('Could not resolve tracking commit')
+            b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+            _wait_for_enter()
+            return
+        tracking_commit = tracking_commit.strip()
+
         # Reset to before the tracking commit (now at series_tip)
         ecode, out = b4.git_run_command(topdir, ['reset', '--hard', 'HEAD~1'], logstderr=True)
         if ecode != 0:
             logger.critical('Could not reset to before tracking commit: %s', out.strip())
+            b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
+            b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
             _wait_for_enter()
             return
 
@@ -2393,13 +2504,55 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # --onto target_head base_commit means: take commits after base_commit and replay onto target_head
         ecode, out = b4.git_run_command(topdir, ['rebase', '--onto', target_head, base_commit], logstderr=True)
         if ecode != 0:
-            logger.critical('Rebase failed: %s', out.strip())
-            logger.critical('Aborting rebase...')
-            b4.git_run_command(topdir, ['rebase', '--abort'], logstderr=True)
-            # Try to restore the original branch state
-            b4.git_run_command(topdir, ['checkout', review_branch], logstderr=True)
-            _wait_for_enter()
-            return
+            if applies_clean:
+                # Test said clean but real rebase failed — something is wrong, abort
+                logger.critical('Rebase failed unexpectedly: %s', out.strip())
+                logger.critical('Aborting rebase...')
+                b4.git_run_command(topdir, ['rebase', '--abort'], logstderr=True)
+                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
+                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                _wait_for_enter()
+                return
+
+            logger.critical('---')
+            logger.critical(out.strip())
+            logger.critical('---')
+            logger.critical('Rebase had conflicts.')
+            logger.info('You can resolve the conflicts in your working tree.')
+            logger.info('Use "git rebase --continue" after resolving, or "git rebase --abort" to give up.')
+            _suspend_to_shell(hint='b4 rebase')
+            # Check if rebase is still in progress (user exited without finishing)
+            ecode, gitdir = b4.git_run_command(topdir, ['rev-parse', '--git-dir'], logstderr=True)
+            rebase_in_progress = False
+            if ecode == 0:
+                gitdir = gitdir.strip()
+                rebase_in_progress = (os.path.isdir(os.path.join(gitdir, 'rebase-merge'))
+                                      or os.path.isdir(os.path.join(gitdir, 'rebase-apply')))
+            if rebase_in_progress:
+                logger.warning('Rebase not completed, aborting')
+                b4.git_run_command(topdir, ['rebase', '--abort'], logstderr=True)
+                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
+                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                _wait_for_enter()
+                return
+            # Check if the rebase was aborted (HEAD back at pre-rebase state)
+            ecode, current_head = b4.git_run_command(topdir, ['rev-parse', 'HEAD'], logstderr=True)
+            if ecode != 0 or current_head.strip() == series_tip:
+                logger.warning('Rebase was aborted')
+                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
+                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                _wait_for_enter()
+                return
+            # Verify target is an ancestor of HEAD (rebase actually landed)
+            ecode, _out = b4.git_run_command(
+                topdir, ['merge-base', '--is-ancestor', target_head, 'HEAD'], logstderr=True)
+            if ecode != 0:
+                logger.warning('Rebase result does not include %s, something went wrong', target_branch)
+                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
+                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                _wait_for_enter()
+                return
+            logger.info('Rebase conflicts resolved')
 
         # Update tracking data with new base commit
         series['base-commit'] = target_head
@@ -2425,6 +2578,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             _wait_for_enter()
             return
 
+        # Switch back to the original branch
+        b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
         logger.info('Successfully rebased %s onto %s', review_branch, target_head[:12])
         _wait_for_enter()
 
@@ -2925,10 +3080,31 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return
             linkurl = linkmask % top_msgid
 
+            # Prepare blob ancestors for three-way merge if needed
+            if lser.complete:
+                _checked, mismatches = lser.check_applies_clean(gitdir=topdir)
+                if mismatches:
+                    rstart, rend = lser.make_fake_am_range(gitdir=topdir)
+                    if rstart and rend:
+                        logger.info('Prepared fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+
             try:
                 logger.info('Base: %s', base_commit)
                 b4.git_fetch_am_into_repo(topdir, ambytes=ambytes,
-                                          at_base=base_commit, origin=linkurl)
+                                          at_base=base_commit, origin=linkurl,
+                                          am_flags=['-3'])
+                b4.review.create_review_branch(topdir, review_branch,
+                                               base_commit, lser, linkurl,
+                                               linkmask, num_prereqs=0,
+                                               identifier=self._identifier,
+                                               status='reviewing')
+                logger.info('Review branch created: %s', review_branch)
+            except b4.AmConflictError as cex:
+                if not _resolve_worktree_am_conflict(topdir, cex):
+                    _wait_for_enter()
+                    return
+                b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
+                # Create the review branch from resolved result
                 b4.review.create_review_branch(topdir, review_branch,
                                                base_commit, lser, linkurl,
                                                linkmask, num_prereqs=0,

@@ -507,6 +507,58 @@ Toggle ``Mark as accepted`` to update the series status after the take.
 Press ``Ctrl-y`` to proceed with the actual take, or ``Escape`` to back
 out without making any changes.
 
+.. _review_conflict_resolution:
+
+Conflict resolution
+~~~~~~~~~~~~~~~~~~~~
+Several TUI operations apply patches and can encounter conflicts:
+
+* **Checking out a series for review** (``r`` from the tracking list)
+* **Upgrading to a newer revision** (Upgrade from the action menu)
+* **Taking patches** (Take from the action menu)
+* **Rebasing** (Rebase from the action menu)
+
+The first three use ``git am`` with three-way merge (``git am -3``),
+which resolves many conflicts automatically. When the patches come
+from lore and the referenced blobs are not already in your repository,
+b4 creates a temporary fake commit range so the three-way merge can
+find them. If the blobs are already present in your tree, this step is
+skipped.
+
+When a conflict does occur, b4 suspends the TUI and drops you into an
+interactive shell so you can resolve it. The workflow depends on the
+operation:
+
+**For checkout, upgrade, and take (merge)** — the shell opens inside
+the worktree where the conflict happened:
+
+* Inspect the conflict with ``git diff`` or ``git status``
+* Edit the affected files to resolve the conflict
+* Stage your fixes with ``git add``
+* Run ``git am --continue`` to finish applying
+* Type ``exit`` to return to the TUI
+
+If you can't resolve the conflict, run ``git am --abort`` and then
+``exit``. B4 cleans up the worktree and returns you to the TUI without
+making any changes to your branch.
+
+**For take (linear)** — patches are applied directly to your target
+branch, so the shell opens in your repository directory. The same
+workflow applies: resolve, ``git am --continue``, and ``exit``.
+
+**For rebase** — the shell opens in your repository directory with a
+``git rebase`` in progress:
+
+* Inspect the conflict with ``git diff`` or ``git status``
+* Edit the affected files to resolve the conflict
+* Stage your fixes with ``git add``
+* Run ``git rebase --continue`` to move to the next patch
+* Repeat if further patches conflict
+* Type ``exit`` to return to the TUI
+
+If you can't resolve the conflict, run ``git rebase --abort`` and then
+``exit``. B4 returns you to the TUI without making any changes.
+
 Rebasing
 ~~~~~~~~
 Open the action menu (``a``) and select **Rebase** to rebase the review
@@ -757,26 +809,26 @@ commit SHAs, and other tracking data.
 
 The available keys are:
 
-====================  ================================================
-Key                   Description
-====================  ================================================
-``branch``            Full branch name
-``change-id``         Series change-id
-``revision``          Current revision number
-``status``            Review status (new, reviewing, accepted, etc.)
-``identifier``        Project identifier
-``subject``           Series subject line
-``sender``            Author in ``Name <email>`` format
-``link``              Link to the series on the mailing list
-``base-commit``       Base commit SHA
-``first-patch-commit``  SHA of the first patch commit
-``series-range``      Commit range of the patch commits
-``num-patches``       Number of patch commits
-``num-prereqs``       Number of prerequisite commits
-``complete``          Whether all expected patches were received
-``target-branch``     Per-series target branch (or config default)
-``commit-HASH``       Subject of each patch commit (dynamic keys)
-====================  ================================================
+========================  ================================================
+Key                       Description
+========================  ================================================
+``branch``                Full branch name
+``change-id``             Series change-id
+``revision``              Current revision number
+``status``                Review status (new, reviewing, accepted, etc.)
+``identifier``            Project identifier
+``subject``               Series subject line
+``sender``                Author in ``Name <email>`` format
+``link``                  Link to the series on the mailing list
+``base-commit``           Base commit SHA
+``first-patch-commit``    SHA of the first patch commit
+``series-range``          Commit range of the patch commits
+``num-patches``           Number of patch commits
+``num-prereqs``           Number of prerequisite commits
+``complete``              Whether all expected patches were received
+``target-branch``         Per-series target branch (or config default)
+``commit-HASH``           Subject of each patch commit (dynamic keys)
+========================  ================================================
 
 .. versionadded:: v0.15
 

@@ -73,6 +73,13 @@ __VERSION__ = '0.15-dev'
 PW_REST_API_VERSION = '1.2'
 
 
+class AmConflictError(RuntimeError):
+    def __init__(self, worktree_path: str, output: str):
+        self.worktree_path = worktree_path
+        self.output = output
+        super().__init__(output)
+
+
 def _dkim_log_filter(record: logging.LogRecord) -> bool:
     # Hide all dkim logging output in normal operation by setting the level to
     # DEBUG. If debugging output has been enabled then prefix dkim logging
@@ -4751,32 +4758,65 @@ def git_revparse_obj(gitobj: str, gitdir: Optional[str] = None) -> str:
     return out.strip()
 
 
+def _rewrite_fetch_head_origin(topdir: str, old_origin: str, new_origin: str) -> None:
+    """Rewrite FETCH_HEAD to replace old_origin with a descriptive message."""
+    ecode, fhf = git_run_command(topdir, ['rev-parse', '--git-path', 'FETCH_HEAD'],
+                                 logstderr=True)
+    if ecode > 0:
+        return
+    fhf = fhf.rstrip()
+    with open(fhf, 'r') as fhh:
+        contents = fhh.read()
+    mmsg = 'patches from %s' % new_origin
+    new_contents = contents.replace(old_origin, mmsg)
+    if new_contents != contents:
+        with open(fhf, 'w') as fhh:
+            fhh.write(new_contents)
+
+
 def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str = 'HEAD',
-                           origin: Optional[str] = None, check_only: bool = False) -> None:
+                           origin: Optional[str] = None, check_only: bool = False,
+                           am_flags: Optional[List[str]] = None) -> None:
     if gitdir is None:
         gitdir = os.getcwd()
     topdir = git_get_toplevel(gitdir)
 
-    with git_temp_worktree(topdir, at_base) as gwt:
+    common_dir = git_get_common_dir(topdir)
+    if not common_dir:
+        raise RuntimeError('Unable to determine git common dir')
+    gwt = os.path.join(common_dir, 'b4-shazam-worktree')
+
+    # Clean up any stale worktree from a previous run
+    if os.path.exists(gwt):
+        git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
+
+    gitargs = ['worktree', 'add', '--detach', '--no-checkout', gwt]
+    if at_base:
+        gitargs.append(at_base)
+    ecode, out = git_run_command(topdir, gitargs, logstderr=True)
+    if ecode > 0:
+        raise RuntimeError('Failed to create worktree: %s' % out.strip())
+
+    cleanup = True
+    try:
         logger.info('Magic: Preparing a sparse worktree')
-        ecode, out = git_run_command(gwt, ['sparse-checkout', 'set'], logstderr=True)
+        ecode, out = git_run_command(gwt, ['sparse-checkout', 'set'], logstderr=True, rundir=gwt)
         if ecode > 0:
             logger.critical('Error running sparse-checkout set')
             logger.critical(out)
             raise RuntimeError
-        ecode, out = git_run_command(gwt, ['checkout', '-f'], logstderr=True)
+        ecode, out = git_run_command(gwt, ['checkout', '-f'], logstderr=True, rundir=gwt)
         if ecode > 0:
             logger.critical('Error running checkout into sparse workdir')
             logger.critical(out)
             raise RuntimeError
-        ecode, out = git_run_command(gwt, ['am'], stdin=ambytes, logstderr=True)
+        amargs = ['am']
+        if am_flags:
+            amargs.extend(am_flags)
+        ecode, out = git_run_command(gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt)
         if ecode > 0:
-            logger.critical('Unable to cleanly apply series, see failure log below')
-            logger.critical('---')
-            logger.critical(out.strip())
-            logger.critical('---')
-            logger.critical('Not fetching into FETCH_HEAD')
-            raise RuntimeError
+            cleanup = False
+            raise AmConflictError(gwt, out.strip())
         if check_only:
             return
         logger.info('---')
@@ -4789,24 +4829,12 @@ def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str =
             logger.critical('Unable to fetch from the worktree')
             logger.critical(out.strip())
             raise RuntimeError
+    finally:
+        if cleanup:
+            git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
 
-    if not origin:
-        return
-
-    # Update the FETCH_HEAD to point where we actually fetched from
-    gitargs = ['rev-parse', '--git-path', 'FETCH_HEAD']
-    ecode, fhf = git_run_command(topdir, gitargs, logstderr=True)
-    if ecode > 0:
-        logger.critical('Unable to find FETCH_HEAD')
-        logger.critical(out.strip())
-        raise RuntimeError
-    with open(fhf.rstrip(), 'r') as fhh:
-        contents = fhh.read()
-    mmsg = 'patches from %s' % origin
-    new_contents = contents.replace(str(gwt), mmsg)
-    if new_contents != contents:
-        with open(fhf.rstrip(), 'w') as fhh:
-            fhh.write(new_contents)
+    if origin and topdir:
+        _rewrite_fetch_head_origin(topdir, gwt, origin)
 
 
 def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
