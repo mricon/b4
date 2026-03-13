@@ -232,6 +232,7 @@ def _review_help_lines(has_agent: bool = False) -> List[str]:
         '  [bold]f[/bold]         Toggle follow-up comments from lore\n',
         '  [bold]d[/bold]         Toggle patch done state\n',
         '  [bold]x[/bold]         Toggle patch skip state\n',
+        '  [bold]H[/bold]         Toggle hiding of skipped patches\n',
     ]
     if has_agent:
         lines.append('  [bold]a[/bold]         Run review agent\n')

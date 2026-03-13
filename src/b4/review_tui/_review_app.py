@@ -201,6 +201,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         Binding('a', 'agent', 'agent'),
         Binding('d', 'patch_done', 'done'),
         Binding('x', 'patch_skip', 'skip'),
+        Binding('H', 'hide_skipped', 'hide skipped', key_display='H', show=False),
         Binding('P', 'prior_review', 'prior', key_display='P'),
         Binding('C', 'check', 'checks', key_display='C'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
@@ -253,6 +254,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._followup_comments: Dict[int, List[Dict[str, Any]]] = {}
         self._followup_header_map: Dict[int, Dict[str, Any]] = {}
         self._reply_sent: bool = False
+        self._hide_skipped: bool = False
         self._check_loading: Optional[Any] = None
 
     def _get_check_context(self) -> Optional[Tuple[str, str, str]]:
@@ -330,6 +332,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             subject = self._commit_subjects[idx] if idx < len(self._commit_subjects) else '(unknown)'
             patch_meta = self._patches[idx] if idx < len(self._patches) else {}
             state = b4.review._get_patch_state(patch_meta, self._usercfg)
+            if self._hide_skipped and state == 'skip':
+                continue
             mark = PATCH_STATE_MARKERS[state]
             label = f'{mark} {patch_num}/{total} {subject[:40]}'
             lv.append(PatchListItem(label, patch_num, state))
@@ -1306,12 +1310,31 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         new_state = '' if current == 'skip' else 'skip'
         b4.review._set_patch_state(target, self._usercfg, new_state)
         self._save_tracking()
-        self._refresh_patch_item(self._selected_idx)
-        if self._preview_mode:
+        if self._hide_skipped and new_state == 'skip':
+            # Patch just got skipped while hiding is on — repopulate
+            self._selected_idx = 0 if self._has_cover else 1
+            self._populate_patch_list()
             self._show_content(self._selected_idx)
+        else:
+            self._refresh_patch_item(self._selected_idx)
+            if self._preview_mode:
+                self._show_content(self._selected_idx)
         total = len(self._commit_shas)
         label = 'cover' if self._selected_idx == 0 else f'{self._selected_idx}/{total}'
         self.notify(f'{label} skipped' if new_state else f'{label} unskipped')
+        self.refresh_bindings()
+
+    def action_hide_skipped(self) -> None:
+        """Toggle visibility of skipped patches in the patch list."""
+        self._hide_skipped = not self._hide_skipped
+        # If current selection is skipped and we're hiding, move to first visible
+        if self._hide_skipped:
+            target = self._get_current_review_target()
+            if target and b4.review._get_patch_state(target, self._usercfg) == 'skip':
+                self._selected_idx = 0 if self._has_cover else 1
+        self._populate_patch_list()
+        self._show_content(self._selected_idx)
+        self.notify('Skipped patches hidden' if self._hide_skipped else 'Skipped patches shown')
 
     def action_send(self) -> None:
         """Collect review emails and show send confirmation dialog."""

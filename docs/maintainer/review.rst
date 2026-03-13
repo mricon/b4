@@ -322,6 +322,7 @@ Key                        Action
 ``a``                      Agent — run review LLM agent (if configured)
 ``d``                      Done — toggle "done" state on the current patch
 ``x``                      Skip — toggle "skip" state on the current patch
+``H``                      Hide skipped — toggle visibility of skipped patches
 ``C``                      CI checks — run check commands and show results
                            (see :ref:`ci_check_protocol`)
 ``e``                      Toggle email mode
@@ -407,7 +408,9 @@ Skip        ``x``   Intentionally skipped, exclude from outgoing emails
 
 Pressing ``d`` or ``x`` toggles the state for the current patch. The
 patch list on the left shows the state visually: done patches appear in
-bold, skipped patches appear dimmed.
+bold, skipped patches appear dimmed. Press ``H`` to hide skipped patches
+from the list entirely — useful for large series where many patches are
+irrelevant to your review.
 
 Skipped patches are automatically excluded when sending review emails.
 When taking patches via cherry-pick, skipped patches are pre-deselected
