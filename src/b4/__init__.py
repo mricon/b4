@@ -4866,15 +4866,24 @@ def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
         with open(temp_fpath, 'xb') as view_file:
             view_file.write(bdata)
 
-        sp = shlex.shlex(pager, posix=True)
-        sp.whitespace_split = True
-        cmdargs = list(sp) + [temp_fpath]
-        logger.debug('Running %s', ' '.join(cmdargs))
         # Strip -F (quit-if-one-screen) from LESS so the pager always
         # stays open, even when the output fits on a single screen.
         env = dict(os.environ)
         env['LESS'] = env.get('LESS', 'FRX').replace('F', '')
-        spop = subprocess.Popen(cmdargs, env=env)
+        if '|' in pager:
+            # Pager uses a pipeline (e.g. "diff-highlight | less -RFX"),
+            # so we must use the shell to interpret it.  Feed data on
+            # stdin since piped pagers read from the pipe, not from a
+            # file argument.
+            logger.debug('Running (shell): %s < %s', pager, temp_fpath)
+            with open(temp_fpath, 'rb') as fh:
+                spop = subprocess.Popen(pager, shell=True, stdin=fh, env=env)
+        else:
+            sp = shlex.shlex(pager, posix=True)
+            sp.whitespace_split = True
+            cmdargs = list(sp) + [temp_fpath]
+            logger.debug('Running %s', ' '.join(cmdargs))
+            spop = subprocess.Popen(cmdargs, env=env)
         spop.wait()
 
 
