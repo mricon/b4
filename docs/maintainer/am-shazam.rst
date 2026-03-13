@@ -265,7 +265,7 @@ the merge commit.
   you can merge just as if it were a pull request:
 
   1. b4 prepares a temporary sparse worktree
-  2. b4 applies the series to that worktree
+  2. b4 applies the series to that worktree using three-way merge
   3. if ``git am`` completes successfully, b4 fetches that tree into
      your current tree's ``FETCH_HEAD``, and then gets rid of the
      temporary tree
@@ -284,5 +284,73 @@ the merge commit.
   Exactly the same as ``--make-fetch-head``, but will actually execute
   the suggested ``git merge`` command.
 
+``--resolve``
+  Used with ``-H`` or ``-M``. When patches fail to apply cleanly,
+  enables interactive conflict resolution instead of simply reporting
+  the failure. See :ref:`shazam_conflict_resolution` below.
+
+``--continue``
+  Continue after resolving merge conflicts from ``--resolve``. Run this
+  after fixing the conflicts in your working tree.
+
+``--abort``
+  Abort a conflicted shazam and clean up any saved state.
+
 Please also see the :ref:`shazam_settings` section for some
 configuration file options that affect some of ``b4 shazam`` behaviour.
+
+.. _shazam_conflict_resolution:
+
+Dealing with patches that don't apply cleanly
+----------------------------------------------
+When a patch series doesn't apply cleanly, you have several options
+depending on how you want to handle the conflict.
+
+Three-way merge
+~~~~~~~~~~~~~~~~
+``b4 shazam -H`` uses three-way merge (``git am -3``) when applying
+patches. Three-way merge uses the blob hashes recorded in the patch's
+``index`` lines to reconstruct a common ancestor, which lets git
+resolve many conflicts that a plain text apply cannot.
+
+When the patches come from lore and the referenced blobs are not already
+in your repository, b4 automatically creates a temporary fake commit
+range that contains the right blobs, so the three-way merge can find
+them. If the blobs are already present in your tree (for example,
+because the patches were made against a recent commit), this step is
+skipped.
+
+This means that many series that would previously fail to apply now
+succeed without any manual intervention.
+
+Conflict resolution
+~~~~~~~~~~~~~~~~~~~~
+If a series still fails to apply even with three-way merge, ``b4
+shazam -H`` prints an error and exits. To handle this interactively,
+add the ``--resolve`` flag::
+
+    b4 shazam -H --resolve <msgid>
+
+With ``--resolve``, b4 does the following when a conflict occurs:
+
+1. Applies as many patches as it can cleanly.
+2. Fetches the successfully applied patches into ``FETCH_HEAD`` and
+   merges them into your current branch.
+3. Applies remaining patches one by one using ``git apply --3way``.
+4. If a patch has conflicts, b4 stops and tells you which files need
+   attention.
+
+At this point, resolve the conflicts in your working tree (the usual
+``git diff``, edit, ``git add`` cycle), then run::
+
+    b4 shazam --continue
+
+B4 picks up where it left off — it applies any remaining patches and
+finishes the merge. If all goes well, you end up with a merge commit
+just as if the series had applied cleanly.
+
+If you decide you don't want to proceed, run::
+
+    b4 shazam --abort
+
+This cleans up the saved state and leaves your branch as it was before.

@@ -272,9 +272,11 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         elif not lser.complete:
             logger.critical('WARNING: cannot prepare 3-way (series incomplete)')
         else:
-            rstart, rend = lser.make_fake_am_range(gitdir=None)
-            if rstart and rend:
-                logger.info('Preared a fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+            _checked, mismatches = lser.check_applies_clean(gitdir=topdir)
+            if mismatches:
+                rstart, rend = lser.make_fake_am_range(gitdir=None)
+                if rstart and rend:
+                    logger.info('Prepared fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
 
     logger.critical('---')
     if lser.partial_reroll:
@@ -1120,7 +1122,7 @@ def shazam_continue(cmdargs: argparse.Namespace) -> None:
     b4.git_run_command(topdir, ['add', '-u'], logstderr=True, rundir=topdir)
 
     # Check for remaining unmerged files
-    ecode, unmerged = b4.git_run_command(topdir, ['diff', '--name-only', '--diff-filter=U'],
+    _ecode, unmerged = b4.git_run_command(topdir, ['diff', '--name-only', '--diff-filter=U'],
                                           logstderr=True, rundir=topdir)
     if unmerged.strip():
         logger.critical('There are still unresolved conflicts:')

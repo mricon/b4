@@ -4758,6 +4758,22 @@ def git_revparse_obj(gitobj: str, gitdir: Optional[str] = None) -> str:
     return out.strip()
 
 
+def _rewrite_fetch_head_origin(topdir: str, old_origin: str, new_origin: str) -> None:
+    """Rewrite FETCH_HEAD to replace old_origin with a descriptive message."""
+    ecode, fhf = git_run_command(topdir, ['rev-parse', '--git-path', 'FETCH_HEAD'],
+                                 logstderr=True)
+    if ecode > 0:
+        return
+    fhf = fhf.rstrip()
+    with open(fhf, 'r') as fhh:
+        contents = fhh.read()
+    mmsg = 'patches from %s' % new_origin
+    new_contents = contents.replace(old_origin, mmsg)
+    if new_contents != contents:
+        with open(fhf, 'w') as fhh:
+            fhh.write(new_contents)
+
+
 def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str = 'HEAD',
                            origin: Optional[str] = None, check_only: bool = False,
                            am_flags: Optional[List[str]] = None) -> None:
@@ -4817,23 +4833,8 @@ def git_fetch_am_into_repo(gitdir: Optional[str], ambytes: bytes, at_base: str =
         if cleanup:
             git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
 
-    if not origin:
-        return
-
-    # Update the FETCH_HEAD to point where we actually fetched from
-    gitargs = ['rev-parse', '--git-path', 'FETCH_HEAD']
-    ecode, fhf = git_run_command(topdir, gitargs, logstderr=True)
-    if ecode > 0:
-        logger.critical('Unable to find FETCH_HEAD')
-        logger.critical(out.strip())
-        raise RuntimeError
-    with open(fhf.rstrip(), 'r') as fhh:
-        contents = fhh.read()
-    mmsg = 'patches from %s' % origin
-    new_contents = contents.replace(gwt, mmsg)
-    if new_contents != contents:
-        with open(fhf.rstrip(), 'w') as fhh:
-            fhh.write(new_contents)
+    if origin and topdir:
+        _rewrite_fetch_head_origin(topdir, gwt, origin)
 
 
 def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:

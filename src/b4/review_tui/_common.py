@@ -772,7 +772,7 @@ def _render_email_to_viewer(
             viewer.write(Text(line))
 
 
-def _suspend_to_shell(hint: str = 'b4 review') -> None:
+def _suspend_to_shell(hint: str = 'b4 review', cwd: Optional[str] = None) -> None:
     """Spawn an interactive sub-shell with a PS1 hint.
 
     For bash and zsh, a temporary rc file is used so the user's normal
@@ -802,7 +802,7 @@ def _suspend_to_shell(hint: str = 'b4 review') -> None:
             rcf.write(source)
             rcfile = rcf.name
         try:
-            subprocess.run([shell, '--rcfile', rcfile], env=env)
+            subprocess.run([shell, '--rcfile', rcfile], env=env, cwd=cwd)
         finally:
             os.unlink(rcfile)
     elif shellname == 'zsh':
@@ -814,9 +814,9 @@ def _suspend_to_shell(hint: str = 'b4 review') -> None:
                 f.write('[ -f "$ZDOTDIR/.zshrc" ] && . "$ZDOTDIR/.zshrc"\n')
                 f.write(f'PS1="({hint}) $PS1"\n')
             env['ZDOTDIR'] = tmpdir
-            subprocess.run([shell], env=env)
+            subprocess.run([shell], env=env, cwd=cwd)
     else:
-        subprocess.run([shell], env=env)
+        subprocess.run([shell], env=env, cwd=cwd)
 
 
 def _addrs_to_lines(header_str: str) -> str:
