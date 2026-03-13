@@ -529,27 +529,33 @@ screen shows the generated message with keybindings to **Send** (``S``),
 **Queuing thanks for delayed delivery**
 
 When :term:`b4.thanks-commit-url-mask` is configured, the thank-you
-preview also offers a **Queue** option (``W``). Queuing stores the
-message in a local database (``mailqueue.sqlite3`` in
-``$XDG_DATA_HOME/b4/``) instead of sending it immediately. This is
-useful when you want to push your commits to a public tree before
-sending thank-you messages — the message references commit URLs that
-may not resolve until the push is complete.
+preview also offers a **Queue** option (``W``). Queuing writes the
+message as an RFC 2822 file in ``.git/b4-review/queue/`` instead of
+sending it immediately. This is useful when you want to push your
+commits to a public tree before sending thank-you messages — the
+message references commit URLs that may not resolve until the push is
+complete.
+
+Files are named ``{change-id}-v{revision}.msg`` and the target URL is
+recorded as an ``X-Check-URL`` header, so you can inspect or hand-edit
+queued messages with any mail tool.
 
 The series remains in ``accepted`` status while its thank-you message is
 queued. The title bar shows a queue count indicator on the right side
 (e.g. ``3 queued``) and the ``Q`` keybinding appears in the footer.
 
 Press ``Q`` to open the queue viewer, which lists all pending messages
-for the current project with their subjects and target URLs. From
-this screen, press ``Q`` again to attempt delivery: b4 checks each
-queued message's commit URL with an HTTP HEAD request, and delivers
-the message via SMTP once the URL resolves. Successfully delivered
-series are automatically marked as ``thanked``.
+with their subjects and target URLs. From this screen, press ``Q``
+again to attempt delivery: b4 checks each queued message's commit URL
+with an HTTP HEAD request, and delivers the message via SMTP once the
+URL resolves. Successfully delivered messages are moved to
+``.git/b4-review/queue/sent/`` and their series are automatically
+marked as ``thanked``.
 
-When running with ``--email-dry-run``, queued messages are tagged as
-dry-run in the database and the commit URL check is skipped, allowing
-end-to-end testing of the queue workflow without sending real email.
+When running with ``--email-dry-run``, queued messages are written to
+``.git/b4-review/queue/dryrun/`` and the commit URL check is skipped,
+allowing end-to-end testing of the queue workflow without sending real
+email.
 
 Archive and abandon
 ~~~~~~~~~~~~~~~~~~~

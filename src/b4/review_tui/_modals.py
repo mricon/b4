@@ -1409,11 +1409,10 @@ class QueueDeliveryScreen(ModalScreen[Optional[Tuple[int, int, List[Tuple[str, i
     }
     """
 
-    def __init__(self, identifier: str, total: int,
+    def __init__(self, total: int,
                  dryrun: bool = False,
                  patatt_sign: bool = True) -> None:
         super().__init__()
-        self._identifier = identifier
         self._total = total
         self._dryrun = dryrun
         self._patatt_sign = patatt_sign
@@ -1440,7 +1439,6 @@ class QueueDeliveryScreen(ModalScreen[Optional[Tuple[int, int, List[Tuple[str, i
                 self.app.call_from_thread(self._update_progress, completed, total, status)
 
         return b4.ty.process_queue(
-            self._identifier,
             dryrun=self._dryrun,
             patatt_sign=self._patatt_sign,
             progress_cb=_on_progress,

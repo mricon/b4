@@ -5,9 +5,7 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import datetime
 import os
-import sqlite3
 import sys
 
 import b4
@@ -677,90 +675,77 @@ def get_wanted_branch(cmdargs: argparse.Namespace) -> str:
     return wantbranch
 
 
-QUEUE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS queue (
-    id INTEGER PRIMARY KEY,
-    added TEXT NOT NULL,
-    identifier TEXT NOT NULL,
-    change_id TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    checkurl TEXT NOT NULL,
-    message TEXT NOT NULL,
-    dryrun INTEGER NOT NULL DEFAULT 0
-);
-"""
+def _get_queue_dir(dryrun: bool = False) -> str:
+    """Return the path to the thanks queue directory.
+
+    Uses .git/b4-review/queue (via git-common-dir for worktree
+    support).  Dry-run messages go into a ``dryrun`` subdirectory.
+    """
+    gitdir = b4.git_get_common_dir()
+    if not gitdir:
+        raise RuntimeError('Not inside a git repository')
+    qdir = os.path.join(gitdir, 'b4-review', 'queue')
+    if dryrun:
+        qdir = os.path.join(qdir, 'dryrun')
+    return qdir
 
 
-def get_queue_db() -> sqlite3.Connection:
-    """Open (or create) the thanks queue database."""
-    datadir = b4.get_data_dir()
-    db_path = os.path.join(datadir, 'mailqueue.sqlite3')
-    is_new = not os.path.exists(db_path)
-    conn = sqlite3.connect(db_path)
-    if is_new:
-        conn.executescript(QUEUE_SCHEMA)
-        conn.commit()
-    return conn
+def _queue_filename(change_id: str, revision: int) -> str:
+    """Return the queue filename for a series: ``{change_id}-v{revision}.msg``."""
+    return f'{change_id}-v{revision}.msg'
 
 
-def queue_message(msg: EmailMessage, checkurl: str, identifier: str,
+def _parse_queue_file(filepath: str) -> Optional[EmailMessage]:
+    """Parse an RFC 2822 .msg file, returning None on error."""
+    try:
+        with open(filepath, 'rb') as fh:
+            return email.parser.BytesParser(policy=b4.emlpolicy).parse(fh)
+    except Exception:
+        return None
+
+
+def queue_message(msg: EmailMessage, checkurl: str,
                   change_id: str, revision: int,
                   dryrun: bool = False) -> None:
-    """Insert a thanks message into the queue for later delivery."""
-    conn = get_queue_db()
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
-    conn.execute(
-        'INSERT INTO queue (added, identifier, change_id, revision, checkurl, message, dryrun)'
-        ' VALUES (?, ?, ?, ?, ?, ?, ?)',
-        (now, identifier, change_id, revision,
-         checkurl, msg_bytes.decode('utf-8', errors='replace'),
-         1 if dryrun else 0),
-    )
-    conn.commit()
-    conn.close()
+    """Write a thanks message to the file-based queue."""
+    qdir = _get_queue_dir(dryrun=dryrun)
+    os.makedirs(qdir, exist_ok=True)
+    # Inject the check URL as a header
+    if 'X-Check-URL' in msg:
+        del msg['X-Check-URL']
+    msg['X-Check-URL'] = checkurl
+    filepath = os.path.join(qdir, _queue_filename(change_id, revision))
+    with open(filepath, 'wb') as fh:
+        fh.write(msg.as_bytes(policy=b4.emlpolicy))
 
 
-def get_queued_count(identifier: str, dryrun: bool = False) -> int:
-    """Return the number of queued thanks messages for an identifier."""
-    try:
-        conn = get_queue_db()
-    except Exception:
+def get_queued_count(dryrun: bool = False) -> int:
+    """Return the number of queued .msg files."""
+    qdir = _get_queue_dir(dryrun=dryrun)
+    if not os.path.isdir(qdir):
         return 0
-    row = conn.execute(
-        'SELECT COUNT(*) FROM queue WHERE identifier = ? AND dryrun = ?',
-        (identifier, 1 if dryrun else 0),
-    ).fetchone()
-    count = row[0] if row else 0
-    conn.close()
-    return count
+    return sum(1 for f in os.listdir(qdir) if f.endswith('.msg'))
 
 
-def get_queued_messages(identifier: str,
-                        dryrun: bool = False) -> List[Dict[str, str]]:
+def get_queued_messages(dryrun: bool = False) -> List[Dict[str, str]]:
     """Return queued message details for display.
 
-    Each entry has keys: added, subject, checkurl.
+    Each entry has keys: filename, subject, checkurl.
     """
-    try:
-        conn = get_queue_db()
-    except Exception:
+    qdir = _get_queue_dir(dryrun=dryrun)
+    if not os.path.isdir(qdir):
         return []
-    rows = conn.execute(
-        'SELECT added, checkurl, message FROM queue'
-        ' WHERE identifier = ? AND dryrun = ? ORDER BY added',
-        (identifier, 1 if dryrun else 0),
-    ).fetchall()
-    conn.close()
     results: List[Dict[str, str]] = []
-    for added, checkurl, msg_text in rows:
-        subject = ''
-        msg = email.parser.Parser(policy=b4.emlpolicy).parsestr(msg_text)
-        subj = msg.get('Subject')
-        if subj:
-            subject = str(subj)
+    for fname in sorted(os.listdir(qdir)):
+        if not fname.endswith('.msg'):
+            continue
+        msg = _parse_queue_file(os.path.join(qdir, fname))
+        if msg is None:
+            continue
+        subject = str(msg.get('Subject', '(no subject)'))
+        checkurl = str(msg.get('X-Check-URL', ''))
         results.append({
-            'added': added,
+            'filename': fname,
             'subject': subject,
             'checkurl': checkurl,
         })
@@ -773,39 +758,59 @@ ProgressCallbackT = Optional[Callable[[int, int, str], None]]
 QueueResultT = Tuple[int, int, List[Tuple[str, int]]]
 
 
-def process_queue(identifier: str, dryrun: bool = False,
+def _parse_change_revision(fname: str) -> Tuple[str, int]:
+    """Extract (change_id, revision) from a queue filename."""
+    stem = fname
+    if stem.endswith('.msg'):
+        stem = stem[:-4]
+    # Last component after -v is the revision
+    if '-v' in stem:
+        base, _, rev_str = stem.rpartition('-v')
+        try:
+            return (base, int(rev_str))
+        except ValueError:
+            pass
+    return (stem, 0)
+
+
+def process_queue(dryrun: bool = False,
                   patatt_sign: bool = True,
                   progress_cb: ProgressCallbackT = None) -> QueueResultT:
     """Check queued messages and deliver those whose commits are visible.
 
-    Only processes messages matching *identifier*.
     *progress_cb*, when provided, is called as
     ``progress_cb(completed, total, status_text)`` after each message.
     Returns (delivered, still_pending, delivered_series) where
     delivered_series is a list of (change_id, revision) tuples.
     """
-    conn = get_queue_db()
-    rows = conn.execute(
-        'SELECT id, change_id, revision, checkurl, message'
-        ' FROM queue WHERE identifier = ? AND dryrun = ?',
-        (identifier, 1 if dryrun else 0),
-    ).fetchall()
-    if not rows:
-        conn.close()
+    qdir = _get_queue_dir(dryrun=dryrun)
+    if not os.path.isdir(qdir):
         return (0, 0, [])
 
-    total = len(rows)
+    files = sorted(f for f in os.listdir(qdir) if f.endswith('.msg'))
+    if not files:
+        return (0, 0, [])
+
+    sentdir = os.path.join(qdir, 'sent')
+    total = len(files)
     delivered = 0
     still_pending = 0
     delivered_series: List[Tuple[str, int]] = []
-    for i, (row_id, change_id, revision, checkurl, msg_text) in enumerate(rows):
-        msg = email.parser.Parser(policy=b4.emlpolicy).parsestr(msg_text)
+
+    for i, fname in enumerate(files):
+        filepath = os.path.join(qdir, fname)
+        msg = _parse_queue_file(filepath)
+        if msg is None:
+            still_pending += 1
+            continue
+
+        checkurl = str(msg.get('X-Check-URL', ''))
         subject = str(msg.get('Subject', '(no subject)'))
         if progress_cb:
             progress_cb(i, total, f'Checking: {subject}')
 
         # Check if the commit is publicly visible
-        if not dryrun:
+        if not dryrun and checkurl:
             try:
                 session = b4.get_requests_session()
                 resp = session.head(checkurl, timeout=15,
@@ -821,24 +826,29 @@ def process_queue(identifier: str, dryrun: bool = False,
                     progress_cb(i + 1, total, f'Check failed: {subject}')
                 continue
 
+        # Strip the internal header before sending
+        if 'X-Check-URL' in msg:
+            del msg['X-Check-URL']
+
         # Commit is visible — deliver the message
         try:
             smtp, fromaddr = b4.get_smtp(dryrun=dryrun)
             b4.send_mail(smtp, [msg], fromaddr=fromaddr,
                          patatt_sign=patatt_sign, dryrun=dryrun,
                          output_dir=None, reflect=False)
-            conn.execute('DELETE FROM queue WHERE id = ?', (row_id,))
-            conn.commit()
+            # Move to sent/
+            os.makedirs(sentdir, exist_ok=True)
+            os.rename(filepath, os.path.join(sentdir, fname))
             delivered += 1
+            change_id, revision = _parse_change_revision(fname)
             delivered_series.append((change_id, revision))
         except Exception as ex:
-            logger.warning('Failed to send queued message %d: %s', row_id, ex)
+            logger.warning('Failed to send queued message %s: %s', fname, ex)
             still_pending += 1
 
         if progress_cb:
             progress_cb(i + 1, total, subject)
 
-    conn.close()
     return (delivered, still_pending, delivered_series)
 
 

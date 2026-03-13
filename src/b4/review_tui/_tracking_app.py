@@ -3383,7 +3383,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         change_id = series.get('change_id', '')
         revision = series.get('revision', 1)
         try:
-            b4.ty.queue_message(msg, checkurl, self._identifier,
+            b4.ty.queue_message(msg, checkurl,
                                 change_id, revision,
                                 dryrun=self._email_dryrun)
         except Exception as ex:
@@ -3430,8 +3430,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def _refresh_queue_indicator(self) -> None:
         """Update the title-bar queue count and Q binding visibility."""
         import b4.ty
-        self._queue_count = b4.ty.get_queued_count(self._identifier,
-                                                    dryrun=self._email_dryrun)
+        self._queue_count = b4.ty.get_queued_count(dryrun=self._email_dryrun)
         try:
             right = self.query_one('#title-right', Static)
         except Exception:
@@ -3445,8 +3444,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def action_process_queue(self) -> None:
         """Show the queue modal and optionally deliver."""
         import b4.ty
-        entries = b4.ty.get_queued_messages(self._identifier,
-                                             dryrun=self._email_dryrun)
+        entries = b4.ty.get_queued_messages(dryrun=self._email_dryrun)
         if not entries:
             self.notify('No queued thanks messages')
             return
@@ -3492,7 +3490,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         self.push_screen(
             QueueDeliveryScreen(
-                self._identifier, self._queue_count,
+                self._queue_count,
                 dryrun=self._email_dryrun,
                 patatt_sign=self._patatt_sign,
             ),
