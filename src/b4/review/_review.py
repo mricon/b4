@@ -15,6 +15,7 @@ import re
 import shutil
 import textwrap
 import sys
+import urllib.parse
 
 import b4
 import b4.mbox
@@ -669,8 +670,11 @@ _NACK_TRAILER_KEY = 'nacked-by'
 def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     """Derive the effective per-patch state for the current user.
 
-    Returns 'done', 'draft', 'skip', or '' (no state).
+    Returns 'done', 'draft', 'external', 'skip', or '' (no state).
     Only 'done' and 'skip' are stored explicitly; other states are derived.
+    The 'external' state indicates that external reviewers (agents,
+    sashiko, follow-ups) have inline comments but the maintainer has
+    not yet commented.
     """
     review = _get_my_review(target, usercfg)
     explicit = str(review.get('patch-state', ''))
@@ -686,6 +690,12 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
         return 'done'
     if review.get('comments') or review.get('reply', ''):
         return 'draft'
+    # Check for external reviewer comments
+    my_email = str(usercfg.get('email', ''))
+    all_reviews = target.get('reviews', {})
+    if any(addr != my_email and rev.get('comments')
+           for addr, rev in all_reviews.items()):
+        return 'external'
     return ''
 
 
@@ -734,6 +744,7 @@ def _extract_patch_comments(edited: str, track_content: bool = False,
     COMMENT_HEADER = 1
     COMMENT_BODY = 2
     COMMENT_TRAILER = 3
+    ATTRIBUTED_SKIP = 4
 
     # Skip everything before the first "diff --git" line
     in_diff = False
@@ -775,12 +786,26 @@ def _extract_patch_comments(edited: str, track_content: bool = False,
 
         stripped = line.strip()
 
-        # Comment header: skip decorative > lines until body starts
+        # Comment header: skip decorative > lines until body starts.
+        # If a >>> line has non-space content after it (attribution),
+        # the entire block is external and should be skipped.
         if state == COMMENT_HEADER:
             if stripped.startswith(('>', '+>')):
+                # Check for attribution: >>> followed by non-space content
+                bare = stripped.lstrip('+').rstrip()
+                after_arrows = bare.lstrip('>')
+                if after_arrows and not after_arrows.isspace():
+                    # Attributed comment block — skip until <<<
+                    state = ATTRIBUTED_SKIP
                 continue
             state = COMMENT_BODY
             # Fall through to COMMENT_BODY handling below
+
+        # Attributed skip: discard everything until closing <<< delimiter
+        if state == ATTRIBUTED_SKIP:
+            if re.fullmatch(r'\+?<+', stripped):
+                state = COMMENT_TRAILER
+            continue
 
         # Comment body: collect lines until closing < delimiter
         if state == COMMENT_BODY:
@@ -883,6 +908,12 @@ def _resolve_comment_positions(
     updates each comment that carries a ``content`` key to the correct
     position.  Comments without ``content`` (or whose content is not
     found) keep their original counted position.
+
+    Content is matched with the diff prefix character (``+``, ``-``,
+    or ``\\x20``) stripped, so a sashiko context line (``\\x20\\tcode``)
+    correctly matches an addition line (``+\\tcode``) in a new-file diff.
+    When the same code line appears multiple times (e.g. ``return -EINVAL;``),
+    the occurrence closest to the comment's current position is chosen.
     """
     if not comments:
         return
@@ -898,9 +929,12 @@ def _resolve_comment_positions(
     a_line = 0
     b_line = 0
 
-    # Map content text -> (path, line); last occurrence wins if
-    # duplicates exist, but that is unlikely for real diff lines.
-    content_map: Dict[str, Tuple[str, int]] = {}
+    # Map normalized content -> list of (path, line) positions.
+    # We strip the leading diff prefix (+/-/ ) so that the same code
+    # line matches regardless of whether the source had it as context,
+    # addition, or deletion.  Duplicate lines (e.g. "return -EINVAL;")
+    # produce multiple entries; we pick the closest one later.
+    content_map: Dict[str, List[Tuple[str, int]]] = {}
 
     for line in diff_text.splitlines():
         if line.startswith(('--- a/', '--- /dev/null')):
@@ -920,21 +954,37 @@ def _resolve_comment_positions(
             b_line = int(hm.group(2))
             continue
 
+        # Strip the diff prefix for the content key
+        bare = line[1:] if line and line[0] in ('+', '-', ' ') else line
+
         if line.startswith('-'):
-            content_map[line] = (current_a_file, a_line)
+            content_map.setdefault(bare, []).append((current_a_file, a_line))
             a_line += 1
         elif line.startswith('+'):
-            content_map[line] = (current_b_file, b_line)
+            content_map.setdefault(bare, []).append((current_b_file, b_line))
             b_line += 1
         elif line.startswith(' ') or line == '':
-            content_map[line] = (current_b_file, b_line)
+            content_map.setdefault(bare, []).append((current_b_file, b_line))
             a_line += 1
             b_line += 1
 
     for c in to_resolve:
         content = c['content']
-        if content in content_map:
-            c['path'], c['line'] = content_map[content]
+        # Strip the diff prefix from the stored content too
+        bare = content[1:] if content and content[0] in ('+', '-', ' ') else content
+        positions = content_map.get(bare)
+        if not positions:
+            continue
+        if len(positions) == 1:
+            c['path'], c['line'] = positions[0]
+        else:
+            # Multiple occurrences — pick the one closest to the
+            # comment's current (source-derived) position and path.
+            cur_path = c['path']
+            cur_line = c['line']
+            best = min(positions,
+                       key=lambda p: (p[0] != cur_path, abs(p[1] - cur_line)))
+            c['path'], c['line'] = best
 
 
 def reanchor_patch_comments(
@@ -1146,12 +1196,351 @@ def _integrate_agent_reviews(
     return True
 
 
-def _reinsert_comments(diff_text: str, comments: List[Dict[str, Any]]) -> str:
+def _extract_comments_from_quoted_reply(text: str) -> List[Dict[str, Any]]:
+    """Extract inline comments from a ``> ``-quoted email reply.
+
+    This is the standard mailing-list code review format: the reviewer
+    quotes patch diff lines with ``> `` and intersperses their comments
+    as unquoted text.  Sashiko inline reviews use the same convention.
+
+    The ``> `` prefix is the authoritative signal for what is diff
+    content vs. reviewer commentary — quoted lines are diff, unquoted
+    lines are comments.  This avoids the ambiguity of stripping quotes
+    first and then trying to re-parse.
+
+    Returns a list of ``{'path', 'line', 'text', 'content'}`` dicts,
+    the same shape as :func:`_extract_patch_comments`.
+    """
+    hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
+    diff_git_re = re.compile(r'^diff --git a/(.*) b/(.*)$')
+
+    in_diff = False
+    in_hunk = False
+    current_a_file = ''
+    current_b_file = ''
+    a_line = 0
+    b_line = 0
+    last_diff_path = ''
+    last_diff_line = 0
+    last_diff_content = ''
+
+    comments: List[Dict[str, Any]] = []
+    pending_comment_lines: List[str] = []
+
+    def _flush_comment() -> None:
+        if pending_comment_lines and last_diff_path:
+            text = '\n'.join(pending_comment_lines).strip()
+            if text:
+                comment: Dict[str, Any] = {
+                    'path': last_diff_path,
+                    'line': last_diff_line,
+                    'text': text,
+                }
+                if last_diff_content:
+                    comment['content'] = last_diff_content
+                comments.append(comment)
+        pending_comment_lines.clear()
+
+    for line in text.splitlines():
+        # Unquoted lines are reviewer comments (or preamble/blank)
+        if not line.startswith('>'):
+            if line.strip() == '[ ... ]':
+                continue
+            if in_diff:
+                # Accumulate as comment text (including blank lines
+                # between paragraphs — they stay part of the comment)
+                pending_comment_lines.append(line)
+            continue
+
+        # Strip the quote prefix to get the raw diff line
+        if line.startswith('> '):
+            raw = line[2:]
+        else:
+            raw = line[1:]
+
+        # Once we see quoted diff content, any pending comment is done
+        if pending_comment_lines:
+            _flush_comment()
+
+        # Track diff structure
+        if not in_diff:
+            m = diff_git_re.match(raw)
+            if m:
+                in_diff = True
+                in_hunk = False
+                current_a_file = m.group(1)
+                current_b_file = m.group(2)
+            continue
+
+        m = diff_git_re.match(raw)
+        if m:
+            in_hunk = False
+            current_a_file = m.group(1)
+            current_b_file = m.group(2)
+            continue
+
+        if raw.startswith(('--- a/', '--- /dev/null')):
+            current_a_file = raw[4:]
+            continue
+        if raw.startswith(('+++ b/', '+++ /dev/null')):
+            current_b_file = raw[4:]
+            continue
+        if raw.startswith(('--- ', '+++ ')):
+            continue
+
+        hm = hunk_re.match(raw)
+        if hm:
+            a_line = int(hm.group(1))
+            b_line = int(hm.group(2))
+            last_diff_path = current_b_file
+            last_diff_line = b_line
+            in_hunk = True
+            continue
+
+        if not in_hunk:
+            # Structural lines outside hunks (index, mode, etc.)
+            continue
+
+        # Inside a hunk — track line numbers
+        if raw.startswith('-'):
+            last_diff_path = current_a_file
+            last_diff_line = a_line
+            last_diff_content = raw
+            a_line += 1
+        elif raw.startswith('+'):
+            last_diff_path = current_b_file
+            last_diff_line = b_line
+            last_diff_content = raw
+            b_line += 1
+        elif raw.startswith(' ') or raw == '':
+            last_diff_path = current_b_file
+            last_diff_line = b_line
+            last_diff_content = raw
+            a_line += 1
+            b_line += 1
+
+    # Flush any trailing comment
+    _flush_comment()
+
+    return comments
+
+
+def _integrate_sashiko_reviews(
+    topdir: str,
+    cover_text: str,
+    tracking: Dict[str, Any],
+    commit_shas: List[str],
+    patches: List[Dict[str, Any]],
+) -> bool:
+    """Fetch sashiko inline reviews and merge into tracking as comments.
+
+    Queries the sashiko API for the series message-id, converts each
+    patch's ``inline_review`` into the annotated-diff format used by
+    :func:`_extract_patch_comments`, and stores the resulting comments
+    in the tracking data alongside any agent reviews.
+
+    Returns True if any reviews were integrated.
+    """
+    series = tracking['series']
+    config = b4.get_main_config()
+    sashiko_url = str(config.get('sashiko-url', ''))
+    if not sashiko_url:
+        return False
+
+    # Use the series-level message-id to query sashiko
+    series_msgid = series.get('message_id', '')
+    if not series_msgid:
+        series_msgid = series.get('header-info', {}).get('msgid', '')
+    if not series_msgid:
+        return False
+
+    from b4.review.checks import _fetch_sashiko_patchset, clear_sashiko_cache
+    clear_sashiko_cache()
+    patchset = _fetch_sashiko_patchset(series_msgid, sashiko_url)
+    if not patchset:
+        return False
+
+    # Build a map from message-id to sashiko review data
+    sashiko_reviews: Dict[str, Dict[str, Any]] = {}
+    s_patches = patchset.get('patches', [])
+    s_reviews = patchset.get('reviews', [])
+    # Map sashiko patch id -> message_id
+    spatch_msgid: Dict[int, str] = {}
+    for sp in s_patches:
+        sp_id = sp.get('id')
+        sp_msgid = sp.get('message_id', '')
+        if sp_id is not None and sp_msgid:
+            spatch_msgid[sp_id] = sp_msgid
+    # Map message-id -> best review with inline_review content
+    for sr in s_reviews:
+        patch_id = sr.get('patch_id')
+        inline = sr.get('inline_review', '') or ''
+        if not inline or patch_id not in spatch_msgid:
+            continue
+        msgid = spatch_msgid[patch_id]
+        # Keep only the latest review per patch
+        existing = sashiko_reviews.get(msgid)
+        if existing is None or sr.get('id', 0) > existing.get('id', 0):
+            sashiko_reviews[msgid] = sr
+
+    if not sashiko_reviews:
+        return False
+
+    reviewer_name = 'sashiko.dev'
+    reviewer_email = 'sashiko@sashiko.dev'
+    base_url = sashiko_url.rstrip('/')
+    integrated = 0
+
+    for idx, patch in enumerate(patches):
+        if idx >= len(commit_shas):
+            break
+        pmsgid = patch.get('header-info', {}).get('msgid', '')
+        if not pmsgid or pmsgid not in sashiko_reviews:
+            continue
+
+        sr = sashiko_reviews[pmsgid]
+        inline_review = sr.get('inline_review', '') or ''
+        if not inline_review:
+            continue
+
+        # Skip if we already integrated this exact review
+        review_id = sr.get('id', 0)
+        existing_entry = patch.get('reviews', {}).get(reviewer_email, {})
+        if existing_entry.get('sashiko-review-id') == review_id:
+            continue
+
+        # Extract inline comments directly from the quoted format
+        comments = _extract_comments_from_quoted_reply(inline_review)
+        if not comments:
+            continue
+
+        # Resolve comment positions against the real diff
+        sha = commit_shas[idx]
+        ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
+        if ecode == 0:
+            _resolve_comment_positions(real_diff, comments)
+
+        # Store in tracking
+        patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})
+        entry = patch_reviews.setdefault(reviewer_email, {})
+        entry['name'] = reviewer_name
+        entry['comments'] = comments
+        entry['sashiko-review-id'] = review_id
+        encoded_msgid = urllib.parse.quote(pmsgid, safe='@')
+        entry['provenance'] = f'{base_url}/#/message/{encoded_msgid}'
+        integrated += 1
+
+    if not integrated:
+        return False
+
+    save_tracking(topdir, cover_text, tracking)
+    logger.info('Integrated sashiko inline reviews for %d patch(es)', integrated)
+    return True
+
+
+def _integrate_followup_inline_comments(
+    topdir: str,
+    cover_text: str,
+    tracking: Dict[str, Any],
+    commit_shas: List[str],
+    patches: List[Dict[str, Any]],
+) -> bool:
+    """Extract inline diff comments from mailing-list follow-up messages.
+
+    Reads the cached thread mbox from the ``thread-blob`` stored in
+    tracking, parses each follow-up that quotes patch diff content,
+    and converts the ``> ``-quoted reply into positioned inline comments
+    using the same pipeline as agent and sashiko reviews.
+
+    Returns True if any comments were integrated.
+    """
+    series = tracking['series']
+    blob_sha = series.get('thread-blob', '')
+    if not blob_sha:
+        return False
+
+    mbox_bytes = b4.review.tracking.get_thread_mbox(topdir, blob_sha)
+    if not mbox_bytes:
+        return False
+
+    cover_msgid = series.get('header-info', {}).get('msgid', '')
+    followup_comments = b4.review.tracking._parse_msgs_to_followup_comments(
+        b4.mailsplit_bytes(mbox_bytes, os.path.join(topdir, '.git', 'b4-followup-tmp')),
+        cover_msgid, patches)
+
+    integrated = 0
+
+    for display_idx, fc_list in followup_comments.items():
+        # display_idx 0 = cover letter (skip), 1..N = patches
+        if display_idx < 1:
+            continue
+        idx = display_idx - 1
+        if idx >= len(patches) or idx >= len(commit_shas):
+            continue
+
+        patch = patches[idx]
+
+        for fc in fc_list:
+            body = fc.get('body', '')
+            if not body:
+                continue
+
+            # Only process follow-ups that quote diff content
+            if '> diff --git ' not in body and '> @@ ' not in body:
+                continue
+
+            reviewer_email = fc.get('fromemail', '')
+            if not reviewer_email:
+                continue
+
+            # Skip if we already integrated this exact follow-up message
+            fc_msgid = fc.get('msgid', '')
+            existing_entry = patch.get('reviews', {}).get(reviewer_email, {})
+            if fc_msgid and existing_entry.get('followup-msgid') == fc_msgid:
+                continue
+
+            comments = _extract_comments_from_quoted_reply(body)
+            if not comments:
+                continue
+
+            # Resolve positions against the real diff
+            sha = commit_shas[idx]
+            ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
+            if ecode == 0:
+                _resolve_comment_positions(real_diff, comments)
+
+            # Store under the follow-up author's identity
+            reviewer_name = fc.get('fromname', '')
+            patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})
+            entry = patch_reviews.setdefault(reviewer_email, {})
+            if reviewer_name:
+                entry['name'] = reviewer_name
+            entry['comments'] = comments
+            if fc_msgid:
+                entry['followup-msgid'] = fc_msgid
+                entry['provenance'] = f'{b4.LINKADDR}/{fc_msgid}'
+            integrated += 1
+
+    if not integrated:
+        return False
+
+    save_tracking(topdir, cover_text, tracking)
+    logger.info('Integrated inline comments from %d follow-up message(s)', integrated)
+    return True
+
+
+def _reinsert_comments(diff_text: str, comments: List[Dict[str, Any]],
+                       attribution: str = '') -> str:
     """Re-insert stored comments into a diff at their original positions.
 
     Walks the diff tracking file paths and line numbers, and after each
     diff line that matches a stored comment location, inserts the comment
     wrapped in ``>`` / ``>>>`` … ``<<<`` / ``<`` delimiters.
+
+    When *attribution* is non-empty, the ``>>>`` line includes it as a
+    suffix (e.g. ``>>> sashiko.dev (2026-03-01)``).  Attributed blocks
+    are skipped by :func:`_extract_patch_comments` so they remain
+    read-only in the editor.
     """
     if not comments:
         return diff_text
@@ -1177,7 +1566,10 @@ def _reinsert_comments(diff_text: str, comments: List[Dict[str, Any]]) -> str:
             if len(text_lines) == 1 and len(text_lines[0]) > 78:
                 text_lines = textwrap.wrap(text_lines[0], width=78)
             result.append('>')
-            result.append('>>>')
+            if attribution:
+                result.append(f'>>> {attribution}')
+            else:
+                result.append('>>>')
             result.append('')
             for cline in text_lines:
                 result.append(cline)
@@ -1222,20 +1614,96 @@ def _reinsert_all_comments(
 ) -> str:
     """Re-insert comments from all reviewers into a diff.
 
-    All comments are inserted as ``>`` / ``>>>`` … ``<<<`` / ``<``
-    blocks regardless of their origin.  When the maintainer saves the edited
-    diff, every comment becomes attributed to them and existing
-    reviewer comments for this patch should be cleared by the caller.
-    """
-    # Collect all comments into one flat list, own first
-    all_comments: List[Dict[str, Any]] = []
-    if my_email in all_reviews:
-        all_comments.extend(all_reviews[my_email].get('comments', []))
-    for addr in sorted(all_reviews):
-        if addr != my_email:
-            all_comments.extend(all_reviews[addr].get('comments', []))
+    The maintainer's own comments are inserted without attribution so
+    they round-trip through the editor.  External reviewer comments
+    get an attribution suffix on the ``>>>`` line (e.g.
+    ``>>> sashiko.dev (2026-03-01)``).  Attributed blocks are skipped
+    by :func:`_extract_patch_comments`, so external comments remain
+    read-only unless the maintainer removes the attribution line to
+    adopt them.
 
-    return _reinsert_comments(diff_text, all_comments)
+    All comments are collected into a single flat list and inserted in
+    one pass to avoid re-parsing already-inserted delimiters.
+    """
+    # Build a flat list of (comment, attribution) tuples.
+    # Own comments first (no attribution), then external (with attribution).
+    entries: List[Tuple[Dict[str, Any], str]] = []
+    if my_email in all_reviews:
+        for c in all_reviews[my_email].get('comments', []):
+            entries.append((c, ''))
+    for addr in sorted(all_reviews):
+        if addr == my_email:
+            continue
+        rev_data = all_reviews[addr]
+        name = rev_data.get('name', addr)
+        prov = rev_data.get('provenance', '')
+        if prov:
+            attr = f'{name} : {prov}'
+        else:
+            attr = name
+        for c in rev_data.get('comments', []):
+            entries.append((c, attr))
+
+    if not entries:
+        return diff_text
+
+    # Build lookup: (path, line) -> list of (text, attribution) in order
+    comment_map: Dict[Tuple[str, int], List[Tuple[str, str]]] = {}
+    for c, attr in entries:
+        key = (c['path'], c['line'])
+        comment_map.setdefault(key, []).append((c['text'], attr))
+
+    diff_lines = diff_text.splitlines()
+    result: List[str] = []
+    current_a_file = ''
+    current_b_file = ''
+    a_line = 0
+    b_line = 0
+    hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
+
+    def _insert(key: Tuple[str, int]) -> None:
+        for text, attr in comment_map.pop(key, []):
+            text_lines = text.splitlines()
+            if len(text_lines) == 1 and len(text_lines[0]) > 78:
+                text_lines = textwrap.wrap(text_lines[0], width=78)
+            result.append('>')
+            if attr:
+                result.append(f'>>> {attr}')
+            else:
+                result.append('>>>')
+            result.append('')
+            for cline in text_lines:
+                result.append(cline)
+            result.append('')
+            result.append('<<<')
+            result.append('<')
+
+    for line in diff_lines:
+        result.append(line)
+
+        if line.startswith(('--- a/', '--- /dev/null')):
+            current_a_file = line[4:]
+        elif line.startswith(('+++ b/', '+++ /dev/null')):
+            current_b_file = line[4:]
+        elif line.startswith(('--- ', '+++ ', 'diff --git ')):
+            pass
+        else:
+            hm = hunk_re.match(line)
+            if hm:
+                a_line = int(hm.group(1))
+                b_line = int(hm.group(2))
+            elif line.startswith('-'):
+                _insert((current_a_file, a_line))
+                a_line += 1
+            elif line.startswith('+'):
+                _insert((current_b_file, b_line))
+                b_line += 1
+            elif line.startswith(' ') or line == '':
+                _insert((current_b_file, b_line))
+                a_line += 1
+                b_line += 1
+
+    return '\n'.join(result) + '\n'
 
 
 def _build_reply_from_comments(diff_text: str,
@@ -1717,6 +2185,12 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
 
     # Integrate agent reviews from .git/b4-review/
     _integrate_agent_reviews(topdir, cover_text, tracking, commit_shas, patches)
+
+    # Integrate sashiko inline reviews (if configured)
+    _integrate_sashiko_reviews(topdir, cover_text, tracking, commit_shas, patches)
+
+    # Integrate inline comments from mailing-list follow-up messages
+    _integrate_followup_inline_comments(topdir, cover_text, tracking, commit_shas, patches)
 
     # Ensure the plain-text thread-context-blob exists for the AI agent.
     # Runs only when thread-blob was stored before this feature existed

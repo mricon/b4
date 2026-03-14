@@ -10,7 +10,7 @@ import os
 import re
 import subprocess
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import b4
 import b4.mbox
@@ -22,12 +22,14 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
+from rich.rule import Rule
 from rich.syntax import Syntax
 from rich.text import Text
 
 from b4.review_tui._common import (
     logger, PATCH_STATE_MARKERS,
     resolve_styles, reviewer_colours, CheckRunnerMixin,
+    _quiet_worker, get_thread_msgs,
     _has_review_data, _make_initials, _wait_for_enter,
     _write_comments, _write_followup_comments,
     _write_followup_trailers, _resolve_patch_for_followup,
@@ -73,18 +75,19 @@ class PatchListItem(ListItem):
 
 
 class FollowupItem(ListItem):
-    """A follow-up commenter entry in the patch list sidebar."""
+    """A follow-up entry in the patch list sidebar."""
 
-    def __init__(self, name: str, display_idx: int, fromemail: str) -> None:
+    def __init__(self, name: str, display_idx: int, msgid: str) -> None:
         super().__init__()
         self.display_idx = display_idx
-        self.fromemail = fromemail
+        self.msgid = msgid
         self._display_name = name
 
     def compose(self) -> ComposeResult:
         st = Static(f'\u00a0\u00a0\u00a0\u00a0{self._display_name}', markup=False)
         st.styles.text_style = 'dim'
         yield st
+
 
 
 
@@ -194,7 +197,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         Binding('up', 'k_key', 'Prev/Scroll up', show=False),
         # Review mode bindings
         Binding('t', 'trailer', 'trailers'),
-        Binding('c', 'review_diff', 'comment'),
+        Binding('C', 'review_diff', 'comment', key_display='C'),
         Binding('N', 'edit_note', 'note', key_display='N'),
         Binding('r', 'edit_reply', 'reply'),
         Binding('f', 'followups', 'followups'),
@@ -203,7 +206,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         Binding('x', 'patch_skip', 'skip'),
         Binding('H', 'hide_skipped', 'hide skipped', key_display='H', show=False),
         Binding('P', 'prior_review', 'prior', key_display='P'),
-        Binding('C', 'check', 'checks', key_display='C'),
+        Binding('c', 'check', 'checks'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings
@@ -250,9 +253,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._selected_idx: int = 0 if self._has_cover else 1  # 0 = cover, 1..N = patches
         self._preview_mode: bool = False
         self._comment_positions: List[int] = []
-        self._followup_positions: Dict[Tuple[int, str], int] = {}
+        self._followup_positions: Dict[str, int] = {}
         self._followup_comments: Dict[int, List[Dict[str, Any]]] = {}
         self._followup_header_map: Dict[int, Dict[str, Any]] = {}
+        self._selected_followup_msgid: Optional[str] = None
+        self._show_external_comments: bool = False
+        self._hint_gutter_lines: Dict[int, Tuple[str, int]] = {}
         self._reply_sent: bool = False
         self._hide_skipped: bool = False
         self._check_loading: Optional[Any] = None
@@ -347,27 +353,14 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     break
 
     def _append_followup_items(self, lv: ListView, display_idx: int) -> None:
-        """Append FollowupItem entries to *lv* for commenters on *display_idx*."""
+        """Append FollowupItem entries to *lv* for each follow-up message."""
         fc_list = self._followup_comments.get(display_idx, [])
         if not fc_list:
             return
-        # Count messages per participant
-        counts: Dict[str, int] = {}
-        names: Dict[str, str] = {}
         for e in fc_list:
-            email = e['fromemail']
-            counts[email] = counts.get(email, 0) + 1
-            if email not in names:
-                names[email] = e['fromname']
-        seen: Set[str] = set()
-        for e in sorted(fc_list, key=lambda x: x['date']):
-            if e['fromemail'] not in seen:
-                seen.add(e['fromemail'])
-                name = e['fromname']
-                n = counts[e['fromemail']]
-                if n > 1:
-                    name = f'{name} ({n})'
-                lv.append(FollowupItem(name, display_idx, e['fromemail']))
+            name = str(e.get('fromname') or e.get('fromemail') or '(unknown)')
+            msgid = str(e.get('msgid', ''))
+            lv.append(FollowupItem(name, display_idx, msgid))
 
     def _refresh_patch_item(self, display_idx: int) -> None:
         """Refresh a single patch list item's label."""
@@ -404,6 +397,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._comment_positions = []
         self._followup_positions = {}
         self._followup_header_map = {}
+        self._hint_gutter_lines = {}
+        self._selected_followup_msgid = None
 
         self._selected_idx = display_idx
 
@@ -432,13 +427,14 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         # Show cover-level follow-up trailers
         _write_followup_trailers(viewer, self._tracking.get('followups', []), ts=ts)
         # Show cover-level follow-up comments
-        fc_author_pos: Dict[str, int] = {}
         _write_followup_comments(
             viewer, self._followup_comments.get(0, []),
-            self._comment_positions, fc_author_pos,
+            self._comment_positions,
             header_position_map=self._followup_header_map, ts=ts)
-        for addr, pos in fc_author_pos.items():
-            self._followup_positions[(0, addr)] = pos
+        for line_pos, entry in self._followup_header_map.items():
+            msgid = str(entry.get('msgid', ''))
+            if msgid:
+                self._followup_positions[msgid] = line_pos
 
     def _show_diff(self, viewer: RichLog, patch_idx: int) -> None:
         """Render a patch diff in the diff viewer with syntax colouring."""
@@ -499,23 +495,36 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     has_content = True
                 if has_content:
                     viewer.write(Text(''))
+                    viewer.write(Rule(style='dim'))
+                    viewer.write(Text(''))
 
         ecode, diff_out = b4.git_run_command(self._topdir, ['diff', f'{sha}~1', sha])
         if ecode > 0:
             viewer.write(Text('Could not generate diff', style=ts['error']))
             return
 
-        # Get review comments from all reviewers
+        # Get review comments — own comments always, external only on "f"
         patch_target = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
         all_reviews = patch_target.get('reviews', {})
+        my_email = str(self._usercfg.get('email', ''))
         comment_map: Dict[Tuple[str, int], List[Tuple[str, str, str]]] = {}
+        # Track lines with hidden external comments for gutter markers
+        external_hint_lines: set[Tuple[str, int]] = set()
         for rev_email, rev_data in all_reviews.items():
-            rev_name = rev_data.get('name', '')
-            initials = _make_initials(rev_name)
-            colour = self._reviewer_colour(rev_email, patch_target, ts)
-            for c in rev_data.get('comments', []):
-                key = (c['path'], c['line'])
-                comment_map.setdefault(key, []).append((initials, colour, c['text']))
+            if rev_email == my_email:
+                colour = self._reviewer_colour(rev_email, patch_target, ts)
+                for c in rev_data.get('comments', []):
+                    key = (c['path'], c['line'])
+                    comment_map.setdefault(key, []).append(('You', colour, c['text']))
+            elif self._show_external_comments:
+                rev_name = rev_data.get('name', '')
+                colour = self._reviewer_colour(rev_email, patch_target, ts)
+                for c in rev_data.get('comments', []):
+                    key = (c['path'], c['line'])
+                    comment_map.setdefault(key, []).append((rev_name, colour, c['text']))
+            else:
+                for c in rev_data.get('comments', []):
+                    external_hint_lines.add((c['path'], c['line']))
 
         # Parse and render diff with line tracking
         hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
@@ -523,20 +532,31 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         current_b_file = ''
         a_line = 0
         b_line = 0
+        hint_style = f"bold {ts['warning']}"
+        has_hints = bool(external_hint_lines)
+        self._hint_gutter_lines = {}
 
+        def _gutter(key: Tuple[str, int]) -> str:
+            if not has_hints:
+                return ''
+            if key in external_hint_lines:
+                return '\u2261'
+            return ' '
+
+        gpad = ' ' if has_hints else ''
         for line in diff_out.splitlines():
             if line.startswith('diff --git '):
-                viewer.write(Text(line, style='bold'))
+                viewer.write(Text(f'{gpad}{line}', style='bold'))
                 continue
             if line.startswith('--- '):
                 if line.startswith(('--- a/', '--- /dev/null')):
                     current_a_file = line[4:]
-                viewer.write(Text(line, style='bold'))
+                viewer.write(Text(f'{gpad}{line}', style='bold'))
                 continue
             if line.startswith('+++ '):
                 if line.startswith(('+++ b/', '+++ /dev/null')):
                     current_b_file = line[4:]
-                viewer.write(Text(line, style='bold'))
+                viewer.write(Text(f'{gpad}{line}', style='bold'))
                 continue
 
             hm = hunk_re.match(line)
@@ -545,7 +565,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 b_line = int(hm.group(2))
                 # Colour only the @@...@@ marker, leave context in default
                 end = line.index(' @@', 3) + 3
-                hunk_text = Text()
+                hunk_text = Text(gpad)
                 hunk_text.append(line[:end], style=f"bold {ts['secondary']}")
                 if len(line) > end:
                     hunk_text.append(line[end:])
@@ -553,24 +573,45 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 continue
 
             if line.startswith('+'):
-                viewer.write(Text(line, style=ts['success']))
                 key = (current_b_file, b_line)
+                t = Text()
+                g = _gutter(key)
+                if g:
+                    t.append(g, style=hint_style)
+                t.append(line, style=ts['success'])
+                if key in external_hint_lines:
+                    self._hint_gutter_lines[len(viewer.lines)] = key
+                viewer.write(t)
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
                     _write_comments(viewer, entries, ts=ts)
                 b_line += 1
             elif line.startswith('-'):
-                viewer.write(Text(line, style=ts['error']))
                 key = (current_a_file, a_line)
+                t = Text()
+                g = _gutter(key)
+                if g:
+                    t.append(g, style=hint_style)
+                t.append(line, style=ts['error'])
+                if key in external_hint_lines:
+                    self._hint_gutter_lines[len(viewer.lines)] = key
+                viewer.write(t)
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
                     _write_comments(viewer, entries, ts=ts)
                 a_line += 1
             elif line.startswith(' '):
-                viewer.write(Text(line))
                 key = (current_b_file, b_line)
+                t = Text()
+                g = _gutter(key)
+                if g:
+                    t.append(g, style=hint_style)
+                t.append(line)
+                if key in external_hint_lines:
+                    self._hint_gutter_lines[len(viewer.lines)] = key
+                viewer.write(t)
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
@@ -578,17 +619,17 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 a_line += 1
                 b_line += 1
             else:
-                viewer.write(Text(line))
+                viewer.write(Text(f'{gpad}{line}'))
 
         # Render follow-up comments at the bottom
-        fc_author_pos: Dict[str, int] = {}
         _write_followup_comments(
             viewer, self._followup_comments.get(patch_idx + 1, []),
-            self._comment_positions, fc_author_pos,
+            self._comment_positions,
             header_position_map=self._followup_header_map, ts=ts)
-        display_idx = patch_idx + 1
-        for addr, pos in fc_author_pos.items():
-            self._followup_positions[(display_idx, addr)] = pos
+        for line_pos, entry in self._followup_header_map.items():
+            msgid = str(entry.get('msgid', ''))
+            if msgid:
+                self._followup_positions[msgid] = line_pos
 
     def _show_email_preview(self, viewer: RichLog, display_idx: int) -> None:
         """Render the email that would be sent for the selected patch/cover."""
@@ -729,7 +770,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         """Show the parent patch for a follow-up item and scroll to its comment."""
         if self._selected_idx != item.display_idx:
             self._show_content(item.display_idx)
-        pos = self._followup_positions.get((item.display_idx, item.fromemail))
+        self._selected_followup_msgid = item.msgid
+        pos = self._followup_positions.get(item.msgid)
         if pos is not None:
             viewer = self.query_one('#diff-viewer', RichLog)
             viewer.scroll_to(y=pos, animate=False)
@@ -842,6 +884,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
     def check_action(self, action: str, parameters: Tuple[Any, ...]) -> Optional[bool]:
         """Show/hide mode-specific bindings in the footer."""
+        if action == 'edit_reply' and self._selected_followup_msgid is not None:
+            return True
         if action == 'agent':
             config = b4.get_main_config()
             if not config.get('review-agent-command') or not config.get('review-agent-prompt-path'):
@@ -954,6 +998,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
     def action_edit_reply(self) -> None:
         """Open $EDITOR for reply editing."""
+        if self._selected_followup_msgid is not None:
+            for entry in self._followup_comments.get(self._selected_idx, []):
+                if entry.get('msgid') == self._selected_followup_msgid:
+                    self._compose_followup_reply(entry)
+                    return
         target = self._get_current_review_target()
         if not target:
             return
@@ -1095,24 +1144,18 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             self.notify('Editor returned no content')
             return
         edited_text = result.decode(errors='replace')
-        if edited_text == patch_text and not has_any_comments:
-                self.notify('No changes made')
-                return
-            # The maintainer opened the editor with existing comments
-            # and exited without changes — adopt them as their own.
+        if edited_text == patch_text:
+            self.notify('No changes made')
+            return
         new_comments = b4.review._extract_patch_comments(edited_text, track_content=True)
-        if not new_comments and not has_any_comments:
+        old_comments = review.get('comments', [])
+        if not new_comments and not old_comments:
             self.notify('No comments found')
             return
         if new_comments:
             review['comments'] = new_comments
         elif 'comments' in review:
             del review['comments']
-        # All comments were presented as unattributed; clear other
-        # reviewers' inline comments since they are now the maintainer's.
-        if has_any_comments:
-            b4.review._clear_other_comments(all_reviews, my_email)
-        if not new_comments:
             b4.review._cleanup_review(target, self._usercfg)
         self._save_tracking()
         self._refresh_patch_item(self._selected_idx)
@@ -1120,8 +1163,10 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if new_comments:
             files = set(c['path'] for c in new_comments)
             self.notify(f'{len(new_comments)} comments across {len(files)} files')
-        else:
+        elif old_comments:
             self.notify('Inline comments deleted')
+        else:
+            self.notify('No changes to your comments')
 
     def action_prior_review(self) -> None:
         """Show prior revision review context."""
@@ -1385,9 +1430,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self.push_screen(SendScreen(msgs), _on_send_confirmed)
 
     def on_click(self, event: Click) -> None:
-        """Detect clicks on follow-up panel header rows to open quick reply."""
-        if not self._followup_header_map:
-            return
+        """Detect clicks on follow-up headers or hint gutter markers."""
         try:
             viewer = self.query_one('#diff-viewer', RichLog)
         except Exception:
@@ -1396,10 +1439,18 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if not region.contains(event.screen_x, event.screen_y):
             return
         content_line = int(viewer.scroll_y) + (event.screen_y - region.y)
-        entry = self._followup_header_map.get(content_line)
-        if entry:
-            self._compose_followup_reply(entry)
+        # Click on hint gutter → nudge to press f
+        click_col = event.screen_x - region.x + int(viewer.scroll_x)
+        if click_col == 0 and content_line in self._hint_gutter_lines:
+            self.notify('Press f to display inline comments')
             event.stop()
+            return
+        # Click on follow-up header → quick reply
+        if self._followup_header_map:
+            entry = self._followup_header_map.get(content_line)
+            if entry:
+                self._compose_followup_reply(entry)
+                event.stop()
 
     def _compose_followup_reply(self, entry: Dict[str, Any],
                                  initial_text: Optional[str] = None) -> None:
@@ -1526,45 +1577,152 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         for fc_list in self._followup_comments.values():
             fc_list.sort(key=lambda e: e['date'])
 
+        # Extract inline diff comments from follow-ups that quote patches
+        inline_count = self._integrate_followup_inline(self._followup_comments)
+
+        # Count stored external inline comments (sashiko, agents)
+        my_email = str(self._usercfg.get('email', ''))
+        ext_count = sum(
+            len(rev.get('comments', []))
+            for patch in self._patches
+            for addr, rev in patch.get('reviews', {}).items()
+            if addr != my_email
+        )
+
+        parts = []
         if count:
-            self.notify(f'Loaded {count} follow-up comment(s)')
+            parts.append(f'{count} follow-up(s)')
+        if inline_count:
+            parts.append(f'{inline_count} inline comment(s)')
+        if ext_count:
+            parts.append(f'{ext_count} external review comment(s)')
+        if parts:
+            self.notify(f'Loaded {", ".join(parts)}')
         else:
             self.notify('No follow-up comments found')
         self._populate_patch_list()
         self._show_content(self._selected_idx)
 
+    def _integrate_followup_inline(
+        self,
+        followup_comments: Dict[int, List[Dict[str, Any]]],
+    ) -> int:
+        """Extract inline diff comments from follow-ups into patch reviews.
+
+        Scans follow-up bodies for ``> ``-quoted diff content, extracts
+        positioned comments, resolves them against the real diff, and
+        stores them in ``patches[idx]['reviews']`` so they render inline
+        in the diff view.
+
+        Returns the number of inline comments integrated.
+        """
+        integrated = 0
+        for display_idx, fc_list in followup_comments.items():
+            if display_idx < 1:
+                continue
+            idx = display_idx - 1
+            if idx >= len(self._patches) or idx >= len(self._commit_shas):
+                continue
+
+            patch = self._patches[idx]
+
+            for fc in fc_list:
+                body = fc.get('body', '')
+                if not body:
+                    continue
+                if '> diff --git ' not in body and '> @@ ' not in body:
+                    continue
+
+                reviewer_email = fc.get('fromemail', '')
+                if not reviewer_email:
+                    continue
+
+                fc_msgid = fc.get('msgid', '')
+                existing_entry = patch.get('reviews', {}).get(reviewer_email, {})
+                if fc_msgid and existing_entry.get('followup-msgid') == fc_msgid:
+                    continue
+
+                comments = b4.review._extract_comments_from_quoted_reply(body)
+                if not comments:
+                    continue
+
+                sha = self._commit_shas[idx]
+                ecode, real_diff = b4.git_run_command(
+                    self._topdir, ['diff', f'{sha}~1', sha])
+                if ecode == 0:
+                    b4.review._resolve_comment_positions(real_diff, comments)
+
+                reviewer_name = fc.get('fromname', '')
+                patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})
+                entry = patch_reviews.setdefault(reviewer_email, {})
+                if reviewer_name:
+                    entry['name'] = reviewer_name
+                entry['comments'] = comments
+                if fc_msgid:
+                    entry['followup-msgid'] = fc_msgid
+                    entry['provenance'] = f'{b4.LINKADDR}/{fc_msgid}'
+                integrated += len(comments)
+
+        if integrated:
+            self._save_tracking()
+
+        return integrated
+
     def action_followups(self) -> None:
         """Toggle follow-up comments on/off."""
         # ── Toggle off ────────────────────────────────────────────────────────
-        if self._followup_comments:
+        if self._show_external_comments:
+            self._show_external_comments = False
             self._followup_comments = {}
             self._followup_positions = {}
             self._populate_patch_list()
             self._show_content(self._selected_idx)
             return
 
-        # ── Always fetch live from lore for up-to-date follow-ups ────────────
         cover_msgid = self._series.get('header-info', {}).get('msgid')
         if not cover_msgid:
             self.notify('No message-id for cover letter', severity='error')
             return
-        with self.suspend():
-            logger.info('Fetching thread for %s ...', cover_msgid)
-            msgs = b4.get_pi_thread_by_msgid(cover_msgid)
-        if not msgs:
-            self.notify('Could not fetch thread from lore', severity='error')
-            return
-        # Cache the thread locally for other consumers.
-        change_id = self._series.get('change-id')
-        if change_id:
-            new_sha = b4.review.tracking._store_thread_blob(
-                self._topdir, change_id, msgs)
-            if new_sha:
-                self._series['thread-blob'] = new_sha
 
-        self._load_followup_msgs(msgs)
-        self._mark_followup_msgs_seen(msgs)
-        self._detect_maintainer_replies(msgs)
+        self._show_external_comments = True
+
+        # ── Try local blob first, fall back to lore in background ────────────
+        blob_sha = self._series.get('thread-blob', '')
+        self.notify('Loading follow-ups\u2026')
+        self.run_worker(
+            lambda: self._fetch_followups_bg(cover_msgid, blob_sha),
+            name='_followup_worker', thread=True)
+
+    def _fetch_followups_bg(self, cover_msgid: str, blob_sha: str) -> None:
+        """Load follow-ups from local blob or lore (background thread)."""
+        with _quiet_worker():
+            msgs = get_thread_msgs(self._topdir, cover_msgid,
+                                   blob_sha=blob_sha, quiet=True)
+
+        if not msgs:
+            def _no_msgs() -> None:
+                self.notify('Could not load thread', severity='error')
+                # Still refresh to show external comments (sashiko etc.)
+                self._populate_patch_list()
+                self._show_content(self._selected_idx)
+            self.app.call_from_thread(_no_msgs)
+            return
+
+        # Cache the thread locally if we fetched from lore.
+        if not blob_sha:
+            change_id = self._series.get('change-id')
+            if change_id:
+                with _quiet_worker():
+                    new_sha = b4.review.tracking._store_thread_blob(
+                        self._topdir, change_id, msgs)
+                if new_sha:
+                    self._series['thread-blob'] = new_sha
+
+        def _finish() -> None:
+            self._load_followup_msgs(msgs)
+            self._mark_followup_msgs_seen(msgs)
+            self._detect_maintainer_replies(msgs)
+        self.app.call_from_thread(_finish)
 
     def _mark_followup_msgs_seen(self, msgs: List[Any]) -> None:
         """Mark all follow-up messages as Seen in the messages DB."""

@@ -37,12 +37,39 @@ from rich.text import Text
 logger = b4.logger
 
 
+def get_thread_msgs(
+    topdir: str,
+    message_id: str,
+    blob_sha: str = '',
+    quiet: bool = False,
+) -> Optional[List[email.message.EmailMessage]]:
+    """Retrieve thread messages, trying the local git blob first.
+
+    If *blob_sha* points to a valid mbox blob in the repository, the
+    thread is loaded from there without network access.  Otherwise
+    falls back to fetching from lore via ``b4.get_pi_thread_by_msgid``.
+
+    Returns a list of ``EmailMessage`` objects, or *None* on failure.
+    """
+    if blob_sha:
+        mbox_bytes = b4.review.tracking.get_thread_mbox(topdir, blob_sha)
+        if mbox_bytes:
+            msgs = b4.mailsplit_bytes(
+                mbox_bytes,
+                os.path.join(topdir, '.git', 'b4-thread-tmp'))
+            if msgs:
+                return msgs
+
+    return b4.get_pi_thread_by_msgid(message_id, quiet=quiet) or None
+
+
 # Per-patch state indicators — same glyphs as _tracking_app._STATUS_SYMBOLS
 PATCH_STATE_MARKERS: Dict[str, str] = {
-    '':      ' ',
-    'draft': '\u270e',  # ✎ lower right pencil  (= reviewing)
-    'done':  '\u2713',  # ✓ check mark           (= thanked)
-    'skip':  '\u2715',  # ✕ multiplication x      (= gone)
+    '':         ' ',
+    'external': '\u00b1',  # ± plus-minus (= external comments available)
+    'draft':    '\u270e',  # ✎ pencil    (= maintainer reviewing)
+    'done':     '\u2713',  # ✓ check     (= done)
+    'skip':     '\u2715',  # ✕ cross     (= skipped)
 }
 
 # CI check label text (colour-free constant — used with ci_check_styles())
@@ -167,7 +194,6 @@ def reviewer_colours(ts: Dict[str, str]) -> List[str]:
     """
     return [
         ts['warning'],      # index 0: current user (warm/distinct)
-        ts['success'],
         ts['accent'],
         ts['secondary'],
         ts['error'],
@@ -270,6 +296,7 @@ class CheckRunnerMixin:
         import b4.review.checks as checks
         from b4.review_tui._modals import TrackingCheckResultsScreen
 
+        checks.clear_sashiko_cache()
         perpatch_cmds, series_cmds = checks.load_check_cmds()
         if not perpatch_cmds and not series_cmds:
             self._dismiss_loading('No check commands configured', 'warning')
@@ -288,10 +315,12 @@ class CheckRunnerMixin:
         # Dump tracking data to a temp file for external scripts
         extra_env: Dict[str, str] = {}
         tracking_file: Optional[str] = None
+        blob_sha = ''
         if change_id:
             review_branch = f'b4/review/{change_id}'
             try:
                 _cover, tracking = b4.review.load_tracking(topdir, review_branch)
+                blob_sha = tracking.get('series', {}).get('thread-blob', '')
                 fd, tracking_file = tempfile.mkstemp(prefix='b4-tracking-', suffix='.json')
                 with os.fdopen(fd, 'w') as fp:
                     json.dump(tracking, fp, indent=2)
@@ -299,10 +328,11 @@ class CheckRunnerMixin:
             except SystemExit:
                 pass
 
-        # Fetch the thread
-        self._update_loading('Fetching thread\u2026')
+        # Fetch the thread (local blob first, then lore)
+        self._update_loading('Loading thread\u2026')
         with _quiet_worker():
-            msgs = b4.get_pi_thread_by_msgid(message_id, quiet=True)
+            msgs = get_thread_msgs(topdir, message_id,
+                                   blob_sha=blob_sha, quiet=True)
         if not msgs:
             self._dismiss_loading('Could not fetch thread from lore', 'error')
             return
@@ -517,7 +547,6 @@ def _write_followup_comments(
     viewer: 'RichLog',
     fc_list: List[Dict[str, Any]],
     comment_positions: List[int],
-    fc_author_positions: Optional[Dict[str, int]] = None,
     header_position_map: Optional[Dict[int, Dict[str, Any]]] = None,
     ts: Optional[Dict[str, str]] = None,
 ) -> None:
@@ -526,8 +555,6 @@ def _write_followup_comments(
     Each entry has 'body', 'fromname', 'fromemail', 'date', and optionally
     'depth' (0 = direct reply to patch, N = N hops through follow-up replies).
     Entries with depth > 0 are indented to visually show threading.
-    If *fc_author_positions* is provided, it is populated with the
-    first viewer line position for each unique fromemail.
     If *header_position_map* is provided, it is populated with
     {viewer_line: entry} for each panel header row, enabling click-to-reply.
     *ts* is a resolved theme styles dict from :func:`resolve_styles`.
@@ -535,7 +562,7 @@ def _write_followup_comments(
     if not fc_list:
         return
     rev_palette = reviewer_colours(ts) if ts else [
-        'dark_goldenrod', 'dark_green', 'dark_cyan',
+        'dark_goldenrod', 'dark_cyan',
         'dark_magenta', 'dark_red', 'dark_blue',
     ]
     fc_emails = sorted({e['fromemail'] for e in fc_list})
@@ -546,17 +573,15 @@ def _write_followup_comments(
     viewer.write(Rule(title='follow-ups', style='dim'))
     viewer.write(Text(''))
     for e in sorted(fc_list, key=lambda x: x['date']):
-        initials = _make_initials(e['fromname'])
+        fromname = e['fromname']
         colour = colour_map.get(e['fromemail'], rev_palette[1])
         line_pos = len(viewer.lines)
         comment_positions.append(line_pos)
         if header_position_map is not None:
             header_position_map[line_pos] = e
-        if fc_author_positions is not None and e['fromemail'] not in fc_author_positions:
-            fc_author_positions[e['fromemail']] = line_pos
         body = _strip_attribution(e['body'])
         body_text = Text()
-        body_text.append(f'From:  {e["fromname"]} <{e["fromemail"]}>\n', style='bold')
+        body_text.append(f'From:  {fromname} <{e["fromemail"]}>\n', style='bold')
         body_text.append(f'Date:  {e["date"].strftime("%Y-%m-%d %H:%M %z")}\n', style='bold')
         if msgid := e.get('msgid', ''):
             body_text.append(f'Msgid: <{msgid}>\n', style='bold')
@@ -569,7 +594,7 @@ def _write_followup_comments(
             body_text.append('\n')
         depth = e.get('depth', 0)
         title_text = Text()
-        title_text.append(initials)
+        title_text.append(fromname)
         title_text.append('  ↩', style='dim')
         panel = Panel(
             body_text,
@@ -643,20 +668,20 @@ def _write_comments(
 ) -> None:
     """Write review comment entries to *viewer* as bordered panels.
 
-    Each entry is an (initials, colour, text) tuple.  Comments from
+    Each entry is a (name, colour, text) tuple.  Comments from
     the same diff line are rendered as separate panels.
     *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
     bg = f"on {ts['panel']}" if ts else 'on grey11'
-    for initials, colour, text in entries:
+    for name, colour, text in entries:
         panel = Panel(
             Text(text),
             box=box.ROUNDED,
             border_style=colour,
-            title=initials,
-            title_align='left',
+            subtitle=name,
+            subtitle_align='right',
             expand=False,
-            padding=(0, 1),
+            padding=(1, 1),
             style=bg,
         )
         viewer.write(panel)

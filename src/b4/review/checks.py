@@ -16,11 +16,23 @@ import sqlite3
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
+
 import b4
 
 logger = logging.getLogger(__name__)
 
 _STATUS_ORDER = {'pass': 0, 'warn': 1, 'fail': 2}
+
+# In-process cache for sashiko API responses, keyed by message-id.
+# This prevents redundant API calls when checking multiple patches
+# from the same series within a single check run.
+_sashiko_patchset_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+
+def clear_sashiko_cache() -> None:
+    """Clear the sashiko patchset cache between check runs."""
+    _sashiko_patchset_cache.clear()
 
 SCHEMA_VERSION = 1
 
@@ -160,6 +172,12 @@ def load_check_cmds() -> Tuple[List[str], List[str]]:
     if '_builtin_patchwork' not in perpatch and config.get('pw-project') and config.get('pw-url'):
         perpatch.append('_builtin_patchwork')
     series = _as_list(config.get('review-series-check-cmd'))
+    # Auto-wire sashiko AI review when URL is configured
+    if config.get('sashiko-url'):
+        if '_builtin_sashiko' not in perpatch:
+            perpatch.append('_builtin_sashiko')
+        if '_builtin_sashiko' not in series:
+            series.append('_builtin_sashiko')
     return perpatch, series
 
 
@@ -305,6 +323,191 @@ def _run_builtin_patchwork(msg: EmailMessage, pwkey: str,
     }]
 
 
+def _fetch_sashiko_patchset(msgid: str, sashiko_url: str) -> Optional[Dict[str, Any]]:
+    """Fetch patchset data from sashiko, with in-process caching.
+
+    The cache ensures only one API call per series, even when checking
+    multiple patches from the same patchset.
+    """
+    if msgid in _sashiko_patchset_cache:
+        return _sashiko_patchset_cache[msgid]
+
+    url = f'{sashiko_url.rstrip("/")}/api/patch'
+    try:
+        session = b4.get_requests_session()
+        resp = session.get(url, params={'id': msgid}, timeout=30)
+        if resp.status_code == 404:
+            _sashiko_patchset_cache[msgid] = None
+            return None
+        resp.raise_for_status()
+        data: Dict[str, Any] = resp.json()
+    except requests.RequestException as ex:
+        logger.debug('Sashiko API query failed for %s: %s', msgid, ex)
+        _sashiko_patchset_cache[msgid] = None
+        return None
+
+    # Cache by all message-ids in this patchset so subsequent patches
+    # in the same series hit the cache instead of the network.
+    cover_msgid = data.get('message_id', '')
+    if cover_msgid:
+        _sashiko_patchset_cache[cover_msgid] = data
+    for patch in data.get('patches', []):
+        p_msgid = patch.get('message_id', '')
+        if p_msgid:
+            _sashiko_patchset_cache[p_msgid] = data
+    _sashiko_patchset_cache[msgid] = data
+    return data
+
+
+def _parse_sashiko_findings(review: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Parse findings from a sashiko review's output JSON."""
+    output_str = review.get('output', '') or ''
+    if not output_str:
+        return []
+    try:
+        output = json.loads(output_str)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    raw_findings = output.get('findings', [])
+    findings: List[Dict[str, str]] = []
+    for f in raw_findings:
+        if not isinstance(f, dict):
+            continue
+        severity = (f.get('severity', '') or '').lower()
+        problem = f.get('problem', f.get('title', ''))
+        suggestion = f.get('suggestion', '')
+        if severity in ('critical', 'high'):
+            status = 'fail'
+        elif severity == 'medium':
+            status = 'warn'
+        else:
+            status = 'pass'
+        desc = str(problem)
+        if suggestion:
+            desc += f' \u2014 {suggestion}'
+        findings.append({
+            'status': status,
+            'context': f'sashiko/{severity}',
+            'state': severity,
+            'description': desc,
+        })
+    return findings
+
+
+def _sashiko_findings_summary(findings: List[Dict[str, str]]) -> Tuple[str, str]:
+    """Return ``(worst_status, summary_text)`` for a list of findings."""
+    if not findings:
+        return 'pass', 'No findings'
+
+    worst = 'pass'
+    counts: Dict[str, int] = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+    for f in findings:
+        state = f.get('state', '')
+        if state in counts:
+            counts[state] += 1
+        if _STATUS_ORDER.get(f['status'], 0) > _STATUS_ORDER.get(worst, 0):
+            worst = f['status']
+
+    parts = []
+    for sev in ('critical', 'high', 'medium', 'low'):
+        if counts[sev]:
+            parts.append(f'{counts[sev]} {sev}')
+    return worst, ', '.join(parts)
+
+
+def _run_builtin_sashiko(msg: EmailMessage,
+                         sashiko_url: str) -> List[Dict[str, str]]:
+    """Query sashiko AI review service for findings on a patch."""
+    msgid = msg.get('message-id', '').strip('<> ')
+    if not msgid:
+        return []
+
+    data = _fetch_sashiko_patchset(msgid, sashiko_url)
+    if not data:
+        return []
+
+    ps_status = data.get('status', '')
+    ps_id = data.get('id', '')
+    reviews = data.get('reviews', [])
+    patches = data.get('patches', [])
+    base_url = sashiko_url.rstrip('/')
+    patchset_url = f'{base_url}/patch/{ps_id}' if ps_id else ''
+
+    # Build a map from patch message-id to sashiko patch id
+    patch_id_by_msgid: Dict[str, int] = {}
+    for p in patches:
+        p_msgid = p.get('message_id', '')
+        p_id = p.get('id')
+        if p_msgid and p_id is not None:
+            patch_id_by_msgid[p_msgid] = int(p_id)
+
+    cover_msgid = data.get('message_id', '')
+    is_cover = (msgid == cover_msgid)
+
+    # Overall patchset status check (applies to cover letter row or
+    # when the series is not yet reviewed).
+    if ps_status in ('Pending', 'In Review', 'Applying'):
+        return [{'tool': 'sashiko', 'status': 'warn',
+                 'summary': f'Review {ps_status.lower()}',
+                 'url': patchset_url}]
+    if ps_status in ('Failed', 'Failed To Apply'):
+        return [{'tool': 'sashiko', 'status': 'fail',
+                 'summary': ps_status, 'url': patchset_url}]
+    if ps_status == 'Incomplete':
+        return [{'tool': 'sashiko', 'status': 'warn',
+                 'summary': 'Series incomplete', 'url': patchset_url}]
+
+    if is_cover:
+        # Aggregate findings across all reviews for the cover letter
+        all_findings: List[Dict[str, str]] = []
+        for review in reviews:
+            all_findings.extend(_parse_sashiko_findings(review))
+        worst, summary = _sashiko_findings_summary(all_findings)
+        result: Dict[str, str] = {
+            'tool': 'sashiko', 'status': worst,
+            'summary': summary, 'url': patchset_url,
+        }
+        if all_findings:
+            result['details'] = json.dumps(all_findings)
+        return [result]
+
+    # Per-patch: find the matching review
+    sashiko_patch_id = patch_id_by_msgid.get(msgid)
+    if sashiko_patch_id is None:
+        return []
+
+    for review in reviews:
+        if review.get('patch_id') == sashiko_patch_id:
+            review_status = review.get('status', '')
+            if review_status == 'Skipped':
+                result_msg = review.get('result', '') or 'Skipped'
+                return [{'tool': 'sashiko', 'status': 'pass',
+                         'summary': result_msg, 'url': patchset_url}]
+            if review_status in ('Pending', 'In Review'):
+                return [{'tool': 'sashiko', 'status': 'warn',
+                         'summary': 'Review in progress',
+                         'url': patchset_url}]
+            if review_status == 'Failed':
+                result_msg = review.get('result', '') or 'Review failed'
+                return [{'tool': 'sashiko', 'status': 'fail',
+                         'summary': result_msg, 'url': patchset_url}]
+            # Reviewed — parse findings
+            findings = _parse_sashiko_findings(review)
+            worst, summary = _sashiko_findings_summary(findings)
+            result = {
+                'tool': 'sashiko', 'status': worst,
+                'summary': summary, 'url': patchset_url,
+            }
+            if findings:
+                result['details'] = json.dumps(findings)
+            return [result]
+
+    # No review found for this patch
+    return [{'tool': 'sashiko', 'status': 'pass',
+             'summary': 'No review', 'url': patchset_url}]
+
+
 # ---------------------------------------------------------------------------
 # External command runner
 # ---------------------------------------------------------------------------
@@ -388,6 +591,13 @@ def _dispatch_cmd(cmdstr: str, msg: EmailMessage, topdir: str,
         if pwkey and pwurl:
             return _run_builtin_patchwork(msg, pwkey, pwurl)
         logger.debug('_builtin_patchwork requested but pw-key/pw-url not configured')
+        return []
+    if cmdstr == '_builtin_sashiko':
+        config = b4.get_main_config()
+        sashiko_url = str(config.get('sashiko-url', ''))
+        if sashiko_url:
+            return _run_builtin_sashiko(msg, sashiko_url)
+        logger.debug('_builtin_sashiko requested but sashiko-url not configured')
         return []
 
     cmdargs = parse_cmd(cmdstr)

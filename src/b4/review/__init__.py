@@ -11,6 +11,9 @@ from b4.review._review import (
     _build_reply_from_comments, _ensure_trailers_in_body,
     _build_review_email,
     _integrate_agent_reviews,
+    _extract_comments_from_quoted_reply,
+    _integrate_sashiko_reviews,
+    _integrate_followup_inline_comments,
     _prepare_review_session,
 )
 
@@ -26,5 +29,8 @@ __all__ = [
     '_build_reply_from_comments', '_ensure_trailers_in_body',
     '_build_review_email',
     '_integrate_agent_reviews',
+    '_extract_comments_from_quoted_reply',
+    '_integrate_sashiko_reviews',
+    '_integrate_followup_inline_comments',
     '_prepare_review_session',
 ]

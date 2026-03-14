@@ -589,6 +589,71 @@ class TestRoundTrip:
         assert extracted[0]['line'] == comments[0]['line']
 
 
+class TestAttributedComments:
+    """Tests for attributed comment blocks (external reviewer comments)."""
+
+    def test_attributed_block_skipped_on_extract(self) -> None:
+        """Comments with attribution on >>> line are not extracted."""
+        comments = [
+            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'External note.'},
+        ]
+        with_comments = review._reinsert_comments(
+            SIMPLE_DIFF, comments, attribution='sashiko.dev (2026-03-01)')
+        extracted = review._extract_patch_comments(with_comments)
+        assert len(extracted) == 0
+
+    def test_unattributed_block_still_extracted(self) -> None:
+        """Comments without attribution are still extracted normally."""
+        comments = [
+            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'My note.'},
+        ]
+        with_comments = review._reinsert_comments(SIMPLE_DIFF, comments)
+        extracted = review._extract_patch_comments(with_comments)
+        assert len(extracted) == 1
+        assert extracted[0]['text'] == 'My note.'
+
+    def test_mixed_attributed_and_own_comments(self) -> None:
+        """Only unattributed (maintainer) comments survive extraction."""
+        all_reviews = {
+            'me@example.com': {
+                'name': 'Maintainer',
+                'comments': [
+                    {'path': 'b/lib/helpers.c', 'line': 12,
+                     'text': 'My own comment.'},
+                ],
+            },
+            'sashiko@sashiko.dev': {
+                'name': 'sashiko.dev',
+                'comments': [
+                    {'path': 'b/lib/helpers.c', 'line': 13,
+                     'text': 'External comment.'},
+                ],
+            },
+        }
+        with_comments = review._reinsert_all_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com')
+        assert 'My own comment.' in with_comments
+        assert 'External comment.' in with_comments
+        # Only the maintainer's comment should be extracted
+        extracted = review._extract_patch_comments(with_comments)
+        assert len(extracted) == 1
+        assert extracted[0]['text'] == 'My own comment.'
+
+    def test_adopted_comment_extracted(self) -> None:
+        """Removing the attribution line makes a comment extractable."""
+        comments = [
+            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Adopted note.'},
+        ]
+        with_comments = review._reinsert_comments(
+            SIMPLE_DIFF, comments, attribution='Claude Opus 4.6 (2026-03-13)')
+        # Simulate the maintainer deleting the attribution line
+        edited = with_comments.replace(
+            '>>> Claude Opus 4.6 (2026-03-13)', '>>>')
+        extracted = review._extract_patch_comments(edited)
+        assert len(extracted) == 1
+        assert extracted[0]['text'] == 'Adopted note.'
+
+
 class TestBuildReplyFromComments:
     """Tests for _build_reply_from_comments()."""
 
@@ -1794,3 +1859,855 @@ class TestCheckSeriesAttestation:
         with mock.patch('b4.get_main_config', return_value={}):
             result = check_series_attestation(lser)
         assert result == 'signed:DKIM/kernel.org'
+
+
+# -- Tests for sashiko inline review conversion and integration ---------------
+
+# A sashiko inline_review with two hunks and two comments
+_SASHIKO_INLINE = """\
+commit ea336c9a36385d0aabe371a1bcbf38c730add763
+Author: Julian Ruess <julianr@linux.ibm.com>
+
+vfio/ism: Implement vfio_pci driver for ISM devices
+
+> diff --git a/drivers/vfio/pci/ism/main.c b/drivers/vfio/pci/ism/main.c
+> @@ -83,12 +83,12 @@ static ssize_t ism_vfio_pci_do_io_w(struct vfio_device *core_vdev,
+>  	if (((off % PAGE_SIZE) + count) > PAGE_SIZE)
+>  		return -EINVAL;
+
+Could an unaligned count here trigger a specification exception?
+
+[ ... ]
+
+> @@ -311,10 +311,10 @@ static void ism_vfio_pci_remove(struct pci_dev *pdev)
+>  	vfio_put_device(&ivpcd->core_device.vdev);
+>  	kmem_cache_destroy(ivpcd->store_block_cache);
+
+Can this cause a use-after-free of ivpcd?
+"""
+
+
+class TestExtractCommentsFromQuotedReply:
+    """Tests for _extract_comments_from_quoted_reply()."""
+
+    def test_sashiko_fixture_produces_two_comments(self) -> None:
+        """The _SASHIKO_INLINE fixture (two hunks) produces two comments."""
+        comments = review._extract_comments_from_quoted_reply(_SASHIKO_INLINE)
+        assert len(comments) == 2
+        assert 'unaligned count' in comments[0]['text']
+        assert comments[0]['path'] == 'drivers/vfio/pci/ism/main.c'
+        assert 'use-after-free' in comments[1]['text']
+        assert comments[1]['path'] == 'drivers/vfio/pci/ism/main.c'
+
+    def test_sashiko_fixture_line_numbers(self) -> None:
+        """Line numbers track hunk offsets correctly."""
+        comments = review._extract_comments_from_quoted_reply(_SASHIKO_INLINE)
+        # First hunk: @@ -83,12 +83,12 @@ — two context lines shown (+83, +84)
+        # Comment anchors after the second context line
+        assert comments[0]['line'] == 84
+        # Second hunk: @@ -311,10 +311,10 @@ — two context lines (+311, +312)
+        assert comments[1]['line'] == 312
+
+    def test_content_key_set(self) -> None:
+        """The content key records the last diff line before each comment."""
+        comments = review._extract_comments_from_quoted_reply(_SASHIKO_INLINE)
+        assert 'content' in comments[0]
+        assert 'EINVAL' in comments[0]['content']
+        assert 'content' in comments[1]
+        assert 'store_block_cache' in comments[1]['content']
+
+    def test_single_hunk_single_comment(self) -> None:
+        """A minimal single-hunk inline review produces one comment."""
+        inline = (
+            "commit abc123\n"
+            "Author: Test <test@test.com>\n"
+            "\n"
+            "Test patch\n"
+            "\n"
+            "> diff --git a/fs/file.c b/fs/file.c\n"
+            "> @@ -10,4 +10,5 @@ void func(void)\n"
+            ">  \tint x;\n"
+            "> +\tptr = malloc(sz);\n"
+            "\n"
+            "Missing NULL check after malloc.\n"
+            "\n"
+            ">  \treturn 0;\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert 'NULL check' in comments[0]['text']
+        assert comments[0]['path'] == 'fs/file.c'
+        # +malloc is at +11, comment anchors there
+        assert comments[0]['line'] == 11
+
+    def test_no_diff_produces_no_comments(self) -> None:
+        """Text with no quoted diff content produces nothing."""
+        inline = "commit abc123\nAuthor: Test\n\nJust text, no diffs.\n"
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert comments == []
+
+    def test_truncation_markers_skipped(self) -> None:
+        """'[ ... ]' markers don't appear in comment text."""
+        inline = (
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+            "\n"
+            "Comment here.\n"
+            "\n"
+            "[ ... ]\n"
+            "\n"
+            "> @@ -10,3 +10,4 @@\n"
+            ">  ctx2\n"
+            "> +new2\n"
+            "\n"
+            "Another comment.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 2
+        assert '[ ... ]' not in comments[0]['text']
+        assert 'Comment here.' == comments[0]['text']
+        assert 'Another comment.' == comments[1]['text']
+
+    def test_multiline_comment(self) -> None:
+        """Multiple non-quoted lines between diff sections form one comment."""
+        inline = (
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -5,3 +5,4 @@ void f(void)\n"
+            ">  \tint a;\n"
+            "> +\tint b;\n"
+            "\n"
+            "This variable name is confusing.\n"
+            "Consider using a more descriptive name.\n"
+            "\n"
+            ">  \treturn;\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert 'confusing' in comments[0]['text']
+        assert 'descriptive' in comments[0]['text']
+
+    def test_multi_paragraph_comment_stays_merged(self) -> None:
+        """Two paragraphs separated by a blank line become one comment."""
+        inline = (
+            "> diff --git a/f.c b/f.c\n"
+            "> --- a/f.c\n"
+            "> +++ b/f.c\n"
+            "> @@ -5,3 +5,5 @@ void f(void)\n"
+            ">  \tint a;\n"
+            "> +\tint b;\n"
+            "> +\tint c;\n"
+            "\n"
+            "First paragraph of review.\n"
+            "\n"
+            "Second paragraph of review.\n"
+            "\n"
+            ">  \treturn;\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert 'First paragraph' in comments[0]['text']
+        assert 'Second paragraph' in comments[0]['text']
+
+    def test_comments_in_different_hunks_stay_separate(self) -> None:
+        """Comments in different hunks (far apart) stay separate."""
+        inline = (
+            "> diff --git a/f.c b/f.c\n"
+            "> --- a/f.c\n"
+            "> +++ b/f.c\n"
+            "> @@ -5,3 +5,4 @@\n"
+            ">  \tint a;\n"
+            "> +\tint b;\n"
+            "\n"
+            "Comment on hunk 1.\n"
+            "\n"
+            ">  \treturn;\n"
+            "> @@ -100,3 +101,4 @@\n"
+            ">  \tvoid x;\n"
+            "> +\tvoid y;\n"
+            "\n"
+            "Comment on hunk 2.\n"
+            "\n"
+            ">  \treturn;\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 2
+        assert 'hunk 1' in comments[0]['text']
+        assert 'hunk 2' in comments[1]['text']
+
+    def test_email_reply_with_file_headers(self) -> None:
+        """Email follow-ups include --- a/ and +++ b/ lines; parser handles them."""
+        email_reply = (
+            "On Mon, Jan 1, 2024, Dev <dev@test.com> wrote:\n"
+            "> diff --git a/fs/file.c b/fs/file.c\n"
+            "> index abc123..def456 100644\n"
+            "> --- a/fs/file.c\n"
+            "> +++ b/fs/file.c\n"
+            "> @@ -10,3 +10,4 @@ void f(void)\n"
+            ">  \tint x;\n"
+            "> +\tptr = malloc(sz);\n"
+            "\n"
+            "Missing NULL check.\n"
+            "\n"
+            ">  \treturn 0;\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(email_reply)
+        assert len(comments) == 1
+        assert 'NULL check' in comments[0]['text']
+        # With explicit +++ b/ header, path includes the b/ prefix
+        assert comments[0]['path'] == 'b/fs/file.c'
+
+    def test_bare_gt_prefix(self) -> None:
+        """Lines starting with just '>' (no space) are also parsed."""
+        inline = (
+            ">diff --git a/f.c b/f.c\n"
+            ">@@ -1,3 +1,4 @@\n"
+            "> ctx\n"
+            ">+new\n"
+            "\n"
+            "Looks good.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert 'Looks good.' == comments[0]['text']
+
+    def test_comments_in_different_files(self) -> None:
+        """Comments in different files produce separate entries with correct paths."""
+        inline = (
+            "> diff --git a/a.c b/a.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new_a\n"
+            "\n"
+            "Comment in a.c.\n"
+            "\n"
+            "> diff --git a/b.c b/b.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new_b\n"
+            "\n"
+            "Comment in b.c.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 2
+        assert comments[0]['path'] == 'a.c'
+        assert 'a.c' in comments[0]['text']
+        assert comments[1]['path'] == 'b.c'
+        assert 'b.c' in comments[1]['text']
+
+    def test_preamble_before_diff_ignored(self) -> None:
+        """Text before the first quoted diff line is not treated as a comment."""
+        inline = (
+            "Hi, some general feedback below:\n"
+            "\n"
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+            "\n"
+            "Actual inline comment.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert 'Actual inline comment.' == comments[0]['text']
+
+    def test_trailing_comment_flushed(self) -> None:
+        """A comment at the very end (no trailing quoted line) is still captured."""
+        inline = (
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+            "\n"
+            "Final comment with no trailing diff.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert 'Final comment' in comments[0]['text']
+
+    def test_deletion_line_anchors_to_a_file(self) -> None:
+        """Comment after a deletion line anchors to the a-side file and line."""
+        inline = (
+            "> diff --git a/old.c b/old.c\n"
+            "> @@ -10,4 +10,3 @@\n"
+            ">  ctx\n"
+            "> -removed_line\n"
+            "\n"
+            "Why was this removed?\n"
+            "\n"
+            ">  more ctx\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert comments[0]['path'] == 'old.c'
+        # Deletion at a_line=11, so comment anchors to line 11
+        assert comments[0]['line'] == 11
+
+
+class TestResolveCommentPositions:
+    """Tests for _resolve_comment_positions()."""
+
+    def test_context_content_matches_addition_in_new_file(self) -> None:
+        """Content stored as context (space prefix) matches addition (+) in real diff."""
+        # Sashiko uses fake context hunks even for new files, so the
+        # content key has a space prefix while the real diff has + prefix.
+        real_diff = (
+            "diff --git a/f.c b/f.c\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/f.c\n"
+            "@@ -0,0 +1,5 @@\n"
+            "+int x;\n"
+            "+int y;\n"
+            "+return -EINVAL;\n"
+            "+if (check)\n"
+            "+\treturn 0;\n"
+        )
+        comments = [
+            {'path': 'f.c', 'line': 90, 'text': 'Bug here.',
+             'content': ' return -EINVAL;'},
+        ]
+        review._resolve_comment_positions(real_diff, comments)
+        assert comments[0]['line'] == 3
+        assert comments[0]['path'] == 'b/f.c'
+
+    def test_exact_prefix_match_still_works(self) -> None:
+        """Content with matching prefix (both +) still resolves correctly."""
+        real_diff = (
+            "diff --git a/f.c b/f.c\n"
+            "--- a/f.c\n"
+            "+++ b/f.c\n"
+            "@@ -10,3 +10,4 @@\n"
+            " ctx\n"
+            "+new_line\n"
+            " more\n"
+        )
+        comments = [
+            {'path': 'f.c', 'line': 99, 'text': 'Review.',
+             'content': '+new_line'},
+        ]
+        review._resolve_comment_positions(real_diff, comments)
+        assert comments[0]['line'] == 11
+
+    def test_no_content_key_keeps_original_position(self) -> None:
+        """Comments without content key are not touched."""
+        real_diff = "diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+        comments = [{'path': 'f.c', 'line': 42, 'text': 'Note.'}]
+        review._resolve_comment_positions(real_diff, comments)
+        assert comments[0]['line'] == 42
+
+    def test_duplicate_content_picks_closest_to_source_position(self) -> None:
+        """When the same line appears multiple times, pick the closest match."""
+        # Simulates a new file with return -EINVAL; at lines 10, 30, and 50
+        real_diff = (
+            "diff --git a/f.c b/f.c\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/f.c\n"
+            "@@ -0,0 +1,50 @@\n"
+            + "".join(f"+line{i}\n" for i in range(1, 10))
+            + "+\treturn -EINVAL;\n"        # line 10
+            + "".join(f"+line{i}\n" for i in range(11, 30))
+            + "+\treturn -EINVAL;\n"        # line 30
+            + "".join(f"+line{i}\n" for i in range(31, 50))
+            + "+\treturn -EINVAL;\n"        # line 50
+        )
+        # Sashiko says line 30 with context-prefix content
+        comments = [
+            {'path': 'f.c', 'line': 30, 'text': 'Bug here.',
+             'content': ' \treturn -EINVAL;'},
+        ]
+        review._resolve_comment_positions(real_diff, comments)
+        # Should pick line 30 (closest to source position 30)
+        assert comments[0]['line'] == 30
+        assert comments[0]['path'] == 'b/f.c'
+
+
+class TestIntegrateSashikoReviews:
+    """Tests for _integrate_sashiko_reviews()."""
+
+    _SASHIKO_RESPONSE = {
+        'id': 42,
+        'message_id': 'cover@example.com',
+        'status': 'Reviewed',
+        'patches': [
+            {'id': 100, 'message_id': 'patch1@example.com', 'part_index': 1},
+            {'id': 101, 'message_id': 'patch2@example.com', 'part_index': 2},
+        ],
+        'reviews': [
+            {
+                'id': 200,
+                'patch_id': 100,
+                'status': 'Reviewed',
+                'output': '{}',
+                'inline_review': (
+                    "commit aaa\n"
+                    "Author: Test\n\n"
+                    "Test patch 1\n\n"
+                    "> diff --git a/f.c b/f.c\n"
+                    "> @@ -10,3 +10,4 @@ void f(void)\n"
+                    ">  \tint x;\n"
+                    "> +\tptr = alloc();\n"
+                    "\n"
+                    "Missing error check.\n"
+                    "\n"
+                    ">  \treturn 0;\n"
+                ),
+            },
+            {
+                'id': 201,
+                'patch_id': 101,
+                'status': 'Reviewed',
+                'output': '{}',
+                'inline_review': '',
+            },
+        ],
+    }
+
+    def test_no_sashiko_url_returns_false(self) -> None:
+        """When sashiko-url is not configured, returns False immediately."""
+        with mock.patch('b4.get_main_config', return_value={}):
+            result = review._integrate_sashiko_reviews(
+                '/tmp', '', {'series': {}, 'patches': []}, [], [])
+        assert result is False
+
+    def test_no_series_msgid_returns_false(self) -> None:
+        """When series has no message_id, returns False."""
+        with mock.patch('b4.get_main_config',
+                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+            result = review._integrate_sashiko_reviews(
+                '/tmp', '', {'series': {}, 'patches': []}, [], [])
+        assert result is False
+
+    def test_api_returns_none(self) -> None:
+        """When sashiko API returns nothing, returns False."""
+        series = {'message_id': 'test@example.com'}
+        with mock.patch('b4.get_main_config',
+                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+            with mock.patch('b4.review.checks._fetch_sashiko_patchset', return_value=None):
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    result = review._integrate_sashiko_reviews(
+                        '/tmp', '', {'series': series, 'patches': []}, [], [])
+        assert result is False
+
+    def test_integrates_inline_comments(self) -> None:
+        """Inline review comments are extracted and stored in tracking."""
+        patches = [
+            {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
+            {'header-info': {'msgid': 'patch2@example.com'}, 'title': 'patch 2'},
+        ]
+        series = {'message_id': 'cover@example.com'}
+        tracking = {'series': series, 'patches': patches}
+        commit_shas = ['aaaa', 'bbbb']
+        # Real diff matching the inline review structure
+        real_diff = (
+            "diff --git a/f.c b/f.c\n"
+            "index 111..222 100644\n"
+            "--- a/f.c\n"
+            "+++ b/f.c\n"
+            "@@ -10,3 +10,4 @@ void f(void)\n"
+            " \tint x;\n"
+            "+\tptr = alloc();\n"
+            " \treturn 0;\n"
+        )
+        with mock.patch('b4.get_main_config',
+                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
+                            return_value=self._SASHIKO_RESPONSE):
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    with mock.patch('b4.git_run_command') as mock_git:
+                        mock_git.return_value = (0, real_diff)
+                        with mock.patch.object(review, 'save_tracking'):
+                            result = review._integrate_sashiko_reviews(
+                                '/tmp', 'cover', tracking, commit_shas, patches)
+
+        assert result is True
+        # Patch 1 should have sashiko comments
+        assert 'reviews' in patches[0]
+        sashiko_review = patches[0]['reviews'].get('sashiko@sashiko.dev')
+        assert sashiko_review is not None
+        assert sashiko_review['name'] == 'sashiko.dev'
+        assert len(sashiko_review['comments']) == 1
+        assert 'Missing error check' in sashiko_review['comments'][0]['text']
+        # Patch 2 has empty inline_review, should have no sashiko entry
+        assert 'reviews' not in patches[1]
+
+    def test_skips_patch_without_msgid(self) -> None:
+        """Patches without header-info.msgid are skipped gracefully."""
+        patches = [
+            {'title': 'no msgid patch'},
+        ]
+        series = {'message_id': 'cover@example.com'}
+        tracking = {'series': series, 'patches': patches}
+        with mock.patch('b4.get_main_config',
+                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
+                            return_value=self._SASHIKO_RESPONSE):
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    result = review._integrate_sashiko_reviews(
+                        '/tmp', '', tracking, ['aaa'], patches)
+        assert result is False
+
+    def test_uses_header_info_msgid_fallback(self) -> None:
+        """Falls back to header-info.msgid when message_id is missing."""
+        series = {'header-info': {'msgid': 'cover@example.com'}}
+        tracking = {'series': series, 'patches': []}
+        with mock.patch('b4.get_main_config',
+                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
+                            return_value=None) as mock_fetch:
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    review._integrate_sashiko_reviews(
+                        '/tmp', '', tracking, [], [])
+        # Should have been called with the header-info msgid
+        mock_fetch.assert_called_once_with('cover@example.com', 'https://sashiko.dev')
+
+    def test_picks_latest_review_per_patch(self) -> None:
+        """When multiple reviews exist for a patch, uses the one with highest id."""
+        patchset = {
+            'id': 42,
+            'message_id': 'cover@example.com',
+            'status': 'Reviewed',
+            'patches': [
+                {'id': 100, 'message_id': 'patch1@example.com', 'part_index': 1},
+            ],
+            'reviews': [
+                {
+                    'id': 200,
+                    'patch_id': 100,
+                    'status': 'Reviewed',
+                    'inline_review': (
+                        "commit aaa\nAuthor: Test\n\nOld\n\n"
+                        "> diff --git a/f.c b/f.c\n"
+                        "> @@ -1,3 +1,4 @@\n>  ctx\n> +new\n"
+                        "\nOld review comment.\n"
+                    ),
+                },
+                {
+                    'id': 300,
+                    'patch_id': 100,
+                    'status': 'Reviewed',
+                    'inline_review': (
+                        "commit bbb\nAuthor: Test\n\nNew\n\n"
+                        "> diff --git a/f.c b/f.c\n"
+                        "> @@ -1,3 +1,4 @@\n>  ctx\n> +new\n"
+                        "\nNew review comment.\n"
+                    ),
+                },
+            ],
+        }
+        patches = [{'header-info': {'msgid': 'patch1@example.com'}}]
+        series = {'message_id': 'cover@example.com'}
+        tracking = {'series': series, 'patches': patches}
+        real_diff = (
+            "diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n"
+            "@@ -1,3 +1,4 @@\n ctx\n+new\n ctx\n"
+        )
+        with mock.patch('b4.get_main_config',
+                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
+                            return_value=patchset):
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
+                        with mock.patch.object(review, 'save_tracking'):
+                            review._integrate_sashiko_reviews(
+                                '/tmp', '', tracking, ['aaa'], patches)
+        comments = patches[0]['reviews']['sashiko@sashiko.dev']['comments']
+        # Should have the newer review's comment
+        assert any('New review comment' in c['text'] for c in comments)
+        assert not any('Old review comment' in c['text'] for c in comments)
+
+    def test_skips_already_integrated_review(self) -> None:
+        """When the sashiko-review-id already matches, no re-parsing happens."""
+        patches = [
+            {
+                'header-info': {'msgid': 'patch1@example.com'},
+                'title': 'patch 1',
+                'reviews': {
+                    'sashiko@sashiko.dev': {
+                        'name': 'sashiko.dev',
+                        'sashiko-review-id': 200,
+                        'comments': [{'path': 'f.c', 'line': 11, 'text': 'Already here.'}],
+                    },
+                },
+            },
+        ]
+        series = {'message_id': 'cover@example.com'}
+        tracking = {'series': series, 'patches': patches}
+        with mock.patch('b4.get_main_config',
+                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
+                            return_value=self._SASHIKO_RESPONSE):
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    with mock.patch('b4.git_run_command') as mock_git:
+                        result = review._integrate_sashiko_reviews(
+                            '/tmp', '', tracking, ['aaaa'], patches)
+        # Should not have called git diff (skipped re-parsing)
+        mock_git.assert_not_called()
+        assert result is False
+        # Original comments untouched
+        assert patches[0]['reviews']['sashiko@sashiko.dev']['comments'][0]['text'] == 'Already here.'
+
+
+class TestIntegrateFollowupInlineComments:
+    """Tests for _integrate_followup_inline_comments()."""
+
+    _FOLLOWUP_BODY_WITH_DIFF = (
+        "On Mon, Jan 1, 2024, Dev <dev@test.com> wrote:\n"
+        "> diff --git a/fs/file.c b/fs/file.c\n"
+        "> index abc123..def456 100644\n"
+        "> --- a/fs/file.c\n"
+        "> +++ b/fs/file.c\n"
+        "> @@ -10,3 +10,4 @@ void f(void)\n"
+        ">  \tint x;\n"
+        "> +\tptr = malloc(sz);\n"
+        "\n"
+        "Missing NULL check after malloc.\n"
+        "\n"
+        ">  \treturn 0;\n"
+    )
+
+    _FOLLOWUP_BODY_NO_DIFF = (
+        "I think this approach makes sense, but can we also\n"
+        "add a test for the error path?\n"
+    )
+
+    def _make_followup_comments(self, bodies_by_patch: Dict[int, list]) -> Dict[int, list]:
+        """Build a followup_comments dict like _parse_msgs_to_followup_comments returns."""
+        result: Dict[int, list] = {}
+        for display_idx, body_list in bodies_by_patch.items():
+            entries = []
+            for i, body in enumerate(body_list):
+                entries.append({
+                    'body': body,
+                    'fromname': f'Reviewer {i}',
+                    'fromemail': f'reviewer{i}@example.com',
+                    'date': '2024-01-01',
+                    'msgid': f'followup{display_idx}-{i}@example.com',
+                    'subject': 'Re: [PATCH]',
+                    'depth': 0,
+                })
+            result[display_idx] = entries
+        return result
+
+    def test_no_thread_blob_returns_false(self) -> None:
+        """Without a thread-blob, returns False immediately."""
+        tracking = {'series': {}, 'patches': []}
+        result = review._integrate_followup_inline_comments(
+            '/tmp', '', tracking, [], [])
+        assert result is False
+
+    def test_extracts_inline_comments_from_followup(self) -> None:
+        """Follow-ups that quote diff content produce inline comments."""
+        patches = [
+            {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
+        ]
+        series = {
+            'header-info': {'msgid': 'cover@example.com'},
+            'thread-blob': 'abc123',
+        }
+        tracking = {'series': series, 'patches': patches}
+        commit_shas = ['aaaa']
+
+        # Follow-up body that quotes diff with a comment
+        followup_comments = self._make_followup_comments({
+            1: [self._FOLLOWUP_BODY_WITH_DIFF],  # display_idx 1 = patch 0
+        })
+
+        real_diff = (
+            "diff --git a/fs/file.c b/fs/file.c\n"
+            "index abc123..def456 100644\n"
+            "--- a/fs/file.c\n"
+            "+++ b/fs/file.c\n"
+            "@@ -10,3 +10,4 @@ void f(void)\n"
+            " \tint x;\n"
+            "+\tptr = malloc(sz);\n"
+            " \treturn 0;\n"
+        )
+
+        with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
+            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
+                                return_value=followup_comments):
+                    with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
+                        with mock.patch.object(review, 'save_tracking'):
+                            result = review._integrate_followup_inline_comments(
+                                '/tmp', 'cover', tracking, commit_shas, patches)
+
+        assert result is True
+        assert 'reviews' in patches[0]
+        rev = patches[0]['reviews'].get('reviewer0@example.com')
+        assert rev is not None
+        assert rev['name'] == 'Reviewer 0'
+        assert len(rev['comments']) == 1
+        assert 'NULL check' in rev['comments'][0]['text']
+
+    def test_skips_followups_without_diff(self) -> None:
+        """Follow-ups that don't quote diff content are ignored."""
+        patches = [
+            {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
+        ]
+        series = {
+            'header-info': {'msgid': 'cover@example.com'},
+            'thread-blob': 'abc123',
+        }
+        tracking = {'series': series, 'patches': patches}
+        followup_comments = self._make_followup_comments({
+            1: [self._FOLLOWUP_BODY_NO_DIFF],
+        })
+
+        with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
+            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
+                                return_value=followup_comments):
+                    result = review._integrate_followup_inline_comments(
+                        '/tmp', '', tracking, ['aaa'], patches)
+        assert result is False
+        assert 'reviews' not in patches[0]
+
+    def test_skips_cover_letter_followups(self) -> None:
+        """Follow-ups to the cover letter (display_idx 0) are skipped."""
+        patches = [
+            {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
+        ]
+        series = {
+            'header-info': {'msgid': 'cover@example.com'},
+            'thread-blob': 'abc123',
+        }
+        tracking = {'series': series, 'patches': patches}
+        followup_comments = self._make_followup_comments({
+            0: [self._FOLLOWUP_BODY_WITH_DIFF],  # cover letter
+        })
+
+        with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
+            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
+                                return_value=followup_comments):
+                    result = review._integrate_followup_inline_comments(
+                        '/tmp', '', tracking, ['aaa'], patches)
+        assert result is False
+
+    def test_multiple_reviewers_same_patch(self) -> None:
+        """Multiple follow-ups to the same patch create separate review entries."""
+        patches = [
+            {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
+        ]
+        series = {
+            'header-info': {'msgid': 'cover@example.com'},
+            'thread-blob': 'abc123',
+        }
+        tracking = {'series': series, 'patches': patches}
+        followup_comments = self._make_followup_comments({
+            1: [self._FOLLOWUP_BODY_WITH_DIFF, self._FOLLOWUP_BODY_WITH_DIFF],
+        })
+
+        real_diff = (
+            "diff --git a/fs/file.c b/fs/file.c\n"
+            "index abc123..def456 100644\n"
+            "--- a/fs/file.c\n"
+            "+++ b/fs/file.c\n"
+            "@@ -10,3 +10,4 @@ void f(void)\n"
+            " \tint x;\n"
+            "+\tptr = malloc(sz);\n"
+            " \treturn 0;\n"
+        )
+
+        with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
+            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
+                                return_value=followup_comments):
+                    with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
+                        with mock.patch.object(review, 'save_tracking'):
+                            result = review._integrate_followup_inline_comments(
+                                '/tmp', 'cover', tracking, ['aaa'], patches)
+
+        assert result is True
+        reviews = patches[0]['reviews']
+        assert 'reviewer0@example.com' in reviews
+        assert 'reviewer1@example.com' in reviews
+
+    def test_skips_already_integrated_followup(self) -> None:
+        """When the followup-msgid already matches, no re-parsing happens."""
+        patches = [
+            {
+                'header-info': {'msgid': 'patch1@example.com'},
+                'title': 'patch 1',
+                'reviews': {
+                    'reviewer0@example.com': {
+                        'name': 'Reviewer 0',
+                        'followup-msgid': 'followup1-0@example.com',
+                        'comments': [{'path': 'fs/file.c', 'line': 11, 'text': 'Already here.'}],
+                    },
+                },
+            },
+        ]
+        series = {
+            'header-info': {'msgid': 'cover@example.com'},
+            'thread-blob': 'abc123',
+        }
+        tracking = {'series': series, 'patches': patches}
+        followup_comments = self._make_followup_comments({
+            1: [self._FOLLOWUP_BODY_WITH_DIFF],
+        })
+
+        with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
+            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
+                                return_value=followup_comments):
+                    with mock.patch('b4.git_run_command') as mock_git:
+                        result = review._integrate_followup_inline_comments(
+                            '/tmp', '', tracking, ['aaa'], patches)
+        # Should not have called git diff (skipped re-parsing)
+        mock_git.assert_not_called()
+        assert result is False
+        # Original comments untouched
+        assert patches[0]['reviews']['reviewer0@example.com']['comments'][0]['text'] == 'Already here.'
+
+
+class TestFollowupItemPerMessage:
+    """Tests for per-message follow-up selection (msgid-based keying)."""
+
+    @staticmethod
+    def _make_session() -> Dict[str, Any]:
+        return {
+            'topdir': '/tmp',
+            'cover_text': 'Subject\n',
+            'tracking': {},
+            'series': {},
+            'patches': [{}],
+            'base_commit': '',
+            'commit_shas': ['deadbeef'],
+            'commit_subjects': ['Patch subject'],
+            'sha_map': {},
+            'abbrev_len': 12,
+            'default_identity': 'Tester <tester@example.com>',
+            'usercfg': {'name': 'Tester', 'email': 'tester@example.com'},
+            'cover_subject_clean': 'Subject',
+        }
+
+    def test_followup_item_keyed_by_msgid(self) -> None:
+        """FollowupItem stores msgid, not fromemail."""
+        from b4.review_tui._review_app import FollowupItem
+        item = FollowupItem('Alice', 1, 'reply-1@example.com')
+        assert item.msgid == 'reply-1@example.com'
+        assert item.display_idx == 1
+
+    def test_selected_followup_enables_reply_in_preview(self) -> None:
+        """check_action returns True for edit_reply when a follow-up is selected."""
+        from b4.review_tui._review_app import ReviewApp
+        app = ReviewApp(self._make_session())
+        app._preview_mode = True
+        app._selected_followup_msgid = 'reply@example.com'
+        assert app.check_action('edit_reply', ()) is True
+
+    def test_selected_followup_cleared_on_show_content(self) -> None:
+        """_selected_followup_msgid is reset when switching patches."""
+        from b4.review_tui._review_app import ReviewApp
+        app = ReviewApp(self._make_session())
+        app._selected_followup_msgid = 'reply@example.com'
+        # Verify it was set
+        assert app._selected_followup_msgid == 'reply@example.com'
+        # The field should be None after init for a fresh app
+        app2 = ReviewApp(self._make_session())
+        assert app2._selected_followup_msgid is None

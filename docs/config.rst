@@ -454,6 +454,22 @@ These settings control ``b4 review`` TUI behaviour.
 
      .. versionadded:: v0.15
 
+   :term:`b4.sashiko-url`
+     Base URL of a `sashiko.dev <https://sashiko.dev>`_ instance to use
+     for AI-powered code review. When set, b4 automatically queries the
+     sashiko API for review findings as part of CI checks and integrates
+     sashiko inline review comments into the diff view. Inline comments
+     appear attributed to ``sashiko.dev`` with a provenance link back to
+     the sashiko web interface.
+
+     Example::
+
+         sashiko-url = https://sashiko.dev
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
 .. _patchwork_settings:
 
 Patchwork integration settings

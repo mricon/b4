@@ -315,15 +315,16 @@ Key                        Action
 ``.``/``,``                Jump to next/previous review comment
 ``Tab``                    Switch focus between panels
 ``t``                      Trailers — quickly add Reviewed-by, Acked-by, etc.
-``c``                      Comment — open ``$EDITOR`` for inline comment
+``C``                      Comment — open ``$EDITOR`` for inline comment
 ``n``                      Notes — view or edit review notes
 ``r``                      Reply — open ``$EDITOR`` for a general reply
-``f``                      Followups — toggle follow-up messages from lore
+``f``                      Followups — toggle follow-up messages and external
+                           inline comments from lore
 ``a``                      Agent — run review LLM agent (if configured)
 ``d``                      Done — toggle "done" state on the current patch
 ``x``                      Skip — toggle "skip" state on the current patch
 ``H``                      Hide skipped — toggle visibility of skipped patches
-``C``                      CI checks — run check commands and show results
+``c``                      CI checks — run check commands and show results
                            (see :ref:`ci_check_protocol`)
 ``e``                      Toggle email mode
 ``s``                      Shell — suspend to an interactive sub-shell
@@ -343,7 +344,7 @@ Key     Action
 
 **Inline diff comments**
 
-Press ``c`` on a patch to open ``$EDITOR`` with the full diff. B4
+Press ``C`` on a patch to open ``$EDITOR`` with the full diff. B4
 prepends instruction comments at the top and sets the filehint to
 ``review.diff``, so editors with filetype detection will apply diff
 syntax highlighting.
@@ -377,9 +378,9 @@ Single-line comments can be written without delimiters::
      another context line
 
 On save, b4 extracts each comment and associates it with the nearest
-preceding diff line (file path and line number). Comments from all
-reviewers are displayed in the diff view as coloured bordered panels,
-with the reviewer's initials shown in the panel title. Use ``.`` and
+preceding diff line (file path and line number). Your comments are
+displayed in the diff view as coloured bordered panels with your name
+shown in the bottom-right corner of the panel frame. Use ``.`` and
 ``,`` to jump between comments.
 
 When you send review emails, b4 automatically builds a standard
@@ -391,20 +392,93 @@ diff context above each comment and collapses larger gaps with a
 ``[ ... skip N lines ... ]`` marker.
 
 The left pane summarises the review state per reviewer using a trailer
-overlay.
+overlay. This overlay always shows all reviewers — both your own review
+and any external reviewers — so you can see at a glance who has
+commented on the current patch.
+
+**External inline comments**
+
+B4 can display inline comments from external sources alongside your own
+in the diff view. These sources include:
+
+* **Follow-up messages** — replies to patches on the mailing list that
+  quote diff lines and add comments. These use the standard
+  mailing-list review format: diff lines quoted with ``>`` and
+  unquoted reviewer comments.
+* **Sashiko** — the `sashiko.dev <https://sashiko.dev>`_ AI code review
+  service (when :term:`b4.sashiko-url` is configured).
+* **Review agents** — AI review agents invoked with ``a``.
+
+External inline comments are only displayed when follow-ups are active
+— press ``f`` to toggle them on. Your own comments are always visible
+regardless of the ``f`` state. When external comments are hidden, the
+diff view shows a ``≡`` gutter marker in the left margin on lines that
+have external comments, so you can see at a glance where reviewers have
+commented without loading the full panels.
+
+Each reviewer's comments are displayed in a distinct colour (green is
+excluded from the palette to avoid blending with diff additions). The
+reviewer's full name is shown in the bottom-right corner of each
+comment panel; your own comments show "You" instead of your name.
+
+**Adopting external comments**
+
+When you open the inline comment editor (``C``), external reviewer
+comments are included in the diff as attributed blocks::
+
+    >
+    >>> sashiko.dev : https://sashiko.dev/#/message/20260313-example%40kernel.org
+
+    Is it possible for this code to trigger an exception
+    on heterogeneous systems?
+
+    <<<
+    <
+
+The ``>>>`` line shows the reviewer's name and a provenance URL linking
+back to the original review (the sashiko web interface for sashiko
+reviews, or ``patch.msgid.link`` for mailing-list follow-ups).
+Attributed blocks are read-only — they are preserved in the editor for
+context but are not saved as your own comments.
+
+To adopt an external comment as your own (for example, to endorse an
+agent suggestion or incorporate a reviewer's point), simply delete the
+attribution line so only ``>>>`` remains::
+
+    >
+    >>>
+
+    Is it possible for this code to trigger an exception
+    on heterogeneous systems?
+
+    <<<
+    <
+
+The comment is now treated as yours and will be included when you send
+review emails. The original reviewer's copy remains in the tracking
+data.
 
 **Per-patch states**
 
 Each patch in the series can be marked with a state to help you track
 your review progress:
 
-==========  ======  =======================================================
-State       Key     Meaning
-==========  ======  =======================================================
-*(none)*    —       Not yet reviewed
-Done        ``d``   Review complete, include in outgoing emails
-Skip        ``x``   Intentionally skipped, exclude from outgoing emails
-==========  ======  =======================================================
+==========  ======  ======  ====================================================
+State       Marker  Key     Meaning
+==========  ======  ======  ====================================================
+*(none)*    |sp|    —       Not yet reviewed
+External    ``±``   —       External reviewers have inline comments (auto)
+Draft       ``✎``   —       You have comments, a reply, or a nack trailer (auto)
+Done        ``✓``   ``d``   Review complete, include in outgoing emails
+Skip        ``✕``   ``x``   Intentionally skipped, exclude from outgoing emails
+==========  ======  ======  ====================================================
+
+.. |sp| unicode:: U+0020
+
+The marker column shows the highest-priority state that applies. For
+example, if external reviewers have commented but you have not yet
+reviewed, the marker shows ``±``; once you add your own comments it
+changes to ``✎``.
 
 Pressing ``d`` or ``x`` toggles the state for the current patch. The
 patch list on the left shows the state visually: done patches appear in
@@ -418,13 +492,22 @@ in the patch selection dialog.
 
 **Follow-up messages**
 
-Press ``f`` to fetch and display follow-up messages from lore for the
-series being reviewed. The ``f`` key is a toggle — pressing it again
-clears the follow-up display.
+Press ``f`` to load and display follow-up messages for the series being
+reviewed. B4 first checks the locally cached thread (stored as a git
+blob in the review branch); if no local copy exists, it fetches from
+lore in the background. The ``f`` key is a toggle — pressing it again
+hides the follow-up display.
 
-Follow-up messages appear as coloured panels in the diff view, showing
+Follow-up messages appear as coloured panels below the diff, showing
 threading depth (replies indented visually), along with From, Date, and
 Message-ID headers for easy cross-referencing with your mail client.
+Each panel shows the reviewer's full name in the title.
+
+When follow-ups contain inline diff review comments (quoted diff lines
+with unquoted reviewer comments), b4 extracts and resolves them against
+the real diff so they display at the correct position inline, alongside
+your own comments. This works for any follow-up that uses the standard
+mailing-list code review format.
 
 You can click a follow-up panel header (marked with ↩) to compose a
 quick reply directly from the review interface. B4 opens ``$EDITOR``
@@ -837,7 +920,7 @@ Key                       Description
 CI check integration
 --------------------
 
-Both the tracking list (``c``) and the review app (``C``) support
+Both the tracking list (``c``) and the review app (``c``) support
 running CI checks on a series. Results are displayed in a matrix modal showing each
 patch as a row and each check tool as a column, with colour-coded
 status indicators. Press ``Enter`` on a row to drill into detailed

@@ -1,9 +1,8 @@
 import datetime
 import json
 import os
-import sqlite3
 from email.message import EmailMessage
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest import mock
 
 import pytest
@@ -462,3 +461,455 @@ class TestStatusOrder:
     def test_ordering(self) -> None:
         assert checks._STATUS_ORDER['pass'] < checks._STATUS_ORDER['warn']
         assert checks._STATUS_ORDER['warn'] < checks._STATUS_ORDER['fail']
+
+
+# ---------------------------------------------------------------------------
+# Sashiko AI review integration
+# ---------------------------------------------------------------------------
+
+# Sample patchset response matching the real sashiko API format.
+_SASHIKO_PATCHSET: Dict[str, Any] = {
+    'id': 93,
+    'message_id': 'cover@example.com',
+    'subject': '[PATCH 0/3] Example series',
+    'status': 'Reviewed',
+    'author': 'Test Author <test@example.com>',
+    'patches': [
+        {'id': 1, 'message_id': 'patch1@example.com', 'part_index': 1,
+         'subject': '[PATCH 1/3] First patch', 'status': 'applied'},
+        {'id': 2, 'message_id': 'patch2@example.com', 'part_index': 2,
+         'subject': '[PATCH 2/3] Second patch', 'status': 'applied'},
+        {'id': 3, 'message_id': 'patch3@example.com', 'part_index': 3,
+         'subject': '[PATCH 3/3] Third patch', 'status': 'applied'},
+    ],
+    'reviews': [
+        {
+            'id': 100, 'patch_id': 1, 'status': 'Reviewed',
+            'result': 'Review completed successfully.',
+            'summary': '', 'inline_review': 'looks good',
+            'output': json.dumps({
+                'findings': [
+                    {'severity': 'Low', 'problem': 'Minor style issue'},
+                ],
+            }),
+        },
+        {
+            'id': 101, 'patch_id': 2, 'status': 'Reviewed',
+            'result': 'Review completed successfully.',
+            'summary': '', 'inline_review': 'has issues',
+            'output': json.dumps({
+                'findings': [
+                    {'severity': 'Critical', 'problem': 'Use-after-free',
+                     'suggestion': 'Add proper locking'},
+                    {'severity': 'High', 'problem': 'Missing error check'},
+                ],
+            }),
+        },
+        {
+            'id': 102, 'patch_id': 3, 'status': 'Skipped',
+            'result': 'Skipped: touches only ignored files',
+            'summary': '', 'inline_review': '', 'output': '',
+        },
+    ],
+}
+
+
+class TestSashikoCache:
+    """Tests for sashiko in-process patchset cache."""
+
+    def setup_method(self) -> None:
+        checks.clear_sashiko_cache()
+
+    def teardown_method(self) -> None:
+        checks.clear_sashiko_cache()
+
+    def test_clear_cache(self) -> None:
+        checks._sashiko_patchset_cache['test@ex'] = {'id': 1}
+        checks.clear_sashiko_cache()
+        assert checks._sashiko_patchset_cache == {}
+
+    def test_fetch_caches_all_msgids(self) -> None:
+        resp = mock.Mock()
+        resp.status_code = 200
+        resp.json.return_value = _SASHIKO_PATCHSET
+
+        session = mock.Mock()
+        session.get.return_value = resp
+
+        with mock.patch('b4.get_requests_session', return_value=session):
+            data = checks._fetch_sashiko_patchset(
+                'cover@example.com', 'https://sashiko.dev')
+
+        assert data is not None
+        assert data['id'] == 93
+        # All msgids should be cached
+        assert 'cover@example.com' in checks._sashiko_patchset_cache
+        assert 'patch1@example.com' in checks._sashiko_patchset_cache
+        assert 'patch2@example.com' in checks._sashiko_patchset_cache
+        assert 'patch3@example.com' in checks._sashiko_patchset_cache
+        # Second call should use cache, not network
+        session.get.reset_mock()
+        data2 = checks._fetch_sashiko_patchset(
+            'patch2@example.com', 'https://sashiko.dev')
+        session.get.assert_not_called()
+        assert data2 is not None
+        assert data2['id'] == 93
+
+    def test_fetch_404_caches_none(self) -> None:
+        resp = mock.Mock()
+        resp.status_code = 404
+
+        session = mock.Mock()
+        session.get.return_value = resp
+
+        with mock.patch('b4.get_requests_session', return_value=session):
+            data = checks._fetch_sashiko_patchset(
+                'unknown@example.com', 'https://sashiko.dev')
+
+        assert data is None
+        assert checks._sashiko_patchset_cache['unknown@example.com'] is None
+
+    def test_fetch_network_error_caches_none(self) -> None:
+        import requests
+        session = mock.Mock()
+        session.get.side_effect = requests.ConnectionError('offline')
+
+        with mock.patch('b4.get_requests_session', return_value=session):
+            data = checks._fetch_sashiko_patchset(
+                'test@example.com', 'https://sashiko.dev')
+
+        assert data is None
+        assert checks._sashiko_patchset_cache['test@example.com'] is None
+
+
+class TestParseSashikoFindings:
+    """Tests for _parse_sashiko_findings."""
+
+    def test_empty_output(self) -> None:
+        assert checks._parse_sashiko_findings({'output': ''}) == []
+
+    def test_null_output(self) -> None:
+        assert checks._parse_sashiko_findings({'output': None}) == []
+
+    def test_no_output_key(self) -> None:
+        assert checks._parse_sashiko_findings({}) == []
+
+    def test_invalid_json(self) -> None:
+        assert checks._parse_sashiko_findings({'output': 'not json'}) == []
+
+    def test_critical_finding(self) -> None:
+        review = {'output': json.dumps({
+            'findings': [{'severity': 'Critical', 'problem': 'UAF bug'}],
+        })}
+        findings = checks._parse_sashiko_findings(review)
+        assert len(findings) == 1
+        assert findings[0]['status'] == 'fail'
+        assert findings[0]['state'] == 'critical'
+        assert 'UAF bug' in findings[0]['description']
+
+    def test_high_finding(self) -> None:
+        review = {'output': json.dumps({
+            'findings': [{'severity': 'High', 'problem': 'Missing check'}],
+        })}
+        findings = checks._parse_sashiko_findings(review)
+        assert findings[0]['status'] == 'fail'
+        assert findings[0]['state'] == 'high'
+
+    def test_medium_finding(self) -> None:
+        review = {'output': json.dumps({
+            'findings': [{'severity': 'Medium', 'problem': 'Questionable logic'}],
+        })}
+        findings = checks._parse_sashiko_findings(review)
+        assert findings[0]['status'] == 'warn'
+        assert findings[0]['state'] == 'medium'
+
+    def test_low_finding(self) -> None:
+        review = {'output': json.dumps({
+            'findings': [{'severity': 'Low', 'problem': 'Style issue'}],
+        })}
+        findings = checks._parse_sashiko_findings(review)
+        assert findings[0]['status'] == 'pass'
+        assert findings[0]['state'] == 'low'
+
+    def test_suggestion_appended(self) -> None:
+        review = {'output': json.dumps({
+            'findings': [{'severity': 'High', 'problem': 'Bug',
+                         'suggestion': 'Fix it'}],
+        })}
+        findings = checks._parse_sashiko_findings(review)
+        assert 'Bug' in findings[0]['description']
+        assert 'Fix it' in findings[0]['description']
+
+    def test_context_includes_severity(self) -> None:
+        review = {'output': json.dumps({
+            'findings': [{'severity': 'Medium', 'problem': 'test'}],
+        })}
+        findings = checks._parse_sashiko_findings(review)
+        assert findings[0]['context'] == 'sashiko/medium'
+
+    def test_multiple_findings(self) -> None:
+        review = {'output': json.dumps({
+            'findings': [
+                {'severity': 'Critical', 'problem': 'bad'},
+                {'severity': 'Low', 'problem': 'minor'},
+            ],
+        })}
+        findings = checks._parse_sashiko_findings(review)
+        assert len(findings) == 2
+
+    def test_no_findings_key(self) -> None:
+        review = {'output': json.dumps({'fixes': []})}
+        assert checks._parse_sashiko_findings(review) == []
+
+
+class TestSashikoFindingsSummary:
+    """Tests for _sashiko_findings_summary."""
+
+    def test_no_findings(self) -> None:
+        worst, summary = checks._sashiko_findings_summary([])
+        assert worst == 'pass'
+        assert summary == 'No findings'
+
+    def test_single_critical(self) -> None:
+        findings = [{'status': 'fail', 'state': 'critical',
+                     'description': 'bad'}]
+        worst, summary = checks._sashiko_findings_summary(findings)
+        assert worst == 'fail'
+        assert '1 critical' in summary
+
+    def test_mixed_severities(self) -> None:
+        findings = [
+            {'status': 'fail', 'state': 'critical', 'description': ''},
+            {'status': 'fail', 'state': 'high', 'description': ''},
+            {'status': 'warn', 'state': 'medium', 'description': ''},
+            {'status': 'pass', 'state': 'low', 'description': ''},
+        ]
+        worst, summary = checks._sashiko_findings_summary(findings)
+        assert worst == 'fail'
+        assert '1 critical' in summary
+        assert '1 high' in summary
+        assert '1 medium' in summary
+        assert '1 low' in summary
+
+    def test_only_low_is_pass(self) -> None:
+        findings = [
+            {'status': 'pass', 'state': 'low', 'description': ''},
+            {'status': 'pass', 'state': 'low', 'description': ''},
+        ]
+        worst, summary = checks._sashiko_findings_summary(findings)
+        assert worst == 'pass'
+        assert '2 low' in summary
+
+
+class TestRunBuiltinSashiko:
+    """Tests for _run_builtin_sashiko end-to-end."""
+
+    def setup_method(self) -> None:
+        checks.clear_sashiko_cache()
+
+    def teardown_method(self) -> None:
+        checks.clear_sashiko_cache()
+
+    def _prefill_cache(self, patchset: Optional[Dict[str, Any]] = None) -> None:
+        """Pre-fill the cache so no HTTP calls are made."""
+        ps = patchset if patchset is not None else _SASHIKO_PATCHSET
+        for key in ['cover@example.com', 'patch1@example.com',
+                    'patch2@example.com', 'patch3@example.com']:
+            checks._sashiko_patchset_cache[key] = ps
+
+    def test_no_msgid_returns_empty(self) -> None:
+        msg = EmailMessage()
+        msg['Subject'] = 'test'
+        assert checks._run_builtin_sashiko(msg, 'https://sashiko.dev') == []
+
+    def test_not_found_returns_empty(self) -> None:
+        checks._sashiko_patchset_cache['unknown@ex'] = None
+        msg = _make_msg(msgid='unknown@ex')
+        assert checks._run_builtin_sashiko(msg, 'https://sashiko.dev') == []
+
+    def test_cover_letter_aggregates_all_findings(self) -> None:
+        self._prefill_cache()
+        msg = _make_msg(msgid='cover@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert len(results) == 1
+        assert results[0]['tool'] == 'sashiko'
+        assert results[0]['status'] == 'fail'  # critical finding in patch 2
+        assert '1 critical' in results[0]['summary']
+        assert '1 high' in results[0]['summary']
+        assert '1 low' in results[0]['summary']
+        assert results[0]['url'] == 'https://sashiko.dev/patch/93'
+        # Details should be valid JSON
+        details = json.loads(results[0]['details'])
+        assert len(details) == 3  # 1 low + 1 critical + 1 high
+
+    def test_patch_with_critical_finding(self) -> None:
+        self._prefill_cache()
+        msg = _make_msg(msgid='patch2@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'fail'
+        assert '1 critical' in results[0]['summary']
+        assert '1 high' in results[0]['summary']
+
+    def test_patch_with_low_finding(self) -> None:
+        self._prefill_cache()
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'pass'
+        assert '1 low' in results[0]['summary']
+
+    def test_skipped_patch(self) -> None:
+        self._prefill_cache()
+        msg = _make_msg(msgid='patch3@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'pass'
+        assert 'Skipped' in results[0]['summary']
+
+    def test_pending_patchset(self) -> None:
+        ps = dict(_SASHIKO_PATCHSET, status='Pending')
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'warn'
+        assert 'pending' in results[0]['summary'].lower()
+
+    def test_in_review_patchset(self) -> None:
+        ps = dict(_SASHIKO_PATCHSET, status='In Review')
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='cover@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'warn'
+        assert 'in review' in results[0]['summary'].lower()
+
+    def test_failed_patchset(self) -> None:
+        ps = dict(_SASHIKO_PATCHSET, status='Failed')
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='cover@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'fail'
+        assert results[0]['summary'] == 'Failed'
+
+    def test_failed_to_apply_patchset(self) -> None:
+        ps = dict(_SASHIKO_PATCHSET, status='Failed To Apply')
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='cover@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'fail'
+
+    def test_incomplete_patchset(self) -> None:
+        ps = dict(_SASHIKO_PATCHSET, status='Incomplete')
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='cover@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'warn'
+        assert 'incomplete' in results[0]['summary'].lower()
+
+    def test_no_findings_pass(self) -> None:
+        reviews = [{'id': 100, 'patch_id': 1, 'status': 'Reviewed',
+                    'result': 'Review completed successfully.',
+                    'output': json.dumps({'findings': []})}]
+        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'pass'
+        assert results[0]['summary'] == 'No findings'
+
+    def test_pending_review_for_patch(self) -> None:
+        reviews = [{'id': 100, 'patch_id': 1, 'status': 'Pending',
+                    'output': ''}]
+        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'warn'
+        assert 'in progress' in results[0]['summary'].lower()
+
+    def test_failed_review_for_patch(self) -> None:
+        reviews = [{'id': 100, 'patch_id': 1, 'status': 'Failed',
+                    'result': 'Token limit exceeded', 'output': ''}]
+        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'fail'
+        assert 'Token limit' in results[0]['summary']
+
+    def test_patch_not_in_sashiko(self) -> None:
+        self._prefill_cache()
+        msg = _make_msg(msgid='unknown-patch@example.com')
+        # Not in cache, will try to fetch
+        checks._sashiko_patchset_cache['unknown-patch@example.com'] = None
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results == []
+
+    def test_patch_without_review(self) -> None:
+        # Patchset is reviewed but this specific patch has no review entry
+        ps = dict(_SASHIKO_PATCHSET, reviews=[])
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'pass'
+        assert results[0]['summary'] == 'No review'
+
+    def test_url_constructed_correctly(self) -> None:
+        self._prefill_cache()
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev/')
+        # Trailing slash should not cause double slash
+        assert results[0]['url'] == 'https://sashiko.dev/patch/93'
+
+
+class TestSashikoAutoWire:
+    """Tests for auto-wiring _builtin_sashiko in load_check_cmds."""
+
+    def test_sashiko_added_when_url_configured(self) -> None:
+        config = {'sashiko-url': 'https://sashiko.dev'}
+        with mock.patch('b4.get_main_config', return_value=config), \
+             mock.patch('b4.git_get_toplevel', return_value=None):
+            perpatch, series = checks.load_check_cmds()
+        assert '_builtin_sashiko' in perpatch
+        assert '_builtin_sashiko' in series
+
+    def test_sashiko_not_added_without_url(self) -> None:
+        config: Dict[str, Any] = {}
+        with mock.patch('b4.get_main_config', return_value=config), \
+             mock.patch('b4.git_get_toplevel', return_value=None):
+            perpatch, series = checks.load_check_cmds()
+        assert '_builtin_sashiko' not in perpatch
+        assert '_builtin_sashiko' not in series
+
+    def test_sashiko_not_duplicated(self) -> None:
+        config = {
+            'sashiko-url': 'https://sashiko.dev',
+            'review-perpatch-check-cmd': ['_builtin_sashiko'],
+            'review-series-check-cmd': ['_builtin_sashiko'],
+        }
+        with mock.patch('b4.get_main_config', return_value=config), \
+             mock.patch('b4.git_get_toplevel', return_value=None):
+            perpatch, series = checks.load_check_cmds()
+        assert perpatch.count('_builtin_sashiko') == 1
+        assert series.count('_builtin_sashiko') == 1
+
+
+class TestSashikoDispatch:
+    """Tests for _dispatch_cmd routing to _builtin_sashiko."""
+
+    def test_dispatch_routes_to_sashiko(self) -> None:
+        checks.clear_sashiko_cache()
+        checks._sashiko_patchset_cache['test@ex'] = _SASHIKO_PATCHSET
+        msg = _make_msg(msgid='test@ex')
+        # Pre-cache so no HTTP call is made; use cover msgid
+        checks._sashiko_patchset_cache['test@ex'] = dict(
+            _SASHIKO_PATCHSET, message_id='test@ex')
+        config = {'sashiko-url': 'https://sashiko.dev'}
+        with mock.patch('b4.get_main_config', return_value=config):
+            results = checks._dispatch_cmd('_builtin_sashiko', msg, '/fake')
+        assert results[0]['tool'] == 'sashiko'
+        checks.clear_sashiko_cache()
+
+    def test_dispatch_without_config(self) -> None:
+        msg = _make_msg()
+        config: Dict[str, Any] = {}
+        with mock.patch('b4.get_main_config', return_value=config):
+            results = checks._dispatch_cmd('_builtin_sashiko', msg, '/fake')
+        assert results == []
