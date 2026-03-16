@@ -4374,7 +4374,7 @@ def get_smtp(dryrun: bool = False) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL
             # Let any exceptions bubble up
             if smtpauth in ('oauth', 'oauth2', 'xoauth2'):
                 auth_str = f'user={auser}\x01auth=Bearer {apass}\x01\x01'
-                smtp.auth('XOAUTH2', lambda: auth_str)
+                smtp.auth('XOAUTH2', lambda x=None: auth_str if x is None else '')
             else:
                 smtp.login(auser, apass)
     else:
