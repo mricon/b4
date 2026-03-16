@@ -5,15 +5,15 @@ Work with code submissions in a public-inbox archive
 ----------------------------------------------------
 
 :Author:    mricon@kernel.org
-:Date:      2024-06-10
+:Date:      2026-03-16
 :Copyright: The Linux Foundation and contributors
 :License:   GPLv2+
-:Version:   0.14-dev
+:Version:   0.15
 :Manual section: 1
 
 SYNOPSIS
 --------
-b4 {mbox,am,shazam,pr,diff,ty,kr,review,prep,send,trailers} [options]
+b4 {mbox,am,shazam,pr,diff,ty,kr,dig,review,prep,send,trailers} [options]
 
 DESCRIPTION
 -----------
@@ -37,6 +37,7 @@ Maintainer-oriented:
 * *pr*: Work with pull requests
 * *ty*: Create templated replies for processed patches and pull requests
 * *diff*: Show range-diff style diffs between patch versions
+* *dig*: Find the mailing list submission for a given commit
 * *review*: TUI-based patch review workflow (alpha)
 * *kr*: (STUB) Operate on patatt-compatible keyrings
 
@@ -140,6 +141,9 @@ If you want to automatically invoke git-merge, you can use ``-M``
 instead of ``-H``. B4 automatically opens up the editor allowing you to
 edit the merge commit message.
 
+When using ``-H``, you can pass ``--resolve`` to interactively resolve
+any merge conflicts using a three-way merge.
+
 Note: the ``-M`` and ``-H`` options work best for series that have the
 ``base-commit`` info matching an object in your local tree.
 
@@ -220,6 +224,37 @@ For options and their descriptions, see ``b4 diff --help``.
   Retrieves the thread matching the msgid specified and attempts to
   auto-locate the previous version of the series. If successful, shows
   the output of ``git range-diff`` comparing the patch differences.
+
+b4 dig
+~~~~~~
+Given a commit in a local git repository, this command tries to find
+the original mailing list submission on a public-inbox instance. It
+uses several strategies in order of reliability:
+
+* match by stable patch-id (tries multiple diff algorithms)
+* match by author email and subject
+* match by in-body From: line (for patches sent from a different
+  address than the commit author)
+
+If ``--all`` is specified, b4 will also try to locate all other
+revisions of the same series using change-id or subject matching.
+
+For options and their descriptions, see ``b4 dig --help``.
+
+*Examples*
+
+``b4 dig [commit]``
+  Find the mailing list submission for the given commit and print a
+  link to it.
+
+``b4 dig -a [commit]``
+  Find all revisions of the series containing the given commit.
+
+``b4 dig -w [commit]``
+  Find the submission and show who was originally included in To/Cc.
+
+``b4 dig -m /tmp/thread.mbx [commit]``
+  Find the submission and save the full thread as an mbox file.
 
 b4 kr
 ~~~~~

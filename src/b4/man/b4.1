@@ -27,12 +27,12 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
-.TH "B4" "1" "2024-06-10" "0.14-dev"
+.TH "B4" "1" "2026-03-16" "0.15"
 .SH NAME
 B4 \- Work with code submissions in a public-inbox archive
 .SH SYNOPSIS
 .sp
-b4 {mbox,am,shazam,pr,diff,ty,kr,prep,send,trailers} [options]
+b4 {mbox,am,shazam,pr,diff,ty,kr,dig,review,prep,send,trailers} [options]
 .SH DESCRIPTION
 .sp
 This is a helper utility to work with patches and pull requests made
@@ -60,6 +60,10 @@ Maintainer\-oriented:
 \fIty\fP: Create templated replies for processed patches and pull requests
 .IP \(bu 2
 \fIdiff\fP: Show range\-diff style diffs between patch versions
+.IP \(bu 2
+\fIdig\fP: Find the mailing list submission for a given commit
+.IP \(bu 2
+\fIreview\fP: TUI\-based patch review workflow (alpha)
 .IP \(bu 2
 \fIkr\fP: (STUB) Operate on patatt\-compatible keyrings
 .UNINDENT
@@ -174,6 +178,9 @@ If you want to automatically invoke git\-merge, you can use \fB\-M\fP
 instead of \fB\-H\fP\&. B4 automatically opens up the editor allowing you to
 edit the merge commit message.
 .sp
+When using \fB\-H\fP, you can pass \fB\-\-resolve\fP to interactively resolve
+any merge conflicts using a three\-way merge.
+.sp
 Note: the \fB\-M\fP and \fB\-H\fP options work best for series that have the
 \fBbase\-commit\fP info matching an object in your local tree.
 .sp
@@ -263,6 +270,42 @@ Retrieves the thread matching the msgid specified and attempts to
 auto\-locate the previous version of the series. If successful, shows
 the output of \fBgit range\-diff\fP comparing the patch differences.
 .UNINDENT
+.SS b4 dig
+.sp
+Given a commit in a local git repository, this command tries to find
+the original mailing list submission on a public\-inbox instance. It
+uses several strategies in order of reliability:
+.INDENT 0.0
+.IP \(bu 2
+match by stable patch\-id (tries multiple diff algorithms)
+.IP \(bu 2
+match by author email and subject
+.IP \(bu 2
+match by in\-body From: line (for patches sent from a different
+address than the commit author)
+.UNINDENT
+.sp
+If \fB\-\-all\fP is specified, b4 will also try to locate all other
+revisions of the same series using change\-id or subject matching.
+.sp
+For options and their descriptions, see \fBb4 dig \-\-help\fP\&.
+.sp
+\fIExamples\fP
+.INDENT 0.0
+.TP
+.B \fBb4 dig [commit]\fP
+Find the mailing list submission for the given commit and print a
+link to it.
+.TP
+.B \fBb4 dig \-a [commit]\fP
+Find all revisions of the series containing the given commit.
+.TP
+.B \fBb4 dig \-w [commit]\fP
+Find the submission and show who was originally included in To/Cc.
+.TP
+.B \fBb4 dig \-m /tmp/thread.mbx [commit]\fP
+Find the submission and save the full thread as an mbox file.
+.UNINDENT
 .SS b4 kr
 .sp
 This subcommand allows maintaining a local keyring of contributor keys.
@@ -279,13 +322,41 @@ For options and their descriptions, see \fBb4 kr \-\-help\fP\&.
 Retrieve the thread specified and show any cryptographic keys used to
 attest the patches.
 .UNINDENT
+.SS b4 review (alpha)
+.sp
+\fBNote:\fP this subcommand is a technology preview. Commands, flags, and
+on\-disk formats may change in incompatible ways between releases.
+.sp
+This command provides a TUI\-based review workflow for maintainers
+receiving patches on mailing lists. It lets you track incoming series,
+review diffs with inline commenting, add code\-review trailers, send
+review emails, and take (apply) patches.
+.sp
+The workflow consists of three steps: enrol a repository, track one or
+more series, and launch the TUI to review and act on them.
+.sp
+For options and their descriptions, see \fBb4 review \-\-help\fP and
+\fBb4 review <subcommand> \-\-help\fP\&.
+.sp
+\fIExamples\fP
+.INDENT 0.0
+.TP
+.B \fBb4 review enroll\fP
+Enrol the current repository for review tracking.
+.TP
+.B \fBb4 review track <msgid>\fP
+Track a series by its message\-id, URL, or change\-id.
+.TP
+.B \fBb4 review tui\fP
+Launch the review TUI.
+.UNINDENT
 .SS b4 prep, trailers, send
 .sp
 These commands allow preparing and submitting a patch series for review
 on the mailing list. Full documentation is available online at the
 following address:
 .sp
- <https://b4.docs.kernel.org/en/latest/contributor/overview.html>
+ <https://b4.docs.kernel.org/en/latest/contributor/overview.html> 
 .sp
 For options, see the output of \fBb4 prep \-\-help\fP, \fBb4 trailers
 \-\-help\fP and \fBb4 send \-\-help\fP\&.
@@ -330,7 +401,7 @@ either the toplevel \fB$HOME/.gitconfig\fP file, or in a per\-repository
 \&.git/config file if your workflow changes per project.
 .sp
 To see configuration options available, see online documentation at
- <https://b4.docs.kernel.org/en/latest/config.html>
+ <https://b4.docs.kernel.org/en/latest/config.html> 
 .SH PROXYING REQUESTS
 .sp
 Commands making remote HTTP requests may be configured to use a proxy by
