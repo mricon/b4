@@ -694,6 +694,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         except OSError:
             return
         if mtime != self._db_mtime:
+            if self._selected_series:
+                self._focus_change_id = self._selected_series.get('change_id')
             self._load_series()
 
     @staticmethod
@@ -782,6 +784,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if result is None:
             return
         self._limit_pattern = result
+        if self._selected_series:
+            self._focus_change_id = self._selected_series.get('change_id')
         self._load_series()
 
     def action_cursor_down(self) -> None:
@@ -1857,6 +1861,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not confirmed:
             return
         take_screen.accept_series = confirm_screen.accept_series
+        self._focus_change_id = change_id
         if method == 'merge':
             with self.suspend():
                 self._do_take_merge(change_id, review_branch, take_screen, series)
@@ -3212,6 +3217,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             branch_name = f'b4/review/{change_id}'
             b4.review.update_tracking_status(topdir, branch_name, 'waiting')
         self.notify('Series moved to waiting')
+        self._focus_change_id = change_id
         self._load_series()
 
     def action_snooze(self) -> None:
@@ -3273,6 +3279,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._last_snooze_input = result.get('input', '')
 
         self.notify(f'Snoozed, {_format_snooze_until(until_value)}')
+        self._focus_change_id = change_id
         self._load_series()
 
     def action_unsnooze(self) -> None:
@@ -3305,6 +3312,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             return
 
         self.notify(f'Unsnoozed, restored to {previous_status}')
+        self._focus_change_id = change_id
         self._load_series()
 
     def action_archive(self) -> None:
@@ -3609,6 +3617,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     review_branch = f'b4/review/{change_id}'
                     b4.review.update_tracking_status(topdir, review_branch, 'thanked')
             self.notify('Thank-you message sent')
+            self._focus_change_id = change_id
             self._load_series()
         except Exception as ex:
             self.notify(f'Send failed: {ex}', severity='error')
@@ -3672,6 +3681,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.notify(', '.join(parts) if parts else 'Queue empty')
             self._refresh_queue_indicator()
             if delivered_series:
+                if self._selected_series:
+                    self._focus_change_id = self._selected_series.get('change_id')
                 self._load_series()
 
         self.push_screen(
