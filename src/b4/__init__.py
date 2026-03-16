@@ -4888,7 +4888,8 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
 
 def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
     corecfg = get_config_from_git(r'core\..*', {'pager': os.environ.get('PAGER', 'less')})
-    pager = corecfg.get('pager')
+    pager = corecfg.get('pager', 'less')
+    assert pager is not None
     logger.debug('pager=%s', pager)
 
     topdir = git_get_toplevel()
