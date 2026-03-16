@@ -580,30 +580,27 @@ def cmd_show_info(cmdargs: argparse.Namespace) -> None:
 
 def save_tracking_ref(topdir: str, branch: str,
                       cover_text: str, tracking: Dict[str, Any]) -> bool:
-    """Amend the tracking commit at the tip of branch without checkout.
+    """Amend the tracking commit at the tip of a ref without checkout.
 
-    Uses git commit-tree + git update-ref so the current working tree
-    is not disturbed.  Returns True on success.
+    Uses git commit-tree + git update-ref so that commit.gpgsign and
+    hooks are not triggered — tracking commits are ephemeral and do
+    not benefit from signing.  Returns True on success.
     """
     commit_msg = cover_text + '\n\n' + make_review_magic_json(tracking)
-    # Get the tree from the current tip
     ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{branch}^{{tree}}'])
     if ecode > 0:
         return False
     tree = out.strip()
-    # Get the parent (commit below tracking commit)
     ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{branch}~1'])
     if ecode > 0:
         return False
     parent = out.strip()
-    # Create a new commit object with the same tree and parent
     ecode, out = b4.git_run_command(topdir,
                                     ['commit-tree', tree, '-p', parent, '-F', '-'],
                                     stdin=commit_msg.encode())
     if ecode > 0:
         return False
     new_sha = out.strip()
-    # Point the branch ref at the new commit
     ecode, out = b4.git_run_command(topdir,
                                     ['update-ref', f'refs/heads/{branch}', new_sha])
     return ecode == 0
@@ -621,13 +618,16 @@ def update_tracking_status(topdir: str, branch: str, status: str) -> bool:
 
 
 def save_tracking(topdir: str, cover_text: str, tracking: Dict[str, Any]) -> None:
-    """Amend the tip tracking commit with updated metadata."""
-    commit_msg = cover_text + '\n\n' + make_review_magic_json(tracking)
-    ecode, out = b4.git_run_command(topdir, ['commit', '--amend', '--allow-empty', '-F', '-'],
-                                    stdin=commit_msg.encode(), logstderr=True)
-    if ecode > 0:
+    """Amend the tip tracking commit on the current branch.
+
+    Resolves HEAD to a branch name and delegates to save_tracking_ref().
+    """
+    branch = b4.git_get_current_branch(topdir)
+    if not branch:
+        logger.critical('Unable to resolve HEAD to a branch')
+        sys.exit(1)
+    if not save_tracking_ref(topdir, branch, cover_text, tracking):
         logger.critical('Unable to amend tracking commit')
-        logger.critical(out.strip())
         sys.exit(1)
 
 
