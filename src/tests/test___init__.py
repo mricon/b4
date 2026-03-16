@@ -5,6 +5,7 @@ import email
 import email.parser
 import io
 import pathlib
+import socket
 
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -56,6 +57,19 @@ def test_save_git_am_mbox(sampledir: Optional[str], tmp_path: pathlib.Path, sour
     with open(dest, 'r') as fh:
         res = fh.read()
     assert re.search(regex, res, flags=flags)
+
+
+def _msgid_domain(msgid: str) -> str:
+    return msgid.strip('<>').rsplit('@', maxsplit=1)[1]
+
+
+def test_make_msgid_avoids_host_domain_by_default() -> None:
+    stdlib_msgid = email.utils.make_msgid()
+    b4_msgid = b4.make_msgid(idstring='b4-test')
+
+    assert _msgid_domain(stdlib_msgid) == socket.getfqdn()
+    assert _msgid_domain(b4_msgid) == 'b4'
+    assert _msgid_domain(b4_msgid) != socket.getfqdn()
 
 
 @pytest.mark.parametrize('source,expected', [

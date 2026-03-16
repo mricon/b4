@@ -2359,11 +2359,7 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
     else:
         msg['References'] = f'<{header_info["msgid"]}>'
     msg['Date'] = email.utils.formatdate(localtime=True)
-    _, _, mid_domain = user_email.rpartition('@')
-    msg['Message-Id'] = email.utils.make_msgid(
-        idstring='b4-review',
-        domain=mid_domain or 'b4',
-    )
+    msg['Message-Id'] = b4.make_msgid(idstring='b4-review')
 
     return msg
 

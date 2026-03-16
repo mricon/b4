@@ -245,7 +245,7 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
     cmsg = EmailMessage()
     cmsg.add_header('From', myemail)
     cmsg.add_header('Subject', 'b4-send-verify')
-    cmsg.add_header('Message-ID', email.utils.make_msgid(domain='b4'))
+    cmsg.add_header('Message-ID', b4.make_msgid())
     cmsg.set_charset('utf-8')
     cmsg.set_payload(f'verify:{vstr}\n', charset='utf-8')
     bdata = cmsg.as_bytes(policy=b4.emlpolicy)
@@ -1186,7 +1186,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if cover:
             cmsg = EmailMessage()
             cmsg['Subject'] = f'[PATCH 0/{len(patches)}] cover'
-            cmsg['Message-Id'] = email.utils.make_msgid(domain='b4')
+            cmsg['Message-Id'] = b4.make_msgid()
             cmsg.set_payload('cover', 'us-ascii')
             patches.insert(0, ('', cmsg))
             rethread(patches)
@@ -2924,7 +2924,7 @@ def auto_to_cc() -> None:
     if extras:
         # Make it a LoreMessage, so we can run a fix_trailers on it
         cmsg = EmailMessage()
-        cmsg['Message-ID'] = email.utils.make_msgid(domain='b4')
+        cmsg['Message-ID'] = b4.make_msgid()
         cmsg['Subject'] = 'Cover letter'
         cmsg.set_payload(cover, charset='utf-8')
         clm = b4.LoreMessage(cmsg)

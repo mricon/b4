@@ -1302,18 +1302,6 @@ class TestBuildReviewEmailHeaders:
         assert 'reviewer@example.com' in msg['From']
         assert 'Reviewer' in msg['From']
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_message_id_uses_reviewer_domain(self, _mock_cfg: mock.Mock,
-                                             _mock_sig: mock.Mock) -> None:
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None)
-        assert msg is not None
-        assert msg['Message-Id'].endswith('@example.com>')
-        assert '.ip6.arpa' not in msg['Message-Id']
-
-
 # -- Tests for _build_review_email() user-edited To/Cc -----------------------
 
 class TestBuildReviewEmailToCcEdited:

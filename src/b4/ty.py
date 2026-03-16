@@ -118,8 +118,7 @@ def make_reply(reply_template: str, jsondata: JsonDictT, gitdir: Optional[str], 
     else:
         msg.add_header('Subject', 'Re: ' + subject)
 
-    mydomain = jsondata['myemail'].split('@')[1]
-    msg['Message-Id'] = email.utils.make_msgid(idstring='b4-ty', domain=mydomain)
+    msg['Message-Id'] = b4.make_msgid(idstring='b4-ty')
     msg['Date'] = email.utils.formatdate(localtime=True)
     body = Template(reply_template).safe_substitute(jsondata)
     msg.set_payload(body, charset='utf-8')

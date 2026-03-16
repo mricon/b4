@@ -2135,7 +2135,7 @@ class LoreMessage:
         references = LoreMessage.clean_header(self.msg.get('References', '') or '')
         msg['References'] = f'{references} <{self.msgid}>'.strip()
         msg['Date'] = email.utils.formatdate(localtime=True)
-        msg['Message-Id'] = email.utils.make_msgid()
+        msg['Message-Id'] = make_msgid(idstring='b4-reply')
         return msg
 
     @staticmethod
@@ -5054,6 +5054,11 @@ def get_mailfrom() -> Tuple[str, str]:
 
     usercfg = get_user_config()
     return str(usercfg.get('name', '')), str(usercfg.get('email', ''))
+
+
+def make_msgid(idstring: Optional[str] = None, domain: str = 'b4') -> str:
+    """Wraps email.utils.make_msgid() to avoid hostname-derived message-ids."""
+    return email.utils.make_msgid(idstring=idstring, domain=domain)
 
 
 def is_maildir(dest: str) -> bool:
