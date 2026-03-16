@@ -2039,7 +2039,8 @@ class LoreMessage:
                         addr = (LoreMessage.clean_header(addr[0]), addr[1])
                     # Work around https://github.com/python/cpython/issues/100900
                     if re.search(r'[^\w\s]', addr[0]):
-                        newaddrs.append(f'"{addr[0]}" <{addr[1]}>')
+                        quoted = email.utils.quote(addr[0])
+                        newaddrs.append(f'"{quoted}" <{addr[1]}>')
                     else:
                         newaddrs.append(email.utils.formataddr(addr))
                 return ', '.join(newaddrs)
@@ -4055,8 +4056,14 @@ def format_addrs(pairs: List[Tuple[str, str]], clean: bool = True,
         if not header_safe:
             addrs.append(f'{pair[0]} <{pair[1]}>')
             continue
+        # Strip RFC 2822 outer quotes from the display name to avoid
+        # double-quoting when formataddr or our workaround re-quotes.
+        name = pair[0]
+        if len(name) > 1 and name.startswith('"') and name.endswith('"'):
+            name = name[1:-1]
+            pair = (name, pair[1])
         # Work around https://github.com/python/cpython/issues/100900
-        if not pair[0].startswith('=?') and not pair[0].startswith('"') and qspecials.search(pair[0]):
+        if not pair[0].startswith('=?') and qspecials.search(pair[0]):
             quoted = email.utils.quote(pair[0])
             addrs.append(f'"{quoted}" <{pair[1]}>')
             continue

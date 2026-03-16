@@ -257,6 +257,20 @@ def test_header_wrapping(sampledir: str, hval: str, verify: str, tr: Literal['en
      'foo@example.com, "Quûx, Foo" <quux@example.com>', True),
     ([('', 'foo@example.com'), ('=?utf-8?q?Qu=C3=BBx=2C_Foo?=', 'quux@example.com')],
      'foo@example.com, =?utf-8?q?Qu=C3=BBx=2C_Foo?= <quux@example.com>', False),
+    # Pre-quoted display name with special chars must not be double-quoted
+    ([('', 'foo@example.com'), ('"Example.org Tools"', 'tools@example.org')],
+     'foo@example.com, "Example.org Tools" <tools@example.org>', True),
+    ([('', 'foo@example.com'), ('"Doe, Jane"', 'jane@example.com')],
+     'foo@example.com, "Doe, Jane" <jane@example.com>', True),
+    # Unquoted name with internal quotes
+    ([('', 'foo@example.com'), ('Jane "JD" Doe', 'jd@example.com')],
+     'foo@example.com, "Jane \\"JD\\" Doe" <jd@example.com>', True),
+    # Name starting with quote but not fully quoted
+    ([('', 'foo@example.com'), ('"JD" Doe', 'jd@example.com')],
+     'foo@example.com, "\\"JD\\" Doe" <jd@example.com>', True),
+    # Pre-quoted name with internal quotes
+    ([('', 'foo@example.com'), ('"Jane "JD" Doe"', 'jd@example.com')],
+     'foo@example.com, "Jane \\"JD\\" Doe" <jd@example.com>', True),
 ])
 def test_format_addrs(pairs: List[Tuple[str, str]], verify: str, clean: bool) -> None:
     formatted = b4.format_addrs(pairs, clean)
