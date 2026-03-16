@@ -1389,10 +1389,23 @@ class TestTrackingSnoozeRemembersChoice:
             tag_input.value = 'v6.15-rc3'
             await pilot.press('ctrl+y')
             await pilot.pause()
+            await pilot.pause()
 
-            # Now snooze the second (which is now the only visible one)
+            # Move to the other (non-snoozed) series before snoozing it.
+            # The cursor may still be on the just-snoozed item, so press
+            # down then up to ensure we land on a non-snoozed item.
+            first_cid = app._selected_series.get('change_id') if app._selected_series else None
+            if app._selected_series and app._selected_series.get('status') == 'snoozed':
+                await pilot.press('down')
+                await pilot.pause()
+                # If down didn't change, try up
+                if app._selected_series and app._selected_series.get('change_id') == first_cid:
+                    await pilot.press('up')
+                    await pilot.pause()
+
             await pilot.press('a')
             await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
             await pilot.press('s')
             await pilot.pause()
             assert isinstance(app.screen, SnoozeScreen)
