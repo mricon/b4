@@ -647,6 +647,7 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
     seen_msgids: Set[str] = set()
     seen_covers: Set[int] = set()
     queries: Set[str] = set()
+    change_ids: Set[str] = set()
     by_changeid: bool = False
     for msg in msgs:
         msgid = b4.LoreMessage.get_clean_msgid(msg)
@@ -670,9 +671,11 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         if payload:
             matches = re.search(r'^change-id:\s+(\S+)', payload, flags=re.I | re.M)
             if matches:
-                logger.debug('Found change-id %s', matches.groups()[0])
+                cid = matches.groups()[0]
+                logger.debug('Found change-id %s', cid)
+                change_ids.add(cid)
                 by_changeid = True
-                q = 'nq:"change-id: %s"' % matches.groups()[0]
+                q = 'nq:"change-id: %s"' % cid
                 queries.add(q)
 
         logger.debug('Checking the subject on %s', lsub.full_subject)
@@ -729,7 +732,8 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
     if not q_msgs:
         return msgs
 
-    seen_revisions = dict()
+    seen_revisions: Dict[int, int] = dict()
+    candidates: List[EmailMessage] = list()
     for q_msg in q_msgs:
         q_msgid = b4.LoreMessage.get_clean_msgid(q_msg)
         if q_msgid is None:
@@ -743,7 +747,7 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
             # These will get sorted out later
             logger.debug('Adding reply: %s', lsub.full_subject)
             logger.debug('              msgid: %s', q_msgid)
-            msgs.append(q_msg)
+            candidates.append(q_msg)
             seen_msgids.add(q_msgid)
             continue
 
@@ -776,8 +780,43 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
             seen_revisions[lsub.revision] = 0
         seen_revisions[lsub.revision] += 1
         logger.debug('Adding: %s', lsub.full_subject)
-        msgs.append(q_msg)
+        candidates.append(q_msg)
         seen_msgids.add(q_msgid)
+
+    if by_changeid and change_ids:
+        # Verify that candidate revisions actually belong to the same
+        # series.  The nq: search can match messages that merely
+        # reference our change-id as a prerequisite-change-id, so we
+        # check that at least one message per revision contains a
+        # standalone "change-id: <id>" line (not prerequisite-change-id).
+        valid_revisions: Set[int] = set()
+        for q_msg in candidates:
+            payload, _ = b4.LoreMessage.get_payload(q_msg)
+            if not payload:
+                continue
+            for cid in change_ids:
+                if re.search(rf'^change-id:\s*{re.escape(cid)}\s*$', payload, flags=re.I | re.M):
+                    lsub = b4.LoreSubject(q_msg.get('Subject', ''))
+                    valid_revisions.add(lsub.revision)
+                    break
+        rejected: List[int] = list()
+        validated: List[EmailMessage] = list()
+        for q_msg in candidates:
+            lsub = b4.LoreSubject(q_msg.get('Subject', ''))
+            if lsub.reply or lsub.revision in valid_revisions:
+                validated.append(q_msg)
+            else:
+                if lsub.revision not in rejected:
+                    rejected.append(lsub.revision)
+                if lsub.revision in seen_revisions:
+                    seen_revisions[lsub.revision] -= 1
+        candidates = validated
+        for rev in rejected:
+            logger.debug('Rejected v%s: change-id mismatch', rev)
+        # Clean up empty revision counts
+        seen_revisions = {r: c for r, c in seen_revisions.items() if c > 0}
+
+    msgs.extend(candidates)
 
     for rev, count in seen_revisions.items():
         logger.info('  Added from v%s: %s patches', rev, count)
