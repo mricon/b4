@@ -23,7 +23,7 @@ import argparse
 
 import b4
 
-from typing import Optional, Union, List, Set, Dict, Tuple
+from typing import Any, Optional, Union, List, Set, Dict, Tuple
 from string import Template
 
 from email.message import EmailMessage
@@ -886,7 +886,7 @@ def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
 
 
 def _start_merge_resolve(topdir: str, cex: b4.AmConflictError,
-                          common_dir: str, state: Dict) -> None:
+                          common_dir: str, state: Dict[str, Any]) -> None:
     gwt = cex.worktree_path
     logger.critical('---')
     logger.critical(cex.output)
@@ -989,7 +989,7 @@ def _start_merge_resolve(topdir: str, cex: b4.AmConflictError,
     sys.exit(0)
 
 
-def _apply_remaining_patches(topdir: str, patches_dir: str, state: Dict,
+def _apply_remaining_patches(topdir: str, patches_dir: str, state: Dict[str, Any],
                               state_file: str, common_dir: str) -> None:
     with open(os.path.join(patches_dir, 'total'), 'r') as fh:
         total = int(fh.read().strip())
@@ -1030,7 +1030,7 @@ def _apply_remaining_patches(topdir: str, patches_dir: str, state: Dict,
     _finish_shazam_merge(topdir, state, state_file, common_dir, patches_dir)
 
 
-def _finish_shazam_merge(topdir: str, state: Dict, state_file: str,
+def _finish_shazam_merge(topdir: str, state: Dict[str, Any], state_file: str,
                           common_dir: str, patches_dir: str) -> None:
     b4.git_run_command(topdir, ['add', '-u'], logstderr=True, rundir=topdir)
 
@@ -1086,7 +1086,7 @@ def _finish_shazam_merge(topdir: str, state: Dict, state_file: str,
     logger.info('Merge completed successfully.')
 
 
-def _load_shazam_state(require_state: bool = True) -> Tuple[str, str, str, Optional[Dict]]:
+def _load_shazam_state(require_state: bool = True) -> Tuple[str, str, str, Optional[Dict[str, Any]]]:
     topdir = b4.git_get_toplevel()
     if not topdir:
         logger.critical('Could not figure out where your git dir is.')
