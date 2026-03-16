@@ -710,10 +710,10 @@ class TestCmdTrack:
         assert row['message_id'] == 'first-patch@example.com'
         conn.close()
 
-    @mock.patch('b4.retrieve_messages')
+    @mock.patch('b4.review.tracking.resolve_identifier', return_value=None)
     def test_track_fails_without_identifier(
         self,
-        mock_retrieve: mock.Mock,
+        mock_resolve: mock.Mock,
         tmp_path: pytest.TempPathFactory
     ) -> None:
         """Verify track fails when no identifier can be resolved."""
