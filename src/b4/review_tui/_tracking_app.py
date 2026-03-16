@@ -29,6 +29,7 @@ from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widgets import Footer, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
 from b4.review_tui._common import (
@@ -765,6 +766,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self._focus_change_id = None
         lv.focus()
 
+        # Populate the details panel for the highlighted item now that
+        # the widget tree is stable.  The Highlighted event may have
+        # fired during batch_update before #details-panel was queryable.
+        highlighted = lv.highlighted_child
+        if isinstance(highlighted, TrackedSeriesItem):
+            self._show_details(highlighted.series)
+
     def action_limit(self) -> None:
         self.push_screen(LimitScreen(self._limit_pattern,
                                      hint='Prefixes: s:<status>  t:<target-branch>'),
@@ -1341,7 +1349,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _show_details(self, series: Dict[str, Any]) -> None:
 
-        panel = self.query_one('#details-panel', Vertical)
+        try:
+            panel = self.query_one('#details-panel', Vertical)
+        except NoMatches:
+            return
 
         raw_subject = series.get('subject', '(no subject)')
         revision = series.get('revision', 1)
