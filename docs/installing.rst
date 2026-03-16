@@ -14,41 +14,71 @@ Note, that b4 is under heavy development, so it is possible that the
 version packaged for your distribution is not as recent as you'd like.
 If that is the case, you can install it from other sources.
 
-Installing with pip
--------------------
-To install from PyPi::
+Installing with pipx
+--------------------
+The recommended way to install b4 from PyPI is with `pipx`_, which
+installs CLI tools into isolated environments::
 
-    python3 -m pip install --user b4
+    pipx install b4
 
-This will install b4 locally and pull in any required dependencies. If
-you are not able to execute ``b4 --version`` after pip completes, check
-that your ``~/.local/bin/`` is in your ``$PATH``.
+To also install the TUI dependencies needed for ``b4 review tui``::
+
+    pipx install b4[tui]
+
+If you do not have pipx, it is available in most distribution
+repositories (``dnf install pipx``, ``apt install pipx``).
 
 Upgrading
 ~~~~~~~~~
-If you have previously installed from PyPi, you can upgrade using pip as
-well::
+::
 
-    python3 -m pip install --user --upgrade b4
+    pipx upgrade b4
 
-Running from the checkout dir
------------------------------
-If you want to run the latest development version of b4, you can run it
-directly from the git repository::
+Using uv
+~~~~~~~~
+`uv`_ is a fast alternative to pipx::
+
+    uv tool install b4
+    uv tool install b4[tui]
+
+.. _`pipx`: https://pipx.pypa.io/
+.. _`uv`: https://docs.astral.sh/uv/
+
+Installing from a git checkout
+------------------------------
+If you want to run the latest development version of b4, you can
+install it from a local git clone using pipx::
 
     git clone https://git.kernel.org/pub/scm/utils/b4/b4.git
     cd b4
     git submodule update --init
-    pip install --user -r requirements.txt
+    pipx install .
 
-You can then either symlink the ``b4.sh`` script to your user-bin
-directory::
+Or with TUI support::
 
-    ln -sf $HOME/path/to/b4.sh ~/bin/b4
+    pipx install .[tui]
 
-or you can add an alias to your shell's RC file::
+After pulling new changes, reinstall to pick them up::
+
+    git pull origin master
+    git submodule update
+    pipx install --force .
+
+Running directly with b4.sh
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Alternatively, you can run b4 directly from the checkout without
+installing. Symlink the ``b4.sh`` script to your user-bin directory::
+
+    ln -sf $HOME/path/to/b4/b4.sh ~/bin/b4
+
+or add an alias to your shell's RC file::
 
     alias b4="$HOME/path/to/b4/b4.sh"
+
+To update, just pull::
+
+    git pull origin master
+    git submodule update
 
 Using a stable branch
 ~~~~~~~~~~~~~~~~~~~~~
@@ -56,15 +86,3 @@ If you don't want to use the master branch (which may not be stable),
 you can switch to a stable branch instead, e.g.::
 
     git switch stable-0.9.y
-
-Updating the git checkout
-~~~~~~~~~~~~~~~~~~~~~~~~~
-It should be sufficient to just turn ``git pull``::
-
-    git pull origin master
-    git submodule update
-
-If you notice that ``requirements.txt`` has been updated, you may wish
-to run the pip command again::
-
-    pip install --user -r requirements.txt

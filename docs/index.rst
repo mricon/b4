@@ -26,6 +26,7 @@ For maintainers
    maintainer/mbox
    maintainer/am-shazam
    maintainer/diff
+   maintainer/dig
    maintainer/pr
    maintainer/ty
    maintainer/review

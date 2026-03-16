@@ -9,6 +9,10 @@ aggregator service, such as the one running on lore.kernel.org, but can
 be used with local mailboxes and maildirs, thus providing fully
 decentralized, experience with robust end-to-end attestation.
 
+If you need to trace an already-applied commit back to its original
+mailing list submission, ``b4 dig`` can find it using patch-id or
+author/subject matching. See :doc:`dig` for details.
+
 B4 also provides a TUI-based review workflow (``b4 review``, currently
 in alpha) that lets you track, review, and act on incoming patch series
 from a single terminal interface. See :doc:`review` for details.
