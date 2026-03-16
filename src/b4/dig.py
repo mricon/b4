@@ -102,13 +102,13 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
 
     # Find commit's author and subject from git
     ecode, out = b4.git_run_command(
-        topdir, ['show', '--no-patch', '--format=%as %ae %s', commit],
+        topdir, ['show', '--no-patch', '--format=%as%x00%ae%x00%an%x00%s', commit],
     )
     if ecode > 0:
         logger.error('Could not get commit info for %s', commit)
         sys.exit(1)
-    cdate, fromeml, csubj = out.strip().split(maxsplit=2)
-    logger.debug('cdate=%s, fromeml=%s, csubj=%s', cdate, fromeml, csubj)
+    cdate, fromeml, fromname, csubj = out.strip().split('\x00', maxsplit=3)
+    logger.debug('cdate=%s, fromeml=%s, fromname=%s, csubj=%s', cdate, fromeml, fromname, csubj)
     # Add 24 hours to the date to account for timezones
     # First, parse YYYY-MM-DD into datetime
     cdate_dt = datetime.datetime.strptime(cdate, '%Y-%m-%d')  # noqa: DTZ007
@@ -163,7 +163,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             break
 
     if not msgs:
-        logger.info('Attempting to match by author and subject...')
+        logger.info('Attempting to match by author email and subject...')
         q = '(s:"%s" AND f:"%s" AND d:..%s)' % (csubj.replace('"', ''), fromeml, pidate)
         logger.debug('q=%s', q)
         msgs = b4.get_pi_search_results(q, nocache=cmdargs.nocache, full_threads=False)
@@ -173,6 +173,22 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
                 if msgid:
                     logger.debug('Adding from author+subject matches: %s', msgid)
                     msgids.add(msgid)
+        if not msgs:
+            # The sender may have used a different email address than the
+            # commit author. When git-am applies such a patch, it moves the
+            # original author identity into an in-body "From:" line, so we
+            # can search for that exact string on lore.
+            inbody_from = f'From: {fromname} <{fromeml}>'
+            logger.info('Attempting to match by in-body From: line...')
+            q = '(nq:"%s" AND s:"%s" AND d:..%s)' % (inbody_from.replace('"', ''), csubj.replace('"', ''), pidate)
+            logger.debug('q=%s', q)
+            msgs = b4.get_pi_search_results(q, nocache=cmdargs.nocache, full_threads=False)
+            if msgs:
+                for msg in msgs:
+                    msgid = b4.LoreMessage.get_clean_msgid(msg)
+                    if msgid:
+                        logger.debug('Adding from in-body From matches: %s', msgid)
+                        msgids.add(msgid)
         if not msgs and not msgids:
             logger.error('Could not find anything matching commit %s', commit)
             if links:
