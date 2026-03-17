@@ -126,10 +126,25 @@
     )
   "Font-lock keywords for `b4-review-mode'.")
 
+(defun b4-review--auto-fill ()
+  "Auto-fill only on the reviewer's own comment lines.
+Quoted (> ), external (|), and instruction (#) lines are left alone."
+  (let ((prefix (buffer-substring-no-properties
+                  (line-beginning-position)
+                  (min (+ (line-beginning-position) 2) (line-end-position)))))
+    (unless (or (string-prefix-p ">" prefix)
+                (string-prefix-p "|" prefix)
+                (string-prefix-p "#" prefix))
+      (do-auto-fill))))
+
 ;;;###autoload
 (define-derived-mode b4-review-mode text-mode "b4-review"
   "Major mode for editing b4 review replies."
   (setq font-lock-defaults '(b4-review-font-lock-keywords t))
+  ;; Only auto-fill the reviewer's own comment lines — quoted diff
+  ;; lines (> ), external comments (|), and instructions (#) must not
+  ;; be reflowed or the parser cannot match them.
+  (setq-local auto-fill-function #'b4-review--auto-fill)
   ;; Disable spell-checking on quoted and external lines
   (setq-local flyspell-generic-check-word-predicate
               #'b4-review--flyspell-check-p))

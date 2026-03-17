@@ -564,7 +564,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     if has_content:
                         viewer.write(Text(''))
                     viewer.write(Text('---', style='dim'))
-                    for bline in email_basement.strip().splitlines():
+                    for bline in email_basement.strip('\n').splitlines():
                         viewer.write(Text(bline, style='dim'))
                     has_content = True
 
@@ -1076,6 +1076,19 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         review = self._ensure_review(target)
         existing_reply = review.get('reply', '')
 
+        # Get the real diff for position resolution when parsing back
+        real_diff = ''
+        if self._selected_idx > 0:
+            patch_idx = self._selected_idx - 1
+            if patch_idx >= len(self._commit_shas):
+                return
+            sha = self._commit_shas[patch_idx]
+            ecode, real_diff = b4.git_run_command(
+                self._topdir, ['diff', f'{sha}~1', sha])
+            if ecode > 0:
+                self.notify('Could not get diff', severity='error')
+                return
+
         if existing_reply:
             editor_text = existing_reply
         else:
@@ -1087,22 +1100,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     '', all_reviews, my_email,
                     commit_msg=self._cover_text)
             else:
-                patch_idx = self._selected_idx - 1
-                if patch_idx >= len(self._commit_shas):
-                    return
-                sha = self._commit_shas[patch_idx]
                 ecode, commit_msg = b4.git_run_command(
                     self._topdir, ['show', '--format=%B', '--no-patch', sha])
                 if ecode > 0:
                     self.notify('Could not get commit message', severity='error')
                     return
-                ecode, diff_text = b4.git_run_command(
-                    self._topdir, ['diff', f'{sha}~1', sha])
-                if ecode > 0:
-                    self.notify('Could not get diff', severity='error')
-                    return
                 editor_text = b4.review._render_quoted_diff_with_comments(
-                    diff_text, all_reviews, my_email,
+                    real_diff, all_reviews, my_email,
                     commit_msg=commit_msg.strip())
 
         with self.suspend():
@@ -1138,7 +1142,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         # Parse inline comments from the quoted reply
         # _extract_editor_comments strips | lines (unadopted external
         # comments) before parsing, so only adopted ones are kept
-        new_comments = b4.review._extract_editor_comments(reply_text)
+        new_comments = b4.review._extract_editor_comments(reply_text, diff_text=real_diff)
         if new_comments:
             review['comments'] = new_comments
             if 'reply' in review:

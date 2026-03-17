@@ -1040,6 +1040,38 @@ def _extract_comments_from_quoted_reply(text: str,
     Returns a list of ``{'path', 'line', 'text', 'content'}`` dicts,
     the same shape as :func:`_extract_comments_from_quoted_reply`.
     """
+    # Rejoin diff --git lines that were wrapped by the editor (e.g. vim
+    # with textwidth=72 triggered by .eml filetype detection).  A wrapped
+    # line looks like:
+    #   > diff --git a/long/path
+    #   b/long/path
+    # Rejoin them so the regex can match.
+    raw_lines = text.splitlines()
+    joined: List[str] = []
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        stripped = line[2:] if line.startswith('> ') else line[1:] if line.startswith('>') else None
+        if (stripped is not None
+                and stripped.startswith('diff --git a/') and ' b/' not in stripped):
+            # Peek at next line for the b/ continuation
+            if i + 1 < len(raw_lines):
+                nxt = raw_lines[i + 1]
+                if nxt.startswith(('> b/', '>b/')):
+                    # Quoted continuation
+                    nxt_stripped = nxt[2:] if nxt.startswith('> ') else nxt[1:]
+                    joined.append(line.rstrip() + ' ' + nxt_stripped)
+                    i += 2
+                    continue
+                if nxt.startswith('b/'):
+                    # Unquoted continuation (editor dropped the > prefix)
+                    joined.append(line.rstrip() + ' ' + nxt)
+                    i += 2
+                    continue
+        joined.append(line)
+        i += 1
+    text = '\n'.join(joined)
+
     hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
     diff_git_re = re.compile(r'^diff --git a/(.*) b/(.*)$')
 
@@ -1061,7 +1093,7 @@ def _extract_comments_from_quoted_reply(text: str,
     preamble_lines: List[str] = []
 
     def _flush_comment() -> None:
-        if pending_comment_lines and last_diff_path:
+        if pending_comment_lines and (last_diff_path or last_diff_content):
             text = '\n'.join(pending_comment_lines).strip()
             if text:
                 comment: Dict[str, Any] = {
@@ -1126,6 +1158,25 @@ def _extract_comments_from_quoted_reply(text: str,
                 in_hunk = False
                 current_a_file = m.group(1)
                 current_b_file = m.group(2)
+                continue
+            # Handle orphan diff headers (user trimmed diff --git line)
+            if raw.startswith(('--- a/', '--- /dev/null')):
+                in_diff = True
+                in_commit_msg = False
+                current_a_file = raw[4:]
+                continue
+            if raw.startswith(('+++ b/', '+++ /dev/null')):
+                in_diff = True
+                in_commit_msg = False
+                current_b_file = raw[4:]
+                continue
+            hm = hunk_re.match(raw)
+            if hm:
+                in_diff = True
+                in_hunk = True
+                in_commit_msg = False
+                a_line = int(hm.group(1))
+                b_line = int(hm.group(2))
                 continue
             # Quoted lines before the diff are commit message
             in_commit_msg = True
@@ -1469,6 +1520,12 @@ def _render_quoted_diff_with_comments(
         for msg_lineno, mline in enumerate(msg_lines, start=1):
             result.append(f'> {mline}')
             _insert((COMMIT_MESSAGE_PATH, msg_lineno))
+        # Sweep up any remaining :message comments (e.g. on the
+        # separator line between commit message and diff, which the
+        # parser counts but _strip_subject does not include).
+        remaining_msg = [k for k in comment_map if k[0] == COMMIT_MESSAGE_PATH]
+        for key in sorted(remaining_msg):
+            _insert(key)
         if msg_lines and diff_lines:
             result.append('>')
 
@@ -1500,13 +1557,17 @@ def _render_quoted_diff_with_comments(
     return '\n'.join(result) + '\n'
 
 
-def _extract_editor_comments(edited_text: str) -> List[Dict[str, Any]]:
+def _extract_editor_comments(edited_text: str,
+                             diff_text: str = '') -> List[Dict[str, Any]]:
     """Extract comments from the quoted-diff editor format.
 
     Strips instruction lines (``#`` prefix) and external reviewer
     comments (``|`` prefix), then delegates to
     :func:`_extract_comments_from_quoted_reply` which handles the
     ``> ``-quoted diff with unquoted comment format.
+
+    When *diff_text* is provided, runs :func:`_resolve_comment_positions`
+    to correct positions when the user has trimmed quoted content.
     """
     filtered: List[str] = []
     for line in edited_text.splitlines():
@@ -1517,8 +1578,11 @@ def _extract_editor_comments(edited_text: str) -> List[Dict[str, Any]]:
         if line.startswith('|'):
             continue
         filtered.append(line)
-    return _extract_comments_from_quoted_reply(
+    comments = _extract_comments_from_quoted_reply(
         '\n'.join(filtered), capture_preamble=True)
+    if diff_text and comments:
+        _resolve_comment_positions(diff_text, comments)
+    return comments
 
 
 def _build_reply_from_comments(diff_text: str,
@@ -1567,20 +1631,31 @@ def _build_reply_from_comments(diff_text: str,
             if texts:
                 msg_comment_indices.append(msg_lineno)
                 msg_insert_map[msg_lineno] = texts
+        # Sweep up remaining :message comments beyond the body
+        # (e.g. on the separator line between commit message and diff)
+        remaining_msg = [k for k in comment_map if k[0] == COMMIT_MESSAGE_PATH]
+        for key in sorted(remaining_msg):
+            texts = comment_map.pop(key, [])
+            if texts:
+                msg_comment_indices.append(key[1])
+                msg_insert_map[key[1]] = texts
         if msg_comment_indices:
             prev_quoted = 0  # last msg line index (1-based) emitted
             for comment_lineno in msg_comment_indices:
                 window_start = max(prev_quoted + 1,
                                    comment_lineno - _REPLY_CONTEXT_LINES)
+                # Clamp to valid msg_lines range
+                window_start = min(window_start, len(msg_lines) + 1)
+                comment_quote_end = min(comment_lineno, len(msg_lines))
                 skipped = window_start - (prev_quoted + 1)
                 if skipped >= 3:
                     result.append('> [...]')
                 elif skipped > 0:
                     for i in range(prev_quoted + 1, window_start):
                         result.append(f'> {msg_lines[i - 1]}')
-                for i in range(window_start, comment_lineno + 1):
+                for i in range(window_start, comment_quote_end + 1):
                     result.append(f'> {msg_lines[i - 1]}')
-                prev_quoted = comment_lineno
+                prev_quoted = max(comment_lineno, comment_quote_end)
                 for ctext in msg_insert_map[comment_lineno]:
                     result.append('')
                     result.extend(ctext.splitlines())

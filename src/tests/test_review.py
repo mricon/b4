@@ -603,6 +603,56 @@ index abc..def 100644
         # Line 1 is far above — should be skipped
         assert '> Line 1\n' not in result
 
+    def test_comment_on_separator_between_msg_and_diff(self) -> None:
+        """A comment placed after the commit message but before diff is kept."""
+        commit_msg = 'Subject\n\nBody line 1.\n\nSigned-off-by: A <a@b.c>'
+        comments = [
+            # Line 4 is beyond _strip_subject's output (3 body lines),
+            # simulating a comment on the > separator
+            {'path': ':message', 'line': 4, 'text': 'General comment.'},
+        ]
+        result = review._build_reply_from_comments(
+            SIMPLE_DIFF, comments, [], commit_msg=commit_msg)
+        assert 'General comment.' in result
+
+    def test_comment_above_diff_git_roundtrips(self) -> None:
+        """Comment above first diff --git line survives parse and render."""
+        commit_msg = 'Subject\n\nBody.\n\nSigned-off-by: A <a@b.c>'
+        diff = (
+            "diff --git a/f.c b/f.c\n"
+            "--- a/f.c\n"
+            "+++ b/f.c\n"
+            "@@ -1,3 +1,4 @@\n"
+            " ctx\n"
+            "+new\n"
+            " more\n"
+        )
+        # Simulate what the editor would produce: quoted commit message,
+        # separator, user comment, then quoted diff
+        edited = (
+            "> Body.\n"
+            ">\n"
+            "> Signed-off-by: A <a@b.c>\n"
+            ">\n"
+            "\n"
+            "My general comment.\n"
+            "\n"
+            "> diff --git a/f.c b/f.c\n"
+            "> --- a/f.c\n"
+            "> +++ b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+            ">  more\n"
+        )
+        comments = review._extract_editor_comments(edited, diff_text=diff)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'My general comment.'
+        # Now rebuild the reply from those comments
+        result = review._build_reply_from_comments(
+            diff, comments, [], commit_msg=commit_msg)
+        assert 'My general comment.' in result
+
 
 class TestAddrsToLines:
     """Tests for review_tui._addrs_to_lines()."""
@@ -2085,6 +2135,129 @@ class TestExtractCommentsFromQuotedReply:
         # Attribution line should NOT become a comment
         for c in comments:
             assert 'wrote:' not in c.get('text', '')
+
+    def test_orphan_hunk_header_enters_diff_mode(self) -> None:
+        """A @@ hunk header without diff --git still enters diff mode."""
+        inline = (
+            "> @@ -10,3 +10,4 @@ some_func\n"
+            ">  ctx\n"
+            "> +new line\n"
+            "\n"
+            "This needs a test.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'This needs a test.'
+        assert comments[0]['line'] == 11
+        assert comments[0].get('content') == '+new line'
+
+    def test_orphan_file_headers_enter_diff_mode(self) -> None:
+        """--- a/ and +++ b/ without diff --git still enter diff mode."""
+        inline = (
+            "> --- a/kernel/sched.c\n"
+            "> +++ b/kernel/sched.c\n"
+            "> @@ -5,3 +5,4 @@\n"
+            ">  existing\n"
+            "> +added\n"
+            "\n"
+            "Why this change?\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert comments[0]['path'] == 'b/kernel/sched.c'
+        assert comments[0]['line'] == 6
+        assert comments[0]['text'] == 'Why this change?'
+
+    def test_trimmed_diff_with_content_resolution(self) -> None:
+        """Trimmed reply resolved against real diff gets correct position."""
+        # User trimmed everything except the line they're commenting on
+        inline = (
+            "> +new line\n"
+            "\n"
+            "Looks good.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        # Comment is captured (even without file path from headers)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'Looks good.'
+        assert comments[0].get('content') == '+new line'
+
+        # Now resolve against the real diff
+        real_diff = (
+            "diff --git a/f.c b/f.c\n"
+            "--- a/f.c\n"
+            "+++ b/f.c\n"
+            "@@ -1,3 +1,4 @@\n"
+            " ctx\n"
+            "+new line\n"
+            " more\n"
+        )
+        review._resolve_comment_positions(real_diff, comments)
+        assert comments[0]['path'] == 'b/f.c'
+        assert comments[0]['line'] == 2
+
+    def test_wrapped_diff_git_line_rejoined(self) -> None:
+        """A diff --git line wrapped by the editor is rejoined."""
+        # Editor wraps at 72 chars, splitting diff --git into two lines
+        inline = (
+            "> diff --git a/tools/lib/python/kdoc/xforms_lists.py\n"
+            "b/tools/lib/python/kdoc/xforms_lists.py\n"
+            "> --- a/tools/lib/python/kdoc/xforms_lists.py\n"
+            "> +++ b/tools/lib/python/kdoc/xforms_lists.py\n"
+            "> @@ -4,7 +4,8 @@\n"
+            ">  existing\n"
+            "> +from kdoc.c_lex import CMatch\n"
+            "\n"
+            "Only editing 2nd file.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'Only editing 2nd file.'
+        assert comments[0]['path'] == 'b/tools/lib/python/kdoc/xforms_lists.py'
+        assert comments[0]['line'] == 5
+
+    def test_wrapped_diff_git_line_quoted_continuation(self) -> None:
+        """A diff --git line wrapped with quoted continuation is rejoined."""
+        inline = (
+            "> diff --git a/tools/lib/python/kdoc/xforms_lists.py\n"
+            "> b/tools/lib/python/kdoc/xforms_lists.py\n"
+            "> --- a/tools/lib/python/kdoc/xforms_lists.py\n"
+            "> +++ b/tools/lib/python/kdoc/xforms_lists.py\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+            "\n"
+            "Comment here.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'Comment here.'
+        assert comments[0]['path'] == 'b/tools/lib/python/kdoc/xforms_lists.py'
+
+    def test_extract_editor_comments_with_diff_resolution(self) -> None:
+        """_extract_editor_comments resolves positions when diff provided."""
+        edited = (
+            "# instructions\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new line\n"
+            "\n"
+            "My comment.\n"
+        )
+        real_diff = (
+            "diff --git a/f.c b/f.c\n"
+            "--- a/f.c\n"
+            "+++ b/f.c\n"
+            "@@ -1,3 +1,4 @@\n"
+            " ctx\n"
+            "+new line\n"
+            " more\n"
+        )
+        comments = review._extract_editor_comments(edited, diff_text=real_diff)
+        assert len(comments) == 1
+        assert comments[0]['path'] == 'b/f.c'
+        assert comments[0]['line'] == 2
+        assert comments[0]['text'] == 'My comment.'
 
 
 class TestResolveCommentPositions:
