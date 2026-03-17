@@ -49,609 +49,433 @@ index 3333333..4444444 100644
 """
 
 
-class TestExtractPatchComments:
-    """Tests for _extract_patch_comments()."""
 
-    def test_no_comments(self) -> None:
-        """A clean diff with no comments returns an empty list."""
-        assert review._extract_patch_comments(SIMPLE_DIFF) == []
+class TestRenderQuotedDiffWithComments:
+    """Tests for _render_quoted_diff_with_comments()."""
 
-    def test_bare_comment_after_addition(self) -> None:
-        """A bare line (no diff prefix) after a '+' line is a comment."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
+    def test_no_comments_quotes_diff(self) -> None:
+        """Without comments, every diff line gets a '> ' prefix."""
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, {}, 'me@example.com')
+        for line in result.splitlines():
+            assert line.startswith('> ') or line == '', f'Unquoted line: {line!r}'
 
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-This can return NULL.
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['path'] == 'b/lib/helpers.c'
-        assert comments[0]['line'] == 12
-        assert comments[0]['text'] == 'This can return NULL.'
-
-    def test_bare_comment_after_context(self) -> None:
-        """A bare comment line after a context line tracks the b-side."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-Comment on ret declaration.
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['path'] == 'b/lib/helpers.c'
-        assert comments[0]['line'] == 10
-
-    def test_bare_comment_after_deletion(self) -> None:
-        """A bare comment after a '-' line tracks the a-side."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,4 +10,3 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
--	old_call();
-Comment on removed line.
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['path'] == 'a/lib/helpers.c'
-        assert comments[0]['line'] == 11
-
-    def test_delimited_comment(self) -> None:
-        """A >>> / <<< block is collected as a single comment."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->>>
-kzalloc() can return NULL here.
-Check the return value.
-<<<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert 'kzalloc() can return NULL here.' in comments[0]['text']
-        assert 'Check the return value.' in comments[0]['text']
-        assert comments[0]['line'] == 12
-
-    def test_delimited_comment_with_marker_padding(self) -> None:
-        """> / < markers with blank-line padding inside do not shift positions."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->
->>>
-
-Check return value.
-
-<<<
-<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['line'] == 12
-        assert comments[0]['text'] == 'Check return value.'
-
-    def test_multiple_comments_same_hunk(self) -> None:
-        """Multiple comments in the same hunk are all collected."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->>>
-First comment.
-<<<
-+	ptr->field = value;
->>>
-Second comment.
-<<<
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 2
-        assert comments[0]['text'] == 'First comment.'
-        assert comments[0]['line'] == 12
-        assert comments[1]['text'] == 'Second comment.'
-        assert comments[1]['line'] == 13
-
-    def test_comments_across_two_files(self) -> None:
-        """Comments on different files are tracked separately."""
-        edited = """\
-diff --git a/src/a.c b/src/a.c
-index 1111111..2222222 100644
---- a/src/a.c
-+++ b/src/a.c
-@@ -5,3 +5,4 @@ void a(void)
- 	int x;
-+	int y;
->>>
-Comment on a.c
-<<<
- 	return;
-diff --git a/src/b.c b/src/b.c
-index 3333333..4444444 100644
---- a/src/b.c
-+++ b/src/b.c
-@@ -1,3 +1,4 @@ void b(void)
- 	int a;
-+	int b;
->>>
-Comment on b.c
-<<<
- 	return;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 2
-        assert comments[0]['path'] == 'b/src/a.c'
-        assert comments[0]['text'] == 'Comment on a.c'
-        assert comments[1]['path'] == 'b/src/b.c'
-        assert comments[1]['text'] == 'Comment on b.c'
-
-    def test_preamble_before_diff_ignored(self) -> None:
-        """Text before the first 'diff --git' line is ignored."""
-        edited = """\
-# Review instructions
-# You may delete hunks you are not interested in.
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-+	ptr->field = value;
- 	return 0;
-"""
-        assert review._extract_patch_comments(edited) == []
-
-    def test_delimited_only_ignores_bare_comments(self) -> None:
-        """With delimited_only=True, bare lines are not comments."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-This would be a comment normally.
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited, delimited_only=True)
-        assert len(comments) == 0
-
-    def test_delimited_only_collects_delimited(self) -> None:
-        """With delimited_only=True, >>> / <<< blocks are still collected."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->>>
-Delimited comment.
-<<<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited, delimited_only=True)
-        assert len(comments) == 1
-        assert comments[0]['text'] == 'Delimited comment.'
-
-    def test_track_content(self) -> None:
-        """With track_content=True, comments include a 'content' key."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->>>
-Check return value.
-<<<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited, track_content=True)
-        assert len(comments) == 1
-        assert comments[0]['content'] == '+\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);'
-
-    def test_agent_plus_delimiters(self) -> None:
-        """Agent-produced +>>> / +<<< and +comment lines are handled."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-+>>>
-+Check return value.
-+<<<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(
-            edited, delimited_only=True)
-        assert len(comments) == 1
-        assert comments[0]['text'] == 'Check return value.'
-
-    def test_multiline_bare_comment(self) -> None:
-        """Consecutive bare lines form a single multiline comment."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-Line one of comment.
-Line two of comment.
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert 'Line one of comment.' in comments[0]['text']
-        assert 'Line two of comment.' in comments[0]['text']
-
-    def test_deleted_hunk_does_not_break_tracking(self) -> None:
-        """Removing a hunk entirely still parses the remaining one."""
-        edited = """\
-diff --git a/src/a.c b/src/a.c
-index 1111111..2222222 100644
---- a/src/a.c
-+++ b/src/a.c
-@@ -5,3 +5,4 @@ void a(void)
- 	int x;
-+	int y;
->>>
-Comment here.
-<<<
- 	return;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['path'] == 'b/src/a.c'
-        assert comments[0]['text'] == 'Comment here.'
-
-    def test_empty_delimited_block_ignored(self) -> None:
-        """An empty >>> / <<< block produces no comment."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->>>
-<<<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 0
-
-    def test_new_file_diff(self) -> None:
-        """/dev/null source is handled for new files."""
-        edited = """\
-diff --git a/src/new.c b/src/new.c
-new file mode 100644
-index 0000000..1234567
---- /dev/null
-+++ b/src/new.c
-@@ -0,0 +1,3 @@
-+#include <stdio.h>
->>>
-Missing license header.
-<<<
-+int main(void) { return 0; }
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['path'] == 'b/src/new.c'
-        assert comments[0]['line'] == 1
-
-
-    def test_agent_bare_delimiters(self) -> None:
-        """Agent-produced >>> / <<< (no +) are parsed by the unified parser."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->>>
-This is the agent comment.
-<<<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(
-            edited, delimited_only=True)
-        assert len(comments) == 1
-        assert comments[0]['text'] == 'This is the agent comment.'
-        assert comments[0]['line'] == 12
-
-    def test_single_gt_lt_markers(self) -> None:
-        """Single > / < markers open and close a comment block."""
-        edited = """\
-diff --git a/lib/helpers.c b/lib/helpers.c
-index abc1234..def5678 100644
---- a/lib/helpers.c
-+++ b/lib/helpers.c
-@@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)
- 	int ret;
-
-+	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
->
-Check the return value.
-<
-+	ptr->field = value;
- 	return 0;
-"""
-        comments = review._extract_patch_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['text'] == 'Check the return value.'
-        assert comments[0]['line'] == 12
-
-
-class TestReinsertComments:
-    """Tests for _reinsert_comments()."""
-
-    def test_no_comments_returns_diff_unchanged(self) -> None:
-        result = review._reinsert_comments(SIMPLE_DIFF, [])
-        assert result == SIMPLE_DIFF
-
-    def test_comment_inserted_at_correct_position(self) -> None:
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check NULL.'},
-        ]
-        result = review._reinsert_comments(SIMPLE_DIFF, comments)
-        lines = result.splitlines()
-        # Find the > open marker
-        idx = lines.index('>')
-        assert lines[idx + 1] == '>>>'
-        assert lines[idx + 2] == ''
-        assert lines[idx + 3] == 'Check NULL.'
-        assert lines[idx + 4] == ''
-        assert lines[idx + 5] == '<<<'
-        assert lines[idx + 6] == '<'
-        # The line before the > marker should be the +kzalloc line
-        assert 'kzalloc' in lines[idx - 1]
-
-    def test_multiple_comments_inserted_in_order(self) -> None:
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'First.'},
-            {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Second.'},
-        ]
-        result = review._reinsert_comments(SIMPLE_DIFF, comments)
-        lines = result.splitlines()
-        first_idx = lines.index('First.')
-        second_idx = lines.index('Second.')
-        assert first_idx < second_idx
-        # Both comments use the > / >>> ... <<< / < format
-        assert '>' in lines
-        assert '>>>' in lines
-        assert '<<<' in lines
-        assert '<' in lines
-
-    def test_comments_across_files(self) -> None:
-        comments = [
-            {'path': 'b/src/a.c', 'line': 6, 'text': 'Comment A.'},
-            {'path': 'b/src/b.c', 'line': 2, 'text': 'Comment B.'},
-        ]
-        result = review._reinsert_comments(TWO_FILE_DIFF, comments)
-        assert 'Comment A.' in result
-        assert 'Comment B.' in result
-
-
-class TestRoundTrip:
-    """Verify that extract(reinsert(comments)) reproduces the same comments."""
-
-    def test_single_comment_round_trip(self) -> None:
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12,
-             'text': 'Check the return value.'},
-        ]
-        with_comments = review._reinsert_comments(SIMPLE_DIFF, comments)
-        extracted = review._extract_patch_comments(with_comments)
-        assert len(extracted) == 1
-        assert extracted[0]['path'] == comments[0]['path']
-        assert extracted[0]['line'] == comments[0]['line']
-        assert extracted[0]['text'] == comments[0]['text']
-
-    def test_multiple_comments_round_trip(self) -> None:
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'First note.'},
-            {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Second note.'},
-        ]
-        with_comments = review._reinsert_comments(SIMPLE_DIFF, comments)
-        extracted = review._extract_patch_comments(with_comments)
-        assert len(extracted) == 2
-        for orig, ext in zip(comments, extracted):
-            assert ext['path'] == orig['path']
-            assert ext['line'] == orig['line']
-            assert ext['text'] == orig['text']
-
-    def test_cross_file_round_trip(self) -> None:
-        comments = [
-            {'path': 'b/src/a.c', 'line': 6, 'text': 'Note on a.c'},
-            {'path': 'b/src/b.c', 'line': 2, 'text': 'Note on b.c'},
-        ]
-        with_comments = review._reinsert_comments(TWO_FILE_DIFF, comments)
-        extracted = review._extract_patch_comments(with_comments)
-        assert len(extracted) == 2
-        for orig, ext in zip(comments, extracted):
-            assert ext['path'] == orig['path']
-            assert ext['line'] == orig['line']
-            assert ext['text'] == orig['text']
-
-    def test_double_round_trip_stable(self) -> None:
-        """Two consecutive round-trips produce the same positions."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12,
-             'text': 'Check return value.'},
-        ]
-        # First round-trip
-        rt1 = review._reinsert_comments(SIMPLE_DIFF, comments)
-        ext1 = review._extract_patch_comments(rt1)
-        # Second round-trip
-        rt2 = review._reinsert_comments(SIMPLE_DIFF, ext1)
-        ext2 = review._extract_patch_comments(rt2)
-        assert len(ext1) == len(ext2) == 1
-        assert ext1[0]['line'] == ext2[0]['line']
-        assert ext1[0]['path'] == ext2[0]['path']
-        assert ext1[0]['text'] == ext2[0]['text']
-
-    def test_triple_round_trip_stable(self) -> None:
-        """Three consecutive round-trips still produce the same positions."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Note A.'},
-            {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Note B.'},
-        ]
-        prev = comments
-        for _ in range(3):
-            text = review._reinsert_comments(SIMPLE_DIFF, prev)
-            prev = review._extract_patch_comments(text)
-        assert len(prev) == 2
-        for orig, ext in zip(comments, prev):
-            assert ext['path'] == orig['path']
-            assert ext['line'] == orig['line']
-            assert ext['text'] == orig['text']
-
-    def test_round_trip_with_multiline_comment(self) -> None:
-        """Multiline comment text survives a round-trip."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12,
-             'text': 'Line one.\nLine two.\nLine three.'},
-        ]
-        with_comments = review._reinsert_comments(SIMPLE_DIFF, comments)
-        extracted = review._extract_patch_comments(with_comments)
-        assert len(extracted) == 1
-        assert extracted[0]['text'] == comments[0]['text']
-        assert extracted[0]['line'] == comments[0]['line']
-
-
-class TestAttributedComments:
-    """Tests for attributed comment blocks (external reviewer comments)."""
-
-    def test_attributed_block_skipped_on_extract(self) -> None:
-        """Comments with attribution on >>> line are not extracted."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'External note.'},
-        ]
-        with_comments = review._reinsert_comments(
-            SIMPLE_DIFF, comments, attribution='sashiko.dev (2026-03-01)')
-        extracted = review._extract_patch_comments(with_comments)
-        assert len(extracted) == 0
-
-    def test_unattributed_block_still_extracted(self) -> None:
-        """Comments without attribution are still extracted normally."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'My note.'},
-        ]
-        with_comments = review._reinsert_comments(SIMPLE_DIFF, comments)
-        extracted = review._extract_patch_comments(with_comments)
-        assert len(extracted) == 1
-        assert extracted[0]['text'] == 'My note.'
-
-    def test_mixed_attributed_and_own_comments(self) -> None:
-        """Only unattributed (maintainer) comments survive extraction."""
-        all_reviews = {
+    def test_own_comment_is_unquoted(self) -> None:
+        """Own comments appear as unquoted text between quoted diff."""
+        all_reviews: Dict[str, Any] = {
             'me@example.com': {
-                'name': 'Maintainer',
+                'name': 'Me',
                 'comments': [
-                    {'path': 'b/lib/helpers.c', 'line': 12,
-                     'text': 'My own comment.'},
-                ],
-            },
-            'sashiko@sashiko.dev': {
-                'name': 'sashiko.dev',
-                'comments': [
-                    {'path': 'b/lib/helpers.c', 'line': 13,
-                     'text': 'External comment.'},
+                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check NULL return'},
                 ],
             },
         }
-        with_comments = review._reinsert_all_comments(
+        result = review._render_quoted_diff_with_comments(
             SIMPLE_DIFF, all_reviews, 'me@example.com')
-        assert 'My own comment.' in with_comments
-        assert 'External comment.' in with_comments
-        # Only the maintainer's comment should be extracted
-        extracted = review._extract_patch_comments(with_comments)
-        assert len(extracted) == 1
-        assert extracted[0]['text'] == 'My own comment.'
+        assert 'Check NULL return' in result
+        # Comment should NOT be quoted
+        for line in result.splitlines():
+            if 'Check NULL return' in line:
+                assert not line.startswith('> ')
+                assert not line.startswith('| ')
 
-    def test_adopted_comment_extracted(self) -> None:
-        """Removing the attribution line makes a comment extractable."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Adopted note.'},
-        ]
-        with_comments = review._reinsert_comments(
-            SIMPLE_DIFF, comments, attribution='Claude Opus 4.6 (2026-03-13)')
-        # Simulate the maintainer deleting the attribution line
-        edited = with_comments.replace(
-            '>>> Claude Opus 4.6 (2026-03-13)', '>>>')
-        extracted = review._extract_patch_comments(edited)
+    def test_external_comment_uses_pipe_prefix(self) -> None:
+        """External comments are prefixed with '| '."""
+        all_reviews: Dict[str, Any] = {
+            'other@example.com': {
+                'name': 'Other',
+                'comments': [
+                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Looks wrong.'},
+                ],
+            },
+        }
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com')
+        assert '| Looks wrong.' in result
+        assert '| Other <other@example.com>:' in result
+
+    def test_mixed_own_and_external(self) -> None:
+        """Own and external comments at the same position."""
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {
+                'name': 'Me',
+                'comments': [
+                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'My comment'},
+                ],
+            },
+            'ext@example.com': {
+                'name': 'Ext',
+                'comments': [
+                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Ext comment'},
+                ],
+                'provenance': 'https://lore.kernel.org/test',
+            },
+        }
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com')
+        assert 'My comment' in result
+        assert '| Ext comment' in result
+
+    def test_cross_file_comments(self) -> None:
+        """Comments in different files render correctly."""
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {
+                'name': 'Me',
+                'comments': [
+                    {'path': 'b/src/a.c', 'line': 6, 'text': 'Comment in a.c'},
+                    {'path': 'b/src/b.c', 'line': 2, 'text': 'Comment in b.c'},
+                ],
+            },
+        }
+        result = review._render_quoted_diff_with_comments(
+            TWO_FILE_DIFF, all_reviews, 'me@example.com')
+        assert 'Comment in a.c' in result
+        assert 'Comment in b.c' in result
+
+
+    def test_commit_msg_quoted_before_diff(self) -> None:
+        """Commit message body is quoted before the diff when provided."""
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, {}, 'me@example.com',
+            commit_msg='Subject line\n\nThis is the body.\nSecond line.')
+        lines = result.splitlines()
+        # Body lines should appear quoted before the diff
+        assert '> This is the body.' in lines
+        assert '> Second line.' in lines
+        # They should come before the diff
+        body_idx = lines.index('> This is the body.')
+        diff_idx = next(i for i, l in enumerate(lines) if 'diff --git' in l)
+        assert body_idx < diff_idx
+
+    def test_commit_msg_own_comment(self) -> None:
+        """Own comments on commit message lines are rendered unquoted."""
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {
+                'name': 'Me',
+                'comments': [
+                    {'path': ':message', 'line': 1, 'text': 'Body comment'},
+                ],
+            },
+        }
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com',
+            commit_msg='Subject\n\nFirst body line.')
+        assert 'Body comment' in result
+        for line in result.splitlines():
+            if 'Body comment' in line:
+                assert not line.startswith('> ')
+                assert not line.startswith('| ')
+
+    def test_commit_msg_external_comment(self) -> None:
+        """External comments on commit message lines use | prefix."""
+        all_reviews: Dict[str, Any] = {
+            'other@example.com': {
+                'name': 'Other',
+                'provenance': 'https://lore.kernel.org/test',
+                'comments': [
+                    {'path': ':message', 'line': 1, 'text': 'Ext msg comment'},
+                ],
+            },
+        }
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com',
+            commit_msg='Subject\n\nFirst body line.')
+        assert '| Ext msg comment' in result
+        assert '| Other <other@example.com>:' in result
+        assert '| via: https://lore.kernel.org/test' in result
+
+    def test_preamble_comment_rendered(self) -> None:
+        """Preamble comments (line 0) are rendered before the commit message."""
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {
+                'name': 'Me',
+                'comments': [
+                    {'path': ':message', 'line': 0, 'text': 'General note'},
+                ],
+            },
+        }
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com',
+            commit_msg='Subject\n\nFirst body line.')
+        lines = result.splitlines()
+        assert 'General note' in lines
+        note_idx = lines.index('General note')
+        body_idx = next(i for i, l in enumerate(lines) if 'First body line' in l)
+        assert note_idx < body_idx
+
+
+class TestExtractEditorComments:
+    """Tests for _extract_editor_comments()."""
+
+    def test_basic_comment(self) -> None:
+        """Unquoted text between quoted diff is extracted as a comment."""
+        edited = (
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '>  \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            'Check NULL return.\n'
+            '\n'
+            '> +\tptr->field = value;\n'
+            '>  \treturn 0;\n'
+        )
+        comments = review._extract_editor_comments(edited)
+        assert len(comments) == 1
+        assert comments[0]['path'] == 'b/lib/helpers.c'
+        assert comments[0]['line'] == 12
+        assert comments[0]['text'] == 'Check NULL return.'
+
+    def test_instruction_lines_stripped(self) -> None:
+        """Lines starting with # are ignored."""
+        edited = (
+            '# Review patch for: test\n'
+            '#\n'
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '>  \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            'My comment.\n'
+            '\n'
+            '> +\tptr->field = value;\n'
+            '>  \treturn 0;\n'
+        )
+        comments = review._extract_editor_comments(edited)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'My comment.'
+
+    def test_pipe_prefix_lines_stripped(self) -> None:
+        """Lines starting with | are ignored (external comments)."""
+        edited = (
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '>  \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            '| Other <other@example.com>:\n'
+            '|\n'
+            '| This is wrong.\n'
+            '\n'
+            '> +\tptr->field = value;\n'
+            '>  \treturn 0;\n'
+        )
+        comments = review._extract_editor_comments(edited)
+        assert len(comments) == 0
+
+    def test_adopt_external_comment(self) -> None:
+        """Removing | prefix adopts an external comment."""
+        edited = (
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '>  \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            'This is wrong.\n'
+            '\n'
+            '> +\tptr->field = value;\n'
+            '>  \treturn 0;\n'
+        )
+        comments = review._extract_editor_comments(edited)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'This is wrong.'
+
+    def test_multiple_comments_correct_positions(self) -> None:
+        """Multiple comments with blank lines don't shift positions."""
+        edited = (
+            '> diff --git a/test.rst b/test.rst\n'
+            '> new file mode 100644\n'
+            '> --- /dev/null\n'
+            '> +++ b/test.rst\n'
+            '> @@ -0,0 +1,9 @@\n'
+            '> +line1\n'
+            '> +line2\n'
+            '> +line3\n'
+            '\n'
+            '1st comment\n'
+            '\n'
+            '> +\n'
+            '> +line5\n'
+            '> +line6\n'
+            '\n'
+            '2nd comment\n'
+            '\n'
+            '> +\n'
+            '> +line8\n'
+            '> +line9\n'
+            '\n'
+            '3rd comment\n'
+        )
+        comments = review._extract_editor_comments(edited)
+        assert len(comments) == 3
+        assert comments[0]['line'] == 3
+        assert comments[0]['text'] == '1st comment'
+        assert comments[1]['line'] == 6
+        assert comments[1]['text'] == '2nd comment'
+        assert comments[2]['line'] == 9
+        assert comments[2]['text'] == '3rd comment'
+
+    def test_content_key_set(self) -> None:
+        """Extracted comments have 'content' key from the diff line."""
+        edited = (
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '>  \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            'My comment.\n'
+            '\n'
+            '> +\tptr->field = value;\n'
+        )
+        comments = review._extract_editor_comments(edited)
+        assert len(comments) == 1
+        assert comments[0]['content'] == '+\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);'
+
+
+class TestQuotedEditorRoundTrip:
+    """Tests for render → edit → extract round-trip."""
+
+    def test_single_comment_round_trip(self) -> None:
+        """A single comment survives render → extract."""
+        comments = [{'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check this'}]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com')
+        extracted = review._extract_editor_comments(rendered)
         assert len(extracted) == 1
-        assert extracted[0]['text'] == 'Adopted note.'
+        assert extracted[0]['path'] == 'b/lib/helpers.c'
+        assert extracted[0]['line'] == 12
+        assert extracted[0]['text'] == 'Check this'
+
+    def test_multiple_comments_round_trip(self) -> None:
+        """Multiple comments in different files survive round-trip."""
+        comments_a = [{'path': 'b/src/a.c', 'line': 6, 'text': 'Note A'}]
+        comments_b = [{'path': 'b/src/b.c', 'line': 2, 'text': 'Note B'}]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {
+                'name': 'Me',
+                'comments': comments_a + comments_b,
+            },
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            TWO_FILE_DIFF, all_reviews, 'me@example.com')
+        extracted = review._extract_editor_comments(rendered)
+        assert len(extracted) == 2
+        assert extracted[0]['path'] == 'b/src/a.c'
+        assert extracted[0]['text'] == 'Note A'
+        assert extracted[1]['path'] == 'b/src/b.c'
+        assert extracted[1]['text'] == 'Note B'
+
+    def test_double_round_trip_stable(self) -> None:
+        """Two round-trips produce the same comments."""
+        comments = [{'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check this'}]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered1 = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com')
+        extracted1 = review._extract_editor_comments(rendered1)
+
+        all_reviews2: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': extracted1},
+        }
+        rendered2 = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews2, 'me@example.com')
+        extracted2 = review._extract_editor_comments(rendered2)
+
+        assert len(extracted1) == len(extracted2)
+        for c1, c2 in zip(extracted1, extracted2):
+            assert c1['path'] == c2['path']
+            assert c1['line'] == c2['line']
+            assert c1['text'] == c2['text']
+
+    def test_external_comments_preserved_through_round_trip(self) -> None:
+        """External | comments don't leak into extracted comments."""
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {
+                'name': 'Me',
+                'comments': [
+                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'My note'},
+                ],
+            },
+            'ext@example.com': {
+                'name': 'Ext',
+                'comments': [
+                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Ext note'},
+                ],
+            },
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com')
+        extracted = review._extract_editor_comments(rendered)
+        assert len(extracted) == 1
+        assert extracted[0]['text'] == 'My note'
+
+    def test_commit_message_comment_round_trip(self) -> None:
+        """Comments on commit message lines survive render → extract."""
+        comments = [{'path': ':message', 'line': 1, 'text': 'Body comment'}]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com',
+            commit_msg='Subject\n\nFirst body line.\nSecond line.')
+        extracted = review._extract_editor_comments(rendered)
+        msg_comments = [c for c in extracted if c['path'] == ':message']
+        assert len(msg_comments) == 1
+        assert msg_comments[0]['text'] == 'Body comment'
+        assert msg_comments[0]['line'] == 1
+
+    def test_preamble_comment_round_trip(self) -> None:
+        """Preamble comments (line 0) survive render → extract."""
+        comments = [{'path': ':message', 'line': 0, 'text': 'General note'}]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com',
+            commit_msg='Subject\n\nBody line.')
+        extracted = review._extract_editor_comments(rendered)
+        preamble = [c for c in extracted if c['path'] == ':message' and c['line'] == 0]
+        assert len(preamble) == 1
+        assert preamble[0]['text'] == 'General note'
+
+    def test_mixed_commit_msg_and_diff_round_trip(self) -> None:
+        """Both commit message and diff comments survive round-trip."""
+        comments = [
+            {'path': ':message', 'line': 1, 'text': 'Msg comment'},
+            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Diff comment'},
+        ]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, all_reviews, 'me@example.com',
+            commit_msg='Subject\n\nFirst body line.')
+        extracted = review._extract_editor_comments(rendered)
+        msg_c = [c for c in extracted if c['path'] == ':message']
+        diff_c = [c for c in extracted if c['path'] != ':message']
+        assert len(msg_c) == 1
+        assert msg_c[0]['text'] == 'Msg comment'
+        assert len(diff_c) == 1
+        assert diff_c[0]['text'] == 'Diff comment'
 
 
 class TestBuildReplyFromComments:
@@ -722,6 +546,62 @@ index abc..def 100644
         result = review._build_reply_from_comments(diff, comments, [])
         assert 'int z' in result
         assert 'Why z?' in result
+
+    def test_commit_msg_comment_with_context(self) -> None:
+        """Commit message comments include context lines and use windowing."""
+        commit_msg = 'Subject\n\nLine one.\nLine two.\nLine three.'
+        comments = [
+            {'path': ':message', 'line': 3, 'text': 'Comment on line three.'},
+        ]
+        result = review._build_reply_from_comments(
+            SIMPLE_DIFF, comments, [], commit_msg=commit_msg)
+        assert 'Comment on line three.' in result
+        assert '> Line three.' in result
+
+    def test_commit_msg_preamble_comment(self) -> None:
+        """Preamble comments (line 0) appear before quoted content."""
+        commit_msg = 'Subject\n\nBody line.'
+        comments = [
+            {'path': ':message', 'line': 0, 'text': 'General feedback.'},
+        ]
+        result = review._build_reply_from_comments(
+            '', comments, [], commit_msg=commit_msg)
+        lines = result.splitlines()
+        assert 'General feedback.' in lines
+        # Preamble should come before any quoted line
+        feedback_idx = lines.index('General feedback.')
+        quoted_lines = [i for i, l in enumerate(lines) if l.startswith('>')]
+        if quoted_lines:
+            assert feedback_idx < quoted_lines[0]
+
+    def test_commit_msg_no_separator_without_diff(self) -> None:
+        """No stray > separator when there is no diff content."""
+        commit_msg = 'Subject\n\nBody line.'
+        comments = [
+            {'path': ':message', 'line': 1, 'text': 'A comment.'},
+        ]
+        result = review._build_reply_from_comments(
+            '', comments, [], commit_msg=commit_msg)
+        # Should not end with a bare >
+        stripped = result.rstrip()
+        assert not stripped.endswith('\n>')
+        assert '> Body line.' in result
+        assert 'A comment.' in result
+
+    def test_commit_msg_skips_uncommented_lines(self) -> None:
+        """Only context around commented lines is quoted, rest is skipped."""
+        lines = '\n'.join(f'Line {i}' for i in range(1, 21))
+        commit_msg = f'Subject\n\n{lines}'
+        comments = [
+            {'path': ':message', 'line': 15, 'text': 'Comment here.'},
+        ]
+        result = review._build_reply_from_comments(
+            '', comments, [], commit_msg=commit_msg)
+        # Line 15 and a few lines of context above should be quoted
+        assert '> Line 15' in result
+        assert 'Comment here.' in result
+        # Line 1 is far above — should be skipped
+        assert '> Line 1\n' not in result
 
 
 class TestAddrsToLines:
@@ -2131,6 +2011,80 @@ class TestExtractCommentsFromQuotedReply:
         assert comments[0]['path'] == 'old.c'
         # Deletion at a_line=11, so comment anchors to line 11
         assert comments[0]['line'] == 11
+
+
+    def test_commit_message_comment_extracted(self) -> None:
+        """Comments on quoted commit message lines get :message path."""
+        inline = (
+            "> This is the commit body.\n"
+            "> It explains the change.\n"
+            "\n"
+            "Why is this needed?\n"
+            "\n"
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert comments[0]['path'] == ':message'
+        assert comments[0]['line'] == 2
+        assert comments[0]['text'] == 'Why is this needed?'
+
+    def test_preamble_captured_when_enabled(self) -> None:
+        """With capture_preamble=True, text before first quote is a comment."""
+        inline = (
+            "General feedback on this patch.\n"
+            "\n"
+            "> Commit body line.\n"
+            "\n"
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(
+            inline, capture_preamble=True)
+        preamble = [c for c in comments if c['line'] == 0]
+        assert len(preamble) == 1
+        assert preamble[0]['path'] == ':message'
+        assert 'General feedback' in preamble[0]['text']
+
+    def test_preamble_not_captured_by_default(self) -> None:
+        """Without capture_preamble, text before first quote is ignored."""
+        inline = (
+            "General feedback on this patch.\n"
+            "\n"
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+            "\n"
+            "Actual comment.\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(inline)
+        assert len(comments) == 1
+        assert comments[0]['text'] == 'Actual comment.'
+
+    def test_attribution_line_skipped_in_preamble(self) -> None:
+        """The 'On ..., ... wrote:' attribution line is not captured."""
+        inline = (
+            "On Thu, 12 Mar 2026 15:54:20 +0100, Author <a@b.com> wrote:\n"
+            "> Commit body.\n"
+            "\n"
+            "My comment.\n"
+            "\n"
+            "> diff --git a/f.c b/f.c\n"
+            "> @@ -1,3 +1,4 @@\n"
+            ">  ctx\n"
+            "> +new\n"
+        )
+        comments = review._extract_comments_from_quoted_reply(
+            inline, capture_preamble=True)
+        # Attribution line should NOT become a comment
+        for c in comments:
+            assert 'wrote:' not in c.get('text', '')
 
 
 class TestResolveCommentPositions:

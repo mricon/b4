@@ -91,6 +91,9 @@ class FollowupItem(ListItem):
 
 
 
+from b4.review._review import COMMIT_MESSAGE_PATH
+
+
 class ReviewApp(CheckRunnerMixin, App[None]):
     """Textual app for b4 review TUI."""
 
@@ -176,12 +179,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
     """
 
     # Actions visible only in review mode
-    _REVIEW_ACTIONS = frozenset({'review_diff', 'followups', 'agent'})
+    _REVIEW_ACTIONS = frozenset({'followups', 'agent'})
     # Actions visible only in email mode
     _EMAIL_ACTIONS = frozenset({'edit_tocc', 'send'})
 
     BINDING_GROUPS = {
-        'trailer': 'Review', 'review_diff': 'Review', 'edit_note': 'Review',
+        'trailer': 'Review', 'edit_note': 'Review',
         'edit_reply': 'Review', 'followups': 'Review', 'agent': 'Review',
         'prior_review': 'Review',
         'patch_done': 'Review', 'patch_skip': 'Review', 'check': 'Review',
@@ -197,7 +200,6 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         Binding('up', 'k_key', 'Prev/Scroll up', show=False),
         # Review mode bindings
         Binding('t', 'trailer', 'trailers'),
-        Binding('C', 'review_diff', 'comment', key_display='C'),
         Binding('N', 'edit_note', 'note', key_display='N'),
         Binding('r', 'edit_reply', 'reply'),
         Binding('f', 'followups', 'followups'),
@@ -413,6 +415,25 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         viewer.scroll_home(animate=False)
         self._refresh_trailer_overlay()
 
+    def _build_msg_comment_map(
+        self, target: Dict[str, Any], ts: Dict[str, str],
+    ) -> Dict[int, List[Tuple[str, str, str]]]:
+        """Build a comment map for COMMIT_MESSAGE_PATH comments.
+
+        Returns a dict mapping line number to list of
+        ``(author, colour, text)`` tuples for the current user's comments.
+        """
+        all_reviews = target.get('reviews', {})
+        my_email = str(self._usercfg.get('email', ''))
+        result: Dict[int, List[Tuple[str, str, str]]] = {}
+        my_review = all_reviews.get(my_email, {})
+        colour = self._reviewer_colour(my_email, target, ts)
+        for c in my_review.get('comments', []):
+            if c['path'] == COMMIT_MESSAGE_PATH:
+                result.setdefault(c['line'], []).append(
+                    ('You', colour, c['text']))
+        return result
+
     def _show_cover(self, viewer: RichLog) -> None:
         """Render the cover letter in the diff viewer."""
         ts = resolve_styles(self)
@@ -421,9 +442,29 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if cover_lines:
             viewer.write(Text(cover_lines[0], style=f"bold {ts['accent']}"))
             viewer.write(Text(''))
-        body = '\n'.join(cover_lines[1:]).lstrip('\n')
+        body_lines = b4.review._strip_subject(self._cover_text)
+        body = '\n'.join(body_lines)
         if body:
-            viewer.write(Syntax(body, 'markdown', theme=ts['syntax_theme']))
+            # Build cover comment map
+            cv_comment_map = self._build_msg_comment_map(self._series, ts)
+
+            # Render preamble comments (line 0)
+            preamble_entries = cv_comment_map.pop(0, [])
+            if preamble_entries:
+                self._comment_positions.append(len(viewer.lines))
+                _write_comments(viewer, preamble_entries, ts=ts)
+
+            if cv_comment_map:
+                # Render body line-by-line with inline comments
+                body_lines = body.splitlines()
+                for lineno, bline in enumerate(body_lines, start=1):
+                    viewer.write(Text(bline))
+                    entries = cv_comment_map.pop(lineno, [])
+                    if entries:
+                        self._comment_positions.append(len(viewer.lines))
+                        _write_comments(viewer, entries, ts=ts)
+            else:
+                viewer.write(Syntax(body, 'markdown', theme=ts['syntax_theme']))
         # Show cover-level follow-up trailers
         _write_followup_trailers(viewer, self._tracking.get('followups', []), ts=ts)
         # Show cover-level follow-up comments
@@ -448,31 +489,64 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         ecode, commit_msg = b4.git_run_command(
             self._topdir, ['show', '--format=%B', '--no-patch', sha])
         if ecode == 0 and commit_msg.strip():
-            msg_lines = commit_msg.strip().splitlines()
+            all_lines = commit_msg.strip().splitlines()
             # Render subject in accent colour
-            if msg_lines:
-                viewer.write(Text(msg_lines[0], style=f"bold {ts['accent']}"))
+            if all_lines:
+                viewer.write(Text(all_lines[0], style=f"bold {ts['accent']}"))
                 viewer.write(Text(''))
-            body = '\n'.join(msg_lines[1:]).lstrip('\n')
+            body = '\n'.join(b4.review._strip_subject(commit_msg))
             if body:
+                # Build commit message comment map
+                patch_target_cm = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+                msg_comment_map = self._build_msg_comment_map(patch_target_cm, ts)
+
+                # Render preamble comments (line 0 = before commit message)
+                preamble_entries = msg_comment_map.pop(0, [])
+                if preamble_entries:
+                    self._comment_positions.append(len(viewer.lines))
+                    _write_comments(viewer, preamble_entries, ts=ts)
+
                 bheaders, message, btrailers, _basement, _signature = \
                     b4.LoreMessage.get_body_parts(body)
-                has_content = False
+                has_content = bool(preamble_entries)
+                # Track line number through the body (1-based, after
+                # subject and leading blanks — same as _build_annotated_diff)
+                body_lines = body.splitlines()
+                body_lineno = 0
+
+                def _write_msg_line(text_obj: Text) -> None:
+                    nonlocal body_lineno, has_content
+                    body_lineno += 1
+                    viewer.write(text_obj)
+                    has_content = True
+                    entries = msg_comment_map.pop(body_lineno, [])
+                    if entries:
+                        self._comment_positions.append(len(viewer.lines))
+                        _write_comments(viewer, entries, ts=ts)
+
                 if bheaders:
                     for lt in bheaders:
-                        viewer.write(Text(lt.as_string(), style='dim'))
-                    has_content = True
+                        _write_msg_line(Text(lt.as_string(), style='dim'))
                 if message:
                     if has_content:
                         viewer.write('')
-                    viewer.write(Syntax(message.rstrip('\n'), 'markdown', theme=ts['syntax_theme']))
-                    has_content = True
+                    for mline in message.rstrip('\n').splitlines():
+                        _write_msg_line(Text(mline))
                 if btrailers:
                     if has_content:
                         viewer.write('')
                     for lt in btrailers:
-                        viewer.write(Text(lt.as_string(), style=ts['accent']))
-                    has_content = True
+                        _write_msg_line(Text(lt.as_string(), style=ts['accent']))
+
+                # Account for blank lines between parts that get_body_parts
+                # consumed but we didn't render — advance the counter
+                while body_lineno < len(body_lines):
+                    body_lineno += 1
+                    entries = msg_comment_map.pop(body_lineno, [])
+                    if entries:
+                        self._comment_positions.append(len(viewer.lines))
+                        _write_comments(viewer, entries, ts=ts)
+
                 # Show follow-up trailers not already in the commit,
                 # including cover-letter trailers that apply to all patches
                 patch_meta = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
@@ -493,6 +567,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     for bline in email_basement.strip().splitlines():
                         viewer.write(Text(bline, style='dim'))
                     has_content = True
+
                 if has_content:
                     viewer.write(Text(''))
                     viewer.write(Rule(style='dim'))
@@ -508,8 +583,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         all_reviews = patch_target.get('reviews', {})
         my_email = str(self._usercfg.get('email', ''))
         comment_map: Dict[Tuple[str, int], List[Tuple[str, str, str]]] = {}
-        # Track lines with hidden external comments for gutter markers
-        external_hint_lines: set[Tuple[str, int]] = set()
+        # Track lines with hidden external comments — map to (name, line_count)
+        external_hints: Dict[Tuple[str, int], List[Tuple[str, int]]] = {}
         for rev_email, rev_data in all_reviews.items():
             if rev_email == my_email:
                 colour = self._reviewer_colour(rev_email, patch_target, ts)
@@ -523,8 +598,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     key = (c['path'], c['line'])
                     comment_map.setdefault(key, []).append((rev_name, colour, c['text']))
             else:
+                rev_name = rev_data.get('name', rev_email)
                 for c in rev_data.get('comments', []):
-                    external_hint_lines.add((c['path'], c['line']))
+                    key = (c['path'], c['line'])
+                    nlines = len(c.get('text', '').splitlines())
+                    external_hints.setdefault(key, []).append((rev_name, nlines))
 
         # Parse and render diff with line tracking
         hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
@@ -533,30 +611,37 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         a_line = 0
         b_line = 0
         hint_style = f"bold {ts['warning']}"
-        has_hints = bool(external_hint_lines)
         self._hint_gutter_lines = {}
 
-        def _gutter(key: Tuple[str, int]) -> str:
-            if not has_hints:
-                return ''
-            if key in external_hint_lines:
-                return '\u2261'
-            return ' '
+        def _write_hints(key: Tuple[str, int]) -> None:
+            entries = external_hints.get(key, [])
+            if not entries:
+                return
+            # Aggregate line counts per reviewer (deduplicate)
+            counts: Dict[str, int] = {}
+            for name, nlines in entries:
+                counts[name] = counts.get(name, 0) + nlines
+            parts: List[str] = []
+            for name, total in counts.items():
+                parts.append(f'{name} ({total}L)')
+            label = ', '.join(parts)
+            self._hint_gutter_lines[len(viewer.lines)] = key
+            ruler = Text(f' \u2500\u2500 {label} \u2500\u2500', style=hint_style)
+            viewer.write(ruler)
 
-        gpad = ' ' if has_hints else ''
         for line in diff_out.splitlines():
             if line.startswith('diff --git '):
-                viewer.write(Text(f'{gpad}{line}', style='bold'))
+                viewer.write(Text(line, style='bold'))
                 continue
             if line.startswith('--- '):
                 if line.startswith(('--- a/', '--- /dev/null')):
                     current_a_file = line[4:]
-                viewer.write(Text(f'{gpad}{line}', style='bold'))
+                viewer.write(Text(line, style='bold'))
                 continue
             if line.startswith('+++ '):
                 if line.startswith(('+++ b/', '+++ /dev/null')):
                     current_b_file = line[4:]
-                viewer.write(Text(f'{gpad}{line}', style='bold'))
+                viewer.write(Text(line, style='bold'))
                 continue
 
             hm = hunk_re.match(line)
@@ -565,7 +650,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 b_line = int(hm.group(2))
                 # Colour only the @@...@@ marker, leave context in default
                 end = line.index(' @@', 3) + 3
-                hunk_text = Text(gpad)
+                hunk_text = Text()
                 hunk_text.append(line[:end], style=f"bold {ts['secondary']}")
                 if len(line) > end:
                     hunk_text.append(line[end:])
@@ -574,52 +659,34 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
             if line.startswith('+'):
                 key = (current_b_file, b_line)
-                t = Text()
-                g = _gutter(key)
-                if g:
-                    t.append(g, style=hint_style)
-                t.append(line, style=ts['success'])
-                if key in external_hint_lines:
-                    self._hint_gutter_lines[len(viewer.lines)] = key
-                viewer.write(t)
+                viewer.write(Text(line, style=ts['success']))
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
                     _write_comments(viewer, entries, ts=ts)
+                _write_hints(key)
                 b_line += 1
             elif line.startswith('-'):
                 key = (current_a_file, a_line)
-                t = Text()
-                g = _gutter(key)
-                if g:
-                    t.append(g, style=hint_style)
-                t.append(line, style=ts['error'])
-                if key in external_hint_lines:
-                    self._hint_gutter_lines[len(viewer.lines)] = key
-                viewer.write(t)
+                viewer.write(Text(line, style=ts['error']))
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
                     _write_comments(viewer, entries, ts=ts)
+                _write_hints(key)
                 a_line += 1
             elif line.startswith(' '):
                 key = (current_b_file, b_line)
-                t = Text()
-                g = _gutter(key)
-                if g:
-                    t.append(g, style=hint_style)
-                t.append(line)
-                if key in external_hint_lines:
-                    self._hint_gutter_lines[len(viewer.lines)] = key
-                viewer.write(t)
+                viewer.write(Text(line))
                 entries = comment_map.pop(key, [])
                 if entries:
                     self._comment_positions.append(len(viewer.lines))
                     _write_comments(viewer, entries, ts=ts)
+                _write_hints(key)
                 a_line += 1
                 b_line += 1
             else:
-                viewer.write(Text(f'{gpad}{line}'))
+                viewer.write(Text(line))
 
         # Render follow-up comments at the bottom
         _write_followup_comments(
@@ -1012,62 +1079,35 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if existing_reply:
             editor_text = existing_reply
         else:
+            all_reviews = target.get('reviews', {})
+            my_email = str(self._usercfg.get('email', ''))
             if self._selected_idx == 0:
                 # Cover letter reply
-                body_lines = self._cover_text.splitlines()
-                if body_lines:
-                    body_lines = body_lines[1:]
-                while body_lines and not body_lines[0].strip():
-                    body_lines.pop(0)
-                reply_body = '\n'.join(f'> {line}' for line in body_lines)
-                orig_date = self._series.get('header-info', {}).get('sentdate', '')
-                orig_author = (f'{self._series.get("fromname", "")} '
-                               f'<{self._series.get("fromemail", "")}>')
+                editor_text = b4.review._render_quoted_diff_with_comments(
+                    '', all_reviews, my_email,
+                    commit_msg=self._cover_text)
             else:
                 patch_idx = self._selected_idx - 1
                 if patch_idx >= len(self._commit_shas):
                     return
                 sha = self._commit_shas[patch_idx]
-                patch_meta = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
-                orig_date = patch_meta.get('header-info', {}).get('sentdate', '')
-                pfu = self._series.get('fromname', '')
-                pfe = self._series.get('fromemail', '')
-                orig_author = f'{pfu} <{pfe}>'
-
-                existing_comments = review.get('comments', [])
-                if existing_comments:
-                    ecode, commit_msg = b4.git_run_command(
-                        self._topdir, ['show', '--format=%B', '--no-patch', sha])
-                    if ecode > 0:
-                        self.notify('Could not get commit message', severity='error')
-                        return
-                    ecode, diff_text = b4.git_run_command(
-                        self._topdir, ['diff', f'{sha}~1', sha])
-                    if ecode > 0:
-                        self.notify('Could not get diff', severity='error')
-                        return
-                    review_trailers = review.get('trailers', [])
-                    reply_body = b4.review._build_reply_from_comments(
-                        diff_text, existing_comments, review_trailers,
-                        commit_msg=commit_msg.strip())
-                else:
-                    ecode, raw = b4.git_run_command(
-                        self._topdir, ['show', '--format=%B', '--patch-with-stat', sha])
-                    if ecode > 0:
-                        self.notify('Could not get patch content', severity='error')
-                        return
-                    # Strip subject line (already in the email Subject header)
-                    rb_lines = raw.splitlines()
-                    if rb_lines:
-                        rb_lines = rb_lines[1:]
-                    while rb_lines and not rb_lines[0].strip():
-                        rb_lines.pop(0)
-                    reply_body = '\n'.join(f'> {line}' for line in rb_lines)
-
-            editor_text = f'On {orig_date}, {orig_author} wrote:\n{reply_body}'
+                ecode, commit_msg = b4.git_run_command(
+                    self._topdir, ['show', '--format=%B', '--no-patch', sha])
+                if ecode > 0:
+                    self.notify('Could not get commit message', severity='error')
+                    return
+                ecode, diff_text = b4.git_run_command(
+                    self._topdir, ['diff', f'{sha}~1', sha])
+                if ecode > 0:
+                    self.notify('Could not get diff', severity='error')
+                    return
+                editor_text = b4.review._render_quoted_diff_with_comments(
+                    diff_text, all_reviews, my_email,
+                    commit_msg=commit_msg.strip())
 
         with self.suspend():
-            result = b4.edit_in_editor(editor_text.encode(), filehint='reply.eml')
+            result = b4.edit_in_editor(
+                editor_text.encode(), filehint='reply.b4-review.eml')
 
         if result is None:
             self.notify('Editor returned no content')
@@ -1076,97 +1116,47 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if reply_text == editor_text:
             self.notify('No changes made')
             return
-        review['reply'] = reply_text
-        if 'comments' in review:
-            del review['comments']
-        self._save_tracking()
-        self._refresh_patch_item(self._selected_idx)
-        self._show_content(self._selected_idx)
-        self.notify('Reply saved')
+        # Extract trailers from the unquoted portion of the reply
+        # (skip > quoted lines and | external comment lines)
+        unquoted_lines: List[str] = []
+        for line in reply_text.splitlines():
+            if not line.startswith('>') and not line.startswith('|'):
+                unquoted_lines.append(line)
+        unquoted_text = '\n'.join(unquoted_lines)
+        found_trailers, _others = b4.LoreMessage.find_trailers(unquoted_text)
+        if found_trailers:
+            trailer_strs = [lt.as_string() for lt in found_trailers]
+            review['trailers'] = trailer_strs
+            # Strip trailer lines from the reply before parsing comments
+            trailer_set = set(trailer_strs)
+            stripped_lines: List[str] = []
+            for line in reply_text.splitlines():
+                if line.strip() not in trailer_set:
+                    stripped_lines.append(line)
+            reply_text = '\n'.join(stripped_lines)
 
-    def action_review_diff(self) -> None:
-        """Open $EDITOR for inline diff review."""
-        if self._selected_idx == 0:
-            self.notify('Not applicable for cover letter', severity='warning')
-            return
-        patch_idx = self._selected_idx - 1
-        target = self._get_current_review_target()
-        if not target:
-            return
-        review = self._ensure_review(target)
-
-        if review.get('reply', ''):
-            self.notify('A reply already exists; delete it first', severity='warning')
-            return
-        if patch_idx >= len(self._commit_shas):
-            return
-
-        sha = self._commit_shas[patch_idx]
-        ecode, diff_out = b4.git_run_command(self._topdir, ['diff', f'{sha}~1', sha])
-        if ecode > 0:
-            self.notify('Could not generate diff', severity='error')
-            return
-
-        all_reviews = target.get('reviews', {})
-        has_any_comments = any(
-            r.get('comments') for r in all_reviews.values()
-        )
-        if has_any_comments:
-            my_email = str(self._usercfg.get('email', ''))
-            diff_out = b4.review._reinsert_all_comments(
-                diff_out, all_reviews, my_email)
-
-        subject = self._commit_subjects[patch_idx] if patch_idx < len(self._commit_subjects) else ''
-        instructions = (
-            '# Review patch for: %s\n'
-            '#\n'
-            '# Start your comments on a new line inside a hunk.\n'
-            '# Any new line not starting with " ", "+", "-" continues the comment.\n'
-            '#\n'
-            '# You can also use > / < delimiters to clearly mark multiline comments:\n'
-            '#\n'
-            '#   >\n'
-            '#   >>>\n'
-            '#   Your multiline comment here.\n'
-            '#   <<<\n'
-            '#   <\n'
-            '#\n'
-            '# You may delete hunks you are not interested in reviewing,\n'
-            '# but leave all hunks you are commenting on intact.\n'
-            '#\n' % subject
-        )
-        patch_text = instructions + diff_out
-
-        with self.suspend():
-            result = b4.edit_in_editor(patch_text.encode(), filehint='review.diff')
-
-        if result is None:
-            self.notify('Editor returned no content')
-            return
-        edited_text = result.decode(errors='replace')
-        if edited_text == patch_text:
-            self.notify('No changes made')
-            return
-        new_comments = b4.review._extract_patch_comments(edited_text, track_content=True)
-        old_comments = review.get('comments', [])
-        if not new_comments and not old_comments:
-            self.notify('No comments found')
-            return
+        # Parse inline comments from the quoted reply
+        # _extract_editor_comments strips | lines (unadopted external
+        # comments) before parsing, so only adopted ones are kept
+        new_comments = b4.review._extract_editor_comments(reply_text)
         if new_comments:
             review['comments'] = new_comments
-        elif 'comments' in review:
-            del review['comments']
-            b4.review._cleanup_review(target, self._usercfg)
+            if 'reply' in review:
+                del review['reply']
+        else:
+            # No structured comments found — store as raw reply
+            review['reply'] = reply_text
+            if 'comments' in review:
+                del review['comments']
         self._save_tracking()
         self._refresh_patch_item(self._selected_idx)
         self._show_content(self._selected_idx)
         if new_comments:
             files = set(c['path'] for c in new_comments)
             self.notify(f'{len(new_comments)} comments across {len(files)} files')
-        elif old_comments:
-            self.notify('Inline comments deleted')
         else:
-            self.notify('No changes to your comments')
+            self.notify('Reply saved')
+
 
     def action_prior_review(self) -> None:
         """Show prior revision review context."""

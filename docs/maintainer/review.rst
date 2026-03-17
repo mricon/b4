@@ -315,9 +315,8 @@ Key                        Action
 ``.``/``,``                Jump to next/previous review comment
 ``Tab``                    Switch focus between panels
 ``t``                      Trailers — quickly add Reviewed-by, Acked-by, etc.
-``C``                      Comment — open ``$EDITOR`` for inline comment
+``r``                      Reply — open ``$EDITOR`` to reply
 ``n``                      Notes — view or edit review notes
-``r``                      Reply — open ``$EDITOR`` for a general reply
 ``f``                      Followups — toggle follow-up messages and external
                            inline comments from lore
 ``a``                      Agent — run review LLM agent (if configured)
@@ -344,44 +343,35 @@ Key     Action
 
 **Inline diff comments**
 
-Press ``C`` on a patch to open ``$EDITOR`` with the full diff. B4
-prepends instruction comments at the top and sets the filehint to
-``review.diff``, so editors with filetype detection will apply diff
-syntax highlighting.
+Press ``r`` on a patch to open ``$EDITOR`` with the quoted commit
+message and diff. The content uses the standard mailing-list reply
+format: original content is quoted with ``> `` and your comments go on
+unquoted lines between quoted sections.
 
-To leave a comment, write it on a new line inside the hunk, directly
-below the diff line you want to comment on. Any line that does not
-start with ``" "``, ``+``, ``-``, or ``\`` is treated as a comment.
-You may delete hunks you are not interested in reviewing, but leave
-all hunks you are commenting on intact.
+To leave a comment, write it on a new line below the quoted diff line
+you want to comment on::
 
-For longer comments that span multiple lines, wrap them in ``>`` / ``<``
-delimiters::
+    > @@ -10,3 +10,4 @@
+    >  context line
+    > +new_function();
 
-    @@ -10,3 +10,4 @@
-     context line
-    +new_function();
-    >
-    >>>
-    This function needs a NULL check on the return value,
-    otherwise we risk a dereference on the error path.
-    <<<
-    <
-     another context line
-
-Single-line comments can be written without delimiters::
-
-    @@ -10,3 +10,4 @@
-     context line
-    +new_function();
     Needs a NULL check here.
-     another context line
 
-On save, b4 extracts each comment and associates it with the nearest
-preceding diff line (file path and line number). Your comments are
-displayed in the diff view as coloured bordered panels with your name
-shown in the bottom-right corner of the panel frame. Use ``.`` and
-``,`` to jump between comments.
+    > +return result;
+
+You can also comment on the commit message — it appears quoted at the
+top of the editor, before the diff content. Comments before the first
+quoted line are stored as general comments on the patch.
+
+On save, b4 parses your reply and extracts each comment, associating
+it with the nearest preceding quoted line (file path and line number,
+or commit message line). Any trailers you added (e.g. ``Reviewed-by``)
+are extracted and stored separately. Your comments are displayed in the
+diff view as coloured bordered panels with your name shown in the
+bottom-right corner. Use ``.`` and ``,`` to jump between comments.
+
+Press ``r`` again to re-open the editor with your existing comments
+interleaved into the quoted content for further editing.
 
 When you send review emails, b4 automatically builds a standard
 quoted-reply for each patch: only hunks that contain comments are
@@ -389,7 +379,7 @@ included, diff lines are quoted with ``>``, and your comments appear
 unquoted after the relevant line — matching the format expected on
 mailing lists. To keep replies concise, b4 shows at most 5 lines of
 diff context above each comment and collapses larger gaps with a
-``[ ... skip N lines ... ]`` marker.
+``> [...]`` marker.
 
 The left pane summarises the review state per reviewer using a trailer
 overlay. This overlay always shows all reviewers — both your own review
@@ -423,40 +413,69 @@ comment panel; your own comments show "You" instead of your name.
 
 **Adopting external comments**
 
-When you open the inline comment editor (``C``), external reviewer
-comments are included in the diff as attributed blocks::
+When you open the reply editor (``r``), external reviewer comments are
+shown with a ``|`` prefix::
 
-    >
-    >>> sashiko.dev : https://sashiko.dev/#/message/20260313-example%40kernel.org
+    > +new_function();
 
-    Is it possible for this code to trigger an exception
-    on heterogeneous systems?
+    | Pat Reviewer <pat@example.com>:
+    |
+    | Is it possible for this code to trigger an exception
+    | on heterogeneous systems?
+    |
+    | via: https://lore.kernel.org/...
 
-    <<<
-    <
+    > +return result;
 
-The ``>>>`` line shows the reviewer's name and a provenance URL linking
-back to the original review (the sashiko web interface for sashiko
-reviews, or ``patch.msgid.link`` for mailing-list follow-ups).
-Attributed blocks are read-only — they are preserved in the editor for
-context but are not saved as your own comments.
+Lines starting with ``|`` are read-only — they are shown in the editor
+for context but are not saved as your own comments.
 
 To adopt an external comment as your own (for example, to endorse an
-agent suggestion or incorporate a reviewer's point), simply delete the
-attribution line so only ``>>>`` remains::
+agent suggestion or incorporate a reviewer's point), delete the ``|``
+prefix from the comment lines::
 
-    >
-    >>>
+    > +new_function();
 
     Is it possible for this code to trigger an exception
     on heterogeneous systems?
 
-    <<<
-    <
+    > +return result;
 
 The comment is now treated as yours and will be included when you send
-review emails. The original reviewer's copy remains in the tracking
-data.
+review emails. You can also edit the text before saving. The original
+reviewer's copy remains in the tracking data.
+
+**Editor syntax highlighting**
+
+B4 ships syntax highlighting files for Vim and Emacs in the ``misc/``
+directory. These provide diff-aware colouring for the reply editor
+format: quoted additions in green, removals in red, hunk headers in
+cyan, external ``|`` comments visually bracketed, and your own comments
+in the default foreground. Spell checking is limited to your own
+comment lines.
+
+*Vim*
+
+Copy or symlink the files into your Vim configuration::
+
+    mkdir -p ~/.vim/syntax ~/.vim/ftdetect
+    ln -s /path/to/b4/misc/vim/syntax/b4review.vim ~/.vim/syntax/
+    ln -s /path/to/b4/misc/vim/ftdetect/b4review.vim ~/.vim/ftdetect/
+
+If ftdetect does not work with your plugin manager, add this to
+your ``~/.vimrc`` instead::
+
+    augroup filetypedetect
+      autocmd BufNewFile,BufRead *.b4-review.eml set filetype=b4review
+    augroup END
+
+*Emacs*
+
+Add this to your ``~/.emacs.d/init.el`` or ``~/.emacs``::
+
+    (load "/path/to/b4/misc/emacs/b4-review-mode.el")
+
+The mode is automatically activated for ``*.b4-review.eml`` files.
 
 **Per-patch states**
 

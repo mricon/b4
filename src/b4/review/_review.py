@@ -13,7 +13,6 @@ import json
 import os
 import re
 import shutil
-import textwrap
 import sys
 import urllib.parse
 
@@ -27,9 +26,24 @@ logger = b4.logger
 
 REVIEW_MAGIC_MARKER = '--- b4-review-tracking ---'
 REVIEW_BRANCH_PREFIX = 'b4/review/'
+COMMIT_MESSAGE_PATH = ':message'
 # Maximum number of diff context lines quoted above a comment in reply emails.
 # The @@ hunk header is always included regardless of this limit.
 _REPLY_CONTEXT_LINES = 5
+
+
+def _strip_subject(text: str) -> List[str]:
+    """Return the body lines of a commit/cover message.
+
+    Strips the subject line and any leading blank lines, returning the
+    remaining body as a list of strings.
+    """
+    lines = text.strip().splitlines()
+    if lines:
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    return lines
 
 
 def make_review_magic_json(data: Dict[str, Any]) -> str:
@@ -711,191 +725,6 @@ def _set_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT,
         _cleanup_review(target, usercfg)
 
 
-def _extract_patch_comments(edited: str, track_content: bool = False,
-                            delimited_only: bool = False) -> List[Dict[str, Any]]:
-    """Walk the edited patch and extract maintainer comments.
-
-    Returns a list of dicts: [{'path': 'b/file.c', 'line': 42, 'text': '...'}, ...]
-    Everything before the first "diff --git" line is ignored (instructions).
-    Inside hunks, any line that is not a valid diff line (starting with
-    " ", "+", "-", or "\\") is treated as a maintainer comment.  Multiline
-    comments use ``>`` / ``<`` delimiters: a line consisting entirely of
-    ``>`` characters opens a comment block and a line consisting entirely of
-    ``<`` characters closes it (an optional leading ``+`` is tolerated for
-    agent compatibility).  Comments are mapped to the nearest preceding diff
-    line.  The maintainer may delete hunks they are not interested in;
-    remaining hunks must be left intact.
-
-    When *track_content* is True, each comment dict also includes a
-    ``'content'`` key with the text of the last diff line before the
-    comment.  This is used by :func:`_resolve_comment_positions` to
-    fix line-number drift when the agent omits diff lines.
-
-    When *delimited_only* is True, only comments inside delimiter
-    blocks are collected.  Bare non-diff lines in hunks are ignored
-    (they are likely context lines with stripped leading whitespace).
-    Use this for agent-produced reviews where comments are always
-    delimited.
-    """
-    edit_lines = edited.splitlines()
-
-    # Parser states
-    NORMAL = 0
-    COMMENT_HEADER = 1
-    COMMENT_BODY = 2
-    COMMENT_TRAILER = 3
-    ATTRIBUTED_SKIP = 4
-
-    # Skip everything before the first "diff --git" line
-    in_diff = False
-    in_hunk = False
-    current_a_file = ''
-    current_b_file = ''
-    a_line = 0
-    b_line = 0
-    last_diff_path = ''
-    last_diff_line = 0
-    last_diff_content = ''
-
-    hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
-    comments: List[Dict[str, Any]] = []
-    pending_comment_lines: List[str] = []
-    state = NORMAL
-
-    def _flush_comment() -> None:
-        if pending_comment_lines and last_diff_path:
-            text = '\n'.join(pending_comment_lines).strip()
-            if text:
-                comment: Dict[str, Any] = {
-                    'path': last_diff_path,
-                    'line': last_diff_line,
-                    'text': text,
-                }
-                if track_content and last_diff_content:
-                    comment['content'] = last_diff_content
-                comments.append(comment)
-        pending_comment_lines.clear()
-
-    for line in edit_lines:
-        if not in_diff:
-            if line.startswith('diff --git '):
-                in_diff = True
-                in_hunk = False
-            else:
-                continue
-
-        stripped = line.strip()
-
-        # Comment header: skip decorative > lines until body starts.
-        # If a >>> line has non-space content after it (attribution),
-        # the entire block is external and should be skipped.
-        if state == COMMENT_HEADER:
-            if stripped.startswith(('>', '+>')):
-                # Check for attribution: >>> followed by non-space content
-                bare = stripped.lstrip('+').rstrip()
-                after_arrows = bare.lstrip('>')
-                if after_arrows and not after_arrows.isspace():
-                    # Attributed comment block — skip until <<<
-                    state = ATTRIBUTED_SKIP
-                continue
-            state = COMMENT_BODY
-            # Fall through to COMMENT_BODY handling below
-
-        # Attributed skip: discard everything until closing <<< delimiter
-        if state == ATTRIBUTED_SKIP:
-            if re.fullmatch(r'\+?<+', stripped):
-                state = COMMENT_TRAILER
-            continue
-
-        # Comment body: collect lines until closing < delimiter
-        if state == COMMENT_BODY:
-            if re.fullmatch(r'\+?<+', stripped):
-                _flush_comment()
-                state = COMMENT_TRAILER
-                continue
-            # Strip leading "+" that agents add when they confuse
-            # comment text with diff addition lines.
-            cline = line[1:] if line.startswith('+') else line
-            pending_comment_lines.append(cline)
-            continue
-
-        # Comment trailer: skip decorative < lines until normal resumes
-        if state == COMMENT_TRAILER:
-            if stripped.startswith(('<', '+<')):
-                continue
-            state = NORMAL
-            # Fall through to normal processing of this line
-
-        # NORMAL state — check for comment open delimiter before
-        # anything else so it does not advance line counters.
-        if re.fullmatch(r'\+?>+', stripped):
-            _flush_comment()
-            state = COMMENT_HEADER
-            continue
-
-        # Track file and hunk structure
-        if line.startswith('diff --git '):
-            _flush_comment()
-            in_hunk = False
-            continue
-        if line.startswith(('--- a/', '--- /dev/null')):
-            _flush_comment()
-            current_a_file = line[4:]
-            continue
-        if line.startswith(('+++ b/', '+++ /dev/null')):
-            _flush_comment()
-            current_b_file = line[4:]
-            continue
-        if line.startswith(('--- ', '+++ ')):
-            _flush_comment()
-            continue
-
-        hm = hunk_re.match(line)
-        if hm:
-            _flush_comment()
-            a_line = int(hm.group(1))
-            b_line = int(hm.group(2))
-            last_diff_path = current_b_file
-            last_diff_line = b_line
-            in_hunk = True
-            continue
-
-        if in_hunk and (line.startswith((' ', '+', '-', '\\')) or line == ''):
-            # Valid diff line — flush any pending comment first
-            _flush_comment()
-            if line.startswith('-'):
-                last_diff_path = current_a_file
-                last_diff_line = a_line
-                last_diff_content = line
-                a_line += 1
-            elif line.startswith('+'):
-                last_diff_path = current_b_file
-                last_diff_line = b_line
-                last_diff_content = line
-                b_line += 1
-            elif line == '' or line.startswith(' '):
-                last_diff_path = current_b_file
-                last_diff_line = b_line
-                last_diff_content = line
-                a_line += 1
-                b_line += 1
-            # "\ No newline at end of file" — no line tracking needed
-            continue
-
-        # Anything else inside a hunk is a comment (no prefix needed)
-        if in_hunk and not delimited_only:
-            pending_comment_lines.append(line)
-            continue
-
-        # Outside a hunk: structural lines (index, mode, etc.) — ignore
-        _flush_comment()
-
-    # Flush any trailing comment
-    _flush_comment()
-
-    return comments
-
-
 def _resolve_comment_positions(
     diff_text: str,
     comments: List[Dict[str, Any]],
@@ -1137,23 +966,22 @@ def _integrate_agent_reviews(
         except OSError:
             continue
 
-        # Split into overall note (before first diff --git) and diff portion
+        # Split into overall note (before first "> diff --git") and diff
         note_text = ''
         diff_portion = ''
-        diff_idx = file_text.find('\ndiff --git ')
-        if diff_idx < 0 and file_text.startswith('diff --git '):
+        diff_idx = file_text.find('\n> diff --git ')
+        if diff_idx < 0 and file_text.startswith('> diff --git '):
             diff_portion = file_text
         elif diff_idx >= 0:
             note_text = file_text[:diff_idx].strip()
-            diff_portion = file_text[diff_idx + 1:]  # skip the leading newline
+            diff_portion = file_text[diff_idx + 1:]
         else:
             note_text = file_text.strip()
 
-        # Extract inline comments from the diff portion
+        # Extract inline comments from the quoted diff portion
         comments: List[Dict[str, Any]] = []
         if diff_portion:
-            comments = _extract_patch_comments(diff_portion, track_content=True,
-                                                       delimited_only=True)
+            comments = _extract_comments_from_quoted_reply(diff_portion)
 
         # Resolve comment positions against the real diff
         if comments:
@@ -1196,7 +1024,8 @@ def _integrate_agent_reviews(
     return True
 
 
-def _extract_comments_from_quoted_reply(text: str) -> List[Dict[str, Any]]:
+def _extract_comments_from_quoted_reply(text: str,
+                                        capture_preamble: bool = False) -> List[Dict[str, Any]]:
     """Extract inline comments from a ``> ``-quoted email reply.
 
     This is the standard mailing-list code review format: the reviewer
@@ -1209,13 +1038,16 @@ def _extract_comments_from_quoted_reply(text: str) -> List[Dict[str, Any]]:
     first and then trying to re-parse.
 
     Returns a list of ``{'path', 'line', 'text', 'content'}`` dicts,
-    the same shape as :func:`_extract_patch_comments`.
+    the same shape as :func:`_extract_comments_from_quoted_reply`.
     """
     hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
     diff_git_re = re.compile(r'^diff --git a/(.*) b/(.*)$')
 
     in_diff = False
     in_hunk = False
+    in_commit_msg = False
+    seen_quoted = False
+    msg_lineno = 0
     current_a_file = ''
     current_b_file = ''
     a_line = 0
@@ -1226,6 +1058,7 @@ def _extract_comments_from_quoted_reply(text: str) -> List[Dict[str, Any]]:
 
     comments: List[Dict[str, Any]] = []
     pending_comment_lines: List[str] = []
+    preamble_lines: List[str] = []
 
     def _flush_comment() -> None:
         if pending_comment_lines and last_diff_path:
@@ -1241,15 +1074,32 @@ def _extract_comments_from_quoted_reply(text: str) -> List[Dict[str, Any]]:
                 comments.append(comment)
         pending_comment_lines.clear()
 
+    def _flush_preamble() -> None:
+        """Store preamble text as a comment on commit message line 0."""
+        text = '\n'.join(preamble_lines).strip()
+        if text:
+            comments.append({
+                'path': COMMIT_MESSAGE_PATH,
+                'line': 0,
+                'text': text,
+            })
+        preamble_lines.clear()
+
     for line in text.splitlines():
         # Unquoted lines are reviewer comments (or preamble/blank)
         if not line.startswith('>'):
             if line.strip() == '[ ... ]':
                 continue
-            if in_diff:
+            if in_diff or in_commit_msg:
                 # Accumulate as comment text (including blank lines
                 # between paragraphs — they stay part of the comment)
                 pending_comment_lines.append(line)
+            elif not seen_quoted and capture_preamble:
+                # Text before any quoted content — preamble
+                # Skip the attribution line (e.g. "On ..., ... wrote:")
+                if re.match(r'^On .+ wrote:\s*$', line):
+                    continue
+                preamble_lines.append(line)
             continue
 
         # Strip the quote prefix to get the raw diff line
@@ -1257,6 +1107,11 @@ def _extract_comments_from_quoted_reply(text: str) -> List[Dict[str, Any]]:
             raw = line[2:]
         else:
             raw = line[1:]
+
+        # Flush preamble on first quoted line
+        if not seen_quoted:
+            seen_quoted = True
+            _flush_preamble()
 
         # Once we see quoted diff content, any pending comment is done
         if pending_comment_lines:
@@ -1267,9 +1122,17 @@ def _extract_comments_from_quoted_reply(text: str) -> List[Dict[str, Any]]:
             m = diff_git_re.match(raw)
             if m:
                 in_diff = True
+                in_commit_msg = False
                 in_hunk = False
                 current_a_file = m.group(1)
                 current_b_file = m.group(2)
+                continue
+            # Quoted lines before the diff are commit message
+            in_commit_msg = True
+            msg_lineno += 1
+            last_diff_path = COMMIT_MESSAGE_PATH
+            last_diff_line = msg_lineno
+            last_diff_content = raw
             continue
 
         m = diff_git_re.match(raw)
@@ -1336,7 +1199,7 @@ def _integrate_sashiko_reviews(
 
     Queries the sashiko API for the series message-id, converts each
     patch's ``inline_review`` into the annotated-diff format used by
-    :func:`_extract_patch_comments`, and stores the resulting comments
+    :func:`_extract_comments_from_quoted_reply`, and stores the resulting comments
     in the tracking data alongside any agent reviews.
 
     Returns True if any reviews were integrated.
@@ -1529,129 +1392,47 @@ def _integrate_followup_inline_comments(
     return True
 
 
-def _reinsert_comments(diff_text: str, comments: List[Dict[str, Any]],
-                       attribution: str = '') -> str:
-    """Re-insert stored comments into a diff at their original positions.
-
-    Walks the diff tracking file paths and line numbers, and after each
-    diff line that matches a stored comment location, inserts the comment
-    wrapped in ``>`` / ``>>>`` … ``<<<`` / ``<`` delimiters.
-
-    When *attribution* is non-empty, the ``>>>`` line includes it as a
-    suffix (e.g. ``>>> sashiko.dev (2026-03-01)``).  Attributed blocks
-    are skipped by :func:`_extract_patch_comments` so they remain
-    read-only in the editor.
-    """
-    if not comments:
-        return diff_text
-
-    # Build lookup: (path, line) -> list of comment texts (in order)
-    comment_map: Dict[Tuple[str, int], List[str]] = {}
-    for c in comments:
-        key = (c['path'], c['line'])
-        comment_map.setdefault(key, []).append(c['text'])
-
-    diff_lines = diff_text.splitlines()
-    result: List[str] = []
-    current_a_file = ''
-    current_b_file = ''
-    a_line = 0
-    b_line = 0
-    hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
-
-    def _insert_comments(key: Tuple[str, int]) -> None:
-        for text in comment_map.pop(key, []):
-            # Wrap long single-line comments at 78 chars
-            text_lines = text.splitlines()
-            if len(text_lines) == 1 and len(text_lines[0]) > 78:
-                text_lines = textwrap.wrap(text_lines[0], width=78)
-            result.append('>')
-            if attribution:
-                result.append(f'>>> {attribution}')
-            else:
-                result.append('>>>')
-            result.append('')
-            for cline in text_lines:
-                result.append(cline)
-            result.append('')
-            result.append('<<<')
-            result.append('<')
-
-    for line in diff_lines:
-        result.append(line)
-
-        # Track file and hunk structure to determine position
-        if line.startswith(('--- a/', '--- /dev/null')):
-            current_a_file = line[4:]
-        elif line.startswith(('+++ b/', '+++ /dev/null')):
-            current_b_file = line[4:]
-        elif line.startswith(('--- ', '+++ ', 'diff --git ')):
-            pass
-        else:
-            hm = hunk_re.match(line)
-            if hm:
-                a_line = int(hm.group(1))
-                b_line = int(hm.group(2))
-            elif line.startswith('-'):
-                _insert_comments((current_a_file, a_line))
-                a_line += 1
-            elif line.startswith('+'):
-                _insert_comments((current_b_file, b_line))
-                b_line += 1
-            elif line.startswith(' ') or line == '':
-                # Empty lines are context lines with a stripped leading space
-                _insert_comments((current_b_file, b_line))
-                a_line += 1
-                b_line += 1
-
-    return '\n'.join(result) + '\n'
-
-
-def _reinsert_all_comments(
+def _render_quoted_diff_with_comments(
     diff_text: str,
     all_reviews: Dict[str, Dict[str, Any]],
     my_email: str,
+    commit_msg: str = '',
 ) -> str:
-    """Re-insert comments from all reviewers into a diff.
+    """Render a diff as ``> ``-quoted text with comments for the editor.
 
-    The maintainer's own comments are inserted without attribution so
-    they round-trip through the editor.  External reviewer comments
-    get an attribution suffix on the ``>>>`` line (e.g.
-    ``>>> sashiko.dev (2026-03-01)``).  Attributed blocks are skipped
-    by :func:`_extract_patch_comments`, so external comments remain
-    read-only unless the maintainer removes the attribution line to
-    adopt them.
+    Every diff line is prefixed with ``> `` (email reply convention).
+    The maintainer's own comments are inserted as unquoted text.
+    External reviewer comments are prefixed with ``| `` (read-only).
 
-    All comments are collected into a single flat list and inserted in
-    one pass to avoid re-parsing already-inserted delimiters.
+    If *commit_msg* is provided, the commit message body (after the
+    subject line) is quoted before the diff content with comments
+    interleaved.
+
+    This format is unambiguous: ``> `` lines are diff, ``| `` lines
+    are external comments, and bare lines are the maintainer's own
+    comments.  Blank lines and trailing whitespace cannot corrupt it.
     """
-    # Build a flat list of (comment, attribution) tuples.
-    # Own comments first (no attribution), then external (with attribution).
-    entries: List[Tuple[Dict[str, Any], str]] = []
+    # Collect all comments keyed by (path, line).
+    # Own comments: (text, '', '') — rendered unquoted.
+    # External comments: (text, attribution, provenance) — rendered with | prefix.
+    entries: List[Tuple[Dict[str, Any], str, str]] = []
     if my_email in all_reviews:
         for c in all_reviews[my_email].get('comments', []):
-            entries.append((c, ''))
+            entries.append((c, '', ''))
     for addr in sorted(all_reviews):
         if addr == my_email:
             continue
         rev_data = all_reviews[addr]
         name = rev_data.get('name', addr)
+        attr = f'{name} <{addr}>'
         prov = rev_data.get('provenance', '')
-        if prov:
-            attr = f'{name} : {prov}'
-        else:
-            attr = name
         for c in rev_data.get('comments', []):
-            entries.append((c, attr))
+            entries.append((c, attr, prov))
 
-    if not entries:
-        return diff_text
-
-    # Build lookup: (path, line) -> list of (text, attribution) in order
-    comment_map: Dict[Tuple[str, int], List[Tuple[str, str]]] = {}
-    for c, attr in entries:
+    comment_map: Dict[Tuple[str, int], List[Tuple[str, str, str]]] = {}
+    for c, attr, prov in entries:
         key = (c['path'], c['line'])
-        comment_map.setdefault(key, []).append((c['text'], attr))
+        comment_map.setdefault(key, []).append((c['text'], attr, prov))
 
     diff_lines = diff_text.splitlines()
     result: List[str] = []
@@ -1662,24 +1443,37 @@ def _reinsert_all_comments(
     hunk_re = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
     def _insert(key: Tuple[str, int]) -> None:
-        for text, attr in comment_map.pop(key, []):
-            text_lines = text.splitlines()
-            if len(text_lines) == 1 and len(text_lines[0]) > 78:
-                text_lines = textwrap.wrap(text_lines[0], width=78)
-            result.append('>')
+        for text, attr, prov in comment_map.pop(key, []):
+            if result:
+                result.append('')
             if attr:
-                result.append(f'>>> {attr}')
+                # External reviewer comment — render with | prefix
+                result.append(f'| {attr}:')
+                result.append('|')
+                for cline in text.splitlines():
+                    result.append(f'| {cline}' if cline else '|')
+                if prov:
+                    result.append('|')
+                    result.append(f'| via: {prov}')
             else:
-                result.append('>>>')
+                # Own comment — render as unquoted text
+                for cline in text.splitlines():
+                    result.append(cline)
             result.append('')
-            for cline in text_lines:
-                result.append(cline)
-            result.append('')
-            result.append('<<<')
-            result.append('<')
+
+    # Quote commit message body with interleaved comments
+    if commit_msg:
+        msg_lines = _strip_subject(commit_msg)
+        # Preamble comments (line 0)
+        _insert((COMMIT_MESSAGE_PATH, 0))
+        for msg_lineno, mline in enumerate(msg_lines, start=1):
+            result.append(f'> {mline}')
+            _insert((COMMIT_MESSAGE_PATH, msg_lineno))
+        if msg_lines and diff_lines:
+            result.append('>')
 
     for line in diff_lines:
-        result.append(line)
+        result.append(f'> {line}')
 
         if line.startswith(('--- a/', '--- /dev/null')):
             current_a_file = line[4:]
@@ -1704,6 +1498,27 @@ def _reinsert_all_comments(
                 b_line += 1
 
     return '\n'.join(result) + '\n'
+
+
+def _extract_editor_comments(edited_text: str) -> List[Dict[str, Any]]:
+    """Extract comments from the quoted-diff editor format.
+
+    Strips instruction lines (``#`` prefix) and external reviewer
+    comments (``|`` prefix), then delegates to
+    :func:`_extract_comments_from_quoted_reply` which handles the
+    ``> ``-quoted diff with unquoted comment format.
+    """
+    filtered: List[str] = []
+    for line in edited_text.splitlines():
+        # Strip editor instruction lines
+        if line.startswith('#'):
+            continue
+        # Strip external reviewer comment blocks (| prefix)
+        if line.startswith('|'):
+            continue
+        filtered.append(line)
+    return _extract_comments_from_quoted_reply(
+        '\n'.join(filtered), capture_preamble=True)
 
 
 def _build_reply_from_comments(diff_text: str,
@@ -1733,17 +1548,46 @@ def _build_reply_from_comments(diff_text: str,
 
     result: List[str] = []
 
-    # Optionally quote the commit message body (minus the subject line)
+    # Insert preamble comments (line 0 = before commit message)
+    preamble_key = (COMMIT_MESSAGE_PATH, 0)
+    for ctext in comment_map.pop(preamble_key, []):
+        result.extend(ctext.splitlines())
+        result.append('')
+
+    # Optionally quote the commit message body (minus the subject line),
+    # only including context around lines that have comments.
     if commit_msg:
-        msg_lines = commit_msg.strip().splitlines()
-        if msg_lines:
-            msg_lines = msg_lines[1:]
-            while msg_lines and not msg_lines[0].strip():
-                msg_lines.pop(0)
-        for line in msg_lines:
-            result.append(f'> {line}')
-        if msg_lines:
-            result.append('>')
+        msg_lines = _strip_subject(commit_msg)
+        # Find which message lines have comments
+        msg_comment_indices: List[int] = []
+        msg_insert_map: Dict[int, List[str]] = {}
+        for msg_lineno in range(1, len(msg_lines) + 1):
+            msg_key = (COMMIT_MESSAGE_PATH, msg_lineno)
+            texts = comment_map.pop(msg_key, [])
+            if texts:
+                msg_comment_indices.append(msg_lineno)
+                msg_insert_map[msg_lineno] = texts
+        if msg_comment_indices:
+            prev_quoted = 0  # last msg line index (1-based) emitted
+            for comment_lineno in msg_comment_indices:
+                window_start = max(prev_quoted + 1,
+                                   comment_lineno - _REPLY_CONTEXT_LINES)
+                skipped = window_start - (prev_quoted + 1)
+                if skipped >= 3:
+                    result.append('> [...]')
+                elif skipped > 0:
+                    for i in range(prev_quoted + 1, window_start):
+                        result.append(f'> {msg_lines[i - 1]}')
+                for i in range(window_start, comment_lineno + 1):
+                    result.append(f'> {msg_lines[i - 1]}')
+                prev_quoted = comment_lineno
+                for ctext in msg_insert_map[comment_lineno]:
+                    result.append('')
+                    result.extend(ctext.splitlines())
+                    result.append('')
+            # Add separator only if diff content follows
+            if diff_text.strip():
+                result.append('>')
 
     # Walk the diff, collecting hunks and inserting comments
     diff_lines = diff_text.splitlines()
@@ -1869,6 +1713,9 @@ def _build_reply_from_comments(diff_text: str,
 
     # Append trailers
     if review_trailers:
+        # Strip trailing blank lines before adding trailers
+        while result and not result[-1].strip():
+            result.pop()
         result.append('')
         for t in review_trailers:
             result.append(t)
@@ -2275,6 +2122,13 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
     # Build body
     if reply_text:
         body = reply_text.strip()
+    elif comments and patch_meta is None:
+        # Cover letter with structured comments — build reply from cover text
+        reply_body = _build_reply_from_comments(
+            '', comments, trailers, commit_msg=cover_text)
+        # Add blank line before preamble, but not before quoted content
+        sep = '\n\n' if not reply_body.startswith('>') else '\n'
+        body = attribution + sep + reply_body
     elif comments and commit_sha and topdir:
         # Auto-generate reply from inline review comments
         ecode, commit_msg = b4.git_run_command(
@@ -2287,8 +2141,10 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
         if ecode > 0:
             logger.warning('Could not get diff for %s', commit_sha)
             return None
-        body = attribution + '\n' + _build_reply_from_comments(
-            diff_text, comments, trailers)
+        reply_body = _build_reply_from_comments(
+            diff_text, comments, trailers, commit_msg=commit_msg)
+        sep = '\n\n' if not reply_body.startswith('>') else '\n'
+        body = attribution + sep + reply_body
     else:
         # Trailer-only reply: quote the first paragraph of the original
         if patch_meta is not None and commit_sha and topdir:
@@ -2296,8 +2152,7 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
                 topdir, ['show', '--format=%B', '--no-patch', commit_sha])
             if ecode == 0 and commit_msg.strip():
                 # Strip the subject line (already in Subject: Re: header)
-                cm_lines = commit_msg.strip().splitlines()
-                cm_body = '\n'.join(cm_lines[1:]).lstrip('\n')
+                cm_body = '\n'.join(_strip_subject(commit_msg))
                 body = attribution + '\n' + b4.make_quote(cm_body) + '\n\n' + '\n'.join(trailers) \
                     if cm_body else \
                     attribution + '\n' + b4.make_quote(cover_text) + '\n\n' + '\n'.join(trailers)
@@ -2312,7 +2167,7 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
     # Append signature if not already present
     if '\n-- \n' not in body:
         signature = b4.get_email_signature()
-        body += '\n\n-- \n' + signature
+        body = body.rstrip('\n') + '\n\n-- \n' + signature
 
     # Construct the EmailMessage
     user_name, user_email = b4.get_mailfrom()

@@ -262,20 +262,13 @@ Each file has two sections:
 
    The note should follow a **summary-plus-body** format (see above).
 
-2. **Annotated diff** -- a copy of the patch diff (from
-   `git diff <sha>~1 <sha>`) with inline comments inserted as
-   `>>>` / `<<<` blocks directly below the line they are commenting on.
+2. **Annotated diff** -- the patch diff (from `git diff <sha>~1 <sha>`)
+   quoted with `> ` prefix (email reply convention), with your comments
+   inserted as unquoted text between quoted diff sections.
 
-Comment blocks use this delimiter pair:
-
-    >>>
-    Your comment text here.
-    It can span multiple lines.
-    <<<
-
-`>>>` opens a comment block and `<<<` closes it. These blocks are
-inserted **inside diff hunks**, immediately after the diff line the
-comment attaches to.
+   Every diff line must be prefixed with `> `. Your comments are plain
+   unquoted lines. Separate comments from quoted diff with blank lines
+   for readability.
 
 Complete patch review example (`0002.txt`):
 
@@ -284,24 +277,24 @@ Complete patch review example (`0002.txt`):
     The kzalloc() call is not checked before the pointer is
     dereferenced, which could cause a crash under memory pressure.
 
-    diff --git a/lib/helpers.c b/lib/helpers.c
-    index abc1234..def5678 100644
-    --- a/lib/helpers.c
-    +++ b/lib/helpers.c
-    @@ -30,6 +30,8 @@ void setup_helper(struct ctx *ctx)
-     	int ret;
+    > diff --git a/lib/helpers.c b/lib/helpers.c
+    > index abc1234..def5678 100644
+    > --- a/lib/helpers.c
+    > +++ b/lib/helpers.c
+    > @@ -30,6 +30,8 @@ void setup_helper(struct ctx *ctx)
+    >  	int ret;
+    >
+    > +	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
 
-    +	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-    >>>
     kzalloc() can return NULL here. The caller dereferences the pointer
     unconditionally on line 36, which would be a NULL-pointer dereference
     under memory pressure.
-    <<<
-    +	ptr->field = value;
-     	return 0;
+
+    > +	ptr->field = value;
+    >  	return 0;
 
 **Important:** Do not delete any lines from the generated diffs, only insert
-your own comments.
+your own comments. All diff lines must keep the `> ` prefix.
 
 ### Identifying yourself
 
@@ -349,9 +342,9 @@ Examples:
 6. Build the per-patch review body:
 
    - Start with overall free-form review text (optional).
-   - Paste the diff
-   - Insert `>>>` / `<<<` blocks after the diff lines you want to
-     comment on.
+   - Quote the diff by prefixing every line with `> `.
+   - Insert your comments as unquoted text after the quoted diff
+     lines you want to comment on.
 
 7. Write the per-patch review file (1-indexed, zero-padded).
    Writing to the same filename overwrites any previous review for that
