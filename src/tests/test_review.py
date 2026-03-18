@@ -590,15 +590,15 @@ index abc..def 100644
 
     def test_commit_msg_skips_uncommented_lines(self) -> None:
         """Only context around commented lines is quoted, rest is skipped."""
-        lines = '\n'.join(f'Line {i}' for i in range(1, 21))
+        lines = '\n'.join(f'Line {i}' for i in range(1, 31))
         commit_msg = f'Subject\n\n{lines}'
         comments = [
-            {'path': ':message', 'line': 15, 'text': 'Comment here.'},
+            {'path': ':message', 'line': 25, 'text': 'Comment here.'},
         ]
         result = review._build_reply_from_comments(
             '', comments, [], commit_msg=commit_msg)
-        # Line 15 and a few lines of context above should be quoted
-        assert '> Line 15' in result
+        # Line 25 and a few lines of context above should be quoted
+        assert '> Line 25' in result
         assert 'Comment here.' in result
         # Line 1 is far above — should be skipped
         assert '> Line 1\n' not in result

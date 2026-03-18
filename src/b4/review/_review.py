@@ -1648,7 +1648,7 @@ def _build_reply_from_comments(diff_text: str,
                 window_start = min(window_start, len(msg_lines) + 1)
                 comment_quote_end = min(comment_lineno, len(msg_lines))
                 skipped = window_start - (prev_quoted + 1)
-                if skipped >= 3:
+                if skipped >= 10:
                     result.append('> [...]')
                 elif skipped > 0:
                     for i in range(prev_quoted + 1, window_start):
@@ -1660,8 +1660,8 @@ def _build_reply_from_comments(diff_text: str,
                     result.append('')
                     result.extend(ctext.splitlines())
                     result.append('')
-            # Add separator only if diff content follows
-            if diff_text.strip():
+            # Add separator only if diff comments remain to render
+            if diff_text.strip() and comment_map:
                 result.append('>')
 
     # Walk the diff, collecting hunks and inserting comments
@@ -1713,7 +1713,7 @@ def _build_reply_from_comments(diff_text: str,
             # but never re-emit lines already quoted by a prior comment.
             window_start = max(prev_quoted + 1, comment_idx - _REPLY_CONTEXT_LINES)
             skipped = window_start - (prev_quoted + 1)
-            if skipped >= 3:
+            if skipped >= 10:
                 result.append(f'> [ ... skip {skipped} lines ... ]')
             elif skipped > 0:
                 # Few enough lines that it's cleaner to just include them.
