@@ -337,6 +337,12 @@ class NoteScreen(ModalScreen[Optional[str]]):
         Binding('q', 'cancel', 'Cancel', show=False),
         Binding('e', 'edit', 'Edit'),
         Binding('d', 'delete', 'Delete all'),
+        Binding('j', 'scroll_down', 'Scroll down', show=False),
+        Binding('k', 'scroll_up', 'Scroll up', show=False),
+        Binding('down', 'scroll_down', 'Scroll down', show=False),
+        Binding('up', 'scroll_up', 'Scroll up', show=False),
+        Binding('space', 'page_down', 'Page down', show=False),
+        Binding('backspace', 'page_up', 'Page up', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -378,6 +384,18 @@ class NoteScreen(ModalScreen[Optional[str]]):
             for line in note.splitlines():
                 viewer.write(Text(line))
             viewer.write('')
+
+    def action_scroll_down(self) -> None:
+        self.query_one('#note-viewer', RichLog).scroll_down()
+
+    def action_scroll_up(self) -> None:
+        self.query_one('#note-viewer', RichLog).scroll_up()
+
+    def action_page_down(self) -> None:
+        self.query_one('#note-viewer', RichLog).scroll_page_down()
+
+    def action_page_up(self) -> None:
+        self.query_one('#note-viewer', RichLog).scroll_page_up()
 
     def action_edit(self) -> None:
         self.dismiss('__EDIT__')
