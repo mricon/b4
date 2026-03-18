@@ -21,7 +21,7 @@ from pathlib import Path
 
 from email.message import EmailMessage
 
-from typing import Callable, cast, Optional, Tuple, Union, List, Dict, Any
+from typing import Callable, cast, Optional, Set, Tuple, Union, List, Dict, Any
 
 ConfigDictT = b4.ConfigDictT
 JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
@@ -751,6 +751,19 @@ def get_queued_messages(dryrun: bool = False) -> List[Dict[str, str]]:
             'checkurl': checkurl,
         })
     return results
+
+
+def get_queued_change_ids(dryrun: bool = False) -> Set[str]:
+    """Return the set of change_ids that have queued thank-you messages."""
+    qdir = _get_queue_dir(dryrun=dryrun)
+    if not os.path.isdir(qdir):
+        return set()
+    result: Set[str] = set()
+    for fname in os.listdir(qdir):
+        if fname.endswith('.msg'):
+            cid, _rev = _parse_change_revision(fname)
+            result.add(cid)
+    return result
 
 
 ProgressCallbackT = Optional[Callable[[int, int, str], None]]

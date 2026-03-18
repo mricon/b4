@@ -55,14 +55,31 @@ _STATUS_SYMBOLS: Dict[str, str] = {
     'replied':   '↩',  # U+21A9 leftwards arrow with hook
     'waiting':   '↻',  # U+21BB clockwise open circle arrow
     'accepted':  '∈',  # U+2208 element of
+    'queued':    '◷',  # U+25F7 white circle with upper right quadrant
     'snoozed':   '⏸',  # U+23F8 double vertical bar
     'thanked':   '✓',  # U+2713 check mark
     'gone':      'ø',  # U+00F8 latin small letter o with stroke
 }
 
+# Sort tier for each status.  Lower tier sorts higher in the list.
+#   0 = active (needs review work)
+#   1 = action required (awaiting maintainer decision)
+#   2 = inactive (no action needed)
+_STATUS_TIER: Dict[str, int] = {
+    'new':       0,
+    'reviewing': 0,
+    'replied':   1,
+    'accepted':  1,
+    'queued':    2,
+    'snoozed':   2,
+    'waiting':   2,
+    'thanked':   2,
+    'gone':      2,
+}
+
 # Statuses where the maintainer can take action right now.
 _ACTIONABLE_STATUSES: frozenset[str] = frozenset({
-    'new', 'reviewing', 'replied', 'accepted', 'thanked',
+    'new', 'reviewing', 'replied', 'accepted',
 })
 
 
@@ -241,7 +258,8 @@ class TrackedSeriesItem(ListItem):
         super().__init__()
         self.series = series
         status = series.get('status', 'new')
-        if status not in _ACTIONABLE_STATUSES:
+        effective = 'queued' if series.get('queued') else status
+        if _STATUS_TIER.get(effective, 2) >= 2:
             self.add_class('non-actionable')
         if status == 'gone':
             self.add_class('gone')
@@ -252,7 +270,8 @@ class TrackedSeriesItem(ListItem):
         revision = self.series.get('revision', 1)
         num_patches = self.series.get('num_patches', 0)
         status = self.series.get('status', 'new')
-        symbol = _STATUS_SYMBOLS.get(status, '?')
+        effective = 'queued' if self.series.get('queued') else status
+        symbol = _STATUS_SYMBOLS.get(effective, '?')
         flag = '*' if self.series.get('needs_update') else ' '
         art = self.series.get('art')
         if art:
@@ -624,6 +643,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
 
     def _load_series(self) -> None:
+        import b4.ty
         self._auto_wake_snoozed()
 
         all_series = b4.review.tracking.get_all_tracked_series(self._identifier)
@@ -670,15 +690,23 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         finally:
             if conn:
                 conn.close()
-        # Sort: actionable series first, non-actionable at the bottom.
-        # Within each group, sort by when the maintainer started tracking
+        # Tag accepted series that have a queued thank-you letter.
+        # This is a display-only pseudo-state, not stored in the DB.
+        queued_cids = b4.ty.get_queued_change_ids(dryrun=self._email_dryrun)
+        for series in self._all_series:
+            if (series.get('status') == 'accepted'
+                    and series.get('change_id', '') in queued_cids):
+                series['queued'] = True
+        # Sort into three tiers: active → action required → inactive.
+        # Within each tier, sort by when the maintainer started tracking
         # (added_at descending) — newest-tracked at the top, like an inbox.
         self._all_series.sort(
             key=lambda s: s.get('added_at') or s.get('sent_at') or '',
             reverse=True,
         )
         self._all_series.sort(
-            key=lambda s: 0 if s.get('status', 'new') in _ACTIONABLE_STATUSES else 1
+            key=lambda s: _STATUS_TIER.get(
+                'queued' if s.get('queued') else s.get('status', 'new'), 2)
         )
         self.call_later(self._refresh_list)
 
