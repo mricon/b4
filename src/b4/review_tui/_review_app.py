@@ -260,7 +260,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._followup_header_map: Dict[int, Dict[str, Any]] = {}
         self._selected_followup_msgid: Optional[str] = None
         self._show_external_comments: bool = False
-        self._hint_gutter_lines: Dict[int, Tuple[str, int]] = {}
+        self._collapsed_comment_lines: Dict[int, Tuple[str, int]] = {}
         self._reply_sent: bool = False
         self._hide_skipped: bool = False
         self._check_loading: Optional[Any] = None
@@ -399,7 +399,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._comment_positions = []
         self._followup_positions = {}
         self._followup_header_map = {}
-        self._hint_gutter_lines = {}
+        self._collapsed_comment_lines = {}
         self._selected_followup_msgid = None
 
         self._selected_idx = display_idx
@@ -611,7 +611,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         a_line = 0
         b_line = 0
         hint_style = f"bold {ts['warning']}"
-        self._hint_gutter_lines = {}
+        self._collapsed_comment_lines = {}
 
         def _write_hints(key: Tuple[str, int]) -> None:
             entries = external_hints.get(key, [])
@@ -625,7 +625,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             for name, total in counts.items():
                 parts.append(f'{name} ({total}L)')
             label = ', '.join(parts)
-            self._hint_gutter_lines[len(viewer.lines)] = key
+            self._collapsed_comment_lines[len(viewer.lines)] = key
             ruler = Text(f' \u2500\u2500 {label} \u2500\u2500', style=hint_style)
             viewer.write(ruler)
 
@@ -915,9 +915,18 @@ class ReviewApp(CheckRunnerMixin, App[None]):
     def action_scroll_right(self) -> None:
         self.query_one('#diff-viewer', RichLog).scroll_right(animate=False)
 
+    def _get_navigable_comment_positions(self) -> List[int]:
+        """Return comment positions to navigate, including collapsed hints."""
+        if self._comment_positions:
+            return self._comment_positions
+        if self._collapsed_comment_lines:
+            return sorted(self._collapsed_comment_lines.keys())
+        return []
+
     def action_next_comment(self) -> None:
         """Scroll to the next review comment in the diff view."""
-        if not self._comment_positions:
+        positions = self._get_navigable_comment_positions()
+        if not positions:
             self.notify('No comments in this patch', severity='warning')
             return
         viewer = self.query_one('#diff-viewer', RichLog)
@@ -926,7 +935,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         context = 5
         # Account for the context offset when determining current position
         viewed_pos = current_y + context
-        for pos in self._comment_positions:
+        for pos in positions:
             if pos > viewed_pos:
                 viewer.scroll_to(y=max(0, pos - context), animate=False)
                 return
@@ -934,7 +943,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
     def action_prev_comment(self) -> None:
         """Scroll to the previous review comment in the diff view."""
-        if not self._comment_positions:
+        positions = self._get_navigable_comment_positions()
+        if not positions:
             self.notify('No comments in this patch', severity='warning')
             return
         viewer = self.query_one('#diff-viewer', RichLog)
@@ -943,7 +953,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         context = 5
         # Account for the context offset when determining current position
         viewed_pos = current_y + context
-        for pos in reversed(self._comment_positions):
+        for pos in reversed(positions):
             if pos < viewed_pos:
                 viewer.scroll_to(y=max(0, pos - context), animate=False)
                 return
@@ -1435,7 +1445,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         content_line = int(viewer.scroll_y) + (event.screen_y - region.y)
         # Click on hint gutter → nudge to press f
         click_col = event.screen_x - region.x + int(viewer.scroll_x)
-        if click_col == 0 and content_line in self._hint_gutter_lines:
+        if click_col == 0 and content_line in self._collapsed_comment_lines:
             self.notify('Press f to display inline comments')
             event.stop()
             return
