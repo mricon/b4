@@ -25,10 +25,10 @@ Enrolling and tracking a series
 
 .. raw:: html
 
-   <script src="https://asciinema.org/a/802140.js" id="asciicast-802140"
+   <script src="https://asciinema.org/a/850261.js" id="asciicast-850261"
     async data-speed="1.5" data-theme="monokai" data-fit="width"></script>
 
-Before you can use the review TUI, you need to enrol your repository.
+Before you can use the review TUI, you need to enroll your repository.
 Run this once per checkout::
 
     b4 review enroll
@@ -44,10 +44,9 @@ Once enrolled, launch the TUI::
 
     b4 review tui
 
-The tracking list starts empty. To add a series, you need to pass a
-series identifier to ``b4 review track``. The UI will automatically
-display any newly added series. You can do it from another terminal even
-if the UI is running::
+The tracking list starts empty. To add a series, run
+``b4 review track`` from another terminal (it works even while the TUI
+is running)::
 
     b4 review track <msgid-or-lore-url>
 
@@ -58,11 +57,13 @@ configure mutt to track a series when you press "8"::
 
 B4 fetches the series from lore, discovers all available revisions
 (older and newer), and stores everything in the tracking database.
+The TUI updates automatically to show the newly added series.
 
 **Quick actions in the tracking list:**
 
-- ``v`` — view the series (cover letter + patches) in a modal
-- ``u`` — update: fetch latest trailers, check for newer revisions, and refresh message counts
+- ``e`` — view the email thread in a lightweight reader
+- ``u`` — update: fetch latest trailers, check for newer revisions,
+  and refresh message counts
 - ``a`` — open the action menu (context-sensitive)
 - ``q`` — quit
 
@@ -75,18 +76,63 @@ Reviewing a series
 
 .. raw:: html
 
-   <script src="https://asciinema.org/a/802142.js" id="asciicast-802142"
+   <script src="https://asciinema.org/a/850549.js" id="asciicast-850549"
     async data-speed="1.5" data-theme="monokai" data-fit="width"></script>
 
 Select a series in the tracking list and press ``r`` to start
 reviewing. B4 fetches the thread, checks attestation on all messages,
 and creates a review branch (``b4/review/<change-id>``). The review
-interface then opens in a split-pane view: the patch list on the left,
-the diff for the selected patch on the right.
+interface opens in a split-pane view: the patch list on the left, the
+diff for the selected patch on the right.
 
 Navigate between patches with ``[`` and ``]``, scroll with ``j``/``k``,
-and page with ``Space``/``Backspace``. You can also use arrows and tab
-between panes if you're less familiar with vim keybindings.
+and page with ``Space``/``Backspace``. The status bar at the bottom
+shows the available keybindings at all times.
+
+Viewing follow-up comments
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+Press ``f`` to fetch follow-up messages from lore. These are inline
+review comments and trailers left by other reviewers. Once loaded,
+they appear as coloured panels in the diff view, attributed by
+reviewer name.
+
+Follow-up trailers (such as ``Reviewed-by`` or ``Tested-by`` from other
+reviewers) are shown in a green bar above the diff, so you can quickly
+see who has already reviewed each patch.
+
+Use ``.`` and ``,`` to jump between comments in the current patch.
+
+AI agent notes
+~~~~~~~~~~~~~~
+If you have run an AI agent review on the series (see
+:ref:`ai_assisted_review` below), agent comments also appear as
+coloured panels in the diff view. Press ``n`` to view the agent's
+per-patch review notes, or ``N`` to view the full note in a scrollable
+modal.
+
+
+Adding comments and previewing emails
+--------------------------------------
+
+.. raw:: html
+
+   <script src="https://asciinema.org/a/850602.js" id="asciicast-850602"
+    async data-speed="1.5" data-theme="monokai" data-fit="width"></script>
+
+Adding inline comments
+~~~~~~~~~~~~~~~~~~~~~~
+Press ``r`` on a patch to compose a reply in ``$EDITOR``. The editor
+opens with the full diff quoted (``> `` prefix), along with any
+external comments from other reviewers (``| `` prefix) and agent
+comments. Write your comments on blank lines directly below the diff
+line you want to comment on. You can trim quoted content you are not
+interested in — b4 will match your comments to the right location.
+
+.. tip::
+
+   If an AI agent has already left a useful comment, you can edit it
+   in-place to make it your own. On save, the comment is re-attributed
+   to you and will be included in your review email.
 
 Adding trailers
 ~~~~~~~~~~~~~~~
@@ -95,39 +141,19 @@ pop-up lets you select the trailer type — Reviewed-by, Acked-by,
 Tested-by, etc. The trailer is recorded in the review branch and will
 be included when you send the review.
 
-For trailers that require additional explanation, press ``r`` instead to
-compose a full reply in ``$EDITOR``.
-
-Inline diff comments
-~~~~~~~~~~~~~~~~~~~~
-Press ``c`` to open ``$EDITOR`` with the full diff for the current
-patch. Write your comment on a new line inside the hunk, directly
-below the diff line you want to comment on. Any line that does not
-start with ``" "``, ``+``, ``-``, or ``\`` is treated as a comment.
-
-For multi-line comments, use ``>>>`` / ``<<<`` delimiters::
-
-    @@ -10,3 +10,4 @@
-     context line
-    +new_function();
-    >
-    >>>
-    This function needs a NULL check on the return value,
-    otherwise we risk a dereference on the error path.
-    <<<
-    <
-     another context line
-
-You may delete hunks you are not interested in reviewing, but leave
-all hunks you are commenting on intact.
-
-Previewing and sending the review
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Previewing outgoing email
+~~~~~~~~~~~~~~~~~~~~~~~~~
 Press ``e`` to toggle email preview mode. The right pane switches to
 show the exact email that will be sent for each patch, including your
 trailers and inline comments formatted as quoted replies. Navigate
 between patches with ``[`` and ``]`` to inspect each outgoing message.
 
+B4 automatically trims quoted context and leaves only your own comments
+in the outgoing email, saving you the effort of manually cleaning up
+the reply.
+
+Sending the review
+~~~~~~~~~~~~~~~~~~
 When you are satisfied, press ``S`` (capital S) to send. B4 composes
 proper ``In-Reply-To`` / ``References`` headers so your review appears
 in the correct thread on the mailing list.
@@ -146,31 +172,20 @@ in the correct thread on the mailing list.
 
 After sending, the series status changes to **replied**.
 
-Waiting for a new revision
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-If your review requested changes, open the action menu (``a``) and
-select **Mark as waiting on new revision**. The series moves to
-**waiting** status and sorts into its own Waiting group below the
-active series.
+Series lifecycle
+~~~~~~~~~~~~~~~~
+Once you have reviewed a series:
 
-When you press ``u`` to update all tracked series, b4 checks lore for
-newer revisions. If one is found, the series is highlighted and you
-can **Upgrade** to the new revision via the action menu.
-
-Snoozing a series
-~~~~~~~~~~~~~~~~~~
-If you want to defer a series — for example, until a release candidate
-tag appears — open the action menu (``a``) and select **Snooze**. You
-can snooze by duration (``2w``), date (``2026-04-01``), or git tag
-(``v6.15-rc3``). The series moves to a separate Snoozed group and
-wakes up automatically when the condition is met. See
-:ref:`snooze_details` in the reference for full details.
-
-Range-diff between revisions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Press ``d`` in the tracking list to compare two revisions of the
-series using ``git range-diff``. B4 fetches the comparison revision
-from lore if needed and displays the result in a scrollable view.
+- **Waiting** — if your review requested changes, open the action menu
+  (``a``) and select **Mark as waiting on new revision**. The series
+  moves to a lower-priority group. When you press ``u`` to update, b4
+  checks lore for newer revisions and brings the series back to active
+  status.
+- **Snooze** — to defer a series until a specific date, duration, or
+  git tag, select **Snooze** from the action menu. See
+  :ref:`snooze_details` in the reference for full details.
+- **Range-diff** — press ``d`` in the tracking list to compare two
+  revisions of the series side-by-side.
 
 
 Taking a series and sending thank-yous
@@ -178,27 +193,17 @@ Taking a series and sending thank-yous
 
 .. raw:: html
 
-   <script src="https://asciinema.org/a/802143.js" id="asciicast-802143"
+   <script src="https://asciinema.org/a/850603.js" id="asciicast-850603"
     async data-speed="1.5" data-theme="monokai" data-fit="width"></script>
-
-Fetching follow-ups
-~~~~~~~~~~~~~~~~~~~~
-Before applying a series, you may want to check what other reviewers
-have said. Press ``f`` in the review interface to fetch follow-up
-messages from lore. They are displayed as coloured panels in the diff
-view, attributed by the reviewer's initials.
 
 Applying patches (take)
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Go back to the tracking list (``q`` from the review interface) and
-open the action menu (``a``). Select **Take** to apply the series.
-
-B4 presents a dialog where you choose:
+When you are ready to accept a series, open the action menu (``a``)
+and select **Take**. B4 presents a dialog where you choose:
 
 * **Merge strategy** — merge (creates a merge commit using the cover
-  letter as the message template, with per-commit trailers applied to
-  each patch), linear (``git am``), or cherry-pick (select individual
-  patches; skipped patches are pre-deselected).
+  letter as the message template), linear (``git am``), or cherry-pick
+  (select individual patches).
 * **Target branch** — recently used branches are suggested, with the
   configured :term:`b4.review-target-branch` always included. You can
   also type a branch name directly.
@@ -206,20 +211,20 @@ B4 presents a dialog where you choose:
   ``Link:`` trailer to each commit.
 * **Mark as accepted** — update the series status after applying.
 
-For the merge strategy, ``$EDITOR`` opens with the merge commit
-message for you to review and edit. Press ``Ctrl-y`` to confirm, or
-``Escape`` to cancel.
-
-After taking, the series status changes to **accepted** (if the
-"mark as accepted" checkbox is ticked).
+After taking, the series status changes to **accepted**.
 
 Sending a thank-you note
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
-Open the action menu (``a``) on an accepted series and select **Thank**.
-B4 composes a thank-you email listing each applied commit with its
-hash, and sends it to the submitter and relevant lists.
+Open the action menu (``a``) on an accepted series and select
+**Thank**. B4 composes a thank-you email listing each applied commit
+with its hash, and sends it to the submitter and relevant lists.
 
-After sending, the series status changes to **thanked**.
+You can send the thank-you right away with ``S``, or press ``W`` to
+queue it — the message will be held until the specified git ref becomes
+publicly available, ensuring the commit hashes in the thank-you are
+reachable before anyone receives the email.
+
+After sending (or queuing), the series status changes to **thanked**.
 
 Archiving a completed series
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -229,13 +234,10 @@ select **Archive**. This creates a ``.tar.gz`` backup in
 the tracking list.
 
 
+.. _ai_assisted_review:
+
 AI-assisted review
 ------------------
-
-.. raw:: html
-
-   <script src="https://asciinema.org/a/802144.js" id="asciicast-802144"
-    async data-speed="1.5" data-theme="monokai" data-fit="width"></script>
 
 The review interface can invoke an external AI agent to help you
 review patches. The agent runs in a sandboxed environment with
@@ -272,9 +274,8 @@ integrates its findings into the review branch and displays a summary
 (e.g. "Integrated agent review data from 4 file(s)").
 
 Agent comments appear in the diff view as coloured panels, attributed
-by the agent's initials (e.g. "CO4" for Claude Opus 4). Use ``.``
-and ``,`` to jump between comments. Press ``n`` to view the agent's
-per-patch review notes.
+by the agent's name. Use ``.`` and ``,`` to jump between comments.
+Press ``n`` to view the agent's per-patch review notes.
 
 Incorporating agent feedback
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -282,11 +283,11 @@ Agent comments are private to you by default — toggling email preview
 (``e``) shows that no replies will be sent for patches with only agent
 comments.
 
-To include an agent finding in your review, press ``c`` to open the
-diff editor for that patch. The agent's comments are already present
-in the diff; edit them to add your own judgement, rephrase, or remove
-findings you disagree with. On save, the comments are re-attributed
-to you (your initials) and will be included when you send the review.
+To include an agent finding in your review, press ``r`` to open the
+reply editor for that patch. The agent's comments are already present;
+edit them to add your own judgement, rephrase, or remove findings you
+disagree with. On save, the comments are re-attributed to you and will
+be included when you send the review.
 
 
 Patchwork integration
@@ -294,11 +295,11 @@ Patchwork integration
 
 .. raw:: html
 
-   <script src="https://asciinema.org/a/802145.js" id="asciicast-802145"
+   <script src="https://asciinema.org/a/850545.js" id="asciicast-850545"
     async data-speed="1.5" data-theme="monokai" data-fit="width"></script>
 
-If your project uses a Patchwork server, you can browse and track
-series directly from the Patchwork listing without leaving the TUI.
+If your project uses a Patchwork server, b4 automatically enables
+Patchwork integration when it detects the relevant configuration.
 
 .. note::
 
@@ -310,21 +311,18 @@ Browsing series
 ~~~~~~~~~~~~~~~~
 Press ``p`` in the tracking list to switch to the Patchwork browser.
 The listing shows series from your Patchwork project with coloured CI
-status indicators: green for pass, red for fail or warning, and dim
-for pending.
-
-Viewing CI results
-~~~~~~~~~~~~~~~~~~~
-Press ``c`` on a series to open a detailed view of all CI checks,
-grouped by patch. Each entry shows the check context, description, and
-a link to the full CI results.
+status indicators.
 
 Tracking from Patchwork
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Press ``t`` to track the selected series. B4 fetches it from lore and
-adds it to your local tracking database, just as if you had run
-``b4 review track`` from the command line. Press ``q`` to return to
-the tracking list, where the newly tracked series is ready for review.
+If you see a series worth reviewing, press ``t`` to track it. B4
+fetches the series from lore and adds it to your local tracking
+database. Press ``q`` to return to the tracking list, where the newly
+tracked series is ready for review.
+
+You can also view the email thread directly from the Patchwork browser
+using the lightweight thread viewer, without having to track the series
+first.
 
 Patchwork state synchronisation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
