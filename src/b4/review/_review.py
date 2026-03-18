@@ -32,6 +32,18 @@ COMMIT_MESSAGE_PATH = ':message'
 _REPLY_CONTEXT_LINES = 5
 
 
+def _should_promote_waiting(newer_vers: List[int],
+                            previously_known: Set[int]) -> bool:
+    """Decide whether a waiting series should be promoted to reviewing.
+
+    Only promotes when at least one of the newer versions was not
+    already known before this update cycle.  This prevents a broken
+    version (e.g. v2 that fails to apply) from repeatedly waking the
+    series after the maintainer puts it back into waiting.
+    """
+    return any(v not in previously_known for v in newer_vers)
+
+
 def _strip_subject(text: str) -> List[str]:
     """Return the body lines of a commit/cover message.
 
@@ -1867,10 +1879,12 @@ def update_series_tracking(
         b4.review.tracking.update_attestation(
             identifier, change_id, current_rev, att)
 
-    # Record all discovered revisions in SQLite
+    # Record all discovered revisions in SQLite, keeping track of what
+    # was already known so we can distinguish genuinely new versions.
+    previously_known: Set[int] = set()
     try:
         conn = b4.review.tracking.get_db(identifier)
-        existing_revs = set(r['revision'] for r in b4.review.tracking.get_revisions(conn, change_id))
+        previously_known = set(r['revision'] for r in b4.review.tracking.get_revisions(conn, change_id))
         for v in sorted(lmbx.series.keys()):
             v_ser = lmbx.series[v]
             v_msgid = ''
@@ -1883,7 +1897,7 @@ def update_series_tracking(
                         break
             v_link = (linkmask % v_msgid) if v_msgid and '%s' in str(linkmask) else ''
             b4.review.tracking.add_revision(conn, change_id, v, v_msgid, v_subject, v_link)
-            if v not in existing_revs:
+            if v not in previously_known:
                 result['new_revisions'] += 1
         conn.close()
     except Exception as ex:
@@ -1891,17 +1905,22 @@ def update_series_tracking(
 
     newer_vers = sorted(v for v in lmbx.series if v > current_rev)
 
-    # Auto-promote waiting series when a newer revision is discovered
-    if status == 'waiting' and newer_vers:
-        try:
-            conn = b4.review.tracking.get_db(identifier)
-            b4.review.tracking.update_series_status(
-                conn, change_id, 'reviewing',
-                revision=series.get('revision'))
-            conn.close()
-            result['promoted'] = True
-        except Exception as ex:
-            logger.warning('Could not promote waiting series: %s', ex)
+    # Auto-promote waiting series only when a genuinely new revision
+    # is discovered — one not already known before this update.  This
+    # prevents a broken version (e.g. v2 that fails to apply) from
+    # repeatedly waking the series after the maintainer puts it back
+    # into waiting.
+    if status == 'waiting' and _should_promote_waiting(
+            newer_vers, previously_known):
+            try:
+                conn = b4.review.tracking.get_db(identifier)
+                b4.review.tracking.update_series_status(
+                    conn, change_id, 'reviewing',
+                    revision=series.get('revision'))
+                conn.close()
+                result['promoted'] = True
+            except Exception as ex:
+                logger.warning('Could not promote waiting series: %s', ex)
 
     # Update follow-up trailers if the series has a review branch
     if status in ('reviewing', 'replied', 'waiting') and topdir:

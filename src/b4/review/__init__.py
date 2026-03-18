@@ -15,6 +15,7 @@ from b4.review._review import (
     _integrate_sashiko_reviews,
     _integrate_followup_inline_comments,
     _prepare_review_session,
+    _should_promote_waiting,
 )
 
 # Tell mypy these private symbols are intentionally re-exported
@@ -33,4 +34,5 @@ __all__ = [
     '_integrate_sashiko_reviews',
     '_integrate_followup_inline_comments',
     '_prepare_review_session',
+    '_should_promote_waiting',
 ]

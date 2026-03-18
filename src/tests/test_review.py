@@ -2260,6 +2260,42 @@ class TestExtractCommentsFromQuotedReply:
         assert comments[0]['text'] == 'My comment.'
 
 
+class TestShouldPromoteWaiting:
+    """Tests for _should_promote_waiting()."""
+
+    def test_promotes_on_genuinely_new_version(self) -> None:
+        """A version not previously known triggers promotion."""
+        assert review._should_promote_waiting([2], previously_known={1})
+
+    def test_no_promote_when_version_already_known(self) -> None:
+        """A version already in the DB does not trigger promotion."""
+        assert not review._should_promote_waiting([2], previously_known={1, 2})
+
+    def test_promotes_when_one_of_several_is_new(self) -> None:
+        """If any newer version is genuinely new, promote."""
+        assert review._should_promote_waiting([2, 3], previously_known={1, 2})
+
+    def test_no_promote_when_all_already_known(self) -> None:
+        """No promotion when all newer versions were already known."""
+        assert not review._should_promote_waiting([2, 3], previously_known={1, 2, 3})
+
+    def test_no_promote_on_empty_newer_vers(self) -> None:
+        """No newer versions means no promotion."""
+        assert not review._should_promote_waiting([], previously_known={1})
+
+    def test_promotes_when_previously_known_empty(self) -> None:
+        """First update ever — nothing known, so any version is new."""
+        assert review._should_promote_waiting([2], previously_known=set())
+
+    def test_marks_scenario(self) -> None:
+        """Mark's exact scenario: v2 known+broken, waiting, v3 arrives."""
+        # v1 applied, v2 discovered but broken, maintainer went back to waiting
+        # Next update: v2 still there but already known — no promote
+        assert not review._should_promote_waiting([2], previously_known={1, 2})
+        # v3 arrives — genuinely new, should promote
+        assert review._should_promote_waiting([2, 3], previously_known={1, 2})
+
+
 class TestResolveCommentPositions:
     """Tests for _resolve_comment_positions()."""
 
