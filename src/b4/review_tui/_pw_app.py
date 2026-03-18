@@ -94,13 +94,12 @@ class PwApp(App[None]):
         dock: top;
         width: 100%;
         height: 1;
-        background: $accent;
+        background: $primary-darken-2;
         color: $text;
         text-style: bold;
-        content-align: center middle;
+        content-align: left middle;
     }
     #pw-header {
-        dock: top;
         width: 100%;
         height: 1;
         background: $surface;
