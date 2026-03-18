@@ -25,7 +25,7 @@ syn match b4DiffFileB     /^> +++ .*/ contains=b4QuotePrefix,@NoSpell
 " External reviewer comments (| prefix)
 syn match b4ExtComment    /^| .*/ contains=@NoSpell
 syn match b4ExtEmpty      /^|$/
-syn match b4ExtHeader     /^| .\+:$/ contains=@NoSpell
+syn match b4ExtHeader     /^| .\+>:$/ contains=@NoSpell
 syn match b4ExtVia        /^| via: .*/ contains=@NoSpell
 
 " Instruction lines

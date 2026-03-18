@@ -117,7 +117,7 @@
 
     ;; External reviewer comments (| prefix) — specific first
     ("^| via: .*$" (0 'b4-review-ext-via))
-    ("^| .+:$" (0 'b4-review-ext-header))
+    ("^| .+>:$" (0 'b4-review-ext-header))
     ("^| .*$" (0 'b4-review-ext-comment))
     ("^|$" (0 'b4-review-ext-comment))
 
