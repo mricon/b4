@@ -6,6 +6,7 @@ import b4.mbox
 import b4.command
 
 from typing import Any, Dict, Generator, List, Optional, Tuple
+from unittest.mock import MagicMock, patch
 
 
 @pytest.fixture(scope="function")
@@ -78,4 +79,92 @@ def test_trailers(sampledir: str, prepdir: str, mboxf: str, bundlef: Optional[st
     with open(cfile, 'r') as fh:
         cstr = fh.read()
     assert logstr == cstr
+
+
+# ---------------------------------------------------------------------------
+# Tests for pre/post-rewrite hooks
+# ---------------------------------------------------------------------------
+
+class TestRunRewriteHook:
+    """Tests for run_rewrite_hook() and its integration with run_frf()."""
+
+    def test_no_hooks_configured(self) -> None:
+        """When no hook is configured, nothing is executed."""
+        with patch('b4.ez.b4._run_command') as mock_run:
+            b4.ez.run_rewrite_hook('pre')
+            b4.ez.run_rewrite_hook('post')
+            mock_run.assert_not_called()
+
+    def test_pre_hook_success(self) -> None:
+        """A pre-hook that exits 0 should not raise."""
+        b4.MAIN_CONFIG['prep-pre-rewrite-hook'] = 'true'
+        try:
+            with patch('b4.ez.b4._run_command',
+                       return_value=(0, b'', b'')) as mock_run, \
+                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'):
+                b4.ez.run_rewrite_hook('pre')
+                mock_run.assert_called_once_with(['true'], rundir='/tmp')
+        finally:
+            b4.MAIN_CONFIG.pop('prep-pre-rewrite-hook', None)
+
+    def test_pre_hook_failure_raises(self) -> None:
+        """A pre-hook that exits non-zero should raise RuntimeError."""
+        b4.MAIN_CONFIG['prep-pre-rewrite-hook'] = 'stg commit --all'
+        try:
+            with patch('b4.ez.b4._run_command',
+                       return_value=(1, b'', b'stg: not initialized\n')), \
+                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'):
+                with pytest.raises(RuntimeError, match='Pre-rewrite hook'):
+                    b4.ez.run_rewrite_hook('pre')
+        finally:
+            b4.MAIN_CONFIG.pop('prep-pre-rewrite-hook', None)
+
+    def test_post_hook_failure_warns(self) -> None:
+        """A post-hook that exits non-zero should warn, not raise."""
+        b4.MAIN_CONFIG['prep-post-rewrite-hook'] = 'false'
+        try:
+            with patch('b4.ez.b4._run_command',
+                       return_value=(1, b'', b'error\n')), \
+                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'):
+                # Should not raise
+                b4.ez.run_rewrite_hook('post')
+        finally:
+            b4.MAIN_CONFIG.pop('prep-post-rewrite-hook', None)
+
+    def test_pre_hook_blocks_frf(self) -> None:
+        """A failing pre-hook should prevent git-filter-repo from running."""
+        b4.MAIN_CONFIG['prep-pre-rewrite-hook'] = 'false'
+        try:
+            mock_frf = MagicMock()
+            with patch('b4.ez.b4._run_command',
+                       return_value=(1, b'', b'hook failed\n')), \
+                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'):
+                with pytest.raises(RuntimeError):
+                    b4.ez.run_frf(mock_frf)
+            # frf.run() should never have been called
+            mock_frf.run.assert_not_called()
+        finally:
+            b4.MAIN_CONFIG.pop('prep-pre-rewrite-hook', None)
+
+    def test_hooks_bracket_frf(self) -> None:
+        """Both hooks should run around a successful git-filter-repo."""
+        b4.MAIN_CONFIG['prep-pre-rewrite-hook'] = 'pre-cmd'
+        b4.MAIN_CONFIG['prep-post-rewrite-hook'] = 'post-cmd'
+        try:
+            mock_frf = MagicMock()
+            call_order: List[str] = []
+            mock_frf.run.side_effect = lambda: call_order.append('frf')
+
+            def _track_run(cmdargs: Any, **kwargs: Any) -> tuple:
+                call_order.append(cmdargs[0])
+                return (0, b'', b'')
+
+            with patch('b4.ez.b4._run_command', side_effect=_track_run), \
+                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'):
+                b4.ez.run_frf(mock_frf)
+
+            assert call_order == ['pre-cmd', 'frf', 'post-cmd']
+        finally:
+            b4.MAIN_CONFIG.pop('prep-pre-rewrite-hook', None)
+            b4.MAIN_CONFIG.pop('prep-post-rewrite-hook', None)
 

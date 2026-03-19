@@ -582,6 +582,32 @@ Contributor-oriented settings
 
      .. versionadded:: v0.14
 
+   :term:`b4.prep-pre-rewrite-hook`
+     A command to run before any operation that rewrites history on a prep
+     branch (e.g. updating the cover letter, applying trailers, or enrolling
+     with the ``commit`` strategy).  If the command exits with a non-zero
+     status, the operation is aborted.  This is useful for tools like Stacked
+     Git that maintain their own branch state::
+
+         [b4]
+         prep-pre-rewrite-hook = stg commit --all
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
+   :term:`b4.prep-post-rewrite-hook`
+     A command to run after a successful history rewrite on a prep branch.  A
+     non-zero exit status is logged as a warning but does not undo the
+     rewrite::
+
+         [b4]
+         prep-post-rewrite-hook = stg repair
+
+     Default: ``None``
+
+     .. versionadded:: v0.15
+
    :term:`b4.send-auto-cc-cmd`
      The command to use for obtaining the list of "Cc:" recipients. The command is
      run once for each patch in the series. Each patch file is piped through

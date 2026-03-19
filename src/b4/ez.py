@@ -111,6 +111,34 @@ DEPS_HELP = """
 PFHASH_CACHE: Dict[str, str]= dict()
 
 
+def run_rewrite_hook(stage: str) -> None:
+    """Run a pre-rewrite or post-rewrite hook if configured.
+
+    Looks up ``b4.prep-{stage}-rewrite-hook`` in the main config and
+    runs it.  For the *pre* stage, a non-zero exit raises
+    ``RuntimeError`` so callers can abort.  For the *post* stage, a
+    non-zero exit is logged as a warning but does not raise.
+    """
+    config = b4.get_main_config()
+    hook_cmd = config.get(f'prep-{stage}-rewrite-hook')
+    if not hook_cmd or not isinstance(hook_cmd, str):
+        return
+
+    topdir = b4.git_get_toplevel()
+    logger.info('Running %s-rewrite hook: %s', stage, hook_cmd)
+    ecode, _out, err = b4._run_command(shlex.split(hook_cmd), rundir=topdir)
+    if ecode != 0:
+        errmsg = err.decode(errors='replace').strip() if err else ''
+        if stage == 'pre':
+            logger.critical('Pre-rewrite hook failed (exit code %d)', ecode)
+            if errmsg:
+                logger.critical(errmsg)
+            raise RuntimeError(f'Pre-rewrite hook "{hook_cmd}" failed')
+        logger.warning('Post-rewrite hook exited with code %d', ecode)
+        if errmsg:
+            logger.warning(errmsg)
+
+
 def run_frf(frf: fr.RepoFilter) -> None:
     """
     Run git-filter-repo with the provided RepoFilter configuration
@@ -124,6 +152,7 @@ def run_frf(frf: fr.RepoFilter) -> None:
     if not can_gfr:
         logger.critical('CRITICAL: git-filter-repo is not available')
         sys.exit(1)
+    run_rewrite_hook('pre')
     logger.debug('Running git-filter-repo...')
     frf.run()
     logger.debug('git-filter-repo complete')
@@ -134,6 +163,7 @@ def run_frf(frf: fr.RepoFilter) -> None:
         if os.path.exists(already_ran):
             logger.debug('Removing %s', already_ran)
             os.remove(already_ran)
+    run_rewrite_hook('post')
 
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
