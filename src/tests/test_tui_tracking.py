@@ -1940,3 +1940,382 @@ class TestTargetBranch:
             target = tracking.get_target_branch(conn, change_id)
             conn.close()
             assert target is None
+
+
+# ---------------------------------------------------------------------------
+# Helpers for update-revision tests
+# ---------------------------------------------------------------------------
+
+def _make_mock_lser(revision: int = 2, expected: int = 1,
+                    complete: bool = False) -> b4.LoreSeries:
+    """Build a minimal LoreSeries usable by _on_update_* callbacks.
+
+    Patches list contains a single MagicMock with msgid and body
+    attributes so the Phase 3 metadata extraction succeeds.
+    """
+    from unittest.mock import MagicMock
+    lser = b4.LoreSeries(revision, expected)
+    lser.complete = complete
+    lser.fromname = 'Test Author'
+    lser.fromemail = 'test@example.com'
+    mock_patch = MagicMock()
+    mock_patch.msgid = 'test-update-msgid@example.com'
+    mock_patch.body = 'patch body'
+    mock_patch.date = None
+    lser.patches = [mock_patch]
+    return lser
+
+
+def _setup_update_test(gitdir: str, identifier: str,
+                       change_id: str,
+                       current_rev: int = 1,
+                       target_rev: int = 2) -> str:
+    """Seed a DB + review branch for update-revision tests.
+
+    Returns the review branch name.
+    """
+    branch = _create_review_branch(
+        gitdir, change_id, identifier=identifier,
+        revision=current_rev, status='reviewing')
+    _seed_db(identifier, [{
+        'change_id': change_id,
+        'subject': f'[PATCH v{current_rev}] update test',
+        'revision': current_rev,
+        'status': 'reviewing',
+        'message_id': f'v{current_rev}@ex.com',
+    }])
+    # Register the target revision so _do_update_revision can look it up
+    conn = tracking.get_db(identifier)
+    tracking.add_revision(conn, change_id, target_rev,
+                          f'v{target_rev}@ex.com',
+                          subject=f'[PATCH v{target_rev}] update test')
+    conn.close()
+    return branch
+
+
+class TestUpdateRevisionWorkflow:
+    """Tests for the three-phase update-revision workflow.
+
+    The refactored _do_update_revision uses a temporary upgrade branch
+    so the old review branch is never modified until the new revision
+    has been successfully applied.
+    """
+
+    # --- Phase 1: _do_update_revision (DB lookup + worker push) ----------
+
+    @pytest.mark.asyncio
+    async def test_no_msgid_shows_error(self, gitdir: str) -> None:
+        """Target revision without a message-id should notify an error."""
+        identifier = 'test-update-nomsgid'
+        change_id = 'update-nomsgid-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(identifier, [{
+            'change_id': change_id,
+            'subject': '[PATCH v1] no msgid test',
+            'status': 'reviewing',
+            'message_id': 'v1@ex.com',
+        }])
+        # Register v2 without a message-id
+        conn = tracking.get_db(identifier)
+        tracking.add_revision(conn, change_id, 2, '',
+                              subject='[PATCH v2] no msgid test')
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            # Call the method directly — worker should not be pushed
+            app._do_update_revision(change_id, 1, 2)
+            await pilot.pause()
+            # Should stay on the main screen, not a WorkerScreen
+            assert not isinstance(app.screen,
+                                  __import__('b4.review_tui._modals',
+                                             fromlist=['WorkerScreen']).WorkerScreen)
+
+    # --- Phase 2: _on_update_prepared (base selection screen) ------------
+
+    @pytest.mark.asyncio
+    async def test_prepared_none_is_noop(self, tmp_path: pathlib.Path) -> None:
+        """A None result (worker cancelled) should do nothing."""
+        identifier = 'test-update-none'
+        _seed_db(identifier, [{
+            'change_id': 'noop-1',
+            'subject': '[PATCH] noop',
+            'message_id': 'noop@ex.com',
+        }])
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_update_prepared(
+                None, 'noop-1', 1, 2, 'v2@ex.com', 'subj',
+                'b4/review/noop-1')
+            await pilot.pause()
+            # No BaseSelectionScreen should be pushed
+            from b4.review_tui._modals import BaseSelectionScreen
+            assert not isinstance(app.screen, BaseSelectionScreen)
+
+    @pytest.mark.asyncio
+    async def test_prepared_pushes_base_selection(
+            self, tmp_path: pathlib.Path) -> None:
+        """Successful worker result should push BaseSelectionScreen."""
+        identifier = 'test-update-base'
+        _seed_db(identifier, [{
+            'change_id': 'base-1',
+            'subject': '[PATCH] base select',
+            'message_id': 'base@ex.com',
+        }])
+        lser = _make_mock_lser()
+        ambytes = b'fake mbox'
+        result = (lser, ambytes, 'abc123456789', 'Guessed base: foo', 1)
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_update_prepared(
+                result, 'base-1', 1, 2, 'v2@ex.com',
+                '[PATCH v2] base select', 'b4/review/base-1')
+            await pilot.pause()
+            from b4.review_tui._modals import BaseSelectionScreen
+            assert isinstance(app.screen, BaseSelectionScreen)
+
+    # --- Phase 3: _on_update_base_selected (apply + swap) ----------------
+
+    @pytest.mark.asyncio
+    async def test_base_selected_none_cancels(
+            self, tmp_path: pathlib.Path) -> None:
+        """Passing None as base_sha should cancel the update."""
+        identifier = 'test-update-cancel'
+        _seed_db(identifier, [{
+            'change_id': 'cancel-1',
+            'subject': '[PATCH] cancel',
+            'message_id': 'cancel@ex.com',
+        }])
+        lser = _make_mock_lser()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_update_base_selected(
+                None, lser, b'mbox', 1, 'cancel-1', 1, 2,
+                'v2@ex.com', 'subj', 'b4/review/cancel-1')
+            await pilot.pause()
+            # App should still be running — not exited
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_apply_failure_preserves_old_branch(
+            self, gitdir: str) -> None:
+        """When git-am fails the old review branch must remain intact."""
+        identifier = 'test-update-fail'
+        change_id = 'update-fail-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        upgrade_branch = f'b4/review/{change_id}-v2-upgrade'
+
+        # Snapshot old branch HEAD before the attempt
+        ecode, old_head = b4.git_run_command(
+            gitdir, ['rev-parse', review_branch])
+        assert ecode == 0
+        old_head = old_head.strip()
+
+        lser = _make_mock_lser()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with patch.object(app, 'suspend', return_value=__import__(
+                    'contextlib').nullcontext()), \
+                 patch.object(app, 'exit'), \
+                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
+                 patch('b4.git_fetch_am_into_repo',
+                       side_effect=RuntimeError('apply failed')):
+                app._on_update_base_selected(
+                    'HEAD', lser, b'mbox', 1, change_id, 1, 2,
+                    'v2@ex.com', 'subj', review_branch)
+            await pilot.pause()
+
+        # Old review branch must still exist with unchanged HEAD
+        assert b4.git_branch_exists(gitdir, review_branch)
+        ecode, cur_head = b4.git_run_command(
+            gitdir, ['rev-parse', review_branch])
+        assert ecode == 0
+        assert cur_head.strip() == old_head
+
+        # Upgrade branch must not exist
+        assert not b4.git_branch_exists(gitdir, upgrade_branch)
+
+        # DB should still show original revision
+        conn = tracking.get_db(identifier)
+        cursor = conn.execute(
+            'SELECT revision, status FROM series WHERE change_id = ?',
+            (change_id,))
+        row = cursor.fetchone()
+        conn.close()
+        assert row[0] == 1
+        assert row[1] == 'reviewing'
+
+    @pytest.mark.asyncio
+    async def test_conflict_abort_preserves_old_branch(
+            self, gitdir: str) -> None:
+        """When user aborts conflict resolution the old branch stays."""
+        identifier = 'test-update-abort'
+        change_id = 'update-abort-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        upgrade_branch = f'b4/review/{change_id}-v2-upgrade'
+
+        ecode, old_head = b4.git_run_command(
+            gitdir, ['rev-parse', review_branch])
+        assert ecode == 0
+        old_head = old_head.strip()
+
+        lser = _make_mock_lser()
+        conflict = b4.AmConflictError('/tmp/fake-wt', 'conflict output')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with patch.object(app, 'suspend', return_value=__import__(
+                    'contextlib').nullcontext()), \
+                 patch.object(app, 'exit'), \
+                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
+                 patch('b4.git_fetch_am_into_repo',
+                       side_effect=conflict), \
+                 patch('b4.review_tui._tracking_app._resolve_worktree_am_conflict',
+                       return_value=False):
+                app._on_update_base_selected(
+                    'HEAD', lser, b'mbox', 1, change_id, 1, 2,
+                    'v2@ex.com', 'subj', review_branch)
+            await pilot.pause()
+
+        # Old review branch must be untouched
+        assert b4.git_branch_exists(gitdir, review_branch)
+        ecode, cur_head = b4.git_run_command(
+            gitdir, ['rev-parse', review_branch])
+        assert ecode == 0
+        assert cur_head.strip() == old_head
+
+        # Upgrade branch must not linger
+        assert not b4.git_branch_exists(gitdir, upgrade_branch)
+
+    @pytest.mark.asyncio
+    async def test_successful_upgrade_renames_branch(
+            self, gitdir: str) -> None:
+        """On success the upgrade branch replaces the old review branch."""
+        identifier = 'test-update-ok'
+        change_id = 'update-ok-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+
+        lser = _make_mock_lser()
+
+        # Pre-create the upgrade branch to simulate create_review_branch
+        ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        base = base.strip()
+
+        def _fake_create(topdir: str, branch: str, base_commit: str,
+                         lser_arg: b4.LoreSeries, linkurl: str,
+                         linkmask: str, num_prereqs: int = 0,
+                         identifier: Optional[str] = None,
+                         status: str = 'reviewing') -> None:
+            """Simulate create_review_branch by making a real branch."""
+            _create_review_branch(topdir, change_id + '-v2-upgrade',
+                                  identifier=identifier or 'test',
+                                  revision=2, status='reviewing')
+
+        def _mock_archive(self_app: TrackingApp, cid: str,
+                          rev: Optional[int], rbranch: str,
+                          pw_series_id: Optional[int] = None,
+                          notify: bool = True) -> bool:
+            """Delete branch + mark archived in DB."""
+            b4.git_run_command(gitdir, ['branch', '-D', rbranch])
+            aconn = tracking.get_db(self_app._identifier)
+            tracking.update_series_status(aconn, cid, 'archived',
+                                          revision=rev)
+            aconn.close()
+            return True
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with patch.object(app, 'suspend', return_value=__import__(
+                    'contextlib').nullcontext()), \
+                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
+                 patch('b4.git_fetch_am_into_repo'), \
+                 patch('b4.review.create_review_branch',
+                       side_effect=_fake_create), \
+                 patch('b4.review.get_review_branch_patch_ids',
+                       return_value=[]), \
+                 patch('b4.review.load_tracking',
+                       return_value=('', {'series': {}, 'patches': []})), \
+                 patch('b4.review.reanchor_patch_comments'), \
+                 patch('b4.review.save_tracking_ref'), \
+                 patch.object(TrackingApp, '_archive_branch',
+                              _mock_archive):
+                app._on_update_base_selected(
+                    base, lser, b'mbox', 1, change_id, 1, 2,
+                    'v2@ex.com', '[PATCH v2] update test',
+                    review_branch)
+            await pilot.pause()
+
+            # Upgrade branch should be gone (was renamed)
+            assert not b4.git_branch_exists(
+                gitdir, f'b4/review/{change_id}-v2-upgrade')
+            # Upgrade branch should have been renamed to review branch
+            assert b4.git_branch_exists(gitdir, review_branch)
+
+            # DB should show v2 as reviewing
+            conn = tracking.get_db(identifier)
+            cursor = conn.execute(
+                'SELECT revision, status FROM series'
+                ' WHERE change_id = ? AND revision = 2',
+                (change_id,))
+            row = cursor.fetchone()
+            conn.close()
+            assert row is not None
+            assert row[1] == 'reviewing'
+
+            # Should return to tracking list, not exit to review
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_archive_failure_leaves_both_branches(
+            self, gitdir: str) -> None:
+        """If archiving fails, both branches are left for manual recovery."""
+        identifier = 'test-update-archfail'
+        change_id = 'update-archfail-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        upgrade_branch = f'b4/review/{change_id}-v2-upgrade'
+
+        lser = _make_mock_lser()
+
+        def _fake_create(topdir: str, branch: str, *args: Any,
+                         **kwargs: Any) -> None:
+            _create_review_branch(topdir, change_id + '-v2-upgrade',
+                                  identifier=identifier,
+                                  revision=2, status='reviewing')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with patch.object(app, 'suspend', return_value=__import__(
+                    'contextlib').nullcontext()), \
+                 patch.object(app, 'exit'), \
+                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
+                 patch('b4.git_fetch_am_into_repo'), \
+                 patch('b4.review.create_review_branch',
+                       side_effect=_fake_create), \
+                 patch('b4.review.get_review_branch_patch_ids',
+                       return_value=[]), \
+                 patch('b4.review.load_tracking',
+                       return_value=('', {'series': {}, 'patches': []})), \
+                 patch('b4.review.reanchor_patch_comments'), \
+                 patch('b4.review.save_tracking_ref'), \
+                 patch.object(TrackingApp, '_archive_branch',
+                              return_value=False):
+                app._on_update_base_selected(
+                    'HEAD', lser, b'mbox', 1, change_id, 1, 2,
+                    'v2@ex.com', 'subj', review_branch)
+            await pilot.pause()
+
+        # Both branches should exist — user can recover manually
+        assert b4.git_branch_exists(gitdir, review_branch)
+        assert b4.git_branch_exists(gitdir, upgrade_branch)

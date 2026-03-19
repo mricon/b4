@@ -2992,11 +2992,156 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                             target_rev: int) -> None:
         """Upgrade the review branch from *current_rev* to *target_rev*.
 
-        Saves maintainer reviews keyed by patch-id, archives the old
-        branch, checks out the new revision, then restores reviews onto
-        patches whose patch-id matches.
+        Uses a three-phase workflow so the old review branch is never
+        modified until the new revision has been successfully applied:
+
+        Phase 1 (worker): fetch the new series and compute base hints.
+        Phase 2 (modal):  show BaseSelectionScreen for the user.
+        Phase 3 (suspend): apply to a temporary upgrade branch, then
+                 archive the old branch and rename on success.
         """
         review_branch = f'b4/review/{change_id}'
+
+        # Look up message-id for the target revision from DB
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            revisions = b4.review.tracking.get_revisions(conn, change_id)
+            conn.close()
+        except Exception as ex:
+            self.notify(f'Could not load revisions: {ex}', severity='error')
+            return
+
+        target_msgid = ''
+        target_subject = ''
+        for r in revisions:
+            if r['revision'] == target_rev:
+                target_msgid = r.get('message_id', '')
+                target_subject = r.get('subject', '')
+                break
+
+        if not target_msgid:
+            self.notify(f'No message-id recorded for v{target_rev}',
+                        severity='error')
+            return
+
+        # Phase 1: fetch series and compute base in a worker thread
+        def _fetch_update() -> Tuple[b4.LoreSeries, bytes, str, str, int]:
+            with _quiet_worker():
+                msgs = b4.review._retrieve_messages(target_msgid)
+                lser = b4.review._get_lore_series(msgs)
+
+                am_msgs = lser.get_am_ready(
+                    noaddtrailers=True, addmysob=False, addlink=False,
+                    cherrypick=None, copyccs=False, allowbadchars=False,
+                    showchecks=False)
+                if not am_msgs:
+                    raise LookupError('No patches ready for applying')
+
+                ifh = io.BytesIO()
+                b4.save_git_am_mbox(am_msgs, ifh)
+                ambytes = ifh.getvalue()
+
+                # Determine best base: series-specified or guessed
+                initial_base = 'HEAD'
+                base_hint = ''
+                topdir = b4.git_get_toplevel()
+                if lser.base_commit and topdir:
+                    bc = lser.base_commit
+                    short = bc[:12] if len(bc) > 12 else bc
+                    if b4.git_commit_exists(topdir, bc):
+                        initial_base = short
+                        base_hint = f'Series base: {short}'
+                    else:
+                        base_hint = f'Series base: {short} (not in repo)'
+                if topdir and initial_base == 'HEAD':
+                    try:
+                        guessed, nblobs, mismatches = lser.find_base(
+                            topdir,
+                            branches=['--exclude=refs/heads/b4/review/*',
+                                      '--all'],
+                            maxdays=30)
+                        if guessed:
+                            ecode, sha_out = b4.git_run_command(
+                                topdir, ['rev-parse', '--verify', guessed])
+                            sha = sha_out.strip() if ecode == 0 else ''
+                            short_sha = sha[:12] if sha else guessed
+                            if mismatches == 0:
+                                initial_base = short_sha
+                                base_hint = (f'Guessed base: {guessed}'
+                                             f' (exact match)')
+                            elif nblobs != mismatches:
+                                matched = nblobs - mismatches
+                                initial_base = short_sha
+                                base_hint = (f'Guessed base: {guessed}'
+                                             f' ({matched}/{nblobs} blobs)')
+                            else:
+                                base_hint = 'Could not find a matching base'
+                    except (IndexError, Exception):
+                        pass
+
+                return lser, ambytes, initial_base, base_hint, len(am_msgs)
+
+        self.push_screen(
+            WorkerScreen('Fetching new revision\u2026', _fetch_update),
+            callback=lambda result: self._on_update_prepared(
+                result, change_id, current_rev, target_rev,
+                target_msgid, target_subject, review_branch),
+        )
+
+    def _on_update_prepared(self, result: Any,
+                            change_id: str, current_rev: int,
+                            target_rev: int, target_msgid: str,
+                            target_subject: str,
+                            review_branch: str) -> None:
+        """Phase 2: show BaseSelectionScreen after fetching the new series."""
+        if result is None:
+            return
+
+        lser, ambytes, initial_base, base_hint, num_am = result
+
+        # Build base commit suggestions: HEAD, configured targets, recent branches
+        base_suggestions: List[str] = ['HEAD']
+        for cb in b4.review.tracking.get_review_target_branches():
+            if cb not in base_suggestions:
+                base_suggestions.append(cb)
+        topdir = b4.git_get_toplevel()
+        if topdir:
+            gitdir = b4.git_get_common_dir(topdir)
+            if gitdir:
+                recent = b4.review.tracking.get_recent_take_branches(gitdir)
+                if recent:
+                    for rb in recent:
+                        if rb not in base_suggestions:
+                            base_suggestions.append(rb)
+
+        self.push_screen(
+            BaseSelectionScreen(initial_base, lser, ambytes,
+                                base_suggestions=base_suggestions,
+                                base_hint=base_hint,
+                                subject=target_subject),
+            callback=lambda base_sha: self._on_update_base_selected(
+                base_sha, lser, ambytes, num_am, change_id, current_rev,
+                target_rev, target_msgid, target_subject,
+                review_branch),
+        )
+
+    def _on_update_base_selected(
+            self, base_sha: Optional[str],
+            lser: b4.LoreSeries, ambytes: bytes, num_am: int,
+            change_id: str, current_rev: int, target_rev: int,
+            target_msgid: str, target_subject: str,
+            review_branch: str) -> None:
+        """Phase 3: apply new revision to upgrade branch, then swap.
+
+        The old review branch is never touched until the apply succeeds.
+        On failure the upgrade branch is deleted and the old branch
+        remains intact.
+        """
+        if base_sha is None:
+            self.notify('Update cancelled', severity='information')
+            return
+
+        upgrade_branch = f'b4/review/{change_id}-v{target_rev}-upgrade'
 
         with self.suspend():
             topdir = b4.git_get_toplevel()
@@ -3032,65 +3177,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             prior_thread_blob = old_series.get('thread-context-blob', '')
             prior_msgid = old_series.get('header-info', {}).get('msgid', '')
 
-            # --- 2. Archive the old revision ---
-            logger.info('Archiving v%d...', current_rev)
-            pw_series_id = None
-            if self._selected_series:
-                pw_series_id = self._selected_series.get('pw_series_id')
-            if not self._archive_branch(change_id, current_rev, review_branch,
-                                        pw_series_id=pw_series_id, notify=False):
-                logger.critical('Failed to archive v%d', current_rev)
-                _wait_for_enter()
-                return
-
-            # --- 3. Fetch and create new review branch ---
-            logger.info('Fetching v%d...', target_rev)
-
-            # Look up message-id for the target revision
-            try:
-                conn = b4.review.tracking.get_db(self._identifier)
-                revisions = b4.review.tracking.get_revisions(conn, change_id)
-                conn.close()
-            except Exception as ex:
-                logger.critical('Could not load revisions: %s', ex)
-                _wait_for_enter()
-                return
-
-            target_msgid = ''
-            target_subject = ''
-            for r in revisions:
-                if r['revision'] == target_rev:
-                    target_msgid = r.get('message_id', '')
-                    target_subject = r.get('subject', '')
-                    break
-
-            if not target_msgid:
-                logger.critical('No message-id recorded for v%d', target_rev)
-                _wait_for_enter()
-                return
-
-            try:
-                msgs = b4.review._retrieve_messages(target_msgid)
-                lser = b4.review._get_lore_series(msgs)
-            except LookupError as ex:
-                logger.critical('%s', ex)
-                _wait_for_enter()
-                return
-            except Exception as ex:
-                logger.critical('Error retrieving series: %s', ex)
-                _wait_for_enter()
-                return
-
-            # Get am-ready messages
-            am_msgs = lser.get_am_ready(noaddtrailers=True, addmysob=False,
-                                        addlink=False, cherrypick=None,
-                                        copyccs=False, allowbadchars=False,
-                                        showchecks=False)
-            if not am_msgs:
-                logger.critical('No patches ready for applying')
-                _wait_for_enter()
-                return
-
+            # --- 2. Resolve metadata for git-am ---
             top_msgid = None
             first_body = None
             for lmsg in lser.patches:
@@ -3103,18 +3190,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 logger.critical('Could not find any patches in the series')
                 _wait_for_enter()
                 return
-
-            # Determine base commit
-            base_commit = self._resolve_base_commit(topdir, lser)
-            if not base_commit:
-                logger.critical('Could not determine base commit')
-                _wait_for_enter()
-                return
-
-            # Build mbox for git-am
-            ifh = io.BytesIO()
-            b4.save_git_am_mbox(am_msgs, ifh)
-            ambytes = ifh.getvalue()
 
             config = b4.get_main_config()
             linkmask = str(config.get('linkmask', 'https://lore.kernel.org/r/%s'))
@@ -3132,66 +3207,48 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     if rstart and rend:
                         logger.info('Prepared fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
 
+            # --- 3. Apply to temporary upgrade branch ---
             try:
-                logger.info('Base: %s', base_commit)
+                logger.info('Base: %s', base_sha)
                 b4.git_fetch_am_into_repo(topdir, ambytes=ambytes,
-                                          at_base=base_commit, origin=linkurl,
+                                          at_base=base_sha, origin=linkurl,
                                           am_flags=['-3'])
-                b4.review.create_review_branch(topdir, review_branch,
-                                               base_commit, lser, linkurl,
+                b4.review.create_review_branch(topdir, upgrade_branch,
+                                               base_sha, lser, linkurl,
                                                linkmask, num_prereqs=0,
                                                identifier=self._identifier,
                                                status='reviewing')
-                logger.info('Review branch created: %s', review_branch)
+                logger.info('Upgrade branch created: %s', upgrade_branch)
             except b4.AmConflictError as cex:
                 if not _resolve_worktree_am_conflict(topdir, cex):
+                    # User aborted — clean up upgrade branch if it was
+                    # partially created before the conflict
+                    if b4.git_branch_exists(topdir, upgrade_branch):
+                        b4.git_run_command(
+                            topdir, ['branch', '-D', upgrade_branch])
                     _wait_for_enter()
                     return
                 b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
-                # Create the review branch from resolved result
-                b4.review.create_review_branch(topdir, review_branch,
-                                               base_commit, lser, linkurl,
+                b4.review.create_review_branch(topdir, upgrade_branch,
+                                               base_sha, lser, linkurl,
                                                linkmask, num_prereqs=0,
                                                identifier=self._identifier,
                                                status='reviewing')
-                logger.info('Review branch created: %s', review_branch)
+                logger.info('Upgrade branch created: %s', upgrade_branch)
             except Exception as ex:
                 logger.critical('Error creating review branch: %s', ex)
+                if b4.git_branch_exists(topdir, upgrade_branch):
+                    b4.git_run_command(
+                        topdir, ['branch', '-D', upgrade_branch])
                 _wait_for_enter()
                 return
 
-            # Ensure target revision is tracked in the DB
-            if self._identifier:
-                try:
-                    conn = b4.review.tracking.get_db(self._identifier)
-                    sender_name = getattr(lser, 'fromname', '') or ''
-                    sender_email = getattr(lser, 'fromemail', '') or ''
-                    sent_at = ''
-                    ref_msg = None
-                    for p in lser.patches:
-                        if p is not None:
-                            ref_msg = p
-                            break
-                    if ref_msg and ref_msg.date:
-                        sent_at = ref_msg.date.isoformat()
-                    b4.review.tracking.add_series_to_db(
-                        conn, change_id, target_rev,
-                        target_subject, sender_name, sender_email,
-                        sent_at, target_msgid,
-                        lser.expected or len(am_msgs))
-                    b4.review.tracking.update_series_status(
-                        conn, change_id, 'reviewing', revision=target_rev)
-                    conn.close()
-                except Exception as ex:
-                    logger.warning('Failed to update DB for v%d: %s',
-                                   target_rev, ex)
-
-            # --- 4. Restore maintainer review data ---
+            # --- 4. Apply succeeded — restore reviews onto upgrade branch ---
             logger.info('Restoring reviews...')
             new_patch_ids = b4.review.get_review_branch_patch_ids(
-                topdir, review_branch)
+                topdir, upgrade_branch)
             new_cover_text, new_tracking = b4.review.load_tracking(
-                topdir, review_branch)
+                topdir, upgrade_branch)
             new_patches = new_tracking.get('patches', [])
 
             restored = 0
@@ -3213,15 +3270,64 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 new_tracking['series']['prior-thread-context-blob'] = prior_thread_blob
             if prior_msgid:
                 new_tracking['series']['prior-revision-msgid'] = prior_msgid
-            b4.review.save_tracking_ref(topdir, review_branch,
+            b4.review.save_tracking_ref(topdir, upgrade_branch,
                                         new_cover_text, new_tracking)
             logger.info('Restored reviews for %d of %d patch(es)',
                         restored, len(new_patch_ids))
+
+            # --- 5. Archive old branch and rename upgrade → review ---
+            logger.info('Archiving v%d...', current_rev)
+            pw_series_id = None
+            if self._selected_series:
+                pw_series_id = self._selected_series.get('pw_series_id')
+            if not self._archive_branch(change_id, current_rev, review_branch,
+                                        pw_series_id=pw_series_id, notify=False):
+                logger.critical('Failed to archive v%d', current_rev)
+                # Upgrade branch has new data but old branch could not be
+                # archived.  Leave both branches so the user can recover.
+                _wait_for_enter()
+                return
+
+            ecode, out = b4.git_run_command(
+                topdir, ['branch', '-m', upgrade_branch, review_branch])
+            if ecode > 0:
+                logger.critical('Failed to rename upgrade branch: %s',
+                                out.strip())
+                _wait_for_enter()
+                return
+
+            # --- 6. Update tracking database ---
+            if self._identifier:
+                try:
+                    conn = b4.review.tracking.get_db(self._identifier)
+                    sender_name = getattr(lser, 'fromname', '') or ''
+                    sender_email = getattr(lser, 'fromemail', '') or ''
+                    sent_at = ''
+                    ref_msg = None
+                    for p in lser.patches:
+                        if p is not None:
+                            ref_msg = p
+                            break
+                    if ref_msg and ref_msg.date:
+                        sent_at = ref_msg.date.isoformat()
+                    b4.review.tracking.add_series_to_db(
+                        conn, change_id, target_rev,
+                        target_subject, sender_name, sender_email,
+                        sent_at, target_msgid,
+                        lser.expected or num_am)
+                    b4.review.tracking.update_series_status(
+                        conn, change_id, 'reviewing', revision=target_rev)
+                    conn.close()
+                except Exception as ex:
+                    logger.warning('Failed to update DB for v%d: %s',
+                                   target_rev, ex)
+
             logger.info('Upgrade to v%d complete', target_rev)
             _wait_for_enter()
 
-        # Exit to review mode on the updated branch
-        self.exit(review_branch)
+        # Return to the tracking list with the upgraded series focused
+        self._focus_change_id = change_id
+        self._load_series()
 
     def action_waiting(self) -> None:
         """Put the selected series into waiting state."""
