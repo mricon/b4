@@ -1498,7 +1498,15 @@ def _render_quoted_diff_with_comments(
         comment_map.setdefault(key, []).append((c['text'], attr, prov))
 
     diff_lines = diff_text.splitlines()
-    result: List[str] = []
+    result: List[str] = [
+        '# Add your code comments below. There is no need to trim or delete',
+        '# any existing content -- just insert your comments under the relevant',
+        '# lines of code. Lines starting with "> " are quoted diff context and',
+        '# lines starting with "| " are comments from other reviewers.',
+        '# The final email will be reformatted automatically to include only',
+        '# the sections that have your comments.',
+        '#',
+    ]
     current_a_file = ''
     current_b_file = ''
     a_line = 0

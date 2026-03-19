@@ -58,7 +58,7 @@ class TestRenderQuotedDiffWithComments:
         result = review._render_quoted_diff_with_comments(
             SIMPLE_DIFF, {}, 'me@example.com')
         for line in result.splitlines():
-            assert line.startswith('> ') or line == '', f'Unquoted line: {line!r}'
+            assert line.startswith(('> ', '#')) or line == '', f'Unquoted line: {line!r}'
 
     def test_own_comment_is_unquoted(self) -> None:
         """Own comments appear as unquoted text between quoted diff."""
@@ -132,6 +132,20 @@ class TestRenderQuotedDiffWithComments:
         assert 'Comment in a.c' in result
         assert 'Comment in b.c' in result
 
+
+    def test_editor_instructions_at_top(self) -> None:
+        """Rendered output starts with # instruction lines."""
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF, {}, 'me@example.com')
+        lines = result.splitlines()
+        # First non-empty line should be an instruction
+        assert lines[0].startswith('# ')
+        # Instructions end before the first quoted diff line
+        instruction_lines = [l for l in lines if l.startswith('#')]
+        assert len(instruction_lines) >= 3
+        # _extract_editor_comments should strip them
+        comments = review._extract_editor_comments(result)
+        assert not any(c['text'].startswith('#') for c in comments)
 
     def test_commit_msg_quoted_before_diff(self) -> None:
         """Commit message body is quoted before the diff when provided."""
