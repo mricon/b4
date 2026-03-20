@@ -49,6 +49,13 @@ For developers
    contributor/send
    contributor/trailers
 
+Release notes
+-------------
+.. toctree::
+   :maxdepth: 1
+
+   releases
+
 Getting help
 ------------
 To report a problem or suggest a feature, please send plaintext email to
