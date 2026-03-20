@@ -345,6 +345,21 @@ review sets the Patchwork state to "under-review", and taking a series
 sets it to "accepted".
 
 
+Customising the TUI
+-------------------
+
+The review TUI is built on the `Textual`_ framework. You can adjust
+colours, themes, and scroll animations using environment variables.
+For example, to disable smooth scrolling::
+
+    TEXTUAL_ANIMATIONS=none b4 review tui
+
+See the :ref:`customising_theme` section in the full reference for
+all available options.
+
+.. _`Textual`: https://textual.textualize.io/
+
+
 Where to go from here
 ---------------------
 

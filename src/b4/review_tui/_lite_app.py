@@ -380,7 +380,7 @@ class MessageViewScreen(ModalScreen[None]):
             self._node = nodes[new_idx]
             self._update_title()
             self._render_message()
-            self.query_one('#msg-viewer', RichLog).scroll_home(animate=False)
+            self.query_one('#msg-viewer', RichLog).scroll_home()
             self._lite_screen.mark_seen(self._node)
 
     def action_next_message(self) -> None:
@@ -409,7 +409,7 @@ class MessageViewScreen(ModalScreen[None]):
         if i < total:
             # Show a couple of trailing quote lines for context
             target = max(0, i - 2)
-            viewer.scroll_to(y=target, animate=False)
+            viewer.scroll_to(y=target)
 
     def action_back(self) -> None:
         self.dismiss(None)
@@ -427,10 +427,10 @@ class MessageViewScreen(ModalScreen[None]):
         self.query_one('#msg-viewer', RichLog).scroll_page_up()
 
     def action_scroll_top(self) -> None:
-        self.query_one('#msg-viewer', RichLog).scroll_home(animate=False)
+        self.query_one('#msg-viewer', RichLog).scroll_home()
 
     def action_scroll_bottom(self) -> None:
-        self.query_one('#msg-viewer', RichLog).scroll_end(animate=False)
+        self.query_one('#msg-viewer', RichLog).scroll_end()
 
 
 class LiteThreadScreen(ModalScreen[None]):

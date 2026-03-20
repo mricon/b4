@@ -3480,7 +3480,7 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
     def _render_matrix(self) -> None:
         viewer = self.query_one('#tcr-matrix', RichLog)
         viewer.clear()
-        viewer.scroll_home(animate=False)
+        viewer.scroll_home()
 
         if not self._tools:
             viewer.write(Text('No check results to display.', style='dim'))
@@ -3533,7 +3533,7 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
     def _render_detail(self, pidx: int) -> None:
         detail = self.query_one('#tcr-detail', RichLog)
         detail.clear()
-        detail.scroll_home(animate=False)
+        detail.scroll_home()
 
         label = self._patch_labels[pidx] if pidx < len(self._patch_labels) else '?'
         detail.write(Text(f'Details for {label}', style='bold'))

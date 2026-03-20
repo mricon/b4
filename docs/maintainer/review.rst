@@ -1106,17 +1106,22 @@ for your project. A sample prompt is included in
 repository and adapt it to your project's coding standards and review
 guidelines.
 
+.. _customising_theme:
+
 Customising the colour theme
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-The review TUI uses Textual's built-in theming system. By default it
-picks colours from the active Textual theme. You can switch themes by
-setting the ``TEXTUAL_THEME`` environment variable before launching the
-TUI. For example, to use a dark theme::
+The review TUI uses Textual's built-in theming system. Textual ships
+with many themes — to browse them, press ``ctrl+p`` inside the TUI to
+open the command palette, then select **Theme**. Once you find
+one you like, make it permanent by setting the ``TEXTUAL_THEME``
+environment variable::
+
+    export TEXTUAL_THEME=monokai
+
+A few examples worth trying::
 
     TEXTUAL_THEME=textual-dark b4 review tui
-
-To use a 16-colour theme that works well on basic terminals::
-
+    TEXTUAL_THEME=dracula b4 review tui
     TEXTUAL_THEME=textual-ansi b4 review tui
 
 The ``textual-ansi`` theme restricts rendering to the standard 16 ANSI
@@ -1136,3 +1141,19 @@ for the broader convention)::
 
 This tells Textual to strip all colour information from the rendered
 output while keeping the layout intact.
+
+Disabling scroll animations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+By default, Textual animates page-up/page-down and other scroll
+operations. To disable all animations::
+
+    TEXTUAL_ANIMATIONS=none b4 review tui
+
+Other accepted values are ``basic`` (reduced animations) and ``full``
+(the default). To disable smooth scrolling specifically without
+affecting other animations::
+
+    TEXTUAL_SMOOTH_SCROLL=0 b4 review tui
+
+Export either variable in your shell profile to make the change
+permanent.

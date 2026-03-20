@@ -412,7 +412,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             patch_idx = display_idx - 1
             self._show_diff(viewer, patch_idx)
 
-        viewer.scroll_home(animate=False)
+        viewer.scroll_home()
         self._refresh_trailer_overlay()
 
     def _build_msg_comment_map(
@@ -841,7 +841,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         pos = self._followup_positions.get(item.msgid)
         if pos is not None:
             viewer = self.query_one('#diff-viewer', RichLog)
-            viewer.scroll_to(y=pos, animate=False)
+            viewer.scroll_to(y=pos)
 
     def _get_current_review_target(self) -> Dict[str, Any]:
         """Return the tracking dict (series or patch) for the currently selected item."""
@@ -910,10 +910,10 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self.query_one('#diff-viewer', RichLog).scroll_page_up()
 
     def action_scroll_left(self) -> None:
-        self.query_one('#diff-viewer', RichLog).scroll_left(animate=False)
+        self.query_one('#diff-viewer', RichLog).scroll_left()
 
     def action_scroll_right(self) -> None:
-        self.query_one('#diff-viewer', RichLog).scroll_right(animate=False)
+        self.query_one('#diff-viewer', RichLog).scroll_right()
 
     def _get_navigable_comment_positions(self) -> List[int]:
         """Return comment positions to navigate, including collapsed hints."""
@@ -937,7 +937,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         viewed_pos = current_y + context
         for pos in positions:
             if pos > viewed_pos:
-                viewer.scroll_to(y=max(0, pos - context), animate=False)
+                viewer.scroll_to(y=max(0, pos - context))
                 return
         self.notify('No more comments below', severity='information')
 
@@ -955,7 +955,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         viewed_pos = current_y + context
         for pos in reversed(positions):
             if pos < viewed_pos:
-                viewer.scroll_to(y=max(0, pos - context), animate=False)
+                viewer.scroll_to(y=max(0, pos - context))
                 return
         self.notify('No more comments above', severity='information')
 
