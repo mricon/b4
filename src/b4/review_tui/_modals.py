@@ -628,6 +628,14 @@ class SendScreen(ModalScreen[bool]):
         Binding('y', 'confirm', 'Confirm'),
         Binding('escape', 'cancel', 'Cancel'),
         Binding('q', 'cancel', 'Cancel', show=False),
+        Binding('j', 'scroll_down', 'Scroll down', show=False),
+        Binding('k', 'scroll_up', 'Scroll up', show=False),
+        Binding('down', 'scroll_down', 'Scroll down', show=False),
+        Binding('up', 'scroll_up', 'Scroll up', show=False),
+        Binding('space', 'page_down', 'Page down', show=False),
+        Binding('backspace', 'page_up', 'Page up', show=False),
+        Binding('pagedown', 'page_down', 'Page down', show=False),
+        Binding('pageup', 'page_up', 'Page up', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -676,11 +684,26 @@ class SendScreen(ModalScreen[bool]):
             yield Static(text, markup=False)
             yield Static('y confirm  |  Escape cancel', id='send-hint')
 
+    def _get_dialog(self) -> Vertical:
+        return self.query_one('#send-dialog', Vertical)
+
     def action_confirm(self) -> None:
         self.dismiss(True)
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_scroll_down(self) -> None:
+        self._get_dialog().scroll_down()
+
+    def action_scroll_up(self) -> None:
+        self._get_dialog().scroll_up()
+
+    def action_page_down(self) -> None:
+        self._get_dialog().scroll_page_down()
+
+    def action_page_up(self) -> None:
+        self._get_dialog().scroll_page_up()
 
 
 class TakeScreen(ModalScreen[bool]):
