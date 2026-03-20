@@ -44,6 +44,19 @@ Once enrolled, launch the TUI::
 
     b4 review tui
 
+.. tip::
+
+   By default, the TUI captures mouse events for scrolling and
+   clicking. This prevents your terminal from handling text selection
+   and copy/paste normally. If you prefer to select and copy text
+   with the mouse, launch with ``--no-mouse``::
+
+       b4 review tui --no-mouse
+
+   To make this permanent, set it in your git config::
+
+       git config --global b4.review-no-mouse true
+
 The tracking list starts empty. To add a series, run
 ``b4 review track`` from another terminal (it works even while the TUI
 is running)::
