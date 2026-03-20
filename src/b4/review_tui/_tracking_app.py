@@ -579,6 +579,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             # only written when a branch SHA differs, so _check_db_changed()
             # naturally stays quiet on a no-op rescan.
             if gone or result.get('changed', 0):
+                if self._selected_series:
+                    self._focus_change_id = self._selected_series.get('change_id')
                 self._load_series()
 
     @staticmethod
