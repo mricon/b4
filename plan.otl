@@ -1,3 +1,21 @@
+v0.16
+-----
+[_] `b4 review` improvements
+	[_] Manual revision linking when auto-discovery fails (no change-id or in-reply-to chain)
+		: Mark Brown, https://msgid.link/88549a4a-cc82-4200-b73b-e335cbb2b024@sirena.org.uk
+	[_] Auto-detect existing trailers to mark patches as "done"
+		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+	[_] Cancel background processes (e.g. base check) on exit
+		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+	[_] Batch trailer selection across multiple patches
+		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+	[_] Keep trailers in-place when added via reply editor
+		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+[ ] `b4 ty` interactive mode
+	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
+[ ] `b4 trailers` interactive mode
+	[_] Similar to above, a mode to review incoming trailers
+
 v0.15
 -----
 [X] `b4 review` interactive patch review workflow
@@ -39,7 +57,7 @@ v0.15
 	[X] Revision tracking and discovery
 	[X] Patchwork state synchronisation on review lifecycle transitions
 	[X] Update review branch to a newer revision
-[ ] `b4 review` feedback
+[X] `b4 review` feedback
 	[X] Worktree support and configurable default target branch
 		[X] Add git_get_common_dir() helper using git rev-parse --git-common-dir
 		[X] Fix get_repo_identifier() to resolve metadata via shared .git directory
@@ -152,7 +170,7 @@ v0.15
 		[X] P keybinding (hidden when no context available)
 		[X] Agent prompt: prior-review-context and prior-thread-context-blob sections
 	[X] Non-Patchwork CI integration for external tool results
-	[_] Reply/comment mode UX redesign to reduce mode-switching confusion
+	[X] Combine reply and inline comment as a single mode
 	[X] Per-series target vs base branch tracking
 	[X] Respect sendemail.from in review emails
 	[X] CLI for listing review branches and their commits/bases
@@ -172,10 +190,6 @@ v0.15
 	[X] Replace __import__('re') hack with top-level import re in _modals.py
 	[X] Remove redundant local import io statements in _tracking_app.py
 	[X] Move inline from typing import Set to top-level in _review.py
-[ ] `b4 ty` interactive mode
-	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
-[ ] `b4 trailers` interactive mode
-	[_] Similar to above, a mode to review incoming trailers
 
 v0.14
 -----
