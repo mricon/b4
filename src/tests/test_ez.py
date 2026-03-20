@@ -160,7 +160,8 @@ class TestRunRewriteHook:
                 return (0, b'', b'')
 
             with patch('b4.ez.b4._run_command', side_effect=_track_run), \
-                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'):
+                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'), \
+                 patch('b4.ez.b4.git_get_gitdir', return_value='/tmp'):
                 b4.ez.run_frf(mock_frf)
 
             assert call_order == ['pre-cmd', 'frf', 'post-cmd']

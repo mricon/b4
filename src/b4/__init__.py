@@ -4030,6 +4030,17 @@ def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
     return topdir
 
 
+def git_get_gitdir(path: Optional[str] = None) -> Optional[str]:
+    gitargs = ['rev-parse', '--git-dir']
+    lines = git_get_command_lines(path, gitargs)
+    if len(lines) == 1:
+        gitdir = lines[0]
+        if not os.path.isabs(gitdir):
+            gitdir = os.path.normpath(os.path.join(os.getcwd(), gitdir))
+        return gitdir
+    return None
+
+
 def git_get_common_dir(path: Optional[str] = None) -> Optional[str]:
     gitargs = ['rev-parse', '--git-common-dir']
     lines = git_get_command_lines(path, gitargs)

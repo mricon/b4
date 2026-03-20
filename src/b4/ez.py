@@ -156,10 +156,10 @@ def run_frf(frf: fr.RepoFilter) -> None:
     logger.debug('Running git-filter-repo...')
     frf.run()
     logger.debug('git-filter-repo complete')
-    gtl = b4.git_get_toplevel()
-    if isinstance(gtl, str):
-        # Remove .git/filter-repo/already_ran
-        already_ran = os.path.join(gtl, '.git', 'filter-repo', 'already_ran')
+    gitdir = b4.git_get_gitdir()
+    if isinstance(gitdir, str):
+        # Remove $GIT_DIR/filter-repo/already_ran
+        already_ran = os.path.join(gitdir, 'filter-repo', 'already_ran')
         if os.path.exists(already_ran):
             logger.debug('Removing %s', already_ran)
             os.remove(already_ran)
