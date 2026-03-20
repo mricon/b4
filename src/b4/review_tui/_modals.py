@@ -71,6 +71,10 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
         Binding('space', 'toggle_item', 'Toggle', show=False),
         Binding('j', 'cursor_down', 'Down', show=False),
         Binding('k', 'cursor_up', 'Up', show=False),
+        Binding('a', 'quick_toggle("Acked-by")', 'Acked-by', show=False),
+        Binding('r', 'quick_toggle("Reviewed-by")', 'Reviewed-by', show=False),
+        Binding('t', 'quick_toggle("Tested-by")', 'Tested-by', show=False),
+        Binding('n', 'quick_toggle("NACKed-by")', 'NACKed-by', show=False),
         Binding('q', 'confirm', 'Save'),
         Binding('escape', 'cancel', 'Cancel'),
     ]
@@ -114,7 +118,7 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
                 *[TrailerOption(name, name in self._existing) for name in self.TRAILER_NAMES],
                 id='trailer-list',
             )
-            yield Static('Space toggle  |  Enter save', id='trailer-hint')
+            yield Static('a/r/t/n toggle  |  Enter save', id='trailer-hint')
 
     def on_mount(self) -> None:
         self.query_one('#trailer-list', ListView).focus()
@@ -126,6 +130,14 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
         lv = self.query_one('#trailer-list', ListView)
         if lv.highlighted_child is not None and isinstance(lv.highlighted_child, TrailerOption):
             lv.highlighted_child.toggle()
+
+    def action_quick_toggle(self, name: str) -> None:
+        lv = self.query_one('#trailer-list', ListView)
+        for i, child in enumerate(lv.children):
+            if isinstance(child, TrailerOption) and child.trailer_name == name:
+                child.toggle()
+                lv.index = i
+                break
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Enter key on ListView triggers Selected — use it to confirm."""
