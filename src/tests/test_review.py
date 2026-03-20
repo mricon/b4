@@ -1,7 +1,6 @@
-import argparse
 import email.message
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Union
 from unittest import mock
 
 import pytest
@@ -920,7 +919,7 @@ class TestEnsureMyReview:
 
     def test_creates_entry_when_empty(self) -> None:
         target: Dict[str, Any] = {}
-        usercfg = {'email': 'user@example.com', 'name': 'User'}
+        usercfg: Dict[str, Union[str, List[str], None]] = {'email': 'user@example.com', 'name': 'User'}
         entry = review._ensure_my_review(target, usercfg)
         assert entry['name'] == 'User'
         assert target['reviews']['user@example.com'] is entry
@@ -928,7 +927,7 @@ class TestEnsureMyReview:
     def test_returns_existing_and_updates_name(self) -> None:
         existing = {'name': 'Old Name', 'trailers': ['Reviewed-by: Old']}
         target = {'reviews': {'user@example.com': existing}}
-        usercfg = {'email': 'user@example.com', 'name': 'New Name'}
+        usercfg: Dict[str, Union[str, List[str], None]] = {'email': 'user@example.com', 'name': 'New Name'}
         entry = review._ensure_my_review(target, usercfg)
         assert entry is existing
         assert entry['name'] == 'New Name'
@@ -1080,7 +1079,7 @@ class TestEnsureTrailersInBody:
 
     def test_case_insensitive_match(self) -> None:
         trailer = 'Reviewed-by: Test <test@example.com>'
-        body = f'Some text.\n\nreviewed-by: test <test@example.com>\n\n-- \nsig'
+        body = 'Some text.\n\nreviewed-by: test <test@example.com>\n\n-- \nsig'
         result = review._ensure_trailers_in_body(body, [trailer])
         # Should not duplicate — the existing lowercase version counts
         assert result.count('test@example.com') == 1
@@ -1449,7 +1448,7 @@ class TestCollectFollowups:
         return lt
 
     def _make_lmsg(
-        self, body: str, followup_trailers: list,
+        self, body: str, followup_trailers: List[Any],
     ) -> mock.Mock:
         """Build a mock LoreMessage with body and followup_trailers."""
         lmsg = mock.Mock()
@@ -1560,7 +1559,7 @@ class TestGetArtCounts:
     """Tests for _get_art_counts() in _tracking_app."""
 
     @staticmethod
-    def _make_tracking_json(followups=None, patches=None) -> str:
+    def _make_tracking_json(followups: Optional[List[Dict[str, Any]]] = None, patches: Optional[List[Dict[str, Any]]] = None) -> str:
         """Build a tracking commit message with the given followup data."""
         tracking: Dict[str, Any] = {}
         if followups is not None:
@@ -1677,7 +1676,7 @@ def _make_mock_attestation(status: str, identity: str, passing: bool) -> Dict[st
     return {'status': status, 'identity': identity, 'passing': passing}
 
 
-def _make_mock_lmsg(attestations: list, passing: bool = True, critical: bool = False) -> mock.Mock:
+def _make_mock_lmsg(attestations: List[Dict[str, Any]], passing: bool = True, critical: bool = False) -> mock.Mock:
     """Build a mock LoreMessage with a canned get_attestation_status() response."""
     lmsg = mock.Mock()
     lmsg.get_attestation_status = mock.Mock(return_value=(attestations, passing, critical))
@@ -1689,7 +1688,7 @@ def _make_mock_lmsg(attestations: list, passing: bool = True, critical: bool = F
 class TestCheckSeriesAttestation:
     """Tests for check_series_attestation()."""
 
-    def _make_series(self, patch_msgs: list) -> mock.Mock:
+    def _make_series(self, patch_msgs: List[mock.Mock]) -> mock.Mock:
         """Build a mock LoreSeries with given patch messages (index 0 = cover)."""
         lser = mock.Mock()
         lser.patches = [None] + patch_msgs  # patches[0] is the cover letter
@@ -1741,6 +1740,7 @@ class TestCheckSeriesAttestation:
         with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
             result = check_series_attestation(lser)
         # Sorted by (status, identity): nokey < signed alphabetically
+        assert result is not None
         parts = result.split(';')
         assert len(parts) == 2
         assert 'signed:DKIM/kernel.org' in parts
@@ -2458,7 +2458,7 @@ class TestIntegrateSashikoReviews:
 
     def test_integrates_inline_comments(self) -> None:
         """Inline review comments are extracted and stored in tracking."""
-        patches = [
+        patches: List[Dict[str, Any]] = [
             {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
             {'header-info': {'msgid': 'patch2@example.com'}, 'title': 'patch 2'},
         ]
@@ -2562,7 +2562,7 @@ class TestIntegrateSashikoReviews:
                 },
             ],
         }
-        patches = [{'header-info': {'msgid': 'patch1@example.com'}}]
+        patches: List[Dict[str, Any]] = [{'header-info': {'msgid': 'patch1@example.com'}}]
         series = {'message_id': 'cover@example.com'}
         tracking = {'series': series, 'patches': patches}
         real_diff = (
@@ -2585,7 +2585,7 @@ class TestIntegrateSashikoReviews:
 
     def test_skips_already_integrated_review(self) -> None:
         """When the sashiko-review-id already matches, no re-parsing happens."""
-        patches = [
+        patches: List[Dict[str, Any]] = [
             {
                 'header-info': {'msgid': 'patch1@example.com'},
                 'title': 'patch 1',
@@ -2638,9 +2638,9 @@ class TestIntegrateFollowupInlineComments:
         "add a test for the error path?\n"
     )
 
-    def _make_followup_comments(self, bodies_by_patch: Dict[int, list]) -> Dict[int, list]:
+    def _make_followup_comments(self, bodies_by_patch: Dict[int, List[str]]) -> Dict[int, List[Dict[str, Any]]]:
         """Build a followup_comments dict like _parse_msgs_to_followup_comments returns."""
-        result: Dict[int, list] = {}
+        result: Dict[int, List[Dict[str, Any]]] = {}
         for display_idx, body_list in bodies_by_patch.items():
             entries = []
             for i, body in enumerate(body_list):
@@ -2658,14 +2658,14 @@ class TestIntegrateFollowupInlineComments:
 
     def test_no_thread_blob_returns_false(self) -> None:
         """Without a thread-blob, returns False immediately."""
-        tracking = {'series': {}, 'patches': []}
+        tracking: Dict[str, Any] = {'series': {}, 'patches': []}
         result = review._integrate_followup_inline_comments(
             '/tmp', '', tracking, [], [])
         assert result is False
 
     def test_extracts_inline_comments_from_followup(self) -> None:
         """Follow-ups that quote diff content produce inline comments."""
-        patches = [
+        patches: List[Dict[str, Any]] = [
             {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
         ]
         series = {
@@ -2794,7 +2794,7 @@ class TestIntegrateFollowupInlineComments:
 
     def test_skips_already_integrated_followup(self) -> None:
         """When the followup-msgid already matches, no re-parsing happens."""
-        patches = [
+        patches: List[Dict[str, Any]] = [
             {
                 'header-info': {'msgid': 'patch1@example.com'},
                 'title': 'patch 1',

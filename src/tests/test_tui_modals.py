@@ -14,7 +14,7 @@ import pytest
 from typing import Any, Dict, List, Optional, Tuple
 
 from textual.app import App, ComposeResult
-from textual.widgets import Checkbox, Input, Label, ListView
+from textual.widgets import Input, Label, ListView
 
 from b4.review_tui._modals import (
     ActionScreen,
@@ -157,7 +157,7 @@ class TestConfirmScreen:
     @pytest.mark.asyncio
     async def test_y_confirms(self) -> None:
         app = ModalTestApp()
-        results: List[bool] = []
+        results: List[Optional[bool]] = []
 
         async with app.run_test() as pilot:
             app.push_screen(
@@ -175,7 +175,7 @@ class TestConfirmScreen:
     @pytest.mark.asyncio
     async def test_escape_cancels(self) -> None:
         app = ModalTestApp()
-        results: List[bool] = []
+        results: List[Optional[bool]] = []
 
         async with app.run_test() as pilot:
             app.push_screen(

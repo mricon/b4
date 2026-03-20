@@ -64,7 +64,7 @@ def _create_review_branch_with_patches(
 
     # Build tracking metadata
     patches_meta: List[Dict[str, Any]] = []
-    for i, sha in enumerate(patch_shas):
+    for i, _sha in enumerate(patch_shas):
         patches_meta.append({
             'header-info': {'msgid': f'{change_id}-patch{i + 1}@example.com'},
             'followups': [],
@@ -239,11 +239,10 @@ class TestReconcileAfterShell:
     @pytest.mark.asyncio
     async def test_single_reword_preserves_unchanged(self, gitdir: str) -> None:
         """Only the reworded commit gets a new SHA; unchanged ones keep theirs."""
-        branch, patch_shas = _create_review_branch_with_patches(
+        branch, _patch_shas = _create_review_branch_with_patches(
             gitdir, 'reconcile-partial',
             ['keep this one', 'change this one'])
         session = _build_session(gitdir, branch)
-        base_sha = session['base_commit']
 
         app = ReviewApp(session)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -303,7 +302,7 @@ class TestReconcileAfterShell:
     @pytest.mark.asyncio
     async def test_tracking_commit_persisted(self, gitdir: str) -> None:
         """The on-disk tracking commit is amended with new first-patch-commit."""
-        branch, patch_shas = _create_review_branch_with_patches(
+        branch, _patch_shas = _create_review_branch_with_patches(
             gitdir, 'reconcile-persist',
             ['persist patch 1', 'persist patch 2'])
         session = _build_session(gitdir, branch)
@@ -323,7 +322,7 @@ class TestReconcileAfterShell:
             app._reconcile_after_shell(old_shas)
 
             # Verify the on-disk tracking commit was updated
-            cover_text, tracking = b4.review.load_tracking(gitdir, branch)
+            _cover_text, tracking = b4.review.load_tracking(gitdir, branch)
             disk_first = tracking['series']['first-patch-commit']
             assert disk_first == app._commit_shas[0]
             assert disk_first != old_shas[0]

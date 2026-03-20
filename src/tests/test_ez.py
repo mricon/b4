@@ -155,7 +155,7 @@ class TestRunRewriteHook:
             call_order: List[str] = []
             mock_frf.run.side_effect = lambda: call_order.append('frf')
 
-            def _track_run(cmdargs: Any, **kwargs: Any) -> tuple:
+            def _track_run(cmdargs: Any, **kwargs: Any) -> Tuple[int, bytes, bytes]:
                 call_order.append(cmdargs[0])
                 return (0, b'', b'')
 

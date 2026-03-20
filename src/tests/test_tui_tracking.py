@@ -10,19 +10,17 @@ Uses real SQLite databases (via b4.review.tracking) and git repos
 core user workflows: series listing, navigation, filtering,
 status transitions, and modal interactions.
 """
-import json
-import os
 import pathlib
 import pytest
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 import b4
 import b4.review
 import b4.review.tracking as tracking
 
-from textual.widgets import Input, Label, ListView, Static
+from textual.widgets import Input, ListView, Static
 
 from b4.review_tui._tracking_app import TrackingApp, TrackedSeriesItem
 from b4.review_tui._modals import (
@@ -31,7 +29,6 @@ from b4.review_tui._modals import (
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
-    SetStateScreen,
     SnoozeScreen,
     TargetBranchScreen,
 )
@@ -1017,7 +1014,7 @@ class TestTrackingSnooze:
             assert row[0] == 'snoozed'
 
             # Verify tracking commit was updated
-            cover_text, trk = b4.review.load_tracking(
+            _cover_text, trk = b4.review.load_tracking(
                 gitdir, f'b4/review/{change_id}')
             assert trk['series']['status'] == 'snoozed'
             assert 'snoozed' in trk['series']
@@ -1183,7 +1180,7 @@ class TestTrackingWaiting:
             assert row[0] == 'waiting'
 
             # Verify tracking commit
-            cover_text, trk = b4.review.load_tracking(
+            _cover_text, trk = b4.review.load_tracking(
                 gitdir, f'b4/review/{change_id}')
             assert trk['series']['status'] == 'waiting'
 
@@ -1493,7 +1490,7 @@ class TestSeriesLifecycle:
         assert _get_db_status(identifier, change_id) == 'waiting'
 
         # Verify tracking commit also updated
-        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        _cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         assert trk['series']['status'] == 'waiting'
 
         # === Phase 2: waiting → reviewing (re-review) ===
@@ -1537,7 +1534,7 @@ class TestSeriesLifecycle:
         assert _get_db_status(identifier, change_id) == 'snoozed'
 
         # Verify tracking commit stores previous_state
-        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        _cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         assert trk['series']['status'] == 'snoozed'
         assert trk['series']['snoozed']['previous_state'] == 'reviewing'
 
@@ -1562,7 +1559,7 @@ class TestSeriesLifecycle:
         assert _get_db_status(identifier, change_id) == 'reviewing'
 
         # Verify tracking commit restored
-        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        _cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         assert trk['series']['status'] == 'reviewing'
         assert 'snoozed' not in trk['series']
 
@@ -1760,7 +1757,7 @@ class TestSeriesLifecycle:
         assert _get_db_status(identifier, change_id) == 'waiting'
 
         # Verify tracking commit cleaned up
-        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        _cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         assert trk['series']['status'] == 'waiting'
         assert 'snoozed' not in trk['series']
 

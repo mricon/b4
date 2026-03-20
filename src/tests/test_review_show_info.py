@@ -5,16 +5,12 @@
 #
 """Tests for ``b4 review show-info``."""
 import json
-import os
 import pytest
 
-from typing import Any, Dict, List
 
 import b4
 import b4.review
-import b4.review.tracking as tracking
 from b4.review._review import (
-    REVIEW_BRANCH_PREFIX,
     get_review_info,
     show_review_info,
     list_review_branches,
@@ -143,8 +139,9 @@ class TestGetReviewInfo:
         assert len(commit_keys) == 3
         # Each commit key should have a subject value
         for k in commit_keys:
-            assert isinstance(info[k], str)
-            assert len(info[k]) > 0
+            val = info[k]
+            assert isinstance(val, str)
+            assert len(val) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +234,7 @@ class TestTargetBranchInInfo:
 
     def test_target_branch_in_info(self, gitdir: str) -> None:
         """Branch with target-branch in tracking data includes it in info."""
-        branch_name = f'b4/review/target-info-test'
+        branch_name = 'b4/review/target-info-test'
         # Get current HEAD as base
         ecode, base_sha = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
         assert ecode == 0

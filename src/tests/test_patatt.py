@@ -6,6 +6,8 @@ import base64
 import email.message
 import os
 import tempfile
+from collections.abc import Generator
+from typing import Tuple
 
 import pytest
 
@@ -16,7 +18,7 @@ from nacl.signing import SigningKey
 
 
 @pytest.fixture()
-def ed25519_keypair() -> tuple:
+def ed25519_keypair() -> Generator[Tuple[str, str, str, str], None, None]:
     """Generate an ephemeral ed25519 keypair written to temp files.
 
     Returns (privkey_path, verify_key_b64, identity, selector).
@@ -35,7 +37,7 @@ def ed25519_keypair() -> tuple:
 
 
 @pytest.fixture()
-def keyring_dir(ed25519_keypair: tuple) -> str:
+def keyring_dir(ed25519_keypair: Tuple[str, str, str, str]) -> Generator[str, None, None]:
     """Create a temporary keyring directory with the ephemeral public key.
 
     The directory layout follows patatt's expected structure:
@@ -69,7 +71,7 @@ def _make_test_message(from_addr: str = 'test@example.com',
 class TestPatattSignVerify:
     """Round-trip sign and verify using ephemeral ed25519 keys."""
 
-    def test_sign_and_verify(self, ed25519_keypair: tuple,
+    def test_sign_and_verify(self, ed25519_keypair: Tuple[str, str, str, str],
                              keyring_dir: str) -> None:
         """A signed message should validate with the matching public key."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
@@ -80,14 +82,14 @@ class TestPatattSignVerify:
             'selector': selector,
             'signingkey': f'ed25519:{privkey_path}',
         }
-        signed = patatt.rfc2822_sign(msg_bytes, config=config)
+        signed = patatt.rfc2822_sign(msg_bytes, config=config)  # type: ignore[attr-defined]
         assert b'X-Developer-Signature' in signed
 
-        results = patatt.validate_message(signed, [keyring_dir])
+        results = patatt.validate_message(signed, [keyring_dir])  # type: ignore[attr-defined]
         assert len(results) > 0
-        assert results[0][0] == patatt.RES_VALID
+        assert results[0][0] == patatt.RES_VALID  # type: ignore[attr-defined]
 
-    def test_tampered_body_fails(self, ed25519_keypair: tuple,
+    def test_tampered_body_fails(self, ed25519_keypair: Tuple[str, str, str, str],
                                  keyring_dir: str) -> None:
         """Modifying the body after signing should fail validation."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
@@ -98,15 +100,15 @@ class TestPatattSignVerify:
             'selector': selector,
             'signingkey': f'ed25519:{privkey_path}',
         }
-        signed = patatt.rfc2822_sign(msg_bytes, config=config)
+        signed = patatt.rfc2822_sign(msg_bytes, config=config)  # type: ignore[attr-defined]
 
         # Tamper with the body
         tampered = signed.replace(b'This is a test.', b'This is TAMPERED.')
-        results = patatt.validate_message(tampered, [keyring_dir])
+        results = patatt.validate_message(tampered, [keyring_dir])  # type: ignore[attr-defined]
         assert len(results) > 0
-        assert results[0][0] == patatt.RES_BADSIG
+        assert results[0][0] == patatt.RES_BADSIG  # type: ignore[attr-defined]
 
-    def test_wrong_key_fails(self, ed25519_keypair: tuple) -> None:
+    def test_wrong_key_fails(self, ed25519_keypair: Tuple[str, str, str, str]) -> None:
         """Validating against a different public key should fail."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
         msg_bytes = _make_test_message(from_addr=identity)
@@ -116,7 +118,7 @@ class TestPatattSignVerify:
             'selector': selector,
             'signingkey': f'ed25519:{privkey_path}',
         }
-        signed = patatt.rfc2822_sign(msg_bytes, config=config)
+        signed = patatt.rfc2822_sign(msg_bytes, config=config)  # type: ignore[attr-defined]
 
         # Create a keyring with a different key
         other_sk = SigningKey.generate()
@@ -127,11 +129,11 @@ class TestPatattSignVerify:
             os.makedirs(key_dir)
             with open(os.path.join(key_dir, selector), 'w') as fh:
                 fh.write(other_vk_b64)
-            results = patatt.validate_message(signed, [tmpdir])
+            results = patatt.validate_message(signed, [tmpdir])  # type: ignore[attr-defined]
             assert len(results) > 0
-            assert results[0][0] == patatt.RES_BADSIG
+            assert results[0][0] == patatt.RES_BADSIG  # type: ignore[attr-defined]
 
-    def test_no_key_available(self, ed25519_keypair: tuple) -> None:
+    def test_no_key_available(self, ed25519_keypair: Tuple[str, str, str, str]) -> None:
         """Validating with an empty keyring should return RES_NOKEY."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
         msg_bytes = _make_test_message(from_addr=identity)
@@ -141,21 +143,21 @@ class TestPatattSignVerify:
             'selector': selector,
             'signingkey': f'ed25519:{privkey_path}',
         }
-        signed = patatt.rfc2822_sign(msg_bytes, config=config)
+        signed = patatt.rfc2822_sign(msg_bytes, config=config)  # type: ignore[attr-defined]
 
         with tempfile.TemporaryDirectory() as empty_keyring:
-            results = patatt.validate_message(signed, [empty_keyring])
+            results = patatt.validate_message(signed, [empty_keyring])  # type: ignore[attr-defined]
             assert len(results) > 0
-            assert results[0][0] == patatt.RES_NOKEY
+            assert results[0][0] == patatt.RES_NOKEY  # type: ignore[attr-defined]
 
     def test_unsigned_message(self, keyring_dir: str) -> None:
         """An unsigned message should return RES_NOSIG."""
         msg_bytes = _make_test_message()
-        results = patatt.validate_message(msg_bytes, [keyring_dir])
+        results = patatt.validate_message(msg_bytes, [keyring_dir])  # type: ignore[attr-defined]
         assert len(results) == 1
-        assert results[0][0] == patatt.RES_NOSIG
+        assert results[0][0] == patatt.RES_NOSIG  # type: ignore[attr-defined]
 
-    def test_sign_adds_developer_key_header(self, ed25519_keypair: tuple) -> None:
+    def test_sign_adds_developer_key_header(self, ed25519_keypair: Tuple[str, str, str, str]) -> None:
         """Signing adds both X-Developer-Signature and X-Developer-Key."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
         msg_bytes = _make_test_message(from_addr=identity)
@@ -165,7 +167,7 @@ class TestPatattSignVerify:
             'selector': selector,
             'signingkey': f'ed25519:{privkey_path}',
         }
-        signed = patatt.rfc2822_sign(msg_bytes, config=config)
+        signed = patatt.rfc2822_sign(msg_bytes, config=config)  # type: ignore[attr-defined]
         assert b'X-Developer-Signature' in signed
         assert b'X-Developer-Key' in signed
         assert b'a=ed25519' in signed

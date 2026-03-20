@@ -522,7 +522,7 @@ def _build_multi_patch_conflict(gitdir: str) -> Tuple[bytes, str]:
 
 
 def _make_shazam_state(common_dir: str,
-                       state: Optional[Dict] = None) -> Tuple[str, str]:
+                       state: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
     """Create shazam state file and patches dir.
 
     Returns (state_file_path, patches_dir_path).

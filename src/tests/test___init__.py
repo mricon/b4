@@ -252,7 +252,7 @@ def test_header_wrapping(sampledir: str, hval: str, verify: str, tr: Literal['en
         hname = 'To' if '@' in hval else "X-Header"
     wrapped = b4.LoreMessage.wrap_header((hname, hval), transform=tr)
     assert wrapped.decode() == f'{hname}: {verify}'
-    wname, wval = wrapped.split(b':', maxsplit=1)
+    _wname, wval = wrapped.split(b':', maxsplit=1)
     if tr != 'decode':
         cval = b4.LoreMessage.clean_header(wval.decode())
         assert cval == hval

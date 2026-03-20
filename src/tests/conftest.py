@@ -42,7 +42,7 @@ def gitdir(request: pytest.FixtureRequest, tmp_path: pathlib.Path) -> Generator[
     assert os.path.exists(bfile)
     dest = os.path.join(tmp_path, 'repo')
     args = ['clone', '--branch', 'master', bfile, dest]
-    out, logstr = b4.git_run_command(None, args)
+    out, _logstr = b4.git_run_command(None, args)
     assert out == 0
     assert isinstance(b4.USER_CONFIG['name'], str)
     assert isinstance(b4.USER_CONFIG['email'], str)

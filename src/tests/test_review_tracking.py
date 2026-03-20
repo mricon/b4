@@ -4,7 +4,7 @@ import io
 import os
 import re
 from email.message import EmailMessage
-from typing import Any
+from typing import Any, Dict, List, Union
 from unittest import mock
 
 import pytest
@@ -264,7 +264,7 @@ class TestRepoMetadata:
 
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
         assert out == 0
 
         identifier = review_tracking.get_repo_identifier(worktree_dir)
@@ -478,7 +478,7 @@ class TestCmdEnroll:
         """Verify enroll from a worktree writes metadata to the shared .git."""
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
         assert out == 0
 
         cmdargs = argparse.Namespace(
@@ -504,7 +504,7 @@ class TestCmdEnroll:
 
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
         assert out == 0
 
         # Enrolling from worktree with same identifier should exit 0
@@ -527,7 +527,7 @@ class TestCmdEnroll:
 
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
         assert out == 0
 
         # Enrolling from worktree with different identifier should fail
@@ -894,7 +894,7 @@ class TestGitGetCommonDir:
     def test_returns_shared_git_dir_from_worktree(self, gitdir: str) -> None:
         """Verify git_get_common_dir returns the shared .git from a worktree."""
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
         assert out == 0
 
         result = b4.git_get_common_dir(worktree_dir)
@@ -919,7 +919,7 @@ class TestReviewTargetBranch:
         assert b4.DEFAULT_CONFIG['review-target-branch'] is None
 
 
-def _create_review_branch(topdir: str, change_id: str, tracking_data: dict) -> str:
+def _create_review_branch(topdir: str, change_id: str, tracking_data: Dict[str, Any]) -> str:
     """Helper: create a b4/review/<change_id> branch with a tracking commit."""
     branch = f'b4/review/{change_id}'
     cover_text = f'Cover letter for {change_id}'
@@ -1018,7 +1018,7 @@ class TestGetReviewBranches:
 
     def test_lists_review_branches(self, gitdir: str) -> None:
         """Verify get_review_branches finds b4/review/* branches."""
-        tracking_data = {
+        tracking_data: Dict[str, Any] = {
             'series': {
                 'identifier': 'test-proj',
                 'status': 'reviewing',
@@ -1058,7 +1058,7 @@ class TestRescanBranches:
 
     def _make_tracking_data(self, change_id: str, identifier: str = 'rescan-proj',
                             status: str = 'reviewing', revision: int = 1,
-                            subject: str = 'Test series') -> dict:
+                            subject: str = 'Test series') -> Dict[str, Any]:
         return {
             'series': {
                 'identifier': identifier,
@@ -1215,11 +1215,11 @@ class TestRescanBranches:
         # Amend the tracking commit on the branch with a different status.
         tracking_data['series']['status'] = 'replied'
         new_msg = ('Cover\n\n' + b4.review.make_review_magic_json(tracking_data))
-        ecode, tree = b4.git_run_command(gitdir, ['rev-parse', f'{branch}^{{tree}}'])
+        _ecode, tree = b4.git_run_command(gitdir, ['rev-parse', f'{branch}^{{tree}}'])
         tree = tree.strip()
-        ecode, parent = b4.git_run_command(gitdir, ['rev-parse', branch])
+        _ecode, parent = b4.git_run_command(gitdir, ['rev-parse', branch])
         parent = parent.strip()
-        ecode, new_sha = b4.git_run_command(
+        _ecode, new_sha = b4.git_run_command(
             gitdir, ['commit-tree', tree, '-p', parent, '-F', '-'],
             stdin=new_msg.encode())
         b4.git_run_command(gitdir, ['update-ref', f'refs/heads/{branch}', new_sha.strip()])
@@ -1492,7 +1492,7 @@ def _make_test_msg(msgid: str = 'test@example.com') -> EmailMessage:
     return msg
 
 
-def _make_blob_tracking_data(change_id: str, identifier: str = 'blob-proj') -> dict:
+def _make_blob_tracking_data(change_id: str, identifier: str = 'blob-proj') -> Dict[str, Any]:
     """Return a minimal tracking dict for blob tests."""
     return {
         'series': {
@@ -1676,9 +1676,9 @@ class TestFollowupBlob:
 class TestPatchState:
     """Tests for _get_patch_state() and _set_patch_state()."""
 
-    _USERCFG = {'email': 'reviewer@example.com', 'name': 'Test Reviewer'}
+    _USERCFG: Dict[str, Union[str, List[str], None]] = {'email': 'reviewer@example.com', 'name': 'Test Reviewer'}
 
-    def _make_target(self, review_data: dict | None = None) -> dict:
+    def _make_target(self, review_data: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """Return a minimal target dict, optionally with review data."""
         if review_data is None:
             return {}
@@ -1984,7 +1984,7 @@ class TestSnoozeDurationRegex:
 class TestGetExpiredSnoozedDatetime:
     """Verify get_expired_snoozed() works with full ISO datetimes."""
 
-    def _make_snoozed_series(self, conn, change_id: str,
+    def _make_snoozed_series(self, conn: Any, change_id: str,
                              snoozed_until: str) -> None:
         """Insert a snoozed series with a given wake-up time."""
         review_tracking.add_series_to_db(
@@ -2024,7 +2024,7 @@ class TestGetExpiredSnoozedDatetime:
     def test_past_date_only_is_expired(self) -> None:
         """A legacy date-only value in the past still works."""
         conn = review_tracking.init_db('snooze-past-date')
-        yesterday = (datetime.date.today()
+        yesterday = (datetime.datetime.now(datetime.timezone.utc).date()
                      - datetime.timedelta(days=1)).isoformat()
         self._make_snoozed_series(conn, 'past-date-id', yesterday)
         expired = review_tracking.get_expired_snoozed(conn)
@@ -2035,7 +2035,7 @@ class TestGetExpiredSnoozedDatetime:
     def test_future_date_only_not_expired(self) -> None:
         """A legacy date-only value in the future still works."""
         conn = review_tracking.init_db('snooze-future-date')
-        tomorrow = (datetime.date.today()
+        tomorrow = (datetime.datetime.now(datetime.timezone.utc).date()
                     + datetime.timedelta(days=2)).isoformat()
         self._make_snoozed_series(conn, 'future-date-id', tomorrow)
         expired = review_tracking.get_expired_snoozed(conn)
@@ -2047,7 +2047,7 @@ class TestGetExpiredSnoozedDatetime:
         conn = review_tracking.init_db('snooze-mixed')
         past_dt = (datetime.datetime.now(datetime.timezone.utc)
                    - datetime.timedelta(minutes=30)).isoformat()
-        yesterday = (datetime.date.today()
+        yesterday = (datetime.datetime.now(datetime.timezone.utc).date()
                      - datetime.timedelta(days=1)).isoformat()
         future_dt = (datetime.datetime.now(datetime.timezone.utc)
                      + datetime.timedelta(hours=5)).isoformat()
