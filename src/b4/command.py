@@ -197,7 +197,7 @@ def setup_parser() -> argparse.ArgumentParser:
                       help='Refetch all messages in specified mbox with their original headers')
     sm_g.add_argument('--minimize', dest='minimize', action='store_true', default=False,
                       help='Attempt to generate a minimal thread to simplify review.')
-    sp_mbox.set_defaults(func=cmd_mbox)
+    sp_mbox.set_defaults(func=cmd_mbox, subparser=sp_mbox)
 
     # b4 am
     sp_am = subparsers.add_parser('am', help='Create an mbox file that is ready to git-am')
@@ -218,7 +218,7 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Do not save the cover letter (on by default when using -o -)')
     sp_am.add_argument('--no-partial-reroll', dest='nopartialreroll', action='store_true', default=False,
                        help='Do not reroll partial series when detected')
-    sp_am.set_defaults(func=cmd_am)
+    sp_am.set_defaults(func=cmd_am, subparser=sp_am)
 
     # b4 shazam
     sp_sh = subparsers.add_parser('shazam', help='Like b4 am, but applies the series to your tree')
@@ -240,11 +240,11 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Continue after resolving merge conflicts from --resolve')
     sp_sh.add_argument('--abort', dest='shazam_abort', action='store_true', default=False,
                        help='Abort a conflicted shazam and clean up')
-    sp_sh.set_defaults(func=cmd_shazam)
+    sp_sh.set_defaults(func=cmd_shazam, subparser=sp_sh)
 
     # b4 review
     sp_rev = subparsers.add_parser('review', help='Review patch series received on mailing lists')
-    sp_rev.set_defaults(func=cmd_review)
+    sp_rev.set_defaults(func=cmd_review, subparser=sp_rev)
     rev_subparsers = sp_rev.add_subparsers(help='review sub-command help', dest='review_subcmd')
 
     # b4 review tui
@@ -257,6 +257,7 @@ def setup_parser() -> argparse.ArgumentParser:
                             help='Do not patatt-sign outgoing review emails')
     sp_rev_tui.add_argument('--no-mouse', dest='no_mouse', action='store_true', default=False,
                             help='Disable mouse support in the TUI')
+    sp_rev_tui.set_defaults(review_subparser=sp_rev_tui)
 
     # b4 review enroll
     sp_rev_enroll = rev_subparsers.add_parser('enroll', help='Enroll a repository for review tracking')
@@ -264,6 +265,7 @@ def setup_parser() -> argparse.ArgumentParser:
                                help='Path to the git repository to enroll (default: current directory)')
     sp_rev_enroll.add_argument('-i', '--identifier', dest='identifier', default=None,
                                help='Project identifier (default: repository directory name)')
+    sp_rev_enroll.set_defaults(review_subparser=sp_rev_enroll)
 
     # b4 review track
     sp_rev_track = rev_subparsers.add_parser('track', help='Track a series for review')
@@ -274,6 +276,7 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_rev_track.add_argument('--rethread', nargs='+', metavar='MSGID', default=None,
                               help='Rethread multiple unrelated messages into a single series for tracking '
                                    '(pass - to read message IDs from stdin, one per line)')
+    sp_rev_track.set_defaults(review_subparser=sp_rev_track)
 
     # b4 review show-info
     sp_rev_showinfo = rev_subparsers.add_parser('show-info',
@@ -287,6 +290,7 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_rev_showinfo.add_argument('-j', '--json', dest='json_output',
         action='store_true', default=False,
         help='Output in JSON format')
+    sp_rev_showinfo.set_defaults(review_subparser=sp_rev_showinfo)
 
 
     # b4 pr
@@ -310,7 +314,7 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Force a --dry-run on git-send-email invocation (use with -s)')
     sp_pr.add_argument('msgid', nargs='?',
                        help='Message ID to process, or pipe a raw message')
-    sp_pr.set_defaults(func=cmd_pr)
+    sp_pr.set_defaults(func=cmd_pr, subparser=sp_pr)
 
     # b4 ty
     sp_ty = subparsers.add_parser('ty', help='Generate thanks email when something gets merged/applied')
@@ -338,7 +342,7 @@ def setup_parser() -> argparse.ArgumentParser:
                        help='Set this patchwork state instead of default (use with -a, -t or -d)')
     sp_ty.add_argument('--me-too', action='store_true', dest='metoo', default=False,
                        help='Send a copy of the thank-you message to yourself as well')
-    sp_ty.set_defaults(func=cmd_ty)
+    sp_ty.set_defaults(func=cmd_ty, subparser=sp_ty)
 
     # b4 diff
     sp_diff = subparsers.add_parser('diff', help='Show a range-diff to previous series revision')
@@ -360,14 +364,14 @@ def setup_parser() -> argparse.ArgumentParser:
                          help='Compare two mbx files prepared with "b4 am"')
     sp_diff.add_argument('--range-diff-opts', default=None,
                          help='Arguments passed to git range-diff')
-    sp_diff.set_defaults(func=cmd_diff)
+    sp_diff.set_defaults(func=cmd_diff, subparser=sp_diff)
 
     # b4 kr
     sp_kr = subparsers.add_parser('kr', help='Keyring operations')
     cmd_retrieval_common_opts(sp_kr)
     sp_kr.add_argument('--show-keys', dest='showkeys', action='store_true', default=False,
                        help='Show all developer keys found in a thread')
-    sp_kr.set_defaults(func=cmd_kr)
+    sp_kr.set_defaults(func=cmd_kr, subparser=sp_kr)
 
     # b4 prep
     sp_prep = subparsers.add_parser('prep', help='Work on patch series to submit for mailing list review')
@@ -419,7 +423,7 @@ def setup_parser() -> argparse.ArgumentParser:
     ag_prepe.add_argument('-e', '--enroll', dest='enroll_base', nargs='?', const='@{upstream}',
                           help='Enroll current branch, using its configured upstream branch as fork base, '
                                'or the passed tag, branch, or commit')
-    sp_prep.set_defaults(func=cmd_prep)
+    sp_prep.set_defaults(func=cmd_prep, subparser=sp_prep)
 
     # b4 trailers
     sp_trl = subparsers.add_parser('trailers', help='Operate on trailers received for mailing list reviews')
@@ -434,7 +438,7 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_trl.add_argument('--since-commit', metavar='COMMITISH',
                         help='Look for any new trailers for commits starting with this one')
     cmd_retrieval_common_opts(sp_trl)
-    sp_trl.set_defaults(func=cmd_trailers)
+    sp_trl.set_defaults(func=cmd_trailers, subparser=sp_trl)
 
     # b4 send
     sp_send = subparsers.add_parser('send', help='Submit your work for review on the mailing lists')
@@ -467,7 +471,7 @@ def setup_parser() -> argparse.ArgumentParser:
                           help='Initiate a new web authentication request')
     ag_sendh.add_argument('--web-auth-verify', dest='auth_verify', metavar='VERIFY_TOKEN',
                           help='Submit the token received via verification email')
-    sp_send.set_defaults(func=cmd_send)
+    sp_send.set_defaults(func=cmd_send, subparser=sp_send)
 
     # b4 dig
     sp_dig = subparsers.add_parser('dig', help='Dig into the details of a specific commit')
@@ -482,14 +486,25 @@ def setup_parser() -> argparse.ArgumentParser:
                            help='Save matched thread to the specified mbox file')
     sp_dig_eg.add_argument('-w', '--who', action='store_true', default=False,
                            help='Show list of recipients in the original message')
-    sp_dig.set_defaults(func=cmd_dig)
+    sp_dig.set_defaults(func=cmd_dig, subparser=sp_dig)
 
     return parser
 
 
 def cmd() -> None:
     parser = setup_parser()
-    cmdargs = parser.parse_args()
+    argv = sys.argv[1:]
+    cmdargs, extras = parser.parse_known_args(argv)
+    # argparse reports unknown args from the top-level parser after selecting a subcommand.
+    if extras:
+        prior_args = argv[:argv.index(extras[0])]
+        errparser = parser
+        if getattr(cmdargs, 'subcmd', None) in prior_args:
+            errparser = cmdargs.subparser
+        if getattr(cmdargs, 'review_subcmd', None) in prior_args:
+            errparser = cmdargs.review_subparser
+        errparser.error('unrecognized arguments: %s' % ' '.join(extras))
+
     logger.setLevel(logging.DEBUG)
 
     ch = logging.StreamHandler()
