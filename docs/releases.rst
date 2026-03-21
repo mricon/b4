@@ -103,14 +103,15 @@ thread on lore.kernel.org.
 
 ::
 
-    b4 dig <commitish>
-    b4 dig --all-series HEAD~20..HEAD
-    b4 dig --who --save-mbox <commitish>
+    b4 dig -c <commitish>
+    b4 dig -c <commitish> --all-series
+    b4 dig -c <commitish> --who
+    b4 dig -c <commitish> --save-mbox /tmp/thread.mbx
 
-The ``--all-series`` flag processes a range of commits and groups them
-by original series. The ``--who`` flag shows the original author and
-date, and ``--save-mbox`` saves the matching thread to a local mbox
-file. See :doc:`maintainer/dig` for details.
+The ``--all-series`` flag shows all revisions of the series containing
+the commit. The ``--who`` flag shows who was originally included on
+the thread (To/Cc recipients), and ``--save-mbox`` saves the matched
+thread to a local mbox file. See :doc:`maintainer/dig` for details.
 
 ``b4 shazam`` — three-way merge and conflict resolution
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
