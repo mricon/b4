@@ -26,6 +26,9 @@ def cmd_retrieval_common_opts(sp: argparse.ArgumentParser) -> None:
                     help='Do not use local cache')
     sp.add_argument('--single-message', dest='singlemsg', action='store_true', default=False,
                     help='Only retrieve the message matching the msgid and ignore the rest of the thread')
+    sp.add_argument('--rethread', nargs='+', metavar='MSGID', default=None,
+                    help='Rethread multiple unrelated messages into a single series '
+                         '(pass - to read message IDs from stdin, one per line)')
 
 
 def cmd_mbox_common_opts(sp: argparse.ArgumentParser) -> None:
@@ -268,6 +271,9 @@ def setup_parser() -> argparse.ArgumentParser:
                               help='Series identifier (message-id, URL, or change-id); or pipe message to stdin')
     sp_rev_track.add_argument('-i', '--identifier', dest='identifier', default=None,
                               help='Project identifier (required if not in an enrolled repository)')
+    sp_rev_track.add_argument('--rethread', nargs='+', metavar='MSGID', default=None,
+                              help='Rethread multiple unrelated messages into a single series for tracking '
+                                   '(pass - to read message IDs from stdin, one per line)')
 
     # b4 review show-info
     sp_rev_showinfo = rev_subparsers.add_parser('show-info',

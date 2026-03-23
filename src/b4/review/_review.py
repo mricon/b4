@@ -177,6 +177,38 @@ def _retrieve_messages(message_id: str) -> List[email.message.EmailMessage]:
     return msgs
 
 
+def retrieve_series_messages(series: Dict[str, Any],
+                             identifier: str) -> List[email.message.EmailMessage]:
+    """Fetch messages for a tracked series, using stored patch info when available.
+
+    For rethreaded series, reads the series_patches table to fetch each
+    patch individually and runs the rethread pipeline. For normal series,
+    falls back to the standard single-msgid retrieval.
+    """
+    change_id = series.get('change_id', '')
+    revision = series.get('revision')
+    message_id = series.get('message_id', '')
+    is_rethreaded = series.get('is_rethreaded', False)
+
+    if is_rethreaded and change_id and revision is not None:
+        conn = b4.review.tracking.get_db(identifier)
+        patches = b4.review.tracking.get_series_patches(conn, change_id, int(revision))
+        conn.close()
+
+        if patches:
+            msgids = [p['message_id'] for p in patches if p['position'] > 0]
+            if len(msgids) >= 2:
+                _msgids, all_msgs = b4.fetch_rethread_messages(msgids, nocache=True)
+                _cover_msgid, msgs = b4.LoreSeries.rethread_series(msgids, all_msgs)
+                if not msgs:
+                    raise LookupError(f'Could not retrieve series patches for {change_id}')
+                return msgs
+
+    if not message_id:
+        raise LookupError('No message-id for this series')
+    return _retrieve_messages(message_id)
+
+
 def _get_lore_series(msgs: List[email.message.EmailMessage], sloppytrailers: bool = False,
                      wantver: Optional[int] = None) -> 'b4.LoreSeries':
     """Build a LoreMailbox from messages and return the requested series version.
@@ -221,7 +253,8 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
                          lser: b4.LoreSeries, linkurl: str, linkmask: str,
                          num_prereqs: int = 0,
                          identifier: Optional[str] = None,
-                         status: str = 'reviewing') -> None:
+                         status: str = 'reviewing',
+                         is_rethreaded: bool = False) -> None:
     # Verify branch does not already exist
     ecode, out = b4.git_run_command(topdir, ['rev-parse', '--verify', branch_name])
     if ecode == 0:
@@ -328,6 +361,7 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
             'first-patch-commit': first_patch_commit,
             'header-info': cover_reply_headers,
             'tracked-at': tracked_at,
+            'is-rethreaded': is_rethreaded,
         },
         'followups': cover_followups,
         'patches': patches_meta,
@@ -1835,17 +1869,12 @@ def update_series_tracking(
         'error': None,
     }
 
-    message_id = series.get('message_id', '')
     change_id = series.get('change_id', '')
     current_rev = series.get('revision', 1)
     status = series.get('status', 'new')
 
-    if not message_id:
-        result['error'] = 'No message-id for this series'
-        return result
-
     try:
-        msgs = _retrieve_messages(message_id)
+        msgs = retrieve_series_messages(series, identifier)
     except (LookupError, Exception) as ex:
         result['error'] = str(ex)
         return result

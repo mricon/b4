@@ -5,12 +5,13 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import email.message
 import email.utils
 import os
 import re
 import subprocess
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import b4
 import b4.mbox
@@ -1697,11 +1698,35 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             lambda: self._fetch_followups_bg(cover_msgid, blob_sha),
             name='_followup_worker', thread=True)
 
+    def _fetch_rethreaded_threads(self, blob_sha: str) -> Optional[List[email.message.EmailMessage]]:
+        """Fetch threads for each real patch in a rethreaded series."""
+        all_msgs: List[email.message.EmailMessage] = []
+        seen_msgids: Set[str] = set()
+        fetched_patches: Set[str] = set()
+        for patch_meta in self._patches:
+            pmsgid = patch_meta.get('header-info', {}).get('msgid', '')
+            if not pmsgid or pmsgid in fetched_patches:
+                continue
+            fetched_patches.add(pmsgid)
+            thread = get_thread_msgs(self._topdir, pmsgid,
+                                     blob_sha=blob_sha, quiet=True)
+            if thread:
+                for msg in thread:
+                    c_msgid = b4.LoreMessage.get_clean_msgid(msg)
+                    if c_msgid and c_msgid not in seen_msgids:
+                        all_msgs.append(msg)
+                        seen_msgids.add(c_msgid)
+        return all_msgs or None
+
     def _fetch_followups_bg(self, cover_msgid: str, blob_sha: str) -> None:
         """Load follow-ups from local blob or lore (background thread)."""
         with _quiet_worker():
-            msgs = get_thread_msgs(self._topdir, cover_msgid,
-                                   blob_sha=blob_sha, quiet=True)
+            if self._series.get('is-rethreaded'):
+                # Rethreaded series: fetch each real patch's thread
+                msgs = self._fetch_rethreaded_threads(blob_sha)
+            else:
+                msgs = get_thread_msgs(self._topdir, cover_msgid,
+                                       blob_sha=blob_sha, quiet=True)
 
         if not msgs:
             def _no_msgs() -> None:

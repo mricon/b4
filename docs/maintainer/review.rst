@@ -59,6 +59,31 @@ start tracking.
 B4 fetches the series from lore, discovers all available revisions
 (older and newer), and stores everything in the tracking database.
 
+Tracking unthreaded series
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+When a submitter sends patches without proper threading (each patch as a
+separate, unrelated message), you can use ``--rethread`` to stitch them
+together. Pass any single patch from the series and b4 auto-discovers
+the rest::
+
+    b4 review track --rethread <msgid>
+
+B4 searches lore for other patches from the same author sent within a
+1-hour window, matches them by ``[PATCH n/m]`` counters and version,
+and assembles the full series. You can also provide all message IDs
+explicitly::
+
+    b4 review track --rethread <msgid1> <msgid2> [<msgid3> ...]
+
+Or read them from stdin::
+
+    b4 review track --rethread - < msgids.txt
+
+The ``--rethread`` flag cannot be combined with a positional series
+identifier.
+
+.. versionadded:: v0.16
+
 Using the TUI
 -------------
 Launch the TUI inside the repository with::

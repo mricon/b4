@@ -26,7 +26,17 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+
+SERIES_PATCHES_DDL = '''
+CREATE TABLE IF NOT EXISTS series_patches (
+    change_id  TEXT NOT NULL,
+    revision   INTEGER NOT NULL,
+    position   INTEGER NOT NULL,
+    message_id TEXT NOT NULL,
+    subject    TEXT,
+    PRIMARY KEY (change_id, revision, position)
+)'''
 
 SCHEMA_SQL = '''
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -55,6 +65,7 @@ CREATE TABLE IF NOT EXISTS series (
     snoozed_until TEXT,
     attestation TEXT DEFAULT 'pending',
     target_branch TEXT,
+    is_rethreaded INTEGER DEFAULT 0,
     UNIQUE (change_id, revision)
 );
 
@@ -68,7 +79,7 @@ CREATE TABLE IF NOT EXISTS revisions (
     PRIMARY KEY (change_id, revision)
 );
 
-'''
+''' + SERIES_PATCHES_DDL + ';'
 
 
 def get_review_data_dir() -> str:
@@ -122,6 +133,9 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE series ADD COLUMN attestation TEXT DEFAULT 'pending'")
     if version < 6:
         conn.execute('ALTER TABLE series ADD COLUMN target_branch TEXT')
+    if version < 7:
+        conn.execute(SERIES_PATCHES_DDL)
+        conn.execute('ALTER TABLE series ADD COLUMN is_rethreaded INTEGER DEFAULT 0')
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -297,14 +311,16 @@ def add_series_to_db(conn: sqlite3.Connection, change_id: str, revision: int,
                      message_id: str, num_patches: int,
                      pw_series_id: Optional[int] = None,
                      fingerprint: Optional[str] = None,
-                     added_at: Optional[str] = None) -> int:
+                     added_at: Optional[str] = None,
+                     is_rethreaded: bool = False) -> int:
     """Add a series to the tracking database. Returns the track_id."""
     if added_at is None:
         added_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     cursor = conn.execute('''
         INSERT INTO series
-        (change_id, revision, subject, sender_name, sender_email, sent_at, added_at, message_id, num_patches, pw_series_id, fingerprint)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (change_id, revision, subject, sender_name, sender_email, sent_at, added_at,
+         message_id, num_patches, pw_series_id, fingerprint, is_rethreaded)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (change_id, revision) DO UPDATE SET
             subject = excluded.subject,
             sender_name = excluded.sender_name,
@@ -314,9 +330,11 @@ def add_series_to_db(conn: sqlite3.Connection, change_id: str, revision: int,
             message_id = excluded.message_id,
             num_patches = excluded.num_patches,
             pw_series_id = excluded.pw_series_id,
-            fingerprint = excluded.fingerprint
+            fingerprint = excluded.fingerprint,
+            is_rethreaded = excluded.is_rethreaded
         RETURNING track_id
-    ''', (change_id, revision, subject, sender_name, sender_email, sent_at, added_at, message_id, num_patches, pw_series_id, fingerprint))
+    ''', (change_id, revision, subject, sender_name, sender_email, sent_at, added_at,
+          message_id, num_patches, pw_series_id, fingerprint, int(is_rethreaded)))
     track_id = cursor.fetchone()[0]
     conn.commit()
     return int(track_id)
@@ -346,25 +364,34 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
 
     # Parse the series identifier (message-id, URL, or change-id)
     # Support reading from stdin if no series_id provided
-    series_id = cmdargs.series_id
-    if not series_id:
-        series_id = b4.get_msgid_from_stdin()
-        if not series_id:
-            logger.critical('No series identifier provided')
-            logger.critical('Pipe a message or pass msgid/URL/change-id as parameter')
+    rethread = getattr(cmdargs, 'rethread', None)
+    if rethread:
+        if cmdargs.series_id:
+            logger.critical('--rethread cannot be used with a positional series_id argument')
             sys.exit(1)
+        series_id = None
+    else:
+        series_id = cmdargs.series_id
+        if not series_id:
+            series_id = b4.get_msgid_from_stdin()
+            if not series_id:
+                logger.critical('No series identifier provided')
+                logger.critical('Pipe a message or pass msgid/URL/change-id as parameter')
+                sys.exit(1)
 
     # Set up cmdargs for retrieve_messages
     cmdargs.msgid = series_id
     cmdargs.localmbox = None
-    cmdargs.nocache = False
+    cmdargs.nocache = True
     cmdargs.noparent = False
     cmdargs.wantname = None
     cmdargs.wantver = None
 
     # Retrieve the series
-    logger.info('Retrieving series: %s', series_id)
-    cmdargs.nocache = True
+    if rethread:
+        logger.info('Rethreading series from %d message IDs', len(rethread))
+    else:
+        logger.info('Retrieving series: %s', series_id)
     _msgid, msgs = b4.retrieve_messages(cmdargs)
     if not msgs:
         logger.critical('Could not retrieve series: %s', series_id)
@@ -411,12 +438,20 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
 
     fingerprint = lser.fingerprint
 
-    # Get message-id from cover letter or first patch
+    # Get message-id from cover letter or first patch.
+    # For rethreaded series, skip the synthetic cover and use the first
+    # real patch so the stored msgid is fetchable from lore.
     ref_msg: Optional[b4.LoreMessage] = None
-    if lser.has_cover and lser.patches[0] is not None:
-        ref_msg = lser.patches[0]
-    elif len(lser.patches) > 1 and lser.patches[1] is not None:
-        ref_msg = lser.patches[1]
+    if rethread:
+        for p in lser.patches[1:]:
+            if p is not None:
+                ref_msg = p
+                break
+    else:
+        if lser.has_cover and lser.patches[0] is not None:
+            ref_msg = lser.patches[0]
+        elif len(lser.patches) > 1 and lser.patches[1] is not None:
+            ref_msg = lser.patches[1]
 
     if ref_msg is None:
         logger.critical('Could not find cover letter or first patch')
@@ -458,7 +493,9 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     subject = lser.subject
     conn = get_db(identifier)
     add_series_to_db(conn, change_id, revision, subject, sender_name, sender_email,
-                     sent_at, message_id, num_patches, fingerprint=fingerprint)
+                     sent_at, message_id, num_patches, fingerprint=fingerprint,
+                     is_rethreaded=bool(rethread))
+    add_series_patches(conn, change_id, revision, lser)
 
     # Record all discovered revisions
     config = b4.get_main_config()
@@ -538,7 +575,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
             SELECT track_id, change_id, revision, subject, sender_name, sender_email,
                    sent_at, added_at, status, num_patches, message_id, pw_series_id,
                    message_count, seen_message_count, last_activity_at, attestation,
-                   target_branch
+                   target_branch, is_rethreaded
             FROM series
             ORDER BY added_at DESC
         ''')
@@ -562,6 +599,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                 'last_activity_at': row[14],
                 'attestation': row[15],
                 'target_branch': row[16],
+                'is_rethreaded': bool(row[17]),
             })
         conn.close()
         return result
@@ -579,6 +617,38 @@ def add_revision(conn: sqlite3.Connection, change_id: str, revision: int,
         VALUES (?, ?, ?, ?, ?, ?)''',
                  (change_id, revision, message_id, subject, link, found_at))
     conn.commit()
+
+
+def add_series_patches(conn: sqlite3.Connection, change_id: str, revision: int,
+                       lser: 'b4.LoreSeries') -> None:
+    """Store the member patches for a tracked series.
+
+    Iterates lser.patches and inserts one row per non-None patch.
+    Deletes any existing rows first so the call is idempotent.
+    """
+    conn.execute('DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+                 (change_id, revision))
+    rows = []
+    for position, lmsg in enumerate(lser.patches):
+        if lmsg is None:
+            continue
+        rows.append((change_id, revision, position, lmsg.msgid, lmsg.subject))
+    if rows:
+        conn.executemany(
+            'INSERT INTO series_patches (change_id, revision, position, message_id, subject)'
+            ' VALUES (?, ?, ?, ?, ?)', rows)
+    conn.commit()
+
+
+def get_series_patches(conn: sqlite3.Connection, change_id: str,
+                       revision: int) -> List[Dict[str, Any]]:
+    """Return the stored patches for a series, ordered by position."""
+    cols = ('position', 'message_id', 'subject')
+    cursor = conn.execute(
+        'SELECT position, message_id, subject FROM series_patches'
+        ' WHERE change_id = ? AND revision = ? ORDER BY position ASC',
+        (change_id, revision))
+    return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
 def get_revisions(conn: sqlite3.Connection, change_id: str) -> list[dict[str, Any]]:
@@ -1702,6 +1772,7 @@ def rescan_branches(identifier: str, topdir: str,
                 pass
 
         message_id = series.get('header-info', {}).get('msgid', '')
+        is_rethreaded = series.get('is-rethreaded', False)
 
         # Upsert metadata and sync status from the tracking commit.
         tracked_at = series.get('tracked-at')
@@ -1713,8 +1784,25 @@ def rescan_branches(identifier: str, topdir: str,
                          sent_at=sent_at,
                          message_id=message_id,
                          num_patches=series.get('expected', 0),
-                         added_at=tracked_at)
+                         added_at=tracked_at,
+                         is_rethreaded=is_rethreaded)
         update_series_status(conn, change_id, status, revision=revision)
+
+        # Rebuild series_patches from tracking commit data
+        tracking_patches = tracking.get('patches', [])
+        if tracking_patches:
+            conn.execute('DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+                         (change_id, revision))
+            rows = []
+            for i, p in enumerate(tracking_patches, 1):
+                p_msgid = p.get('header-info', {}).get('msgid', '')
+                if p_msgid:
+                    rows.append((change_id, revision, i, p_msgid, p.get('title', '')))
+            if rows:
+                conn.executemany(
+                    'INSERT INTO series_patches (change_id, revision, position, message_id, subject)'
+                    ' VALUES (?, ?, ?, ?, ?)', rows)
+                conn.commit()
 
         # Persist the new HEAD SHA so future rescans can skip this branch.
         conn.execute('UPDATE series SET branch_sha = ? WHERE change_id = ? AND revision = ?',

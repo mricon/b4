@@ -60,6 +60,29 @@ Option flags
 
   .. versionadded:: v0.13
 
+``--rethread MSGID [MSGID ...]``
+  When a submitter sends patches without proper threading (each patch
+  is a separate, unrelated message), b4 cannot process them as a
+  series. This flag stitches them into a single properly threaded
+  series.
+
+  With a single message ID, b4 auto-discovers the rest of the series
+  by searching lore for patches from the same author sent within a
+  1-hour window. It uses the ``[PATCH n/m]`` counters and version to
+  identify sibling patches.
+
+  With two or more message IDs, b4 uses them directly without
+  searching. Pass ``-`` to read message IDs from stdin, one per line
+  (lines starting with ``#`` are ignored).
+
+  If the series has a cover letter, it is used as the thread root.
+  Otherwise, patches are threaded under the first patch, just like
+  a normal coverless series.
+
+  Cannot be used with ``--use-local-mbox``.
+
+  .. versionadded:: v0.16
+
 ``-o OUTDIR, --outdir OUTDIR``
   Instead of writing the .mbox file to the current directory, write it
   to this location instead. You can also pass a path to an existing

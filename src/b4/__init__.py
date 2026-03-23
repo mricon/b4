@@ -647,6 +647,152 @@ class LoreSeries:
                 self.fromname = self.patches[1].fromname
                 self.fromemail = self.patches[1].fromemail
 
+    @staticmethod
+    def rewrite_subject_counter(msg: EmailMessage, counter: int, expected: int) -> None:
+        """Rewrite the [PATCH n/m] in a message's subject, preserving extra prefixes."""
+        lsubj = LoreSubject(msg.get('Subject', ''))
+        extra_pfx = lsubj.get_extra_prefixes(exclude=['patch'])
+        parts = ['PATCH'] + extra_pfx
+        if lsubj.revision > 1:
+            parts.append(f'v{lsubj.revision}')
+        cstr = str(counter).zfill(len(str(expected)))
+        parts.append(f'{cstr}/{expected}')
+        new_subject = f'[{" ".join(parts)}] {lsubj.subject}'
+        del msg['Subject']
+        msg['Subject'] = new_subject
+
+    @staticmethod
+    def identify_cover_letter(all_msgs: List[EmailMessage],
+                              msgids: List[str]) -> Tuple[Optional[str], List[EmailMessage]]:
+        """Identify the cover letter and patch messages among the user-specified msgids.
+
+        Scans the messages matching the given msgids for one with an explicit
+        [PATCH 0/N] subject (the cover letter). All other matching messages
+        are returned as patches, in the order they appear in msgids.
+
+        Returns (cover_msgid_or_None, ordered_patch_messages).
+        """
+        msg_by_id: Dict[str, EmailMessage] = {}
+        for msg in all_msgs:
+            c_msgid = LoreMessage.get_clean_msgid(msg)
+            if c_msgid:
+                msg_by_id[c_msgid] = msg
+
+        cover_msgid: Optional[str] = None
+        patch_msgs: List[EmailMessage] = []
+
+        for msgid in msgids:
+            found_msg = msg_by_id.get(msgid)
+            if found_msg is None:
+                continue
+            lsubj = LoreSubject(found_msg.get('Subject', ''))
+            if lsubj.counter == 0 and not lsubj.counters_inferred:
+                cover_msgid = msgid
+            else:
+                patch_msgs.append(found_msg)
+
+        return cover_msgid, patch_msgs
+
+    @staticmethod
+    def renumber_patches(patch_msgs: List[EmailMessage]) -> None:
+        """Renumber patches so the series has consistent [PATCH n/m] subjects.
+
+        If all patches have explicit counters, only the expected total is
+        fixed (in case individual patches claimed the wrong total). If any
+        patches have inferred counters, all patches are renumbered based on
+        list order.
+        """
+        num_patches = len(patch_msgs)
+        if not num_patches:
+            return
+
+        parsed = [(msg, LoreSubject(msg.get('Subject', ''))) for msg in patch_msgs]
+        all_explicit = all(not lsubj.counters_inferred for _, lsubj in parsed)
+
+        if all_explicit:
+            for msg, lsubj in parsed:
+                if lsubj.expected != num_patches:
+                    LoreSeries.rewrite_subject_counter(msg, lsubj.counter, num_patches)
+        else:
+            logger.info('Renumbering patches based on command-line order')
+            for i, (msg, _lsubj) in enumerate(parsed, 1):
+                LoreSeries.rewrite_subject_counter(msg, i, num_patches)
+
+    @staticmethod
+    def rethread_messages(all_msgs: List[EmailMessage], cover_msgid: str,
+                          patch_msgids: Set[str]) -> None:
+        """Rewrite threading headers so all top-level patches are children of the cover.
+
+        The cover letter has its In-Reply-To and References stripped (it
+        becomes the thread root). Each patch in patch_msgids gets In-Reply-To
+        and References pointing at the cover. Child messages (reviews, acks)
+        are left untouched.
+        """
+        for msg in all_msgs:
+            c_msgid = LoreMessage.get_clean_msgid(msg)
+            if c_msgid == cover_msgid:
+                if msg.get('In-Reply-To'):
+                    del msg['In-Reply-To']
+                if msg.get('References'):
+                    del msg['References']
+                continue
+
+            if c_msgid in patch_msgids:
+                if msg.get('In-Reply-To'):
+                    del msg['In-Reply-To']
+                msg['In-Reply-To'] = f'<{cover_msgid}>'
+                if msg.get('References'):
+                    del msg['References']
+                msg['References'] = f'<{cover_msgid}>'
+
+    @staticmethod
+    def rethread_series(msgids: List[str],
+                        all_msgs: List[EmailMessage]) -> Tuple[str, List[EmailMessage]]:
+        """Reconstitute a properly threaded series from unthreaded messages.
+
+        Runs the full rethread pipeline: identify a cover letter (or use
+        the first patch as thread root), renumber patches, and rewrite
+        threading headers. Returns (root_msgid, all_msgs).
+        """
+        cover_msgid, patch_msgs = LoreSeries.identify_cover_letter(all_msgs, msgids)
+
+        if not patch_msgs:
+            raise LookupError('No patch messages found in the provided message IDs')
+
+        num_patches = len(patch_msgs)
+
+        # Use the cover letter as thread root, or fall back to the
+        # first patch — just like a normal coverless series on lore.
+        if cover_msgid is None:
+            root_msgid = LoreMessage.get_clean_msgid(patch_msgs[0])
+            if not root_msgid:
+                raise LookupError('Could not determine message-id for first patch')
+            logger.info('No cover letter found, threading under first patch')
+        else:
+            root_msgid = cover_msgid
+
+        LoreSeries.renumber_patches(patch_msgs)
+
+        # Fix the cover/root expected count if it doesn't match
+        for msg in all_msgs:
+            if LoreMessage.get_clean_msgid(msg) == root_msgid:
+                lsubj = LoreSubject(msg.get('Subject', ''))
+                if lsubj.expected != num_patches:
+                    counter = 0 if root_msgid == cover_msgid else lsubj.counter
+                    LoreSeries.rewrite_subject_counter(msg, counter, num_patches)
+                break
+
+        # Build the set of msgids to rethread (exclude the root itself)
+        patch_msgids: Set[str] = set()
+        for m in patch_msgs:
+            mid = LoreMessage.get_clean_msgid(m)
+            if mid and mid != root_msgid:
+                patch_msgids.add(mid)
+        LoreSeries.rethread_messages(all_msgs, root_msgid, patch_msgids)
+
+        logger.info('Rethreaded %d patches under %s', num_patches, root_msgid)
+        return root_msgid, all_msgs
+
     def get_slug(self, extended: bool = False) -> str:
         # Find the first non-None entry
         lmsg = None
@@ -3477,17 +3623,9 @@ def get_msgid_from_stdin() -> Optional[str]:
     return None
 
 
-def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
-    if not cmdargs.msgid and not cmdargs.no_stdin:
-        logger.debug('Getting Message-ID from stdin')
-        msgid = get_msgid_from_stdin()
-    else:
-        msgid = cmdargs.msgid
-
-    if msgid is None:
-        return None
-
-    msgid = msgid.strip('<>')
+def parse_msgid(msgid: str) -> str:
+    """Parse a clean message-id from a string that may be a URL, angle-bracketed, or bare msgid."""
+    msgid = msgid.strip().strip('<>')
     # Handle the case when someone pastes a full URL to the message
     # Is this a patchwork URL?
     matches = re.search(r'^https?://.*/project/.*/patch/([^/]+@[^/]+)', msgid, re.IGNORECASE)
@@ -3520,6 +3658,19 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
         msgid = re.sub(r'^\w*id:', '', msgid)
 
     return msgid
+
+
+def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
+    if not cmdargs.msgid and not cmdargs.no_stdin:
+        logger.debug('Getting Message-ID from stdin')
+        msgid = get_msgid_from_stdin()
+    else:
+        msgid = cmdargs.msgid
+
+    if msgid is None:
+        return None
+
+    return parse_msgid(msgid)
 
 
 def get_strict_thread(msgs: List[EmailMessage], msgid: str, noparent: bool = False) -> Optional[List[EmailMessage]]:
@@ -4706,7 +4857,182 @@ def get_email_signature() -> str:
     return signature
 
 
+def discover_rethread_series(msgid: str, nocache: bool = False) -> List[str]:
+    """Auto-discover sibling patches for a single msgid by querying lore.
+
+    Fetches the seed message, determines the author and date, then
+    searches lore for other patches from the same author within a
+    1-hour window. Filters results by matching patch counters and
+    revision to identify the series.
+
+    Returns an ordered list of msgids (cover first if found, then
+    patches sorted by counter).
+    """
+    seed_msgs = get_pi_thread_by_msgid(msgid, nocache=nocache)
+    if not seed_msgs:
+        raise LookupError(f'Could not retrieve seed message: {msgid}')
+
+    # Find the seed message itself among the thread results
+    seed_msg = None
+    for msg in seed_msgs:
+        if LoreMessage.get_clean_msgid(msg) == msgid:
+            seed_msg = msg
+            break
+    if seed_msg is None:
+        seed_msg = seed_msgs[0]
+
+    seed = LoreMessage(seed_msg)
+    logger.info('Seed: [%d/%d] %s (from %s)',
+                seed.counter, seed.expected, seed.subject, seed.fromemail)
+
+    # Build a 1-hour date window around the seed (30 min each way)
+    # Convert to UTC since public-inbox dt: expects UTC timestamps
+    seed_utc = seed.date.astimezone(datetime.timezone.utc)
+    dt_start = seed_utc - datetime.timedelta(minutes=30)
+    dt_end = seed_utc + datetime.timedelta(minutes=30)
+    d_start = dt_start.strftime('%Y%m%d%H%M%S')
+    d_end = dt_end.strftime('%Y%m%d%H%M%S')
+
+    q = f'f:"{seed.fromemail}" AND dt:{d_start}..{d_end}'
+    logger.info('Searching lore for related patches: %s', q)
+    results = get_pi_search_results(q, nocache=nocache, full_threads=False)
+    if not results:
+        logger.warning('No search results found, using seed message only')
+        return [msgid]
+
+    # Filter candidates by matching counters/revision
+    found: Dict[int, str] = {}
+    found_bare: List[str] = []
+    seen_msgids: Set[str] = set()
+    for msg in results:
+        lmsg = LoreMessage(msg)
+        if lmsg.reply:
+            continue
+        if not lmsg.lsubject.patch:
+            continue
+        if lmsg.msgid in seen_msgids:
+            continue
+        seen_msgids.add(lmsg.msgid)
+
+        if not seed.counters_inferred:
+            # Seed has explicit [n/m] counters — match expected and revision
+            if lmsg.counters_inferred:
+                continue
+            if lmsg.expected != seed.expected:
+                continue
+            if lmsg.revision != seed.revision:
+                continue
+            if lmsg.counter not in found:
+                found[lmsg.counter] = lmsg.msgid
+        else:
+            # Seed is bare [PATCH] — match other bare [PATCH] messages
+            if not lmsg.counters_inferred:
+                continue
+            found_bare.append(lmsg.msgid)
+
+    if seed.counters_inferred:
+        if not found_bare:
+            logger.warning('Could not find any matching patches, using seed message only')
+            return [msgid]
+        logger.info('Discovered %d bare patches from the same author', len(found_bare))
+        return found_bare
+
+    if not found:
+        logger.warning('Could not find any matching patches, using seed message only')
+        return [msgid]
+
+    # Sort by counter: cover (0) first, then patches 1..N
+    msgids = [found[c] for c in sorted(found.keys())]
+
+    expected = seed.expected
+    # Count patches only (exclude cover at counter 0)
+    n_patches = sum(1 for c in found if c > 0)
+    if n_patches < expected:
+        missing = [str(i) for i in range(1, expected + 1) if i not in found]
+        logger.warning('Found %d/%d patches (missing: %s)',
+                       n_patches, expected, ', '.join(missing))
+    else:
+        logger.info('Discovered %d/%d patches for the series', n_patches, expected)
+
+    return msgids
+
+
+def fetch_rethread_messages(msgids: List[str], nocache: bool = False) -> Tuple[List[str], List[EmailMessage]]:
+    """Fetch messages for multiple msgids, deduplicating across threads.
+
+    Returns (msgids, all_msgs) where msgids is the input list (for
+    pipeline use) and all_msgs contains all fetched messages with
+    duplicates removed.
+    """
+    all_msgs: List[EmailMessage] = []
+    seen: Set[str] = set()
+
+    for msgid in msgids:
+        logger.info('Retrieving series: %s', msgid)
+        thread_msgs = get_pi_thread_by_msgid(msgid, nocache=nocache)
+        if not thread_msgs:
+            logger.warning('Could not retrieve %s, skipping', msgid)
+            continue
+        for msg in thread_msgs:
+            c_msgid = LoreMessage.get_clean_msgid(msg)
+            if c_msgid and c_msgid not in seen:
+                all_msgs.append(msg)
+                seen.add(c_msgid)
+
+    if not all_msgs:
+        raise LookupError('Could not retrieve any of the specified messages')
+
+    return msgids, all_msgs
+
+
+def retrieve_rethreaded_messages(cmdargs: argparse.Namespace) -> Tuple[str, List[EmailMessage]]:
+    """Retrieve messages from multiple unthreaded msgids and rethread them into a series."""
+    raw_ids: List[str] = cmdargs.rethread
+
+    # Support reading from stdin with --rethread -
+    if len(raw_ids) == 1 and raw_ids[0] == '-':
+        if sys.stdin.isatty():
+            raise LookupError('--rethread - requires message IDs piped via stdin')
+        raw_ids = []
+        for line in sys.stdin:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                raw_ids.append(line)
+        if not raw_ids:
+            raise LookupError('No message IDs found on stdin')
+
+    if not raw_ids:
+        raise LookupError('--rethread requires at least one message ID')
+
+    # Parse each entry to a clean msgid
+    msgids: List[str] = []
+    for raw_id in raw_ids:
+        msgid = parse_msgid(raw_id)
+        msgids.append(msgid)
+        logger.debug('Parsed rethread msgid: %s', msgid)
+
+    nocache = getattr(cmdargs, 'nocache', False)
+
+    # Auto-discover the rest of the series from a single seed message
+    if len(msgids) == 1:
+        msgids = discover_rethread_series(msgids[0], nocache=nocache)
+        if len(msgids) < 2:
+            raise LookupError('Could not discover additional patches for the series')
+
+    _msgids, all_msgs = fetch_rethread_messages(msgids, nocache=nocache)
+    return LoreSeries.rethread_series(msgids, all_msgs)
+
+
 def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optional[List[EmailMessage]]]:
+    # Handle --rethread mode: fetch multiple unrelated messages and stitch them together
+    if getattr(cmdargs, 'rethread', None):
+        if not can_network:
+            raise LookupError('Cannot retrieve threads from remote in offline mode')
+        if cmdargs.localmbox:
+            raise LookupError('--rethread cannot be used with --use-local-mbox')
+        cover_msgid, msgs = retrieve_rethreaded_messages(cmdargs)
+        return cover_msgid, msgs
+
     msgid = None
     with_thread = True
     pickings = set()

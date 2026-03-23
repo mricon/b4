@@ -78,6 +78,11 @@ For options and their descriptions, see ``b4 mbox --help``.
   existing mailbox, filtering out any dupes already in your mailbox
   folder.
 
+``b4 mbox --rethread [msgid1] [msgid2] [...]``
+  Stitch multiple unthreaded messages into a single series and save as
+  an mbox file. Useful when a submitter sends patches without proper
+  threading.
+
 
 b4 am
 ~~~~~
@@ -127,6 +132,10 @@ For options and their descriptions, see ``b4 am --help``.
   the command using the ``b4.am-perpatch-check-cmd`` configuration
   option. For the Linux kernel, the default will be the most common
   ``checkpatch.pl`` set of options.
+
+``b4 am --rethread [msgid1] [msgid2] [...]``
+  Stitch multiple unthreaded messages into a single series and prepare
+  them for ``git am``.
 
 b4 shazam
 ~~~~~~~~~
@@ -295,6 +304,10 @@ For options and their descriptions, see ``b4 review --help`` and
 
 ``b4 review track <msgid>``
   Track a series by its message-id, URL, or change-id.
+
+``b4 review track --rethread <msgid1> <msgid2> [...]``
+  Track a series that was sent without proper threading by stitching
+  the given messages into a single series.
 
 ``b4 review tui``
   Launch the review TUI.

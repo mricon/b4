@@ -1071,7 +1071,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         def _fetch_and_prepare() -> Tuple[b4.LoreSeries, bytes, str, str]:
             with _quiet_worker():
-                msgs = b4.review._retrieve_messages(message_id)
+                msgs = b4.review.retrieve_series_messages(series, self._identifier)
                 self._refresh_msg_count(series, len(msgs))
                 wantver = series.get('revision')
                 lser = b4.review._get_lore_series(msgs, wantver=wantver)
@@ -1307,10 +1307,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                                           origin=linkurl, am_flags=['-3'])
 
                 # Create the review branch
+                _is_rt = bool(series.get('is_rethreaded'))
                 b4.review.create_review_branch(topdir, branch_name, base_commit, lser,
                                                linkurl, linkmask, num_prereqs=0,
                                                identifier=self._identifier,
-                                               status='reviewing')
+                                               status='reviewing',
+                                               is_rethreaded=_is_rt)
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
             except b4.AmConflictError as cex:
@@ -1322,7 +1324,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 b4.review.create_review_branch(topdir, branch_name, base_commit, lser,
                                                linkurl, linkmask, num_prereqs=0,
                                                identifier=self._identifier,
-                                               status='reviewing')
+                                               status='reviewing',
+                                               is_rethreaded=_is_rt)
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
             except Exception as ex:
@@ -3029,7 +3032,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Phase 1: fetch series and compute base in a worker thread
         def _fetch_update() -> Tuple[b4.LoreSeries, bytes, str, str, int]:
             with _quiet_worker():
-                msgs = b4.review._retrieve_messages(target_msgid)
+                target_series = dict(self._selected_series or {})
+                target_series['message_id'] = target_msgid
+                target_series['revision'] = target_rev
+                msgs = b4.review.retrieve_series_messages(target_series, self._identifier)
                 lser = b4.review._get_lore_series(msgs)
 
                 am_msgs = lser.get_am_ready(
@@ -3215,11 +3221,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 b4.git_fetch_am_into_repo(topdir, ambytes=ambytes,
                                           at_base=base_sha, origin=linkurl,
                                           am_flags=['-3'])
+                _is_rt = bool((self._selected_series or {}).get('is_rethreaded'))
                 b4.review.create_review_branch(topdir, upgrade_branch,
                                                base_sha, lser, linkurl,
                                                linkmask, num_prereqs=0,
                                                identifier=self._identifier,
-                                               status='reviewing')
+                                               status='reviewing',
+                                               is_rethreaded=_is_rt)
                 logger.info('Upgrade branch created: %s', upgrade_branch)
             except b4.AmConflictError as cex:
                 if not _resolve_worktree_am_conflict(topdir, cex):
@@ -3235,7 +3243,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                                                base_sha, lser, linkurl,
                                                linkmask, num_prereqs=0,
                                                identifier=self._identifier,
-                                               status='reviewing')
+                                               status='reviewing',
+                                               is_rethreaded=_is_rt)
                 logger.info('Upgrade branch created: %s', upgrade_branch)
             except Exception as ex:
                 logger.critical('Error creating review branch: %s', ex)

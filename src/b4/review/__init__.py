@@ -1,7 +1,7 @@
 # Re-export everything from the original review module
 from b4.review._review import *  # noqa: F403
 from b4.review._review import (
-    _retrieve_messages, _get_lore_series,
+    _retrieve_messages, retrieve_series_messages, _get_lore_series,
     _collect_followups, _collect_reply_headers,
     _get_my_review, _ensure_my_review, _cleanup_review,
     _get_patch_state, _set_patch_state,
@@ -20,7 +20,7 @@ from b4.review._review import (
 
 # Tell mypy these private symbols are intentionally re-exported
 __all__ = [
-    '_retrieve_messages', '_get_lore_series',
+    '_retrieve_messages', 'retrieve_series_messages', '_get_lore_series',
     '_collect_followups', '_collect_reply_headers',
     '_get_my_review', '_ensure_my_review', '_cleanup_review',
     '_get_patch_state', '_set_patch_state',

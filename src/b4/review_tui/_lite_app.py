@@ -524,7 +524,17 @@ class LiteThreadScreen(ModalScreen[None]):
 
     def _fetch_thread(self) -> List[ThreadNode]:
         with _quiet_worker():
-            msgs = b4.review._retrieve_messages(self._message_id)
+            ti = self._tracking_info or {}
+            series_dict: Dict[str, Any] = {
+                'message_id': self._message_id,
+                'change_id': ti.get('change_id', ''),
+                'revision': ti.get('revision'),
+            }
+            identifier = ti.get('identifier', '')
+            if identifier:
+                msgs = b4.review.retrieve_series_messages(series_dict, identifier)
+            else:
+                msgs = b4.review._retrieve_messages(self._message_id)
             self._refresh_msg_count(len(msgs))
             lmbx = b4.LoreMailbox()
             for msg in msgs:
