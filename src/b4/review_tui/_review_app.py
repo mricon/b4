@@ -110,7 +110,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         border-right: solid $primary;
     }
     #patch-list {
-        height: auto;
+        height: 1fr;
     }
     #diff-viewer {
         width: 3fr;
@@ -352,6 +352,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             for i, child in enumerate(lv.children):
                 if isinstance(child, PatchListItem) and child.patch_idx == self._selected_idx:
                     lv.index = i
+                    lv.scroll_visible()
                     break
 
     def _append_followup_items(self, lv: ListView, display_idx: int) -> None:
@@ -897,11 +898,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         lv = self.query_one('#patch-list', ListView)
         if lv.index is not None and lv.index > 0:
             lv.index -= 1
+            lv.scroll_visible()
 
     def action_next_patch(self) -> None:
         lv = self.query_one('#patch-list', ListView)
         if lv.index is not None and lv.index < len(lv.children) - 1:
             lv.index += 1
+            lv.scroll_visible()
 
     def action_page_down(self) -> None:
         self.query_one('#diff-viewer', RichLog).scroll_page_down()
