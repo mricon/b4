@@ -548,6 +548,7 @@ class TestCmdTrack:
         msgid: str = 'test-msgid@example.com',
         fromname: str = 'Test Author',
         fromemail: str = 'author@example.com',
+        subject: str = 'Test patch',
         date: datetime.datetime = datetime.datetime(2024, 1, 15, 10, 0, 0, tzinfo=datetime.timezone.utc)
     ) -> mock.Mock:
         """Create a mock LoreMessage."""
@@ -555,6 +556,7 @@ class TestCmdTrack:
         lmsg.msgid = msgid
         lmsg.fromname = fromname
         lmsg.fromemail = fromemail
+        lmsg.subject = subject
         lmsg.date = date
         lmsg.lsubject.get_slug.return_value = 'test-series'
         return lmsg

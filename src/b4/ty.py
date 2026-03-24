@@ -679,10 +679,12 @@ def _get_queue_dir(dryrun: bool = False) -> str:
 
     Uses .git/b4-review/queue (via git-common-dir for worktree
     support).  Dry-run messages go into a ``dryrun`` subdirectory.
+    When not inside a git repository, returns a path that will not
+    exist so callers that check os.path.isdir() get empty results.
     """
     gitdir = b4.git_get_common_dir()
     if not gitdir:
-        raise RuntimeError('Not inside a git repository')
+        return ''
     qdir = os.path.join(gitdir, 'b4-review', 'queue')
     if dryrun:
         qdir = os.path.join(qdir, 'dryrun')

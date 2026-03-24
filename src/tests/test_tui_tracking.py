@@ -2212,7 +2212,8 @@ class TestUpdateRevisionWorkflow:
                          lser_arg: b4.LoreSeries, linkurl: str,
                          linkmask: str, num_prereqs: int = 0,
                          identifier: Optional[str] = None,
-                         status: str = 'reviewing') -> None:
+                         status: str = 'reviewing',
+                         **kwargs: Any) -> None:
             """Simulate create_review_branch by making a real branch."""
             _create_review_branch(topdir, change_id + '-v2-upgrade',
                                   identifier=identifier or 'test',

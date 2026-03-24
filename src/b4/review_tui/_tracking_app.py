@@ -2870,11 +2870,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not confirmed:
             return
         topdir = b4.git_get_toplevel()
-        if not topdir:
-            self.notify('Not in a git repository', severity='error')
-            return
         # Delete the review branch if it exists
-        if has_branch:
+        if has_branch and topdir:
             if not self._delete_review_branch(topdir, review_branch):
                 return
         # Delete from tracking database
