@@ -1646,6 +1646,9 @@ def rescan_branches(identifier: str, topdir: str,
     changed = 0
 
     for br in branches:
+        # Skip temporary branches (e.g. upgrade work branches)
+        if br.startswith('b4/review/_tmp-'):
+            continue
         # Derive change_id from the branch name for the fast SHA check.
         change_id_from_branch = br.removeprefix('b4/review/')
 
