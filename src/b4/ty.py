@@ -682,7 +682,7 @@ def _get_queue_dir(dryrun: bool = False) -> str:
     """
     gitdir = b4.git_get_common_dir()
     if not gitdir:
-        raise RuntimeError('Not inside a git repository')
+        return ''
     qdir = os.path.join(gitdir, 'b4-review', 'queue')
     if dryrun:
         qdir = os.path.join(qdir, 'dryrun')
