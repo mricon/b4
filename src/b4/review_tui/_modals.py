@@ -3480,7 +3480,6 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
     def _render_matrix(self) -> None:
         viewer = self.query_one('#tcr-matrix', RichLog)
         viewer.clear()
-        viewer.scroll_home()
 
         if not self._tools:
             viewer.write(Text('No check results to display.', style='dim'))
@@ -3529,6 +3528,11 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
                     dash = '\u2013'
                     row.append(f'{dash:^{col_w}s}  ', style='dim')
             viewer.write(row)
+
+        # Scroll so the cursor row is visible (2 header lines + data rows)
+        cursor_line = 2 + self._cursor_row
+        viewer.scroll_to(y=max(0, cursor_line - viewer.size.height // 2),
+                         animate=False)
 
     def _render_detail(self, pidx: int) -> None:
         detail = self.query_one('#tcr-detail', RichLog)
