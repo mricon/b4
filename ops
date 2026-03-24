@@ -1,1 +1,1 @@
-{"author":{"id":"3672b31936ef7ee7b115507ccb8bc3cb03992434083382a438ce8438928469c1"},"ops":[{"type":5,"timestamp":1774357045,"nonce":"hRiiXu9qMedV5vNzETMpI7rI6Lw=","added":["b4/tests"],"removed":null}]}
+{"author":{"id":"2fec99dc79e1c05dcc8e6b4c2ef3b9c29fe62a9801fe4df49021516fba017977"},"ops":[{"type":2,"timestamp":1774357298,"nonce":"gBQaWQk6PBc77ghitpO7EV3I84g=","title":"tests not working when run from tarball","was":"b4 v0.15.0 released"}]}
