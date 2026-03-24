@@ -252,6 +252,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._cover_subject_clean: str = session['cover_subject_clean']
         self._email_dryrun: bool = session.get('email_dryrun', False)
         self._patatt_sign: bool = session.get('patatt_sign', True)
+        self._branch: str = session['branch']
+        self._original_branch: Optional[str] = session.get('original_branch')
+        self.branch_checked_out: bool = False
         self._has_cover: bool = 'NOTE: No cover letter provided by the author.' not in self._cover_text
         self._selected_idx: int = 0 if self._has_cover else 1  # 0 = cover, 1..N = patches
         self._preview_mode: bool = False
@@ -1847,6 +1850,33 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         except Exception:
             pass
 
+    def _ensure_branch_checked_out(self) -> bool:
+        """Check out the review branch if not already done.
+
+        Shell suspend and agent runs need the working tree on the review
+        branch. This defers the checkout to the first time it's needed
+        so that normal review operations (reading diffs, saving tracking
+        data) never switch branches.
+        """
+        if self.branch_checked_out:
+            return True
+        ecode, _out = b4.git_run_command(
+            self._topdir, ['checkout', self._branch], logstderr=True)
+        if ecode != 0:
+            self.notify(f'Could not check out {self._branch}', severity='error')
+            return False
+        self.branch_checked_out = True
+        return True
+
+    def _restore_original_branch(self) -> None:
+        """Switch back to the original branch after shell/agent use."""
+        if not self.branch_checked_out or not self._original_branch:
+            return
+        ecode, _out = b4.git_run_command(
+            self._topdir, ['checkout', self._original_branch], logstderr=True)
+        if ecode == 0:
+            self.branch_checked_out = False
+
     def action_agent(self) -> None:
         """Run the configured review agent command."""
         import shlex
@@ -1870,6 +1900,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                         severity='error')
             return
         cmdargs += [f'Read and execute the prompt from {prompt_path}']
+
+        if not self._ensure_branch_checked_out():
+            return
 
         with self.suspend():
             logger.info('Running review agent: %s', ' '.join(cmdargs))
@@ -1898,6 +1931,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             self._populate_patch_list()
             self._show_content(self._selected_idx)
             self.notify('Agent review data loaded')
+        self._restore_original_branch()
 
     def _save_tracking(self) -> None:
         """Save tracking data to the review branch."""
@@ -1905,10 +1939,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
     def action_suspend(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
+        if not self._ensure_branch_checked_out():
+            return
         old_shas = list(self._commit_shas)
         with self.suspend():
             _suspend_to_shell()
         self._reconcile_after_shell(old_shas)
+        self._restore_original_branch()
 
     def _reconcile_after_shell(self, old_shas: List[str]) -> None:
         """Reconcile tracking data after returning from shell.

@@ -926,23 +926,25 @@ def _integrate_agent_reviews(
     tracking: Dict[str, Any],
     commit_shas: List[str],
     patches: List[Dict[str, Any]],
+    branch: Optional[str] = None,
 ) -> bool:
-    """Read review files from .git/b4-review/<HEAD-sha>/ and merge into tracking.
+    """Read review files from .git/b4-review/<tip-sha>/ and merge into tracking.
 
     The directory-based layout uses:
     - ``identity.txt`` for reviewer attribution (``Name <email>``)
     - ``series.txt`` for cover letter review (plain text note)
     - ``NNNN.txt`` (1-indexed) for per-patch reviews with annotated diffs
 
-    Consumption is implicit: :func:`save_tracking` amends HEAD, changing
-    its SHA so the directory no longer matches on the next run.
+    Consumption is implicit: :func:`save_tracking` amends the branch tip,
+    changing its SHA so the directory no longer matches on the next run.
 
     Returns True if any reviews were integrated.
     """
     series = tracking['series']
 
-    # Resolve HEAD SHA
-    ecode, out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
+    # Resolve tip SHA from explicit ref or HEAD
+    ref = branch if branch else 'HEAD'
+    ecode, out = b4.git_run_command(topdir, ['rev-parse', ref])
     if ecode != 0:
         return False
     head_sha = out.strip()
@@ -2103,32 +2105,24 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
                         branch, REVIEW_BRANCH_PREFIX)
         sys.exit(1)
 
-    # Ensure we are on the review branch
-    ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
-    current_branch = out.strip() if ecode == 0 else None
-    if current_branch != branch:
-        ecode, out = b4.git_run_command(topdir, ['checkout', branch], logstderr=True)
-        if ecode > 0:
-            logger.critical('Could not check out branch %s', branch)
-            logger.critical(out.strip())
-            sys.exit(1)
-
+    # No checkout needed — all git operations use explicit refs.
+    # Shell suspend and agent runs check out the branch on demand.
     cover_text, tracking = load_tracking(topdir, branch)
     series = tracking['series']
     patches = tracking['patches']
     base_commit = series['base-commit']
 
     # Determine abbreviation length from core.abbrev (default: git decides)
-    ecode, out = b4.git_run_command(topdir, ['rev-parse', '--short', 'HEAD'])
+    ecode, out = b4.git_run_command(topdir, ['rev-parse', '--short', branch])
     abbrev_len = len(out.strip()) if ecode == 0 else 7
 
     # Get ordered commit SHAs (excluding the tracking commit at tip)
     # Use first-patch-commit to skip any prerequisite commits
     first_patch = series.get('first-patch-commit', '')
     if first_patch:
-        range_spec = f'{first_patch}~1..HEAD~1'
+        range_spec = f'{first_patch}~1..{branch}~1'
     else:
-        range_spec = f'{base_commit}..HEAD~1'
+        range_spec = f'{base_commit}..{branch}~1'
     ecode, out = b4.git_run_command(topdir, ['rev-list', '--reverse', range_spec])
     if ecode > 0 or not out.strip():
         logger.critical('Unable to list patch commits')
@@ -2162,7 +2156,7 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     default_identity = f'{user_name} <{user_email}>'
 
     # Integrate agent reviews from .git/b4-review/
-    _integrate_agent_reviews(topdir, cover_text, tracking, commit_shas, patches)
+    _integrate_agent_reviews(topdir, cover_text, tracking, commit_shas, patches, branch=branch)
 
     # Integrate sashiko inline reviews (if configured)
     _integrate_sashiko_reviews(topdir, cover_text, tracking, commit_shas, patches)
@@ -2177,9 +2171,15 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     if change_id and series.get('thread-blob') and not series.get('thread-context-blob'):
         b4.review.tracking.ensure_thread_context_blob(topdir, change_id, series, patches)
 
+    # Record current branch so ReviewApp can restore it if it checks
+    # out the review branch for shell/agent operations.
+    ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
+    current_branch = out.strip() if ecode == 0 else None
+
     return {
         'topdir': topdir,
         'branch': branch,
+        'original_branch': current_branch,
         'cover_text': cover_text,
         'tracking': tracking,
         'series': series,

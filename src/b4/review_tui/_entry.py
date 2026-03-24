@@ -117,7 +117,6 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             continue
 
         # User selected a branch to review - prepare session and run ReviewApp
-        logger.info('Checking out branch and starting review UI...')
         cmdargs = argparse.Namespace(branch=branch_name)
         try:
             session = b4.review._prepare_review_session(cmdargs)
@@ -150,8 +149,9 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
         except Exception as ex:
             logger.warning('Could not sync tracking status: %s', ex)
 
-        # Restore original branch after exiting ReviewApp
-        if original_branch:
+        # Restore original branch only if ReviewApp checked it out
+        # (for shell suspend or agent runs).
+        if review_app.branch_checked_out and original_branch:
             logger.info('Checking out %s and starting tracking UI...', original_branch)
             ecode, _out = b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
             if ecode != 0:
