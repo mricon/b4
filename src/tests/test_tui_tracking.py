@@ -2106,7 +2106,7 @@ class TestUpdateRevisionWorkflow:
         identifier = 'test-update-fail'
         change_id = 'update-fail-1'
         review_branch = _setup_update_test(gitdir, identifier, change_id)
-        upgrade_branch = f'b4/review/{change_id}-v2-upgrade'
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
 
         # Snapshot old branch HEAD before the attempt
         ecode, old_head = b4.git_run_command(
@@ -2157,7 +2157,7 @@ class TestUpdateRevisionWorkflow:
         identifier = 'test-update-abort'
         change_id = 'update-abort-1'
         review_branch = _setup_update_test(gitdir, identifier, change_id)
-        upgrade_branch = f'b4/review/{change_id}-v2-upgrade'
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
 
         ecode, old_head = b4.git_run_command(
             gitdir, ['rev-parse', review_branch])
@@ -2215,7 +2215,8 @@ class TestUpdateRevisionWorkflow:
                          status: str = 'reviewing',
                          **kwargs: Any) -> None:
             """Simulate create_review_branch by making a real branch."""
-            _create_review_branch(topdir, change_id + '-v2-upgrade',
+            branch_suffix = branch.removeprefix('b4/review/')
+            _create_review_branch(topdir, branch_suffix,
                                   identifier=identifier or 'test',
                                   revision=2, status='reviewing')
 
@@ -2256,7 +2257,7 @@ class TestUpdateRevisionWorkflow:
 
             # Upgrade branch should be gone (was renamed)
             assert not b4.git_branch_exists(
-                gitdir, f'b4/review/{change_id}-v2-upgrade')
+                gitdir, f'b4/review/_tmp-{change_id}-v2-upgrade')
             # Upgrade branch should have been renamed to review branch
             assert b4.git_branch_exists(gitdir, review_branch)
 
@@ -2281,13 +2282,14 @@ class TestUpdateRevisionWorkflow:
         identifier = 'test-update-archfail'
         change_id = 'update-archfail-1'
         review_branch = _setup_update_test(gitdir, identifier, change_id)
-        upgrade_branch = f'b4/review/{change_id}-v2-upgrade'
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
 
         lser = _make_mock_lser()
 
         def _fake_create(topdir: str, branch: str, *args: Any,
                          **kwargs: Any) -> None:
-            _create_review_branch(topdir, change_id + '-v2-upgrade',
+            branch_suffix = branch.removeprefix('b4/review/')
+            _create_review_branch(topdir, branch_suffix,
                                   identifier=identifier,
                                   revision=2, status='reviewing')
 

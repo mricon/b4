@@ -3146,7 +3146,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.notify('Update cancelled', severity='information')
             return
 
-        upgrade_branch = f'b4/review/{change_id}-v{target_rev}-upgrade'
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v{target_rev}-upgrade'
 
         with self.suspend():
             topdir = b4.git_get_toplevel()
@@ -3272,6 +3272,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             b4.review.reanchor_patch_comments(topdir, new_shas, new_patches)
 
             new_tracking['series']['status'] = 'reviewing'
+            # Ensure the tracking commit has the real change-id, not
+            # the temporary upgrade branch name.
+            new_tracking['series']['change-id'] = change_id
             if prior_context:
                 new_tracking['series']['prior-review-context'] = prior_context
             if prior_thread_blob:
