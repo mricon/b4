@@ -257,7 +257,7 @@ class TestGitFetchAmIntoRepo:
 class TestSuspendToShellCwd:
     """Test that _suspend_to_shell passes cwd to subprocess.run."""
 
-    @patch('b4.review_tui._common.subprocess.run')
+    @patch('b4.tui._common.subprocess.run')
     def test_cwd_passed_through(self, mock_run: Any,
                                 monkeypatch: pytest.MonkeyPatch) -> None:
         from b4.review_tui._common import _suspend_to_shell
@@ -271,7 +271,7 @@ class TestSuspendToShellCwd:
         _args, kwargs = mock_run.call_args
         assert kwargs.get('cwd') == '/tmp/test-worktree'
 
-    @patch('b4.review_tui._common.subprocess.run')
+    @patch('b4.tui._common.subprocess.run')
     def test_cwd_none_by_default(self, mock_run: Any,
                                  monkeypatch: pytest.MonkeyPatch) -> None:
         from b4.review_tui._common import _suspend_to_shell
@@ -283,7 +283,7 @@ class TestSuspendToShellCwd:
         _args, kwargs = mock_run.call_args
         assert kwargs.get('cwd') is None
 
-    @patch('b4.review_tui._common.subprocess.run')
+    @patch('b4.tui._common.subprocess.run')
     def test_hint_appears_in_env(self, mock_run: Any,
                                  monkeypatch: pytest.MonkeyPatch) -> None:
         from b4.review_tui._common import _suspend_to_shell

@@ -824,6 +824,13 @@ class TestLimitScreen:
 class TestActionScreen:
     """Tests for the ActionScreen modal."""
 
+    _SHORTCUTS = {
+        'review': 'r',
+        'take': 'T',
+        'snooze': 's',
+        'archive': 'x',
+    }
+
     @staticmethod
     def _actions() -> List[Tuple[str, str]]:
         return [
@@ -883,7 +890,7 @@ class TestActionScreen:
         results: List[Optional[str]] = []
 
         async with app.run_test() as pilot:
-            app.push_screen(ActionScreen(self._actions()), results.append)
+            app.push_screen(ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append)
             await pilot.pause()
 
             # 'T' is the shortcut for 'take'
@@ -897,7 +904,7 @@ class TestActionScreen:
         results: List[Optional[str]] = []
 
         async with app.run_test() as pilot:
-            app.push_screen(ActionScreen(self._actions()), results.append)
+            app.push_screen(ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append)
             await pilot.pause()
 
             await pilot.press('r')
@@ -910,7 +917,7 @@ class TestActionScreen:
         results: List[Optional[str]] = []
 
         async with app.run_test() as pilot:
-            app.push_screen(ActionScreen(self._actions()), results.append)
+            app.push_screen(ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append)
             await pilot.pause()
 
             await pilot.press('x')

@@ -113,6 +113,11 @@ def cmd_review(cmdargs: argparse.Namespace) -> None:
     b4.review.main(cmdargs)
 
 
+def cmd_bugs(cmdargs: argparse.Namespace) -> None:
+    import b4.bugs
+    b4.bugs.main(cmdargs)
+
+
 def cmd_pr(cmdargs: argparse.Namespace) -> None:
     import b4.pr
     b4.pr.main(cmdargs)
@@ -483,6 +488,41 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_dig_eg.add_argument('-w', '--who', action='store_true', default=False,
                            help='Show list of recipients in the original message')
     sp_dig.set_defaults(func=cmd_dig)
+
+    # b4 bugs
+    sp_bugs = subparsers.add_parser('bugs', help='Manage bug reports from mailing list threads')
+    sp_bugs.set_defaults(func=cmd_bugs)
+    bugs_subparsers = sp_bugs.add_subparsers(help='bugs sub-command help', dest='bugs_subcmd')
+
+    # b4 bugs tui
+    sp_bugs_tui = bugs_subparsers.add_parser('tui', help='Browse and triage bugs in a TUI')
+    sp_bugs_tui.add_argument('--no-mouse', dest='no_mouse', action='store_true', default=False,
+                              help='Disable mouse support in the TUI')
+    sp_bugs_tui.add_argument('--email-dry-run', dest='email_dryrun', action='store_true', default=False,
+                              help='Show email dialogs but print messages to stdout instead of sending')
+    sp_bugs_tui.add_argument('--no-sign', dest='no_sign', action='store_true', default=False,
+                              help='Do not patatt-sign outgoing emails')
+
+    # b4 bugs import
+    sp_bugs_import = bugs_subparsers.add_parser('import', help='Import a lore thread as a new bug')
+    sp_bugs_import.add_argument('msgid', help='Message-ID of the thread to import')
+    sp_bugs_import.add_argument('--no-parent', dest='noparent', action='store_true', default=False,
+                                 help='Break thread at the msgid and ignore parent messages')
+
+    # b4 bugs delete
+    sp_bugs_delete = bugs_subparsers.add_parser('delete', help='Permanently delete a bug')
+    sp_bugs_delete.add_argument('bugid', help='Bug ID to delete')
+
+    # b4 bugs refresh
+    sp_bugs_refresh = bugs_subparsers.add_parser('refresh', help='Refresh bugs with new thread messages')
+    sp_bugs_refresh.add_argument('bugid', nargs='?', default=None,
+                                  help='Bug ID to refresh (default: refresh all open bugs)')
+
+    # b4 bugs list
+    sp_bugs_list = bugs_subparsers.add_parser('list', help='List tracked bugs')
+    sp_bugs_list.add_argument('--status', choices=['open', 'closed'], default=None,
+                               help='Filter by status')
+    sp_bugs_list.add_argument('--label', default=None, help='Filter by label')
 
     return parser
 

@@ -17,6 +17,13 @@ B4 also provides a TUI-based review workflow (``b4 review``, currently
 in alpha) that lets you track, review, and act on incoming patch series
 from a single terminal interface. See :doc:`review` for details.
 
+For bug tracking, ``b4 bugs`` (also in alpha) provides a TUI and CLI
+for managing bug reports stored as git objects via `git-bug`_. Bugs
+travel with the repository and can be imported from lore threads. See
+:doc:`bugs` for details.
+
+.. _`git-bug`: https://github.com/git-bug/git-bug
+
 .. _`public-inbox`: https://public-inbox.org/README.html
 
 Working with patches sent to distribution lists

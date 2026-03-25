@@ -30,6 +30,7 @@ For maintainers
    maintainer/pr
    maintainer/ty
    maintainer/review
+   maintainer/bugs
    maintainer/kr
 
 For reviewers

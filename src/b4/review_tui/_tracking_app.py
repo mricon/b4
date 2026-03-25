@@ -47,6 +47,20 @@ from b4.review_tui._modals import (
     ActionScreen, HelpScreen, SnoozeScreen, TRACKING_HELP_LINES,
 )
 
+# Shortcut keys for the tracking-app action selector.
+_ACTION_SHORTCUTS: Dict[str, str] = {
+    'review': 'r',
+    'take': 'T',
+    'rebase': 'R',
+    'waiting': 'w',
+    'snooze': 's',
+    'unsnooze': 'u',
+    'upgrade': 'U',
+    'thank': 't',
+    'abandon': 'A',
+    'archive': 'x',
+}
+
 
 # Single-character Unicode symbols for each series status.
 _STATUS_SYMBOLS: Dict[str, str] = {
@@ -1064,7 +1078,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 actions.append(('abandon', 'Abandon series'))
             actions.append(('archive', 'Archive series'))
         self.push_screen(
-            ActionScreen(actions),
+            ActionScreen(actions, shortcuts=_ACTION_SHORTCUTS),
             callback=self._on_action_selected,
         )
 

@@ -11,17 +11,14 @@ import io
 import json
 import re
 
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
-
-if TYPE_CHECKING:
-    from textual.events import Key
+from typing import Any, Dict, List, Optional, Tuple
 
 import b4
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Checkbox, Input, Label, ListItem, ListView, LoadingIndicator, ProgressBar, RichLog, Select, Static, TextArea
+from textual.widgets import Checkbox, Input, Label, ListItem, ListView, LoadingIndicator, ProgressBar, RichLog, Select, Static
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.worker import Worker, WorkerState
@@ -33,7 +30,6 @@ from rich.text import Text
 from b4.review_tui._common import (
     CI_CHECK_LABELS, resolve_styles, ci_check_styles,
     JKListNavMixin, logger,
-    _addrs_to_lines, _lines_to_header, _validate_addrs,
     _write_diff_line, _quiet_worker, _render_email_to_viewer,
 )
 
@@ -544,93 +540,12 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class ToCcScreen(ModalScreen[bool]):
-    """Modal screen to edit To, Cc, and Bcc addresses."""
-
-    BINDINGS = [
-        Binding('ctrl+s', 'save', 'Save'),
-        Binding('escape', 'cancel', 'Cancel'),
-        Binding('q', 'cancel', 'Cancel', show=False),
-    ]
-
-    DEFAULT_CSS = """
-    ToCcScreen {
-        align: center middle;
-    }
-    #tocc-dialog {
-        width: 80;
-        max-height: 90%;
-        border: solid $accent;
-        background: $surface;
-        padding: 1 2;
-    }
-    .tocc-label {
-        margin-top: 1;
-        text-style: bold;
-    }
-    .tocc-area {
-        height: 6;
-    }
-    #tocc-hint {
-        height: 1;
-        dock: bottom;
-        color: $text-muted;
-    }
-    """
-
-    def __init__(
-        self,
-        to_addrs: str,
-        cc_addrs: str,
-        bcc_addrs: str,
-        show_apply_all: bool,
-    ) -> None:
-        super().__init__()
-        self._to_text = _addrs_to_lines(to_addrs)
-        self._cc_text = _addrs_to_lines(cc_addrs)
-        self._bcc_text = _addrs_to_lines(bcc_addrs)
-        self._show_apply_all = show_apply_all
-        # Set after save
-        self.to_result: str = ''
-        self.cc_result: str = ''
-        self.bcc_result: str = ''
-        self.apply_all: bool = False
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id='tocc-dialog'):
-            yield Label('To:', classes='tocc-label')
-            yield TextArea(self._to_text, id='to-area', classes='tocc-area')
-            yield Label('Cc:', classes='tocc-label')
-            yield TextArea(self._cc_text, id='cc-area', classes='tocc-area')
-            yield Label('Bcc:', classes='tocc-label')
-            yield TextArea(self._bcc_text, id='bcc-area', classes='tocc-area')
-            if self._show_apply_all:
-                yield Checkbox('Apply to all patches', id='apply-all')
-            yield Static('Ctrl+S save  |  Escape cancel  |  Tab next field', id='tocc-hint')
-
-    def on_mount(self) -> None:
-        self.query_one('#to-area', TextArea).focus()
-
-    def action_save(self) -> None:
-        to_text = self.query_one('#to-area', TextArea).text
-        cc_text = self.query_one('#cc-area', TextArea).text
-        bcc_text = self.query_one('#bcc-area', TextArea).text
-
-        for label, text in [('To', to_text), ('Cc', cc_text), ('Bcc', bcc_text)]:
-            err = _validate_addrs(text)
-            if err:
-                self.notify(f'{label}: {err}', severity='error')
-                return
-
-        self.to_result = _lines_to_header(to_text)
-        self.cc_result = _lines_to_header(cc_text)
-        self.bcc_result = _lines_to_header(bcc_text)
-        if self._show_apply_all:
-            self.apply_all = self.query_one('#apply-all', Checkbox).value
-        self.dismiss(True)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
+# Re-exported from b4.tui (canonical home for shared modals)
+from b4.tui._modals import ToCcScreen as ToCcScreen
+from b4.tui._modals import ConfirmScreen as ConfirmScreen
+from b4.tui._modals import LimitScreen as LimitScreen
+from b4.tui._modals import ActionItem as ActionItem
+from b4.tui._modals import ActionScreen as ActionScreen
 
 
 class SendScreen(ModalScreen[bool]):
@@ -1785,88 +1700,6 @@ class CIChecksScreen(_FetchViewerScreen):
                 target_url = check.get('target_url')
                 if target_url:
                     viewer.write(Text(f'    \u2192 {target_url}', style='dim'))
-
-
-class ConfirmScreen(ModalScreen[bool]):
-    """Generic y/escape confirmation modal.
-
-    *title*: bold heading text.
-    *body*: list of plain strings rendered as ``Static`` widgets.
-    *border*: Textual CSS border-colour token (e.g. ``'$warning'``).
-    *title_colour*: optional CSS colour for the title (defaults to *border*).
-    """
-
-    BINDINGS = [
-        Binding('y', 'confirm', 'Confirm'),
-        Binding('escape', 'cancel', 'Cancel'),
-        Binding('q', 'cancel', 'Cancel', show=False),
-    ]
-
-    DEFAULT_CSS = """
-    ConfirmScreen {
-        align: center middle;
-    }
-    #confirm-dialog {
-        width: 65;
-        height: auto;
-        background: $surface;
-        padding: 1 2;
-        border: solid $accent;
-    }
-    #confirm-dialog.--border-warning {
-        border: solid $warning;
-    }
-    #confirm-dialog.--border-error {
-        border: solid $error;
-    }
-    #confirm-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    #confirm-title.--color-warning {
-        color: $warning;
-    }
-    #confirm-title.--color-error {
-        color: $error;
-    }
-    #confirm-hint {
-        margin-top: 1;
-        color: $text-muted;
-    }
-    """
-
-    # Map CSS variable names to CSS class suffixes for border/title colours.
-    _COLOUR_CLASSES = {'$warning': 'warning', '$error': 'error'}
-
-    def __init__(self, title: str, body: List[str],
-                 border: str = '$accent',
-                 title_colour: Optional[str] = None,
-                 subject: str = '') -> None:
-        super().__init__()
-        self._title = title
-        self._body = body
-        self._border = border
-        self._title_colour = title_colour
-        self._subject = subject
-
-    def compose(self) -> ComposeResult:
-        dialog = Vertical(id='confirm-dialog')
-        border_cls = self._COLOUR_CLASSES.get(self._border)
-        if border_cls:
-            dialog.add_class(f'--border-{border_cls}')
-        with dialog:
-            dialog.border_title = self._title
-            if self._subject:
-                yield Static(self._subject, id='confirm-title', markup=False)
-            for line in self._body:
-                yield Static(line, markup=False)
-            yield Static('y confirm  |  Escape cancel', id='confirm-hint')
-
-    def action_confirm(self) -> None:
-        self.dismiss(True)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
 
 
 def NewerRevisionWarningScreen(current_rev: int, newer_versions: List[int]) -> ConfirmScreen:
@@ -3077,68 +2910,6 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class LimitScreen(ModalScreen[Optional[str]]):
-    """Modal screen for mutt-style limit (filter) by author/subject.
-
-    Supports prefix filters that can be combined with plain text:
-    - ``s:<substring>`` filters by status (e.g. ``s:new``, ``s:rev``)
-    - ``t:<substring>`` filters by target branch (e.g. ``t:next``)
-    - plain text filters by subject or sender name
-    """
-
-    BINDINGS = [
-        Binding('escape', 'cancel', 'Cancel'),
-        Binding('q', 'cancel', 'Cancel', show=False),
-    ]
-
-    DEFAULT_CSS = """
-    LimitScreen {
-        align: center middle;
-    }
-    #limit-dialog {
-        width: 60;
-        height: auto;
-        border: solid $accent;
-        background: $surface;
-        padding: 1 2;
-    }
-    #limit-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    #limit-hint {
-        margin-top: 1;
-        color: $text-muted;
-    }
-    """
-
-    def __init__(self, current_pattern: str = '',
-                 hint: Optional[str] = None) -> None:
-        super().__init__()
-        self._current_pattern = current_pattern
-        self._hint = hint
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id='limit-dialog'):
-            yield Static('Limit series:', id='limit-title')
-            yield Input(value=self._current_pattern, id='limit-input',
-                        placeholder='substring to match (empty to clear)')
-            hint_lines = ''
-            if self._hint:
-                hint_lines = self._hint + '\n'
-            hint_lines += 'Enter apply  |  Escape cancel'
-            yield Static(hint_lines, id='limit-hint')
-
-    def on_mount(self) -> None:
-        self.query_one('#limit-input', Input).focus()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
 class UpdateRevisionScreen(JKListNavMixin, ModalScreen[Optional[int]]):
     """Modal to select a newer revision to upgrade to.
 
@@ -3222,118 +2993,6 @@ class UpdateRevisionScreen(JKListNavMixin, ModalScreen[Optional[int]]):
         lv = self.query_one('#update-rev-list', ListView)
         if lv.index is not None and 0 <= lv.index < len(self._revisions):
             self.dismiss(self._revisions[lv.index]['revision'])
-        else:
-            self.dismiss(None)
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ActionItem(ListItem):
-    """A single action entry in the action selector."""
-
-    def __init__(self, key: str, label: str) -> None:
-        super().__init__()
-        self.key = key
-        self._label = label
-
-    def compose(self) -> ComposeResult:
-        yield Label(self._label, markup=False)
-
-
-class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
-    """Modal presenting context-sensitive actions for a tracked series.
-
-    Returns the action key string (e.g. 'take', 'archive') or None on cancel.
-    Shortcut keys allow single-keypress selection without navigating.
-    """
-
-    _list_id = '#action-list'
-
-    BINDINGS = [
-        Binding('j', 'cursor_down', 'Down', show=False),
-        Binding('k', 'cursor_up', 'Up', show=False),
-        Binding('enter', 'confirm', 'Confirm'),
-        Binding('escape', 'cancel', 'Cancel'),
-        Binding('q', 'cancel', 'Cancel', show=False),
-    ]
-
-    _SHORTCUT_MAP = {
-        'review': 'r',
-        'take': 'T',
-        'rebase': 'R',
-        'waiting': 'w',
-        'snooze': 's',
-        'unsnooze': 'u',
-        'upgrade': 'U',
-        'thank': 't',
-        'abandon': 'A',
-        'archive': 'x',
-    }
-
-    DEFAULT_CSS = """
-    ActionScreen {
-        align: center middle;
-    }
-    #action-dialog {
-        width: 45;
-        height: auto;
-        max-height: 80%;
-        border: solid $accent;
-        background: $surface;
-        padding: 1 2;
-    }
-    #action-list {
-        height: auto;
-        max-height: 20;
-    }
-    """
-
-    def __init__(self, actions: List[Tuple[str, str]]) -> None:
-        super().__init__()
-        self._actions = actions          # [(key, label), ...]
-        # Reverse map: shortcut char -> action key (for current actions only)
-        self._shortcut_to_action = {
-            self._SHORTCUT_MAP[key]: key
-            for key, _label in actions
-            if key in self._SHORTCUT_MAP
-        }
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id='action-dialog'):
-            yield Label('Select action:')
-            items = []
-            for key, label in self._actions:
-                shortcut = self._SHORTCUT_MAP.get(key, '')
-                if shortcut:
-                    label = f'[{shortcut}] {label}'
-                items.append(ActionItem(key, label))
-            yield ListView(*items, id='action-list')
-
-    def on_mount(self) -> None:
-        self.query_one('#action-list', ListView).focus()
-
-    def on_key(self, event: "Key") -> None:
-        ch = event.character
-        if not ch:
-            return
-        action_key = self._shortcut_to_action.get(ch)
-        if action_key:
-            event.stop()
-            event.prevent_default()
-            self.dismiss(action_key)
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        event.stop()
-        self._do_confirm()
-
-    def action_confirm(self) -> None:
-        self._do_confirm()
-
-    def _do_confirm(self) -> None:
-        lv = self.query_one('#action-list', ListView)
-        if lv.index is not None and 0 <= lv.index < len(self._actions):
-            self.dismiss(self._actions[lv.index][0])
         else:
             self.dismiss(None)
 
