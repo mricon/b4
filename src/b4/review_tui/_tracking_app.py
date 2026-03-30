@@ -579,6 +579,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             # only written when a branch SHA differs, so _check_db_changed()
             # naturally stays quiet on a no-op rescan.
             if gone or result.get('changed', 0):
+                # Skip while a modal is active — _check_db_changed() will
+                # pick up the change once the modal closes.
+                if len(self.app.screen_stack) > 1:
+                    return
                 if self._selected_series:
                     self._focus_change_id = self._selected_series.get('change_id')
                 self._load_series()
@@ -760,7 +764,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 if self._matches_limit(s, self._limit_pattern)
             ]
 
-        left = self.query_one('#title-left', Static)
+        try:
+            left = self.query_one('#title-left', Static)
+        except NoMatches:
+            # A modal screen is active or the app is shutting down —
+            # the widget lives on the default screen and is not
+            # reachable right now.  The 1-second _check_db_changed
+            # timer will re-trigger the refresh once the modal closes.
+            return
         title_text = f' Tracked Series — {self._identifier}'
         if self._email_dryrun:
             title_text += ' (DRY-RUN)'
