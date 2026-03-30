@@ -60,6 +60,17 @@ v0.16
 	[_] b4 feed --export to export/push the feed to a remote
 	[_] Privacy guardrails — ensure private emails never end up in the feed
 		: Needs brainstorming: allowlist by list-id? opt-in per send? exclude drafts/dry-run?
+[_] `b4 bugs` integration
+	[_] `b4 bugs` subcommand for git-bug integration
+		: Import mailing list discussions as git-bug entries
+		: TUI with bug list, detail panel, import and label modals
+		: Uses ezgb library for git-bug access via luagit2
+	[_] Arbitrary labels on tracked review series
+		: Reuse LabelScreen/AddLabelScreen from bugs TUI (extract to _common.py)
+		: New series_labels table keyed by change_id (survives revision upgrades)
+		: Colored dot display in tracking list (git-bug deterministic color algorithm)
+		: Extend limit command to filter by label: prefix
+		: Depends on bugs subcommand for shared label UI components
 [ ] `b4 ty` interactive mode
 	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
 [ ] `b4 trailers` interactive mode
