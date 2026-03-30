@@ -575,7 +575,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
             SELECT track_id, change_id, revision, subject, sender_name, sender_email,
                    sent_at, added_at, status, num_patches, message_id, pw_series_id,
                    message_count, seen_message_count, last_activity_at, attestation,
-                   target_branch, is_rethreaded
+                   target_branch, is_rethreaded, snoozed_until
             FROM series
             ORDER BY added_at DESC
         ''')
@@ -600,6 +600,7 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                 'attestation': row[15],
                 'target_branch': row[16],
                 'is_rethreaded': bool(row[17]),
+                'snoozed_until': row[18],
             })
         conn.close()
         return result
@@ -670,6 +671,33 @@ def get_newest_revision(conn: sqlite3.Connection, change_id: str) -> Optional[in
     if row and row[0] is not None:
         return int(row[0])
     return None
+
+
+def get_all_newest_revisions(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return {change_id: max_revision} for all change_ids with revisions."""
+    cursor = conn.execute(
+        'SELECT change_id, MAX(revision) FROM revisions GROUP BY change_id')
+    return {row[0]: int(row[1]) for row in cursor.fetchall()}
+
+
+def get_all_revision_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return {change_id: revision_count} for all change_ids."""
+    cursor = conn.execute(
+        'SELECT change_id, COUNT(*) FROM revisions GROUP BY change_id')
+    return {row[0]: int(row[1]) for row in cursor.fetchall()}
+
+
+def get_all_revisions_grouped(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
+    """Return {change_id: [rev_dicts]} for all change_ids, ordered ascending."""
+    cols = ('change_id', 'revision', 'message_id', 'subject', 'link', 'found_at')
+    cursor = conn.execute(
+        'SELECT change_id, revision, message_id, subject, link, found_at '
+        'FROM revisions ORDER BY change_id, revision ASC')
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in cursor.fetchall():
+        entry = dict(zip(cols, row))
+        result.setdefault(row[0], []).append(entry)
+    return result
 
 
 def update_attestation(identifier: str, change_id: str,

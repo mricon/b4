@@ -1630,6 +1630,37 @@ class TestGetArtCounts:
         assert _get_art_counts('/tmp', 'b4/review/test') == (1, 0, 0)
 
 
+class TestParseArtFromMessage:
+    """Tests for the extracted _parse_art_from_message() helper."""
+
+    @staticmethod
+    def _make_msg(followups: Optional[List[Dict[str, Any]]] = None,
+                  patches: Optional[List[Dict[str, Any]]] = None) -> str:
+        tracking: Dict[str, Any] = {}
+        if followups is not None:
+            tracking['followups'] = followups
+        if patches is not None:
+            tracking['patches'] = patches
+        return 'Cover letter text\n\n--- b4-review-tracking ---\n' + json.dumps(tracking)
+
+    def test_counts_trailers(self) -> None:
+        from b4.review_tui._tracking_app import _parse_art_from_message
+        msg = self._make_msg(
+            followups=[{'trailers': ['Acked-by: A <a@example.com>',
+                                     'Reviewed-by: R <r@example.com>']}],
+            patches=[{'followups': [{'trailers': ['Tested-by: T <t@example.com>']}]}],
+        )
+        assert _parse_art_from_message(msg) == (1, 1, 1)
+
+    def test_returns_none_without_marker(self) -> None:
+        from b4.review_tui._tracking_app import _parse_art_from_message
+        assert _parse_art_from_message('no marker here') is None
+
+    def test_returns_none_on_bad_json(self) -> None:
+        from b4.review_tui._tracking_app import _parse_art_from_message
+        assert _parse_art_from_message('text\n\n--- b4-review-tracking ---\n{bad json') is None
+
+
 # -- Tests for note comment stripping ----------------------------------------
 
 class TestNoteCommentStripping:

@@ -180,15 +180,12 @@ def _format_snooze_until(value: str) -> str:
         return value
 
 
-def _get_art_counts(topdir: str, branch: str) -> Optional[Tuple[int, int, int]]:
-    """Load (Acked, Reviewed, Tested) trailer counts from a review branch."""
-    ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch])
-    if ecode > 0 or not out:
-        return None
+def _parse_art_from_message(commit_msg: str) -> Optional[Tuple[int, int, int]]:
+    """Parse (Acked, Reviewed, Tested) trailer counts from a commit message."""
     marker = '--- b4-review-tracking ---'
-    if marker not in out:
+    if marker not in commit_msg:
         return None
-    json_text = out.split(marker, maxsplit=1)[1].strip()
+    json_text = commit_msg.split(marker, maxsplit=1)[1].strip()
     lines = [ln for ln in json_text.splitlines() if not ln.startswith('#')]
     try:
         tracking = json.loads('\n'.join(lines))
@@ -209,6 +206,85 @@ def _get_art_counts(topdir: str, branch: str) -> Optional[Tuple[int, int, int]]:
             elif name == 'tested-by':
                 tested += 1
     return (acked, reviewed, tested)
+
+
+def _get_art_counts(topdir: str, branch: str) -> Optional[Tuple[int, int, int]]:
+    """Load (Acked, Reviewed, Tested) trailer counts from a review branch."""
+    ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch])
+    if ecode > 0 or not out:
+        return None
+    return _parse_art_from_message(out)
+
+
+def _get_review_branch_tips(topdir: str) -> Dict[str, str]:
+    """Return {branch_short_name: commit_sha} for all b4/review/* branches.
+
+    Uses a single git for-each-ref call instead of per-branch rev-parse.
+    """
+    gitargs = ['for-each-ref', '--format=%(refname:short) %(objectname)',
+               'refs/heads/b4/review/']
+    lines = b4.git_get_command_lines(topdir, gitargs)
+    result: Dict[str, str] = {}
+    for line in lines:
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            result[parts[0]] = parts[1]
+    return result
+
+
+def _get_art_counts_batch(
+    topdir: str,
+    branch_shas: Dict[str, str],
+) -> Dict[str, Tuple[int, int, int]]:
+    """Load ART trailer counts for multiple branches in one git call.
+
+    Uses git cat-file --batch to read all tracking commits at once.
+    """
+    if not branch_shas:
+        return {}
+
+    sha_list = list(branch_shas.items())
+    stdin_data = '\n'.join(sha for _, sha in sha_list).encode() + b'\n'
+
+    ecode, out = b4.git_run_command(
+        topdir,
+        ['cat-file', '--batch'],
+        stdin=stdin_data,
+        decode=False,
+    )
+    if ecode != 0:
+        return {}
+
+    result: Dict[str, Tuple[int, int, int]] = {}
+    data = out
+    assert isinstance(data, bytes)
+    pos = 0
+    for branch_name, _sha in sha_list:
+        newline = data.find(b'\n', pos)
+        if newline < 0:
+            break
+        header = data[pos:newline].decode(errors='replace')
+        parts = header.split()
+        if len(parts) < 3 or parts[1] == 'missing':
+            pos = newline + 1
+            continue
+        size = int(parts[2])
+        content_start = newline + 1
+        content_end = content_start + size
+        content = data[content_start:content_end].decode(errors='replace')
+        pos = content_end + 1  # skip trailing \n
+
+        # Raw commit object: headers\n\n<message>
+        msg_start = content.find('\n\n')
+        if msg_start < 0:
+            continue
+        commit_msg = content[msg_start + 2:]
+
+        art = _parse_art_from_message(commit_msg)
+        if art is not None:
+            result[branch_name] = art
+
+    return result
 
 
 def _format_attestation(att: str, app: Any = None) -> Optional[RichText]:
@@ -499,6 +575,32 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Show target branch binding only when configured
         self._has_target_branches = bool(
             b4.review.tracking.get_review_target_branches())
+        # Cached data for _load_series — invalidated by _invalidate_caches()
+        # when u/U update runs or actions change tracking data.
+        self._cached_branch_tips: Optional[Dict[str, str]] = None
+        self._cached_newest_revisions: Optional[Dict[str, int]] = None
+        self._cached_revision_counts: Optional[Dict[str, int]] = None
+        self._cached_revisions: Optional[Dict[str, List[Dict[str, Any]]]] = None
+        self._cached_art_counts: Optional[Dict[str, Tuple[int, int, int]]] = None
+
+    def _invalidate_caches(self, change_id: Optional[str] = None) -> None:
+        """Drop cached data so the next _load_series re-fetches.
+
+        If change_id is given, only evict that series from the ART
+        cache (branch tips and revision data are cheap dict lookups
+        and get rebuilt from the bulk query anyway).  Without
+        change_id, drop everything.
+        """
+        if change_id is not None:
+            branch_name = f'b4/review/{change_id}'
+            if self._cached_art_counts and branch_name in self._cached_art_counts:
+                del self._cached_art_counts[branch_name]
+            return
+        self._cached_branch_tips = None
+        self._cached_newest_revisions = None
+        self._cached_revision_counts = None
+        self._cached_revisions = None
+        self._cached_art_counts = None
 
     def _refresh_msg_count(self, series: Dict[str, Any],
                            total_messages: int) -> None:
@@ -585,6 +687,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     return
                 if self._selected_series:
                     self._focus_change_id = self._selected_series.get('change_id')
+                self._invalidate_caches()
                 self._load_series()
 
     @staticmethod
@@ -660,42 +763,70 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self._db_mtime = os.path.getmtime(db_path)
         except OSError:
             pass
-        # Check for review branches and update status; flag series with
-        # newer revisions available so the listing can warn the maintainer.
+
         topdir = b4.git_get_toplevel()
+
+        # --- Bulk branch lookup (1 subprocess instead of N) ---
+        if self._cached_branch_tips is None and topdir:
+            self._cached_branch_tips = _get_review_branch_tips(topdir)
+        branch_tips = self._cached_branch_tips or {}
+        existing_branches = set(branch_tips.keys())
+
+        # --- Bulk DB queries (2 queries instead of 2N) ---
         try:
             conn = b4.review.tracking.get_db(self._identifier)
         except Exception:
             conn = None
-        try:
-            for series in self._all_series:
-                change_id = series.get('change_id', '')
-                if series.get('status') == 'new':
-                    branch_name = f'b4/review/{change_id}'
-                    if b4.git_branch_exists(None, branch_name):
-                        series['status'] = 'reviewing'
-                if conn:
-                    current_rev = series.get('revision', 1)
-                    try:
-                        newest = b4.review.tracking.get_newest_revision(conn, change_id)
-                        if newest is not None and newest > current_rev:
-                            series['has_newer'] = True
-                        revs = b4.review.tracking.get_revisions(conn, change_id)
-                        if len(revs) > 1:
-                            series['has_multiple_revisions'] = True
-                        if not revs and series.get('status') not in ('new', 'gone', 'snoozed'):
-                            series['needs_update'] = True
-                    except Exception:
-                        pass
-                # Load A/R/T trailer counts from the review branch
-                if topdir and series.get('status') in ('reviewing', 'replied', 'waiting'):
-                    branch_name = f'b4/review/{change_id}'
-                    art = _get_art_counts(topdir, branch_name)
-                    if art:
-                        series['art'] = art
-        finally:
-            if conn:
-                conn.close()
+        if self._cached_newest_revisions is None and conn:
+            try:
+                self._cached_newest_revisions = b4.review.tracking.get_all_newest_revisions(conn)
+                self._cached_revision_counts = b4.review.tracking.get_all_revision_counts(conn)
+                self._cached_revisions = b4.review.tracking.get_all_revisions_grouped(conn)
+            except Exception:
+                pass
+        newest_revisions = self._cached_newest_revisions or {}
+        revision_counts = self._cached_revision_counts or {}
+        all_revisions = self._cached_revisions or {}
+        if conn:
+            conn.close()
+
+        # --- First pass: branch existence + revision flags ---
+        art_branches: Dict[str, str] = {}
+        for series in self._all_series:
+            change_id = series.get('change_id', '')
+            branch_name = f'b4/review/{change_id}'
+
+            if series.get('status') == 'new':
+                if branch_name in existing_branches:
+                    series['status'] = 'reviewing'
+
+            current_rev = series.get('revision', 1)
+            newest = newest_revisions.get(change_id)
+            if newest is not None and newest > current_rev:
+                series['has_newer'] = True
+            rev_count = revision_counts.get(change_id, 0)
+            if rev_count > 1:
+                series['has_multiple_revisions'] = True
+            if rev_count == 0 and series.get('status') not in ('new', 'gone', 'snoozed'):
+                series['needs_update'] = True
+            # Stash revisions list for the detail panel
+            series['_revisions'] = all_revisions.get(change_id, [])
+
+            # Collect branches needing ART counts
+            if topdir and series.get('status') in ('reviewing', 'replied', 'waiting'):
+                if branch_name in branch_tips:
+                    art_branches[branch_name] = branch_tips[branch_name]
+
+        # --- Bulk ART counts (1 subprocess instead of N) ---
+        if self._cached_art_counts is None and art_branches and topdir:
+            self._cached_art_counts = _get_art_counts_batch(topdir, art_branches)
+        art_map = self._cached_art_counts or {}
+        for series in self._all_series:
+            change_id = series.get('change_id', '')
+            branch_name = f'b4/review/{change_id}'
+            if branch_name in art_map:
+                series['art'] = art_map[branch_name]
+
         # Tag accepted series that have a queued thank-you letter.
         # This is a display-only pseudo-state, not stored in the DB.
         queued_cids = b4.ty.get_queued_change_ids(dryrun=self._email_dryrun)
@@ -730,6 +861,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if mtime != self._db_mtime:
             if self._selected_series:
                 self._focus_change_id = self._selected_series.get('change_id')
+            self._invalidate_caches()
             self._load_series()
 
     @staticmethod
@@ -1441,16 +1573,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         symbol = _STATUS_SYMBOLS.get(status_raw, '?')
         status_str = f'{symbol}  {status_raw}'
         if status_raw == 'snoozed':
-            try:
-                conn = b4.review.tracking.get_db(self._identifier)
-                snoozed_until = b4.review.tracking.get_snoozed_until(
-                    conn, series.get('change_id', ''),
-                    revision=series.get('revision'))
-                conn.close()
-                if snoozed_until:
-                    status_str += f' ({_format_snooze_until(snoozed_until)})'
-            except Exception:
-                pass
+            snoozed_until = series.get('snoozed_until')
+            if snoozed_until:
+                status_str += f' ({_format_snooze_until(snoozed_until)})'
 
         self.query_one('#detail-subject', Static).update(subject)
         self.query_one('#detail-from', Static).update(from_str)
@@ -1477,42 +1602,37 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             else:
                 att_row.display = False
 
-        # Show known revisions from SQLite
+        # Show known revisions (precomputed in _load_series)
         revision = series.get('revision', 1)
         revisions_row = self.query_one('#detail-revisions-row', Horizontal)
-        try:
-            conn = b4.review.tracking.get_db(self._identifier)
-            revs = b4.review.tracking.get_revisions(conn, change_id)
-            conn.close()
-            if revs:
-                rev_str = ', '.join(f'v{r["revision"]}' for r in revs)
+        revs = series.get('_revisions', [])
+        if revs:
+            rev_str = ', '.join(f'v{r["revision"]}' for r in revs)
+            rev_widget = self.query_one('#detail-revisions', Static)
+            status = series.get('status', 'new')
+            if series.get('has_newer') and status == 'reviewing':
+                rev_str += f' (upgrade from v{revision} with [a]ction)'
+                rev_widget.add_class('has-upgrade')
+            elif series.get('has_newer') and status == 'new':
+                newest = max(r['revision'] for r in revs)
+                rev_str += f' (v{newest} available)'
+                rev_widget.add_class('has-upgrade')
+            elif series.get('has_newer') and status == 'waiting':
+                newest = max(r['revision'] for r in revs)
+                rev_str += f' (v{newest} available, will auto-upgrade on update)'
+                rev_widget.add_class('has-upgrade')
+            else:
+                rev_widget.remove_class('has-upgrade')
+            rev_widget.update(rev_str)
+            revisions_row.display = True
+        else:
+            if series.get('needs_update'):
                 rev_widget = self.query_one('#detail-revisions', Static)
-                status = series.get('status', 'new')
-                if series.get('has_newer') and status == 'reviewing':
-                    rev_str += f' (upgrade from v{revision} with [a]ction)'
-                    rev_widget.add_class('has-upgrade')
-                elif series.get('has_newer') and status == 'new':
-                    newest = max(r['revision'] for r in revs)
-                    rev_str += f' (v{newest} available)'
-                    rev_widget.add_class('has-upgrade')
-                elif series.get('has_newer') and status == 'waiting':
-                    newest = max(r['revision'] for r in revs)
-                    rev_str += f' (v{newest} available, will auto-upgrade on update)'
-                    rev_widget.add_class('has-upgrade')
-                else:
-                    rev_widget.remove_class('has-upgrade')
-                rev_widget.update(rev_str)
+                rev_widget.add_class('has-upgrade')
+                rev_widget.update('run [u]pdate to load revision data')
                 revisions_row.display = True
             else:
-                if series.get('needs_update'):
-                    rev_widget = self.query_one('#detail-revisions', Static)
-                    rev_widget.add_class('has-upgrade')
-                    rev_widget.update('run [u]pdate to load revision data')
-                    revisions_row.display = True
-                else:
-                    revisions_row.display = False
-        except Exception:
-            revisions_row.display = False
+                revisions_row.display = False
 
         # Show branch name for series with a review branch
         status = series.get('status', 'new')
@@ -1524,9 +1644,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         else:
             branch_row.display = False
 
-        # Show target branch if set (per-series, tracking commit, or config default)
+        # Show target branch from preloaded series data or config default
         target_row = self.query_one('#detail-target-row', Horizontal)
-        target_branch = self._resolve_target_branch(series)
+        target_branch = series.get('target_branch') or b4.review.tracking.get_review_target_branch_default()
         if target_branch:
             self.query_one('#detail-target', Static).update(target_branch)
             target_row.display = True
@@ -1718,6 +1838,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         severity: Literal['information', 'warning'] = 'warning' if errors else 'information'
         self.notify(', '.join(parts), severity=severity)
+        self._invalidate_caches()
         self._load_series()
 
     def action_hide_details(self) -> None:
@@ -1906,6 +2027,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             return
         take_screen.accept_series = confirm_screen.accept_series
         self._focus_change_id = change_id
+        self._invalidate_caches(change_id)
         if method == 'merge':
             with self.suspend():
                 self._do_take_merge(change_id, review_branch, take_screen, series)
@@ -2897,6 +3019,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._selected_series = None
         panel = self.query_one('#details-panel', Vertical)
         panel.styles.height = 0
+        self._invalidate_caches(change_id)
         self._load_series()
 
     def action_update_revision(self) -> None:
@@ -2989,6 +3112,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             return
         self.notify(f'Now tracking v{target_rev}')
         self._focus_change_id = change_id
+        self._invalidate_caches(change_id)
         self._load_series()
 
     def _switch_revision_by_number(self, change_id: str, current_rev: int,
@@ -3349,6 +3473,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # Return to the tracking list with the upgraded series focused
         self._focus_change_id = change_id
+        self._invalidate_caches(change_id)
         self._load_series()
 
     def action_waiting(self) -> None:
@@ -3374,6 +3499,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             b4.review.update_tracking_status(topdir, branch_name, 'waiting')
         self.notify('Series moved to waiting')
         self._focus_change_id = change_id
+        self._invalidate_caches(change_id)
         self._load_series()
 
     def action_snooze(self) -> None:
@@ -3436,6 +3562,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         self.notify(f'Snoozed, {_format_snooze_until(until_value)}')
         self._focus_change_id = change_id
+        self._invalidate_caches(change_id)
         self._load_series()
 
     def action_unsnooze(self) -> None:
@@ -3469,6 +3596,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         self.notify(f'Unsnoozed, restored to {previous_status}')
         self._focus_change_id = change_id
+        self._invalidate_caches(change_id)
         self._load_series()
 
     def action_archive(self) -> None:
@@ -3594,6 +3722,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self._selected_series = None
             panel = self.query_one('#details-panel', Vertical)
             panel.styles.height = 0
+            self._invalidate_caches(change_id)
             self._load_series()
 
     def action_thank(self) -> None:
@@ -3774,6 +3903,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     b4.review.update_tracking_status(topdir, review_branch, 'thanked')
             self.notify('Thank-you message sent')
             self._focus_change_id = change_id
+            self._invalidate_caches(change_id)
             self._load_series()
         except Exception as ex:
             self.notify(f'Send failed: {ex}', severity='error')

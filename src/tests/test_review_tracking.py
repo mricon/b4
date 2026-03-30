@@ -830,6 +830,52 @@ class TestRevisions:
         assert review_tracking.get_newest_revision(conn, 'nonexistent') is None
         conn.close()
 
+    def test_get_all_newest_revisions(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify bulk newest-revision query returns all change_ids."""
+        conn = review_tracking.init_db('rev-bulk-newest-test')
+        review_tracking.add_revision(conn, 'change-a', 1, 'a-v1@example.com')
+        review_tracking.add_revision(conn, 'change-a', 3, 'a-v3@example.com')
+        review_tracking.add_revision(conn, 'change-b', 2, 'b-v2@example.com')
+        result = review_tracking.get_all_newest_revisions(conn)
+        assert result == {'change-a': 3, 'change-b': 2}
+        conn.close()
+
+    def test_get_all_newest_revisions_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify bulk newest-revision query returns empty dict with no data."""
+        conn = review_tracking.init_db('rev-bulk-newest-empty-test')
+        assert review_tracking.get_all_newest_revisions(conn) == {}
+        conn.close()
+
+    def test_get_all_revision_counts(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify bulk revision-count query returns correct counts."""
+        conn = review_tracking.init_db('rev-bulk-count-test')
+        review_tracking.add_revision(conn, 'change-a', 1, 'a-v1@example.com')
+        review_tracking.add_revision(conn, 'change-a', 2, 'a-v2@example.com')
+        review_tracking.add_revision(conn, 'change-a', 3, 'a-v3@example.com')
+        review_tracking.add_revision(conn, 'change-b', 1, 'b-v1@example.com')
+        result = review_tracking.get_all_revision_counts(conn)
+        assert result == {'change-a': 3, 'change-b': 1}
+        conn.close()
+
+    def test_get_all_revisions_grouped(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify bulk grouped revisions returns correct per-change-id lists."""
+        conn = review_tracking.init_db('rev-bulk-grouped-test')
+        review_tracking.add_revision(conn, 'change-a', 2, 'a-v2@example.com', subject='A v2')
+        review_tracking.add_revision(conn, 'change-a', 1, 'a-v1@example.com', subject='A v1')
+        review_tracking.add_revision(conn, 'change-b', 1, 'b-v1@example.com', subject='B v1')
+        result = review_tracking.get_all_revisions_grouped(conn)
+        assert set(result.keys()) == {'change-a', 'change-b'}
+        # change-a should be sorted ascending
+        assert [r['revision'] for r in result['change-a']] == [1, 2]
+        assert len(result['change-b']) == 1
+        conn.close()
+
+    def test_get_all_revisions_grouped_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify bulk grouped revisions returns empty dict with no data."""
+        conn = review_tracking.init_db('rev-bulk-grouped-empty-test')
+        assert review_tracking.get_all_revisions_grouped(conn) == {}
+        conn.close()
+
     def test_delete_series(self, tmp_path: pytest.TempPathFactory) -> None:
         """Verify delete_series removes series and revisions for a change_id."""
         conn = review_tracking.init_db('del-series-test')
@@ -2187,6 +2233,18 @@ class TestAttestationDb:
         series_list = review_tracking.get_all_tracked_series(ident)
         assert len(series_list) == 1
         assert series_list[0]['attestation'] == 'nokey:ed25519/dev@example.com'
+
+    def test_get_all_tracked_series_includes_snoozed_until(self) -> None:
+        """get_all_tracked_series() includes snoozed_until for snoozed series."""
+        ident = 'snoozed-listing'
+        conn = review_tracking.init_db(ident)
+        self._add_test_series(conn)
+        review_tracking.snooze_series(conn, 'att-test-id', '2026-06-01T00:00:00',
+                                      revision=1)
+        conn.close()
+        series_list = review_tracking.get_all_tracked_series(ident)
+        assert len(series_list) == 1
+        assert series_list[0]['snoozed_until'] == '2026-06-01T00:00:00'
 
     def test_schema_v4_migration_adds_attestation(self) -> None:
         """Migrating from schema v4 adds the attestation column."""

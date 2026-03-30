@@ -2319,3 +2319,112 @@ class TestUpdateRevisionWorkflow:
         # Both branches should exist — user can recover manually
         assert b4.git_branch_exists(gitdir, review_branch)
         assert b4.git_branch_exists(gitdir, upgrade_branch)
+
+
+class TestLoadSeriesCaching:
+    """Tests for _load_series batching and caching."""
+
+    @pytest.mark.asyncio
+    async def test_caches_populated_on_first_load(self, tmp_path: pathlib.Path) -> None:
+        """Caches should be populated after the initial _load_series call."""
+        _seed_db('cache-pop', SAMPLE_SERIES)
+
+        app = TrackingApp('cache-pop')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app._cached_branch_tips is not None
+            assert app._cached_newest_revisions is not None
+            assert app._cached_revision_counts is not None
+
+    @pytest.mark.asyncio
+    async def test_caches_survive_db_poll_no_change(self, tmp_path: pathlib.Path) -> None:
+        """Caches should persist when _check_db_changed finds no change."""
+        _seed_db('cache-nochg', SAMPLE_SERIES)
+
+        app = TrackingApp('cache-nochg')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            tips_id = id(app._cached_branch_tips)
+            app._check_db_changed()
+            await pilot.pause()
+            # Same object — cache was not rebuilt
+            assert id(app._cached_branch_tips) == tips_id
+
+    @pytest.mark.asyncio
+    async def test_full_invalidation_clears_all_caches(self, tmp_path: pathlib.Path) -> None:
+        """_invalidate_caches() without change_id clears everything."""
+        _seed_db('cache-full-inv', SAMPLE_SERIES)
+
+        app = TrackingApp('cache-full-inv')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app._cached_branch_tips is not None
+            app._invalidate_caches()
+            assert app._cached_branch_tips is None
+            assert app._cached_newest_revisions is None
+            assert app._cached_revision_counts is None
+            assert app._cached_art_counts is None
+
+    @pytest.mark.asyncio
+    async def test_selective_invalidation_keeps_other_caches(
+            self, tmp_path: pathlib.Path) -> None:
+        """_invalidate_caches(change_id) only evicts that ART entry."""
+        _seed_db('cache-sel-inv', SAMPLE_SERIES)
+
+        app = TrackingApp('cache-sel-inv')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            # Manually populate ART cache with test data
+            app._cached_art_counts = {
+                'b4/review/test-change-alpha': (1, 2, 0),
+                'b4/review/test-change-bravo': (0, 1, 0),
+            }
+            app._invalidate_caches('test-change-alpha')
+            # Alpha evicted, bravo still there
+            assert 'b4/review/test-change-alpha' not in app._cached_art_counts
+            assert 'b4/review/test-change-bravo' in app._cached_art_counts
+            # Other caches untouched
+            assert app._cached_branch_tips is not None
+            assert app._cached_newest_revisions is not None
+
+    @pytest.mark.asyncio
+    async def test_revisions_stashed_in_series(self, tmp_path: pathlib.Path) -> None:
+        """_load_series should stash _revisions list in each series dict."""
+        _seed_db('cache-revisions', SAMPLE_SERIES)
+        # Add a revision record so there's something to find
+        conn = tracking.get_db('cache-revisions')
+        tracking.add_revision(conn, 'test-change-charlie', 1, 'charlie-v1@example.com')
+        tracking.add_revision(conn, 'test-change-charlie', 2, 'charlie-v2@example.com')
+        conn.close()
+
+        app = TrackingApp('cache-revisions')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            # Find the charlie series and check its stashed revisions
+            charlie = [s for s in app._all_series
+                       if s.get('change_id') == 'test-change-charlie']
+            assert len(charlie) == 1
+            revs = charlie[0].get('_revisions', [])
+            assert len(revs) == 2
+            assert [r['revision'] for r in revs] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_snoozed_until_in_series(self, tmp_path: pathlib.Path) -> None:
+        """_load_series should include snoozed_until from the DB."""
+        series = [{
+            'change_id': 'test-snooze-detail',
+            'subject': '[PATCH] snooze test',
+            'sender_name': 'Tester',
+            'status': 'snoozed',
+        }]
+        _seed_db('cache-snooze', series)
+        conn = tracking.get_db('cache-snooze')
+        tracking.snooze_series(conn, 'test-snooze-detail',
+                               '2026-06-01T00:00:00', revision=1)
+        conn.close()
+
+        app = TrackingApp('cache-snooze')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert len(app._all_series) == 1
+            assert app._all_series[0].get('snoozed_until') == '2026-06-01T00:00:00'
