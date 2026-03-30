@@ -2849,6 +2849,7 @@ class TestFollowupItemPerMessage:
             'default_identity': 'Tester <tester@example.com>',
             'usercfg': {'name': 'Tester', 'email': 'tester@example.com'},
             'cover_subject_clean': 'Subject',
+            'branch': 'b4/review/test-change-id',
         }
 
     def test_followup_item_keyed_by_msgid(self) -> None:
