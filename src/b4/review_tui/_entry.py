@@ -149,10 +149,14 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
         except Exception as ex:
             logger.warning('Could not sync tracking status: %s', ex)
 
-        # Restore original branch only if ReviewApp checked it out
-        # (for shell suspend or agent runs).
-        if review_app.branch_checked_out and original_branch:
-            logger.info('Checking out %s and starting tracking UI...', original_branch)
-            ecode, _out = b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
-            if ecode != 0:
-                logger.warning('Could not restore original branch: %s', original_branch)
+        # Restore original branch if we're no longer on it.
+        # This covers two cases:
+        # - ReviewApp checked out the review branch (shell suspend/agent)
+        # - TrackingApp checked out a new series via create_review_branch
+        if original_branch:
+            current = b4.git_get_current_branch(topdir)
+            if current and current != original_branch:
+                logger.info('Checking out %s and starting tracking UI...', original_branch)
+                ecode, _out = b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                if ecode != 0:
+                    logger.warning('Could not restore original branch: %s', original_branch)
