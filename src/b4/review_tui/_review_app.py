@@ -1935,7 +1935,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
     def _save_tracking(self) -> None:
         """Save tracking data to the review branch."""
-        b4.review.save_tracking(self._topdir, self._cover_text, self._tracking)
+        b4.review.save_tracking_ref(self._topdir, self._branch, self._cover_text, self._tracking)
 
     def action_suspend(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
@@ -2004,8 +2004,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
         # Persist updated tracking
         self._tracking['series'] = series
-        b4.review.save_tracking(
-            self._topdir, self._cover_text, self._tracking)
+        b4.review.save_tracking_ref(
+            self._topdir, self._branch, self._cover_text, self._tracking)
 
         # Refresh in-memory state
         self._commit_shas = new_shas

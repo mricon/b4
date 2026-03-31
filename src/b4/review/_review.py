@@ -646,6 +646,9 @@ def save_tracking_ref(topdir: str, branch: str,
     hooks are not triggered — tracking commits are ephemeral and do
     not benefit from signing.  Returns True on success.
     """
+    if not branch.startswith(REVIEW_BRANCH_PREFIX):
+        logger.critical('Refusing to write tracking commit to non-review branch: %s', branch)
+        return False
     commit_msg = cover_text + '\n\n' + make_review_magic_json(tracking)
     ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{branch}^{{tree}}'])
     if ecode > 0:
@@ -1060,9 +1063,12 @@ def _integrate_agent_reviews(
     if not integrated:
         return False
 
-    # Save tracking — this amends HEAD, changing its SHA so the
-    # directory is not re-consumed on the next run.
-    save_tracking(topdir, cover_text, tracking)
+    # Save tracking — this amends the branch tip, changing its SHA so
+    # the directory is not re-consumed on the next run.
+    if branch:
+        save_tracking_ref(topdir, branch, cover_text, tracking)
+    else:
+        save_tracking(topdir, cover_text, tracking)
     logger.info('Integrated agent review data from %d file(s) in b4-review/%s',
                 integrated, head_sha[:12])
 
@@ -1293,6 +1299,7 @@ def _integrate_sashiko_reviews(
     tracking: Dict[str, Any],
     commit_shas: List[str],
     patches: List[Dict[str, Any]],
+    branch: Optional[str] = None,
 ) -> bool:
     """Fetch sashiko inline reviews and merge into tracking as comments.
 
@@ -1395,7 +1402,10 @@ def _integrate_sashiko_reviews(
     if not integrated:
         return False
 
-    save_tracking(topdir, cover_text, tracking)
+    if branch:
+        save_tracking_ref(topdir, branch, cover_text, tracking)
+    else:
+        save_tracking(topdir, cover_text, tracking)
     logger.info('Integrated sashiko inline reviews for %d patch(es)', integrated)
     return True
 
@@ -1406,6 +1416,7 @@ def _integrate_followup_inline_comments(
     tracking: Dict[str, Any],
     commit_shas: List[str],
     patches: List[Dict[str, Any]],
+    branch: Optional[str] = None,
 ) -> bool:
     """Extract inline diff comments from mailing-list follow-up messages.
 
@@ -1486,7 +1497,10 @@ def _integrate_followup_inline_comments(
     if not integrated:
         return False
 
-    save_tracking(topdir, cover_text, tracking)
+    if branch:
+        save_tracking_ref(topdir, branch, cover_text, tracking)
+    else:
+        save_tracking(topdir, cover_text, tracking)
     logger.info('Integrated inline comments from %d follow-up message(s)', integrated)
     return True
 
@@ -2159,10 +2173,10 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     _integrate_agent_reviews(topdir, cover_text, tracking, commit_shas, patches, branch=branch)
 
     # Integrate sashiko inline reviews (if configured)
-    _integrate_sashiko_reviews(topdir, cover_text, tracking, commit_shas, patches)
+    _integrate_sashiko_reviews(topdir, cover_text, tracking, commit_shas, patches, branch=branch)
 
     # Integrate inline comments from mailing-list follow-up messages
-    _integrate_followup_inline_comments(topdir, cover_text, tracking, commit_shas, patches)
+    _integrate_followup_inline_comments(topdir, cover_text, tracking, commit_shas, patches, branch=branch)
 
     # Ensure the plain-text thread-context-blob exists for the AI agent.
     # Runs only when thread-blob was stored before this feature existed

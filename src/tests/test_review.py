@@ -2514,9 +2514,10 @@ class TestIntegrateSashikoReviews:
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
                     with mock.patch('b4.git_run_command') as mock_git:
                         mock_git.return_value = (0, real_diff)
-                        with mock.patch.object(review, 'save_tracking'):
+                        with mock.patch.object(review, 'save_tracking_ref'):
                             result = review._integrate_sashiko_reviews(
-                                '/tmp', 'cover', tracking, commit_shas, patches)
+                                '/tmp', 'cover', tracking, commit_shas, patches,
+                                branch='b4/review/test')
 
         assert result is True
         # Patch 1 should have sashiko comments
@@ -2606,9 +2607,10 @@ class TestIntegrateSashikoReviews:
                             return_value=patchset):
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
-                        with mock.patch.object(review, 'save_tracking'):
+                        with mock.patch.object(review, 'save_tracking_ref'):
                             review._integrate_sashiko_reviews(
-                                '/tmp', '', tracking, ['aaa'], patches)
+                                '/tmp', '', tracking, ['aaa'], patches,
+                                branch='b4/review/test')
         comments = patches[0]['reviews']['sashiko@sashiko.dev']['comments']
         # Should have the newer review's comment
         assert any('New review comment' in c['text'] for c in comments)
@@ -2727,9 +2729,10 @@ class TestIntegrateFollowupInlineComments:
                 with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
                                 return_value=followup_comments):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
-                        with mock.patch.object(review, 'save_tracking'):
+                        with mock.patch.object(review, 'save_tracking_ref'):
                             result = review._integrate_followup_inline_comments(
-                                '/tmp', 'cover', tracking, commit_shas, patches)
+                                '/tmp', 'cover', tracking, commit_shas, patches,
+                                branch='b4/review/test')
 
         assert result is True
         assert 'reviews' in patches[0]
@@ -2814,9 +2817,10 @@ class TestIntegrateFollowupInlineComments:
                 with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
                                 return_value=followup_comments):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
-                        with mock.patch.object(review, 'save_tracking'):
+                        with mock.patch.object(review, 'save_tracking_ref'):
                             result = review._integrate_followup_inline_comments(
-                                '/tmp', 'cover', tracking, ['aaa'], patches)
+                                '/tmp', 'cover', tracking, ['aaa'], patches,
+                                branch='b4/review/test')
 
         assert result is True
         reviews = patches[0]['reviews']
