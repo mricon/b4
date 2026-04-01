@@ -61,10 +61,16 @@ v0.16
 	[_] Privacy guardrails — ensure private emails never end up in the feed
 		: Needs brainstorming: allowlist by list-id? opt-in per send? exclude drafts/dry-run?
 [_] `b4 bugs` integration
-	[_] `b4 bugs` subcommand for git-bug integration
+	[X] `b4 bugs` subcommand for git-bug integration
 		: Import mailing list discussions as git-bug entries
 		: TUI with bug list, detail panel, import and label modals
-		: Uses ezgb library for git-bug access via luagit2
+		: Uses ezgb library for git-bug access via pygit2
+		: Fast listing via git-bug CLI excerpt cache (~90ms)
+		: Comment removal (tombstoning) for data removal requests
+		: Shared TUI utilities extracted to b4.tui package
+		: Auto-initializes git-bug identity from git config
+		: Auto-reload on external cache changes
+		: 53 unit tests for helpers, 866 total tests passing
 	[_] Arbitrary labels on tracked review series
 		: Reuse LabelScreen/AddLabelScreen from bugs TUI (extract to _common.py)
 		: New series_labels table keyed by change_id (survives revision upgrades)
