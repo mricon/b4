@@ -1,1 +1,1 @@
-{"author":{"id":"2fec99dc79e1c05dcc8e6b4c2ef3b9c29fe62a9801fe4df49021516fba017977"},"ops":[{"type":2,"timestamp":1775014098,"nonce":"EQELcSqUM/hWhcGw6kvsznO9xxA=","title":"patchwork 1.1 API","was":"Re: b4 review available in master"}]}
+{"author":{"id":"2fec99dc79e1c05dcc8e6b4c2ef3b9c29fe62a9801fe4df49021516fba017977"},"ops":[{"type":5,"timestamp":1775014392,"nonce":"womUy1LAFFg06IQdWq+oRNRSDP4=","added":["patchwork"],"removed":null}]}
