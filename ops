@@ -1,1 +1,1 @@
-{"author":{"id":"2fec99dc79e1c05dcc8e6b4c2ef3b9c29fe62a9801fe4df49021516fba017977"},"ops":[{"type":5,"timestamp":1775018403,"nonce":"P5xpQYkHjbhCqAGkBsTezs0pCmk=","added":["trailers"],"removed":null}]}
+{"author":{"id":"2fec99dc79e1c05dcc8e6b4c2ef3b9c29fe62a9801fe4df49021516fba017977"},"ops":[{"type":2,"timestamp":1775020641,"nonce":"sMmQhHYrLggkdpQuEwfIDsRUPOc=","title":"b4 picks up old trailers in a confusing way","was":"b4 very eager to pick up old tags"}]}
