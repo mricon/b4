@@ -2912,3 +2912,106 @@ class TestFollowupItemPerMessage:
         # The field should be None after init for a fresh app
         app2 = ReviewApp(self._make_session())
         assert app2._selected_followup_msgid is None
+
+
+# ---------------------------------------------------------------------------
+# _get_lore_series version-mismatch tests (cc529aa)
+# ---------------------------------------------------------------------------
+
+_MINIMAL_DIFF = """\
+Fix bar.
+
+Signed-off-by: Author <author@example.com>
+---
+ foo.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/foo.c b/foo.c
+index aaa..bbb 100644
+--- a/foo.c
++++ b/foo.c
+@@ -1,3 +1,4 @@
+ void foo(void) {
++    bar();
+ }
+"""
+
+
+def _make_patch_msg(subject: str, from_addr: str, date: str,
+                    body: str = '', msgid: str = '') -> email.message.EmailMessage:
+    """Build a minimal EmailMessage that LoreMailbox can parse as a patch."""
+    msg = email.message.EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = from_addr
+    msg['Date'] = date
+    msg['Message-Id'] = msgid or f'<{abs(hash(subject + date))}@test.com>'
+    msg.set_payload(body or _MINIMAL_DIFF)
+    return msg
+
+
+_AUTHOR = 'Author <author@example.com>'
+
+
+class TestGetLoreSeriesVersionMismatch:
+    """Regression tests for the crash when the stored message-id points
+    to a different version's thread than the wanted revision.
+
+    See bug cc529aa: b4 review crashes updating a series.
+    """
+
+    @staticmethod
+    def _v2_msgs() -> List[email.message.EmailMessage]:
+        return [
+            _make_patch_msg(
+                '[PATCH v2] foo: fix bar',
+                _AUTHOR,
+                'Thu, 19 Mar 2026 08:51:12 +0530',
+                msgid='<v2-patch@example.com>',
+            ),
+        ]
+
+    @staticmethod
+    def _v3_msgs() -> List[email.message.EmailMessage]:
+        return [
+            _make_patch_msg(
+                '[PATCH v3] foo: fix bar',
+                _AUTHOR,
+                'Fri, 27 Mar 2026 14:51:06 +0530',
+                msgid='<v3-patch@example.com>',
+            ),
+        ]
+
+    def test_correct_version_found(self) -> None:
+        """Requesting the version present in messages works."""
+        msgs = self._v2_msgs()
+        lser = review._get_lore_series(msgs, wantver=2)
+        assert lser.revision == 2
+
+    def test_no_preference_picks_highest(self) -> None:
+        """wantver=None selects the highest available version."""
+        msgs = self._v2_msgs() + self._v3_msgs()
+        lser = review._get_lore_series(msgs, wantver=None)
+        assert lser.revision == 3
+
+    def test_version_mismatch_shows_found(self) -> None:
+        """Error message lists which versions were actually found."""
+        msgs = self._v2_msgs()
+        with pytest.raises(LookupError, match=r'found: v2'):
+            review._get_lore_series(msgs, wantver=3)
+
+    def test_version_mismatch_after_extra_series(self) -> None:
+        """Adding the missing version's messages resolves the mismatch."""
+        # Start with only v2 — requesting v3 fails
+        msgs = list(self._v2_msgs())
+        with pytest.raises(LookupError):
+            review._get_lore_series(msgs, wantver=3)
+
+        # Simulating get_extra_series adding v3 messages
+        msgs.extend(self._v3_msgs())
+        lser = review._get_lore_series(msgs, wantver=3)
+        assert lser.revision == 3
+
+    def test_no_series_in_messages(self) -> None:
+        """Completely empty mailbox raises LookupError."""
+        with pytest.raises(LookupError, match='No series found'):
+            review._get_lore_series([], wantver=1)

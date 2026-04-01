@@ -1182,15 +1182,26 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             except Exception:
                 self.notify('Could not load revision data', severity='error')
                 return
+            rev_info = None
             for rev in revs:
                 if rev['revision'] == chosen:
-                    series['message_id'] = rev['message_id']
-                    series['revision'] = chosen
+                    rev_info = rev
                     break
-            else:
+            if rev_info is None:
                 self.notify(f'Revision v{chosen} not found in database',
                             severity='error')
                 return
+            series['message_id'] = rev_info['message_id']
+            series['revision'] = chosen
+            # Persist the switch so it survives checkout failures
+            try:
+                conn = b4.review.tracking.get_db(self._identifier)
+                b4.review.tracking.update_series_revision(
+                    conn, change_id, current_rev, chosen,
+                    rev_info['message_id'], rev_info.get('subject'))
+                conn.close()
+            except Exception:
+                pass
         self._checkout_new_series()
 
     def action_thread(self) -> None:
@@ -1231,7 +1242,23 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 msgs = b4.review.retrieve_series_messages(series, self._identifier)
                 self._refresh_msg_count(series, len(msgs))
                 wantver = series.get('revision')
-                lser = b4.review._get_lore_series(msgs, wantver=wantver)
+                try:
+                    lser = b4.review._get_lore_series(msgs, wantver=wantver)
+                except LookupError:
+                    if wantver is not None and b4.can_network:
+                        # The stored message-id may point to a different
+                        # version's thread.  Search for the wanted version
+                        # in other threads before giving up.
+                        msgs = b4.mbox.get_extra_series(
+                            msgs, direction=1, nocache=True)
+                        if wantver > 1:
+                            msgs = b4.mbox.get_extra_series(
+                                msgs, direction=-1,
+                                wantvers=[wantver], nocache=True)
+                        lser = b4.review._get_lore_series(
+                            msgs, wantver=wantver)
+                    else:
+                        raise
 
                 am_msgs = lser.get_am_ready(
                     noaddtrailers=True, addmysob=False, addlink=False,

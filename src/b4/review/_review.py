@@ -226,7 +226,10 @@ def _get_lore_series(msgs: List[email.message.EmailMessage], sloppytrailers: boo
     if wantver is None:
         wantver = max(lmbx.series.keys())
     if wantver not in lmbx.series:
-        raise LookupError(f'Series version {wantver} not found in retrieved messages')
+        found = ', '.join(f'v{v}' for v in sorted(lmbx.series.keys()))
+        raise LookupError(
+            f'Series version {wantver} not found in retrieved messages'
+            f' (found: {found})')
     lser = lmbx.get_series(wantver, sloppytrailers=sloppytrailers,
                            codereview_trailers=False)
     if not lser:
