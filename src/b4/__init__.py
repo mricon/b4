@@ -5050,7 +5050,7 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
         if ('cherrypick' in cmdargs and cmdargs.cherrypick == '_') or not with_thread:
             # Just that msgid, please
             pickings.add(msgid)
-        msgs = get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache, onlymsgids=pickings, with_thread=with_thread)
+        msgs = get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache, onlymsgids=pickings, with_thread=with_thread) or []
         if not msgs:
             logger.debug('No messages from the query')
             return None, msgs
@@ -5069,7 +5069,7 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
 
             if msgid:
                 if with_thread:
-                    msgs = get_strict_thread(mb_msgs, msgid)
+                    msgs = get_strict_thread(mb_msgs, msgid) or []
                     if not msgs:
                         raise LookupError('Could not find %s in %s' % (msgid, cmdargs.localmbox))
                 else:
@@ -5084,7 +5084,7 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
             raise LookupError('Mailbox %s does not exist' % cmdargs.localmbox)
 
     if msgid and 'noparent' in cmdargs and cmdargs.noparent:
-        msgs = get_strict_thread(msgs, msgid, noparent=True)
+        msgs = get_strict_thread(msgs, msgid, noparent=True) or []
 
     if not msgid and msgs:
         for msg in msgs:
