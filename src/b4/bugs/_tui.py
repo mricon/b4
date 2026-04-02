@@ -301,17 +301,24 @@ class ImportScreen(ModalScreen[Optional[str]]):
     def compose(self) -> ComposeResult:
         with Vertical(id='import-dialog') as dialog:
             dialog.border_title = 'Import thread from lore'
-            yield Input(placeholder='Message-ID', id='import-msgid')
+            yield Input(placeholder='Message-ID or lore URL', id='import-msgid')
             yield Checkbox('Ignore parent messages in thread',
                            id='import-noparent')
             yield Static('', id='import-status')
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        msgid = event.value.strip().strip('<>')
-        if not msgid:
+        raw = event.value.strip()
+        if not raw:
+            return
+        status = self.query_one('#import-status', Static)
+        try:
+            msgid = b4.parse_msgid(raw)
+        except Exception:
+            msgid = ''
+        if not msgid or '@' not in msgid:
+            status.update('Not a valid message-id or lore URL')
             return
         noparent = self.query_one('#import-noparent', Checkbox).value
-        status = self.query_one('#import-status', Static)
         status.update('Importing...')
         self.run_worker(
             lambda: self._do_import(msgid, noparent),

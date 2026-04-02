@@ -123,7 +123,7 @@ def import_thread(
     When *noparent* is True, only the message matching *msgid* and
     its descendants are imported (parent messages are ignored).
     """
-    msgid = msgid.strip().strip('<>')
+    msgid = b4.parse_msgid(msgid)
     msgs = b4.get_pi_thread_by_msgid(msgid)
     if not msgs:
         raise RuntimeError(f'Could not retrieve thread for {msgid}')

@@ -420,3 +420,34 @@ class TestBuildActions:
         keys = [k for k, _label in actions]
         assert 'confirmed' in keys
         assert 'needinfo' not in keys
+
+
+class TestParseMsgidForImport:
+    """Verify that import_thread accepts URLs and bare message-ids."""
+
+    def test_bare_msgid(self) -> None:
+        import b4
+        result = b4.parse_msgid('abc123@example.com')
+        assert result == 'abc123@example.com'
+
+    def test_angle_bracketed(self) -> None:
+        import b4
+        result = b4.parse_msgid('<abc123@example.com>')
+        assert result == 'abc123@example.com'
+
+    def test_lore_url(self) -> None:
+        import b4
+        result = b4.parse_msgid(
+            'https://lore.kernel.org/all/abc123@example.com/')
+        assert result == 'abc123@example.com'
+
+    def test_patch_msgid_link(self) -> None:
+        import b4
+        result = b4.parse_msgid(
+            'https://patch.msgid.link/abc123@example.com')
+        assert result == 'abc123@example.com'
+
+    def test_garbage_has_no_at(self) -> None:
+        import b4
+        result = b4.parse_msgid('not-a-msgid')
+        assert '@' not in result
