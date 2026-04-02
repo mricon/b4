@@ -415,6 +415,7 @@ class BugDetailScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding('a', 'bug_action', 'action'),
+        Binding('L', 'add_label', 'Label'),
         Binding('r', 'reply', 'reply'),
         Binding('c', 'comment', 'comment'),
         Binding('T', 'edit_title', 'edit title'),
@@ -1049,6 +1050,27 @@ class BugDetailScreen(ModalScreen[None]):
 
         self.app.push_screen(
             EditTitleScreen(self.bug.title), callback=_on_result,
+        )
+
+    def action_add_label(self) -> None:
+        """Edit labels on the current bug."""
+        app = self.app
+        if not isinstance(app, BugListApp):
+            return
+
+        def _on_result(result: Optional[dict[str, list[str]]]) -> None:
+            if not result:
+                return
+            for lb in result.get('remove', []):
+                app.repo.remove_label(self.bug.id, lb)
+            for lb in result.get('add', []):
+                app.repo.add_label(self.bug.id, lb)
+            app.repo.invalidate()
+            self._refresh_bug_view()
+
+        self.app.push_screen(
+            LabelScreen(self.bug.labels, app._known_labels),
+            callback=_on_result,
         )
 
     def action_bug_action(self) -> None:
