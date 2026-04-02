@@ -330,7 +330,8 @@ class ImportScreen(ModalScreen[Optional[str]]):
         app = self.app
         if not isinstance(app, BugListApp):
             raise RuntimeError('ImportScreen must be used with BugListApp')
-        bug = import_thread(app.repo, msgid, noparent=noparent)
+        with _quiet_worker():
+            bug = import_thread(app.repo, msgid, noparent=noparent)
         return bug.id
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
@@ -818,7 +819,8 @@ class BugDetailScreen(ModalScreen[None]):
 
         # Fetch thread from lore
         fetch_id = root_msgid.strip('<>')
-        msgs = b4.get_pi_thread_by_msgid(fetch_id)
+        with _quiet_worker():
+            msgs = b4.get_pi_thread_by_msgid(fetch_id)
         if not msgs:
             self.app.call_from_thread(
                 self.notify, 'Could not retrieve thread from lore',
