@@ -414,6 +414,7 @@ class BugDetailScreen(ModalScreen[None]):
     '''
 
     BINDINGS = [
+        Binding('a', 'bug_action', 'action'),
         Binding('r', 'reply', 'reply'),
         Binding('c', 'comment', 'comment'),
         Binding('T', 'edit_title', 'edit title'),
@@ -1049,6 +1050,79 @@ class BugDetailScreen(ModalScreen[None]):
         self.app.push_screen(
             EditTitleScreen(self.bug.title), callback=_on_result,
         )
+
+    def action_bug_action(self) -> None:
+        """Show lifecycle action menu for the current bug."""
+        actions = BugListApp._build_actions(self.bug)
+
+        def _on_result(action: Optional[str]) -> None:
+            if action is None:
+                return
+            app = self.app
+            if not isinstance(app, BugListApp):
+                return
+            bid = self.bug.id
+            if action == 'delete':
+                def _on_delete(confirmed: bool | None) -> None:
+                    if not confirmed:
+                        return
+                    app.repo.remove_bug(bid)
+                    app.repo.invalidate()
+                    self.dismiss(None)
+                self.app.push_screen(
+                    ConfirmScreen(
+                        title='Delete bug?',
+                        subject=f'{bid[:7]}: {self.bug.title}',
+                        body=[],
+                        border='$error',
+                    ),
+                    callback=_on_delete,
+                )
+                return
+            if action == 'duplicate':
+                def _on_dup(target_id: Optional[str]) -> None:
+                    if not target_id:
+                        return
+                    target = app.repo.get_bug(target_id)
+                    app.repo.add_comment(
+                        bid,
+                        f'Closing as duplicate of {target.id[:7]}: '
+                        f'{target.title}',
+                    )
+                    for lb in self.bug.labels:
+                        if lb.startswith('lifecycle:'):
+                            app.repo.remove_label(bid, lb)
+                    app.repo.add_label(bid, 'lifecycle:duplicate')
+                    app.repo.set_status(bid, Status.CLOSED)
+                    app.repo.invalidate()
+                    self.dismiss(None)
+                self.app.push_screen(
+                    DuplicateScreen(app.repo, self.bug),
+                    callback=_on_dup,
+                )
+                return
+            if action == 'reopen':
+                app.repo.set_status(bid, Status.OPEN)
+                for lb in self.bug.labels:
+                    if lb.startswith('lifecycle:'):
+                        app.repo.remove_label(bid, lb)
+            elif action in _LIFECYCLE_SYMBOLS:
+                for lb in self.bug.labels:
+                    if lb.startswith('lifecycle:'):
+                        app.repo.remove_label(bid, lb)
+                app.repo.add_label(bid, f'lifecycle:{action}')
+                if action in BugListApp._CLOSING_STATES:
+                    app.repo.set_status(bid, Status.CLOSED)
+            app.repo.invalidate()
+            # Closing/deleting: return to list. Otherwise refresh detail.
+            if action in BugListApp._CLOSING_STATES or action == 'reopen':
+                self.dismiss(None)
+            else:
+                self._refresh_bug_view()
+
+        self.app.push_screen(
+            ActionScreen(actions, shortcuts=_ACTION_SHORTCUTS),
+            callback=_on_result)
 
     def action_back(self) -> None:
         self.dismiss(None)
@@ -1973,6 +2047,9 @@ class BugListApp(JKListNavMixin, App[None]):
 
             def _on_dismiss(_result: None) -> None:
                 self.repo.invalidate()
+                self._save_focus()
+                self.run_worker(self._load_bugs, name='load_bugs',
+                                thread=True)
 
             self.push_screen(BugDetailScreen(bug),
                              callback=_on_dismiss)
@@ -2187,31 +2264,27 @@ class BugListApp(JKListNavMixin, App[None]):
             actions = [
                 ('confirmed', 'Confirm'),
                 ('needinfo', 'Need info'),
-                ('worksforme', 'Close: works for me'),
-                ('wontfix', "Close: won't fix"),
-                ('duplicate', 'Close: duplicate of\u2026'),
             ]
         elif lifecycle == 'confirmed':
             actions = [
                 ('needinfo', 'Need info'),
-                ('fixed', 'Close: fixed'),
-                ('worksforme', 'Close: works for me'),
-                ('wontfix', "Close: won't fix"),
-                ('duplicate', 'Close: duplicate of\u2026'),
             ]
         elif lifecycle == 'needinfo':
             actions = [
                 ('confirmed', 'Confirm'),
-                ('worksforme', 'Close: works for me'),
-                ('wontfix', "Close: won't fix"),
-                ('duplicate', 'Close: duplicate of\u2026'),
             ]
         else:
             actions = [
                 ('confirmed', 'Confirm'),
                 ('needinfo', 'Need info'),
-                ('duplicate', 'Close: duplicate of\u2026'),
             ]
+        # Close reasons are always available regardless of lifecycle
+        actions.extend([
+            ('fixed', 'Close: fixed'),
+            ('worksforme', 'Close: works for me'),
+            ('wontfix', "Close: won't fix"),
+            ('duplicate', 'Close: duplicate of\u2026'),
+        ])
         actions.append(('delete', 'Delete bug'))
         return actions
 

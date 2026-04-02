@@ -9,10 +9,9 @@ Tests the pure-logic functions in _import.py and _tui.py that don't
 need Textual, git-bug, or network access.
 """
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Set
+from typing import Any, List, Set
 from unittest import mock
 
-import pytest
 
 from b4.bugs._import import (
     format_comment,
@@ -397,6 +396,7 @@ class TestBuildActions:
         keys = [k for k, _label in actions]
         assert 'confirmed' in keys
         assert 'needinfo' in keys
+        assert 'fixed' in keys
         assert 'worksforme' in keys
         assert 'wontfix' in keys
         assert 'duplicate' in keys
@@ -420,6 +420,16 @@ class TestBuildActions:
         keys = [k for k, _label in actions]
         assert 'confirmed' in keys
         assert 'needinfo' not in keys
+
+    def test_close_reasons_always_available(self) -> None:
+        """All close reasons are available from any open lifecycle state."""
+        for lifecycle in ('', 'new', 'confirmed', 'needinfo'):
+            actions = self._build(lifecycle=lifecycle)
+            keys = [k for k, _label in actions]
+            assert 'fixed' in keys, f'fixed missing for {lifecycle!r}'
+            assert 'worksforme' in keys, f'worksforme missing for {lifecycle!r}'
+            assert 'wontfix' in keys, f'wontfix missing for {lifecycle!r}'
+            assert 'duplicate' in keys, f'duplicate missing for {lifecycle!r}'
 
 
 class TestParseMsgidForImport:
