@@ -512,6 +512,19 @@ class BugDetailScreen(ModalScreen[None]):
 
         # Populate left pane
         lv = self.query_one('#comment-list', ListView)
+        for item in self._build_comment_items():
+            lv.append(item)
+        lv.index = 0
+
+        # Populate right pane after mount so RichLog tracks lines correctly
+        def _initial_populate() -> None:
+            self._populate_richlog()
+            self.query_one('#comment-list', ListView).focus()
+        self.call_after_refresh(_initial_populate)
+
+    def _build_comment_items(self) -> list[CommentItem]:
+        """Build CommentItem widgets for the left pane."""
+        items: list[CommentItem] = []
         for i in self._visible_indices:
             comment = self.bug.comments[i]
             from_hdr = parse_comment_header(comment.text, 'From')
@@ -523,15 +536,14 @@ class BugDetailScreen(ModalScreen[None]):
                 name = comment.author.name
             depth = self._comment_depths.get(i, 0)
             indent = '  ' * depth
-            lv.append(CommentItem(f'{indent}{name}', i))
+            items.append(CommentItem(f'{indent}{name}', i))
+        return items
 
-        lv.index = 0
-
-        # Populate right pane after mount so RichLog tracks lines correctly
-        self.call_after_refresh(self._populate_comments)
-
-    def _populate_comments(self) -> None:
+    def _populate_richlog(self) -> None:
+        """Fill the RichLog with comment panels and record positions."""
         viewer = self.query_one('#detail-log', RichLog)
+        viewer.clear()
+        self._comment_positions.clear()
         self._header_line_map.clear()
         for i in self._visible_indices:
             comment = self.bug.comments[i]
@@ -540,7 +552,30 @@ class BugDetailScreen(ModalScreen[None]):
             self._header_line_map[line_pos] = i
             depth = self._comment_depths.get(i, 0)
             self._render_comment_panel(viewer, comment, i, depth)
-        self.query_one('#comment-list', ListView).focus()
+
+    async def _rebuild_panes(self, scroll_to_end: bool = False) -> None:
+        """Rebuild both panes from the current bug state.
+
+        Replaces the ListView widget entirely (rather than clear +
+        append) because ListView.clear() is async and races with
+        subsequent appends, causing stale child counts.
+        """
+        self._visible_indices = [
+            i for i, c in enumerate(self.bug.comments)
+            if not is_comment_removed(c.text)
+        ]
+        # Replace the ListView widget and rebuild the RichLog in a
+        # single batch so the screen doesn't flicker mid-rebuild.
+        items = self._build_comment_items()
+        initial = len(items) - 1 if scroll_to_end and items else 0
+        new_lv = ListView(*items, id='comment-list', initial_index=initial)
+        pane = self.query_one('#comment-list-pane', Vertical)
+        old_lv = self.query_one('#comment-list', ListView)
+        with self.app.batch_update():
+            await old_lv.remove()
+            await pane.mount(new_lv)
+            self._populate_richlog()
+            new_lv.focus()
 
     def _get_comment_colour(self, comment: Comment) -> str:
         """Get the colour for a comment based on sender."""
@@ -600,7 +635,8 @@ class BugDetailScreen(ModalScreen[None]):
             else:
                 body_text.append(line)
             body_text.append('\n')
-        body_text.append('\n')
+        if body.strip():
+            body_text.append('\n')
 
         # Body with quote highlighting
         accent = self._ts.get('accent', 'cyan')
@@ -610,6 +646,9 @@ class BugDetailScreen(ModalScreen[None]):
             else:
                 body_text.append(line)
             body_text.append('\n')
+
+        # Trim trailing whitespace to avoid a blank line at the bottom
+        body_text.rstrip()
 
         panel = Panel(
             body_text,
@@ -674,9 +713,9 @@ class BugDetailScreen(ModalScreen[None]):
         viewer.scroll_page_up()
         self.call_after_refresh(self._sync_highlight_from_scroll)
 
-    def _is_left_pane_focused(self) -> bool:
-        lv = self.query_one('#comment-list', ListView)
-        return lv.has_focus
+    def _is_viewer_focused(self) -> bool:
+        viewer = self.query_one('#detail-log', RichLog)
+        return viewer.has_focus
 
     def _move_comment(self, delta: int) -> None:
         lv = self.query_one('#comment-list', ListView)
@@ -685,23 +724,22 @@ class BugDetailScreen(ModalScreen[None]):
         new_idx = lv.index + delta
         if 0 <= new_idx < len(lv.children):
             lv.index = new_idx
-            self._scroll_to_comment(new_idx)
 
     def on_key(self, event: 'Key') -> None:
         if event.character in ('j', 'k'):
             event.stop()
             event.prevent_default()
-            if self._is_left_pane_focused():
-                # Left pane: move cursor and scroll right pane
-                self._move_comment(1 if event.character == 'j' else -1)
-            else:
-                # Right pane: scroll the viewer
+            if self._is_viewer_focused():
+                # Viewer focused: scroll the viewer line-by-line
                 viewer = self.query_one('#detail-log', RichLog)
                 if event.character == 'j':
                     viewer.scroll_down()
                 else:
                     viewer.scroll_up()
                 self.call_after_refresh(self._sync_highlight_from_scroll)
+            else:
+                # Default: move comment cursor and scroll right pane
+                self._move_comment(1 if event.character == 'j' else -1)
         elif event.character == '.':
             event.stop()
             event.prevent_default()
@@ -953,30 +991,12 @@ class BugDetailScreen(ModalScreen[None]):
         if isinstance(app, BugListApp):
             app.repo.invalidate(self.bug.id)
             self.bug = app.repo.get_bug(self.bug.id)
-        self._comment_positions.clear()
-        self._visible_indices = [
-            i for i, c in enumerate(self.bug.comments)
-            if not is_comment_removed(c.text)
-        ]
-        viewer = self.query_one('#detail-log', RichLog)
-        viewer.clear()
-        lv = self.query_one('#comment-list', ListView)
-        lv.clear()
-        for i in self._visible_indices:
-            comment = self.bug.comments[i]
-            from_hdr = parse_comment_header(comment.text, 'From')
-            if from_hdr:
-                name, _addr = email.utils.parseaddr(from_hdr)
-                if not name:
-                    name = from_hdr
-            else:
-                name = comment.author.name
-            depth = self._comment_depths.get(i, 0)
-            indent = '  ' * depth
-            lv.append(CommentItem(f'{indent}{name}', i))
-        if scroll_to_end and lv.children:
-            lv.index = len(lv.children) - 1
-        self.call_after_refresh(self._populate_comments)
+        # Run the async rebuild so the ListView replacement (which
+        # requires await) happens cleanly in the event loop.
+        self.run_worker(
+            self._rebuild_panes(scroll_to_end=scroll_to_end),
+            name='rebuild_panes',
+        )
 
     def action_remove_comment(self) -> None:
         """Tombstone the selected comment."""
