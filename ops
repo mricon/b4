@@ -1,1 +1,1 @@
-{"author":{"id":"2fec99dc79e1c05dcc8e6b4c2ef3b9c29fe62a9801fe4df49021516fba017977"},"ops":[{"type":2,"timestamp":1775158171,"nonce":"9mrLyW7slQ9FsTus8uojiLSvyjo=","title":"type checking with uv","was":"b4 type checking"}]}
+{"author":{"id":"2fec99dc79e1c05dcc8e6b4c2ef3b9c29fe62a9801fe4df49021516fba017977"},"ops":[{"type":5,"timestamp":1775158200,"nonce":"Sk/yzpZ0inI0biUwwKiW8TwW1po=","added":["linters"],"removed":null}]}
