@@ -241,21 +241,21 @@ def _bug_submitter(bug: Bug) -> str:
 class BugListItem(ListItem):
     """A single bug row in the bug list."""
 
-    def __init__(self, bug: BugLike) -> None:
+    def __init__(self, bug: BugLike, unseen: int = 0) -> None:
         super().__init__()
         self.bug = bug
+        self._unseen = unseen
 
     def compose(self) -> ComposeResult:
         bug = self.bug
         style = 'dim' if _bug_tier(bug) >= 2 else ''
         if isinstance(bug, BugSummary):
             submitter = bug.author_name or '\u2014'
-            msgs = str(bug.comment_count).rjust(4)
+            count = bug.comment_count
         else:
             submitter = _bug_submitter(bug)
-            visible = sum(1 for c in bug.comments
-                          if not is_comment_removed(c.text))
-            msgs = str(visible).rjust(4)
+            count = sum(1 for c in bug.comments
+                        if not is_comment_removed(c.text))
         if display_width(submitter) > 20:
             while display_width(submitter) > 19:
                 submitter = submitter[:-1]
@@ -265,7 +265,11 @@ class BugListItem(ListItem):
         label = Text(no_wrap=True, overflow='ellipsis', style=style)
         label.append(f'{bug.id[:7]}  ')
         label.append(submitter)
-        label.append(f'  {msgs}')
+        label.append(f'  {str(count).rjust(4)}')
+        if self._unseen > 0:
+            label.append(f'({self._unseen})', style='bold dark_goldenrod')
+        else:
+            label.append('   ')
         label.append(f'  {status_sym}')
         label.append(f'  {bug.title}')
         yield Static(label)
@@ -1818,10 +1822,13 @@ class BugListApp(JKListNavMixin, App[None]):
         self._show_closed: bool = False
         self._focus_bug_id: str | None = None
         self._cache_mtime: float = 0.0
+        # In-memory "seen" comment counts for new-comment badges.
+        # Populated on first load, preserved across refreshes.
+        self._seen_counts: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield Static('b4 bugs', id='title-bar')
-        header_text = f'{"ID":<7s}  {"Submitter":<20s}  {"Msgs":>4s}  {"S"}  {"Subject"}'
+        header_text = f'{"ID":<7s}  {"Submitter":<20s}  {"Msgs":>4s}     {"S"}  {"Subject"}'
         yield Static(header_text, id='column-header')
         yield ListView(id='bug-list')
         with Vertical(id='details-panel'):
@@ -1955,7 +1962,12 @@ class BugListApp(JKListNavMixin, App[None]):
 
         self._update_title(len(display_bugs))
 
-        items: list[BugListItem] = [BugListItem(bug) for bug in display_bugs]
+        items: list[BugListItem] = []
+        for bug in display_bugs:
+            count = bug.comment_count if isinstance(bug, BugSummary) else len(bug.comments)
+            seen = self._seen_counts.get(bug.id, count)
+            unseen = max(0, count - seen)
+            items.append(BugListItem(bug, unseen=unseen))
         lv = ListView(*items, id='bug-list')
 
         with self.app.batch_update():
@@ -1978,6 +1990,13 @@ class BugListApp(JKListNavMixin, App[None]):
         if event.worker.name == 'load_bugs':
             result = event.worker.result
             self._all_bugs = result if isinstance(result, list) else []
+            # Snapshot comment counts for bugs we haven't seen yet.
+            # Existing entries are preserved so the badge shows
+            # new comments that arrived since the baseline.
+            for bug in self._all_bugs:
+                if bug.id not in self._seen_counts:
+                    count = bug.comment_count if isinstance(bug, BugSummary) else len(bug.comments)
+                    self._seen_counts[bug.id] = count
             # Collect all known labels across all bugs
             all_labels: set[str] = set()
             for bug in self._all_bugs:
@@ -2064,8 +2083,13 @@ class BugListApp(JKListNavMixin, App[None]):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if isinstance(event.item, BugListItem):
             self._focus_bug_id = event.item.bug.id
+            # Mark as seen so the badge clears on return
+            bug_id = event.item.bug.id
+            bug_obj = event.item.bug
+            count = bug_obj.comment_count if isinstance(bug_obj, BugSummary) else len(bug_obj.comments)
+            self._seen_counts[bug_id] = count
             # Load full Bug on demand (CachedBug doesn't have comments)
-            bug = self.repo.get_bug(event.item.bug.id)
+            bug = self.repo.get_bug(bug_id)
 
             def _on_dismiss(_result: None) -> None:
                 self.repo.invalidate()
