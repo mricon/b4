@@ -1797,12 +1797,14 @@ class BugListApp(JKListNavMixin, App[None]):
         """Check if the limit pattern contains an explicit s: token."""
         return any(t.startswith('s:') for t in pattern.lower().split())
 
-    def _update_title(self) -> None:
-        parts = ['b4 bugs']
+    def _update_title(self, count: int = 0) -> None:
+        topdir = self.repo._repo
+        name = os.path.basename(topdir.rstrip('/'))
         if self._show_closed:
-            parts.append('(all)')
+            status = 'all'
         else:
-            parts.append('(open)')
+            status = 'open'
+        parts = [f'{name} \u2014 {count} bugs ({status})']
         if self._limit_pattern:
             parts.append(f'limit: {self._limit_pattern}')
         title_bar = self.query_one('#title-bar', Static)
@@ -1833,7 +1835,7 @@ class BugListApp(JKListNavMixin, App[None]):
         )
         display_bugs.sort(key=_bug_tier)
 
-        self._update_title()
+        self._update_title(len(display_bugs))
 
         items: list[BugListItem] = [BugListItem(bug) for bug in display_bugs]
         lv = ListView(*items, id='bug-list')
