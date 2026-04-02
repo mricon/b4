@@ -9,9 +9,10 @@ Tests the pure-logic functions in _import.py and _tui.py that don't
 need Textual, git-bug, or network access.
 """
 from datetime import datetime, timezone
-from typing import Any, List, Set
+from typing import Set
 from unittest import mock
 
+from ezgb import Bug, BugSummary, Comment, Identity, Status
 
 from b4.bugs._import import (
     format_comment,
@@ -31,58 +32,64 @@ from b4.bugs._tui import (
 
 
 # ---------------------------------------------------------------------------
-# Helpers -- lightweight fakes for Bug and BugSummary
+# Helpers -- factory functions for real Bug and BugSummary objects
 # ---------------------------------------------------------------------------
 
-class FakeBug:
-    """Minimal Bug-like object for testing pure functions."""
-
-    def __init__(
-        self,
-        *,
-        status: Any = None,
-        labels: Set[str] | None = None,
-        comments: List[Any] | None = None,
-        created_at: datetime | None = None,
-        title: str = '',
-    ) -> None:
-        from ezgb import Status
-        self.status = status or Status.OPEN
-        self.labels = labels or set()
-        self.comments = comments or []
-        self.created_at = created_at or datetime(2026, 1, 1, tzinfo=timezone.utc)
-        self.title = title
+_EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_IDENTITY = Identity(id='test', name='Test', email='test@test.com', login='')
 
 
-class FakeComment:
-    """Minimal Comment-like object."""
+def make_bug(
+    *,
+    status: Status = Status.OPEN,
+    labels: Set[str] | None = None,
+    comments: list[Comment] | None = None,
+    created_at: datetime | None = None,
+    title: str = '',
+) -> Bug:
+    return Bug(
+        id='deadbeef' * 8,
+        title=title,
+        status=status,
+        creator=_IDENTITY,
+        created_at=created_at or _EPOCH,
+        labels=labels or set(),
+        comments=comments or [],
+    )
 
-    def __init__(self, created_at: datetime) -> None:
-        self.created_at = created_at
+
+def make_comment(created_at: datetime) -> Comment:
+    return Comment(
+        id='c0ffee' * 11,
+        author=_IDENTITY,
+        text='',
+        created_at=created_at,
+        count=0,
+        attachment_ids=[],
+    )
 
 
-class FakeSummary:
-    """Minimal BugSummary-like object."""
-
-    def __init__(
-        self,
-        *,
-        status: Any = None,
-        labels: frozenset[str] | None = None,
-        edited_at: datetime | None = None,
-        created_at: datetime | None = None,
-        title: str = '',
-        comment_count: int = 0,
-        author_name: str = '',
-    ) -> None:
-        from ezgb import Status
-        self.status = status or Status.OPEN
-        self.labels = labels or frozenset()
-        self.edited_at = edited_at or datetime(2026, 1, 1, tzinfo=timezone.utc)
-        self.created_at = created_at or datetime(2026, 1, 1, tzinfo=timezone.utc)
-        self.title = title
-        self.comment_count = comment_count
-        self.author_name = author_name
+def make_summary(
+    *,
+    status: Status = Status.OPEN,
+    labels: frozenset[str] | None = None,
+    edited_at: datetime | None = None,
+    created_at: datetime | None = None,
+    title: str = '',
+    comment_count: int = 0,
+    author_name: str = '',
+) -> BugSummary:
+    return BugSummary(
+        id='deadbeef' * 8,
+        title=title,
+        status=status,
+        creator_id='test',
+        created_at=created_at or _EPOCH,
+        labels=labels or frozenset(),
+        comment_count=comment_count,
+        author_name=author_name,
+        edited_at=edited_at or _EPOCH,
+    )
 
 
 # ===========================================================================
@@ -226,51 +233,51 @@ class TestLabelColor:
 
 class TestBugTier:
     def test_open_new_is_tier_0(self) -> None:
-        bug = FakeBug()
+        bug = make_bug()
         assert _bug_tier(bug) == 0
 
     def test_confirmed_is_tier_0(self) -> None:
-        bug = FakeBug(labels={'lifecycle:confirmed'})
+        bug = make_bug(labels={'lifecycle:confirmed'})
         assert _bug_tier(bug) == 0
 
     def test_needinfo_is_tier_1(self) -> None:
-        bug = FakeBug(labels={'lifecycle:needinfo'})
+        bug = make_bug(labels={'lifecycle:needinfo'})
         assert _bug_tier(bug) == 1
 
     def test_fixed_is_tier_2(self) -> None:
-        bug = FakeBug(labels={'lifecycle:fixed'})
+        bug = make_bug(labels={'lifecycle:fixed'})
         assert _bug_tier(bug) == 2
 
     def test_closed_is_tier_2(self) -> None:
         from ezgb import Status
-        bug = FakeBug(status=Status.CLOSED)
+        bug = make_bug(status=Status.CLOSED)
         assert _bug_tier(bug) == 2
 
     def test_summary_works(self) -> None:
-        s = FakeSummary(labels=frozenset({'lifecycle:needinfo'}))
+        s = make_summary(labels=frozenset({'lifecycle:needinfo'}))
         assert _bug_tier(s) == 1
 
 
 class TestBugLifecycle:
     def test_new_default(self) -> None:
-        bug = FakeBug()
+        bug = make_bug()
         assert _bug_lifecycle(bug) == '\u2605'  # ★
 
     def test_confirmed(self) -> None:
-        bug = FakeBug(labels={'lifecycle:confirmed'})
+        bug = make_bug(labels={'lifecycle:confirmed'})
         assert _bug_lifecycle(bug) == '\u00a4'  # ¤
 
     def test_fixed(self) -> None:
-        bug = FakeBug(labels={'lifecycle:fixed'})
+        bug = make_bug(labels={'lifecycle:fixed'})
         assert _bug_lifecycle(bug) == '\u2713'  # ✓
 
     def test_duplicate(self) -> None:
-        bug = FakeBug(labels={'lifecycle:duplicate'})
+        bug = make_bug(labels={'lifecycle:duplicate'})
         assert _bug_lifecycle(bug) == '\u2261'  # ≡
 
     def test_closed_no_lifecycle(self) -> None:
         from ezgb import Status
-        bug = FakeBug(status=Status.CLOSED)
+        bug = make_bug(status=Status.CLOSED)
         assert _bug_lifecycle(bug) == '\u00d7'  # ×
 
 
@@ -278,15 +285,15 @@ class TestBugLastActivity:
     def test_uses_last_comment(self) -> None:
         comment_time = datetime(2026, 3, 15, tzinfo=timezone.utc)
         created_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        bug = FakeBug(
+        bug = make_bug(
             created_at=created_time,
-            comments=[FakeComment(comment_time)],
+            comments=[make_comment(comment_time)],
         )
         assert _bug_last_activity(bug) == comment_time
 
     def test_fallback_to_created_at(self) -> None:
         created_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        bug = FakeBug(created_at=created_time, comments=[])
+        bug = make_bug(created_at=created_time, comments=[])
         assert _bug_last_activity(bug) == created_time
 
     def test_summary_uses_edited_at(self) -> None:
@@ -325,36 +332,36 @@ class TestRelativeTime:
 
 class TestMatchesLimit:
     def test_bare_text_matches_title(self) -> None:
-        bug = FakeBug(title='Crash on startup')
+        bug = make_bug(title='Crash on startup')
         assert BugListApp._matches_limit(bug, 'crash') is True
 
     def test_bare_text_case_insensitive(self) -> None:
-        bug = FakeBug(title='Crash on startup')
+        bug = make_bug(title='Crash on startup')
         assert BugListApp._matches_limit(bug, 'CRASH') is True
 
     def test_bare_text_no_match(self) -> None:
-        bug = FakeBug(title='Crash on startup')
+        bug = make_bug(title='Crash on startup')
         assert BugListApp._matches_limit(bug, 'login') is False
 
     def test_status_filter_open(self) -> None:
         from ezgb import Status
-        bug = FakeBug(status=Status.OPEN)
+        bug = make_bug(status=Status.OPEN)
         assert BugListApp._matches_limit(bug, 's:open') is True
         assert BugListApp._matches_limit(bug, 's:closed') is False
 
     def test_status_filter_closed(self) -> None:
         from ezgb import Status
-        bug = FakeBug(status=Status.CLOSED)
+        bug = make_bug(status=Status.CLOSED)
         assert BugListApp._matches_limit(bug, 's:closed') is True
         assert BugListApp._matches_limit(bug, 's:open') is False
 
     def test_label_filter(self) -> None:
-        bug = FakeBug(labels={'area/network', 'priority/high'})
+        bug = make_bug(labels={'area/network', 'priority/high'})
         assert BugListApp._matches_limit(bug, 'l:network') is True
         assert BugListApp._matches_limit(bug, 'l:web') is False
 
     def test_combined_tokens(self) -> None:
-        bug = FakeBug(
+        bug = make_bug(
             title='Network crash',
             labels={'area/network'},
         )
@@ -362,12 +369,12 @@ class TestMatchesLimit:
         assert BugListApp._matches_limit(bug, 'crash l:web') is False
 
     def test_empty_pattern(self) -> None:
-        bug = FakeBug(title='Anything')
+        bug = make_bug(title='Anything')
         assert BugListApp._matches_limit(bug, '') is True
 
     def test_summary_works(self) -> None:
         from ezgb import Status
-        s = FakeSummary(
+        s = make_summary(
             title='Network bug',
             status=Status.OPEN,
             labels=frozenset({'area/network'}),
@@ -379,13 +386,11 @@ class TestBuildActions:
     """Test context-sensitive action list building."""
 
     @staticmethod
-    def _build(status: str = 'open', lifecycle: str = '') -> List:
-        from ezgb import Status
-        from b4.bugs._tui import BugListApp
+    def _build(status: str = 'open', lifecycle: str = '') -> list[tuple[str, str]]:
         labels: Set[str] = set()
         if lifecycle:
             labels.add(f'lifecycle:{lifecycle}')
-        bug = FakeBug(
+        bug = make_bug(
             status=Status.CLOSED if status == 'closed' else Status.OPEN,
             labels=labels,
         )

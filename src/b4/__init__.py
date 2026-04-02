@@ -1685,10 +1685,10 @@ class LoreMessage:
         # Identify all DKIM-Signature headers and try them in reverse order
         # until we come to a passing one
         dkhdrs = list()
-        for header in list(self.msg._headers):  # type: ignore[attr-defined]
+        for header in list(self.msg._headers): # type: ignore[attr-defined]
             if header[0].lower() == 'dkim-signature':
                 dkhdrs.append(header)
-                self.msg._headers.remove(header)  # type: ignore[attr-defined]
+                self.msg._headers.remove(header) # type: ignore[attr-defined]
         dkhdrs.reverse()
 
         seenatts = list()
@@ -1718,7 +1718,7 @@ class LoreMessage:
                 if isinstance(sh, str) and 'date' in sh.lower().split(':'):
                     signtime = self.date
 
-            self.msg._headers.append((hn, hval))  # type: ignore[attr-defined]
+            self.msg._headers.append((hn, hval)) # type: ignore[attr-defined]
             try:
                 res = dkim.verify(self.msg.as_bytes(policy=emlpolicy), logger=dkimlogger)
                 logger.debug('DKIM verify results: %s=%s', identity, res)
@@ -1735,7 +1735,7 @@ class LoreMessage:
                 self._attestors.append(attestor)
                 return
 
-            self.msg._headers.pop(-1)  # type: ignore[attr-defined]
+            self.msg._headers.pop(-1) # type: ignore[attr-defined]
             seenatts.append(attestor)
 
         # No exact domain matches, so return everything we have
@@ -1781,7 +1781,7 @@ class LoreMessage:
         sources = config.get('keyringsrc')
         if not sources:
             # fallback to patatt's keyring if none is specified for b4
-            patatt_config = patatt.get_config_from_git(r'patatt\..*', multivals=['keyringsrc'])  # type: ignore[attr-defined]
+            patatt_config = patatt.get_config_from_git(r'patatt\..*', multivals=['keyringsrc'])
             sources = patatt_config.get('keyringsrc')
             if not sources:
                 sources = ['ref:::.keys', 'ref:::.local-keys', 'ref::refs/meta/keyring:']
@@ -1791,20 +1791,20 @@ class LoreMessage:
             sources.append(pdir)
 
         # Push our logger and GPGBIN into patatt
-        patatt.logger = logger  # type: ignore[attr-defined]
+        patatt.logger = logger
         assert isinstance(config['gpgbin'], str), \
             'gpgbin config value is not a string: %s' % str(config['gpgbin'])
-        patatt.GPGBIN = config['gpgbin']  # type: ignore[attr-defined]
+        patatt.GPGBIN = config['gpgbin']
 
         logger.debug('Loading patatt attestations with sources=%s', str(sources))
 
         success = False
         trim_body = False
         while True:
-            attestations = patatt.validate_message(self.msg.as_bytes(policy=emlpolicy), sources, trim_body=trim_body)  # type: ignore[attr-defined]
+            attestations = patatt.validate_message(self.msg.as_bytes(policy=emlpolicy), sources, trim_body=trim_body)
             # Do we have any successes?
             for attestation in attestations:
-                if attestation[0] == patatt.RES_VALID:  # type: ignore[attr-defined]
+                if attestation[0] == patatt.RES_VALID:
                     success = True
                     break
             if success:
@@ -2028,9 +2028,9 @@ class LoreMessage:
                             self.fromname = xpair[0]
                             self.fromemail = xpair[1]
                             # Drop the reply-to header if it's exactly the same
-                            for header in list(self.msg._headers):  # type: ignore[attr-defined]
+                            for header in list(self.msg._headers): # type: ignore[attr-defined]
                                 if header[0].lower() == 'reply-to' and header[1].find(xpair[1]) > 0:
-                                    self.msg._headers.remove(header)  # type: ignore[attr-defined]
+                                    self.msg._headers.remove(header) # type: ignore[attr-defined]
 
                 has_passing = True
                 att_info: Dict[str, Any] = {
@@ -3174,10 +3174,10 @@ class LoreAttestorPatatt(LoreAttestor):
         self.keysrc = keysrc
         self.keyalgo = keyalgo
         self.errors = errors
-        if result == patatt.RES_VALID:  # type: ignore[attr-defined]
+        if result == patatt.RES_VALID:
             self.passing = True
             self.have_key = True
-        elif result >= patatt.RES_BADSIG:  # type: ignore[attr-defined]
+        elif result >= patatt.RES_BADSIG:
             self.have_key = True
 
 
@@ -4634,13 +4634,13 @@ def send_mail(smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], msgs
             import patatt
             # patatt.logger = logger
             try:
-                bdata = patatt.rfc2822_sign(bdata)  # type: ignore[attr-defined]
-            except patatt.NoKeyError as ex:  # type: ignore[attr-defined]
+                bdata = patatt.rfc2822_sign(bdata)
+            except patatt.NoKeyError as ex:
                 logger.critical('CRITICAL: Error signing: no key configured')
                 logger.critical('          Run "patatt genkey" or configure "user.signingKey" to use PGP')
                 logger.critical('          As a last resort, rerun with --no-sign')
                 raise RuntimeError(str(ex)) from ex
-            except patatt.SigningError as ex:  # type: ignore[attr-defined]
+            except patatt.SigningError as ex:
                 raise RuntimeError('Failure trying to patatt-sign: %s' % str(ex)) from ex
         if dryrun:
             if output_dir:

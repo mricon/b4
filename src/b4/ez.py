@@ -190,16 +190,16 @@ def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
     if not myemail:
         raise RuntimeError('No email configured, set user.email')
     myname = str(usercfg.get('name', ''))
-    pconfig = patatt.get_main_config()  # type: ignore[attr-defined]
+    pconfig = patatt.get_main_config()
     selector = str(pconfig.get('selector', 'default'))
-    algo, keydata = patatt.get_algo_keydata(pconfig)  # type: ignore[attr-defined]
+    algo, keydata = patatt.get_algo_keydata(pconfig)
     return endpoint, myname, myemail, selector, algo, keydata
 
 
 def auth_new() -> None:
     try:
         endpoint, myname, myemail, selector, algo, keydata = get_auth_configs()
-    except patatt.NoKeyError as ex:  # type: ignore[attr-defined]
+    except patatt.NoKeyError as ex:
         logger.critical('CRITICAL: no usable signing key configured')
         logger.critical('          %s', ex)
         sys.exit(1)
@@ -280,8 +280,8 @@ def auth_verify(cmdargs: argparse.Namespace) -> None:
     cmsg.set_payload(f'verify:{vstr}\n', charset='utf-8')
     bdata = cmsg.as_bytes(policy=b4.emlpolicy)
     try:
-        sdata = patatt.rfc2822_sign(bdata).decode()  # type: ignore[attr-defined]
-    except patatt.SigningError as ex:  # type: ignore[attr-defined]
+        sdata = patatt.rfc2822_sign(bdata).decode()
+    except patatt.SigningError as ex:
         logger.critical('CRITICAL: Unable to sign verification message')
         logger.critical('          %s', ex)
         sys.exit(1)
