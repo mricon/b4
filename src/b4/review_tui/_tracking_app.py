@@ -2852,18 +2852,26 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     @staticmethod
     def _fetch_fake_am_range(
         topdir: str, revisions: List[Dict[str, Any]], rev: int,
-        blob_sha: str = '',
     ) -> Optional[Tuple[str, str]]:
         """Fetch a revision and create a fake-am commit range.
 
-        If *blob_sha* is provided, tries the cached thread blob first
-        before falling back to a lore fetch.
+        Tries the cached thread blob from the revisions table first,
+        falling back to a lore fetch if the blob is absent or GC'd.
 
         Returns (range_start, range_end) on success, or None on failure.
         """
         msgs = None
+        msgid = ''
 
-        # Try cached thread blob first
+        # Locate this revision's record
+        rev_record: Dict[str, Any] = {}
+        for r in revisions:
+            if r['revision'] == rev:
+                rev_record = r
+                break
+
+        # Try cached thread blob first (may be absent or GC'd — tolerate both)
+        blob_sha = rev_record.get('thread_blob') or ''
         if blob_sha:
             mbox_bytes = b4.review.tracking.get_thread_mbox(topdir, blob_sha)
             if mbox_bytes:
@@ -2872,11 +2880,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # Fall back to lore fetch
         if not msgs:
-            msgid = ''
-            for r in revisions:
-                if r['revision'] == rev:
-                    msgid = r.get('message_id', '')
-                    break
+            msgid = rev_record.get('message_id', '')
             if not msgid:
                 logger.critical('No message-id recorded for v%d', rev)
                 return None
@@ -2931,7 +2935,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         branch = f'b4/review/{change_id}'
         cur_start: Optional[str] = None
         cur_end: Optional[str] = None
-        blob_sha = ''
         if b4.git_branch_exists(topdir, branch):
             try:
                 _cover_text, tracking = b4.review.load_tracking(topdir, branch)
@@ -2942,7 +2945,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 else:
                     cur_start = t_series.get('base-commit', '')
                 cur_end = f'{branch}~1'
-                blob_sha = t_series.get('thread-blob', '')
             except SystemExit:
                 pass
 
@@ -2954,8 +2956,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return
             cur_start, cur_end = result
 
-        # --- Fetch the other version (always from lore; the cached blob
-        #     belongs to the current revision's thread, not the other one) ---
+        # --- Fetch the other version (blob SHA comes from the revisions table) ---
         result = self._fetch_fake_am_range(topdir, revisions, other_rev)
         if result is None:
             _wait_for_enter()
@@ -3358,6 +3359,21 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 maintainer_email, current_rev, old_series, patches)
             prior_thread_blob = old_series.get('thread-context-blob', '')
             prior_msgid = old_series.get('header-info', {}).get('msgid', '')
+
+            # --- 1c. Record the current rev's mbox blob in the DB ---
+            # Do this before archiving so the blob SHA survives for range-diff.
+            # The blob may later be GC'd; callers must tolerate a missing blob.
+            if self._identifier:
+                cur_mbox_blob = old_series.get('thread-blob', '')
+                if cur_mbox_blob:
+                    try:
+                        _conn = b4.review.tracking.get_db(self._identifier)
+                        b4.review.tracking.set_revision_thread_blob(
+                            _conn, change_id, current_rev, cur_mbox_blob)
+                        _conn.close()
+                    except Exception as _ex:
+                        logger.debug('Could not record thread blob for v%d: %s',
+                                     current_rev, _ex)
 
             # --- 2. Resolve metadata for git-am ---
             top_msgid = None

@@ -26,7 +26,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SERIES_PATCHES_DDL = '''
 CREATE TABLE IF NOT EXISTS series_patches (
@@ -70,12 +70,13 @@ CREATE TABLE IF NOT EXISTS series (
 );
 
 CREATE TABLE IF NOT EXISTS revisions (
-    change_id  TEXT NOT NULL,
-    revision   INTEGER NOT NULL,
-    message_id TEXT NOT NULL,
-    subject    TEXT,
-    link       TEXT,
-    found_at   TEXT,
+    change_id   TEXT NOT NULL,
+    revision    INTEGER NOT NULL,
+    message_id  TEXT NOT NULL,
+    subject     TEXT,
+    link        TEXT,
+    found_at    TEXT,
+    thread_blob TEXT,
     PRIMARY KEY (change_id, revision)
 );
 
@@ -136,6 +137,21 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
     if version < 7:
         conn.execute(SERIES_PATCHES_DDL)
         conn.execute('ALTER TABLE series ADD COLUMN is_rethreaded INTEGER DEFAULT 0')
+    if version < 8:
+        # Older DBs may not have the revisions table at all; create it if absent.
+        conn.execute('''CREATE TABLE IF NOT EXISTS revisions (
+            change_id  TEXT NOT NULL,
+            revision   INTEGER NOT NULL,
+            message_id TEXT NOT NULL,
+            subject    TEXT,
+            link       TEXT,
+            found_at   TEXT,
+            PRIMARY KEY (change_id, revision)
+        )''')
+        # Add thread_blob only if the table didn't already have it.
+        existing = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
+        if 'thread_blob' not in existing:
+            conn.execute('ALTER TABLE revisions ADD COLUMN thread_blob TEXT')
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -620,6 +636,19 @@ def add_revision(conn: sqlite3.Connection, change_id: str, revision: int,
     conn.commit()
 
 
+def set_revision_thread_blob(conn: sqlite3.Connection, change_id: str,
+                             revision: int, blob_sha: str) -> None:
+    """Record the git blob SHA of the cached mbox thread for a revision.
+
+    The blob may later become unreachable (GC'd), so callers that read this
+    value must tolerate a missing blob and fall back to a lore fetch.
+    """
+    conn.execute(
+        'UPDATE revisions SET thread_blob = ? WHERE change_id = ? AND revision = ?',
+        (blob_sha, change_id, revision))
+    conn.commit()
+
+
 def add_series_patches(conn: sqlite3.Connection, change_id: str, revision: int,
                        lser: 'b4.LoreSeries') -> None:
     """Store the member patches for a tracked series.
@@ -654,9 +683,10 @@ def get_series_patches(conn: sqlite3.Connection, change_id: str,
 
 def get_revisions(conn: sqlite3.Connection, change_id: str) -> list[dict[str, Any]]:
     """Return all known revisions for a change_id, ordered ascending."""
-    cols = ('change_id', 'revision', 'message_id', 'subject', 'link', 'found_at')
+    cols = ('change_id', 'revision', 'message_id', 'subject', 'link', 'found_at',
+            'thread_blob')
     cursor = conn.execute(
-        'SELECT change_id, revision, message_id, subject, link, found_at '
+        'SELECT change_id, revision, message_id, subject, link, found_at, thread_blob '
         'FROM revisions WHERE change_id = ? ORDER BY revision ASC',
         (change_id,))
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
@@ -689,9 +719,10 @@ def get_all_revision_counts(conn: sqlite3.Connection) -> dict[str, int]:
 
 def get_all_revisions_grouped(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
     """Return {change_id: [rev_dicts]} for all change_ids, ordered ascending."""
-    cols = ('change_id', 'revision', 'message_id', 'subject', 'link', 'found_at')
+    cols = ('change_id', 'revision', 'message_id', 'subject', 'link', 'found_at',
+            'thread_blob')
     cursor = conn.execute(
-        'SELECT change_id, revision, message_id, subject, link, found_at '
+        'SELECT change_id, revision, message_id, subject, link, found_at, thread_blob '
         'FROM revisions ORDER BY change_id, revision ASC')
     result: dict[str, list[dict[str, Any]]] = {}
     for row in cursor.fetchall():
