@@ -2788,9 +2788,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return
             cur_start, cur_end = result
 
-        # --- Fetch the other version (try cached blob, fall back to lore) ---
-        result = self._fetch_fake_am_range(topdir, revisions, other_rev,
-                                           blob_sha=blob_sha)
+        # --- Fetch the other version (always from lore; the cached blob
+        #     belongs to the current revision's thread, not the other one) ---
+        result = self._fetch_fake_am_range(topdir, revisions, other_rev)
         if result is None:
             _wait_for_enter()
             return
