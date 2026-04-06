@@ -2876,3 +2876,250 @@ class TestFollowupItemPerMessage:
         # The field should be None after init for a fresh app
         app2 = ReviewApp(self._make_session())
         assert app2._selected_followup_msgid is None
+
+
+
+# ---------------------------------------------------------------------------
+# _get_lore_series version-mismatch tests (cc529aa)
+# ---------------------------------------------------------------------------
+
+_MINIMAL_DIFF = """\
+Fix bar.
+
+Signed-off-by: Author <author@example.com>
+---
+ foo.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/foo.c b/foo.c
+index aaa..bbb 100644
+--- a/foo.c
++++ b/foo.c
+@@ -1,3 +1,4 @@
+ void foo(void) {
++    bar();
+ }
+"""
+
+
+def _make_patch_msg(subject: str, from_addr: str, date: str,
+                    body: str = '', msgid: str = '') -> email.message.EmailMessage:
+    """Build a minimal EmailMessage that LoreMailbox can parse as a patch."""
+    msg = email.message.EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = from_addr
+    msg['Date'] = date
+    msg['Message-Id'] = msgid or f'<{abs(hash(subject + date))}@test.com>'
+    msg.set_payload(body or _MINIMAL_DIFF)
+    return msg
+
+
+_AUTHOR = 'Author <author@example.com>'
+
+
+class TestGetLoreSeriesVersionMismatch:
+    """Regression tests for the crash when the stored message-id points
+    to a different version's thread than the wanted revision.
+
+    See bug cc529aa: b4 review crashes updating a series.
+    """
+
+    @staticmethod
+    def _v2_msgs() -> List[email.message.EmailMessage]:
+        return [
+            _make_patch_msg(
+                '[PATCH v2] foo: fix bar',
+                _AUTHOR,
+                'Thu, 19 Mar 2026 08:51:12 +0530',
+                msgid='<v2-patch@example.com>',
+            ),
+        ]
+
+    @staticmethod
+    def _v3_msgs() -> List[email.message.EmailMessage]:
+        return [
+            _make_patch_msg(
+                '[PATCH v3] foo: fix bar',
+                _AUTHOR,
+                'Fri, 27 Mar 2026 14:51:06 +0530',
+                msgid='<v3-patch@example.com>',
+            ),
+        ]
+
+    def test_correct_version_found(self) -> None:
+        """Requesting the version present in messages works."""
+        msgs = self._v2_msgs()
+        lser = review._get_lore_series(msgs, wantver=2)
+        assert lser.revision == 2
+
+    def test_no_preference_picks_highest(self) -> None:
+        """wantver=None selects the highest available version."""
+        msgs = self._v2_msgs() + self._v3_msgs()
+        lser = review._get_lore_series(msgs, wantver=None)
+        assert lser.revision == 3
+
+    def test_version_mismatch_shows_found(self) -> None:
+        """Error message lists which versions were actually found."""
+        msgs = self._v2_msgs()
+        with pytest.raises(LookupError, match=r'found: v2'):
+            review._get_lore_series(msgs, wantver=3)
+
+    def test_version_mismatch_after_extra_series(self) -> None:
+        """Adding the missing version's messages resolves the mismatch."""
+        # Start with only v2 — requesting v3 fails
+        msgs = list(self._v2_msgs())
+        with pytest.raises(LookupError):
+            review._get_lore_series(msgs, wantver=3)
+
+        # Simulating get_extra_series adding v3 messages
+        msgs.extend(self._v3_msgs())
+        lser = review._get_lore_series(msgs, wantver=3)
+        assert lser.revision == 3
+
+    def test_no_series_in_messages(self) -> None:
+        """Completely empty mailbox raises LookupError."""
+        with pytest.raises(LookupError, match='No series found'):
+            review._get_lore_series([], wantver=1)
+
+
+# -- Tests for collect_review_emails() ----------------------------------------
+
+class TestCollectReviewEmails:
+    """Tests for collect_review_emails() filtering logic.
+
+    Covers the sent-revision safety-net filter added to fix the bug where
+    reviews carried over from a prior revision were re-sent for the new one.
+    """
+
+    MY_EMAIL = 'maintainer@example.com'
+
+    @staticmethod
+    def _make_series(reviews: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return {
+            'revision': 1,
+            'header-info': {
+                'msgid': 'cover@example.com',
+                'to': '',
+                'cc': '',
+                'references': '',
+                'sentdate': '',
+            },
+            'reviews': reviews or {},
+        }
+
+    @staticmethod
+    def _make_patch(reviews: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return {
+            'header-info': {'msgid': 'patch@example.com'},
+            'reviews': reviews or {},
+        }
+
+    @staticmethod
+    def _review(**extra: Any) -> Dict[str, Any]:
+        r: Dict[str, Any] = {
+            'name': 'Maintainer',
+            'trailers': ['Reviewed-by: Maintainer <maintainer@example.com>'],
+        }
+        r.update(extra)
+        return r
+
+    # Use a sentinel email message so we can count how many were produced.
+    _FAKE_MSG = mock.sentinel.email_msg
+
+    @mock.patch('b4.review._review._build_review_email',
+                return_value=_FAKE_MSG)
+    @mock.patch('b4.get_user_config',
+                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    def test_sends_normal_cover_review(self, _cfg: mock.Mock,
+                                       _build: mock.Mock) -> None:
+        """A cover review without sent-revision produces one email."""
+        series = self._make_series({self.MY_EMAIL: self._review()})
+        msgs = review.collect_review_emails(series, [], 'cover', '', [])
+        assert len(msgs) == 1
+
+    @mock.patch('b4.review._review._build_review_email',
+                return_value=_FAKE_MSG)
+    @mock.patch('b4.get_user_config',
+                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    def test_skips_cover_with_sent_revision(self, _cfg: mock.Mock,
+                                             _build: mock.Mock) -> None:
+        """Cover review stamped with sent-revision is not re-sent."""
+        series = self._make_series(
+            {self.MY_EMAIL: self._review(**{'sent-revision': 1})})
+        msgs = review.collect_review_emails(series, [], 'cover', '', [])
+        assert msgs == []
+
+    @mock.patch('b4.review._review._build_review_email',
+                return_value=_FAKE_MSG)
+    @mock.patch('b4.get_user_config',
+                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    def test_sends_normal_patch_review(self, _cfg: mock.Mock,
+                                       _build: mock.Mock) -> None:
+        """A patch review without sent-revision produces one email."""
+        series = self._make_series()
+        patch = self._make_patch({self.MY_EMAIL: self._review()})
+        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
+        assert len(msgs) == 1
+
+    @mock.patch('b4.review._review._build_review_email',
+                return_value=_FAKE_MSG)
+    @mock.patch('b4.get_user_config',
+                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    def test_skips_patch_with_sent_revision(self, _cfg: mock.Mock,
+                                             _build: mock.Mock) -> None:
+        """Patch review stamped with sent-revision is not re-sent."""
+        series = self._make_series()
+        patch = self._make_patch(
+            {self.MY_EMAIL: self._review(**{'sent-revision': 1})})
+        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
+        assert msgs == []
+
+    @mock.patch('b4.review._review._build_review_email',
+                return_value=_FAKE_MSG)
+    @mock.patch('b4.get_user_config',
+                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    def test_skips_patch_auto_skipped_after_upgrade(self, _cfg: mock.Mock,
+                                                     _build: mock.Mock) -> None:
+        """Patch auto-marked skip+skip-reason during upgrade is not re-sent.
+
+        This is the combo A+B fix: the upgrade step sets patch-state=skip
+        AND skip-reason on unchanged patches whose review was already sent.
+        Both the skip filter and the sent-revision filter independently
+        prevent re-sending; this test exercises the skip-state path.
+        """
+        series = self._make_series()
+        patch = self._make_patch({self.MY_EMAIL: self._review(
+            **{'sent-revision': 1,
+               'patch-state': 'skip',
+               'skip-reason': 'Patch unchanged from v1; review already sent'})})
+        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
+        assert msgs == []
+
+    @mock.patch('b4.review._review._build_review_email',
+                return_value=_FAKE_MSG)
+    @mock.patch('b4.get_user_config',
+                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    def test_only_unsent_patches_included(self, _cfg: mock.Mock,
+                                          _build: mock.Mock) -> None:
+        """Mix of sent and unsent patches: only unsent ones produce emails."""
+        series = self._make_series()
+        sent_patch = self._make_patch(
+            {self.MY_EMAIL: self._review(**{'sent-revision': 1})})
+        fresh_patch = self._make_patch(
+            {self.MY_EMAIL: self._review()})
+        msgs = review.collect_review_emails(
+            series, [sent_patch, fresh_patch], 'cover', '', ['sha1', 'sha2'])
+        assert len(msgs) == 1
+
+    @mock.patch('b4.review._review._build_review_email',
+                return_value=_FAKE_MSG)
+    @mock.patch('b4.get_user_config',
+                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    def test_skip_state_without_sent_revision_still_skipped(
+            self, _cfg: mock.Mock, _build: mock.Mock) -> None:
+        """Explicit skip state (manually set, no sent-revision) is honoured."""
+        series = self._make_series()
+        patch = self._make_patch(
+            {self.MY_EMAIL: self._review(**{'patch-state': 'skip'})})
+        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
+        assert msgs == []
