@@ -2765,7 +2765,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         branch = f'b4/review/{change_id}'
         cur_start: Optional[str] = None
         cur_end: Optional[str] = None
-        blob_sha = ''
         if b4.git_branch_exists(topdir, branch):
             try:
                 _cover_text, tracking = b4.review.load_tracking(topdir, branch)
@@ -2776,7 +2775,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 else:
                     cur_start = t_series.get('base-commit', '')
                 cur_end = f'{branch}~1'
-                blob_sha = t_series.get('thread-blob', '')
             except SystemExit:
                 pass
 
