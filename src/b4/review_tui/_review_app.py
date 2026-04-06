@@ -719,7 +719,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if target and b4.review._get_patch_state(target, self._usercfg) == 'skip':
             total = len(self._commit_shas)
             label = 'cover' if display_idx == 0 else f'{display_idx}/{total}'
-            viewer.write(f'[dim]Patch {label} is marked as skipped — no email will be sent.[/dim]')
+            my_review = b4.review._get_my_review(target, self._usercfg)
+            skip_reason = str(my_review.get('skip-reason', ''))
+            if skip_reason:
+                viewer.write(f'[dim]Patch {label} is marked as skipped: {skip_reason}[/dim]')
+            else:
+                viewer.write(f'[dim]Patch {label} is marked as skipped — no email will be sent.[/dim]')
             return
 
         if not review or not (review.get('trailers') or review.get('reply', '')
@@ -1428,6 +1433,16 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 else:
                     self._reply_sent = True
                     self._tracking['series']['status'] = 'replied'
+                    # Stamp sent-revision on every non-skip review so that
+                    # if this series is later upgraded to a newer revision,
+                    # the upgrade step can detect which reviews were already
+                    # sent and auto-skip the unchanged patches.
+                    my_email = str(self._usercfg.get('email', 'unknown@example.com'))
+                    current_rev = int(self._series.get('revision', 1))
+                    for target in [self._series] + list(self._patches):
+                        review = target.get('reviews', {}).get(my_email, {})
+                        if review and review.get('patch-state') != 'skip':
+                            review['sent-revision'] = current_rev
                     self._save_tracking()
                     self._mark_patches_answered(msgs)
                     self.notify(f'Sent {sent} review email(s).')
