@@ -35,6 +35,7 @@ dev = [
     "mypy",
     "pip-tools",
     "pytest",
+    "pytest-asyncio",
     "ruff",
     "types-requests",
 ]
