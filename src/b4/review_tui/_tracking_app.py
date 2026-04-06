@@ -5,6 +5,7 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import copy
 import datetime
 import email.message
 import email.parser
@@ -3435,12 +3436,26 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 topdir, upgrade_branch)
             new_patches = new_tracking.get('patches', [])
 
+            usercfg = b4.get_user_config()
+            my_email = str(usercfg.get('email', 'unknown@example.com'))
             restored = 0
             for idx, _sha, patch_id in new_patch_ids:
                 if patch_id is None or idx >= len(new_patches):
                     continue
                 if patch_id in saved_reviews:
-                    new_patches[idx]['reviews'] = saved_reviews[patch_id]['reviews']
+                    # Deepcopy so we don't mutate the saved v1 review data
+                    reviews = copy.deepcopy(saved_reviews[patch_id]['reviews'])
+                    my_review = reviews.get(my_email, {})
+                    # If this patch is identical to the v1 version (same patch-id)
+                    # and the maintainer already sent their review, auto-skip it so
+                    # collect_review_emails won't include it again for v2.
+                    if my_review.get('sent-revision') is not None:
+                        my_review['patch-state'] = 'skip'
+                        my_review['skip-reason'] = (
+                            f'Patch unchanged from v{current_rev}; '
+                            f'review already sent'
+                        )
+                    new_patches[idx]['reviews'] = reviews
                     restored += 1
 
             # Re-anchor inline comments against new revision diffs

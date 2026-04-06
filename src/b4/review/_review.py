@@ -2385,7 +2385,9 @@ def collect_review_emails(
 
     # Cover letter review (maintainer only)
     cover_review = series.get('reviews', {}).get(my_email, {})
-    if cover_review and cover_review.get('patch-state') != 'skip':
+    if (cover_review
+            and cover_review.get('patch-state') != 'skip'
+            and cover_review.get('sent-revision') is None):
         msg = _build_review_email(series, None, cover_review, cover_text,
                                   topdir, None)
         if msg is not None:
@@ -2395,6 +2397,8 @@ def collect_review_emails(
     for idx, patch_meta in enumerate(patches):
         patch_review = patch_meta.get('reviews', {}).get(my_email, {})
         if not patch_review or patch_review.get('patch-state') == 'skip':
+            continue
+        if patch_review.get('sent-revision') is not None:
             continue
         commit_sha = commit_shas[idx] if idx < len(commit_shas) else None
         msg = _build_review_email(series, patch_meta, patch_review, cover_text,
