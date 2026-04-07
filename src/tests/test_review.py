@@ -2725,7 +2725,7 @@ class TestIntegrateFollowupInlineComments:
         )
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
-            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+            with mock.patch('liblore.utils.split_mbox', return_value=[]):
                 with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
                                 return_value=followup_comments):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
@@ -2757,7 +2757,7 @@ class TestIntegrateFollowupInlineComments:
         })
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
-            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+            with mock.patch('liblore.utils.split_mbox', return_value=[]):
                 with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
                                 return_value=followup_comments):
                     result = review._integrate_followup_inline_comments(
@@ -2780,7 +2780,7 @@ class TestIntegrateFollowupInlineComments:
         })
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
-            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+            with mock.patch('liblore.utils.split_mbox', return_value=[]):
                 with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
                                 return_value=followup_comments):
                     result = review._integrate_followup_inline_comments(
@@ -2813,7 +2813,7 @@ class TestIntegrateFollowupInlineComments:
         )
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
-            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+            with mock.patch('liblore.utils.split_mbox', return_value=[]):
                 with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
                                 return_value=followup_comments):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
@@ -2852,7 +2852,7 @@ class TestIntegrateFollowupInlineComments:
         })
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
-            with mock.patch('b4.mailsplit_bytes', return_value=[]):
+            with mock.patch('liblore.utils.split_mbox', return_value=[]):
                 with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
                                 return_value=followup_comments):
                     with mock.patch('b4.git_run_command') as mock_git:

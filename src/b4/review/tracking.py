@@ -8,13 +8,13 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import argparse
 import datetime
 import email.utils
-import gzip
 import json
 import os
 import pathlib
 import sqlite3
 import sys
-import urllib.parse
+
+import liblore
 
 import b4
 import b4.mbox
@@ -957,45 +957,18 @@ def get_review_branches(topdir: Optional[str] = None) -> list[str]:
     return b4.git_get_command_lines(topdir, gitargs)
 
 
-def _resolve_canonical_url(message_id: str) -> Optional[str]:
-    """Resolve the canonical public-inbox URL for a message ID.
+def _fetch_thread_mbox_bytes(message_id: str) -> Optional[bytes]:
+    """Fetch and decompress the full thread mbox for a message ID via LoreNode.
 
-    Performs a HEAD request via midmask and follows any redirect to find the
-    list-specific canonical URL (e.g. https://lore.kernel.org/linux-kernel/msgid/).
-
-    Returns the canonical URL (with trailing slash stripped), or None on failure.
+    Returns the raw mbox bytes, or None on failure or when offline.
     """
     if not b4.can_network:
         return None
-    config = b4.get_main_config()
-    midmask = config.get('midmask', b4.LOREADDR + '/r/%s')
-    if not isinstance(midmask, str) or '%s' not in midmask:
-        return None
-    qmsgid = urllib.parse.quote_plus(message_id, safe='@')
-    midurl = (midmask % qmsgid).rstrip('/')
     try:
-        session = b4.get_requests_session()
-        resp = session.head(midurl + '/', allow_redirects=False, timeout=10)
-        if resp.status_code in (301, 302) and 'Location' in resp.headers:
-            return resp.headers['Location'].rstrip('/')
-        if resp.status_code < 400:
-            return midurl
-        return None
-    except Exception as ex:
-        logger.debug('Could not resolve canonical URL for %s: %s', message_id, ex)
-        return None
-
-
-def _fetch_mbox_bytes(canonical_url: str) -> Optional[bytes]:
-    """Fetch and decompress the full thread mbox from public-inbox t.mbox.gz."""
-    try:
-        session = b4.get_requests_session()
-        resp = session.get(f'{canonical_url}/t.mbox.gz', timeout=30)
-        if resp.status_code != 200:
-            return None
-        return gzip.decompress(resp.content)
-    except Exception as ex:
-        logger.debug('Could not fetch mbox for %s: %s', canonical_url, ex)
+        node = b4.get_lore_node()
+        return node.get_mbox_by_msgid(message_id)
+    except (liblore.RemoteError, Exception) as ex:
+        logger.debug('Could not fetch mbox for %s: %s', message_id, ex)
         return None
 
 
@@ -1103,22 +1076,18 @@ def fetch_thread_message_count(message_id: str) -> Optional[int]:
     Returns the total number of messages in the thread, or None on failure
     or when offline.
     """
-    canonical_url = _resolve_canonical_url(message_id)
-    if canonical_url is None:
-        return None
-    mbox_bytes = _fetch_mbox_bytes(canonical_url)
+    mbox_bytes = _fetch_thread_mbox_bytes(message_id)
     if mbox_bytes is None:
         return None
     parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
     return len(parsed)
 
 
-def _fetch_new_since(canonical_url: str, since: str) -> Optional[Tuple[int, Optional[str]]]:
-    """Fetch new thread messages since a timestamp via public-inbox dt: query.
+def _fetch_new_since(message_id: str, since: str) -> Optional[Tuple[int, Optional[str]]]:
+    """Fetch new thread messages since a timestamp via LoreNode.
 
-    Uses the public-inbox ``dt:`` date-range query — a POST to
-    ``{canonical_url}/?x=m&q=dt:{since}..``.  Returns an empty gzipped mbox
-    when nothing has arrived, making the no-op case very cheap.
+    Uses LoreNode.get_thread_updates_since() which queries the public-inbox
+    ``rt:`` (Received-date) search endpoint scoped to the thread.
 
     *since* is an ISO-format timestamp stored in the database.
 
@@ -1126,34 +1095,24 @@ def _fetch_new_since(canonical_url: str, since: str) -> Optional[Tuple[int, Opti
     messages (0 if none) and *latest_date_iso* is the most recent Date: header
     found (None if no messages or no parseable date).  Returns None on error.
     """
+    if not b4.can_network:
+        return None
     try:
-        dt = datetime.datetime.fromisoformat(since)
-        since_fmt = dt.strftime('%Y%m%d%H%M%S')
+        since_dt = datetime.datetime.fromisoformat(since)
     except (ValueError, TypeError) as ex:
         logger.debug('Could not parse last_update_check timestamp %r: %s', since, ex)
         return None
 
-    query = urllib.parse.quote_plus(f'dt:{since_fmt}..')
-    query_url = f'{canonical_url}/?x=m&q={query}'
     try:
-        session = b4.get_requests_session()
-        resp = session.post(query_url, data='', timeout=15)
-        if resp.status_code != 200:
-            return None
-        if not resp.content:
+        node = b4.get_lore_node()
+        msgs = node.get_thread_updates_since(message_id, since_dt, strict=False, sort=False)
+        if not msgs:
             return (0, None)
-        try:
-            mbox_bytes = gzip.decompress(resp.content)
-        except Exception:
-            mbox_bytes = resp.content
-        if not mbox_bytes.strip():
-            return (0, None)
-        parsed = b4.split_and_dedupe_pi_results(mbox_bytes)
-        count = len(parsed)
-        latest_date = _latest_date_from_mbox(mbox_bytes)
+        count = len(msgs)
+        latest_date = _latest_date_from_msgs(msgs)
         return (count, latest_date)
     except Exception as ex:
-        logger.debug('dt: query failed for %s: %s', canonical_url, ex)
+        logger.debug('Thread update query failed for %s: %s', message_id, ex)
         return None
 
 
@@ -1575,11 +1534,7 @@ def update_message_counts(identifier: str,
                 if topdir and pre_msgs:
                     _store_thread_blob(topdir, change_id, pre_msgs)
             else:
-                canonical_url = _resolve_canonical_url(message_id)
-                if canonical_url is None:
-                    errors += 1
-                    continue
-                mbox_bytes = _fetch_mbox_bytes(canonical_url)
+                mbox_bytes = _fetch_thread_mbox_bytes(message_id)
                 if mbox_bytes is None:
                     errors += 1
                     continue
@@ -1597,12 +1552,8 @@ def update_message_counts(identifier: str,
                 if topdir and parsed:
                     _store_thread_blob(topdir, change_id, parsed)
         else:
-            # ── Incremental: dt: query for messages since last check ─────────
-            canonical_url = _resolve_canonical_url(message_id)
-            if canonical_url is None:
-                errors += 1
-                continue
-            result = _fetch_new_since(canonical_url, last_check)
+            # ── Incremental: query for messages since last check ─────────
+            result = _fetch_new_since(message_id, last_check)
             if result is None:
                 errors += 1
                 continue
@@ -1618,12 +1569,11 @@ def update_message_counts(identifier: str,
                 conn.commit()
                 updated += 1
                 if topdir:
-                    new_mbox = _fetch_mbox_bytes(canonical_url)
+                    new_mbox = _fetch_thread_mbox_bytes(message_id)
                     if new_mbox:
                         parsed = b4.split_and_dedupe_pi_results(new_mbox)
                         if parsed:
                             _store_thread_blob(topdir, change_id, parsed)
-            # new_count == 0: nothing changed, no DB write at all
 
     conn.close()
     return {'updated': updated, 'errors': errors}

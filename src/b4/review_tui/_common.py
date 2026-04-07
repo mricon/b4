@@ -15,6 +15,8 @@ import tempfile
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import liblore.utils
+
 import b4
 import b4.mbox
 import b4.review
@@ -47,9 +49,7 @@ def get_thread_msgs(
     if blob_sha:
         mbox_bytes = b4.review.tracking.get_thread_mbox(topdir, blob_sha)
         if mbox_bytes:
-            msgs = b4.mailsplit_bytes(
-                mbox_bytes,
-                os.path.join(topdir, '.git', 'b4-thread-tmp'))
+            msgs = liblore.utils.split_mbox(mbox_bytes)
             if msgs:
                 return msgs
 

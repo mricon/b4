@@ -5,7 +5,6 @@ import logging
 import hashlib
 import re
 import sys
-import gzip
 import os
 import fnmatch
 import email.generator
@@ -32,6 +31,9 @@ import pwd
 import io
 
 import requests
+
+import liblore
+import liblore.utils
 
 from pathlib import Path
 from contextlib import contextmanager
@@ -93,6 +95,8 @@ def _dkim_log_filter(record: logging.LogRecord) -> bool:
 logger = logging.getLogger('b4')
 dkimlogger = logger.getChild('dkim')
 dkimlogger.addFilter(_dkim_log_filter)
+# Route liblore logging through b4's logger so debug mode covers it
+logging.getLogger('liblore').parent = logger
 
 HUNK_RE = re.compile(r'^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@')
 FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
@@ -178,6 +182,7 @@ SENDEMAIL_CONFIG: ConfigDictT = dict()
 
 # Used for storing our requests session
 REQSESSION: Optional[requests.Session] = None
+LORENODE: Optional[liblore.LoreNode] = None
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
 # Used to track send-email alias replacements
@@ -2373,13 +2378,7 @@ class LoreMessage:
 
     @staticmethod
     def get_clean_msgid(msg: EmailMessage, header: str = 'Message-Id') -> Optional[str]:
-        msgid = None
-        raw = msg.get(header)
-        if raw:
-            matches = re.search(r'<([^>]+)>', LoreMessage.clean_header(raw))
-            if matches:
-                msgid = matches.groups()[0]
-        return msgid
+        return liblore.utils.get_clean_msgid(msg, header)
 
     @staticmethod
     def get_preferred_duplicate(msg1: EmailMessage, msg2: EmailMessage) -> EmailMessage:
@@ -2387,28 +2386,7 @@ class LoreMessage:
         listidpref = config['listid-preference']
         if not isinstance(listidpref, list):
             listidpref = [str(listidpref)]
-
-        listid1 = LoreMessage.get_clean_msgid(msg1, 'list-id')
-        if listid1:
-            for prefidx1, listglob in enumerate(listidpref):  # noqa: B007
-                if fnmatch.fnmatch(listid1, listglob):
-                    break
-        else:
-            prefidx1 = listidpref.index('*')
-
-        listid2 = LoreMessage.get_clean_msgid(msg2, 'list-id')
-        if listid2:
-            for prefidx2, listglob in enumerate(listidpref):  # noqa: B007
-                if fnmatch.fnmatch(listid2, listglob):
-                    break
-        else:
-            prefidx2 = listidpref.index('*')
-
-        if prefidx1 <= prefidx2:
-            logger.debug('Picked duplicate from preferred source: %s', listid1)
-            return msg1
-        logger.debug('Picked duplicate from preferred source: %s', listid2)
-        return msg2
+        return liblore.utils.get_preferred_duplicate(msg1, msg2, listid_preference=listidpref)
 
     @staticmethod
     def get_patch_id(diff: str) -> Optional[str]:
@@ -3618,6 +3596,29 @@ def get_requests_session() -> requests.Session:
     return REQSESSION
 
 
+def get_lore_node() -> liblore.LoreNode:
+    """Return a LoreNode configured with b4's requests session, URL, and cache."""
+    global LORENODE
+    if LORENODE is None:
+        config = get_main_config()
+        # Extract base URL from midmask (e.g. 'https://lore.kernel.org/all/%s' -> 'https://lore.kernel.org/all')
+        midmask = config.get('midmask', LOREADDR + '/all/%s')
+        assert isinstance(midmask, str), 'b4.midmask must be a string'
+        base_url = midmask.replace('/%s', '').rstrip('/')
+        cache_dir = str(pathlib.Path(get_cache_dir()) / 'lore')
+        try:
+            cache_expire = int(str(config.get('cache-expire', '10')))
+        except ValueError:
+            cache_expire = 10
+        LORENODE = liblore.LoreNode(
+            base_url,
+            cache_dir=cache_dir,
+            cache_ttl=cache_expire * 60,
+        )
+        LORENODE.set_requests_session(get_requests_session())
+    return LORENODE
+
+
 def get_msgid_from_stdin() -> Optional[str]:
     if not sys.stdin.isatty():
         message = email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parsebytes(
@@ -3683,206 +3684,79 @@ def get_strict_thread(msgs: List[EmailMessage], msgid: str, noparent: bool = Fal
     # a standalone patch or series in the middle of a large discussion for another series.
     # We recommend dealing with this using --no-parent, but we can also catch this
     # automatically in certain situations.
-    msgid_map: Dict[str, EmailMessage] = dict()
-    for msg in msgs:
-        c_msgid = LoreMessage.get_clean_msgid(msg)
-        if c_msgid is not None:
-            msgid_map[c_msgid] = msg
-
     if not noparent:
-        # If it's a single standalone patch with no versioning info, we automatically no-parent it
-        my_msg = msgid_map[msgid]
-        my_subj = LoreSubject(my_msg.get('subject', ''))
-        if not my_subj.reply and my_subj.revision == 1 and my_msg.get('References'):
-            if my_subj.counter == 1 and my_subj.expected == 1:
-                # Does it have a diff or a diffstat?
-                my_lmsg = LoreMessage(my_msg)
-                if my_lmsg.has_diff or my_lmsg.has_diffstat:
-                    logger.debug('Auto-noparenting the standadlone patch')
-                    noparent = True
-            else:
-                # Look at the in-reply-to message and see if it's the cover letter
-                irt_msgid = LoreMessage.get_clean_msgid(my_msg, 'In-Reply-To')
-                if irt_msgid and irt_msgid in msgid_map:
-                    irt_msg = msgid_map[irt_msgid]
-                    irt_subj = LoreSubject(irt_msg.get('subject', ''))
-                    if irt_subj.counter == 0:
-                        msgid = irt_msgid
+        msgid_map: Dict[str, EmailMessage] = dict()
+        for msg in msgs:
+            c_msgid = LoreMessage.get_clean_msgid(msg)
+            if c_msgid is not None:
+                msgid_map[c_msgid] = msg
+
+        if msgid in msgid_map:
+            my_msg = msgid_map[msgid]
+            my_subj = LoreSubject(my_msg.get('subject', ''))
+            if not my_subj.reply and my_subj.revision == 1 and my_msg.get('References'):
+                if my_subj.counter == 1 and my_subj.expected == 1:
+                    # Does it have a diff or a diffstat?
+                    my_lmsg = LoreMessage(my_msg)
+                    if my_lmsg.has_diff or my_lmsg.has_diffstat:
+                        logger.debug('Auto-noparenting the standadlone patch')
                         noparent = True
+                else:
+                    # Look at the in-reply-to message and see if it's the cover letter
+                    irt_msgid = LoreMessage.get_clean_msgid(my_msg, 'In-Reply-To')
+                    if irt_msgid and irt_msgid in msgid_map:
+                        irt_msg = msgid_map[irt_msgid]
+                        irt_subj = LoreSubject(irt_msg.get('subject', ''))
+                        if irt_subj.counter == 0:
+                            msgid = irt_msgid
+                            noparent = True
 
-    want: Set[str] = {msgid}
-    ignore: Set[str] = set()
-    got: Set[str] = set()
-    seen: Set[str] = set()
-    maybe: Dict[str, Set[str]] = dict()
-    strict: List[EmailMessage] = list()
-    while True:
-        for c_msgid, msg in msgid_map.items():
-            if c_msgid in ignore:
-                continue
-            seen.add(c_msgid)
-            if c_msgid in got:
-                continue
-            logger.debug('Looking at: %s', c_msgid)
-
-            refs = set()
-            msgrefs = list()
-            if msg.get('In-Reply-To', None):
-                msgrefs += email.utils.getaddresses([str(x) for x in msg.get_all('in-reply-to', [])])
-            if msg.get('References', None):
-                msgrefs += email.utils.getaddresses([str(x) for x in msg.get_all('references', [])])
-            # If noparent is set, we pretend the message we got passed has no references, and add all
-            # parent references of this message to ignore
-            if noparent and msgid == c_msgid:
-                logger.info('Breaking thread to remove parents of %s', msgid)
-                ignore = set([x[1] for x in msgrefs])
-                msgrefs = list()
-
-            for ref in set([x[1] for x in msgrefs]):
-                if ref in ignore:
-                    continue
-                if ref in got or ref in want:
-                    want.add(c_msgid)
-                elif len(ref):
-                    refs.add(ref)
-                    if c_msgid not in want:
-                        if ref not in maybe:
-                            maybe[ref] = set()
-                        logger.debug('Going into maybe: %s->%s', ref, c_msgid)
-                        maybe[ref].add(c_msgid)
-
-            if c_msgid in want:
-                strict.append(msg)
-                got.add(c_msgid)
-                want.update(refs)
-                want.discard(c_msgid)
-                logger.debug('Kept in thread: %s', c_msgid)
-                if c_msgid in maybe:
-                    # Add all these to want
-                    want.update(maybe[c_msgid])
-                    maybe.pop(c_msgid)
-                # Add all maybes that have the same ref into want
-                for ref in refs:
-                    if ref in maybe:
-                        want.update(maybe[ref])
-                        maybe.pop(ref)
-
-        # Remove any entries not in "seen" (missing messages)
-        for c_msgid in set(want):
-            if c_msgid not in seen or c_msgid in got:
-                want.remove(c_msgid)
-        if not len(want):
-            break
-
-    if not len(strict):
-        return None
-
-    if len(msgs) > len(strict):
-        logger.debug('Reduced thread to requested matches only (%s->%s)', len(msgs), len(strict))
-
-    return strict
+    return liblore.utils.get_strict_thread(msgs, msgid, noparent=noparent)
 
 
-def mailsplit_bytes(bmbox: bytes, outdir: str, pipesep: Optional[str] = None) -> List[EmailMessage]:
-    msgs = list()
+def mailsplit_bytes(bmbox: bytes, pipesep: Optional[str] = None) -> List[EmailMessage]:
     if pipesep:
         logger.debug('Mailsplitting using pipesep=%s', pipesep)
         if '\\' in pipesep:
             import codecs
             pipesep = codecs.decode(pipesep.encode(), 'unicode_escape')
+        msgs: List[EmailMessage] = []
         for chunk in bmbox.split(pipesep.encode()):
             if chunk.strip():
                 msgs.append(email.parser.BytesParser(policy=emlpolicy,
                                                      _class=EmailMessage).parsebytes(chunk))
         return msgs
 
-    logger.debug('Mailsplitting the mbox into %s', outdir)
-    args = ['mailsplit', '--mboxrd', '-o%s' % outdir]
-    ecode, _out = git_run_command(None, args, stdin=bmbox)
-    if ecode > 0:
-        logger.critical('Unable to parse mbox received from the server')
-        return msgs
-    # Read in the files
-    for msg in os.listdir(outdir):
-        with open(os.path.join(outdir, msg), 'rb') as fh:
-            msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh))
-    return msgs
+    return liblore.utils.split_mbox(bmbox)
 
 
 def get_pi_search_results(query: str, nocache: bool = False, message: Optional[str] = None,
                           full_threads: bool = True) -> Optional[List[EmailMessage]]:
-    config = get_main_config()
-    searchmask = config.get('searchmask')
-    if not searchmask:
-        logger.critical('b4.searchmask is not defined')
-        return None
-    if not isinstance(searchmask, str):
-        logger.critical('b4.searchmask must be a string')
-        return None
-    if full_threads and 't=1' not in searchmask:
-        logger.debug('full_threads specified, adding t=1')
-        searchmask = f'{searchmask}&t=1'
-    msgs = list()
-    query = urllib.parse.quote_plus(query)
-    query_url = searchmask % query
-    cachedir = get_cache_file(query_url, 'pi.msgs')
-    if os.path.exists(cachedir) and not nocache:
-        logger.debug('Using cached copy: %s', cachedir)
-        for msg in os.listdir(cachedir):
-            with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh))
-        return msgs
-
-    loc = urllib.parse.urlparse(query_url)
+    node = get_lore_node()
     if message is not None and len(message):
-        logger.info(message, loc.netloc)
+        logger.info(message, node.hostname)
     else:
-        logger.info('Grabbing search results from %s', loc.netloc)
-    session = get_requests_session()
-    # For the query to retrieve a mbox file, we need to send a POST request
-    resp = session.post(query_url, data='')
-    if resp.status_code == 404:
-        logger.info('Nothing matching that query.')
+        logger.info('Grabbing search results from %s', node.hostname)
+    try:
+        t_mbox = node.get_mbox_by_query(query, full_threads=full_threads, nocache=nocache)
+    except liblore.RemoteError:
+        logger.info('Server returned an error.')
         return None
-    if resp.status_code != 200:
-        logger.info('Server returned an error: %s', resp.status_code)
-        return None
-    t_mbox = gzip.decompress(resp.content)
-    resp.close()
-    if not len(t_mbox):
+    if not t_mbox:
         logger.info('No messages found for that query')
         return None
 
-    return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
+    return split_and_dedupe_pi_results(t_mbox)
 
 
-def split_and_dedupe_pi_results(t_mbox: bytes, cachedir: Optional[str] = None) -> List[EmailMessage]:
-    # Convert into individual files using git-mailsplit
-    with tempfile.TemporaryDirectory(suffix='-mailsplit') as tfd:
-        msgs = mailsplit_bytes(t_mbox, tfd)
+def split_and_dedupe_pi_results(t_mbox: bytes) -> List[EmailMessage]:
+    config = get_main_config()
+    listid_pref_str = config.get('listid-preference', '')
+    listid_pref: Optional[List[str]] = None
+    if isinstance(listid_pref_str, str) and listid_pref_str:
+        listid_pref = [x.strip() for x in listid_pref_str.split(',')]
 
-    deduped: Dict[str, EmailMessage] = dict()
-
-    for msg in msgs:
-        msgid = LoreMessage.get_clean_msgid(msg)
-        if msgid is None:
-            logger.debug('No message-id found, ignoring %s', msg.get('Subject', '(no subject)'))
-            continue
-        if msgid in deduped:
-            deduped[msgid] = LoreMessage.get_preferred_duplicate(deduped[msgid], msg)
-            continue
-        deduped[msgid] = msg
-
-    msgs = list(deduped.values())
-    if cachedir:
-        if os.path.exists(cachedir):
-            shutil.rmtree(cachedir)
-        pathlib.Path(cachedir).mkdir(parents=True, exist_ok=True)
-        for at, msg in enumerate(msgs):
-            with open(os.path.join(cachedir, '%04d' % at), 'wb') as fh:
-                fh.write(msg.as_bytes(policy=emlpolicy))
-
-    return msgs
+    return liblore.utils.split_and_dedupe(t_mbox, listid_preference=listid_pref)
 
 
 def get_series_by_msgid(msgid: str, nocache: bool = False) -> Optional['LoreMailbox']:
@@ -3943,70 +3817,25 @@ def get_series_by_patch_id(patch_id: str, nocache: bool = False) -> Optional['Lo
     return lmbx
 
 
-def get_pi_thread_by_url(t_mbx_url: str, nocache: bool = False) -> Optional[List[EmailMessage]]:
-    msgs = list()
-    cachedir = get_cache_file(t_mbx_url, 'pi.msgs')
-    if os.path.exists(cachedir) and not nocache:
-        logger.debug('Using cached copy: %s', cachedir)
-        for msg in os.listdir(cachedir):
-            with open(os.path.join(cachedir, msg), 'rb') as fh:
-                msgs.append(email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh))
-        return msgs
-
-    logger.critical('Grabbing thread from %s', t_mbx_url.split('://')[1])
-    session = get_requests_session()
-    resp = session.get(t_mbx_url)
-    if resp.status_code == 404:
-        logger.critical('That message-id is not known.')
-        return None
-    if resp.status_code != 200:
-        logger.critical('Server returned an error: %s', resp.status_code)
-        return None
-    t_mbox = gzip.decompress(resp.content)
-    resp.close()
-    if not len(t_mbox):
-        logger.critical('No messages found for that query')
-        return None
-
-    return split_and_dedupe_pi_results(t_mbox, cachedir=cachedir)
-
-
 def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
                            onlymsgids: Optional[Set[str]] = None,
                            with_thread: bool = True,
                            quiet: bool = False) -> Optional[List[EmailMessage]]:
-    qmsgid = urllib.parse.quote_plus(msgid, safe='@')
-    config = get_main_config()
-    midmask = config['midmask']
-    if midmask is None:
-        logger.critical('b4.midmask is not defined')
-        return None
-    assert isinstance(midmask, str), 'b4.midmask must be a string'
-    # Grab the head from remote, to see if/where we are redirected
-    midurl = midmask % qmsgid + '/'  # trailing slash important for the HEAD lookup
     if not quiet:
-        logger.info('Looking up %s', midurl)
-    session = get_requests_session()
-    resp = session.head(midurl)
-    logger.debug('HEAD returned %s', resp.status_code)
-    if resp.status_code >= 400 or resp.status_code == 300:
+        logger.info('Looking up %s', msgid)
+    node = get_lore_node()
+    try:
+        t_mbox = node.get_mbox_by_msgid(msgid, nocache=nocache)
+    except liblore.RemoteError as ex:
         if not quiet:
-            logger.critical('That message-id is not known.')
+            logger.critical('Could not retrieve thread: %s', ex)
         return None
-    if resp.status_code > 300:
-        if 'Location' not in resp.headers:
-            # In theory, never happens?
-            if not quiet:
-                logger.critical('Remote %s did not provide a redirect location.', midurl)
-            return None
-        t_mbx_url = f'{resp.headers["Location"].rstrip("/")}/t.mbox.gz'
-    else:
-        t_mbx_url = f'{midurl}t.mbox.gz'
+    if not t_mbox:
+        if not quiet:
+            logger.critical('No messages found for that query')
+        return None
+    msgs = split_and_dedupe_pi_results(t_mbox)
 
-    resp.close()
-    logger.debug('t_mbx_url=%s', t_mbx_url)
-
-    msgs = get_pi_thread_by_url(t_mbx_url, nocache=nocache)
     if not msgs:
         return None
 
@@ -4016,7 +3845,6 @@ def get_pi_thread_by_msgid(msgid: str, nocache: bool = False,
         for msg in msgs:
             if LoreMessage.get_clean_msgid(msg) in onlymsgids:
                 strict.append(msg)
-            # also grab any messages where this msgid is in the references header
             if with_thread:
                 for onlymsgid in onlymsgids:
                     if msg.get('references', '').find(onlymsgid) >= 0:
@@ -5062,8 +4890,7 @@ def retrieve_messages(cmdargs: argparse.Namespace) -> Tuple[Optional[str], Optio
     else:
         if cmdargs.localmbox == '-':
             # The entire mbox is passed via stdin, so mailsplit it and use the first message for our msgid
-            with tempfile.TemporaryDirectory() as tfd:
-                msgs = mailsplit_bytes(sys.stdin.buffer.read(), tfd, pipesep=cmdargs.stdin_pipe_sep)
+            msgs = mailsplit_bytes(sys.stdin.buffer.read(), pipesep=cmdargs.stdin_pipe_sep)
             if not len(msgs):
                 raise LookupError('Stdin did not contain any messages')
 

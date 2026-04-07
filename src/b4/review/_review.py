@@ -16,6 +16,8 @@ import shutil
 import sys
 import urllib.parse
 
+import liblore.utils
+
 import b4
 import b4.mbox
 import b4.review.tracking
@@ -1443,7 +1445,7 @@ def _integrate_followup_inline_comments(
 
     cover_msgid = series.get('header-info', {}).get('msgid', '')
     followup_comments = b4.review.tracking._parse_msgs_to_followup_comments(
-        b4.mailsplit_bytes(mbox_bytes, os.path.join(topdir, '.git', 'b4-followup-tmp')),
+        liblore.utils.split_mbox(mbox_bytes),
         cover_msgid, patches)
 
     integrated = 0

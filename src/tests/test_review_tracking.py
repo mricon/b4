@@ -1343,14 +1343,12 @@ class TestFollowupCounts:
         assert row[0] == review_tracking.SCHEMA_VERSION
         conn.close()
 
-    @mock.patch('b4.review.tracking._resolve_canonical_url')
-    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_first_fetch_initialises_seen(
-        self, mock_mbox_bytes: mock.Mock, mock_resolve: mock.Mock,
+        self, mock_mbox_bytes: mock.Mock,
         tmp_path: pytest.TempPathFactory
     ) -> None:
         """First update_message_counts sets seen = count (no badge shown yet)."""
-        mock_resolve.return_value = 'https://lore.kernel.org/linux-kernel/cover@example.com'
         # 9 unique messages in the thread
         mock_mbox_bytes.return_value = _make_test_mbox(9)
 
@@ -1379,15 +1377,12 @@ class TestFollowupCounts:
         conn.close()
 
     @mock.patch('b4.review.tracking._fetch_new_since')
-    @mock.patch('b4.review.tracking._resolve_canonical_url')
-    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_incremental_fetch_adds_new_count(
-        self, mock_fetch: mock.Mock, mock_resolve: mock.Mock,
+        self, mock_fetch: mock.Mock,
         mock_new_since: mock.Mock, tmp_path: pytest.TempPathFactory
     ) -> None:
         """Incremental update adds new message count and keeps seen unchanged."""
-        canonical = 'https://lore.kernel.org/linux-kernel/cover2@example.com'
-        mock_resolve.return_value = canonical
         # 9 unique messages in the thread
         mock_fetch.return_value = _make_test_mbox(9)
         # incremental: 3 new messages, with a newer activity date
@@ -1420,15 +1415,12 @@ class TestFollowupCounts:
         conn.close()
 
     @mock.patch('b4.review.tracking._fetch_new_since')
-    @mock.patch('b4.review.tracking._resolve_canonical_url')
-    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_incremental_noop_makes_no_db_write(
-        self, mock_fetch: mock.Mock, mock_resolve: mock.Mock,
+        self, mock_fetch: mock.Mock,
         mock_new_since: mock.Mock, tmp_path: pytest.TempPathFactory
     ) -> None:
         """Incremental update with zero new messages writes nothing to the DB."""
-        canonical = 'https://lore.kernel.org/linux-kernel/cover3@example.com'
-        mock_resolve.return_value = canonical
         # 9 unique messages in the thread
         mock_fetch.return_value = _make_test_mbox(9)
         mock_new_since.return_value = (0, None)   # no new messages
@@ -1483,9 +1475,9 @@ class TestFollowupCounts:
     def test_followup_fetch_skips_offline(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
-        """fetch_thread_message_count and _resolve_canonical_url return None offline."""
+        """fetch_thread_message_count and _fetch_thread_mbox_bytes return None offline."""
         # can_network is False in test fixture — no mock needed
-        assert review_tracking._resolve_canonical_url('any@example.com') is None
+        assert review_tracking._fetch_thread_mbox_bytes('any@example.com') is None
         assert review_tracking.fetch_thread_message_count('any@example.com') is None
 
     def test_update_message_counts_skips_terminal_statuses(
@@ -1638,15 +1630,12 @@ class TestFollowupBlob:
         result = review_tracking.get_thread_mbox(gitdir, 'deadbeef' * 5)
         assert result is None
 
-    @mock.patch('b4.review.tracking._resolve_canonical_url')
-    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_update_message_counts_stores_blob_on_first_fetch(
-        self, mock_mbox: mock.Mock, mock_resolve: mock.Mock,
+        self, mock_mbox: mock.Mock,
         gitdir: str
     ) -> None:
         """update_message_counts writes a thread blob on the first fetch."""
-        mock_resolve.return_value = 'https://lore.kernel.org/linux-kernel/blob-first@example.com'
-        # 9 unique messages → count = 9 - 3 - 1 = 5
         mock_mbox.return_value = _make_mbox_bytes(9, prefix='ff')
 
         change_id = 'blob-first-fetch'
@@ -1674,15 +1663,12 @@ class TestFollowupBlob:
         assert ecode == 0
 
     @mock.patch('b4.review.tracking._fetch_new_since')
-    @mock.patch('b4.review.tracking._resolve_canonical_url')
-    @mock.patch('b4.review.tracking._fetch_mbox_bytes')
+    @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_update_message_counts_updates_blob_on_incremental(
-        self, mock_fetch: mock.Mock, mock_resolve: mock.Mock,
+        self, mock_fetch: mock.Mock,
         mock_new_since: mock.Mock, gitdir: str
     ) -> None:
         """update_message_counts replaces the blob when new replies arrive."""
-        canonical = 'https://lore.kernel.org/linux-kernel/blob-incr@example.com'
-        mock_resolve.return_value = canonical
         # Different prefixes → different Message-IDs → different blobs
         initial_mbox = _make_mbox_bytes(5, prefix='init')
         larger_mbox = _make_mbox_bytes(8, prefix='upd')
@@ -1710,7 +1696,7 @@ class TestFollowupBlob:
         sha_initial = loaded['series'].get('thread-blob')
         assert sha_initial is not None
 
-        # Incremental — _fetch_mbox_bytes now returns the larger mbox
+        # Incremental — _fetch_thread_mbox_bytes now returns the larger mbox
         mock_fetch.return_value = larger_mbox
         review_tracking.update_message_counts(
             'blob-incr-proj', series_list, topdir=gitdir)
