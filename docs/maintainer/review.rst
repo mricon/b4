@@ -511,6 +511,7 @@ your review progress:
 State       Marker  Key     Meaning
 ==========  ======  ======  ====================================================
 *(none)*    |sp|    —       Not yet reviewed
+Unchanged   ``≡``   —       Patch identical to prior revision (auto, on upgrade)
 External    ``±``   —       External reviewers have inline comments (auto)
 Draft       ``✎``   —       You have comments, a reply, or a nack trailer (auto)
 Done        ``✓``   ``d``   Review complete, include in outgoing emails
@@ -522,13 +523,16 @@ Skip        ``✕``   ``x``   Intentionally skipped, exclude from outgoing email
 The marker column shows the highest-priority state that applies. For
 example, if external reviewers have commented but you have not yet
 reviewed, the marker shows ``±``; once you add your own comments it
-changes to ``✎``.
+changes to ``✎``.  The ``≡`` marker is set automatically when upgrading
+a series to a newer revision — it indicates that the patch content has
+not changed, giving you a visual cue to focus on patches that did.  Any
+review action (adding a trailer, reply, or comment) supersedes it.
 
 Pressing ``d`` or ``x`` toggles the state for the current patch. The
 patch list on the left shows the state visually: done patches appear in
-bold, skipped patches appear dimmed. Press ``H`` to hide skipped patches
-from the list entirely — useful for large series where many patches are
-irrelevant to your review.
+bold, skipped and unchanged patches appear dimmed. Press ``H`` to hide
+skipped patches from the list entirely — useful for large series where
+many patches are irrelevant to your review.
 
 Skipped patches are automatically excluded when sending review emails.
 When taking patches via cherry-pick, skipped patches are pre-deselected
