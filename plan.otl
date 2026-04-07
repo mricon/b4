@@ -35,19 +35,26 @@ v0.16
 		: Compare message counts? Check dt: query freshness? HEAD request timestamp?
 	[_] Failover logic — transparent fallback when local endpoint is down or stale
 	[_] Ties into liblore migration — LoreNode already takes a URL, could extend to multiple
-[_] Migrate lore access to liblore library
+[X] Migrate lore access to liblore library
 	: ~/work/git/liblore — standalone library for public-inbox/lore access
-	[_] Add liblore as a dependency in pyproject.toml
-	[_] Replace get_pi_thread_by_msgid() / get_pi_thread_by_url() with LoreNode.get_thread_by_msgid()
-	[_] Replace get_pi_search_results() / get_msgs_by_patch_id() with LoreNode.get_thread_by_query()
-	[_] Replace split_and_dedupe_pi_results() / mailsplit_bytes() with liblore.split_and_dedupe()
-	[_] Replace get_strict_thread() with liblore.get_strict_thread()
-	[_] Replace review/tracking.py _resolve_canonical_url / _fetch_mbox_bytes / _fetch_new_since
-		: Use LoreNode.get_thread_by_msgid() and LoreNode.get_thread_updates_since()
-	[_] Keep b4's caching layer wrapping liblore calls (liblore has no built-in cache)
-	[_] Migrate get_clean_msgid() and duplicate resolution to liblore equivalents
-	[_] Update all callers: mbox.py, ez.py, dig.py, pr.py, diff.py, review_tui/*.py
-	[_] Keep Patchwork integration as-is (separate from lore access)
+	[X] Add liblore as a dependency in pyproject.toml
+	[X] Replace get_pi_thread_by_msgid() / get_pi_thread_by_url() with LoreNode.get_mbox_by_msgid()
+		: get_pi_thread_by_url() removed (was only called internally)
+	[X] Replace get_pi_search_results() / get_msgs_by_patch_id() with LoreNode.get_mbox_by_query()
+		: Added full_threads parameter to liblore for t=1 support
+	[X] Replace split_and_dedupe_pi_results() / mailsplit_bytes() with liblore.split_and_dedupe()
+		: mailsplit_bytes() outdir parameter removed; pipesep path retained
+	[X] Replace get_strict_thread() with liblore.get_strict_thread()
+		: b4's auto-noparent heuristic kept as wrapper
+	[X] Replace review/tracking.py _resolve_canonical_url / _fetch_mbox_bytes / _fetch_new_since
+		: Collapsed into _fetch_thread_mbox_bytes() via LoreNode; _fetch_new_since uses get_thread_updates_since()
+	[X] Caching handled by liblore's filesystem cache with per-request TTL validation
+		: Fixes stale-cache issues in long-running processes (review TUI)
+		: b4's .pi.msgs directory cache removed; nocache passthrough via liblore API
+	[X] Migrate get_clean_msgid() and duplicate resolution to liblore equivalents
+	[X] Update all callers: mbox.py, ez.py, dig.py, pr.py, diff.py, review_tui/*.py
+		: Callers use unchanged b4 wrapper functions; internal delegation to liblore
+	[X] Keep Patchwork integration as-is (separate from lore access)
 [_] Maintainer feed — public outbox via ezpi
 	: ~/work/git/ezpi — writes RFC2822 messages to public-inbox v2 git repos
 	: Maintainers get a browsable/searchable archive of all emails sent through b4
