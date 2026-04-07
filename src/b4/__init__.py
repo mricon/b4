@@ -3597,7 +3597,7 @@ def get_requests_session() -> requests.Session:
 
 
 def get_lore_node() -> liblore.LoreNode:
-    """Return a LoreNode configured with b4's requests session, URL, and cache."""
+    """Return a LoreNode configured from git config with b4's URL and cache."""
     global LORENODE
     if LORENODE is None:
         config = get_main_config()
@@ -3610,12 +3610,12 @@ def get_lore_node() -> liblore.LoreNode:
             cache_expire = int(str(config.get('cache-expire', '10')))
         except ValueError:
             cache_expire = 10
-        LORENODE = liblore.LoreNode(
+        LORENODE = liblore.LoreNode.from_git_config(
             base_url,
             cache_dir=cache_dir,
             cache_ttl=cache_expire * 60,
         )
-        LORENODE.set_requests_session(get_requests_session())
+        LORENODE.set_user_agent('b4', __VERSION__)
     return LORENODE
 
 

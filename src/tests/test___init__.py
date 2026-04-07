@@ -669,3 +669,64 @@ class TestTakeFlow:
 def test_lore_subject_prefixes(subject: str, extras: Optional[List[str]], expected: str) -> None:
     lsubj = b4.LoreSubject(subject)
     assert lsubj.get_rebuilt_subject(eprefixes=extras) == expected
+
+
+class TestGetLoreNode:
+    """Tests for get_lore_node() liblore integration."""
+
+    def setup_method(self) -> None:
+        b4.LORENODE = None
+
+    def test_uses_from_git_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_lore_node() constructs via LoreNode.from_git_config()."""
+        import liblore
+        from unittest.mock import MagicMock
+        mock_node = MagicMock()
+        mock_from_gc = MagicMock(return_value=mock_node)
+        monkeypatch.setattr(liblore.LoreNode, 'from_git_config', mock_from_gc)
+        node = b4.get_lore_node()
+        mock_from_gc.assert_called_once()
+        assert node is mock_node
+
+    def test_sets_user_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_lore_node() calls set_user_agent with b4's identity."""
+        import liblore
+        from unittest.mock import MagicMock
+        mock_node = MagicMock()
+        monkeypatch.setattr(liblore.LoreNode, 'from_git_config', MagicMock(return_value=mock_node))
+        b4.get_lore_node()
+        mock_node.set_user_agent.assert_called_once_with('b4', b4.__VERSION__)
+
+    def test_does_not_inject_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_lore_node() lets liblore own its session."""
+        import liblore
+        from unittest.mock import MagicMock
+        mock_node = MagicMock()
+        monkeypatch.setattr(liblore.LoreNode, 'from_git_config', MagicMock(return_value=mock_node))
+        b4.get_lore_node()
+        mock_node.set_requests_session.assert_not_called()
+
+    def test_passes_cache_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """cache_dir and cache_ttl from b4 config are passed through."""
+        import liblore
+        from unittest.mock import MagicMock
+        b4.MAIN_CONFIG['cache-expire'] = '5'
+        mock_node = MagicMock()
+        mock_from_gc = MagicMock(return_value=mock_node)
+        monkeypatch.setattr(liblore.LoreNode, 'from_git_config', mock_from_gc)
+        b4.get_lore_node()
+        call_kwargs = mock_from_gc.call_args.kwargs
+        assert call_kwargs['cache_ttl'] == 300
+        assert 'lore' in call_kwargs['cache_dir']
+
+    def test_singleton(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Repeated calls return the same LoreNode instance."""
+        import liblore
+        from unittest.mock import MagicMock
+        mock_node = MagicMock()
+        mock_from_gc = MagicMock(return_value=mock_node)
+        monkeypatch.setattr(liblore.LoreNode, 'from_git_config', mock_from_gc)
+        n1 = b4.get_lore_node()
+        n2 = b4.get_lore_node()
+        assert n1 is n2
+        assert mock_from_gc.call_count == 1
