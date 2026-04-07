@@ -60,7 +60,7 @@ class PatchListItem(ListItem):
 
     def _apply_state_style(self) -> None:
         lbl = self.query_one(Label)
-        if self._state == 'skip':
+        if self._state in ('skip', 'unchanged'):
             lbl.styles.text_style = 'dim'
         elif self._state == 'done':
             lbl.styles.text_style = 'bold'

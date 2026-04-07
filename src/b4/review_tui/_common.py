@@ -58,11 +58,12 @@ def get_thread_msgs(
 
 # Per-patch state indicators — same glyphs as _tracking_app._STATUS_SYMBOLS
 PATCH_STATE_MARKERS: Dict[str, str] = {
-    '':         ' ',
-    'external': '\u00b1',  # ± plus-minus (= external comments available)
-    'draft':    '\u270e',  # ✎ pencil    (= maintainer reviewing)
-    'done':     '\u2713',  # ✓ check     (= done)
-    'skip':     '\u2715',  # ✕ cross     (= skipped)
+    '':          ' ',
+    'external':  '\u00b1',  # ± plus-minus    (= external comments available)
+    'draft':     '\u270e',  # ✎ pencil        (= maintainer reviewing)
+    'done':      '\u2713',  # ✓ check         (= done)
+    'skip':      '\u2715',  # ✕ cross         (= skipped)
+    'unchanged': '\u2261',  # ≡ identical-to  (= patch unchanged from prior revision)
 }
 
 # CI check label text (colour-free constant — used with ci_check_styles())
