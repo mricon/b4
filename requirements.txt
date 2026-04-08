@@ -242,9 +242,9 @@ idna==3.11 \
     --hash=sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea \
     --hash=sha256:795dafcc9c04ed0c1fb032c2aa73654d8e8c5023a7df64a53f39190ada629902
     # via requests
-liblore==0.5.0 \
-    --hash=sha256:ddfe54d23417974d424a463e160698eba8dce4677f855abb53aca1c9bc23a4c3 \
-    --hash=sha256:de858a6716c3d98fb2ac1c3d9229e6d716910626b95f12408d78546c8e79dcf9
+liblore==0.6.0 \
+    --hash=sha256:b9e1dc392b4429be86b854b59227ddbf7e6f0eb810779c7bf40f8d81ef06dc07 \
+    --hash=sha256:cea0a0254360bac40a228eab805e2d4f770bff81504af7e00fe9d9a80b576538
     # via b4 (pyproject.toml)
 patatt==0.7.0 \
     --hash=sha256:3335f90f94ba7446ade9c166aee62c41d57d4c283ba3b7569d311c686eac4ace \

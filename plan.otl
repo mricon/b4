@@ -26,15 +26,25 @@ v0.16
 	: Dave Marquardt, https://msgid.link/20260320-ambrosial-strange-sidewinder-60216e@lemur
 	: Detect commits where the body is empty but below-the-cut content exists
 	: This likely means the developer accidentally put the description in the wrong place
-[_] Multiple lore endpoints with failover
+[X] Multiple lore endpoints with failover
 	: "Maintainer container" project — local 3-month lore mirror for decentralized workflows
 	: Query local endpoint first, fail over to upstream lore if unavailable or stale
-	: Largely to be brainstormed
-	[_] Config for ordered list of endpoints (e.g. http://localhost:8080/all, https://lore.kernel.org/all)
+	: Implemented via liblore 0.6 failover features + git config integration
+	[X] Config for ordered list of endpoints via lore.fallback git config (multi-valued)
+		: Origins are scheme://host prefixes; path preserved from canonical URL
+		: Tried in order listed, canonical server is always the final fallback
+	[X] Failover logic — transparent retry on connection error, timeout, or HTTP 5xx
+		: Implemented in liblore's _request() method; 4xx returns immediately (no retry)
+		: b4 uses LoreNode.from_git_config() to pick up all failover settings from git
+	[X] Latency-based origin probing via lore.autoprobe git config
+		: Concurrent HEAD requests to /manifest.js.gz; reorders origins fastest-first
+		: Results cached to disk for lore.probettl seconds (default 3600)
+	[X] User-Agent identification via lore.useragentplus git config
+		: Appends +IDENTIFIER to b4/version header for server operator prioritization
+	[X] Documentation in docs/config.rst — "Server failover settings" section
 	[_] Staleness detection — how to know when local mirror is behind?
 		: Compare message counts? Check dt: query freshness? HEAD request timestamp?
-	[_] Failover logic — transparent fallback when local endpoint is down or stale
-	[_] Ties into liblore migration — LoreNode already takes a URL, could extend to multiple
+		: Not yet addressed — requires liblore-side design work
 [X] Migrate lore access to liblore library
 	: ~/work/git/liblore — standalone library for public-inbox/lore access
 	[X] Add liblore as a dependency in pyproject.toml

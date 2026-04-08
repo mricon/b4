@@ -143,6 +143,96 @@ These options control many of the core features of b4.
 
      Default: ``None``
 
+.. _lore_settings:
+
+Server failover settings
+~~~~~~~~~~~~~~~~~~~~~~~~
+B4 uses the `liblore <https://git.kernel.org/pub/scm/utils/liblore/liblore.git>`_
+library for all access to public-inbox servers.  Liblore reads its own
+settings from the ``[lore]`` section of git config (not ``[b4]``).  These
+settings are shared by all tools that use liblore, so configuring them
+once benefits b4 and any other liblore-based applications.
+
+When one or more fallback origins are configured, liblore automatically
+retries a request on the next origin whenever a connection error,
+timeout, or HTTP 5xx response occurs.  HTTP 4xx errors are **not**
+retried, since they indicate a missing resource rather than a server
+problem.  Cache keys always use the canonical URL regardless of which
+mirror actually served the response.
+
+Example ``~/.gitconfig``::
+
+    [lore]
+        fallback = https://tor.lore.kernel.org
+        fallback = https://sea.lore.kernel.org
+        autoprobe = true
+        useragentplus = 550e8400-e29b-41d4-a716-446655440000
+
+.. glossary::
+   :sorted:
+
+   :term:`lore.fallback`
+     Origin URL prefix (``scheme://host``) of a mirror to try when the
+     primary server is unreachable or returns a server error.  This
+     option can be specified multiple times; mirrors are tried in the
+     order listed before falling back to the canonical server.  Only
+     the origin (scheme and host) is used — the path from the primary
+     URL is preserved automatically.
+
+     Example::
+
+         [lore]
+             fallback = https://tor.lore.kernel.org
+             fallback = http://mymirror.local
+
+     Default: ``None``
+
+     .. versionadded:: v0.16
+
+   :term:`lore.autoprobe`
+     When set to ``true``, b4 probes all configured origins on the
+     first HTTP request and reorders them by response latency, putting
+     the fastest mirror first.  Probe results are cached to disk for
+     :term:`lore.probettl` seconds so that subsequent runs are fast.
+     Probing only makes sense when at least one :term:`lore.fallback`
+     is configured.
+
+     Default: ``false``
+
+     .. versionadded:: v0.16
+
+   :term:`lore.probetimeout`
+     Per-origin timeout in seconds for latency probes.  Origins that
+     do not respond within this time are treated as unreachable and
+     moved to the end of the list.
+
+     Default: ``5.0``
+
+     .. versionadded:: v0.16
+
+   :term:`lore.probettl`
+     How long probe results stay valid, in seconds.  After this time
+     the cached results expire and the next request that triggers a
+     probe performs a fresh measurement.
+
+     Default: ``3600``
+
+     .. versionadded:: v0.16
+
+   :term:`lore.useragentplus`
+     A unique identifier appended to the ``User-Agent`` header as
+     ``b4/version+IDENTIFIER``.  This allows server operators to
+     identify and prioritize known installations.  Typically a UUID.
+
+     Example::
+
+         [lore]
+             useragentplus = 550e8400-e29b-41d4-a716-446655440000
+
+     Default: ``None``
+
+     .. versionadded:: v0.16
+
 .. _shazam_settings:
 
 ``am`` and ``shazam`` settings
