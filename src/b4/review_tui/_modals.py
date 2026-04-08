@@ -2718,7 +2718,7 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
             self.dismiss((self._ok, self._fail, self._new_state))
 
 
-class UpdateAllScreen(ModalScreen[Dict[str, int]]):
+class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
     """Modal showing progress while updating all tracked series.
 
     Iterates every non-archived series, fetching threads and updating
@@ -2763,13 +2763,14 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
         self._linkmask = linkmask
         self._topdir = topdir
         self._cancelled = False
-        self._result: Dict[str, int] = {
+        self._result: Dict[str, Any] = {
             'series_checked': 0,
             'series_updated': 0,
             'promoted': 0,
             'errors': 0,
             'gone': 0,
             'followup_updated': 0,
+            'error_details': [],
         }
 
     def compose(self) -> ComposeResult:
@@ -2787,7 +2788,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
     def action_cancel(self) -> None:
         self._cancelled = True
 
-    def _do_updates(self) -> Dict[str, int]:
+    def _do_updates(self) -> Dict[str, Any]:
         import b4.review
 
         with _quiet_worker():
@@ -2819,6 +2820,8 @@ class UpdateAllScreen(ModalScreen[Dict[str, int]]):
                     self._result['promoted'] += 1
                 if r.get('error'):
                     self._result['errors'] += 1
+                    submitter = series.get('submitter', 'unknown')
+                    self._result['error_details'].append((submitter, r['error']))
                 if r.get('counts_updated'):
                     self._result['followup_updated'] += 1
 
