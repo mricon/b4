@@ -1,3 +1,9 @@
 [submodule "patatt"]
 	path = patatt
 	url = https://git.kernel.org/pub/scm/utils/patatt/patatt.git
+[submodule "liblore"]
+	path = liblore
+	url = https://git.kernel.org/pub/scm/utils/liblore/liblore.git
+[submodule "ezgb"]
+	path = ezgb
+	url = https://git.kernel.org/pub/scm/utils/ezgb/ezgb.git

@@ -6,5 +6,5 @@
 REAL_SCRIPT=$(realpath -e ${BASH_SOURCE[0]})
 SCRIPT_TOP="${SCRIPT_TOP:-$(dirname ${REAL_SCRIPT})}"
 
-PYTHONPATH="${SCRIPT_TOP}/src:${SCRIPT_TOP}/patatt/src${PYTHONPATH:+:$PYTHONPATH}" \
+PYTHONPATH="${SCRIPT_TOP}/src:${SCRIPT_TOP}/patatt/src:${SCRIPT_TOP}/liblore/src:${SCRIPT_TOP}/ezgb/src${PYTHONPATH:+:$PYTHONPATH}" \
 	exec python3 "${SCRIPT_TOP}/src/b4/command.py" "${@}"
