@@ -1857,7 +1857,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             callback=self._on_update_complete,
         )
 
-    def _on_update_complete(self, result: Optional[Dict[str, int]]) -> None:
+    def _on_update_complete(self, result: Optional[Dict[str, Any]]) -> None:
         """Build a summary notification from an update result."""
         if result is None:
             return
@@ -1866,6 +1866,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         promoted = result.get('promoted', 0)
         errors = result.get('errors', 0)
         gone = result.get('gone', 0)
+        error_details: list[tuple[str, str]] = result.get('error_details', [])
 
         if gone:
             self.notify(f'{gone} review branch(es) are gone', severity='warning')
@@ -1880,6 +1881,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         severity: Literal['information', 'warning'] = 'warning' if errors else 'information'
         self.notify(', '.join(parts), severity=severity)
+        for submitter, error in error_details:
+            logger.warning('Update error (%s): %s', submitter, error)
+            self.notify(f'{submitter}: {error}', severity='error')
         self._invalidate_caches()
         self._load_series()
 
