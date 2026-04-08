@@ -3605,6 +3605,13 @@ def get_lore_node() -> liblore.LoreNode:
         midmask = config.get('midmask', LOREADDR + '/all/%s')
         assert isinstance(midmask, str), 'b4.midmask must be a string'
         base_url = midmask.replace('/%s', '').rstrip('/')
+        # If midmask had no list path (e.g. 'https://lore.kernel.org/%s'), the base_url
+        # is just a bare origin. Append '/all' so liblore can construct valid URLs —
+        # the old code relied on HEAD+redirect to discover the list path, but liblore
+        # builds URLs directly.
+        parsed = urllib.parse.urlparse(base_url)
+        if not parsed.path or parsed.path == '/':
+            base_url += '/all'
         cache_dir = str(pathlib.Path(get_cache_dir()) / 'lore')
         try:
             cache_expire = int(str(config.get('cache-expire', '10')))
