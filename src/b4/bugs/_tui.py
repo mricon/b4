@@ -326,7 +326,7 @@ class ImportScreen(ModalScreen[Optional[str]]):
         status.update('Importing...')
         self.run_worker(
             lambda: self._do_import(msgid, noparent),
-            name='import', thread=True,
+            name='import', thread=True, exit_on_error=False,
         )
 
     def _do_import(self, msgid: str, noparent: bool) -> str:
@@ -334,8 +334,13 @@ class ImportScreen(ModalScreen[Optional[str]]):
         app = self.app
         if not isinstance(app, BugListApp):
             raise RuntimeError('ImportScreen must be used with BugListApp')
-        with _quiet_worker():
-            bug = import_thread(app.repo, msgid, noparent=noparent)
+        try:
+            with _quiet_worker():
+                bug = import_thread(app.repo, msgid, noparent=noparent)
+        except RuntimeError:
+            raise RuntimeError(
+                'Could not retrieve message thread'
+            ) from None
         return bug.id
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
