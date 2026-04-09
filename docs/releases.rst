@@ -1,6 +1,98 @@
 Release notes
 =============
 
+.. _release-0.15.2:
+
+v0.15.2
+-------
+
+Bug fixes for the review TUI and mbox parsing, plus a new visual
+indicator for unchanged patches during series upgrades.
+
+Review TUI fixes
+~~~~~~~~~~~~~~~~
+
+- **Unchanged-patch visual cue** — when upgrading a series to a newer
+  revision, patches whose content is identical between revisions now
+  display a ``≡`` marker and are rendered dim in the patch list, giving
+  the maintainer an at-a-glance signal to focus on patches that actually
+  changed.  The ``≡`` state is automatically superseded by any review
+  action (adding a trailer, reply, or comment).
+- **Prevent double-sending of carried-over reviews** — after a
+  successful send, each review is stamped with a ``sent-revision``
+  field so ``collect_review_emails()`` skips reviews that have already
+  been sent for a previous revision.
+- **Crash fix: stored message-id pointing to wrong version thread** —
+  after upgrading a series, the stored message-id could still reference
+  the old version's thread, causing a ``LookupError``.  B4 now retries
+  with ``get_extra_series()`` to discover the correct version.
+- **Crash fix: IndexError when toggling followups** — a race between
+  Textual's ``ListView.clear()`` and DOM removal could leave the cursor
+  past the end of the list.  Fixed by tracking the new-item count
+  directly and deferring index restoration.
+- **Crash fix: modal screen blocking _refresh_list** — the background
+  rescan finishing while a modal screen was active caused a
+  ``NoMatches`` crash.  Added guards to return early when the default
+  screen's widgets are unreachable.
+- **Replies to additional patches no longer treated as inline reviews**
+  — when a follow-up message contains its own diff, replies to it are
+  no longer injected as code reviews on the wrong patch.
+- **Range-diff finds previous series revision** — pressing ``d``
+  previously passed the current revision's blob SHA when fetching the
+  older one, causing a version mismatch.
+- **Upgrade branches no longer pollute tracking DB** — temporary
+  upgrade branches now use a ``_tmp-`` prefix and are skipped during
+  rescan, preventing ghost entries with garbled change-ids.
+- **Per-series error details after update-all** — the "Update all"
+  action now reports which series failed and why, instead of only
+  showing a total error count.
+
+Mbox parsing fix
+~~~~~~~~~~~~~~~~
+
+- **Free-form replies no longer split on** ``---`` — reply messages
+  that use ``---`` as a visual separator (e.g. AI-assisted reviews) no
+  longer have their body content silently discarded.  The ``---``/diff
+  split is now only applied to messages that contain actual diff content.
+
+Thanks
+~~~~~~
+
+Thanks to the following people for reporting bugs and testing:
+
+- Mark Brown
+- Miroslav Benes
+
+
+.. _release-0.15.1:
+
+v0.15.1
+-------
+
+Bug fixes for the review TUI and documentation corrections.
+
+- **Patch list scrolling** — the patch list in the review TUI now
+  scrolls properly on large series instead of expanding beyond its
+  container.  Keyboard navigation keeps the selected patch visible.
+  (Reported by Chris Samuel)
+- **CI results list scrolling** — the check results matrix no longer
+  resets to the top on every re-render, so keyboard navigation works
+  correctly.  (Reported by Chris Samuel)
+- **TUI tests outside a git repository** — tests no longer fail when
+  run from a release tarball with no ``.git`` directory.
+  (Reported by Jiri Slaby)
+- **Documentation** — fixed incorrect ``b4 dig`` examples in the v0.15
+  release notes.
+
+Thanks
+~~~~~~
+
+Thanks to the following people for reporting bugs:
+
+- Chris Samuel
+- Jiri Slaby
+
+
 .. _release-0.15:
 
 v0.15
