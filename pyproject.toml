@@ -28,7 +28,7 @@ dependencies = [
     "dkimpy>=1.0,<2.0",
     "patatt>=0.6,<2.0",
     "ezgb>=0.1",
-    "liblore>=0.6.1",
+    "liblore>=0.7",
 ]
 
 [dependency-groups]
