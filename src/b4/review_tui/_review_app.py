@@ -329,6 +329,10 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         lv.clear()
 
         total = len(self._commit_shas)
+        # Track new-item count ourselves: lv.children may still
+        # contain old items pending async removal after clear().
+        new_count = 0
+        restore_index = 0
 
         # Cover letter entry (skip if no actual cover letter)
         if self._has_cover:
@@ -336,7 +340,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             mark = PATCH_STATE_MARKERS[state]
             cover_label = f'{mark} 0/{total} {self._cover_subject_clean[:40]}'
             lv.append(PatchListItem(cover_label, 0, state))
+            if 0 == self._selected_idx:
+                restore_index = new_count
+            new_count += 1
             self._append_followup_items(lv, 0)
+            new_count += len(self._followup_comments.get(0, []))
 
         # Patch entries
         for idx, _sha in enumerate(self._commit_shas):
@@ -349,15 +357,21 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             mark = PATCH_STATE_MARKERS[state]
             label = f'{mark} {patch_num}/{total} {subject[:40]}'
             lv.append(PatchListItem(label, patch_num, state))
+            if patch_num == self._selected_idx:
+                restore_index = new_count
+            new_count += 1
             self._append_followup_items(lv, patch_num)
+            new_count += len(self._followup_comments.get(patch_num, []))
 
-        if lv.children:
-            # Find the child index for the currently selected display_idx
-            for i, child in enumerate(lv.children):
-                if isinstance(child, PatchListItem) and child.patch_idx == self._selected_idx:
-                    lv.index = i
-                    lv.scroll_visible()
-                    break
+        if new_count > 0:
+            # Defer index restoration: clear() only schedules DOM
+            # removal, so lv._nodes still contains old items right
+            # now.  Setting the index immediately would highlight a
+            # stale item that disappears once pruning completes.
+            def _restore() -> None:
+                lv.index = restore_index
+                lv.scroll_visible()
+            self.call_after_refresh(_restore)
 
     def _append_followup_items(self, lv: ListView, display_idx: int) -> None:
         """Append FollowupItem entries to *lv* for each follow-up message."""
