@@ -32,7 +32,7 @@ from b4.review_tui._common import (
     _quiet_worker, get_thread_msgs,
     _has_review_data, _make_initials, _wait_for_enter,
     _write_comments, _write_followup_comments,
-    _write_followup_trailers, _resolve_patch_for_followup,
+    _write_followup_trailers, _resolve_patch_for_followup, _chain_has_additional_patch,
     _get_followup_depth, _render_email_to_viewer,
     _suspend_to_shell, SeparatedFooter, _fix_ansi_theme,
 )
@@ -1605,6 +1605,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 'reply': lmsg.reply,
                 'depth': _get_followup_depth(lmsg.in_reply_to, patch_msgids, lmbx.msgid_map),
                 'lmsg': lmsg,
+                'replies-to-diff': _chain_has_additional_patch(
+                    lmsg.in_reply_to, patch_msgids, lmbx.msgid_map),
             }
             self._followup_comments.setdefault(display_idx, []).append(entry)
             count += 1
@@ -1667,6 +1669,10 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 if not body:
                     continue
                 if '> diff --git ' not in body and '> @@ ' not in body:
+                    continue
+                # Skip followups that reply to an additional patch:
+                # quoted diff content is from that patch, not ours.
+                if fc.get('replies-to-diff'):
                     continue
 
                 reviewer_email = fc.get('fromemail', '')
