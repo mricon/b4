@@ -3197,9 +3197,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             patches = tracking.get('patches', [])
 
             saved_reviews: Dict[str, Dict[str, Any]] = {}
+            prior_patch_ids: set[str] = set()
             for idx, _sha, patch_id in patch_ids:
                 if patch_id is None or idx >= len(patches):
                     continue
+                prior_patch_ids.add(patch_id)
                 reviews = patches[idx].get('reviews')
                 if reviews:
                     saved_reviews[patch_id] = {
@@ -3297,21 +3299,25 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             for idx, _sha, patch_id in new_patch_ids:
                 if patch_id is None or idx >= len(new_patches):
                     continue
+                if patch_id not in prior_patch_ids:
+                    continue
                 if patch_id in saved_reviews:
-                    # Deepcopy so we don't mutate the saved v1 review data
+                    # Deepcopy so we don't mutate the saved review data
                     reviews = copy.deepcopy(saved_reviews[patch_id]['reviews'])
-                    my_review = reviews.get(my_email, {})
-                    # If this patch is identical to the v1 version (same patch-id)
-                    # and the maintainer already sent their review, auto-skip it so
-                    # collect_review_emails won't include it again for v2.
-                    if my_review.get('sent-revision') is not None:
-                        my_review['patch-state'] = 'skip'
-                        my_review['skip-reason'] = (
-                            f'Patch unchanged from v{current_rev}; '
-                            f'review already sent'
-                        )
-                    new_patches[idx]['reviews'] = reviews
                     restored += 1
+                else:
+                    reviews = {}
+                # Mark the patch as unchanged so the TUI can show a visual cue.
+                # _get_patch_state() will override this with any derived state
+                # (draft, done, …) if the maintainer already has review content.
+                my_review = reviews.setdefault(
+                    my_email, {'name': str(usercfg.get('name', ''))})
+                my_review['patch-state'] = 'unchanged'
+                reviews['b4-upgrade@internal'] = {
+                    'name': 'B4 Upgrade',
+                    'note': f'Patch unchanged from v{current_rev}',
+                }
+                new_patches[idx]['reviews'] = reviews
 
             # Re-anchor inline comments against new revision diffs
             new_shas = [sha for _idx, sha, _pid in new_patch_ids]

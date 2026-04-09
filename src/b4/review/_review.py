@@ -699,11 +699,11 @@ _NACK_TRAILER_KEY = 'nacked-by'
 def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     """Derive the effective per-patch state for the current user.
 
-    Returns 'done', 'draft', 'external', 'skip', or '' (no state).
-    Only 'done' and 'skip' are stored explicitly; other states are derived.
-    The 'external' state indicates that external reviewers (agents,
-    sashiko, follow-ups) have inline comments but the maintainer has
-    not yet commented.
+    Returns 'done', 'draft', 'external', 'skip', 'unchanged', or ''
+    (no state).  'done', 'skip', and 'unchanged' are stored explicitly;
+    other states are derived.  'unchanged' is low-priority: it is only
+    returned when no derived state (draft, done, external) applies, so
+    any maintainer action automatically supersedes it.
     """
     review = _get_my_review(target, usercfg)
     explicit = str(review.get('patch-state', ''))
@@ -725,12 +725,12 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     if any(addr != my_email and rev.get('comments')
            for addr, rev in all_reviews.items()):
         return 'external'
-    return ''
+    return explicit if explicit else ''
 
 
 def _set_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT,
                      state: str) -> None:
-    """Store an explicit patch state ('done', 'skip', or '' to clear)."""
+    """Store an explicit patch state ('done', 'skip', 'unchanged', or '' to clear)."""
     if state:
         review = _ensure_my_review(target, usercfg)
         review['patch-state'] = state
