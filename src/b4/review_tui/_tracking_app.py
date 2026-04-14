@@ -3460,13 +3460,22 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
             usercfg = b4.get_user_config()
             my_email = str(usercfg.get('email', 'unknown@example.com'))
+            # If the maintainer already sent their review (status='replied'),
+            # don't carry over prior comments verbatim — they are stale and
+            # may refer to issues already addressed in the new version.  The
+            # prior feedback is still accessible via the "Prior" (P) screen.
+            # Only carry over WIP review content when the maintainer hadn't
+            # sent anything yet (e.g. the submitter sent a new version while
+            # the maintainer was still drafting their review).
+            old_status = old_series.get('status', '')
+            carry_over_reviews = (old_status != 'replied')
             restored = 0
             for idx, _sha, patch_id in new_patch_ids:
                 if patch_id is None or idx >= len(new_patches):
                     continue
                 if patch_id not in prior_patch_ids:
                     continue
-                if patch_id in saved_reviews:
+                if carry_over_reviews and patch_id in saved_reviews:
                     # Deepcopy so we don't mutate the saved review data
                     reviews = copy.deepcopy(saved_reviews[patch_id]['reviews'])
                     restored += 1
@@ -3484,9 +3493,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 }
                 new_patches[idx]['reviews'] = reviews
 
-            # Re-anchor inline comments against new revision diffs
-            new_shas = [sha for _idx, sha, _pid in new_patch_ids]
-            b4.review.reanchor_patch_comments(topdir, new_shas, new_patches)
+            # Re-anchor inline comments against new revision diffs.
+            # Only needed when WIP review comments were carried over.
+            if carry_over_reviews:
+                new_shas = [sha for _idx, sha, _pid in new_patch_ids]
+                b4.review.reanchor_patch_comments(topdir, new_shas, new_patches)
 
             new_tracking['series']['status'] = 'reviewing'
             # Ensure the tracking commit has the real change-id, not

@@ -1360,43 +1360,59 @@ def render_prior_review_context(
     lines.append(f'== Prior review feedback from v{revision} ==')
     lines.append('')
 
+    def _render_review_section(review: Dict[str, Any]) -> List[str]:
+        """Render a single reviewer's feedback for one patch or cover letter."""
+        out: List[str] = []
+        note = review.get('note', '').strip()
+        reply = review.get('reply', '').strip()
+        trailers: List[Any] = review.get('trailers', [])
+        comments: List[Any] = review.get('comments', [])
+        if note:
+            out.append('Private note:')
+            out.append(note)
+            out.append('')
+        if reply:
+            out.append('Public reply:')
+            out.append(reply)
+            out.append('')
+        if trailers:
+            out.append('Trailers:')
+            for t in trailers:
+                out.append(f'  {t}')
+            out.append('')
+        if comments:
+            out.append('Inline comments:')
+            for c in comments:
+                path = c.get('path', '')
+                line = c.get('line', 0)
+                text = c.get('text', '').strip()
+                out.append(f'  [{path}:{line}]')
+                for tline in text.splitlines():
+                    out.append(f'    {tline}')
+                out.append('')
+        return out
+
     # Cover letter feedback
     cover_review = series.get('reviews', {}).get(maintainer_email, {})
-    cover_note = cover_review.get('note', '').strip()
-    cover_reply = cover_review.get('reply', '').strip()
-    if cover_note or cover_reply:
+    cover_section = _render_review_section(cover_review)
+    if cover_section:
         cover_subject = series.get('subject', 'cover letter')
         lines.append(f'== Cover letter: {cover_subject} ==')
-        if cover_note:
-            lines.append('Private note:')
-            lines.append(cover_note)
-            lines.append('')
-        if cover_reply:
-            lines.append('Public reply:')
-            lines.append(cover_reply)
-            lines.append('')
+        lines.extend(cover_section)
 
     # Per-patch feedback
     for idx, patch in enumerate(patches):
         patch_num = idx + 1
         title = patch.get('title', f'patch {patch_num}')
         review = patch.get('reviews', {}).get(maintainer_email, {})
-        note = review.get('note', '').strip()
-        reply = review.get('reply', '').strip()
+        patch_section = _render_review_section(review)
 
         lines.append(f'== Patch {patch_num}/{n_patches} — {title} ==')
-        if not note and not reply:
+        if not patch_section:
             lines.append('[No feedback]')
             lines.append('')
-            continue
-        if note:
-            lines.append('Private note:')
-            lines.append(note)
-            lines.append('')
-        if reply:
-            lines.append('Public reply:')
-            lines.append(reply)
-            lines.append('')
+        else:
+            lines.extend(patch_section)
 
     return '\n'.join(lines)
 
