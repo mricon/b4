@@ -3054,10 +3054,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if has_branch and topdir:
             if not self._delete_review_branch(topdir, review_branch):
                 return
-        # Delete from tracking database
+        # Delete all revisions for this change-id from the tracking database.
+        # Passing no revision removes every row including archived prior
+        # revisions, so the series can be re-tracked from scratch if needed.
         try:
             conn = b4.review.tracking.get_db(self._identifier)
-            b4.review.tracking.delete_series(conn, change_id, revision=revision)
+            b4.review.tracking.delete_series(conn, change_id)
             conn.close()
         except Exception as ex:
             self.notify(f'DB error: {ex}', severity='error')
