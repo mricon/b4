@@ -36,9 +36,10 @@ You can then edit the cover letter using::
 
     b4 prep --edit-cover
 
-This should start a text editor using your defined ``$EDITOR`` or
-``core.editor`` and automatically update the cover letter commit when
-you save and exit.
+This should start a text editor and automatically update the cover letter
+commit when you save and exit. The editor is selected following git's
+standard priority: ``$GIT_EDITOR``, then ``core.editor``, then ``$VISUAL``,
+then ``$EDITOR``, falling back to ``vi``.
 
 .. _prep_cover_strategies:
 
@@ -371,16 +372,14 @@ modifying defaults for some of these flags.
   ``git-format-patch`` would do.
 
 ``--edit-cover``
-  Lets you edit the cover letter using the editor command defined in
-  git-config as ``core.editor``, the ``$EDITOR`` environment var if that
-  isn't found, or ``vim`` -- because it's safe to assume that if you
-  don't like vim, you would have already set your ``$EDITOR`` to use
-  some other command.
+  Lets you edit the cover letter in the configured editor. The editor is
+  selected following git's standard priority: ``$GIT_EDITOR``, then
+  ``core.editor``, then ``$VISUAL``, then ``$EDITOR``, falling back to
+  ``vi``.
 
 ``--edit-deps``
-  Lets you edit the series dependencies using the editor command defined
-  in git-config as ``core.editor``, the ``$EDITOR`` environment var if
-  that isn't found, or ``vim``.
+  Lets you edit the series dependencies in the configured editor (same
+  editor selection order as ``--edit-cover``).
 
   .. versionadded:: v0.14
 

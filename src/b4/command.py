@@ -395,9 +395,9 @@ def setup_parser() -> argparse.ArgumentParser:
     spp_g.add_argument('-p', '--format-patch', metavar='OUTPUT_DIR',
                        help='Output prep-tracked commits as patches')
     spp_g.add_argument('--edit-cover', action='store_true', default=False,
-                       help='Edit the cover letter in your defined $EDITOR (or core.editor)')
+                       help='Edit the cover letter in the configured editor')
     spp_g.add_argument('--edit-deps', action='store_true', default=False,
-                       help='Edit the series dependencies in your defined $EDITOR (or core.editor)')
+                       help='Edit the series dependencies in the configured editor')
     spp_g.add_argument('--check-deps', action='store_true', default=False,
                        help='Run checks for any defined series dependencies')
     spp_g.add_argument('--check', action='store_true', default=False,

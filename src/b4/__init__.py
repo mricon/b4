@@ -5026,8 +5026,14 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
     # branch as when the cover-letter was originally opened.
     read_branch = git_get_current_branch()
 
-    corecfg = get_config_from_git(r'core\..*', {'editor': os.environ.get('EDITOR', 'vi')})
-    editor = corecfg.get('editor')
+    corecfg = get_config_from_git(r'core\..*')
+    editor = (
+        os.environ.get('GIT_EDITOR')
+        or corecfg.get('editor')
+        or os.environ.get('VISUAL')
+        or os.environ.get('EDITOR')
+        or 'vi'
+    )
     logger.debug('editor=%s', editor)
 
     topdir = git_get_toplevel()
@@ -5064,9 +5070,13 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
 
 
 def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
-    corecfg = get_config_from_git(r'core\..*', {'pager': os.environ.get('PAGER', 'less')})
-    pager = corecfg.get('pager', 'less')
-    assert pager is not None
+    corecfg = get_config_from_git(r'core\..*')
+    pager = (
+        os.environ.get('GIT_PAGER')
+        or corecfg.get('pager')
+        or os.environ.get('PAGER')
+        or 'less'
+    )
     logger.debug('pager=%s', pager)
 
     topdir = git_get_toplevel()
