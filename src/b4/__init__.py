@@ -49,10 +49,12 @@ from typing import (
     overload,
 )
 
+import dkim  # type: ignore[import-untyped]
 import liblore.utils
 import requests
 
 import liblore
+import patatt
 
 ConfigDictT = Dict[str, Union[str, List[str], None]]
 
@@ -64,20 +66,6 @@ emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length
 # Presence of these characters requires quoting of the name in the header
 # adapted from email._parseaddr
 qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
-
-try:
-    import dkim  # type: ignore[import-untyped]
-
-    can_dkim = True
-except ModuleNotFoundError:
-    can_dkim = False
-
-try:
-    import patatt
-
-    can_patatt = True
-except ModuleNotFoundError:
-    can_patatt = False
 
 # global setting allowing us to turn off networking
 can_network = True
@@ -1012,13 +1000,6 @@ class LoreSeries:
             for trailer in attref:
                 logger.info('  %s', trailer)
 
-        if not (can_dkim and can_patatt):
-            logger.info('  ---')
-            if not can_dkim:
-                logger.info('  NOTE: install dkimpy for DKIM signature verification')
-            if not can_patatt:
-                logger.info('  NOTE: install patatt for end-to-end signature verification')
-
         return msgs
 
 
@@ -1694,9 +1675,6 @@ class LoreMessage:
         if not can_network:
             logger.debug('Message has DKIM signatures, but can_network is off')
             return
-        if not can_dkim:
-            logger.debug('Message has DKIM signatures, but can_dkim is off')
-            return
 
         # Identify all DKIM-Signature headers and try them in reverse order
         # until we come to a passing one
@@ -1783,10 +1761,6 @@ class LoreMessage:
                 self.body = '\n'.join(ibh) + '\n\n' + self.body
 
     def _load_patatt_attestors(self) -> None:
-        if not can_patatt:
-            logger.debug('Message has %s headers, but can_patatt is off', DEVSIG_HDR)
-            return
-
         # This should be always the case, but assert it anyway
         assert isinstance(self._attestors, list)
 

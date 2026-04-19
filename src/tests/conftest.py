@@ -13,7 +13,6 @@ def settestdefaults(tmp_path: pathlib.Path) -> None:
     topdir = b4.git_get_toplevel()
     if topdir and topdir != os.getcwd():
         os.chdir(topdir)
-    b4.can_patatt = False
     b4.can_network = False
     b4.MAIN_CONFIG = dict(b4.DEFAULT_CONFIG)
     b4.USER_CONFIG = {

@@ -13,6 +13,7 @@ import email.policy
 import email.utils
 import gzip
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -29,21 +30,10 @@ from email.message import EmailMessage
 from string import Template
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+import git_filter_repo as fr  # type: ignore[import-untyped]
+
 import b4
-
-try:
-    import patatt
-    can_patatt = True
-except ModuleNotFoundError:
-    can_patatt = False
-
-try:
-    import git_filter_repo as fr  # type: ignore[import-untyped]
-    can_gfr = True
-except ModuleNotFoundError:
-    can_gfr = False
-
-import importlib.util
+import patatt
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -150,9 +140,6 @@ def run_frf(frf: fr.RepoFilter) -> None:
     but is completely unnecessary for b4's purposes. Delete this file after
     each invocation, so it doesn't interfere with subsequent runs.
     """
-    if not can_gfr:
-        logger.critical('CRITICAL: git-filter-repo is not available')
-        sys.exit(1)
     run_rewrite_hook('pre')
     logger.debug('Running git-filter-repo...')
     frf.run()
@@ -2492,13 +2479,6 @@ def reroll(mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PR
     store_cover(new_cover, tracking)
 
 
-def check_can_gfr() -> None:
-    if not can_gfr:
-        logger.critical('ERROR: b4 submit requires git-filter-repo. You should be able')
-        logger.critical('       to install it from your distro packages, or from pip.')
-        sys.exit(1)
-
-
 def show_revision() -> None:
     is_prep_branch(mustbe=True)
     _cover, tracking = load_cover()
@@ -3054,7 +3034,6 @@ def set_presubject(presubject: str) -> None:
 
 
 def cmd_prep(cmdargs: argparse.Namespace) -> None:
-    check_can_gfr()
     status = b4.git_get_repo_status()
     if len(status):
         logger.critical('CRITICAL: Repository contains uncommitted changes.')
@@ -3156,7 +3135,6 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
 
 def cmd_trailers(cmdargs: argparse.Namespace) -> None:
-    check_can_gfr()
     status = b4.git_get_repo_status()
     if len(status):
         logger.critical('CRITICAL: Repository contains uncommitted changes.')
