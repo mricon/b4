@@ -36,6 +36,9 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 import b4
+import b4.review
+import b4.review.tracking
+import b4.ty
 from b4.review_tui._common import (
     CI_CHECK_LABELS,
     JKListNavMixin,
@@ -978,8 +981,6 @@ class TakeConfirmScreen(ModalScreen[bool]):
 
     def _test_take(self) -> Tuple[bool, str]:
         """Test-apply review branch patches at the target base."""
-        import b4.review
-
         with _quiet_worker():
             topdir = b4.git_get_toplevel()
             if not topdir:
@@ -1477,8 +1478,6 @@ class QueueDeliveryScreen(
         self._cancelled = True
 
     def _do_deliver(self) -> Tuple[int, int, List[Tuple[str, int]]]:
-        import b4.ty
-
         def _on_progress(completed: int, total: int, status: str) -> None:
             if not self._cancelled:
                 self.app.call_from_thread(
@@ -1679,7 +1678,8 @@ class ViewSeriesScreen(_FetchViewerScreen):
             msgs = b4.review._retrieve_messages(self._message_id)
             return b4.review._get_lore_series(msgs)
 
-    def _show_result(self, lser: 'b4.LoreSeries') -> None:
+    def _show_result(self, result: 'b4.LoreSeries') -> None:
+        lser = result
         subject = lser.subject or '(no subject)'
         self.query_one('#fv-title', Static).update(subject)
         viewer = self.query_one('#fv-viewer', RichLog)
@@ -1724,13 +1724,12 @@ class CIChecksScreen(_FetchViewerScreen):
         self._series = series
 
     def _fetch(self) -> List[Dict[str, Any]]:
-        import b4.review
-
         with _quiet_worker():
             patch_ids = self._series.get('patch_ids', [])
             return b4.review.pw_fetch_checks(self._pwkey, self._pwurl, patch_ids)
 
-    def _show_result(self, checks: List[Dict[str, Any]]) -> None:
+    def _show_result(self, result: List[Dict[str, Any]]) -> None:
+        checks = result
         series_name = self._series.get('name') or '(no subject)'
         self.query_one('#fv-title', Static).update(f'CI checks \u2014 {series_name}')
         viewer = self.query_one('#fv-viewer', RichLog)
@@ -1989,8 +1988,6 @@ class RebaseScreen(ModalScreen[bool]):
 
     def _prepare_local(self) -> bytes:
         """Build mbox from the local review branch patches."""
-        import b4.review
-
         topdir = b4.git_get_toplevel()
         if not topdir:
             raise RuntimeError('Not in a git repository')
@@ -2760,8 +2757,6 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
         self._cancelled = True
 
     def _do_updates(self) -> Dict[str, Any]:
-        import b4.review
-
         with _quiet_worker():
             # Rescan local review branches first so the DB reflects current
             # on-disk state before the network update runs.

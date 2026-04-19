@@ -279,12 +279,13 @@ class ConfigOption(argparse.Action):
             config = dict()
             setattr(namespace, self.dest, config)
 
-        if isinstance(keyval, str):
-            if '=' in keyval:
-                key, value = keyval.split('=', maxsplit=1)
-            else:
-                key, value = keyval, 'true'
+        if not isinstance(keyval, str):
+            raise TypeError(f'Expected a string config assignment, got {keyval!r}')
 
+        if '=' in keyval:
+            key, value = keyval.split('=', maxsplit=1)
+        else:
+            key, value = keyval, 'true'
         config[key] = value
 
 

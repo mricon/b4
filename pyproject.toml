@@ -37,6 +37,7 @@ dependencies = [
 dev = [
     "mypy",
     "pip-tools",
+    "pyright",
     "pytest",
     "pytest-asyncio",
     "ruff",
@@ -122,10 +123,15 @@ flake8-quotes.inline-quotes = "single"
 [tool.ruff.format]
 quote-style = "single"
 
-[tool.pyright]
-typeCheckingMode = "off"
-
 [tool.mypy]
 exclude = ["^ezgb/", "^liblore/", "^patatt/"]
 strict = true
 warn_unreachable = true
+
+[tool.pyright]
+# pyright automatically ignores virtual environments and other directories, but
+# once we specify `exclude`, we're on our own. See
+# https://github.com/microsoft/pyright/issues/9057#issuecomment-2366938099.
+exclude = [".venv", "ezgb", "liblore", "patatt"]
+typeCheckingMode = "standard"
+reportUnusedImport = true

@@ -3,8 +3,10 @@
 import copy
 import email
 import email.header
+import email.message
 import email.policy
 import email.quoprimime
+import email.utils
 import json
 import logging
 import logging.handlers

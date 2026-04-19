@@ -6,9 +6,6 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.message
-import email.parser
-import email.policy
-import email.utils
 import json
 import os
 import tempfile
@@ -23,7 +20,6 @@ from rich.text import Text
 from textual.widgets import RichLog
 
 import b4
-import b4.mbox
 import b4.review
 import b4.review.tracking
 

@@ -93,7 +93,7 @@ def _dkim_log_filter(record: logging.LogRecord) -> bool:
     return True
 
 
-logger = logging.getLogger('b4')
+logger: logging.Logger = logging.getLogger('b4')
 dkimlogger = logger.getChild('dkim')
 dkimlogger.addFilter(_dkim_log_filter)
 # Route liblore logging through b4's logger so debug mode covers it
@@ -1349,25 +1349,25 @@ class LoreSeries:
                         seenfiles.add(nfn)
                     # Try to grab full ref_id of this hash
                     try:
-                        ohash = git_revparse_obj(ofi)
+                        hash = git_revparse_obj(ofi)
                         logger.debug('  Found matching blob for: %s', ofn)
                         gitargs = [
                             'update-index',
                             '--add',
                             '--cacheinfo',
-                            f'{fmod},{ohash},{ofn}',
+                            f'{fmod},{hash},{ofn}',
                         ]
                     except RuntimeError:
                         logger.debug(
                             'Could not find matching blob for %s (%s)', ofn, ofi
                         )
                         try:
-                            chash = git_revparse_obj(f':{ofn}', topdir)
+                            hash = git_revparse_obj(f':{ofn}', topdir)
                             gitargs = [
                                 'update-index',
                                 '--add',
                                 '--cacheinfo',
-                                f'{fmod},{chash},{ofn}',
+                                f'{fmod},{hash},{ofn}',
                             ]
                         except RuntimeError:
                             logger.critical(
@@ -1378,9 +1378,7 @@ class LoreSeries:
                     ecode, out = git_run_command(None, gitargs)
                     if ecode > 0:
                         logger.critical(
-                            '  ERROR: Could not run update-index for %s (%s)',
-                            ofn,
-                            ohash,
+                            '  ERROR: Could not run update-index for %s (%s)', ofn, hash
                         )
                         return None, None
 
@@ -4972,7 +4970,7 @@ def send_mail(
     web_endpoint: Optional[str] = None,
     reflect: bool = False,
 ) -> Optional[int]:
-    tosend = list()
+    tosend: List[Tuple[Set[str], bytes, LoreSubject]] = list()
     if output_dir is not None:
         dryrun = True
 

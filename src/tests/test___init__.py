@@ -1,5 +1,7 @@
 import email
-import email.parser
+import email.message
+import email.policy
+import email.utils
 import io
 import os
 import pathlib

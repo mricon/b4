@@ -4,7 +4,7 @@ import io
 import os
 import re
 from email.message import EmailMessage
-from typing import Any, Dict, List, Union
+from typing import Any, Dict
 from unittest import mock
 
 import pytest
@@ -1938,20 +1938,14 @@ class TestFollowupBlob:
 class TestPatchState:
     """Tests for _get_patch_state() and _set_patch_state()."""
 
-    _USERCFG: Dict[str, Union[str, List[str], None]] = {
-        'email': 'reviewer@example.com',
-        'name': 'Test Reviewer',
-    }
+    _EMAIL = 'reviewer@example.com'
+    _USERCFG: b4.ConfigDictT = {'email': _EMAIL, 'name': 'Test Reviewer'}
 
     def _make_target(self, review_data: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """Return a minimal target dict, optionally with review data."""
         if review_data is None:
             return {}
-        return {
-            'reviews': {
-                self._USERCFG['email']: {'name': 'Test Reviewer', **review_data}
-            }
-        }
+        return {'reviews': {self._EMAIL: {'name': 'Test Reviewer', **review_data}}}
 
     def test_no_data(self) -> None:
         """Empty reviews dict → no state."""

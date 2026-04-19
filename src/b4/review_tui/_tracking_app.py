@@ -9,7 +9,6 @@ import copy
 import datetime
 import email.message
 import email.parser
-import email.policy
 import email.utils
 import io
 import json
@@ -29,9 +28,11 @@ from textual.widgets import Footer, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
 
 import b4
+import b4.ez
 import b4.mbox
 import b4.review
 import b4.review.tracking
+import b4.ty
 from b4.review_tui._common import (
     CheckRunnerMixin,
     SeparatedFooter,
@@ -829,8 +830,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
 
     def _load_series(self) -> None:
-        import b4.ty
-
         self._auto_wake_snoozed()
 
         all_series = b4.review.tracking.get_all_tracked_series(self._identifier)
@@ -1644,6 +1643,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                             rend,
                         )
 
+            _is_rt = bool(series.get('is_rethreaded'))
             try:
                 logger.info('Base: %s', base_commit)
                 b4.git_fetch_am_into_repo(
@@ -1655,7 +1655,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 )
 
                 # Create the review branch
-                _is_rt = bool(series.get('is_rethreaded'))
                 b4.review.create_review_branch(
                     topdir,
                     branch_name,
@@ -2145,7 +2144,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _on_newer_revision_acknowledged(
         self,
-        proceed: bool,
+        proceed: Optional[bool],
         target_branch: str,
         change_id: str,
         review_branch: str,
@@ -2220,7 +2219,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _on_take_confirmed(
         self,
-        confirmed: bool,
+        confirmed: Optional[bool],
         change_id: str,
         review_branch: str,
         take_screen: 'TakeScreen',
@@ -2272,7 +2271,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _on_cherrypick_confirmed(
         self,
-        confirmed: bool,
+        confirmed: Optional[bool],
         change_id: str,
         review_branch: str,
         take_screen: 'TakeScreen',
@@ -2323,7 +2322,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _on_take_final(
         self,
-        confirmed: bool,
+        confirmed: Optional[bool],
         method: str,
         change_id: str,
         review_branch: str,
@@ -2949,7 +2948,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         )
 
     def _on_rebase_confirmed(
-        self, confirmed: bool, review_branch: str, rebase_screen: 'RebaseScreen'
+        self,
+        confirmed: Optional[bool],
+        review_branch: str,
+        rebase_screen: 'RebaseScreen',
     ) -> None:
         """Handle rebase confirmation result."""
         if not confirmed:
@@ -3452,7 +3454,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _on_abandon_confirmed(
         self,
-        confirmed: bool,
+        confirmed: Optional[bool],
         change_id: str,
         review_branch: str,
         has_branch: bool,
@@ -3879,6 +3881,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                         )
 
             # --- 3. Apply to temporary upgrade branch ---
+            _is_rt = bool((self._selected_series or {}).get('is_rethreaded'))
             try:
                 logger.info('Base: %s', base_sha)
                 b4.git_fetch_am_into_repo(
@@ -3888,7 +3891,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     origin=linkurl,
                     am_flags=['-3'],
                 )
-                _is_rt = bool((self._selected_series or {}).get('is_rethreaded'))
                 b4.review.create_review_branch(
                     topdir,
                     upgrade_branch,
@@ -4240,8 +4242,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         import tarfile
         import time
 
-        import b4.ez
-
         topdir = b4.git_get_toplevel()
         if not topdir:
             if notify:
@@ -4325,7 +4325,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _on_archive_confirmed(
         self,
-        confirmed: bool,
+        confirmed: Optional[bool],
         change_id: str,
         review_branch: str,
         has_branch: bool,
@@ -4346,9 +4346,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def action_thank(self) -> None:
         """Compose and preview a thank-you reply for a taken series."""
         import argparse
-
-        import b4.review
-        import b4.ty
 
         series = self._selected_series
         if not series:
@@ -4479,8 +4476,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self, msg: email.message.EmailMessage, checkurl: str
     ) -> None:
         """Queue the thanks message for delivery once commits are public."""
-        import b4.ty
-
         series = self._selected_series
         if not series:
             return
@@ -4542,8 +4537,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _refresh_queue_indicator(self) -> None:
         """Update the title-bar queue count and Q binding visibility."""
-        import b4.ty
-
         self._queue_count = b4.ty.get_queued_count(dryrun=self._email_dryrun)
         try:
             right = self.query_one('#title-right', Static)
@@ -4557,8 +4550,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def action_process_queue(self) -> None:
         """Show the queue modal and optionally deliver."""
-        import b4.ty
-
         entries = b4.ty.get_queued_messages(dryrun=self._email_dryrun)
         if not entries:
             self.notify('No queued thanks messages')

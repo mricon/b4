@@ -21,6 +21,7 @@ import liblore.utils
 
 import b4
 import b4.mbox
+import b4.review
 import b4.review.tracking
 
 logger = b4.logger
@@ -2172,7 +2173,7 @@ def update_series_tracking(
 
 def cmd_tui(cmdargs: argparse.Namespace) -> None:
     try:
-        import b4.review_tui
+        import b4.review_tui as review_tui
     except ImportError:
         logger.critical('The TUI requires the textual library.')
         logger.critical('Install it with: pip install b4[tui]')
@@ -2197,7 +2198,7 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
             logger.critical('Enroll with: b4 review enroll')
             sys.exit(1)
 
-    b4.review_tui.run_tracking_tui(
+    review_tui.run_tracking_tui(
         identifier,
         email_dryrun=cmdargs.email_dryrun,
         no_sign=cmdargs.no_sign,

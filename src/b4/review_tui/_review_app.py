@@ -1226,7 +1226,6 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         existing_reply = review.get('reply', '')
 
         # Get the real diff for position resolution when parsing back
-        real_diff = ''
         if self._selected_idx > 0:
             patch_idx = self._selected_idx - 1
             if patch_idx >= len(self._commit_shas):
@@ -1238,18 +1237,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             if ecode > 0:
                 self.notify('Could not get diff', severity='error')
                 return
-
-        if existing_reply:
-            editor_text = existing_reply
-        else:
-            all_reviews = target.get('reviews', {})
-            my_email = str(self._usercfg.get('email', ''))
-            if self._selected_idx == 0:
-                # Cover letter reply
-                editor_text = b4.review._render_quoted_diff_with_comments(
-                    '', all_reviews, my_email, commit_msg=self._cover_text
-                )
+            if existing_reply:
+                editor_text = existing_reply
             else:
+                all_reviews = target.get('reviews', {})
+                my_email = str(self._usercfg.get('email', ''))
                 ecode, commit_msg = b4.git_run_command(
                     self._topdir, ['show', '--format=%B', '--no-patch', sha]
                 )
@@ -1258,6 +1250,16 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     return
                 editor_text = b4.review._render_quoted_diff_with_comments(
                     real_diff, all_reviews, my_email, commit_msg=commit_msg.strip()
+                )
+        else:
+            real_diff = ''
+            if existing_reply:
+                editor_text = existing_reply
+            else:
+                all_reviews = target.get('reviews', {})
+                my_email = str(self._usercfg.get('email', ''))
+                editor_text = b4.review._render_quoted_diff_with_comments(
+                    '', all_reviews, my_email, commit_msg=self._cover_text
                 )
 
         with self.suspend():

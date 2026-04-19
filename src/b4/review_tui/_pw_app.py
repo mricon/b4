@@ -515,8 +515,9 @@ class PwApp(App[None]):
         )
 
     def _on_apply_complete(
-        self, result: Tuple[int, int, str], item: 'PwSeriesItem'
+        self, result: Optional[Tuple[int, int, str]], item: 'PwSeriesItem'
     ) -> None:
+        assert result is not None
         ok, fail, new_state = result
         if fail:
             self.notify(f'{ok} updated, {fail} failed', severity='warning')

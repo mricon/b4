@@ -570,9 +570,11 @@ def send_messages(
         else:
             logger.info('Sent %s thank-you letters', outgoing)
             if pwstate:
+                assert isinstance(pwstate, str), 'pwstate must be a string'
                 b4.patchwork_set_state(msgids, pwstate)
     else:
         if pwstate and not cmdargs.dryrun:
+            assert isinstance(pwstate, str), 'pwstate must be a string'
             b4.patchwork_set_state(msgids, pwstate)
             logger.info('---')
         logger.debug('Wrote %s thank-you letters', outgoing)
@@ -677,12 +679,14 @@ def discard_selected(cmdargs: argparse.Namespace) -> None:
     logger.info('Discarding %s messages', len(listing))
     msgids: List[str] = list()
     for jsondata in listing:
-        assert isinstance(jsondata['trackfile'], str), 'trackfile must be a string'
-        fullpath = os.path.join(datadir, jsondata['trackfile'])
+        trackfile = jsondata['trackfile']
+        assert isinstance(trackfile, str), 'trackfile must be a string'
+        fullpath = os.path.join(datadir, trackfile)
         os.rename(fullpath, '%s.discarded' % fullpath)
         logger.info('  Discarded: %s', jsondata['subject'])
-        assert isinstance(jsondata['msgid'], str), 'msgid must be a string'
-        msgids.append(jsondata['msgid'])
+        msgid = jsondata['msgid']
+        assert isinstance(msgid, str), 'msgid must be a string'
+        msgids.append(msgid)
         patches = cast(List[Tuple[str, str, str, str]], jsondata['patches'])
         for pdata in patches:
             msgids.append(pdata[2])
@@ -692,6 +696,7 @@ def discard_selected(cmdargs: argparse.Namespace) -> None:
     if not pwstate:
         pwstate = config.get('pw-discard-state')
     if pwstate:
+        assert isinstance(pwstate, str), 'pwstate must be a string'
         b4.patchwork_set_state(msgids, pwstate)
 
     sys.exit(0)

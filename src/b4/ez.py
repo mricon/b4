@@ -1481,7 +1481,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                         fltr.lmsg.msgid, safe='@'
                     )
                 logger.info('  + %s', rendered)
-                logger.info('    via: %s', source)
+                logger.info('    via: %s', source)  # pyright: ignore[reportPossiblyUnboundVariable] # broken since 742e017c1b5b91d0e6fd6fca7decf73956b31487
             else:
                 logger.debug('  . %s', fltr.as_string(omit_extinfo=True))
 
@@ -1636,7 +1636,7 @@ def get_base_changeid_from_tag(tagname: str) -> Tuple[str, str, str]:
     return cover, base_commit, change_id
 
 
-def make_msgid_tpt(change_id: str, revision: str, domain: Optional[str] = None) -> str:
+def make_msgid_tpt(change_id: str, revision: int, domain: Optional[str] = None) -> str:
     if not domain:
         usercfg = b4.get_user_config()
         myemail = usercfg.get('email')
@@ -1800,7 +1800,7 @@ def get_prep_branch_as_patches(
 
     if prefixes is None:
         prefixes = list()
-    prefixes += tracking['series'].get('prefixes', list())
+    prefixes.extend(tracking['series'].get('prefixes', list()))
     base_commit, start_commit, end_commit = get_series_range(usebranch=usebranch)
     change_id = tracking['series'].get('change-id')
     revision = tracking['series'].get('revision')
@@ -1953,6 +1953,10 @@ def get_prep_branch_as_patches(
         'prerequisites': prerequisites,
         'signature': b4.get_email_signature(),
     }
+    # Possible type confusion here; revision is initially a string, but is
+    # then assigned an integer in the loop above. What happens if that loop
+    # runs zero times? Unclear.
+    assert isinstance(revision, int)
     if cover_template.find('${range_diff}') >= 0:
         if revision > 1:
             oldrev = revision - 1
@@ -2034,7 +2038,7 @@ def get_sent_tag_as_patches(
     csubject, cbody = get_cover_subject_body(cover)
     cbody = cbody.strip() + '\n-- \n' + b4.get_email_signature()
     prefixes = ['RESEND'] + csubject.get_extra_prefixes(exclude=['RESEND'])
-    msgid_tpt = make_msgid_tpt(change_id, str(revision))
+    msgid_tpt = make_msgid_tpt(change_id, revision)
     seriests = int(time.time())
     mailfrom = b4.get_mailfrom()
 
@@ -3178,7 +3182,7 @@ def force_revision(forceto: int) -> None:
 
 
 def range_diff_compare(
-    compareto: str, execvp: bool = True, range_diff_opts: Optional[str] = None
+    compareto: int, execvp: bool = True, range_diff_opts: Optional[str] = None
 ) -> Union[str, None]:
     _, tracking = load_cover()
     # Try the new format first
