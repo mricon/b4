@@ -42,6 +42,13 @@ dev = [
     "ruff",
     "types-requests",
 ]
+misc = [
+    "ezpi",
+    "falcon",
+    "instructor",
+    "pydantic",
+    "sqlalchemy",
+]
 
 [project.optional-dependencies]
 completion = [
@@ -120,5 +127,5 @@ typeCheckingMode = "off"
 
 # Configure mypy in strict mode
 [tool.mypy]
-exclude = ["^ezgb/", "^liblore/", "^misc/", "^patatt/"]
+exclude = ["^ezgb/", "^liblore/", "^patatt/"]
 strict = true

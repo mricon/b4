@@ -1,7 +1,14 @@
 import sys
+from typing import TYPE_CHECKING
 
-from instructor import OpenAISchema
-from pydantic import Field
+from pydantic import BaseModel, Field
+
+# TODO(https://github.com/567-labs/instructor/pull/2246): remove this once the
+# PR is merged and released.
+if TYPE_CHECKING:
+    OpenAISchema = BaseModel
+else:
+    from instructor import OpenAISchema
 
 # This is needed for now while the minimization bits aren't released
 sys.path.insert(0, '/home/user/work/git/korg/b4/src')
@@ -16,8 +23,8 @@ class Function(OpenAISchema):
 
     message_id: str = Field(
         ...,
-        example='20240228-foo-bar-baz@localhost',
-        descriptions='Message-ID of the thread to retrieve from lore.kernel.org',
+        examples=['20240228-foo-bar-baz@localhost'],
+        description='Message-ID of the thread to retrieve from lore.kernel.org',
     )
 
     class Config:
