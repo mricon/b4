@@ -226,8 +226,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         if cmdargs.cherrypick == '_':
             # We might want to pick a patch sent as a followup, so create a fake series
             # and add followups with diffs
-            if lser is None:
-                lser = b4.LoreSeries(revision=1, expected=1)
             for followup in lmbx.followups:
                 if followup.has_diff:
                     lser.add_patch(followup)

@@ -792,10 +792,6 @@ def gather_attestation_info(lser: b4.LoreSeries) -> Dict[str, Any]:
     apply_mismatches = 0
 
     if topdir:
-        # Ensure indexes are populated for applicability check
-        if lser.indexes is None:
-            lser.populate_indexes()
-
         if base_commit:
             base_exists = b4.git_commit_exists(topdir, base_commit)
 

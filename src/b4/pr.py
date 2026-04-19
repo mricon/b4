@@ -92,7 +92,7 @@ def git_get_commit_id_from_repo_ref(repo: str, ref: str) -> Optional[str]:
 
 def parse_pr_data(msg: email.message.EmailMessage) -> Optional[b4.LoreMessage]:
     lmsg = b4.LoreMessage(msg)
-    if lmsg.body is None:
+    if not lmsg.body:
         logger.critical('Could not find a plain part in the message body')
         return None
 

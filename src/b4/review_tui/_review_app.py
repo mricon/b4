@@ -1265,7 +1265,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 editor_text.encode(), filehint='reply.b4-review.eml'
             )
 
-        if result is None:
+        if not result:
             self.notify('Editor returned no content')
             return
         reply_text = result.decode(errors='replace')
@@ -1388,7 +1388,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         with self.suspend():
             result = b4.edit_in_editor(editor_text.encode(), filehint='note.txt')
 
-        if result is None:
+        if not result:
             self.notify('Editor returned no content')
             return
         raw_text = result.decode(errors='replace')

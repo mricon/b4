@@ -2256,8 +2256,6 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
             ifh = io.BytesIO()
             b4.save_git_am_mbox(am_msgs, ifh)
             ambytes = ifh.getvalue()
-            if lser.indexes is None:
-                lser.populate_indexes()
             return lser, ambytes
 
     def _check_applicability(self, branch: str) -> None:

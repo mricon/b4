@@ -88,7 +88,9 @@ class TestHelpScreen:
             await pilot.pause()
             # Should be back on the host screen
             assert not isinstance(app.screen, HelpScreen)
-            assert dismissed == [None]
+            # https://github.com/python/mypy/issues/9457:
+            # app.screen is stale-narrowed across await.
+            assert dismissed == [None]  # type: ignore[unreachable]
 
     @pytest.mark.asyncio
     async def test_question_mark_dismisses(self) -> None:
@@ -182,7 +184,9 @@ class TestConfirmScreen:
             await pilot.press('y')
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmScreen)
-            assert results == [True]
+            # https://github.com/python/mypy/issues/9457:
+            # app.screen is stale-narrowed across await.
+            assert results == [True]  # type: ignore[unreachable]
 
     @pytest.mark.asyncio
     async def test_escape_cancels(self) -> None:
@@ -477,7 +481,9 @@ class TestPriorReviewScreen:
             await pilot.press('escape')
             await pilot.pause()
             assert not isinstance(app.screen, PriorReviewScreen)
-            assert results == [None]
+            # https://github.com/python/mypy/issues/9457:
+            # app.screen is stale-narrowed across await.
+            assert results == [None]  # type: ignore[unreachable]
 
     @pytest.mark.asyncio
     async def test_content_rendered(self) -> None:

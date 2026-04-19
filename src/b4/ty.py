@@ -521,9 +521,6 @@ def send_messages(
             # This is a patch series
             msg = generate_am_thanks(gitdir, jsondata, branch, cmdargs)
 
-        if msg is None:
-            continue
-
         assert isinstance(jsondata['msgid'], str), 'msgid must be a string'
         msgids.append(jsondata['msgid'])
         assert isinstance(jsondata['patches'], list), 'patches must be a list'

@@ -1190,9 +1190,7 @@ class LoreSeries:
         branches: Optional[List[str]] = None,
         maxdays: int = 30,
     ) -> Tuple[str, int, int]:
-        if self.indexes is None:
-            self.populate_indexes()
-        if self.indexes is None or not len(self.indexes):
+        if not self.indexes:
             raise IndexError('No indexes to check against')
 
         pdate = self.submission_date
@@ -1744,7 +1742,7 @@ class LoreMessage:
         # walk until we find the first text/plain part
         self.body, self.charset = LoreMessage.get_payload(self.msg)
 
-        if self.body is None:
+        if not self.body:
             # Woah, we didn't find any usable parts
             logger.debug('  No plain or patch parts found in message')
             logger.info('  Not plaintext: %s', self.full_subject)

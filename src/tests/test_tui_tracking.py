@@ -1044,7 +1044,9 @@ class TestTrackingSnooze:
             assert not isinstance(app.screen, SnoozeScreen)
 
             # Verify DB was updated
-            conn = tracking.get_db(identifier)
+            # https://github.com/python/mypy/issues/9457:
+            # app.screen is stale-narrowed across await.
+            conn = tracking.get_db(identifier)  # type: ignore[unreachable]
             cursor = conn.execute(
                 'SELECT status, snoozed_until FROM series WHERE change_id = ?',
                 ('snooze-test-1',),
@@ -2161,7 +2163,9 @@ class TestTargetBranch:
             assert not isinstance(app.screen, TargetBranchScreen)
 
             # Verify DB cleared
-            conn = tracking.get_db(identifier)
+            # https://github.com/python/mypy/issues/9457:
+            # app.screen is stale-narrowed across await.
+            conn = tracking.get_db(identifier)  # type: ignore[unreachable]
             target = tracking.get_target_branch(conn, change_id)
             conn.close()
             assert target is None
@@ -2709,7 +2713,9 @@ class TestLoadSeriesCaching:
             assert app._cached_branch_tips is not None
             app._invalidate_caches()
             assert app._cached_branch_tips is None
-            assert app._cached_newest_revisions is None
+            # https://github.com/python/mypy/issues/9457:
+            # app._cached_branch_tips is stale-narrowed across a method call.
+            assert app._cached_newest_revisions is None  # type: ignore[unreachable]
             assert app._cached_revision_counts is None
             assert app._cached_art_counts is None
 

@@ -125,7 +125,7 @@ quote-style = "single"
 [tool.pyright]
 typeCheckingMode = "off"
 
-# Configure mypy in strict mode
 [tool.mypy]
 exclude = ["^ezgb/", "^liblore/", "^patatt/"]
 strict = true
+warn_unreachable = true

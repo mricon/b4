@@ -229,13 +229,14 @@ def record_take_branch(gitdir: str, branch: str) -> None:
     metadata_dir = os.path.join(gitdir, REVIEW_METADATA_DIR)
     pathlib.Path(metadata_dir).mkdir(parents=True, exist_ok=True)
     metadata_path = get_repo_metadata_path(gitdir)
-    data: Dict[str, Any] = {}
     if os.path.exists(metadata_path):
         try:
             with open(metadata_path, 'r') as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError):
             pass
+    else:
+        data = {}
     if not isinstance(data, dict):
         data = {}
     branches = data.get('recent-take-branches', [])
