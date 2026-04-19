@@ -1482,7 +1482,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
                         fltr.lmsg.msgid, safe='@'
                     )
                 logger.info('  + %s', rendered)
-                logger.info('    via: %s', source)  # pyright: ignore[reportPossiblyUnboundVariable] # broken since 742e017c1b5b91d0e6fd6fca7decf73956b31487
+                logger.info('    via: %s', source)  # pyright: ignore[reportPossiblyUnboundVariable] # ty:ignore[possibly-unresolved-reference] # broken since 742e017c1b5b91d0e6fd6fca7decf73956b31487
             else:
                 logger.debug('  . %s', fltr.as_string(omit_extinfo=True))
 

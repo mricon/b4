@@ -803,6 +803,8 @@ class SendReceiveListener(object):
             resp.content_type = falcon.MEDIA_TEXT
             resp.text = 'Failed to parse the request\n'
             return
+        # TODO(https://github.com/astral-sh/ruff/pull/24458): remove this when ty understands conditional walrus.
+        action = None
         if not isinstance(jdata, Mapping) or (action := jdata.get('action')) is None:
             logger.critical('Action not set from %s', req.remote_addr)
             return

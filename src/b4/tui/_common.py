@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import unicodedata
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -275,6 +275,12 @@ def _validate_addrs(text: str) -> Optional[str]:
     return None
 
 
+class _ListViewHost(Protocol):
+    _list_id: str
+
+    def query_one(self, selector: str, expect_type: type[ListView]) -> ListView: ...
+
+
 class JKListNavMixin:
     """Mixin providing j/k cursor navigation for a named ListView.
 
@@ -282,15 +288,13 @@ class JKListNavMixin:
     target :class:`ListView` (e.g. ``'#action-list'``).
     """
 
-    _list_id: str = ''
-
-    def action_cursor_down(self) -> None:
-        lv = self.query_one(self._list_id, ListView)  # type: ignore[attr-defined]
+    def action_cursor_down(self: _ListViewHost) -> None:
+        lv = self.query_one(self._list_id, ListView)
         if lv.index is not None and lv.index < len(lv.children) - 1:
             lv.index += 1
 
-    def action_cursor_up(self) -> None:
-        lv = self.query_one(self._list_id, ListView)  # type: ignore[attr-defined]
+    def action_cursor_up(self: _ListViewHost) -> None:
+        lv = self.query_one(self._list_id, ListView)
         if lv.index is not None and lv.index > 0:
             lv.index -= 1
 

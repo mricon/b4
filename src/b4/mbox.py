@@ -51,7 +51,7 @@ def save_msgs_as_mbox(
         added = 0
         if filterdupes:
             for emsg in mdr:
-                have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))  # type: ignore[arg-type]
+                have_msgids.add(b4.LoreMessage.get_clean_msgid(emsg))  # type: ignore[arg-type] # ty:ignore[invalid-argument-type] # this will go away when we update liblore
         for msg in msgs:
             if b4.LoreMessage.get_clean_msgid(msg) not in have_msgids:
                 added += 1
@@ -924,8 +924,7 @@ def refetch(dest: str) -> None:
 
     by_msgid: Dict[str, EmailMessage] = dict()
     for key, msg in mbox.items():
-        # We normally pass EmailMessage objects, but this works, too
-        msgid = b4.LoreMessage.get_clean_msgid(msg)  # type: ignore[arg-type]
+        msgid = b4.LoreMessage.get_clean_msgid(msg)  # type: ignore[arg-type] # ty:ignore[invalid-argument-type] # this will go away when we update liblore
         if not msgid:
             continue
         if msgid not in by_msgid:

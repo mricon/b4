@@ -49,6 +49,7 @@ from b4.review_tui._common import (
     reviewer_colours,
 )
 from b4.review_tui._modals import (
+    CheckLoadingScreen,
     FollowupReplyPreviewScreen,
     HelpScreen,
     NoteScreen,
@@ -294,7 +295,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._collapsed_comment_lines: Dict[int, Tuple[str, int]] = {}
         self._reply_sent: bool = False
         self._hide_skipped: bool = False
-        self._check_loading: Optional[Any] = None
+        self._check_loading: Optional[CheckLoadingScreen] = None
 
     def _get_check_context(self) -> Optional[Tuple[str, str, str]]:
         message_id = self._series.get('header-info', {}).get('msgid', '')
@@ -354,6 +355,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             widget.update(f' WARNING: newer version(s) available: {versions}')
             widget.styles.display = 'block'
         else:
+            # Textual infers StringEnumProperty from the default ("block"),
+            # so ty treats the valid "none" value as an invalid assignment.
             widget.styles.display = 'none'
 
     def _populate_patch_list(self) -> None:

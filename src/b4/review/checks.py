@@ -13,7 +13,7 @@ import pathlib
 import shlex
 import sqlite3
 from email.message import EmailMessage
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 
@@ -163,12 +163,14 @@ def load_check_cmds() -> Tuple[List[str], List[str]]:
     """
     config = b4.get_main_config()
 
-    def _as_list(val: Any) -> List[str]:
-        if isinstance(val, str):
-            return [val]
-        if isinstance(val, list):
-            return list(val)
-        return []
+    def _as_list(val: Union[str, List[str], None]) -> List[str]:
+        match val:
+            case str():
+                return [val]
+            case list():
+                return val
+            case None:
+                return []
 
     perpatch = _as_list(config.get('review-perpatch-check-cmd'))
     if not perpatch:

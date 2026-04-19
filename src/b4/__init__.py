@@ -71,9 +71,9 @@ emlpolicy = email.policy.EmailPolicy(
 qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 # global setting allowing us to turn off networking
-can_network = True
+can_network: bool = True
 
-__VERSION__ = '0.16-dev'
+__VERSION__: str = '0.16-dev'
 PW_REST_API_VERSION = '1.2'
 
 
@@ -237,6 +237,8 @@ class LoreMailbox:
         # Are existing patches replies to previous revisions with the same counter?
         lser = self.series[revision]
         sane = True
+        # TODO(https://github.com/astral-sh/ruff/pull/24458): remove this when ty understands conditional walrus.
+        ppatch = None
         for patch in lser.patches:
             if patch is None:
                 continue
@@ -259,6 +261,8 @@ class LoreMailbox:
                     found = True
                     break
                 # Do we have another level up?
+                # TODO(https://github.com/astral-sh/ruff/pull/24458): remove this when ty understands conditional walrus.
+                npatch = None
                 if (
                     ppatch.in_reply_to is None
                     or (npatch := self.msgid_map.get(ppatch.in_reply_to)) is None
@@ -447,6 +451,8 @@ class LoreMailbox:
                     # Could be a cover letter
                     pmsg.followup_trailers += trailers
                     break
+                # TODO(https://github.com/astral-sh/ruff/pull/24458): remove this when ty understands conditional walrus.
+                nmsg = None
                 if (
                     pmsg.in_reply_to
                     and (nmsg := self.msgid_map.get(pmsg.in_reply_to)) is not None
@@ -1872,10 +1878,10 @@ class LoreMessage:
         # Identify all DKIM-Signature headers and try them in reverse order
         # until we come to a passing one
         dkhdrs = list()
-        for header in list(self.msg._headers):  # type: ignore[attr-defined]
+        for header in list(self.msg._headers):  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             if header[0].lower() == 'dkim-signature':
                 dkhdrs.append(header)
-                self.msg._headers.remove(header)  # type: ignore[attr-defined]
+                self.msg._headers.remove(header)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         dkhdrs.reverse()
 
         seenatts = list()
@@ -1909,7 +1915,7 @@ class LoreMessage:
                 if isinstance(sh, str) and 'date' in sh.lower().split(':'):
                     signtime = self.date
 
-            self.msg._headers.append((hn, hval))  # type: ignore[attr-defined]
+            self.msg._headers.append((hn, hval))  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             try:
                 res = dkim.verify(
                     self.msg.as_bytes(policy=emlpolicy), logger=dkimlogger
@@ -1928,7 +1934,7 @@ class LoreMessage:
                 self._attestors.append(attestor)
                 return
 
-            self.msg._headers.pop(-1)  # type: ignore[attr-defined]
+            self.msg._headers.pop(-1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             seenatts.append(attestor)
 
         # No exact domain matches, so return everything we have
@@ -2248,12 +2254,12 @@ class LoreMessage:
                             self.fromname = xpair[0]
                             self.fromemail = xpair[1]
                             # Drop the reply-to header if it's exactly the same
-                            for header in list(self.msg._headers):  # type: ignore[attr-defined]
+                            for header in list(self.msg._headers):  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
                                 if (
                                     header[0].lower() == 'reply-to'
                                     and header[1].find(xpair[1]) > 0
                                 ):
-                                    self.msg._headers.remove(header)  # type: ignore[attr-defined]
+                                    self.msg._headers.remove(header)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
                 has_passing = True
                 att_info: Dict[str, Any] = {
@@ -3622,8 +3628,8 @@ def git_run_command(
 
     U = TypeVar('U', str, bytes)
 
-    def _handle(_out: U, _err: U) -> Tuple[int, Union[str, bytes]]:
-        if logstderr and len(_err.strip()):
+    def _handle(_out: U, _err: U) -> Tuple[int, U]:
+        if logstderr and len(_err.strip()):  # ty:ignore[no-matching-overload, invalid-argument-type] # https://github.com/astral-sh/ty/issues/1503
             logger.debug('Stderr: %s', _err)
             _out += _err
 
@@ -5063,10 +5069,17 @@ def send_mail(
 
     if isinstance(smtp, list):
         # This is a local command
+
+        # This a little crazy but it's possible, through multiple inheritance,
+        # for smtp to be a list of something other than str if it is also one of
+        # the other types in the union.
+        #
+        # https://github.com/astral-sh/ty/issues/1578
+        smtps = ' '.join(smtp)  # ty:ignore[no-matching-overload]
         if reflect:
-            logger.info('Reflecting via "%s"', ' '.join(smtp))
+            logger.info('Reflecting via "%s"', smtps)
         else:
-            logger.info('Sending via "%s"', ' '.join(smtp))
+            logger.info('Sending via "%s"', smtps)
         for destaddrs, bdata, lsubject in tosend:
             logger.info('  %s', lsubject.full_subject)
             if reflect:
@@ -5075,9 +5088,7 @@ def send_mail(
                 cmdargs = list(smtp) + list(destaddrs)
             ecode, _out, err = _run_command(cmdargs, stdin=bdata)
             if ecode > 0:
-                raise RuntimeError(
-                    'Error running %s: %s' % (' '.join(smtp), err.decode())
-                )
+                raise RuntimeError('Error running %s: %s' % (smtps, err.decode()))
             sent += 1
 
     elif smtp:
@@ -5815,11 +5826,11 @@ def mailbox_email_factory(fh: BinaryIO) -> EmailMessage:
 
 def get_msgs_from_mailbox_or_maildir(mbmd: str) -> List[EmailMessage]:
     if is_maildir(mbmd):
-        in_mdr = mailbox.Maildir(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]
-        return [x[1] for x in in_mdr.items()]  # type: ignore[misc]
+        in_mdr = mailbox.Maildir(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        return [x[1] for x in in_mdr.items()]  # type: ignore[misc]  # ty: ignore[invalid-return-type]
 
-    in_mbx = mailbox.mbox(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]
-    return [x[1] for x in in_mbx.items()]  # type: ignore[misc]
+    in_mbx = mailbox.mbox(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    return [x[1] for x in in_mbx.items()]  # type: ignore[misc]  # ty: ignore[invalid-return-type]
 
 
 def get_mailfrom() -> Tuple[str, str]:

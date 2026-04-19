@@ -1,5 +1,6 @@
 import email
 import email.message
+import email.parser
 import email.policy
 import email.utils
 import io
@@ -58,17 +59,12 @@ def test_save_git_am_mbox(
         if ismbox:
             msgs = b4.get_msgs_from_mailbox_or_maildir(f'{sampledir}/{source}.txt')
         else:
-            import email
-            import email.parser
-
             with open(f'{sampledir}/{source}.txt', 'rb') as fh:
                 msg = email.parser.BytesParser(
                     policy=b4.emlpolicy, _class=email.message.EmailMessage
                 ).parse(fh)
             msgs = [msg]
     else:
-        import email.message
-
         msgs = list()
         for x in range(0, 3):
             msg = email.message.EmailMessage()

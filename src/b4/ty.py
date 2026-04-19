@@ -586,7 +586,10 @@ def list_tracked() -> List[JsonDictT]:
     # find all tracked bits
     tracked = list()
     datadir = b4.get_data_dir()
-    paths = sorted(Path(datadir).iterdir(), key=os.path.getmtime)
+    # Work around https://github.com/astral-sh/ty/issues/2799, which widens the
+    # sorted element type when the key function accepts a broader path-like type
+    # than Path.
+    paths = sorted(Path(datadir).iterdir(), key=lambda path: path.stat().st_mtime)
     for fullpath in paths:
         if fullpath.suffix not in ('.pr', '.am'):
             continue

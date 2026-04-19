@@ -510,6 +510,7 @@ def main(cmdargs: argparse.Namespace) -> None:
 
         if msgs:
             if cmdargs.sendidentity:
+                assert isinstance(cmdargs.sendidentity, str)
                 # Pass exploded series via git-send-email
                 config = b4.get_config_from_git(
                     rf'sendemail\.{cmdargs.sendidentity}\..*'
@@ -522,6 +523,12 @@ def main(cmdargs: argparse.Namespace) -> None:
                     sys.exit(1)
                 # Make sure from is not overridden by current user
                 mailfrom = msgs[0].get('from')
+                if not isinstance(mailfrom, str):
+                    logger.critical(
+                        'Expected a string From header in exploded message, got %r',
+                        mailfrom,
+                    )
+                    sys.exit(1)
                 gitargs = [
                     'send-email',
                     '--identity',

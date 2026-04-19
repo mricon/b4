@@ -1388,7 +1388,8 @@ class TestTrackingDetailPanel:
             from textual.containers import Vertical
 
             panel = app.query_one('#details-panel', Vertical)
-            assert panel.styles.height.value == 0  # type: ignore[union-attr]
+            assert panel.styles.height is not None
+            assert panel.styles.height.value == 0
 
     @pytest.mark.asyncio
     async def test_detail_panel_updates_on_navigation(

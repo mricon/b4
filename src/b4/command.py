@@ -270,7 +270,7 @@ class ConfigOption(argparse.Action):
         self,
         parser: argparse.ArgumentParser,
         namespace: argparse.Namespace,
-        keyval: Union[str, Sequence[Any], None],
+        values: Union[str, Sequence[Any], None],
         option_string: Optional[str] = None,
     ) -> None:
         config = getattr(namespace, self.dest, None)
@@ -279,13 +279,13 @@ class ConfigOption(argparse.Action):
             config = dict()
             setattr(namespace, self.dest, config)
 
-        if not isinstance(keyval, str):
-            raise TypeError(f'Expected a string config assignment, got {keyval!r}')
+        if not isinstance(values, str):
+            raise TypeError(f'Expected a string config assignment, got {values!r}')
 
-        if '=' in keyval:
-            key, value = keyval.split('=', maxsplit=1)
+        if '=' in values:
+            key, value = values.split('=', maxsplit=1)
         else:
-            key, value = keyval, 'true'
+            key, value = values, 'true'
         config[key] = value
 
 

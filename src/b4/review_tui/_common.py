@@ -9,7 +9,20 @@ import email.message
 import json
 import os
 import tempfile
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    ParamSpec,
+    Protocol,
+    Set,
+    Tuple,
+    TypeVar,
+)
 
 import liblore.utils
 from rich import box
@@ -18,6 +31,7 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 from textual.widgets import RichLog
+from textual.worker import Worker
 
 import b4
 import b4.review
@@ -78,6 +92,13 @@ from b4.tui._common import (
 
 logger = b4.logger
 
+if TYPE_CHECKING:
+    from b4.review_tui._modals import CheckLoadingScreen
+
+_CallFromThreadParams = ParamSpec('_CallFromThreadParams')
+_CallFromThreadReturn = TypeVar('_CallFromThreadReturn')
+_WorkerResult = TypeVar('_WorkerResult')
+
 
 def get_thread_msgs(
     topdir: str,
@@ -122,6 +143,61 @@ CI_CHECK_LABELS = {
 }
 
 
+class _CallFromThreadHost(Protocol):
+    def call_from_thread(
+        self,
+        callback: Callable[
+            _CallFromThreadParams,
+            _CallFromThreadReturn | Awaitable[_CallFromThreadReturn],
+        ],
+        *args: _CallFromThreadParams.args,
+        **kwargs: _CallFromThreadParams.kwargs,
+    ) -> _CallFromThreadReturn: ...
+
+
+class _CheckRunnerHost(Protocol):
+    _check_loading: Optional['CheckLoadingScreen']
+
+    @property
+    def app(self) -> _CallFromThreadHost: ...
+
+    def _get_check_context(self) -> Optional[Tuple[str, str, str]]: ...
+
+    def _run_checks(self, force: bool = ...) -> None: ...
+
+    def _dismiss_loading(self, msg: str = ..., severity: str = ...) -> None: ...
+
+    def _update_loading(self, text: str) -> None: ...
+
+    def _fetch_and_check(
+        self,
+        message_id: str,
+        series_subject: str,
+        change_id: str = '',
+        force: bool = ...,
+    ) -> None: ...
+
+    def notify(self, message: str, *, severity: str = ...) -> None: ...
+
+    def push_screen(
+        self,
+        screen: object,
+        callback: Optional[Callable[[Optional[str]], None]] = ...,
+    ) -> object: ...
+
+    def run_worker(
+        self,
+        work: Callable[[], _WorkerResult],
+        name: Optional[str] = ...,
+        group: str = ...,
+        description: str = ...,
+        exit_on_error: bool = ...,
+        start: bool = ...,
+        exclusive: bool = ...,
+        thread: bool = ...,
+    ) -> Worker[_WorkerResult]: ...
+
+
 class CheckRunnerMixin:
     """Mixin providing CI check execution for Textual App subclasses.
 
@@ -130,7 +206,7 @@ class CheckRunnerMixin:
     interaction (loading overlay, results modal) is handled here.
     """
 
-    _check_loading: Optional[Any] = None
+    _check_loading: Optional['CheckLoadingScreen']
 
     # -- interface for subclasses ------------------------------------------
 
@@ -143,26 +219,26 @@ class CheckRunnerMixin:
 
     # -- public action -----------------------------------------------------
 
-    def action_check(self) -> None:
+    def action_check(self: _CheckRunnerHost) -> None:
         """Run CI checks on the current series."""
         self._run_checks(force=False)
 
     # -- helpers -----------------------------------------------------------
 
-    def _run_checks(self, force: bool = False) -> None:
+    def _run_checks(self: _CheckRunnerHost, force: bool = False) -> None:
         """Show loading overlay and launch the check worker thread."""
         ctx = self._get_check_context()
         if ctx is None:
             return
         message_id, series_subject, change_id = ctx
         if not message_id:
-            self.notify('No message-id for this series', severity='error')  # type: ignore[attr-defined]
+            self.notify('No message-id for this series', severity='error')
             return
         from b4.review_tui._modals import CheckLoadingScreen
 
         self._check_loading = CheckLoadingScreen()
-        self.push_screen(self._check_loading)  # type: ignore[attr-defined]
-        self.run_worker(  # type: ignore[attr-defined]
+        self.push_screen(self._check_loading)
+        self.run_worker(
             lambda: self._fetch_and_check(
                 message_id, series_subject, change_id=change_id, force=force
             ),
@@ -170,28 +246,30 @@ class CheckRunnerMixin:
             thread=True,
         )
 
-    def _dismiss_loading(self, msg: str = '', severity: str = '') -> None:
+    def _dismiss_loading(
+        self: _CheckRunnerHost, msg: str = '', severity: str = ''
+    ) -> None:
         """Dismiss the check loading screen and optionally notify."""
 
         def _do() -> None:
             if self._check_loading is not None and self._check_loading.is_attached:
                 self._check_loading.dismiss(None)
             if msg:
-                self.notify(msg, severity=severity)  # type: ignore[attr-defined]
+                self.notify(msg, severity=severity)
 
-        self.app.call_from_thread(_do)  # type: ignore[attr-defined]
+        self.app.call_from_thread(_do)
 
-    def _update_loading(self, text: str) -> None:
+    def _update_loading(self: _CheckRunnerHost, text: str) -> None:
         """Update the loading screen status text."""
 
         def _do() -> None:
             if self._check_loading is not None and self._check_loading.is_attached:
                 self._check_loading.update_status(text)
 
-        self.app.call_from_thread(_do)  # type: ignore[attr-defined]
+        self.app.call_from_thread(_do)
 
     def _fetch_and_check(
-        self,
+        self: _CheckRunnerHost,
         message_id: str,
         series_subject: str,
         change_id: str = '',
@@ -376,14 +454,14 @@ class CheckRunnerMixin:
         def _push_modal() -> None:
             if self._check_loading is not None and self._check_loading.is_attached:
                 self._check_loading.dismiss(None)
-            self.push_screen(  # type: ignore[attr-defined]
+            self.push_screen(
                 TrackingCheckResultsScreen(
                     title, patch_labels, patch_subjects, tools_sorted, matrix
                 ),
                 callback=_on_result,
             )
 
-        self.app.call_from_thread(_push_modal)  # type: ignore[attr-defined]
+        self.app.call_from_thread(_push_modal)
 
 
 def _make_initials(name: str) -> str:

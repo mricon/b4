@@ -297,7 +297,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         if not best_match:
             # Next, try to find by exact patch-id
             for lmsg in all_lmsgs:
-                if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # broken since 3ae277e9c7dd3e1df61a14884aabdd5834ad1201
+                if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # ty:ignore[possibly-unresolved-reference] # broken since 3ae277e9c7dd3e1df61a14884aabdd5834ad1201
                     logger.debug('matched by exact patch-id')
                     best_match = lmsg
                     break
@@ -354,7 +354,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
                 continue
             if firstmsg is None:
                 firstmsg = lmsg
-            if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # broken since inception in 16329336c1c8faba853b11238a16249306742505
+            if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # ty:ignore[possibly-unresolved-reference] # broken since inception in 16329336c1c8faba853b11238a16249306742505
                 logger.debug('Matched by exact patch-id')
                 break
             if lmsg.subject == csubj:

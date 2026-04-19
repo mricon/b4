@@ -51,6 +51,7 @@ from b4.review_tui._modals import (
     ActionScreen,
     ArchiveConfirmScreen,
     BaseSelectionScreen,
+    CheckLoadingScreen,
     CherryPickScreen,
     HelpScreen,
     LimitScreen,
@@ -644,7 +645,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._last_snooze_source: str = ''
         self._last_snooze_input: str = ''
         # CI check modal state
-        self._check_loading: Optional[Any] = None
+        self._check_loading: Optional[CheckLoadingScreen] = None
         # Thanks queue count
         self._queue_count: int = 0
         # Show target branch binding only when configured

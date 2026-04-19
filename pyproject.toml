@@ -12,7 +12,7 @@ license = {file = "COPYING"}
 authors = [
     {name = "Konstantin Ryabitsev", email="konstantin@linuxfoundation.org"},
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 classifiers = [
     "Environment :: Console",
     "Operating System :: POSIX :: Linux",
@@ -41,6 +41,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
+    "ty",
     "types-requests",
 ]
 misc = [
@@ -135,3 +136,9 @@ warn_unreachable = true
 exclude = [".venv", "ezgb", "liblore", "patatt"]
 typeCheckingMode = "standard"
 reportUnusedImport = true
+
+[tool.ty.src]
+exclude = ["ezgb/", "liblore/", "patatt/"]
+
+[tool.ty.rules]
+all = "error"
