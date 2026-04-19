@@ -1,10 +1,11 @@
-import pytest
-import b4
 import os
 import pathlib
 import sys
-
 from typing import Generator
+
+import pytest
+
+import b4
 
 
 @pytest.fixture(scope="function", autouse=True)

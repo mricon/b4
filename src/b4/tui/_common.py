@@ -11,17 +11,15 @@ import os
 import subprocess
 import tempfile
 import unicodedata
-
-from typing import Any, Dict, List, Optional
-
-import b4
-
 from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, ListView
 from textual.widgets._footer import FooterKey
+
+import b4
 
 logger = b4.logger
 

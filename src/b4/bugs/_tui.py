@@ -14,14 +14,13 @@ from typing import TYPE_CHECKING, Optional, Union
 if TYPE_CHECKING:
     from textual.events import Key
 
-from textual.events import Click, MouseScrollDown, MouseScrollUp
-
 from rich import box
 from rich.panel import Panel
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Click, MouseScrollDown, MouseScrollUp
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.widgets import (
@@ -34,6 +33,8 @@ from textual.widgets import (
 )
 from textual.worker import Worker, WorkerState
 
+import b4
+from b4.bugs._import import is_comment_removed, make_tombstone, parse_comment_header
 from b4.tui import (
     ActionScreen,
     ConfirmScreen,
@@ -47,8 +48,6 @@ from b4.tui import (
     resolve_styles,
     reviewer_colours,
 )
-import b4
-from b4.bugs._import import is_comment_removed, make_tombstone, parse_comment_header
 from ezgb import Bug, BugSummary, Comment, GitBugRepo, Status
 
 # Union type for items that can appear in the bug list.

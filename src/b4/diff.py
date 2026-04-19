@@ -5,19 +5,19 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
-import sys
-import b4
-import b4.mbox
+import argparse
 import email
 import email.parser
-import shutil
+import os
 import pathlib
-import argparse
 import shlex
-
-from typing import Tuple, Optional, List
+import shutil
+import sys
 from email.message import EmailMessage
+from typing import List, Optional, Tuple
+
+import b4
+import b4.mbox
 
 logger = b4.logger
 

@@ -17,14 +17,8 @@ import os
 import pathlib
 import re
 import sqlite3
-
 from string import Template
 from typing import Any, Dict, List, Literal, Optional, Tuple
-
-import b4
-import b4.mbox
-import b4.review
-import b4.review.tracking
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -33,19 +27,46 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Footer, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
+
+import b4
+import b4.mbox
+import b4.review
+import b4.review.tracking
 from b4.review_tui._common import (
-    logger, resolve_styles, _wait_for_enter, _suspend_to_shell,
-    SeparatedFooter, _quiet_worker, CheckRunnerMixin,
-    _fix_ansi_theme, display_width, pad_display,
+    CheckRunnerMixin,
+    SeparatedFooter,
+    _fix_ansi_theme,
+    _quiet_worker,
+    _suspend_to_shell,
+    _wait_for_enter,
+    display_width,
+    logger,
+    pad_display,
+    resolve_styles,
 )
 from b4.review_tui._modals import (
-    BaseSelectionScreen, WorkerScreen, TakeScreen, TakeConfirmScreen,
-    CherryPickScreen, NewerRevisionWarningScreen,
-    RevisionChoiceScreen, RebaseScreen, TargetBranchScreen,
+    TRACKING_HELP_LINES,
     AbandonConfirmScreen,
-    ArchiveConfirmScreen, RangeDiffScreen, ThankScreen, QueueScreen, QueueDeliveryScreen,
-    LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
-    ActionScreen, HelpScreen, SnoozeScreen, TRACKING_HELP_LINES,
+    ActionScreen,
+    ArchiveConfirmScreen,
+    BaseSelectionScreen,
+    CherryPickScreen,
+    HelpScreen,
+    LimitScreen,
+    NewerRevisionWarningScreen,
+    QueueDeliveryScreen,
+    QueueScreen,
+    RangeDiffScreen,
+    RebaseScreen,
+    RevisionChoiceScreen,
+    SnoozeScreen,
+    TakeConfirmScreen,
+    TakeScreen,
+    TargetBranchScreen,
+    ThankScreen,
+    UpdateAllScreen,
+    UpdateRevisionScreen,
+    WorkerScreen,
 )
 
 # Shortcut keys for the tracking-app action selector.
@@ -3725,6 +3746,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         """
         import tarfile
         import time
+
         import b4.ez
 
         topdir = b4.git_get_toplevel()
@@ -3823,6 +3845,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def action_thank(self) -> None:
         """Compose and preview a thank-you reply for a taken series."""
         import argparse
+
         import b4.review
         import b4.ty
 

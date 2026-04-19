@@ -1,12 +1,13 @@
-import pytest
 import os
-import b4
-import b4.ez
-import b4.mbox
-import b4.command
-
 from typing import Any, Dict, Generator, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+import b4
+import b4.command
+import b4.ez
+import b4.mbox
 
 
 @pytest.fixture(scope="function")

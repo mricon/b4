@@ -13,13 +13,11 @@ import os
 import pathlib
 import sqlite3
 import sys
-
-import liblore
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import b4
 import b4.mbox
-
-from typing import Any, Dict, List, Optional, Set, Tuple
+import liblore
 
 logger = b4.logger
 
@@ -1129,6 +1127,7 @@ def _store_thread_blob(topdir: str, change_id: str,
     # Local import first — avoids circular deps AND prevents UnboundLocalError
     # that would occur if `import b4.review` appeared after a `b4.xxx` call.
     import io
+
     import b4.review as _b4_review
 
     buf = io.BytesIO()

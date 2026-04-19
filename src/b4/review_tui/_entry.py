@@ -10,11 +10,10 @@ from typing import Any, Dict, Optional
 import b4
 import b4.review
 import b4.review.tracking
-
 from b4.review_tui._common import logger
+from b4.review_tui._pw_app import PwApp
 from b4.review_tui._review_app import ReviewApp
 from b4.review_tui._tracking_app import TrackingApp
-from b4.review_tui._pw_app import PwApp
 
 
 def _tui_use_mouse() -> bool:

@@ -15,14 +15,13 @@ import re
 import shutil
 import sys
 import urllib.parse
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import liblore.utils
 
 import b4
 import b4.mbox
 import b4.review.tracking
-
-from typing import Dict, Any, List, Optional, Set, Tuple, Union
 
 logger = b4.logger
 

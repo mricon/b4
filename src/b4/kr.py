@@ -7,9 +7,9 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
 import os
-import sys
 import pathlib
 import re
+import sys
 
 import b4
 

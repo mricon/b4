@@ -10,11 +10,10 @@ from collections.abc import Generator
 from typing import Tuple, Union
 
 import pytest
+from nacl.signing import SigningKey
 
 import b4
 import patatt
-
-from nacl.signing import SigningKey
 
 
 @pytest.fixture()

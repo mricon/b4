@@ -11,28 +11,25 @@ core user workflows: series listing, navigation, filtering,
 status transitions, and modal interactions.
 """
 import pathlib
-import pytest
-
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
+
+import pytest
+from textual.widgets import Input, ListView, Static
 
 import b4
 import b4.review
 import b4.review.tracking as tracking
-
-from textual.widgets import Input, ListView, Static
-
-from b4.review_tui._tracking_app import TrackingApp, TrackedSeriesItem
 from b4.review_tui._modals import (
-    ActionScreen,
     ActionItem,
+    ActionScreen,
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
     SnoozeScreen,
     TargetBranchScreen,
 )
-
+from b4.review_tui._tracking_app import TrackedSeriesItem, TrackingApp
 
 # ---------------------------------------------------------------------------
 # Compat helper — Textual ≥ 1.0 (pip) uses Static.content,

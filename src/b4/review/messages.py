@@ -8,7 +8,6 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import os
 import pathlib
 import sqlite3
-
 from typing import Dict, List, Optional
 
 import b4

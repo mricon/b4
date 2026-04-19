@@ -4,15 +4,15 @@
 # Copyright (C) 2020 by the Linux Foundation
 """b4 bugs: manage bug reports from mailing list threads."""
 import argparse
+import json
 import logging
+import shutil
 import sys
 
-import json
-import shutil
+from ezgb._git import git_bug_cli
 
 import b4
 from ezgb import BugNotFoundError, GitBugRepo, Status
-from ezgb._git import git_bug_cli
 
 logger = logging.getLogger('b4')
 
@@ -160,7 +160,7 @@ def cmd_list(cmdargs: argparse.Namespace) -> None:
 
     for bug in bugs:
         icon = '\u25cf' if bug.status == Status.OPEN else '\u25cb'
-        labels = ' '.join(f'[{l}]' for l in sorted(bug.labels))
+        labels = ' '.join(f'[{label}]' for label in sorted(bug.labels))
         logger.info('%s %s  %s  %s',
                     icon, bug.id[:7], bug.title, labels)
 

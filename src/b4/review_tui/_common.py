@@ -12,22 +12,73 @@ import email.utils
 import json
 import os
 import tempfile
-
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import liblore.utils
+from rich import box
+from rich.padding import Padding
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.text import Text
+from textual.widgets import RichLog
 
 import b4
 import b4.mbox
 import b4.review
 import b4.review.tracking
 
-from textual.widgets import RichLog
-from rich import box
-from rich.padding import Padding
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.text import Text
+# -- Re-exported from b4.tui (canonical home for shared TUI utilities) --------
+from b4.tui._common import (
+    JKListNavMixin as JKListNavMixin,
+)
+from b4.tui._common import (
+    SeparatedFooter as SeparatedFooter,
+)
+from b4.tui._common import (
+    _addrs_to_lines as _addrs_to_lines,
+)
+from b4.tui._common import (
+    _fix_ansi_theme as _fix_ansi_theme,
+)
+from b4.tui._common import (
+    _lines_to_header as _lines_to_header,
+)
+from b4.tui._common import (
+    _quiet_worker as _quiet_worker,
+)
+from b4.tui._common import (
+    _suspend_to_shell as _suspend_to_shell,
+)
+from b4.tui._common import (
+    _to_rich_color as _to_rich_color,
+)
+from b4.tui._common import (
+    _validate_addrs as _validate_addrs,
+)
+from b4.tui._common import (
+    _wait_for_enter as _wait_for_enter,
+)
+from b4.tui._common import (
+    ci_check_styles as ci_check_styles,
+)
+from b4.tui._common import (
+    ci_markup as ci_markup,
+)
+from b4.tui._common import (
+    ci_styles as ci_styles,
+)
+from b4.tui._common import (
+    display_width as display_width,
+)
+from b4.tui._common import (
+    pad_display as pad_display,
+)
+from b4.tui._common import (
+    resolve_styles as resolve_styles,
+)
+from b4.tui._common import (
+    reviewer_colours as reviewer_colours,
+)
 
 logger = b4.logger
 
@@ -75,26 +126,6 @@ CI_CHECK_LABELS = {
 }
 
 
-# -- Re-exported from b4.tui (canonical home for shared TUI utilities) --------
-from b4.tui._common import (
-    JKListNavMixin as JKListNavMixin,
-    SeparatedFooter as SeparatedFooter,
-    _addrs_to_lines as _addrs_to_lines,
-    _fix_ansi_theme as _fix_ansi_theme,
-    _lines_to_header as _lines_to_header,
-    _quiet_worker as _quiet_worker,
-    _suspend_to_shell as _suspend_to_shell,
-    _to_rich_color as _to_rich_color,
-    _validate_addrs as _validate_addrs,
-    _wait_for_enter as _wait_for_enter,
-    ci_check_styles as ci_check_styles,
-    ci_markup as ci_markup,
-    ci_styles as ci_styles,
-    display_width as display_width,
-    pad_display as pad_display,
-    resolve_styles as resolve_styles,
-    reviewer_colours as reviewer_colours,
-)
 
 
 class CheckRunnerMixin:

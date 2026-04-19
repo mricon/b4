@@ -5,23 +5,20 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
-import sys
-
-import b4
-import re
+import argparse
 import email
 import email.parser
 import email.utils
 import json
-import argparse
-
-from string import Template
-from pathlib import Path
-
+import os
+import re
+import sys
 from email.message import EmailMessage
+from pathlib import Path
+from string import Template
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast
 
-from typing import Callable, cast, Optional, Set, Tuple, Union, List, Dict, Any
+import b4
 
 ConfigDictT = b4.ConfigDictT
 JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]

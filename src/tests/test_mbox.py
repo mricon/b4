@@ -1,12 +1,13 @@
-import pytest
 import os
-import b4
-import b4.mbox
-import b4.command
-
 from email.message import EmailMessage
 from typing import Any, Dict, List
 from unittest.mock import patch as mock_patch
+
+import pytest
+
+import b4
+import b4.command
+import b4.mbox
 
 
 @pytest.mark.parametrize('mboxf, shazamargs, compareargs, compareout, b4cfg', [

@@ -1,13 +1,14 @@
-import pytest
-import b4
-import os
 import email
 import email.parser
 import io
+import os
 import pathlib
 import socket
-
 from typing import Any, Dict, List, Literal, Optional, Tuple
+
+import pytest
+
+import b4
 
 
 @pytest.mark.parametrize('source,expected', [
@@ -679,8 +680,9 @@ class TestGetLoreNode:
 
     def test_uses_from_git_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_lore_node() constructs via LoreNode.from_git_config()."""
-        import liblore
         from unittest.mock import MagicMock
+
+        import liblore
         mock_node = MagicMock()
         mock_from_gc = MagicMock(return_value=mock_node)
         monkeypatch.setattr(liblore.LoreNode, 'from_git_config', mock_from_gc)
@@ -690,8 +692,9 @@ class TestGetLoreNode:
 
     def test_sets_user_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_lore_node() calls set_user_agent with b4's identity."""
-        import liblore
         from unittest.mock import MagicMock
+
+        import liblore
         mock_node = MagicMock()
         monkeypatch.setattr(liblore.LoreNode, 'from_git_config', MagicMock(return_value=mock_node))
         b4.get_lore_node()
@@ -699,8 +702,9 @@ class TestGetLoreNode:
 
     def test_does_not_inject_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_lore_node() lets liblore own its session."""
-        import liblore
         from unittest.mock import MagicMock
+
+        import liblore
         mock_node = MagicMock()
         monkeypatch.setattr(liblore.LoreNode, 'from_git_config', MagicMock(return_value=mock_node))
         b4.get_lore_node()
@@ -708,8 +712,9 @@ class TestGetLoreNode:
 
     def test_passes_cache_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cache_dir and cache_ttl from b4 config are passed through."""
-        import liblore
         from unittest.mock import MagicMock
+
+        import liblore
         b4.MAIN_CONFIG['cache-expire'] = '5'
         mock_node = MagicMock()
         mock_from_gc = MagicMock(return_value=mock_node)
@@ -721,8 +726,9 @@ class TestGetLoreNode:
 
     def test_singleton(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Repeated calls return the same LoreNode instance."""
-        import liblore
         from unittest.mock import MagicMock
+
+        import liblore
         mock_node = MagicMock()
         mock_from_gc = MagicMock(return_value=mock_node)
         monkeypatch.setattr(liblore.LoreNode, 'from_git_config', mock_from_gc)

@@ -5,28 +5,26 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
-import sys
-import mailbox
-import email
-import email.utils
-import email.parser
-import re
-import time
-import json
-import fnmatch
-import shutil
-import pathlib
-import io
-import shlex
 import argparse
+import email
+import email.parser
+import email.utils
+import fnmatch
+import io
+import json
+import mailbox
+import os
+import pathlib
+import re
+import shlex
+import shutil
+import sys
+import time
+from email.message import EmailMessage
+from string import Template
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import b4
-
-from typing import Any, Optional, Union, List, Set, Dict, Tuple
-from string import Template
-
-from email.message import EmailMessage
 
 logger = b4.logger
 

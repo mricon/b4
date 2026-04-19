@@ -5,18 +5,17 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import sys
-import b4
 import argparse
-import re
-import urllib.parse
 import datetime
-
-import b4.mbox
-
-from email.message import EmailMessage
 import email.utils
-from typing import List, Set, Optional
+import re
+import sys
+import urllib.parse
+from email.message import EmailMessage
+from typing import List, Optional, Set
+
+import b4
+import b4.mbox
 
 logger = b4.logger
 

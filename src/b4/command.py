@@ -7,10 +7,10 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
 import logging
-import b4
 import sys
-
 from typing import Any, Optional, Sequence, Union
+
+import b4
 
 logger = b4.logger
 

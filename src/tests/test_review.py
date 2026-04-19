@@ -6,10 +6,8 @@ from unittest import mock
 import pytest
 
 import b4
-from b4 import review
-from b4 import review_tui
+from b4 import review, review_tui
 from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
-
 
 # -- Helper diffs used across tests ------------------------------------------
 
@@ -140,7 +138,7 @@ class TestRenderQuotedDiffWithComments:
         # First non-empty line should be an instruction
         assert lines[0].startswith('# ')
         # Instructions end before the first quoted diff line
-        instruction_lines = [l for l in lines if l.startswith('#')]
+        instruction_lines = [line for line in lines if line.startswith('#')]
         assert len(instruction_lines) >= 3
         # _extract_editor_comments should strip them
         comments = review._extract_editor_comments(result)
@@ -157,7 +155,7 @@ class TestRenderQuotedDiffWithComments:
         assert '> Second line.' in lines
         # They should come before the diff
         body_idx = lines.index('> This is the body.')
-        diff_idx = next(i for i, l in enumerate(lines) if 'diff --git' in l)
+        diff_idx = next(i for i, line in enumerate(lines) if 'diff --git' in line)
         assert body_idx < diff_idx
 
     def test_commit_msg_own_comment(self) -> None:
@@ -213,7 +211,7 @@ class TestRenderQuotedDiffWithComments:
         lines = result.splitlines()
         assert 'General note' in lines
         note_idx = lines.index('General note')
-        body_idx = next(i for i, l in enumerate(lines) if 'First body line' in l)
+        body_idx = next(i for i, line in enumerate(lines) if 'First body line' in line)
         assert note_idx < body_idx
 
 
@@ -583,7 +581,7 @@ index abc..def 100644
         assert 'General feedback.' in lines
         # Preamble should come before any quoted line
         feedback_idx = lines.index('General feedback.')
-        quoted_lines = [i for i, l in enumerate(lines) if l.startswith('>')]
+        quoted_lines = [i for i, line in enumerate(lines) if line.startswith('>')]
         if quoted_lines:
             assert feedback_idx < quoted_lines[0]
 

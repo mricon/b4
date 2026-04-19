@@ -7,24 +7,32 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import json
 import pathlib
-
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import b4
-import b4.review
-import b4.review.tracking
-
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Label, ListItem, ListView, LoadingIndicator, Static
 from textual.worker import Worker, WorkerState
 
-from rich.text import Text
-
-from b4.review_tui._common import resolve_styles, ci_styles, logger, SeparatedFooter, _fix_ansi_theme, pad_display
+import b4
+import b4.review
+import b4.review.tracking
+from b4.review_tui._common import (
+    SeparatedFooter,
+    _fix_ansi_theme,
+    ci_styles,
+    logger,
+    pad_display,
+    resolve_styles,
+)
 from b4.review_tui._modals import (
-    CIChecksScreen, SetStateScreen, ApplyStateModal,
-    LimitScreen, HelpScreen, PW_HELP_LINES,
+    PW_HELP_LINES,
+    ApplyStateModal,
+    CIChecksScreen,
+    HelpScreen,
+    LimitScreen,
+    SetStateScreen,
 )
 
 

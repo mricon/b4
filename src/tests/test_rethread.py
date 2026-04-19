@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
-import b4
 import email.message
+from typing import List, Optional, Tuple
 from unittest import mock
 
-from typing import List, Optional, Tuple
+import b4
 
 
 # ---------------------------------------------------------------------------

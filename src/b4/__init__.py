@@ -1,50 +1,61 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
-import subprocess
-import logging
-import hashlib
-import re
-import sys
-import os
-import fnmatch
+import argparse
+import copy
+import datetime
 import email.generator
 import email.header
 import email.parser
 import email.policy
 import email.quoprimime
 import email.utils
-import tempfile
-import pathlib
-import argparse
-import smtplib
-import shlex
-import textwrap
-import json
-
-import urllib.parse
-import datetime
-import time
-import copy
-import shutil
-import mailbox
-import pwd
+import fnmatch
+import hashlib
 import io
+import json
+import logging
+import mailbox
+import os
+import pathlib
+import pwd
+import re
+import shlex
+import shutil
+import smtplib
+import subprocess
+import sys
+import tempfile
+import textwrap
+import time
+import urllib.parse
+from contextlib import contextmanager
+from email import charset
+from email.message import EmailMessage
+from pathlib import Path
+from typing import (
+    Any,
+    BinaryIO,
+    Dict,
+    Generator,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+    overload,
+)
 
+import liblore.utils
 import requests
 
 import liblore
-import liblore.utils
-
-from pathlib import Path
-from contextlib import contextmanager
-from typing import Optional, Tuple, Set, List, BinaryIO, Union, Sequence, Literal, Iterator, Dict, \
-    TypeVar, overload, Generator, Any
 
 ConfigDictT = Dict[str, Union[str, List[str], None]]
 
-from email.message import EmailMessage
-
-from email import charset
 
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally

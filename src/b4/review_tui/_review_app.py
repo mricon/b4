@@ -10,38 +10,55 @@ import email.utils
 import os
 import re
 import subprocess
-
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import b4
-import b4.mbox
-import b4.review
-import b4.review.tracking
-
+from rich.rule import Rule
+from rich.syntax import Syntax
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
-from rich.rule import Rule
-from rich.syntax import Syntax
-from rich.text import Text
 
+import b4
+import b4.mbox
+import b4.review
+import b4.review.tracking
+from b4.review._review import COMMIT_MESSAGE_PATH
 from b4.review_tui._common import (
-    logger, PATCH_STATE_MARKERS,
-    resolve_styles, reviewer_colours, CheckRunnerMixin,
-    _quiet_worker, get_thread_msgs,
-    _has_review_data, _make_initials, _wait_for_enter,
-    _write_comments, _write_followup_comments,
-    _write_followup_trailers, _resolve_patch_for_followup, _chain_has_additional_patch,
-    _get_followup_depth, _render_email_to_viewer,
-    _suspend_to_shell, SeparatedFooter, _fix_ansi_theme,
+    PATCH_STATE_MARKERS,
+    CheckRunnerMixin,
+    SeparatedFooter,
+    _chain_has_additional_patch,
+    _fix_ansi_theme,
+    _get_followup_depth,
+    _has_review_data,
+    _make_initials,
+    _quiet_worker,
+    _render_email_to_viewer,
+    _resolve_patch_for_followup,
+    _suspend_to_shell,
+    _wait_for_enter,
+    _write_comments,
+    _write_followup_comments,
+    _write_followup_trailers,
+    get_thread_msgs,
+    logger,
+    resolve_styles,
+    reviewer_colours,
 )
 from b4.review_tui._modals import (
-    TrailerScreen, HelpScreen, _review_help_lines,
-    NoteScreen, PriorReviewScreen, ToCcScreen, SendScreen,
     FollowupReplyPreviewScreen,
+    HelpScreen,
+    NoteScreen,
+    PriorReviewScreen,
+    SendScreen,
+    ToCcScreen,
+    TrailerScreen,
+    _review_help_lines,
 )
+
 
 class PatchListItem(ListItem):
     """A single entry in the patch list."""
@@ -92,7 +109,6 @@ class FollowupItem(ListItem):
 
 
 
-from b4.review._review import COMMIT_MESSAGE_PATH
 
 
 class ReviewApp(CheckRunnerMixin, App[None]):

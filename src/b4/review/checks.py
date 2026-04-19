@@ -12,7 +12,6 @@ import os
 import pathlib
 import shlex
 import sqlite3
-
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
 

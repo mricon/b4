@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
 
-import falcon
-import os
-import sys
-import logging
-import logging.handlers
-import json
-import sqlalchemy as sa
-import patatt
-import smtplib
+import copy
 import email
 import email.header
 import email.policy
 import email.quoprimime
+import json
+import logging
+import logging.handlers
+import os
 import re
-import ezpi
-import copy
+import smtplib
+import sys
 import textwrap
-
 from configparser import ConfigParser, ExtendedInterpolation
+from email import charset, utils
 from string import Template
-from email import utils
-from typing import Tuple, Union, List
+from typing import List, Tuple, Union
 
-from email import charset
+import ezpi
+import falcon
+import sqlalchemy as sa
+
+import patatt
+
 charset.add_charset('utf-8', None)
 emlpolicy = email.policy.EmailPolicy(utf8=True, cte_type='8bit', max_line_length=None)
 

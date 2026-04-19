@@ -6,7 +6,7 @@
 """Shared modal screens for b4 Textual apps."""
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -14,10 +14,15 @@ if TYPE_CHECKING:
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Checkbox, Input, Label, ListItem, ListView, Static, TextArea
 from textual.screen import ModalScreen
+from textual.widgets import Checkbox, Input, Label, ListItem, ListView, Static, TextArea
 
-from b4.tui._common import JKListNavMixin, _addrs_to_lines, _lines_to_header, _validate_addrs
+from b4.tui._common import (
+    JKListNavMixin,
+    _addrs_to_lines,
+    _lines_to_header,
+    _validate_addrs,
+)
 
 
 class ToCcScreen(ModalScreen[bool]):

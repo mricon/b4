@@ -6,14 +6,10 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.utils
-
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import b4
-import b4.review
-import b4.review.tracking
-
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -21,11 +17,16 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, LoadingIndicator, RichLog, Static
 from textual.worker import Worker, WorkerState
 
-from rich.text import Text
-
+import b4
+import b4.review
+import b4.review.tracking
 from b4.review_tui._common import (
-    resolve_styles, _quiet_worker, _fix_ansi_theme,
-    _write_diff_line, display_width, pad_display,
+    _fix_ansi_theme,
+    _quiet_worker,
+    _write_diff_line,
+    display_width,
+    pad_display,
+    resolve_styles,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
 

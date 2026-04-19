@@ -10,28 +10,49 @@ import email.utils
 import io
 import json
 import re
-
 from typing import Any, Dict, List, Optional, Tuple
 
-import b4
-
-from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.widgets import Checkbox, Input, Label, ListItem, ListView, LoadingIndicator, ProgressBar, RichLog, Select, Static
-from textual.screen import ModalScreen
-from textual.suggester import SuggestFromList
-from textual.worker import Worker, WorkerState
 from rich import box
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
-
-from b4.review_tui._common import (
-    CI_CHECK_LABELS, resolve_styles, ci_check_styles,
-    JKListNavMixin, logger,
-    _write_diff_line, _quiet_worker, _render_email_to_viewer,
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.suggester import SuggestFromList
+from textual.widgets import (
+    Checkbox,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    LoadingIndicator,
+    ProgressBar,
+    RichLog,
+    Select,
+    Static,
 )
+from textual.worker import Worker, WorkerState
+
+import b4
+from b4.review_tui._common import (
+    CI_CHECK_LABELS,
+    JKListNavMixin,
+    _quiet_worker,
+    _render_email_to_viewer,
+    _write_diff_line,
+    ci_check_styles,
+    logger,
+    resolve_styles,
+)
+
+# Re-exported from b4.tui (canonical home for shared modals)
+from b4.tui._modals import ActionItem as ActionItem
+from b4.tui._modals import ActionScreen as ActionScreen
+from b4.tui._modals import ConfirmScreen as ConfirmScreen
+from b4.tui._modals import LimitScreen as LimitScreen
+from b4.tui._modals import ToCcScreen as ToCcScreen
 
 
 class TrailerOption(ListItem):
@@ -538,14 +559,6 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
 
     def action_abandon(self) -> None:
         self.dismiss(None)
-
-
-# Re-exported from b4.tui (canonical home for shared modals)
-from b4.tui._modals import ToCcScreen as ToCcScreen
-from b4.tui._modals import ConfirmScreen as ConfirmScreen
-from b4.tui._modals import LimitScreen as LimitScreen
-from b4.tui._modals import ActionItem as ActionItem
-from b4.tui._modals import ActionScreen as ActionScreen
 
 
 class SendScreen(ModalScreen[bool]):

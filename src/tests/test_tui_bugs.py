@@ -12,8 +12,6 @@ from datetime import datetime, timezone
 from typing import Set
 from unittest import mock
 
-from ezgb import Bug, BugSummary, Comment, Identity, Status
-
 from b4.bugs._import import (
     format_comment,
     is_comment_removed,
@@ -29,7 +27,7 @@ from b4.bugs._tui import (
     _relative_time,
     label_color,
 )
-
+from ezgb import Bug, BugSummary, Comment, Identity, Status
 
 # ---------------------------------------------------------------------------
 # Helpers -- factory functions for real Bug and BugSummary objects

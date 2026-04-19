@@ -8,15 +8,13 @@
 Tests the shell-return reconciliation logic that detects and handles
 cosmetic commit edits (e.g. reworded subjects via git rebase -i).
 """
-import pytest
-
 from typing import Any, Dict, List, Tuple
+
+import pytest
 
 import b4
 import b4.review
-
 from b4.review_tui._review_app import ReviewApp
-
 
 # ---------------------------------------------------------------------------
 # Helpers

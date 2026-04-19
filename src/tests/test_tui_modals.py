@@ -9,14 +9,14 @@ Uses Textual's built-in ``App.run_test()`` / ``Pilot`` harness so the
 tests run without a real terminal.  Only lightweight, self-contained
 modals are exercised here — no database, network, or git needed.
 """
-import pytest
-
 from typing import Any, Dict, List, Optional, Tuple
 
+import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Label, ListView
 
 from b4.review_tui._modals import (
+    TRACKING_HELP_LINES,
     ActionScreen,
     ConfirmScreen,
     HelpScreen,
@@ -28,9 +28,7 @@ from b4.review_tui._modals import (
     SnoozeScreen,
     TrailerScreen,
     UpdateRevisionScreen,
-    TRACKING_HELP_LINES,
 )
-
 
 # ---------------------------------------------------------------------------
 # Compat helper — Textual ≥ 1.0 (pip) uses Static.content,

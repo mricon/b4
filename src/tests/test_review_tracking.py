@@ -12,8 +12,8 @@ import pytest
 import b4
 import b4.review
 from b4.review import tracking as review_tracking
-from b4.review_tui._tracking_app import _format_snooze_until, _format_attestation
 from b4.review_tui._modals import SnoozeScreen
+from b4.review_tui._tracking_app import _format_attestation, _format_snooze_until
 
 
 class TestGetReviewDataDir:
@@ -1820,14 +1820,14 @@ class TestBuildReplyFromComments:
 
     def _skip_markers(self, lines: list[str]) -> list[str]:
         """Return all skip-marker lines from the output."""
-        return [l for l in lines if l.startswith('> [ ... skip')]
+        return [line for line in lines if line.startswith('> [ ... skip')]
 
     def test_short_hunk_no_skip_marker(self) -> None:
         """Comment within 5 lines of hunk start → no skip marker of any kind."""
         lines = self._call([self._make_comment(3, 'nice')])
         assert not self._skip_markers(lines)
         # @@ header always present
-        assert any('@@ -0,0 +1,40 @@' in l for l in lines)
+        assert any('@@ -0,0 +1,40 @@' in line for line in lines)
         # All 3 added lines quoted
         assert '> +line1' in lines
         assert '> +line2' in lines
@@ -1852,7 +1852,7 @@ class TestBuildReplyFromComments:
         assert len(markers) == 1
         assert 'skip 14 lines' in markers[0]
         # @@ header present
-        assert any('@@ -0,0 +1,40 @@' in l for l in lines)
+        assert any('@@ -0,0 +1,40 @@' in line for line in lines)
         # Only lines 15-20 quoted (5 context + the commented line)
         assert '> +line15' in lines
         assert '> +line20' in lines
@@ -1903,7 +1903,7 @@ class TestBuildReplyFromComments:
     def test_hunk_header_always_present(self) -> None:
         """The @@ hunk header is always included even for a comment on line 20."""
         lines = self._call([self._make_comment(20, 'end')])
-        assert any('@@ -0,0 +1,40 @@' in l for l in lines)
+        assert any('@@ -0,0 +1,40 @@' in line for line in lines)
         assert self._skip_markers(lines)
         assert '> +line20' in lines
         assert '> +line14' not in lines
@@ -1915,7 +1915,7 @@ class TestBuildReplyFromComments:
             self._make_comment(10, 'y'),
         ]
         lines = self._call(comments)
-        quoted = [l for l in lines if l.startswith('> +')]
+        quoted = [line for line in lines if line.startswith('> +')]
         # Each quoted diff line should appear exactly once
         assert len(quoted) == len(set(quoted))
 

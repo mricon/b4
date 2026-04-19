@@ -1,12 +1,13 @@
 import argparse
 import json
 import os
-import pytest
-import b4
-import b4.mbox
-
 from typing import Any, Dict, Optional, Tuple
 from unittest.mock import patch
+
+import pytest
+
+import b4
+import b4.mbox
 
 
 class TestAmConflictError:

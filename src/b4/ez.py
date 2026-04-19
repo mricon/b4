@@ -5,31 +5,31 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
-import sys
-import b4
-import re
 import argparse
-import uuid
-import time
+import base64
 import datetime
-import json
-import shlex
 import email
 import email.policy
 import email.utils
-import pathlib
-import base64
-import textwrap
 import gzip
-import io
-import tarfile
 import hashlib
+import io
+import json
+import os
+import pathlib
+import re
+import shlex
+import sys
+import tarfile
+import textwrap
+import time
 import urllib.parse
-
-from typing import Any, Optional, Tuple, List, Union, Dict, Set
-from string import Template
+import uuid
 from email.message import EmailMessage
+from string import Template
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+import b4
 
 try:
     import patatt
@@ -44,6 +44,7 @@ except ModuleNotFoundError:
     can_gfr = False
 
 import importlib.util
+
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
 logger = b4.logger
@@ -216,8 +217,8 @@ def auth_new() -> None:
             sys.exit(1)
         pubkey = out.decode()
     elif algo == 'ed25519':
-        from nacl.signing import SigningKey
         from nacl.encoding import Base64Encoder
+        from nacl.signing import SigningKey
         sk = SigningKey(keydata.encode(), encoder=Base64Encoder)
         pubkey = base64.b64encode(sk.verify_key.encode()).decode()
     else:

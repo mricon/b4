@@ -5,17 +5,16 @@
 #
 """Tests for ``b4 review show-info``."""
 import json
-import pytest
 
+import pytest
 
 import b4
 import b4.review
 from b4.review._review import (
     get_review_info,
-    show_review_info,
     list_review_branches,
+    show_review_info,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

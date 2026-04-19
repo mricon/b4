@@ -5,26 +5,24 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
-import sys
-import tempfile
-
-import b4
-import re
-import json
+import argparse
 import email
 import email.message
 import email.parser
 import email.utils
-import argparse
-
+import json
+import os
+import re
+import sys
+import tempfile
 import urllib.parse
+from datetime import datetime, timezone
+from email import charset, utils
+from typing import List, Optional
+
 import requests
 
-from datetime import datetime, timezone
-
-from email import utils, charset
-from typing import Optional, List
+import b4
 
 charset.add_charset('utf-8', None)
 
