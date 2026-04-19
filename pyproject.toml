@@ -110,6 +110,9 @@ extend-select = [
 ]
 flake8-quotes.inline-quotes = "single"
 
+[tool.ruff.format]
+quote-style = "single"
+
 [tool.pyright]
 typeCheckingMode = "off"
 

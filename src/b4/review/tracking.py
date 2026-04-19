@@ -26,7 +26,7 @@ REVIEW_METADATA_FILE = 'metadata.json'
 
 SCHEMA_VERSION = 8
 
-SERIES_PATCHES_DDL = '''
+SERIES_PATCHES_DDL = """
 CREATE TABLE IF NOT EXISTS series_patches (
     change_id  TEXT NOT NULL,
     revision   INTEGER NOT NULL,
@@ -34,9 +34,10 @@ CREATE TABLE IF NOT EXISTS series_patches (
     message_id TEXT NOT NULL,
     subject    TEXT,
     PRIMARY KEY (change_id, revision, position)
-)'''
+)"""
 
-SCHEMA_SQL = '''
+SCHEMA_SQL = (
+    """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
@@ -78,7 +79,10 @@ CREATE TABLE IF NOT EXISTS revisions (
     PRIMARY KEY (change_id, revision)
 );
 
-''' + SERIES_PATCHES_DDL + ';'
+"""
+    + SERIES_PATCHES_DDL
+    + ';'
+)
 
 
 def get_review_data_dir() -> str:
@@ -105,7 +109,9 @@ def init_db(identifier: str) -> sqlite3.Connection:
     db_path = get_db_path(identifier)
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA_SQL)
-    conn.execute('INSERT OR REPLACE INTO schema_version (version) VALUES (?)', (SCHEMA_VERSION,))
+    conn.execute(
+        'INSERT OR REPLACE INTO schema_version (version) VALUES (?)', (SCHEMA_VERSION,)
+    )
     conn.commit()
     return conn
 
@@ -127,7 +133,9 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
         conn.execute('ALTER TABLE series ADD COLUMN snoozed_until TEXT')
     if version < 4:
         conn.execute('ALTER TABLE series RENAME COLUMN followup_count TO message_count')
-        conn.execute('ALTER TABLE series RENAME COLUMN seen_followup_count TO seen_message_count')
+        conn.execute(
+            'ALTER TABLE series RENAME COLUMN seen_followup_count TO seen_message_count'
+        )
     if version < 5:
         conn.execute("ALTER TABLE series ADD COLUMN attestation TEXT DEFAULT 'pending'")
     if version < 6:
@@ -137,7 +145,7 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
         conn.execute('ALTER TABLE series ADD COLUMN is_rethreaded INTEGER DEFAULT 0')
     if version < 8:
         # Older DBs may not have the revisions table at all; create it if absent.
-        conn.execute('''CREATE TABLE IF NOT EXISTS revisions (
+        conn.execute("""CREATE TABLE IF NOT EXISTS revisions (
             change_id  TEXT NOT NULL,
             revision   INTEGER NOT NULL,
             message_id TEXT NOT NULL,
@@ -145,7 +153,7 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
             link       TEXT,
             found_at   TEXT,
             PRIMARY KEY (change_id, revision)
-        )''')
+        )""")
         # Add thread_blob only if the table didn't already have it.
         existing = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
         if 'thread_blob' not in existing:
@@ -242,7 +250,9 @@ def record_take_branch(gitdir: str, branch: str) -> None:
         f.write('\n')
 
 
-def resolve_identifier(cmdargs: argparse.Namespace, topdir: Optional[str] = None) -> Optional[str]:
+def resolve_identifier(
+    cmdargs: argparse.Namespace, topdir: Optional[str] = None
+) -> Optional[str]:
     """Resolve project identifier from command args or repository metadata."""
     if hasattr(cmdargs, 'identifier') and cmdargs.identifier:
         return str(cmdargs.identifier)
@@ -264,7 +274,9 @@ def cmd_enroll(cmdargs: argparse.Namespace) -> None:
         # Use current directory
         repo_path_opt = b4.git_get_toplevel()
         if not repo_path_opt:
-            logger.critical('Not in a git repository. Specify a path or run from within a repository.')
+            logger.critical(
+                'Not in a git repository. Specify a path or run from within a repository.'
+            )
             sys.exit(1)
         repo_path = repo_path_opt
 
@@ -319,18 +331,26 @@ def cmd_enroll(cmdargs: argparse.Namespace) -> None:
     logger.info('Project enrolled successfully with identifier: %s', identifier)
 
 
-def add_series_to_db(conn: sqlite3.Connection, change_id: str, revision: int,
-                     subject: Optional[str], sender_name: Optional[str],
-                     sender_email: Optional[str], sent_at: Optional[str],
-                     message_id: str, num_patches: int,
-                     pw_series_id: Optional[int] = None,
-                     fingerprint: Optional[str] = None,
-                     added_at: Optional[str] = None,
-                     is_rethreaded: bool = False) -> int:
+def add_series_to_db(
+    conn: sqlite3.Connection,
+    change_id: str,
+    revision: int,
+    subject: Optional[str],
+    sender_name: Optional[str],
+    sender_email: Optional[str],
+    sent_at: Optional[str],
+    message_id: str,
+    num_patches: int,
+    pw_series_id: Optional[int] = None,
+    fingerprint: Optional[str] = None,
+    added_at: Optional[str] = None,
+    is_rethreaded: bool = False,
+) -> int:
     """Add a series to the tracking database. Returns the track_id."""
     if added_at is None:
         added_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    cursor = conn.execute('''
+    cursor = conn.execute(
+        """
         INSERT INTO series
         (change_id, revision, subject, sender_name, sender_email, sent_at, added_at,
          message_id, num_patches, pw_series_id, fingerprint, is_rethreaded)
@@ -347,8 +367,22 @@ def add_series_to_db(conn: sqlite3.Connection, change_id: str, revision: int,
             fingerprint = excluded.fingerprint,
             is_rethreaded = excluded.is_rethreaded
         RETURNING track_id
-    ''', (change_id, revision, subject, sender_name, sender_email, sent_at, added_at,
-          message_id, num_patches, pw_series_id, fingerprint, int(is_rethreaded)))
+    """,
+        (
+            change_id,
+            revision,
+            subject,
+            sender_name,
+            sender_email,
+            sent_at,
+            added_at,
+            message_id,
+            num_patches,
+            pw_series_id,
+            fingerprint,
+            int(is_rethreaded),
+        ),
+    )
     track_id = cursor.fetchone()[0]
     conn.commit()
     return int(track_id)
@@ -381,7 +415,9 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     rethread = getattr(cmdargs, 'rethread', None)
     if rethread:
         if cmdargs.series_id:
-            logger.critical('--rethread cannot be used with a positional series_id argument')
+            logger.critical(
+                '--rethread cannot be used with a positional series_id argument'
+            )
             sys.exit(1)
         series_id = None
     else:
@@ -390,7 +426,9 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
             series_id = b4.get_msgid_from_stdin()
             if not series_id:
                 logger.critical('No series identifier provided')
-                logger.critical('Pipe a message or pass msgid/URL/change-id as parameter')
+                logger.critical(
+                    'Pipe a message or pass msgid/URL/change-id as parameter'
+                )
                 sys.exit(1)
 
     # Set up cmdargs for retrieve_messages
@@ -430,16 +468,15 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     if b4.can_network:
         msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
         if wanted_ver > 1:
-            msgs = b4.mbox.get_extra_series(msgs, direction=-1,
-                                             wantvers=list(range(1, wanted_ver)),
-                                             nocache=True)
+            msgs = b4.mbox.get_extra_series(
+                msgs, direction=-1, wantvers=list(range(1, wanted_ver)), nocache=True
+            )
         # Rebuild the mailbox with all discovered messages
         lmbx = b4.LoreMailbox()
         for msg in msgs:
             lmbx.add_message(msg)
 
-    lser = lmbx.get_series(wanted_ver, sloppytrailers=False,
-                           codereview_trailers=False)
+    lser = lmbx.get_series(wanted_ver, sloppytrailers=False, codereview_trailers=False)
     if not lser:
         logger.critical('Could not find series version %d', wanted_ver)
         sys.exit(1)
@@ -492,8 +529,9 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     ).fetchone()
     if existing is not None:
         conn.close()
-        logger.critical('This series is already tracked (status: %s, v%d)',
-                        existing[0], existing[1])
+        logger.critical(
+            'This series is already tracked (status: %s, v%d)', existing[0], existing[1]
+        )
         logger.critical('Change-ID: %s', existing[2])
         sys.exit(1)
     conn.close()
@@ -506,9 +544,19 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     # Add to database
     subject = lser.subject
     conn = get_db(identifier)
-    add_series_to_db(conn, change_id, revision, subject, sender_name, sender_email,
-                     sent_at, message_id, num_patches, fingerprint=fingerprint,
-                     is_rethreaded=bool(rethread))
+    add_series_to_db(
+        conn,
+        change_id,
+        revision,
+        subject,
+        sender_name,
+        sender_email,
+        sent_at,
+        message_id,
+        num_patches,
+        fingerprint=fingerprint,
+        is_rethreaded=bool(rethread),
+    )
     add_series_patches(conn, change_id, revision, lser)
 
     # Record all discovered revisions
@@ -523,7 +571,9 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
                 for p in v_ser.patches:
                     if p is not None:
                         v_msgid = str(getattr(p, 'msgid', ''))
-                        v_subject = str(getattr(p, 'full_subject', '') or getattr(p, 'subject', ''))
+                        v_subject = str(
+                            getattr(p, 'full_subject', '') or getattr(p, 'subject', '')
+                        )
                         break
         except Exception:
             pass
@@ -549,7 +599,9 @@ def get_tracked_pw_series_ids(identifier: str) -> set[int]:
         return set()
     try:
         conn = get_db(identifier)
-        cursor = conn.execute('SELECT pw_series_id FROM series WHERE pw_series_id IS NOT NULL')
+        cursor = conn.execute(
+            'SELECT pw_series_id FROM series WHERE pw_series_id IS NOT NULL'
+        )
         result = {row[0] for row in cursor.fetchall()}
         conn.close()
         return result
@@ -564,8 +616,7 @@ def is_pw_series_tracked(identifier: str, pw_series_id: int) -> bool:
     try:
         conn = get_db(identifier)
         cursor = conn.execute(
-            'SELECT 1 FROM series WHERE pw_series_id = ? LIMIT 1',
-            (pw_series_id,)
+            'SELECT 1 FROM series WHERE pw_series_id = ? LIMIT 1', (pw_series_id,)
         )
         result = cursor.fetchone() is not None
         conn.close()
@@ -585,57 +636,67 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
         return []
     try:
         conn = get_db(identifier)
-        cursor = conn.execute('''
+        cursor = conn.execute("""
             SELECT track_id, change_id, revision, subject, sender_name, sender_email,
                    sent_at, added_at, status, num_patches, message_id, pw_series_id,
                    message_count, seen_message_count, last_activity_at, attestation,
                    target_branch, is_rethreaded, snoozed_until
             FROM series
             ORDER BY added_at DESC
-        ''')
+        """)
         result = []
         for row in cursor.fetchall():
-            result.append({
-                'track_id': row[0],
-                'change_id': row[1],
-                'revision': row[2],
-                'subject': row[3] or '(no subject)',
-                'sender_name': row[4] or 'Unknown',
-                'sender_email': row[5] or '',
-                'sent_at': row[6] or '',
-                'added_at': row[7] or '',
-                'status': row[8] or 'new',
-                'num_patches': row[9] or 0,
-                'message_id': row[10] or '',
-                'pw_series_id': row[11],
-                'message_count': row[12],
-                'seen_message_count': row[13],
-                'last_activity_at': row[14],
-                'attestation': row[15],
-                'target_branch': row[16],
-                'is_rethreaded': bool(row[17]),
-                'snoozed_until': row[18],
-            })
+            result.append(
+                {
+                    'track_id': row[0],
+                    'change_id': row[1],
+                    'revision': row[2],
+                    'subject': row[3] or '(no subject)',
+                    'sender_name': row[4] or 'Unknown',
+                    'sender_email': row[5] or '',
+                    'sent_at': row[6] or '',
+                    'added_at': row[7] or '',
+                    'status': row[8] or 'new',
+                    'num_patches': row[9] or 0,
+                    'message_id': row[10] or '',
+                    'pw_series_id': row[11],
+                    'message_count': row[12],
+                    'seen_message_count': row[13],
+                    'last_activity_at': row[14],
+                    'attestation': row[15],
+                    'target_branch': row[16],
+                    'is_rethreaded': bool(row[17]),
+                    'snoozed_until': row[18],
+                }
+            )
         conn.close()
         return result
     except Exception:
         return []
 
 
-def add_revision(conn: sqlite3.Connection, change_id: str, revision: int,
-                 message_id: str, subject: Optional[str] = None,
-                 link: Optional[str] = None) -> None:
+def add_revision(
+    conn: sqlite3.Connection,
+    change_id: str,
+    revision: int,
+    message_id: str,
+    subject: Optional[str] = None,
+    link: Optional[str] = None,
+) -> None:
     """Insert a revision record, ignoring if already present."""
     found_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    conn.execute('''INSERT OR IGNORE INTO revisions
+    conn.execute(
+        """INSERT OR IGNORE INTO revisions
         (change_id, revision, message_id, subject, link, found_at)
-        VALUES (?, ?, ?, ?, ?, ?)''',
-                 (change_id, revision, message_id, subject, link, found_at))
+        VALUES (?, ?, ?, ?, ?, ?)""",
+        (change_id, revision, message_id, subject, link, found_at),
+    )
     conn.commit()
 
 
-def set_revision_thread_blob(conn: sqlite3.Connection, change_id: str,
-                             revision: int, blob_sha: str) -> None:
+def set_revision_thread_blob(
+    conn: sqlite3.Connection, change_id: str, revision: int, blob_sha: str
+) -> None:
     """Record the git blob SHA of the cached mbox thread for a revision.
 
     The blob may later become unreachable (GC'd), so callers that read this
@@ -643,19 +704,23 @@ def set_revision_thread_blob(conn: sqlite3.Connection, change_id: str,
     """
     conn.execute(
         'UPDATE revisions SET thread_blob = ? WHERE change_id = ? AND revision = ?',
-        (blob_sha, change_id, revision))
+        (blob_sha, change_id, revision),
+    )
     conn.commit()
 
 
-def add_series_patches(conn: sqlite3.Connection, change_id: str, revision: int,
-                       lser: 'b4.LoreSeries') -> None:
+def add_series_patches(
+    conn: sqlite3.Connection, change_id: str, revision: int, lser: 'b4.LoreSeries'
+) -> None:
     """Store the member patches for a tracked series.
 
     Iterates lser.patches and inserts one row per non-None patch.
     Deletes any existing rows first so the call is idempotent.
     """
-    conn.execute('DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
-                 (change_id, revision))
+    conn.execute(
+        'DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    )
     rows = []
     for position, lmsg in enumerate(lser.patches):
         if lmsg is None:
@@ -664,37 +729,49 @@ def add_series_patches(conn: sqlite3.Connection, change_id: str, revision: int,
     if rows:
         conn.executemany(
             'INSERT INTO series_patches (change_id, revision, position, message_id, subject)'
-            ' VALUES (?, ?, ?, ?, ?)', rows)
+            ' VALUES (?, ?, ?, ?, ?)',
+            rows,
+        )
     conn.commit()
 
 
-def get_series_patches(conn: sqlite3.Connection, change_id: str,
-                       revision: int) -> List[Dict[str, Any]]:
+def get_series_patches(
+    conn: sqlite3.Connection, change_id: str, revision: int
+) -> List[Dict[str, Any]]:
     """Return the stored patches for a series, ordered by position."""
     cols = ('position', 'message_id', 'subject')
     cursor = conn.execute(
         'SELECT position, message_id, subject FROM series_patches'
         ' WHERE change_id = ? AND revision = ? ORDER BY position ASC',
-        (change_id, revision))
+        (change_id, revision),
+    )
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
 def get_revisions(conn: sqlite3.Connection, change_id: str) -> list[dict[str, Any]]:
     """Return all known revisions for a change_id, ordered ascending."""
-    cols = ('change_id', 'revision', 'message_id', 'subject', 'link', 'found_at',
-            'thread_blob')
+    cols = (
+        'change_id',
+        'revision',
+        'message_id',
+        'subject',
+        'link',
+        'found_at',
+        'thread_blob',
+    )
     cursor = conn.execute(
         'SELECT change_id, revision, message_id, subject, link, found_at, thread_blob '
         'FROM revisions WHERE change_id = ? ORDER BY revision ASC',
-        (change_id,))
+        (change_id,),
+    )
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
 def get_newest_revision(conn: sqlite3.Connection, change_id: str) -> Optional[int]:
     """Return the highest known revision number, or None."""
     cursor = conn.execute(
-        'SELECT MAX(revision) FROM revisions WHERE change_id = ?',
-        (change_id,))
+        'SELECT MAX(revision) FROM revisions WHERE change_id = ?', (change_id,)
+    )
     row = cursor.fetchone()
     if row and row[0] is not None:
         return int(row[0])
@@ -704,24 +781,36 @@ def get_newest_revision(conn: sqlite3.Connection, change_id: str) -> Optional[in
 def get_all_newest_revisions(conn: sqlite3.Connection) -> dict[str, int]:
     """Return {change_id: max_revision} for all change_ids with revisions."""
     cursor = conn.execute(
-        'SELECT change_id, MAX(revision) FROM revisions GROUP BY change_id')
+        'SELECT change_id, MAX(revision) FROM revisions GROUP BY change_id'
+    )
     return {row[0]: int(row[1]) for row in cursor.fetchall()}
 
 
 def get_all_revision_counts(conn: sqlite3.Connection) -> dict[str, int]:
     """Return {change_id: revision_count} for all change_ids."""
     cursor = conn.execute(
-        'SELECT change_id, COUNT(*) FROM revisions GROUP BY change_id')
+        'SELECT change_id, COUNT(*) FROM revisions GROUP BY change_id'
+    )
     return {row[0]: int(row[1]) for row in cursor.fetchall()}
 
 
-def get_all_revisions_grouped(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
+def get_all_revisions_grouped(
+    conn: sqlite3.Connection,
+) -> dict[str, list[dict[str, Any]]]:
     """Return {change_id: [rev_dicts]} for all change_ids, ordered ascending."""
-    cols = ('change_id', 'revision', 'message_id', 'subject', 'link', 'found_at',
-            'thread_blob')
+    cols = (
+        'change_id',
+        'revision',
+        'message_id',
+        'subject',
+        'link',
+        'found_at',
+        'thread_blob',
+    )
     cursor = conn.execute(
         'SELECT change_id, revision, message_id, subject, link, found_at, thread_blob '
-        'FROM revisions ORDER BY change_id, revision ASC')
+        'FROM revisions ORDER BY change_id, revision ASC'
+    )
     result: dict[str, list[dict[str, Any]]] = {}
     for row in cursor.fetchall():
         entry = dict(zip(cols, row))
@@ -729,22 +818,28 @@ def get_all_revisions_grouped(conn: sqlite3.Connection) -> dict[str, list[dict[s
     return result
 
 
-def update_attestation(identifier: str, change_id: str,
-                       revision: int, attestation: Optional[str]) -> None:
+def update_attestation(
+    identifier: str, change_id: str, revision: int, attestation: Optional[str]
+) -> None:
     """Store attestation result for a tracked series."""
     try:
         conn = get_db(identifier)
         conn.execute(
             'UPDATE series SET attestation = ? WHERE change_id = ? AND revision = ?',
-            (attestation, change_id, revision))
+            (attestation, change_id, revision),
+        )
         conn.commit()
         conn.close()
     except Exception:
         pass
 
 
-def update_series_status(conn: sqlite3.Connection, change_id: str, status: str,
-                         revision: Optional[int] = None) -> None:
+def update_series_status(
+    conn: sqlite3.Connection,
+    change_id: str,
+    status: str,
+    revision: Optional[int] = None,
+) -> None:
     """Update the status of a tracked series.
 
     When *revision* is given only that specific revision is updated;
@@ -759,19 +854,24 @@ def update_series_status(conn: sqlite3.Connection, change_id: str, status: str,
         conn.execute(
             'UPDATE series SET status = ?, last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (status, now, change_id, revision))
+            (status, now, change_id, revision),
+        )
     else:
         conn.execute(
-            'UPDATE series SET status = ?, last_activity_at = ?'
-            ' WHERE change_id = ?',
-            (status, now, change_id))
+            'UPDATE series SET status = ?, last_activity_at = ? WHERE change_id = ?',
+            (status, now, change_id),
+        )
     conn.commit()
 
 
-def update_series_revision(conn: sqlite3.Connection, change_id: str,
-                           old_revision: int, new_revision: int,
-                           new_message_id: str,
-                           new_subject: Optional[str] = None) -> None:
+def update_series_revision(
+    conn: sqlite3.Connection,
+    change_id: str,
+    old_revision: int,
+    new_revision: int,
+    new_message_id: str,
+    new_subject: Optional[str] = None,
+) -> None:
     """Switch a tracked series to a different revision number.
 
     Used when a not-yet-checked-out series should track a different
@@ -787,21 +887,25 @@ def update_series_revision(conn: sqlite3.Connection, change_id: str,
             ' message_count = NULL, seen_message_count = NULL,'
             ' last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (new_revision, new_message_id, new_subject, now,
-             change_id, old_revision))
+            (new_revision, new_message_id, new_subject, now, change_id, old_revision),
+        )
     else:
         conn.execute(
             'UPDATE series SET revision = ?, message_id = ?,'
             ' message_count = NULL, seen_message_count = NULL,'
             ' last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (new_revision, new_message_id, now,
-             change_id, old_revision))
+            (new_revision, new_message_id, now, change_id, old_revision),
+        )
     conn.commit()
 
 
-def snooze_series(conn: sqlite3.Connection, change_id: str,
-                  until_date: str, revision: Optional[int] = None) -> None:
+def snooze_series(
+    conn: sqlite3.Connection,
+    change_id: str,
+    until_date: str,
+    revision: Optional[int] = None,
+) -> None:
     """Set a series to snoozed status with a wake-up date.
 
     Args:
@@ -815,17 +919,23 @@ def snooze_series(conn: sqlite3.Connection, change_id: str,
         conn.execute(
             'UPDATE series SET status = ?, snoozed_until = ?, last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
-            ('snoozed', until_date, now, change_id, revision))
+            ('snoozed', until_date, now, change_id, revision),
+        )
     else:
         conn.execute(
             'UPDATE series SET status = ?, snoozed_until = ?, last_activity_at = ?'
             ' WHERE change_id = ?',
-            ('snoozed', until_date, now, change_id))
+            ('snoozed', until_date, now, change_id),
+        )
     conn.commit()
 
 
-def unsnooze_series(conn: sqlite3.Connection, change_id: str,
-                    previous_status: str, revision: Optional[int] = None) -> None:
+def unsnooze_series(
+    conn: sqlite3.Connection,
+    change_id: str,
+    previous_status: str,
+    revision: Optional[int] = None,
+) -> None:
     """Restore a snoozed series to its previous status.
 
     Args:
@@ -839,92 +949,107 @@ def unsnooze_series(conn: sqlite3.Connection, change_id: str,
         conn.execute(
             'UPDATE series SET status = ?, snoozed_until = NULL, last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (previous_status, now, change_id, revision))
+            (previous_status, now, change_id, revision),
+        )
     else:
         conn.execute(
             'UPDATE series SET status = ?, snoozed_until = NULL, last_activity_at = ?'
             ' WHERE change_id = ?',
-            (previous_status, now, change_id))
+            (previous_status, now, change_id),
+        )
     conn.commit()
 
 
 def get_expired_snoozed(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     """Return all snoozed series whose wake-up time has passed."""
     cursor = conn.execute(
-        "SELECT change_id, revision, snoozed_until FROM series"
+        'SELECT change_id, revision, snoozed_until FROM series'
         " WHERE status = 'snoozed'"
         " AND snoozed_until <= strftime('%Y-%m-%dT%H:%M:%S', 'now')"
     )
     results = []
     for row in cursor:
-        results.append({
-            'change_id': row[0],
-            'revision': row[1],
-            'snoozed_until': row[2],
-        })
+        results.append(
+            {
+                'change_id': row[0],
+                'revision': row[1],
+                'snoozed_until': row[2],
+            }
+        )
     return results
 
 
 def get_tag_snoozed(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     """Return all snoozed series waiting for a git tag to appear."""
     cursor = conn.execute(
-        "SELECT change_id, revision, snoozed_until FROM series"
+        'SELECT change_id, revision, snoozed_until FROM series'
         " WHERE status = 'snoozed'"
         " AND snoozed_until LIKE 'tag:%'"
     )
     results = []
     for row in cursor:
-        results.append({
-            'change_id': row[0],
-            'revision': row[1],
-            'snoozed_until': row[2],
-        })
+        results.append(
+            {
+                'change_id': row[0],
+                'revision': row[1],
+                'snoozed_until': row[2],
+            }
+        )
     return results
 
 
-def get_snoozed_until(conn: sqlite3.Connection, change_id: str,
-                      revision: Optional[int] = None) -> Optional[str]:
+def get_snoozed_until(
+    conn: sqlite3.Connection, change_id: str, revision: Optional[int] = None
+) -> Optional[str]:
     """Return the snoozed_until date for a series, or None."""
     if revision is not None:
         row = conn.execute(
             'SELECT snoozed_until FROM series WHERE change_id = ? AND revision = ?',
-            (change_id, revision)).fetchone()
+            (change_id, revision),
+        ).fetchone()
     else:
         row = conn.execute(
-            'SELECT snoozed_until FROM series WHERE change_id = ?',
-            (change_id,)).fetchone()
+            'SELECT snoozed_until FROM series WHERE change_id = ?', (change_id,)
+        ).fetchone()
     return row[0] if row else None
 
 
-def update_target_branch(conn: sqlite3.Connection, change_id: str,
-                         target_branch: Optional[str],
-                         revision: Optional[int] = None) -> None:
+def update_target_branch(
+    conn: sqlite3.Connection,
+    change_id: str,
+    target_branch: Optional[str],
+    revision: Optional[int] = None,
+) -> None:
     """Set or clear the per-series target branch in the database."""
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     if revision is not None:
         conn.execute(
             'UPDATE series SET target_branch = ?, last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (target_branch, now, change_id, revision))
+            (target_branch, now, change_id, revision),
+        )
     else:
         conn.execute(
             'UPDATE series SET target_branch = ?, last_activity_at = ?'
             ' WHERE change_id = ?',
-            (target_branch, now, change_id))
+            (target_branch, now, change_id),
+        )
     conn.commit()
 
 
-def get_target_branch(conn: sqlite3.Connection, change_id: str,
-                      revision: Optional[int] = None) -> Optional[str]:
+def get_target_branch(
+    conn: sqlite3.Connection, change_id: str, revision: Optional[int] = None
+) -> Optional[str]:
     """Return the per-series target branch, or None."""
     if revision is not None:
         row = conn.execute(
             'SELECT target_branch FROM series WHERE change_id = ? AND revision = ?',
-            (change_id, revision)).fetchone()
+            (change_id, revision),
+        ).fetchone()
     else:
         row = conn.execute(
-            'SELECT target_branch FROM series WHERE change_id = ?',
-            (change_id,)).fetchone()
+            'SELECT target_branch FROM series WHERE change_id = ?', (change_id,)
+        ).fetchone()
     return row[0] if row else None
 
 
@@ -1011,11 +1136,11 @@ def _latest_date_from_msgs(msgs: List[Any]) -> Optional[str]:
 
 
 def update_message_count_from_msgs(
-        conn: sqlite3.Connection,
-        change_id: str,
-        revision: int,
-        msgs: List[Any],
-        topdir: Optional[str] = None,
+    conn: sqlite3.Connection,
+    change_id: str,
+    revision: int,
+    msgs: List[Any],
+    topdir: Optional[str] = None,
 ) -> bool:
     """Update message count and thread blob from already-fetched messages.
 
@@ -1032,9 +1157,9 @@ def update_message_count_from_msgs(
     last_activity = _latest_date_from_msgs(msgs)
 
     row = conn.execute(
-        'SELECT message_count FROM series'
-        ' WHERE change_id = ? AND revision = ?',
-        (change_id, revision)).fetchone()
+        'SELECT message_count FROM series WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    ).fetchone()
     existing_count = row['message_count'] if row else None
 
     if existing_count is None:
@@ -1044,7 +1169,8 @@ def update_message_count_from_msgs(
             ' SET message_count = ?, seen_message_count = ?,'
             '     last_update_check = ?, last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (count, count, now, last_activity, change_id, revision))
+            (count, count, now, last_activity, change_id, revision),
+        )
     elif count != existing_count:
         # Count changed — update count but not seen (badge will appear)
         conn.execute(
@@ -1052,13 +1178,15 @@ def update_message_count_from_msgs(
             ' SET message_count = ?, last_update_check = ?,'
             '     last_activity_at = COALESCE(?, last_activity_at)'
             ' WHERE change_id = ? AND revision = ?',
-            (count, now, last_activity, change_id, revision))
+            (count, now, last_activity, change_id, revision),
+        )
     else:
         # No change — just stamp the check time, skip commit
         conn.execute(
             'UPDATE series SET last_update_check = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (now, change_id, revision))
+            (now, change_id, revision),
+        )
         conn.commit()
         return False
 
@@ -1081,7 +1209,9 @@ def fetch_thread_message_count(message_id: str) -> Optional[int]:
     return len(parsed)
 
 
-def _fetch_new_since(message_id: str, since: str) -> Optional[Tuple[int, Optional[str]]]:
+def _fetch_new_since(
+    message_id: str, since: str
+) -> Optional[Tuple[int, Optional[str]]]:
     """Fetch new thread messages since a timestamp via LoreNode.
 
     Uses LoreNode.get_thread_updates_since() which queries the public-inbox
@@ -1103,7 +1233,9 @@ def _fetch_new_since(message_id: str, since: str) -> Optional[Tuple[int, Optiona
 
     try:
         node = b4.get_lore_node()
-        msgs = node.get_thread_updates_since(message_id, since_dt, strict=False, sort=False)
+        msgs = node.get_thread_updates_since(
+            message_id, since_dt, strict=False, sort=False
+        )
         if not msgs:
             return (0, None)
         count = len(msgs)
@@ -1114,8 +1246,7 @@ def _fetch_new_since(message_id: str, since: str) -> Optional[Tuple[int, Optiona
         return None
 
 
-def _store_thread_blob(topdir: str, change_id: str,
-                       msgs: List[Any]) -> Optional[str]:
+def _store_thread_blob(topdir: str, change_id: str, msgs: List[Any]) -> Optional[str]:
     """Serialize msgs to mboxrd and write as a git blob; update tracking commit.
 
     Also writes thread-context-blob (the plain-text rendered context for the
@@ -1137,9 +1268,9 @@ def _store_thread_blob(topdir: str, change_id: str,
         logger.debug('No bytes to store for thread blob for %s', change_id)
         return None
 
-    ecode, out = b4.git_run_command(topdir,
-                                    ['hash-object', '-w', '--stdin'],
-                                    stdin=mbox_bytes)
+    ecode, out = b4.git_run_command(
+        topdir, ['hash-object', '-w', '--stdin'], stdin=mbox_bytes
+    )
     if ecode != 0:
         logger.debug('Could not write thread blob for %s', change_id)
         return None
@@ -1161,13 +1292,16 @@ def _store_thread_blob(topdir: str, change_id: str,
             cover_subject = series.get('subject', '')
             patches = tracking.get('patches', [])
             followup_comments = _parse_msgs_to_followup_comments(
-                msgs, cover_msgid, patches)
+                msgs, cover_msgid, patches
+            )
             context_text = _render_thread_context(
-                followup_comments, patches, cover_subject)
+                followup_comments, patches, cover_subject
+            )
             if context_text.strip():
                 ctx_bytes = context_text.encode()
                 ecode2, ctx_out = b4.git_run_command(
-                    topdir, ['hash-object', '-w', '--stdin'], stdin=ctx_bytes)
+                    topdir, ['hash-object', '-w', '--stdin'], stdin=ctx_bytes
+                )
                 if ecode2 == 0:
                     ctx_sha = ctx_out.strip()
                     if series.get('thread-context-blob') != ctx_sha:
@@ -1175,18 +1309,17 @@ def _store_thread_blob(topdir: str, change_id: str,
                         changed = True
 
             if changed:
-                _b4_review.save_tracking_ref(topdir, branch_name,
-                                             cover_text, tracking)
+                _b4_review.save_tracking_ref(topdir, branch_name, cover_text, tracking)
         except Exception as ex:
-            logger.debug('Could not update thread blobs for %s: %s',
-                         change_id, ex)
+            logger.debug('Could not update thread blobs for %s: %s', change_id, ex)
     return blob_sha
 
 
 def get_thread_mbox(topdir: str, blob_sha: str) -> Optional[bytes]:
     """Read cached thread mbox bytes from a git blob; None if unavailable (e.g. GC'd)."""
-    ecode, out = b4.git_run_command(topdir, ['cat-file', 'blob', blob_sha],
-                                    decode=False)
+    ecode, out = b4.git_run_command(
+        topdir, ['cat-file', 'blob', blob_sha], decode=False
+    )
     if ecode != 0:
         logger.debug("Followup blob %s not found (may have been GC'd)", blob_sha)
         return None
@@ -1280,7 +1413,8 @@ def _parse_msgs_to_followup_comments(
     followup_comments: Dict[int, List[Dict[str, Any]]] = {}
     for lmsg in sorted(lmbx.followups, key=lambda m: m.date):
         display_idx = _resolve_patch_for_followup_local(
-            lmsg.in_reply_to, patch_msgids, lmbx.msgid_map)
+            lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+        )
         if display_idx is None:
             continue
         mbody = minimised_body_map.get(lmsg.msgid, '').strip()
@@ -1300,7 +1434,9 @@ def _parse_msgs_to_followup_comments(
             'date': lmsg.date,
             'msgid': lmsg.msgid,
             'subject': lmsg.subject,
-            'depth': _get_followup_depth_local(lmsg.in_reply_to, patch_msgids, lmbx.msgid_map),
+            'depth': _get_followup_depth_local(
+                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+            ),
         }
         followup_comments.setdefault(display_idx, []).append(entry)
 
@@ -1326,15 +1462,21 @@ def _render_thread_context(
             section = f'Follow-up: cover letter ({cover_subject})'
         else:
             patch_idx = display_idx - 1
-            title = (patches[patch_idx].get('title', f'patch {display_idx}')
-                     if patch_idx < len(patches) else f'patch {display_idx}')
+            title = (
+                patches[patch_idx].get('title', f'patch {display_idx}')
+                if patch_idx < len(patches)
+                else f'patch {display_idx}'
+            )
             section = f'Follow-up: patch {display_idx}/{n_patches} — {title}'
         lines.append(f'== {section} ==')
         lines.append('')
         for entry in fc_list:
-            date_str = (entry['date'].strftime('%Y-%m-%d %H:%M %z')
-                        if entry.get('date') else '')
-            lines.append(f"From: {entry['fromname']} <{entry['fromemail']}> | {date_str}")
+            date_str = (
+                entry['date'].strftime('%Y-%m-%d %H:%M %z') if entry.get('date') else ''
+            )
+            lines.append(
+                f'From: {entry["fromname"]} <{entry["fromemail"]}> | {date_str}'
+            )
             lines.append('')
             lines.append(entry['body'].rstrip())
             lines.append('')
@@ -1416,9 +1558,9 @@ def render_prior_review_context(
     return '\n'.join(lines)
 
 
-def ensure_thread_context_blob(topdir: str, change_id: str,
-                                series: Dict[str, Any],
-                                patches: List[Dict[str, Any]]) -> Optional[str]:
+def ensure_thread_context_blob(
+    topdir: str, change_id: str, series: Dict[str, Any], patches: List[Dict[str, Any]]
+) -> Optional[str]:
     """Ensure thread-context-blob exists in the tracking commit.
 
     Migration aid: if thread-blob was written before this feature existed
@@ -1454,8 +1596,9 @@ def ensure_thread_context_blob(topdir: str, change_id: str,
         return None
 
     ctx_bytes = context_text.encode()
-    ecode, out = b4.git_run_command(topdir, ['hash-object', '-w', '--stdin'],
-                                    stdin=ctx_bytes)
+    ecode, out = b4.git_run_command(
+        topdir, ['hash-object', '-w', '--stdin'], stdin=ctx_bytes
+    )
     if ecode != 0:
         logger.debug('Could not write thread-context blob for %s', change_id)
         return None
@@ -1469,17 +1612,20 @@ def ensure_thread_context_blob(topdir: str, change_id: str,
                 tracking['series']['thread-context-blob'] = ctx_sha
                 _b4_review.save_tracking_ref(topdir, branch_name, cover_text, tracking)
         except Exception as ex:
-            logger.debug('Could not persist thread-context-blob for %s: %s', change_id, ex)
+            logger.debug(
+                'Could not persist thread-context-blob for %s: %s', change_id, ex
+            )
 
     series['thread-context-blob'] = ctx_sha
     return ctx_sha
 
 
-def update_message_counts(identifier: str,
-                           series_list: List[Dict[str, Any]],
-                           topdir: Optional[str] = None,
-                           prefetched: Optional[Dict[Tuple[str, int], List[Any]]] = None,
-                           ) -> Dict[str, int]:
+def update_message_counts(
+    identifier: str,
+    series_list: List[Dict[str, Any]],
+    topdir: Optional[str] = None,
+    prefetched: Optional[Dict[Tuple[str, int], List[Any]]] = None,
+) -> Dict[str, int]:
     """Fetch and store thread message counts for a list of series.
 
     For each active series in *series_list* that has a message_id:
@@ -1525,7 +1671,8 @@ def update_message_counts(identifier: str,
         row = conn.execute(
             'SELECT message_count, seen_message_count, last_update_check'
             ' FROM series WHERE change_id = ? AND revision = ?',
-            (change_id, revision)).fetchone()
+            (change_id, revision),
+        ).fetchone()
 
         existing_count = row['message_count'] if row else None
         last_check = row['last_update_check'] if row else None
@@ -1543,7 +1690,8 @@ def update_message_counts(identifier: str,
                     ' SET message_count = ?, seen_message_count = ?,'
                     '     last_update_check = ?, last_activity_at = ?'
                     ' WHERE change_id = ? AND revision = ?',
-                    (count, count, now, last_activity, change_id, revision))
+                    (count, count, now, last_activity, change_id, revision),
+                )
                 conn.commit()
                 updated += 1
                 if topdir and pre_msgs:
@@ -1561,7 +1709,8 @@ def update_message_counts(identifier: str,
                     ' SET message_count = ?, seen_message_count = ?,'
                     '     last_update_check = ?, last_activity_at = ?'
                     ' WHERE change_id = ? AND revision = ?',
-                    (count, count, now, last_activity, change_id, revision))
+                    (count, count, now, last_activity, change_id, revision),
+                )
                 conn.commit()
                 updated += 1
                 if topdir and parsed:
@@ -1580,7 +1729,8 @@ def update_message_counts(identifier: str,
                     ' SET message_count = message_count + ?, last_update_check = ?,'
                     '     last_activity_at = COALESCE(?, last_activity_at)'
                     ' WHERE change_id = ? AND revision = ?',
-                    (new_count, now, new_activity, change_id, revision))
+                    (new_count, now, new_activity, change_id, revision),
+                )
                 conn.commit()
                 updated += 1
                 if topdir:
@@ -1594,18 +1744,21 @@ def update_message_counts(identifier: str,
     return {'updated': updated, 'errors': errors}
 
 
-def mark_all_messages_seen(conn: sqlite3.Connection, change_id: str,
-                        revision: int) -> None:
+def mark_all_messages_seen(
+    conn: sqlite3.Connection, change_id: str, revision: int
+) -> None:
     """Set seen_message_count = message_count, clearing the unread badge."""
     conn.execute(
         'UPDATE series SET seen_message_count = message_count'
         ' WHERE change_id = ? AND revision = ?',
-        (change_id, revision))
+        (change_id, revision),
+    )
     conn.commit()
 
 
-def sync_seen_from_unseen_count(identifier: str, change_id: str,
-                                revision: int, unseen_count: int) -> bool:
+def sync_seen_from_unseen_count(
+    identifier: str, change_id: str, revision: int, unseen_count: int
+) -> bool:
     """Sync seen_message_count so the unread badge matches the messages DB.
 
     Sets ``seen_message_count = message_count - unseen_count``, clamped
@@ -1621,7 +1774,8 @@ def sync_seen_from_unseen_count(identifier: str, change_id: str,
     row = conn.execute(
         'SELECT message_count, seen_message_count FROM series'
         ' WHERE change_id = ? AND revision = ?',
-        (change_id, revision)).fetchone()
+        (change_id, revision),
+    ).fetchone()
     if row is None:
         conn.close()
         return False
@@ -1637,16 +1791,17 @@ def sync_seen_from_unseen_count(identifier: str, change_id: str,
         return False
 
     conn.execute(
-        'UPDATE series SET seen_message_count = ?'
-        ' WHERE change_id = ? AND revision = ?',
-        (new_seen, change_id, revision))
+        'UPDATE series SET seen_message_count = ? WHERE change_id = ? AND revision = ?',
+        (new_seen, change_id, revision),
+    )
     conn.commit()
     conn.close()
     return True
 
 
-def refresh_message_count(identifier: str, change_id: str, revision: int,
-                           total_messages: int) -> bool:
+def refresh_message_count(
+    identifier: str, change_id: str, revision: int, total_messages: int
+) -> bool:
     """Opportunistically refresh the message count from already-fetched messages.
 
     Called when thread messages have been fetched for another purpose (e.g.
@@ -1673,7 +1828,8 @@ def refresh_message_count(identifier: str, change_id: str, revision: int,
     row = conn.execute(
         'SELECT message_count, seen_message_count FROM series'
         ' WHERE change_id = ? AND revision = ?',
-        (change_id, revision)).fetchone()
+        (change_id, revision),
+    ).fetchone()
     if row is None:
         conn.close()
         return False
@@ -1692,7 +1848,8 @@ def refresh_message_count(identifier: str, change_id: str, revision: int,
             'UPDATE series SET message_count = ?, seen_message_count = ?,'
             '  last_update_check = ?'
             ' WHERE change_id = ? AND revision = ?',
-            (count, count, now, change_id, revision))
+            (count, count, now, change_id, revision),
+        )
     else:
         # Count changed: update only message_count; cap seen if it
         # exceeds the new count (possible when dedup reduces the total).
@@ -1702,20 +1859,23 @@ def refresh_message_count(identifier: str, change_id: str, revision: int,
                 'UPDATE series SET message_count = ?, seen_message_count = ?,'
                 '  last_update_check = ?'
                 ' WHERE change_id = ? AND revision = ?',
-                (count, count, now, change_id, revision))
+                (count, count, now, change_id, revision),
+            )
         else:
             conn.execute(
                 'UPDATE series SET message_count = ?, last_update_check = ?'
                 ' WHERE change_id = ? AND revision = ?',
-                (count, now, change_id, revision))
+                (count, now, change_id, revision),
+            )
 
     conn.commit()
     conn.close()
     return True
 
 
-def rescan_branches(identifier: str, topdir: str,
-                    branch: Optional[str] = None) -> Dict[str, int]:
+def rescan_branches(
+    identifier: str, topdir: str, branch: Optional[str] = None
+) -> Dict[str, int]:
     """Rescan review branches and sync status/metadata into the tracking DB.
 
     Iterates b4/review/* branches (or a single branch if specified).  For each
@@ -1757,7 +1917,8 @@ def rescan_branches(identifier: str, topdir: str,
         stored = conn.execute(
             'SELECT branch_sha FROM series WHERE change_id = ?'
             ' ORDER BY revision DESC LIMIT 1',
-            (change_id_from_branch,)).fetchone()
+            (change_id_from_branch,),
+        ).fetchone()
         if stored and stored['branch_sha'] == current_sha:
             # Branch HEAD unchanged — skip the expensive tracking-commit read.
             scanned_change_ids.add(change_id_from_branch)
@@ -1775,8 +1936,12 @@ def rescan_branches(identifier: str, topdir: str,
 
         # Verify identifier matches (skip if mismatch)
         if track_id_value and track_id_value != identifier:
-            logger.warning('Branch %s has identifier %s, expected %s; skipping',
-                           br, track_id_value, identifier)
+            logger.warning(
+                'Branch %s has identifier %s, expected %s; skipping',
+                br,
+                track_id_value,
+                identifier,
+            )
             continue
 
         change_id = series.get('change-id')
@@ -1803,23 +1968,28 @@ def rescan_branches(identifier: str, topdir: str,
 
         # Upsert metadata and sync status from the tracking commit.
         tracked_at = series.get('tracked-at')
-        add_series_to_db(conn, change_id,
-                         revision=revision,
-                         subject=series.get('subject'),
-                         sender_name=series.get('fromname'),
-                         sender_email=series.get('fromemail'),
-                         sent_at=sent_at,
-                         message_id=message_id,
-                         num_patches=series.get('expected', 0),
-                         added_at=tracked_at,
-                         is_rethreaded=is_rethreaded)
+        add_series_to_db(
+            conn,
+            change_id,
+            revision=revision,
+            subject=series.get('subject'),
+            sender_name=series.get('fromname'),
+            sender_email=series.get('fromemail'),
+            sent_at=sent_at,
+            message_id=message_id,
+            num_patches=series.get('expected', 0),
+            added_at=tracked_at,
+            is_rethreaded=is_rethreaded,
+        )
         update_series_status(conn, change_id, status, revision=revision)
 
         # Rebuild series_patches from tracking commit data
         tracking_patches = tracking.get('patches', [])
         if tracking_patches:
-            conn.execute('DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
-                         (change_id, revision))
+            conn.execute(
+                'DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+                (change_id, revision),
+            )
             rows = []
             for i, p in enumerate(tracking_patches, 1):
                 p_msgid = p.get('header-info', {}).get('msgid', '')
@@ -1828,12 +1998,16 @@ def rescan_branches(identifier: str, topdir: str,
             if rows:
                 conn.executemany(
                     'INSERT INTO series_patches (change_id, revision, position, message_id, subject)'
-                    ' VALUES (?, ?, ?, ?, ?)', rows)
+                    ' VALUES (?, ?, ?, ?, ?)',
+                    rows,
+                )
                 conn.commit()
 
         # Persist the new HEAD SHA so future rescans can skip this branch.
-        conn.execute('UPDATE series SET branch_sha = ? WHERE change_id = ? AND revision = ?',
-                     (current_sha, change_id, revision))
+        conn.execute(
+            'UPDATE series SET branch_sha = ? WHERE change_id = ? AND revision = ?',
+            (current_sha, change_id, revision),
+        )
         conn.commit()
 
         logger.info('Rescanned: %s (status: %s)', change_id, status)
@@ -1848,12 +2022,10 @@ def rescan_branches(identifier: str, topdir: str,
             sid = s.get('change_id')
             if not sid:
                 continue
-            if (s.get('status') in active_statuses
-                    and sid not in scanned_change_ids):
+            if s.get('status') in active_statuses and sid not in scanned_change_ids:
                 branch_name = f'b4/review/{sid}'
                 if not b4.git_branch_exists(topdir, branch_name):
-                    update_series_status(conn, sid, 'gone',
-                                         revision=s.get('revision'))
+                    update_series_status(conn, sid, 'gone', revision=s.get('revision'))
                     logger.info('Marked as gone: %s', sid)
                     gone += 1
 
@@ -1861,9 +2033,9 @@ def rescan_branches(identifier: str, topdir: str,
     return {'gone': gone, 'changed': changed}
 
 
-
-def delete_series(conn: sqlite3.Connection, change_id: str,
-                  revision: Optional[int] = None) -> None:
+def delete_series(
+    conn: sqlite3.Connection, change_id: str, revision: Optional[int] = None
+) -> None:
     """Delete a series from the database.
 
     When *revision* is given only that specific revision is removed;
@@ -1871,10 +2043,14 @@ def delete_series(conn: sqlite3.Connection, change_id: str,
     behaviour kept for backwards compatibility).
     """
     if revision is not None:
-        conn.execute('DELETE FROM revisions WHERE change_id = ? AND revision = ?',
-                     (change_id, revision))
-        conn.execute('DELETE FROM series WHERE change_id = ? AND revision = ?',
-                     (change_id, revision))
+        conn.execute(
+            'DELETE FROM revisions WHERE change_id = ? AND revision = ?',
+            (change_id, revision),
+        )
+        conn.execute(
+            'DELETE FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, revision),
+        )
     else:
         conn.execute('DELETE FROM revisions WHERE change_id = ?', (change_id,))
         conn.execute('DELETE FROM series WHERE change_id = ?', (change_id,))

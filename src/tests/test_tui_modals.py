@@ -9,6 +9,7 @@ Uses Textual's built-in ``App.run_test()`` / ``Pilot`` harness so the
 tests run without a real terminal.  Only lightweight, self-contained
 modals are exercised here — no database, network, or git needed.
 """
+
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
@@ -35,6 +36,7 @@ from b4.review_tui._modals import (
 # older builds (e.g. Fedora 43 package) still use Static.renderable.
 # ---------------------------------------------------------------------------
 
+
 def _static_text(widget: Any) -> str:
     """Return the text content of a Static widget across Textual versions."""
     if hasattr(widget, 'content'):
@@ -46,6 +48,7 @@ def _static_text(widget: Any) -> str:
 # Minimal host app — just enough to push modal screens onto
 # ---------------------------------------------------------------------------
 
+
 class ModalTestApp(App[None]):
     """Bare app that serves as a host for pushing modal screens."""
 
@@ -56,6 +59,7 @@ class ModalTestApp(App[None]):
 # ---------------------------------------------------------------------------
 # HelpScreen
 # ---------------------------------------------------------------------------
+
 
 class TestHelpScreen:
     """Tests for the HelpScreen modal."""
@@ -124,12 +128,21 @@ class TestHelpScreen:
             await pilot.pause()
             assert isinstance(app.screen, HelpScreen)
 
-            for key in ('j', 'k', 'down', 'up', 'space', 'backspace',
-                        'pagedown', 'pageup'):
+            for key in (
+                'j',
+                'k',
+                'down',
+                'up',
+                'space',
+                'backspace',
+                'pagedown',
+                'pageup',
+            ):
                 await pilot.press(key)
                 await pilot.pause()
-                assert isinstance(app.screen, HelpScreen), \
+                assert isinstance(app.screen, HelpScreen), (
                     f'{key!r} unexpectedly closed the help screen'
+                )
 
     @pytest.mark.asyncio
     async def test_content_rendered(self) -> None:
@@ -148,6 +161,7 @@ class TestHelpScreen:
 # ---------------------------------------------------------------------------
 # ConfirmScreen
 # ---------------------------------------------------------------------------
+
 
 class TestConfirmScreen:
     """Tests for the ConfirmScreen modal."""
@@ -201,8 +215,9 @@ class TestConfirmScreen:
             # body lines + hint line + possibly title
             rendered = [_static_text(s) for s in statics]
             for line in body:
-                assert any(line in r for r in rendered), \
+                assert any(line in r for r in rendered), (
                     f'{line!r} not found in rendered statics'
+                )
 
     @pytest.mark.asyncio
     async def test_subject_shown(self) -> None:
@@ -234,6 +249,7 @@ class TestConfirmScreen:
 # ---------------------------------------------------------------------------
 # TrailerScreen
 # ---------------------------------------------------------------------------
+
 
 class TestTrailerScreen:
     """Tests for the TrailerScreen modal."""
@@ -374,6 +390,7 @@ class TestTrailerScreen:
 # NoteScreen
 # ---------------------------------------------------------------------------
 
+
 class TestNoteScreen:
     """Tests for the NoteScreen modal."""
 
@@ -440,6 +457,7 @@ class TestNoteScreen:
 # PriorReviewScreen
 # ---------------------------------------------------------------------------
 
+
 class TestPriorReviewScreen:
     """Tests for the PriorReviewScreen modal."""
 
@@ -474,6 +492,7 @@ class TestPriorReviewScreen:
 # ---------------------------------------------------------------------------
 # RevisionChoiceScreen
 # ---------------------------------------------------------------------------
+
 
 class TestRevisionChoiceScreen:
     """Tests for the RevisionChoiceScreen modal."""
@@ -531,6 +550,7 @@ class TestRevisionChoiceScreen:
 # ---------------------------------------------------------------------------
 # SnoozeScreen
 # ---------------------------------------------------------------------------
+
 
 class TestSnoozeScreen:
     """Tests for the SnoozeScreen modal."""
@@ -667,6 +687,7 @@ class TestSnoozeScreen:
 # SetStateScreen
 # ---------------------------------------------------------------------------
 
+
 class TestSetStateScreen:
     """Tests for the SetStateScreen modal."""
 
@@ -756,6 +777,7 @@ class TestSetStateScreen:
 # LimitScreen
 # ---------------------------------------------------------------------------
 
+
 class TestLimitScreen:
     """Tests for the LimitScreen modal."""
 
@@ -818,6 +840,7 @@ class TestLimitScreen:
 # ---------------------------------------------------------------------------
 # ActionScreen
 # ---------------------------------------------------------------------------
+
 
 class TestActionScreen:
     """Tests for the ActionScreen modal."""
@@ -888,7 +911,9 @@ class TestActionScreen:
         results: List[Optional[str]] = []
 
         async with app.run_test() as pilot:
-            app.push_screen(ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append)
+            app.push_screen(
+                ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append
+            )
             await pilot.pause()
 
             # 'T' is the shortcut for 'take'
@@ -902,7 +927,9 @@ class TestActionScreen:
         results: List[Optional[str]] = []
 
         async with app.run_test() as pilot:
-            app.push_screen(ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append)
+            app.push_screen(
+                ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append
+            )
             await pilot.pause()
 
             await pilot.press('r')
@@ -915,7 +942,9 @@ class TestActionScreen:
         results: List[Optional[str]] = []
 
         async with app.run_test() as pilot:
-            app.push_screen(ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append)
+            app.push_screen(
+                ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append
+            )
             await pilot.pause()
 
             await pilot.press('x')
@@ -926,6 +955,7 @@ class TestActionScreen:
 # ---------------------------------------------------------------------------
 # UpdateRevisionScreen
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateRevisionScreen:
     """Tests for the UpdateRevisionScreen modal."""

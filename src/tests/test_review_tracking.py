@@ -71,19 +71,23 @@ class TestDbOperations:
             sender_email='author@example.com',
             sent_at='2024-01-15T10:00:00+00:00',
             message_id='test-msgid@example.com',
-            num_patches=3
+            num_patches=3,
         )
 
         assert track_id == 1
-        cursor = conn.execute('SELECT track_id, change_id, subject FROM series WHERE change_id = ?',
-                              ('test-change-id',))
+        cursor = conn.execute(
+            'SELECT track_id, change_id, subject FROM series WHERE change_id = ?',
+            ('test-change-id',),
+        )
         row = cursor.fetchone()
         assert row is not None
         assert row[0] == track_id
         assert row[2] == 'Test series subject'
         conn.close()
 
-    def test_add_series_with_pw_series_id(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_add_series_with_pw_series_id(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify series can be added with patchwork series ID."""
         conn = review_tracking.init_db('pw-series-test')
         track_id = review_tracking.add_series_to_db(
@@ -96,27 +100,45 @@ class TestDbOperations:
             sent_at='2024-01-15T10:00:00+00:00',
             message_id='test-msgid@example.com',
             num_patches=3,
-            pw_series_id=12345
+            pw_series_id=12345,
         )
 
-        cursor = conn.execute('SELECT pw_series_id FROM series WHERE track_id = ?', (track_id,))
+        cursor = conn.execute(
+            'SELECT pw_series_id FROM series WHERE track_id = ?', (track_id,)
+        )
         row = cursor.fetchone()
         assert row[0] == 12345
         conn.close()
 
-    def test_add_series_multiple_revisions(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_add_series_multiple_revisions(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify multiple revisions can be tracked for the same change-id."""
         conn = review_tracking.init_db('multi-rev-test')
 
         # Add v1
         track_id_v1 = review_tracking.add_series_to_db(
-            conn, 'change-123', 1, 'Subject v1', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid-v1@example.com', 3
+            conn,
+            'change-123',
+            1,
+            'Subject v1',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid-v1@example.com',
+            3,
         )
         # Add v2
         track_id_v2 = review_tracking.add_series_to_db(
-            conn, 'change-123', 2, 'Subject v2', 'Author', 'a@example.com',
-            '2024-01-16T10:00:00+00:00', 'msgid-v2@example.com', 4
+            conn,
+            'change-123',
+            2,
+            'Subject v2',
+            'Author',
+            'a@example.com',
+            '2024-01-16T10:00:00+00:00',
+            'msgid-v2@example.com',
+            4,
         )
 
         # Different track_ids
@@ -124,7 +146,7 @@ class TestDbOperations:
 
         cursor = conn.execute(
             'SELECT track_id, revision, num_patches FROM series WHERE change_id = ? ORDER BY revision',
-            ('change-123',)
+            ('change-123',),
         )
         rows = cursor.fetchall()
         assert len(rows) == 2
@@ -137,12 +159,26 @@ class TestDbOperations:
         conn = review_tracking.init_db('upsert-test')
 
         track_id_1 = review_tracking.add_series_to_db(
-            conn, 'change-456', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid-old@example.com', 3
+            conn,
+            'change-456',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid-old@example.com',
+            3,
         )
         track_id_2 = review_tracking.add_series_to_db(
-            conn, 'change-456', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid-new@example.com', 5
+            conn,
+            'change-456',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid-new@example.com',
+            5,
         )
 
         # Same track_id after upsert
@@ -150,7 +186,7 @@ class TestDbOperations:
 
         cursor = conn.execute(
             'SELECT track_id, message_id, num_patches FROM series WHERE change_id = ? AND revision = ?',
-            ('change-456', 1)
+            ('change-456', 1),
         )
         row = cursor.fetchone()
         assert row == (track_id_1, 'msgid-new@example.com', 5)
@@ -161,19 +197,40 @@ class TestDbOperations:
         conn = review_tracking.init_db('pw-ids-test')
         # Add series with pw_series_id
         review_tracking.add_series_to_db(
-            conn, 'change-1', 1, 'Subject 1', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3,
-            pw_series_id=100
+            conn,
+            'change-1',
+            1,
+            'Subject 1',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
+            pw_series_id=100,
         )
         review_tracking.add_series_to_db(
-            conn, 'change-2', 1, 'Subject 2', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3,
-            pw_series_id=200
+            conn,
+            'change-2',
+            1,
+            'Subject 2',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
+            pw_series_id=200,
         )
         # Add series without pw_series_id
         review_tracking.add_series_to_db(
-            conn, 'change-3', 1, 'Subject 3', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3
+            conn,
+            'change-3',
+            1,
+            'Subject 3',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
         )
         conn.close()
 
@@ -191,9 +248,16 @@ class TestDbOperations:
         """Verify is_pw_series_tracked works correctly."""
         conn = review_tracking.init_db('is-tracked-test')
         review_tracking.add_series_to_db(
-            conn, 'change-1', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3,
-            pw_series_id=12345
+            conn,
+            'change-1',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
+            pw_series_id=12345,
         )
         conn.close()
 
@@ -210,12 +274,26 @@ class TestDbOperations:
         """Verify get_all_tracked_series returns all series with correct fields."""
         conn = review_tracking.init_db('all-series-test')
         review_tracking.add_series_to_db(
-            conn, 'change-1', 1, 'First series', 'Author One', 'one@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid-1@example.com', 3
+            conn,
+            'change-1',
+            1,
+            'First series',
+            'Author One',
+            'one@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid-1@example.com',
+            3,
         )
         review_tracking.add_series_to_db(
-            conn, 'change-2', 2, 'Second series', 'Author Two', 'two@example.com',
-            '2024-01-16T10:00:00+00:00', 'msgid-2@example.com', 5
+            conn,
+            'change-2',
+            2,
+            'Second series',
+            'Author Two',
+            'two@example.com',
+            '2024-01-16T10:00:00+00:00',
+            'msgid-2@example.com',
+            5,
         )
         conn.close()
 
@@ -264,7 +342,9 @@ class TestRepoMetadata:
 
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(
+            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
+        )
         assert out == 0
 
         identifier = review_tracking.get_repo_identifier(worktree_dir)
@@ -293,7 +373,9 @@ class TestResolveIdentifier:
         result = review_tracking.resolve_identifier(cmdargs, gitdir)
         assert result == 'repo-identifier'
 
-    def test_returns_none_when_no_identifier(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_returns_none_when_no_identifier(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify returns None when no identifier available."""
         cmdargs = argparse.Namespace(identifier=None)
         # Pass a non-git directory
@@ -306,20 +388,14 @@ class TestCmdEnroll:
 
     def test_enroll_creates_database(self, gitdir: str) -> None:
         """Verify enroll creates the database."""
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='enroll-test'
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='enroll-test')
         review_tracking.cmd_enroll(cmdargs)
 
         assert review_tracking.db_exists('enroll-test')
 
     def test_enroll_creates_metadata_file(self, gitdir: str) -> None:
         """Verify enroll creates metadata file in .git directory."""
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='metadata-test'
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='metadata-test')
         review_tracking.cmd_enroll(cmdargs)
 
         metadata_path = os.path.join(gitdir, '.git', 'b4-review', 'metadata.json')
@@ -327,10 +403,7 @@ class TestCmdEnroll:
 
     def test_enroll_uses_dirname_as_default_identifier(self, gitdir: str) -> None:
         """Verify enroll uses directory name as default identifier."""
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier=None
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier=None)
         review_tracking.cmd_enroll(cmdargs)
 
         dirname = os.path.basename(gitdir)
@@ -339,10 +412,7 @@ class TestCmdEnroll:
     def test_enroll_uses_current_directory_when_no_path(self, gitdir: str) -> None:
         """Verify enroll uses current directory when no path specified."""
         # gitdir fixture already changes cwd to the test repo
-        cmdargs = argparse.Namespace(
-            repo_path=None,
-            identifier='current-dir-test'
-        )
+        cmdargs = argparse.Namespace(repo_path=None, identifier='current-dir-test')
         review_tracking.cmd_enroll(cmdargs)
 
         assert review_tracking.db_exists('current-dir-test')
@@ -359,10 +429,7 @@ class TestCmdEnroll:
         oldcwd = os.getcwd()
         os.chdir(non_git_dir)
         try:
-            cmdargs = argparse.Namespace(
-                repo_path=None,
-                identifier='test'
-            )
+            cmdargs = argparse.Namespace(repo_path=None, identifier='test')
             with pytest.raises(SystemExit) as exc_info:
                 review_tracking.cmd_enroll(cmdargs)
             assert exc_info.value.code == 1
@@ -373,10 +440,7 @@ class TestCmdEnroll:
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
         """Verify enroll fails for non-existent paths."""
-        cmdargs = argparse.Namespace(
-            repo_path='/nonexistent/path',
-            identifier='test'
-        )
+        cmdargs = argparse.Namespace(repo_path='/nonexistent/path', identifier='test')
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs)
         assert exc_info.value.code == 1
@@ -388,10 +452,7 @@ class TestCmdEnroll:
         non_git_dir = os.path.join(str(tmp_path), 'not-a-repo')
         os.makedirs(non_git_dir)
 
-        cmdargs = argparse.Namespace(
-            repo_path=non_git_dir,
-            identifier='test'
-        )
+        cmdargs = argparse.Namespace(repo_path=non_git_dir, identifier='test')
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs)
         assert exc_info.value.code == 1
@@ -399,17 +460,11 @@ class TestCmdEnroll:
     def test_enroll_fails_when_repo_already_enrolled(self, gitdir: str) -> None:
         """Verify enroll fails when repository already has metadata."""
         # First enrollment
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='first-id'
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='first-id')
         review_tracking.cmd_enroll(cmdargs)
 
         # Second enrollment of same repo should fail
-        cmdargs2 = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='second-id'
-        )
+        cmdargs2 = argparse.Namespace(repo_path=gitdir, identifier='second-id')
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs2)
         assert exc_info.value.code == 1
@@ -420,10 +475,7 @@ class TestCmdEnroll:
     ) -> None:
         """Verify enroll can reuse existing database for different repo."""
         # Create database via first enrollment
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='shared-db'
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='shared-db')
         review_tracking.cmd_enroll(cmdargs)
 
         # Create a second git repo
@@ -431,10 +483,7 @@ class TestCmdEnroll:
         b4.git_run_command(None, ['init', second_repo])
 
         # Enroll second repo with same identifier - user confirms
-        cmdargs2 = argparse.Namespace(
-            repo_path=second_repo,
-            identifier='shared-db'
-        )
+        cmdargs2 = argparse.Namespace(repo_path=second_repo, identifier='shared-db')
         review_tracking.cmd_enroll(cmdargs2)
 
         # Metadata file should exist in second repo's .git
@@ -448,10 +497,7 @@ class TestCmdEnroll:
     ) -> None:
         """Verify enroll aborts when user declines to use existing database."""
         # Create database via first enrollment
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='declined-db'
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='declined-db')
         review_tracking.cmd_enroll(cmdargs)
 
         # Create a second git repo
@@ -459,10 +505,7 @@ class TestCmdEnroll:
         b4.git_run_command(None, ['init', second_repo])
 
         # Enroll second repo with same identifier - user declines
-        cmdargs2 = argparse.Namespace(
-            repo_path=second_repo,
-            identifier='declined-db'
-        )
+        cmdargs2 = argparse.Namespace(repo_path=second_repo, identifier='declined-db')
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs2)
         # Exit code 0 for user-initiated cancellation
@@ -478,13 +521,12 @@ class TestCmdEnroll:
         """Verify enroll from a worktree writes metadata to the shared .git."""
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(
+            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
+        )
         assert out == 0
 
-        cmdargs = argparse.Namespace(
-            repo_path=worktree_dir,
-            identifier='worktree-test'
-        )
+        cmdargs = argparse.Namespace(repo_path=worktree_dir, identifier='worktree-test')
         review_tracking.cmd_enroll(cmdargs)
 
         # Database should be created
@@ -496,22 +538,18 @@ class TestCmdEnroll:
     def test_enroll_from_worktree_already_enrolled(self, gitdir: str) -> None:
         """Verify enrolling from worktree exits 0 when repo already enrolled."""
         # Enroll the main repo first
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='main-id'
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='main-id')
         review_tracking.cmd_enroll(cmdargs)
 
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(
+            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
+        )
         assert out == 0
 
         # Enrolling from worktree with same identifier should exit 0
-        cmdargs2 = argparse.Namespace(
-            repo_path=worktree_dir,
-            identifier='main-id'
-        )
+        cmdargs2 = argparse.Namespace(repo_path=worktree_dir, identifier='main-id')
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs2)
         assert exc_info.value.code == 0
@@ -519,22 +557,18 @@ class TestCmdEnroll:
     def test_enroll_from_worktree_conflicting_identifier(self, gitdir: str) -> None:
         """Verify enrolling from worktree fails with a different identifier."""
         # Enroll the main repo first
-        cmdargs = argparse.Namespace(
-            repo_path=gitdir,
-            identifier='main-id'
-        )
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='main-id')
         review_tracking.cmd_enroll(cmdargs)
 
         # Create a real worktree
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(
+            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
+        )
         assert out == 0
 
         # Enrolling from worktree with different identifier should fail
-        cmdargs2 = argparse.Namespace(
-            repo_path=worktree_dir,
-            identifier='different-id'
-        )
+        cmdargs2 = argparse.Namespace(repo_path=worktree_dir, identifier='different-id')
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs2)
         assert exc_info.value.code == 1
@@ -549,7 +583,9 @@ class TestCmdTrack:
         fromname: str = 'Test Author',
         fromemail: str = 'author@example.com',
         subject: str = 'Test patch',
-        date: datetime.datetime = datetime.datetime(2024, 1, 15, 10, 0, 0, tzinfo=datetime.timezone.utc)
+        date: datetime.datetime = datetime.datetime(
+            2024, 1, 15, 10, 0, 0, tzinfo=datetime.timezone.utc
+        ),
     ) -> mock.Mock:
         """Create a mock LoreMessage."""
         lmsg = mock.Mock()
@@ -571,7 +607,7 @@ class TestCmdTrack:
         first_patch_msgid: str = 'patch1@example.com',
         fromname: str = 'Test Author',
         fromemail: str = 'author@example.com',
-        subject: str = 'Test series'
+        subject: str = 'Test series',
     ) -> mock.Mock:
         """Create a mock LoreSeries."""
         lser = mock.Mock()
@@ -594,10 +630,7 @@ class TestCmdTrack:
     @mock.patch('b4.retrieve_messages')
     @mock.patch('b4.LoreMailbox')
     def test_track_with_change_id(
-        self,
-        mock_mailbox_class: mock.Mock,
-        mock_retrieve: mock.Mock,
-        gitdir: str
+        self, mock_mailbox_class: mock.Mock, mock_retrieve: mock.Mock, gitdir: str
     ) -> None:
         """Verify tracking a series with a change-id."""
         # Set up enrolled project
@@ -620,7 +653,7 @@ class TestCmdTrack:
             msgid=None,
             noparent=False,
             wantname=None,
-            wantver=None
+            wantver=None,
         )
         review_tracking.cmd_track(cmdargs)
 
@@ -635,10 +668,7 @@ class TestCmdTrack:
     @mock.patch('b4.retrieve_messages')
     @mock.patch('b4.LoreMailbox')
     def test_track_generates_change_id_without_change_id(
-        self,
-        mock_mailbox_class: mock.Mock,
-        mock_retrieve: mock.Mock,
-        gitdir: str
+        self, mock_mailbox_class: mock.Mock, mock_retrieve: mock.Mock, gitdir: str
     ) -> None:
         """Verify tracking generates a change-id when series has none."""
         cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='noid-test')
@@ -659,7 +689,7 @@ class TestCmdTrack:
             msgid=None,
             noparent=False,
             wantname=None,
-            wantver=None
+            wantver=None,
         )
         review_tracking.cmd_track(cmdargs)
 
@@ -675,21 +705,19 @@ class TestCmdTrack:
     @mock.patch('b4.retrieve_messages')
     @mock.patch('b4.LoreMailbox')
     def test_track_uses_first_patch_without_cover(
-        self,
-        mock_mailbox_class: mock.Mock,
-        mock_retrieve: mock.Mock,
-        gitdir: str
+        self, mock_mailbox_class: mock.Mock, mock_retrieve: mock.Mock, gitdir: str
     ) -> None:
         """Verify tracking uses first patch msgid when no cover letter."""
-        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='no-cover-test')
+        cmdargs_enroll = argparse.Namespace(
+            repo_path=gitdir, identifier='no-cover-test'
+        )
         review_tracking.cmd_enroll(cmdargs_enroll)
 
         mock_msg = mock.Mock()
         mock_retrieve.return_value = ('test-msgid', [mock_msg])
 
         mock_lser = self._make_mock_lore_series(
-            has_cover=False,
-            first_patch_msgid='first-patch@example.com'
+            has_cover=False, first_patch_msgid='first-patch@example.com'
         )
         mock_mailbox = mock.Mock()
         mock_mailbox.series = {1: mock_lser}
@@ -702,7 +730,7 @@ class TestCmdTrack:
             msgid=None,
             noparent=False,
             wantname=None,
-            wantver=None
+            wantver=None,
         )
         review_tracking.cmd_track(cmdargs)
 
@@ -714,9 +742,7 @@ class TestCmdTrack:
 
     @mock.patch('b4.review.tracking.resolve_identifier', return_value=None)
     def test_track_fails_without_identifier(
-        self,
-        mock_resolve: mock.Mock,
-        tmp_path: pytest.TempPathFactory
+        self, mock_resolve: mock.Mock, tmp_path: pytest.TempPathFactory
     ) -> None:
         """Verify track fails when no identifier can be resolved."""
         cmdargs = argparse.Namespace(
@@ -725,7 +751,7 @@ class TestCmdTrack:
             msgid=None,
             noparent=False,
             wantname=None,
-            wantver=None
+            wantver=None,
         )
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_track(cmdargs)
@@ -733,9 +759,7 @@ class TestCmdTrack:
 
     @mock.patch('b4.retrieve_messages')
     def test_track_fails_for_unenrolled_project(
-        self,
-        mock_retrieve: mock.Mock,
-        tmp_path: pytest.TempPathFactory
+        self, mock_retrieve: mock.Mock, tmp_path: pytest.TempPathFactory
     ) -> None:
         """Verify track fails when project is not enrolled."""
         cmdargs = argparse.Namespace(
@@ -744,7 +768,7 @@ class TestCmdTrack:
             msgid=None,
             noparent=False,
             wantname=None,
-            wantver=None
+            wantver=None,
         )
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_track(cmdargs)
@@ -752,12 +776,12 @@ class TestCmdTrack:
 
     @mock.patch('b4.retrieve_messages')
     def test_track_fails_when_retrieval_fails(
-        self,
-        mock_retrieve: mock.Mock,
-        gitdir: str
+        self, mock_retrieve: mock.Mock, gitdir: str
     ) -> None:
         """Verify track fails when series retrieval fails."""
-        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='retrieval-fail')
+        cmdargs_enroll = argparse.Namespace(
+            repo_path=gitdir, identifier='retrieval-fail'
+        )
         review_tracking.cmd_enroll(cmdargs_enroll)
 
         mock_retrieve.return_value = (None, None)
@@ -768,7 +792,7 @@ class TestCmdTrack:
             msgid=None,
             noparent=False,
             wantname=None,
-            wantver=None
+            wantver=None,
         )
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_track(cmdargs)
@@ -781,8 +805,14 @@ class TestRevisions:
     def test_add_revision(self, tmp_path: pytest.TempPathFactory) -> None:
         """Verify a revision can be added and retrieved."""
         conn = review_tracking.init_db('rev-add-test')
-        review_tracking.add_revision(conn, 'change-abc', 1, 'msgid-v1@example.com',
-                                     subject='Test v1', link='https://lore.kernel.org/r/msgid-v1')
+        review_tracking.add_revision(
+            conn,
+            'change-abc',
+            1,
+            'msgid-v1@example.com',
+            subject='Test v1',
+            link='https://lore.kernel.org/r/msgid-v1',
+        )
         revs = review_tracking.get_revisions(conn, 'change-abc')
         assert len(revs) == 1
         assert revs[0]['change_id'] == 'change-abc'
@@ -840,7 +870,9 @@ class TestRevisions:
         assert result == {'change-a': 3, 'change-b': 2}
         conn.close()
 
-    def test_get_all_newest_revisions_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_get_all_newest_revisions_empty(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify bulk newest-revision query returns empty dict with no data."""
         conn = review_tracking.init_db('rev-bulk-newest-empty-test')
         assert review_tracking.get_all_newest_revisions(conn) == {}
@@ -860,9 +892,15 @@ class TestRevisions:
     def test_get_all_revisions_grouped(self, tmp_path: pytest.TempPathFactory) -> None:
         """Verify bulk grouped revisions returns correct per-change-id lists."""
         conn = review_tracking.init_db('rev-bulk-grouped-test')
-        review_tracking.add_revision(conn, 'change-a', 2, 'a-v2@example.com', subject='A v2')
-        review_tracking.add_revision(conn, 'change-a', 1, 'a-v1@example.com', subject='A v1')
-        review_tracking.add_revision(conn, 'change-b', 1, 'b-v1@example.com', subject='B v1')
+        review_tracking.add_revision(
+            conn, 'change-a', 2, 'a-v2@example.com', subject='A v2'
+        )
+        review_tracking.add_revision(
+            conn, 'change-a', 1, 'a-v1@example.com', subject='A v1'
+        )
+        review_tracking.add_revision(
+            conn, 'change-b', 1, 'b-v1@example.com', subject='B v1'
+        )
         result = review_tracking.get_all_revisions_grouped(conn)
         assert set(result.keys()) == {'change-a', 'change-b'}
         # change-a should be sorted ascending
@@ -870,7 +908,9 @@ class TestRevisions:
         assert len(result['change-b']) == 1
         conn.close()
 
-    def test_get_all_revisions_grouped_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_get_all_revisions_grouped_empty(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify bulk grouped revisions returns empty dict with no data."""
         conn = review_tracking.init_db('rev-bulk-grouped-empty-test')
         assert review_tracking.get_all_revisions_grouped(conn) == {}
@@ -881,30 +921,49 @@ class TestRevisions:
         conn = review_tracking.init_db('del-series-test')
         # Add a series with revisions
         review_tracking.add_series_to_db(
-            conn, 'change-del', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3)
+            conn,
+            'change-del',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
+        )
         review_tracking.add_revision(conn, 'change-del', 1, 'msgid-v1@example.com')
         review_tracking.add_revision(conn, 'change-del', 2, 'msgid-v2@example.com')
         # Add another series that should not be affected
         review_tracking.add_series_to_db(
-            conn, 'change-keep', 1, 'Keep', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'keep@example.com', 1)
+            conn,
+            'change-keep',
+            1,
+            'Keep',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'keep@example.com',
+            1,
+        )
         review_tracking.add_revision(conn, 'change-keep', 1, 'keep-v1@example.com')
 
         review_tracking.delete_series(conn, 'change-del')
 
         # Deleted change_id should be gone from both tables
-        cursor = conn.execute('SELECT * FROM series WHERE change_id = ?',
-                              ('change-del',))
+        cursor = conn.execute(
+            'SELECT * FROM series WHERE change_id = ?', ('change-del',)
+        )
         assert cursor.fetchone() is None
         assert review_tracking.get_revisions(conn, 'change-del') == []
 
         # Other change_id should be untouched
-        cursor = conn.execute('SELECT * FROM series WHERE change_id = ?',
-                              ('change-keep',))
+        cursor = conn.execute(
+            'SELECT * FROM series WHERE change_id = ?', ('change-keep',)
+        )
         assert cursor.fetchone() is not None
         assert len(review_tracking.get_revisions(conn, 'change-keep')) == 1
         conn.close()
+
 
 class TestUpdateSeriesStatus:
     """Tests for update_series_status()."""
@@ -912,17 +971,28 @@ class TestUpdateSeriesStatus:
     def test_updates_existing_series(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = review_tracking.init_db('status-update-test')
         review_tracking.add_series_to_db(
-            conn, 'change-status', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3)
+            conn,
+            'change-status',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
+        )
 
         review_tracking.update_series_status(conn, 'change-status', 'reviewing')
 
         cursor = conn.execute(
-            'SELECT status FROM series WHERE change_id = ?', ('change-status',))
+            'SELECT status FROM series WHERE change_id = ?', ('change-status',)
+        )
         assert cursor.fetchone()[0] == 'reviewing'
         conn.close()
 
-    def test_noop_for_nonexistent_change_id(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_noop_for_nonexistent_change_id(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         conn = review_tracking.init_db('status-noop-test')
         # Should not raise
         review_tracking.update_series_status(conn, 'nonexistent', 'reviewing')
@@ -942,7 +1012,9 @@ class TestGitGetCommonDir:
     def test_returns_shared_git_dir_from_worktree(self, gitdir: str) -> None:
         """Verify git_get_common_dir returns the shared .git from a worktree."""
         worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch'])
+        out, _logstr = b4.git_run_command(
+            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
+        )
         assert out == 0
 
         result = b4.git_get_common_dir(worktree_dir)
@@ -950,7 +1022,9 @@ class TestGitGetCommonDir:
         expected = os.path.join(gitdir, '.git')
         assert os.path.normpath(result) == os.path.normpath(expected)
 
-    def test_returns_none_for_non_git_dir(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_returns_none_for_non_git_dir(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify git_get_common_dir returns None outside a git repo."""
         non_git = os.path.join(str(tmp_path), 'not-a-repo')
         os.makedirs(non_git)
@@ -967,12 +1041,13 @@ class TestReviewTargetBranch:
         assert b4.DEFAULT_CONFIG['review-target-branch'] is None
 
 
-def _create_review_branch(topdir: str, change_id: str, tracking_data: Dict[str, Any]) -> str:
+def _create_review_branch(
+    topdir: str, change_id: str, tracking_data: Dict[str, Any]
+) -> str:
     """Helper: create a b4/review/<change_id> branch with a tracking commit."""
     branch = f'b4/review/{change_id}'
     cover_text = f'Cover letter for {change_id}'
-    commit_msg = (cover_text + '\n\n'
-                  + b4.review.make_review_magic_json(tracking_data))
+    commit_msg = cover_text + '\n\n' + b4.review.make_review_magic_json(tracking_data)
     # Create an orphan-ish branch off current HEAD
     b4.git_run_command(topdir, ['branch', branch])
     # Create a tracking commit on it via commit-tree
@@ -983,11 +1058,15 @@ def _create_review_branch(topdir: str, change_id: str, tracking_data: Dict[str, 
     assert ecode == 0
     parent = parent.strip()
     ecode, new_sha = b4.git_run_command(
-        topdir, ['commit-tree', tree, '-p', parent, '-F', '-'],
-        stdin=commit_msg.encode())
+        topdir,
+        ['commit-tree', tree, '-p', parent, '-F', '-'],
+        stdin=commit_msg.encode(),
+    )
     assert ecode == 0
     new_sha = new_sha.strip()
-    ecode, _ = b4.git_run_command(topdir, ['update-ref', f'refs/heads/{branch}', new_sha])
+    ecode, _ = b4.git_run_command(
+        topdir, ['update-ref', f'refs/heads/{branch}', new_sha]
+    )
     assert ecode == 0
     return branch
 
@@ -1057,7 +1136,9 @@ class TestUpdateTrackingStatus:
 
     def test_returns_false_for_missing_branch(self, gitdir: str) -> None:
         """Verify update_tracking_status returns False for non-existent branch."""
-        result = b4.review.update_tracking_status(gitdir, 'b4/review/nonexistent', 'replied')
+        result = b4.review.update_tracking_status(
+            gitdir, 'b4/review/nonexistent', 'replied'
+        )
         assert result is False
 
 
@@ -1104,9 +1185,14 @@ class TestGetReviewBranches:
 class TestRescanBranches:
     """Tests for rescan_branches()."""
 
-    def _make_tracking_data(self, change_id: str, identifier: str = 'rescan-proj',
-                            status: str = 'reviewing', revision: int = 1,
-                            subject: str = 'Test series') -> Dict[str, Any]:
+    def _make_tracking_data(
+        self,
+        change_id: str,
+        identifier: str = 'rescan-proj',
+        status: str = 'reviewing',
+        revision: int = 1,
+        subject: str = 'Test series',
+    ) -> Dict[str, Any]:
         return {
             'series': {
                 'identifier': identifier,
@@ -1136,8 +1222,9 @@ class TestRescanBranches:
         identifier = 'rescan-single'
         review_tracking.init_db(identifier).close()
 
-        tracking_data = self._make_tracking_data('single-change', identifier=identifier,
-                                                  status='replied')
+        tracking_data = self._make_tracking_data(
+            'single-change', identifier=identifier, status='replied'
+        )
         branch = _create_review_branch(gitdir, 'single-change', tracking_data)
 
         review_tracking.rescan_branches(identifier, gitdir, branch=branch)
@@ -1145,7 +1232,8 @@ class TestRescanBranches:
         conn = review_tracking.get_db(identifier)
         cursor = conn.execute(
             'SELECT change_id, status, revision FROM series WHERE change_id = ?',
-            ('single-change',))
+            ('single-change',),
+        )
         row = cursor.fetchone()
         assert row is not None
         assert row['change_id'] == 'single-change'
@@ -1159,8 +1247,16 @@ class TestRescanBranches:
         conn = review_tracking.init_db(identifier)
         # Add a series to DB with 'reviewing' status but no corresponding branch
         review_tracking.add_series_to_db(
-            conn, 'gone-change', 1, 'Gone series', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3)
+            conn,
+            'gone-change',
+            1,
+            'Gone series',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
+        )
         review_tracking.update_series_status(conn, 'gone-change', 'reviewing')
         conn.close()
 
@@ -1168,7 +1264,8 @@ class TestRescanBranches:
 
         conn = review_tracking.get_db(identifier)
         cursor = conn.execute(
-            'SELECT status FROM series WHERE change_id = ?', ('gone-change',))
+            'SELECT status FROM series WHERE change_id = ?', ('gone-change',)
+        )
         row = cursor.fetchone()
         assert row['status'] == 'gone'
         conn.close()
@@ -1179,15 +1276,17 @@ class TestRescanBranches:
         review_tracking.init_db(identifier).close()
 
         # Create branch with a different identifier
-        tracking_data = self._make_tracking_data('mismatch-change',
-                                                  identifier='other-project')
+        tracking_data = self._make_tracking_data(
+            'mismatch-change', identifier='other-project'
+        )
         _create_review_branch(gitdir, 'mismatch-change', tracking_data)
 
         review_tracking.rescan_branches(identifier, gitdir)
 
         conn = review_tracking.get_db(identifier)
         cursor = conn.execute(
-            'SELECT * FROM series WHERE change_id = ?', ('mismatch-change',))
+            'SELECT * FROM series WHERE change_id = ?', ('mismatch-change',)
+        )
         row = cursor.fetchone()
         assert row is None
         conn.close()
@@ -1198,8 +1297,16 @@ class TestRescanBranches:
         conn = review_tracking.init_db(identifier)
         # Add an 'accepted' series with no branch — should NOT become 'gone'
         review_tracking.add_series_to_db(
-            conn, 'accepted-change', 1, 'Accepted', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'msgid@example.com', 3)
+            conn,
+            'accepted-change',
+            1,
+            'Accepted',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'msgid@example.com',
+            3,
+        )
         review_tracking.update_series_status(conn, 'accepted-change', 'accepted')
         conn.close()
 
@@ -1207,7 +1314,8 @@ class TestRescanBranches:
 
         conn = review_tracking.get_db(identifier)
         cursor = conn.execute(
-            'SELECT status FROM series WHERE change_id = ?', ('accepted-change',))
+            'SELECT status FROM series WHERE change_id = ?', ('accepted-change',)
+        )
         row = cursor.fetchone()
         assert row['status'] == 'accepted'
         conn.close()
@@ -1252,8 +1360,9 @@ class TestRescanBranches:
         identifier = 'rescan-sha-change'
         review_tracking.init_db(identifier).close()
 
-        tracking_data = self._make_tracking_data('sha-change', identifier=identifier,
-                                                  status='reviewing')
+        tracking_data = self._make_tracking_data(
+            'sha-change', identifier=identifier, status='reviewing'
+        )
         branch = _create_review_branch(gitdir, 'sha-change', tracking_data)
 
         # First rescan: registers the branch with status 'reviewing'.
@@ -1262,23 +1371,28 @@ class TestRescanBranches:
 
         # Amend the tracking commit on the branch with a different status.
         tracking_data['series']['status'] = 'replied'
-        new_msg = ('Cover\n\n' + b4.review.make_review_magic_json(tracking_data))
+        new_msg = 'Cover\n\n' + b4.review.make_review_magic_json(tracking_data)
         _ecode, tree = b4.git_run_command(gitdir, ['rev-parse', f'{branch}^{{tree}}'])
         tree = tree.strip()
         _ecode, parent = b4.git_run_command(gitdir, ['rev-parse', branch])
         parent = parent.strip()
         _ecode, new_sha = b4.git_run_command(
-            gitdir, ['commit-tree', tree, '-p', parent, '-F', '-'],
-            stdin=new_msg.encode())
-        b4.git_run_command(gitdir, ['update-ref', f'refs/heads/{branch}', new_sha.strip()])
+            gitdir,
+            ['commit-tree', tree, '-p', parent, '-F', '-'],
+            stdin=new_msg.encode(),
+        )
+        b4.git_run_command(
+            gitdir, ['update-ref', f'refs/heads/{branch}', new_sha.strip()]
+        )
 
         # Second rescan: SHA changed, should re-read and update status.
         result = review_tracking.rescan_branches(identifier, gitdir)
         assert result['changed'] == 1
 
         conn = review_tracking.get_db(identifier)
-        row = conn.execute('SELECT status FROM series WHERE change_id = ?',
-                           ('sha-change',)).fetchone()
+        row = conn.execute(
+            'SELECT status FROM series WHERE change_id = ?', ('sha-change',)
+        ).fetchone()
         assert row['status'] == 'replied'
         conn.close()
 
@@ -1298,7 +1412,9 @@ def _make_test_mbox(n: int, date: str = 'Mon, 15 Jan 2024 10:00:00 +0000') -> by
 class TestFollowupCounts:
     """Tests for message_count / seen_message_count tracking."""
 
-    def test_schema_has_followup_columns(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_schema_has_followup_columns(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify fresh DB has message_count, seen_message_count, last_update_check, last_activity_at."""
         conn = review_tracking.init_db('fc-schema-test')
         cursor = conn.execute('PRAGMA table_info(series)')
@@ -1309,13 +1425,16 @@ class TestFollowupCounts:
         assert 'last_activity_at' in col_names
         conn.close()
 
-    def test_migration_adds_followup_columns(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_migration_adds_followup_columns(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
         """Verify v1 DB gets followup/update columns during migration."""
         import sqlite3 as _sqlite3
+
         db_path = review_tracking.get_db_path('fc-migration-test')
         # Manually build a schema-version 1 database (no branch_sha, no followup cols)
         raw = _sqlite3.connect(db_path)
-        raw.executescript('''
+        raw.executescript("""
             CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
             CREATE TABLE series (
                 track_id INTEGER PRIMARY KEY,
@@ -1324,7 +1443,7 @@ class TestFollowupCounts:
                 status TEXT DEFAULT 'new',
                 UNIQUE (change_id, revision)
             );
-        ''')
+        """)
         raw.execute('INSERT INTO schema_version (version) VALUES (1)')
         raw.commit()
         raw.close()
@@ -1345,8 +1464,7 @@ class TestFollowupCounts:
 
     @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_first_fetch_initialises_seen(
-        self, mock_mbox_bytes: mock.Mock,
-        tmp_path: pytest.TempPathFactory
+        self, mock_mbox_bytes: mock.Mock, tmp_path: pytest.TempPathFactory
     ) -> None:
         """First update_message_counts sets seen = count (no badge shown yet)."""
         # 9 unique messages in the thread
@@ -1354,13 +1472,27 @@ class TestFollowupCounts:
 
         conn = review_tracking.init_db('fc-first-test')
         review_tracking.add_series_to_db(
-            conn, 'fc-change', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'cover@example.com', 3)
+            conn,
+            'fc-change',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'cover@example.com',
+            3,
+        )
         conn.close()
 
-        series_list = [{'change_id': 'fc-change', 'revision': 1,
-                        'message_id': 'cover@example.com', 'num_patches': 3,
-                        'status': 'new'}]
+        series_list = [
+            {
+                'change_id': 'fc-change',
+                'revision': 1,
+                'message_id': 'cover@example.com',
+                'num_patches': 3,
+                'status': 'new',
+            }
+        ]
         result = review_tracking.update_message_counts('fc-first-test', series_list)
         assert result['updated'] == 1
         assert result['errors'] == 0
@@ -1368,7 +1500,9 @@ class TestFollowupCounts:
         conn = review_tracking.get_db('fc-first-test')
         row = conn.execute(
             'SELECT message_count, seen_message_count, last_update_check, last_activity_at'
-            ' FROM series WHERE change_id = ?', ('fc-change',)).fetchone()
+            ' FROM series WHERE change_id = ?',
+            ('fc-change',),
+        ).fetchone()
         assert row['message_count'] == 9
         # First fetch: seen initialised to same value — no badge yet
         assert row['seen_message_count'] == 9
@@ -1379,8 +1513,10 @@ class TestFollowupCounts:
     @mock.patch('b4.review.tracking._fetch_new_since')
     @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_incremental_fetch_adds_new_count(
-        self, mock_fetch: mock.Mock,
-        mock_new_since: mock.Mock, tmp_path: pytest.TempPathFactory
+        self,
+        mock_fetch: mock.Mock,
+        mock_new_since: mock.Mock,
+        tmp_path: pytest.TempPathFactory,
     ) -> None:
         """Incremental update adds new message count and keeps seen unchanged."""
         # 9 unique messages in the thread
@@ -1390,13 +1526,27 @@ class TestFollowupCounts:
 
         conn = review_tracking.init_db('fc-incr-test')
         review_tracking.add_series_to_db(
-            conn, 'fc-change2', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'cover2@example.com', 3)
+            conn,
+            'fc-change2',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'cover2@example.com',
+            3,
+        )
         conn.close()
 
-        series_list = [{'change_id': 'fc-change2', 'revision': 1,
-                        'message_id': 'cover2@example.com', 'num_patches': 3,
-                        'status': 'reviewing'}]
+        series_list = [
+            {
+                'change_id': 'fc-change2',
+                'revision': 1,
+                'message_id': 'cover2@example.com',
+                'num_patches': 3,
+                'status': 'reviewing',
+            }
+        ]
 
         # First fetch: seen = count = 9, last_update_check set
         review_tracking.update_message_counts('fc-incr-test', series_list)
@@ -1408,7 +1558,9 @@ class TestFollowupCounts:
         conn = review_tracking.get_db('fc-incr-test')
         row = conn.execute(
             'SELECT message_count, seen_message_count, last_activity_at FROM series'
-            ' WHERE change_id = ?', ('fc-change2',)).fetchone()
+            ' WHERE change_id = ?',
+            ('fc-change2',),
+        ).fetchone()
         assert row['message_count'] == 12  # 9 + 3
         assert row['seen_message_count'] == 9  # badge shows +3
         assert row['last_activity_at'] == '2024-02-01T00:00:00+00:00'
@@ -1417,28 +1569,45 @@ class TestFollowupCounts:
     @mock.patch('b4.review.tracking._fetch_new_since')
     @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_incremental_noop_makes_no_db_write(
-        self, mock_fetch: mock.Mock,
-        mock_new_since: mock.Mock, tmp_path: pytest.TempPathFactory
+        self,
+        mock_fetch: mock.Mock,
+        mock_new_since: mock.Mock,
+        tmp_path: pytest.TempPathFactory,
     ) -> None:
         """Incremental update with zero new messages writes nothing to the DB."""
         # 9 unique messages in the thread
         mock_fetch.return_value = _make_test_mbox(9)
-        mock_new_since.return_value = (0, None)   # no new messages
+        mock_new_since.return_value = (0, None)  # no new messages
 
         conn = review_tracking.init_db('fc-noop-test')
         review_tracking.add_series_to_db(
-            conn, 'fc-change3', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'cover3@example.com', 3)
+            conn,
+            'fc-change3',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'cover3@example.com',
+            3,
+        )
         conn.close()
 
-        series_list = [{'change_id': 'fc-change3', 'revision': 1,
-                        'message_id': 'cover3@example.com', 'num_patches': 3,
-                        'status': 'reviewing'}]
+        series_list = [
+            {
+                'change_id': 'fc-change3',
+                'revision': 1,
+                'message_id': 'cover3@example.com',
+                'num_patches': 3,
+                'status': 'reviewing',
+            }
+        ]
 
         # First fetch sets the baseline
         review_tracking.update_message_counts('fc-noop-test', series_list)
 
         import os
+
         db_path = review_tracking.get_db_path('fc-noop-test')
         mtime_before = os.path.getmtime(db_path)
 
@@ -1454,11 +1623,22 @@ class TestFollowupCounts:
         """mark_all_messages_seen sets seen_message_count = message_count."""
         conn = review_tracking.init_db('fc-seen-test')
         review_tracking.add_series_to_db(
-            conn, 'fc-seen', 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'cover3@example.com', 3)
+            conn,
+            'fc-seen',
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'cover3@example.com',
+            3,
+        )
         # Manually set a delta
-        conn.execute('UPDATE series SET message_count = 10, seen_message_count = 6'
-                     ' WHERE change_id = ?', ('fc-seen',))
+        conn.execute(
+            'UPDATE series SET message_count = 10, seen_message_count = 6'
+            ' WHERE change_id = ?',
+            ('fc-seen',),
+        )
         conn.commit()
 
         review_tracking.mark_all_messages_seen(conn, 'fc-seen', 1)
@@ -1466,8 +1646,10 @@ class TestFollowupCounts:
 
         # Reopen with get_db to get row_factory for named column access
         conn = review_tracking.get_db('fc-seen-test')
-        row = conn.execute('SELECT message_count, seen_message_count FROM series'
-                           ' WHERE change_id = ?', ('fc-seen',)).fetchone()
+        row = conn.execute(
+            'SELECT message_count, seen_message_count FROM series WHERE change_id = ?',
+            ('fc-seen',),
+        ).fetchone()
         assert row['message_count'] == 10
         assert row['seen_message_count'] == 10
         conn.close()
@@ -1488,14 +1670,27 @@ class TestFollowupCounts:
         for status in ('archived', 'accepted', 'thanked'):
             cid = f'fc-{status}'
             review_tracking.add_series_to_db(
-                conn, cid, 1, 'Subject', 'Author', 'a@example.com',
-                '2024-01-15T10:00:00+00:00', f'{cid}@example.com', 3)
+                conn,
+                cid,
+                1,
+                'Subject',
+                'Author',
+                'a@example.com',
+                '2024-01-15T10:00:00+00:00',
+                f'{cid}@example.com',
+                3,
+            )
             review_tracking.update_series_status(conn, cid, status)
         conn.close()
 
         series_list = [
-            {'change_id': f'fc-{s}', 'revision': 1,
-             'message_id': f'fc-{s}@example.com', 'num_patches': 3, 'status': s}
+            {
+                'change_id': f'fc-{s}',
+                'revision': 1,
+                'message_id': f'fc-{s}@example.com',
+                'num_patches': 3,
+                'status': s,
+            }
             for s in ('archived', 'accepted', 'thanked')
         ]
         result = review_tracking.update_message_counts('fc-skip-test', series_list)
@@ -1532,7 +1727,9 @@ def _make_test_msg(msgid: str = 'test@example.com') -> EmailMessage:
     return msg
 
 
-def _make_blob_tracking_data(change_id: str, identifier: str = 'blob-proj') -> Dict[str, Any]:
+def _make_blob_tracking_data(
+    change_id: str, identifier: str = 'blob-proj'
+) -> Dict[str, Any]:
     """Return a minimal tracking dict for blob tests."""
     return {
         'series': {
@@ -1567,8 +1764,7 @@ class TestFollowupBlob:
     ) -> None:
         """_store_thread_blob serializes msgs via save_mboxrd_mbox and records SHA."""
         change_id = 'blob-write-test'
-        _create_review_branch(gitdir, change_id,
-                              _make_blob_tracking_data(change_id))
+        _create_review_branch(gitdir, change_id, _make_blob_tracking_data(change_id))
 
         msgs = [_make_test_msg('cover@example.com')]
         blob_sha = review_tracking._store_thread_blob(gitdir, change_id, msgs)
@@ -1578,13 +1774,13 @@ class TestFollowupBlob:
         expected_buf = io.BytesIO()
         b4.save_mboxrd_mbox(msgs, expected_buf)
         ecode, content = b4.git_run_command(
-            gitdir, ['cat-file', 'blob', blob_sha], decode=False)
+            gitdir, ['cat-file', 'blob', blob_sha], decode=False
+        )
         assert ecode == 0
         assert content == expected_buf.getvalue()
 
         # Tracking commit JSON must carry the blob SHA
-        _cover, loaded = b4.review.load_tracking(
-            gitdir, f'b4/review/{change_id}')
+        _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
         assert loaded['series']['thread-blob'] == blob_sha
 
     def test_store_thread_blob_skips_update_when_sha_unchanged(
@@ -1592,8 +1788,7 @@ class TestFollowupBlob:
     ) -> None:
         """_store_thread_blob avoids a new tracking commit when SHA is unchanged."""
         change_id = 'blob-nochurn-test'
-        _create_review_branch(gitdir, change_id,
-                              _make_blob_tracking_data(change_id))
+        _create_review_branch(gitdir, change_id, _make_blob_tracking_data(change_id))
 
         msgs = [_make_test_msg('nochurn@example.com')]
 
@@ -1601,7 +1796,8 @@ class TestFollowupBlob:
         assert sha1 is not None
 
         ecode, tip1 = b4.git_run_command(
-            gitdir, ['rev-parse', f'b4/review/{change_id}'])
+            gitdir, ['rev-parse', f'b4/review/{change_id}']
+        )
         assert ecode == 0
 
         # Second call with identical messages — SHA and branch tip unchanged
@@ -1609,7 +1805,8 @@ class TestFollowupBlob:
         assert sha2 == sha1
 
         ecode, tip2 = b4.git_run_command(
-            gitdir, ['rev-parse', f'b4/review/{change_id}'])
+            gitdir, ['rev-parse', f'b4/review/{change_id}']
+        )
         assert ecode == 0
         assert tip2.strip() == tip1.strip()
 
@@ -1617,56 +1814,70 @@ class TestFollowupBlob:
         """get_thread_mbox returns the exact bytes written to the blob."""
         sample = b'From mboxrd@z Thu Jan  1 00:00:00 1970\nSubject: hi\n\nbody\n'
         ecode, blob_sha = b4.git_run_command(
-            gitdir, ['hash-object', '-w', '--stdin'], stdin=sample)
+            gitdir, ['hash-object', '-w', '--stdin'], stdin=sample
+        )
         assert ecode == 0
 
         result = review_tracking.get_thread_mbox(gitdir, blob_sha.strip())
         assert result == sample
 
-    def test_get_thread_mbox_returns_none_for_missing_sha(
-        self, gitdir: str
-    ) -> None:
+    def test_get_thread_mbox_returns_none_for_missing_sha(self, gitdir: str) -> None:
         """get_thread_mbox returns None (not an exception) for a bogus SHA."""
         result = review_tracking.get_thread_mbox(gitdir, 'deadbeef' * 5)
         assert result is None
 
     @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_update_message_counts_stores_blob_on_first_fetch(
-        self, mock_mbox: mock.Mock,
-        gitdir: str
+        self, mock_mbox: mock.Mock, gitdir: str
     ) -> None:
         """update_message_counts writes a thread blob on the first fetch."""
         mock_mbox.return_value = _make_mbox_bytes(9, prefix='ff')
 
         change_id = 'blob-first-fetch'
-        _create_review_branch(gitdir, change_id,
-                              _make_blob_tracking_data(change_id, 'blob-ff-proj'))
+        _create_review_branch(
+            gitdir, change_id, _make_blob_tracking_data(change_id, 'blob-ff-proj')
+        )
 
         conn = review_tracking.init_db('blob-ff-proj')
         review_tracking.add_series_to_db(
-            conn, change_id, 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'blob-first@example.com', 3)
+            conn,
+            change_id,
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'blob-first@example.com',
+            3,
+        )
         conn.close()
 
-        series_list = [{'change_id': change_id, 'revision': 1,
-                        'message_id': 'blob-first@example.com',
-                        'num_patches': 3, 'status': 'reviewing'}]
+        series_list = [
+            {
+                'change_id': change_id,
+                'revision': 1,
+                'message_id': 'blob-first@example.com',
+                'num_patches': 3,
+                'status': 'reviewing',
+            }
+        ]
         review_tracking.update_message_counts(
-            'blob-ff-proj', series_list, topdir=gitdir)
+            'blob-ff-proj', series_list, topdir=gitdir
+        )
 
         _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
         blob_sha = loaded['series'].get('thread-blob')
         assert blob_sha is not None
         # Blob must be readable
         ecode, _ = b4.git_run_command(
-            gitdir, ['cat-file', 'blob', blob_sha], decode=False)
+            gitdir, ['cat-file', 'blob', blob_sha], decode=False
+        )
         assert ecode == 0
 
     @mock.patch('b4.review.tracking._fetch_new_since')
     @mock.patch('b4.review.tracking._fetch_thread_mbox_bytes')
     def test_update_message_counts_updates_blob_on_incremental(
-        self, mock_fetch: mock.Mock,
-        mock_new_since: mock.Mock, gitdir: str
+        self, mock_fetch: mock.Mock, mock_new_since: mock.Mock, gitdir: str
     ) -> None:
         """update_message_counts replaces the blob when new replies arrive."""
         # Different prefixes → different Message-IDs → different blobs
@@ -1676,22 +1887,38 @@ class TestFollowupBlob:
         mock_new_since.return_value = (3, '2024-02-01T00:00:00+00:00')
 
         change_id = 'blob-incr-test'
-        _create_review_branch(gitdir, change_id,
-                              _make_blob_tracking_data(change_id, 'blob-incr-proj'))
+        _create_review_branch(
+            gitdir, change_id, _make_blob_tracking_data(change_id, 'blob-incr-proj')
+        )
 
         conn = review_tracking.init_db('blob-incr-proj')
         review_tracking.add_series_to_db(
-            conn, change_id, 1, 'Subject', 'Author', 'a@example.com',
-            '2024-01-15T10:00:00+00:00', 'blob-incr@example.com', 3)
+            conn,
+            change_id,
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'blob-incr@example.com',
+            3,
+        )
         conn.close()
 
-        series_list = [{'change_id': change_id, 'revision': 1,
-                        'message_id': 'blob-incr@example.com',
-                        'num_patches': 3, 'status': 'reviewing'}]
+        series_list = [
+            {
+                'change_id': change_id,
+                'revision': 1,
+                'message_id': 'blob-incr@example.com',
+                'num_patches': 3,
+                'status': 'reviewing',
+            }
+        ]
 
         # First fetch — stores initial blob
         review_tracking.update_message_counts(
-            'blob-incr-proj', series_list, topdir=gitdir)
+            'blob-incr-proj', series_list, topdir=gitdir
+        )
         _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
         sha_initial = loaded['series'].get('thread-blob')
         assert sha_initial is not None
@@ -1699,7 +1926,8 @@ class TestFollowupBlob:
         # Incremental — _fetch_thread_mbox_bytes now returns the larger mbox
         mock_fetch.return_value = larger_mbox
         review_tracking.update_message_counts(
-            'blob-incr-proj', series_list, topdir=gitdir)
+            'blob-incr-proj', series_list, topdir=gitdir
+        )
         _cover, loaded = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
         sha_updated = loaded['series'].get('thread-blob')
 
@@ -1710,13 +1938,20 @@ class TestFollowupBlob:
 class TestPatchState:
     """Tests for _get_patch_state() and _set_patch_state()."""
 
-    _USERCFG: Dict[str, Union[str, List[str], None]] = {'email': 'reviewer@example.com', 'name': 'Test Reviewer'}
+    _USERCFG: Dict[str, Union[str, List[str], None]] = {
+        'email': 'reviewer@example.com',
+        'name': 'Test Reviewer',
+    }
 
     def _make_target(self, review_data: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """Return a minimal target dict, optionally with review data."""
         if review_data is None:
             return {}
-        return {'reviews': {self._USERCFG['email']: {'name': 'Test Reviewer', **review_data}}}
+        return {
+            'reviews': {
+                self._USERCFG['email']: {'name': 'Test Reviewer', **review_data}
+            }
+        }
 
     def test_no_data(self) -> None:
         """Empty reviews dict → no state."""
@@ -1730,7 +1965,9 @@ class TestPatchState:
 
     def test_comments(self) -> None:
         """Inline comments list → 'draft'."""
-        target = self._make_target({'comments': [{'path': 'a.c', 'line': 1, 'text': 'hi'}]})
+        target = self._make_target(
+            {'comments': [{'path': 'a.c', 'line': 1, 'text': 'hi'}]}
+        )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
 
     def test_reply(self) -> None:
@@ -1740,25 +1977,35 @@ class TestPatchState:
 
     def test_reviewed_by(self) -> None:
         """Reviewed-by trailer → 'done'."""
-        target = self._make_target({'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>']})
+        target = self._make_target(
+            {'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>']}
+        )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
 
     def test_acked_by(self) -> None:
         """Acked-by trailer → 'done'."""
-        target = self._make_target({'trailers': ['Acked-by: Test Reviewer <reviewer@example.com>']})
+        target = self._make_target(
+            {'trailers': ['Acked-by: Test Reviewer <reviewer@example.com>']}
+        )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
 
     def test_nacked_by_alone(self) -> None:
         """NACKed-by trailer alone → 'draft' (explanation required)."""
-        target = self._make_target({'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>']})
+        target = self._make_target(
+            {'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>']}
+        )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
 
     def test_nacked_by_with_acked(self) -> None:
         """NACK wins over Acked-by — result is still 'draft'."""
-        target = self._make_target({'trailers': [
-            'NACKed-by: Test Reviewer <reviewer@example.com>',
-            'Acked-by: Test Reviewer <reviewer@example.com>',
-        ]})
+        target = self._make_target(
+            {
+                'trailers': [
+                    'NACKed-by: Test Reviewer <reviewer@example.com>',
+                    'Acked-by: Test Reviewer <reviewer@example.com>',
+                ]
+            }
+        )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
 
     def test_explicit_done(self) -> None:
@@ -1773,10 +2020,12 @@ class TestPatchState:
 
     def test_explicit_done_beats_nack(self) -> None:
         """Explicit done overrides a NACKed-by trailer (human override wins)."""
-        target = self._make_target({
-            'patch-state': 'done',
-            'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>'],
-        })
+        target = self._make_target(
+            {
+                'patch-state': 'done',
+                'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>'],
+            }
+        )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
 
     def test_set_and_clear(self) -> None:
@@ -1807,8 +2056,7 @@ class TestBuildReplyFromComments:
         'diff --git a/foo.py b/foo.py\n'
         '--- a/foo.py\n'
         '+++ b/foo.py\n'
-        '@@ -0,0 +1,40 @@\n'
-        + ''.join(f'+line{i}\n' for i in range(1, 41))
+        '@@ -0,0 +1,40 @@\n' + ''.join(f'+line{i}\n' for i in range(1, 41))
     )
 
     def _make_comment(self, line: int, text: str) -> dict[str, Any]:
@@ -1929,22 +2177,25 @@ class TestFormatSnoozeUntil:
 
     def test_expired_datetime(self) -> None:
         """A datetime in the past returns 'expired'."""
-        past = (datetime.datetime.now(datetime.timezone.utc)
-                - datetime.timedelta(hours=1)).isoformat()
+        past = (
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
+        ).isoformat()
         assert _format_snooze_until(past) == 'expired'
 
     def test_future_days_hours_minutes(self) -> None:
         """A datetime ~1d 2h 30m in the future shows all three components."""
-        target = (datetime.datetime.now(datetime.timezone.utc)
-                  + datetime.timedelta(days=1, hours=2, minutes=30, seconds=30))
+        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            days=1, hours=2, minutes=30, seconds=30
+        )
         result = _format_snooze_until(target.isoformat())
         assert result.startswith('wakes in 1d 2h 30m')
         assert '(' in result  # contains the local date/time
 
     def test_future_hours_only(self) -> None:
         """A datetime exactly 3h in the future shows hours (and maybe minutes)."""
-        target = (datetime.datetime.now(datetime.timezone.utc)
-                  + datetime.timedelta(hours=3, seconds=30))
+        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            hours=3, seconds=30
+        )
         result = _format_snooze_until(target.isoformat())
         assert 'wakes in' in result
         assert '3h' in result
@@ -1952,8 +2203,9 @@ class TestFormatSnoozeUntil:
 
     def test_future_minutes_only(self) -> None:
         """A datetime 45m in the future shows only minutes."""
-        target = (datetime.datetime.now(datetime.timezone.utc)
-                  + datetime.timedelta(minutes=45, seconds=30))
+        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            minutes=45, seconds=30
+        )
         result = _format_snooze_until(target.isoformat())
         assert 'wakes in 45m' in result
         assert 'd' not in result.split('(')[0]
@@ -1961,8 +2213,9 @@ class TestFormatSnoozeUntil:
 
     def test_future_less_than_one_minute(self) -> None:
         """A datetime <1m away shows '<1m'."""
-        target = (datetime.datetime.now(datetime.timezone.utc)
-                  + datetime.timedelta(seconds=20))
+        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            seconds=20
+        )
         result = _format_snooze_until(target.isoformat())
         assert 'wakes in <1m' in result
 
@@ -1976,8 +2229,9 @@ class TestFormatSnoozeUntil:
 
     def test_local_time_shown(self) -> None:
         """The parenthesised local time uses YYYY-MM-DD HH:MM format."""
-        target = (datetime.datetime.now(datetime.timezone.utc)
-                  + datetime.timedelta(hours=6))
+        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+            hours=6
+        )
         result = _format_snooze_until(target.isoformat())
         local_dt = target.astimezone()
         expected_str = local_dt.strftime('%Y-%m-%d %H:%M')
@@ -1987,29 +2241,43 @@ class TestFormatSnoozeUntil:
 class TestSnoozeDurationRegex:
     """Tests for SnoozeScreen._DURATION_RE pattern matching."""
 
-    @pytest.mark.parametrize('input_str,expected_value,expected_unit', [
-        ('30m', 30, 'm'),
-        ('3h', 3, 'h'),
-        ('1d', 1, 'd'),
-        ('2w', 2, 'w'),
-        ('7', 7, ''),
-        ('30 m', 30, 'm'),
-        ('3H', 3, 'H'),
-        ('1D', 1, 'D'),
-        ('2W', 2, 'W'),
-        ('45M', 45, 'M'),
-    ])
-    def test_valid_durations(self, input_str: str,
-                             expected_value: int, expected_unit: str) -> None:
+    @pytest.mark.parametrize(
+        'input_str,expected_value,expected_unit',
+        [
+            ('30m', 30, 'm'),
+            ('3h', 3, 'h'),
+            ('1d', 1, 'd'),
+            ('2w', 2, 'w'),
+            ('7', 7, ''),
+            ('30 m', 30, 'm'),
+            ('3H', 3, 'H'),
+            ('1D', 1, 'D'),
+            ('2W', 2, 'W'),
+            ('45M', 45, 'M'),
+        ],
+    )
+    def test_valid_durations(
+        self, input_str: str, expected_value: int, expected_unit: str
+    ) -> None:
         """Valid duration strings are parsed correctly."""
         m = SnoozeScreen._DURATION_RE.match(input_str)
         assert m is not None
         assert int(m.group(1)) == expected_value
         assert m.group(2) == expected_unit
 
-    @pytest.mark.parametrize('input_str', [
-        'abc', '3x', 'h3', 'm', '', '3.5h', '-1d', '3hh',
-    ])
+    @pytest.mark.parametrize(
+        'input_str',
+        [
+            'abc',
+            '3x',
+            'h3',
+            'm',
+            '',
+            '3.5h',
+            '-1d',
+            '3hh',
+        ],
+    )
     def test_invalid_durations(self, input_str: str) -> None:
         """Invalid duration strings are rejected."""
         assert SnoozeScreen._DURATION_RE.match(input_str) is None
@@ -2018,8 +2286,9 @@ class TestSnoozeDurationRegex:
 class TestGetExpiredSnoozedDatetime:
     """Verify get_expired_snoozed() works with full ISO datetimes."""
 
-    def _make_snoozed_series(self, conn: Any, change_id: str,
-                             snoozed_until: str) -> None:
+    def _make_snoozed_series(
+        self, conn: Any, change_id: str, snoozed_until: str
+    ) -> None:
         """Insert a snoozed series with a given wake-up time."""
         review_tracking.add_series_to_db(
             conn,
@@ -2037,8 +2306,9 @@ class TestGetExpiredSnoozedDatetime:
     def test_past_datetime_is_expired(self) -> None:
         """A series snoozed until a past datetime shows up as expired."""
         conn = review_tracking.init_db('snooze-past-dt')
-        past = (datetime.datetime.now(datetime.timezone.utc)
-                - datetime.timedelta(minutes=5)).isoformat()
+        past = (
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
+        ).isoformat()
         self._make_snoozed_series(conn, 'past-dt-id', past)
         expired = review_tracking.get_expired_snoozed(conn)
         assert len(expired) == 1
@@ -2048,8 +2318,9 @@ class TestGetExpiredSnoozedDatetime:
     def test_future_datetime_not_expired(self) -> None:
         """A series snoozed until a future datetime does not show up."""
         conn = review_tracking.init_db('snooze-future-dt')
-        future = (datetime.datetime.now(datetime.timezone.utc)
-                  + datetime.timedelta(hours=2)).isoformat()
+        future = (
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)
+        ).isoformat()
         self._make_snoozed_series(conn, 'future-dt-id', future)
         expired = review_tracking.get_expired_snoozed(conn)
         assert len(expired) == 0
@@ -2058,8 +2329,10 @@ class TestGetExpiredSnoozedDatetime:
     def test_past_date_only_is_expired(self) -> None:
         """A legacy date-only value in the past still works."""
         conn = review_tracking.init_db('snooze-past-date')
-        yesterday = (datetime.datetime.now(datetime.timezone.utc).date()
-                     - datetime.timedelta(days=1)).isoformat()
+        yesterday = (
+            datetime.datetime.now(datetime.timezone.utc).date()
+            - datetime.timedelta(days=1)
+        ).isoformat()
         self._make_snoozed_series(conn, 'past-date-id', yesterday)
         expired = review_tracking.get_expired_snoozed(conn)
         assert len(expired) == 1
@@ -2069,8 +2342,10 @@ class TestGetExpiredSnoozedDatetime:
     def test_future_date_only_not_expired(self) -> None:
         """A legacy date-only value in the future still works."""
         conn = review_tracking.init_db('snooze-future-date')
-        tomorrow = (datetime.datetime.now(datetime.timezone.utc).date()
-                    + datetime.timedelta(days=2)).isoformat()
+        tomorrow = (
+            datetime.datetime.now(datetime.timezone.utc).date()
+            + datetime.timedelta(days=2)
+        ).isoformat()
         self._make_snoozed_series(conn, 'future-date-id', tomorrow)
         expired = review_tracking.get_expired_snoozed(conn)
         assert len(expired) == 0
@@ -2079,12 +2354,17 @@ class TestGetExpiredSnoozedDatetime:
     def test_mixed_date_and_datetime(self) -> None:
         """Both legacy date-only and new datetime values handled together."""
         conn = review_tracking.init_db('snooze-mixed')
-        past_dt = (datetime.datetime.now(datetime.timezone.utc)
-                   - datetime.timedelta(minutes=30)).isoformat()
-        yesterday = (datetime.datetime.now(datetime.timezone.utc).date()
-                     - datetime.timedelta(days=1)).isoformat()
-        future_dt = (datetime.datetime.now(datetime.timezone.utc)
-                     + datetime.timedelta(hours=5)).isoformat()
+        past_dt = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=30)
+        ).isoformat()
+        yesterday = (
+            datetime.datetime.now(datetime.timezone.utc).date()
+            - datetime.timedelta(days=1)
+        ).isoformat()
+        future_dt = (
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5)
+        ).isoformat()
         self._make_snoozed_series(conn, 'expired-dt', past_dt)
         self._make_snoozed_series(conn, 'expired-date', yesterday)
         self._make_snoozed_series(conn, 'still-sleeping', future_dt)
@@ -2107,8 +2387,9 @@ class TestGetExpiredSnoozedDatetime:
         # Add a tag-based snooze
         self._make_snoozed_series(conn, 'tag-id', 'tag:v6.15-rc3')
         # Add a time-based snooze
-        future = (datetime.datetime.now(datetime.timezone.utc)
-                  + datetime.timedelta(hours=2)).isoformat()
+        future = (
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)
+        ).isoformat()
         self._make_snoozed_series(conn, 'time-id', future)
         tag_results = review_tracking.get_tag_snoozed(conn)
         assert len(tag_results) == 1
@@ -2119,11 +2400,13 @@ class TestGetExpiredSnoozedDatetime:
 
 # -- Tests for attestation DB operations -------------------------------------
 
+
 class TestAttestationDb:
     """Tests for attestation storage and schema migration."""
 
-    def _add_test_series(self, conn: Any, change_id: str = 'att-test-id',
-                         revision: int = 1) -> int:
+    def _add_test_series(
+        self, conn: Any, change_id: str = 'att-test-id', revision: int = 1
+    ) -> int:
         """Insert a minimal series row and return its track_id."""
         return review_tracking.add_series_to_db(
             conn,
@@ -2153,8 +2436,9 @@ class TestAttestationDb:
         conn = review_tracking.init_db(ident)
         self._add_test_series(conn)
         conn.close()
-        review_tracking.update_attestation(ident, 'att-test-id', 1,
-                                           'signed:DKIM/kernel.org')
+        review_tracking.update_attestation(
+            ident, 'att-test-id', 1, 'signed:DKIM/kernel.org'
+        )
         conn = review_tracking.get_db(ident)
         row = conn.execute(
             "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
@@ -2183,8 +2467,9 @@ class TestAttestationDb:
         self._add_test_series(conn)
         conn.close()
         review_tracking.update_attestation(ident, 'att-test-id', 1, 'none')
-        review_tracking.update_attestation(ident, 'att-test-id', 1,
-                                           'signed:DKIM/kernel.org')
+        review_tracking.update_attestation(
+            ident, 'att-test-id', 1, 'signed:DKIM/kernel.org'
+        )
         conn = review_tracking.get_db(ident)
         row = conn.execute(
             "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
@@ -2199,8 +2484,9 @@ class TestAttestationDb:
         self._add_test_series(conn)
         conn.close()
         # revision 99 doesn't exist — should not raise
-        review_tracking.update_attestation(ident, 'att-test-id', 99,
-                                           'signed:DKIM/kernel.org')
+        review_tracking.update_attestation(
+            ident, 'att-test-id', 99, 'signed:DKIM/kernel.org'
+        )
         conn = review_tracking.get_db(ident)
         row = conn.execute(
             "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
@@ -2214,8 +2500,9 @@ class TestAttestationDb:
         conn = review_tracking.init_db(ident)
         self._add_test_series(conn)
         conn.close()
-        review_tracking.update_attestation(ident, 'att-test-id', 1,
-                                           'nokey:ed25519/dev@example.com')
+        review_tracking.update_attestation(
+            ident, 'att-test-id', 1, 'nokey:ed25519/dev@example.com'
+        )
         series_list = review_tracking.get_all_tracked_series(ident)
         assert len(series_list) == 1
         assert series_list[0]['attestation'] == 'nokey:ed25519/dev@example.com'
@@ -2225,8 +2512,9 @@ class TestAttestationDb:
         ident = 'snoozed-listing'
         conn = review_tracking.init_db(ident)
         self._add_test_series(conn)
-        review_tracking.snooze_series(conn, 'att-test-id', '2026-06-01T00:00:00',
-                                      revision=1)
+        review_tracking.snooze_series(
+            conn, 'att-test-id', '2026-06-01T00:00:00', revision=1
+        )
         conn.close()
         series_list = review_tracking.get_all_tracked_series(ident)
         assert len(series_list) == 1
@@ -2235,13 +2523,14 @@ class TestAttestationDb:
     def test_schema_v4_migration_adds_attestation(self) -> None:
         """Migrating from schema v4 adds the attestation column."""
         import sqlite3
+
         ident = 'att-migrate-v4'
         # Create a v4-style database manually
         db_path = review_tracking.get_db_path(ident)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         conn = sqlite3.connect(db_path)
         # Create the tables without the attestation column
-        conn.executescript('''
+        conn.executescript("""
             CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
             INSERT INTO schema_version VALUES (4);
             CREATE TABLE series (
@@ -2267,7 +2556,7 @@ class TestAttestationDb:
                 UNIQUE (change_id, revision)
             );
             INSERT INTO series (change_id, revision, subject) VALUES ('migrate-id', 1, 'Test');
-        ''')
+        """)
         conn.close()
         # Opening via get_db triggers migration
         conn = review_tracking.get_db(ident)
@@ -2281,6 +2570,7 @@ class TestAttestationDb:
 
 
 # -- Tests for _format_attestation() display helper --------------------------
+
 
 class TestFormatAttestation:
     """Tests for the _format_attestation() display helper."""
@@ -2325,7 +2615,9 @@ class TestFormatAttestation:
 
     def test_multiple_attestors_comma_separated(self) -> None:
         """Multiple attestors are comma-separated in the output."""
-        text = _format_attestation('signed:DKIM/kernel.org;nokey:ed25519/dev@example.com')
+        text = _format_attestation(
+            'signed:DKIM/kernel.org;nokey:ed25519/dev@example.com'
+        )
         assert text is not None
         plain = text.plain
         assert ', ' in plain

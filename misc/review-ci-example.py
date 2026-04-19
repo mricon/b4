@@ -76,7 +76,9 @@ def main() -> None:
     if build_status == 'warn':
         build_result['details'] = 'Warning: unused variable in drivers/foo.c:42'
     elif build_status == 'fail':
-        build_result['details'] = 'Error: implicit declaration of function bar\n  drivers/foo.c:57:5'
+        build_result['details'] = (
+            'Error: implicit declaration of function bar\n  drivers/foo.c:57:5'
+        )
     results.append(build_result)
 
     # Simulate a test suite check

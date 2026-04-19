@@ -8,7 +8,7 @@ import pytest
 import b4
 
 
-@pytest.fixture(scope="function", autouse=True)
+@pytest.fixture(scope='function', autouse=True)
 def settestdefaults(tmp_path: pathlib.Path) -> None:
     topdir = b4.git_get_toplevel()
     if topdir and topdir != os.getcwd():
@@ -25,13 +25,15 @@ def settestdefaults(tmp_path: pathlib.Path) -> None:
     sys._running_in_pytest = True  # type: ignore[attr-defined]
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope='function')
 def sampledir(request: pytest.FixtureRequest) -> str:
     return os.path.join(request.path.parent, 'samples')
 
 
-@pytest.fixture(scope="function")
-def gitdir(request: pytest.FixtureRequest, tmp_path: pathlib.Path) -> Generator[str, None, None]:
+@pytest.fixture(scope='function')
+def gitdir(
+    request: pytest.FixtureRequest, tmp_path: pathlib.Path
+) -> Generator[str, None, None]:
     sampledir = os.path.join(request.path.parent, 'samples')
     # look for bundle file specific to the calling fspath
     bname = request.path.name[5:-3]

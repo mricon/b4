@@ -36,9 +36,12 @@ from b4.review_tui._modals import (
 )
 
 
-def _format_series_label(series: Dict[str, Any], tracked: bool,
-                         ts: Optional[Dict[str, str]] = None,
-                         show_delegate: bool = True) -> Text:
+def _format_series_label(
+    series: Dict[str, Any],
+    tracked: bool,
+    ts: Optional[Dict[str, str]] = None,
+    show_delegate: bool = True,
+) -> Text:
     """Build a Text label for a series row.
 
     *ts* is a resolved theme styles dict from :func:`resolve_styles`.
@@ -46,12 +49,19 @@ def _format_series_label(series: Dict[str, Any], tracked: bool,
     """
     track_mark = 'T' if tracked else ' '
     ci_state = series.get('check') or 'pending'
-    ci_map = ci_styles(ts) if ts else {
-        'pending': 'dim', 'success': 'green', 'warning': 'red', 'fail': 'bold red',
-    }
+    ci_map = (
+        ci_styles(ts)
+        if ts
+        else {
+            'pending': 'dim',
+            'success': 'green',
+            'warning': 'red',
+            'fail': 'bold red',
+        }
+    )
     ci_style = ci_map.get(ci_state, ci_map['pending'])
     date = (series.get('date') or '')[:10]
-    state = f"{(series.get('state') or 'new'):<15s}"
+    state = f'{(series.get("state") or "new"):<15s}'
     submitter = pad_display(series.get('submitter') or 'Unknown', 30)
     name = series.get('name') or '(no subject)'
     text = Text()
@@ -70,8 +80,9 @@ class PwSeriesItem(ListItem):
 
     ACTION_REQUIRED_STATES = ('new', 'under-review')
 
-    def __init__(self, series: Dict[str, Any], tracked: bool = False,
-                 show_delegate: bool = True) -> None:
+    def __init__(
+        self, series: Dict[str, Any], tracked: bool = False, show_delegate: bool = True
+    ) -> None:
         super().__init__()
         self.series = series
         self.tracked = tracked
@@ -84,9 +95,12 @@ class PwSeriesItem(ListItem):
 
     def compose(self) -> ComposeResult:
         ts = resolve_styles(self.app)
-        yield Label(_format_series_label(self.series, self.tracked, ts,
-                                         show_delegate=self.show_delegate),
-                    markup=False)
+        yield Label(
+            _format_series_label(
+                self.series, self.tracked, ts, show_delegate=self.show_delegate
+            ),
+            markup=False,
+        )
 
 
 class PwApp(App[None]):
@@ -162,9 +176,16 @@ class PwApp(App[None]):
     """
 
     BINDING_GROUPS = {
-        'view': 'Series', 'ci_checks': 'Series', 'track_series': 'Series',
-        'set_state': 'Series', 'hide_series': 'Series',
-        'refresh': 'App', 'limit': 'App', 'toggle_show_hidden': 'App', 'quit': 'App', 'help': 'App',
+        'view': 'Series',
+        'ci_checks': 'Series',
+        'track_series': 'Series',
+        'set_state': 'Series',
+        'hide_series': 'Series',
+        'refresh': 'App',
+        'limit': 'App',
+        'toggle_show_hidden': 'App',
+        'quit': 'App',
+        'help': 'App',
     }
 
     BINDINGS = [
@@ -185,8 +206,14 @@ class PwApp(App[None]):
         Binding('question_mark', 'help', 'help', key_display='?'),
     ]
 
-    def __init__(self, pwkey: str, pwurl: str, pwproj: str,
-                 email_dryrun: bool = False, patatt_sign: bool = True) -> None:
+    def __init__(
+        self,
+        pwkey: str,
+        pwurl: str,
+        pwproj: str,
+        email_dryrun: bool = False,
+        patatt_sign: bool = True,
+    ) -> None:
         super().__init__()
         self._pwkey = pwkey
         self._pwurl = pwurl
@@ -229,9 +256,13 @@ class PwApp(App[None]):
         if not self._tracking_identifier:
             # Fall back to patchwork project name
             self._tracking_identifier = self._pwproj
-        if self._tracking_identifier and b4.review.tracking.db_exists(self._tracking_identifier):
+        if self._tracking_identifier and b4.review.tracking.db_exists(
+            self._tracking_identifier
+        ):
             self._tracking_enabled = True
-            self._tracked_ids = b4.review.tracking.get_tracked_pw_series_ids(self._tracking_identifier)
+            self._tracked_ids = b4.review.tracking.get_tracked_pw_series_ids(
+                self._tracking_identifier
+            )
 
     def _save_local_data(self) -> None:
         path = self._get_local_data_path()
@@ -273,7 +304,9 @@ class PwApp(App[None]):
             elif event.state == WorkerState.ERROR:
                 for widget in self.query('#pw-loading'):
                     await widget.remove()
-                self.query_one('#pw-title', Static).update(' Patchwork — error fetching series')
+                self.query_one('#pw-title', Static).update(
+                    ' Patchwork — error fetching series'
+                )
                 self.notify(str(event.worker.error), severity='error')
 
     async def _populate(self, series_list: List[Dict[str, Any]]) -> None:
@@ -301,16 +334,23 @@ class PwApp(App[None]):
                 visible.append((s, False))
         if self._limit_pattern:
             visible = [
-                (s, h) for s, h in visible
+                (s, h)
+                for s, h in visible
                 if self._matches_limit(s, self._limit_pattern)
             ]
         limit_suffix = f', limit: {self._limit_pattern}' if self._limit_pattern else ''
         if hidden_count and not self._show_hidden:
-            title.update(f' Patchwork — {len(visible)} series ({hidden_count} hidden{limit_suffix})')
+            title.update(
+                f' Patchwork — {len(visible)} series ({hidden_count} hidden{limit_suffix})'
+            )
         elif hidden_count and self._show_hidden:
-            title.update(f' Patchwork — {len(visible)} series (showing {hidden_count} hidden{limit_suffix})')
+            title.update(
+                f' Patchwork — {len(visible)} series (showing {hidden_count} hidden{limit_suffix})'
+            )
         elif self._limit_pattern:
-            title.update(f' Patchwork — {len(visible)} action-required series{limit_suffix}')
+            title.update(
+                f' Patchwork — {len(visible)} action-required series{limit_suffix}'
+            )
         else:
             title.update(f' Patchwork — {len(visible)} action-required series')
         if not visible:
@@ -321,14 +361,15 @@ class PwApp(App[None]):
         if show_delegate:
             header_text = f'   {"Date":<12s}{"State":<15s} {"Submitter":<30s} {"Delegate":<15s} {"Series"}'
         else:
-            header_text = f'   {"Date":<12s}{"State":<15s} {"Submitter":<30s} {"Series"}'
+            header_text = (
+                f'   {"Date":<12s}{"State":<15s} {"Submitter":<30s} {"Series"}'
+            )
         header = Static(header_text, id='pw-header')
         items = []
         for s, is_hidden in visible:
             sid = s.get('id')
             is_tracked = sid in self._tracked_ids if sid else False
-            item = PwSeriesItem(s, tracked=is_tracked,
-                                show_delegate=show_delegate)
+            item = PwSeriesItem(s, tracked=is_tracked, show_delegate=show_delegate)
             if is_hidden:
                 item.add_class('--hidden')
             items.append(item)
@@ -342,7 +383,9 @@ class PwApp(App[None]):
         for widget in self.query('#pw-header, #pw-list'):
             await widget.remove()
         self.query_one('#pw-title', Static).update(' Patchwork — refreshing\u2026')
-        await self.mount(LoadingIndicator(id='pw-loading'), before=self.query_one(Footer))
+        await self.mount(
+            LoadingIndicator(id='pw-loading'), before=self.query_one(Footer)
+        )
         self.run_worker(self._fetch_initial, name='_fetch_initial', thread=True)
 
     @staticmethod
@@ -364,8 +407,10 @@ class PwApp(App[None]):
                 if needle not in (series.get('delegate', '') or '').lower():
                     return False
             else:
-                if (token not in (series.get('name', '') or '').lower()
-                        and token not in (series.get('submitter', '') or '').lower()):
+                if (
+                    token not in (series.get('name', '') or '').lower()
+                    and token not in (series.get('submitter', '') or '').lower()
+                ):
                     return False
         return True
 
@@ -375,8 +420,9 @@ class PwApp(App[None]):
             hint = 'Prefixes: s:<state>  d:<delegate>'
         else:
             hint = 'Prefixes: s:<state>'
-        self.push_screen(LimitScreen(self._limit_pattern, hint=hint),
-                         callback=self._on_limit)
+        self.push_screen(
+            LimitScreen(self._limit_pattern, hint=hint), callback=self._on_limit
+        )
 
     async def _on_limit(self, result: Optional[str]) -> None:
         if result is None:
@@ -406,9 +452,12 @@ class PwApp(App[None]):
             self.notify('No message-id available for this series', severity='error')
             return
         from b4.review_tui._lite_app import LiteThreadScreen
-        self.push_screen(LiteThreadScreen(msgid,
-                                          email_dryrun=self._email_dryrun,
-                                          patatt_sign=self._patatt_sign))
+
+        self.push_screen(
+            LiteThreadScreen(
+                msgid, email_dryrun=self._email_dryrun, patatt_sign=self._patatt_sign
+            )
+        )
 
     def action_ci_checks(self) -> None:
         """View CI check details for the highlighted series."""
@@ -417,7 +466,9 @@ class PwApp(App[None]):
             return
         check = item.series.get('check') or 'pending'
         if check == 'pending':
-            self.notify('No CI checks available for this series', severity='information')
+            self.notify(
+                'No CI checks available for this series', severity='information'
+            )
             return
         self.push_screen(CIChecksScreen(self._pwkey, self._pwurl, item.series))
 
@@ -444,7 +495,9 @@ class PwApp(App[None]):
             callback=lambda result: self._on_set_state(result, item),
         )
 
-    def _on_set_state(self, result: Optional[Tuple[str, bool]], item: 'PwSeriesItem') -> None:
+    def _on_set_state(
+        self, result: Optional[Tuple[str, bool]], item: 'PwSeriesItem'
+    ) -> None:
         if result is None:
             return
         new_state, archived = result
@@ -456,13 +509,14 @@ class PwApp(App[None]):
         series_name = item.series.get('name', '(no subject)')
         self.push_screen(
             ApplyStateModal(
-                self._pwkey, self._pwurl, patch_ids,
-                new_state, archived, series_name
+                self._pwkey, self._pwurl, patch_ids, new_state, archived, series_name
             ),
             callback=lambda res: self._on_apply_complete(res, item),
         )
 
-    def _on_apply_complete(self, result: Tuple[int, int, str], item: 'PwSeriesItem') -> None:
+    def _on_apply_complete(
+        self, result: Tuple[int, int, str], item: 'PwSeriesItem'
+    ) -> None:
         ok, fail, new_state = result
         if fail:
             self.notify(f'{ok} updated, {fail} failed', severity='warning')
@@ -474,13 +528,18 @@ class PwApp(App[None]):
         else:
             item.add_class('--dimmed')
         ts = resolve_styles(self)
-        item.query_one(Label).update(_format_series_label(
-            item.series, item.tracked, ts,
-            show_delegate=item.show_delegate))
+        item.query_one(Label).update(
+            _format_series_label(
+                item.series, item.tracked, ts, show_delegate=item.show_delegate
+            )
+        )
 
     def action_track_series(self) -> None:
         if not self._tracking_enabled:
-            self.notify('Repository not enrolled. Enroll with: b4 review enroll', severity='warning')
+            self.notify(
+                'Repository not enrolled. Enroll with: b4 review enroll',
+                severity='warning',
+            )
             return
         item = self._get_highlighted_item()
         if item is None:
@@ -546,8 +605,17 @@ class PwApp(App[None]):
         assert self._tracking_identifier is not None
         conn = b4.review.tracking.get_db(self._tracking_identifier)
         b4.review.tracking.add_series_to_db(
-            conn, change_id, revision, subject, sender_name, sender_email,
-            sent_at, message_id, num_patches, pw_series_id)
+            conn,
+            change_id,
+            revision,
+            subject,
+            sender_name,
+            sender_email,
+            sent_at,
+            message_id,
+            num_patches,
+            pw_series_id,
+        )
 
         conn.close()
 
@@ -556,10 +624,14 @@ class PwApp(App[None]):
         item.tracked = True
         item.add_class('--tracked')
         ts = resolve_styles(self)
-        item.query_one(Label).update(_format_series_label(
-            item.series, True, ts,
-            show_delegate=item.show_delegate))
-        self.notify(f'Started tracking: {series_name}', severity='information', timeout=3)
+        item.query_one(Label).update(
+            _format_series_label(
+                item.series, True, ts, show_delegate=item.show_delegate
+            )
+        )
+        self.notify(
+            f'Started tracking: {series_name}', severity='information', timeout=3
+        )
 
     async def action_hide_series(self) -> None:
         item = self._get_highlighted_item()
@@ -642,4 +714,3 @@ class PwApp(App[None]):
 
     async def action_quit(self) -> None:
         self.exit()
-

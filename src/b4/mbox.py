@@ -38,7 +38,9 @@ Link: ${midurl}
 """
 
 
-def save_msgs_as_mbox(dest: str, msgs: List[EmailMessage], filterdupes: bool = False) -> int:
+def save_msgs_as_mbox(
+    dest: str, msgs: List[EmailMessage], filterdupes: bool = False
+) -> int:
     if dest == '-':
         b4.save_mboxrd_mbox(msgs, sys.stdout.buffer, mangle_from=False)
         return len(msgs)
@@ -62,12 +64,15 @@ def save_msgs_as_mbox(dest: str, msgs: List[EmailMessage], filterdupes: bool = F
     return len(msgs)
 
 
-def get_base_commit(topdir: Optional[str], body: str, lser: b4.LoreSeries,
-                    cmdargs: argparse.Namespace) -> str:
+def get_base_commit(
+    topdir: Optional[str], body: str, lser: b4.LoreSeries, cmdargs: argparse.Namespace
+) -> str:
     base_commit = 'HEAD'
 
     if lser.prereq_base_commit:
-        logger.debug('Setting base-commit to prereq-base-commit: %s', lser.prereq_base_commit)
+        logger.debug(
+            'Setting base-commit to prereq-base-commit: %s', lser.prereq_base_commit
+        )
         base_commit = lser.prereq_base_commit
     else:
         matches = re.search(r'base-commit: .*?([\da-f]+)', body, re.MULTILINE)
@@ -90,22 +95,30 @@ def get_base_commit(topdir: Optional[str], body: str, lser: b4.LoreSeries,
     if base_commit == 'HEAD' and topdir and cmdargs.guessbase:
         logger.info(' Base: attempting to guess base-commit...')
         try:
-            base_commit, nblobs, mismatches = lser.find_base(topdir, branches=cmdargs.guessbranch,
-                                                             maxdays=cmdargs.guessdays)
+            base_commit, nblobs, mismatches = lser.find_base(
+                topdir, branches=cmdargs.guessbranch, maxdays=cmdargs.guessdays
+            )
             if mismatches == 0:
                 logger.critical(' Base: %s (exact match)', base_commit)
             elif nblobs == mismatches:
                 logger.critical(' Base: failed to guess base')
             else:
-                logger.critical(' Base: %s (best guess, %s/%s blobs matched)', base_commit,
-                                nblobs - mismatches, nblobs)
+                logger.critical(
+                    ' Base: %s (best guess, %s/%s blobs matched)',
+                    base_commit,
+                    nblobs - mismatches,
+                    nblobs,
+                )
         except IndexError as ex:
             logger.critical(' Base: failed to guess base (%s)', ex)
 
     if cmdargs.mergebase:
         if base_commit:
-            logger.debug(' Base: overriding submitter provided base-commit %s with %s',
-                           base_commit, cmdargs.mergebase)
+            logger.debug(
+                ' Base: overriding submitter provided base-commit %s with %s',
+                base_commit,
+                cmdargs.mergebase,
+            )
         base_commit = cmdargs.mergebase
 
     return base_commit
@@ -150,15 +163,22 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                     payload = bpayload.decode('utf-8', errors='replace')
                     part.set_param('charset', 'utf-8')
                 if payload and b4.DIFF_RE.search(payload):
-                    xmsg = email.parser.Parser(policy=b4.emlpolicy, _class=EmailMessage).parsestr(payload)
+                    xmsg = email.parser.Parser(
+                        policy=b4.emlpolicy, _class=EmailMessage
+                    ).parsestr(payload)
                     # Needs to have Subject, From, Date for us to consider it
                     if xmsg.get('Subject') and xmsg.get('From') and xmsg.get('Date'):
                         logger.debug('Found attached patch: %s', xmsg.get('Subject'))
                         xmsg['Message-ID'] = f'<att{len(xpatches)}-{xmsgid}>'
                         xpatches.append(xmsg)
             if len(xpatches):
-                logger.info('Warning: Found %s patches attached to the requested message', len(xpatches))
-                logger.info('         This mode ignores any follow-up trailers, use with caution')
+                logger.info(
+                    'Warning: Found %s patches attached to the requested message',
+                    len(xpatches),
+                )
+                logger.info(
+                    '         This mode ignores any follow-up trailers, use with caution'
+                )
                 # Throw out lmbx and only use these
                 lmbx = b4.LoreMailbox()
                 load_codereview = False
@@ -181,8 +201,12 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
     if cmdargs.nopartialreroll:
         reroll = False
 
-    lser = lmbx.get_series(revision=wantver, sloppytrailers=cmdargs.sloppytrailers, reroll=reroll,
-                           codereview_trailers=load_codereview)
+    lser = lmbx.get_series(
+        revision=wantver,
+        sloppytrailers=cmdargs.sloppytrailers,
+        reroll=reroll,
+        codereview_trailers=load_codereview,
+    )
     if lser is None and cmdargs.cherrypick != '_':
         if wantver is None:
             logger.critical('No patches found.')
@@ -214,7 +238,9 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                     cmdargs.cherrypick = f'<{msgid}>'
                     break
             if not len(cherrypick):
-                logger.critical('Specified msgid is not present in the series, cannot cherrypick')
+                logger.critical(
+                    'Specified msgid is not present in the series, cannot cherrypick'
+                )
                 sys.exit(1)
         elif cmdargs.cherrypick.find('*') >= 0:
             # Globbing on subject
@@ -226,22 +252,35 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 if fnmatch.fnmatch(lmsg.subject, cmdargs.cherrypick):
                     cherrypick.append(at)
             if not len(cherrypick):
-                logger.critical('Could not match "%s" to any subjects in the series', cmdargs.cherrypick)
+                logger.critical(
+                    'Could not match "%s" to any subjects in the series',
+                    cmdargs.cherrypick,
+                )
                 sys.exit(1)
         else:
-            cherrypick = list(b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches) - 1))
+            cherrypick = list(
+                b4.parse_int_range(cmdargs.cherrypick, upper=len(lser.patches) - 1)
+            )
     else:
         cherrypick = None
 
-    am_msgs = lser.get_am_ready(noaddtrailers=cmdargs.noaddtrailers, addmysob=cmdargs.addmysob, addlink=cmdargs.addlink,
-                                cherrypick=cherrypick, copyccs=cmdargs.copyccs, allowbadchars=cmdargs.allowbadchars,
-                                showchecks=cmdargs.check)
+    am_msgs = lser.get_am_ready(
+        noaddtrailers=cmdargs.noaddtrailers,
+        addmysob=cmdargs.addmysob,
+        addlink=cmdargs.addlink,
+        cherrypick=cherrypick,
+        copyccs=cmdargs.copyccs,
+        allowbadchars=cmdargs.allowbadchars,
+        showchecks=cmdargs.check,
+    )
     logger.info('---')
 
     if cherrypick is None:
         logger.critical('Total patches: %s', len(am_msgs))
     else:
-        logger.info('Total patches: %s (cherrypicked: %s)', len(am_msgs), cmdargs.cherrypick)
+        logger.info(
+            'Total patches: %s (cherrypicked: %s)', len(am_msgs), cmdargs.cherrypick
+        )
 
     if len(lser.trailer_mismatches):
         logger.critical('---')
@@ -274,12 +313,20 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             if mismatches:
                 rstart, rend = lser.make_fake_am_range(gitdir=None)
                 if rstart and rend:
-                    logger.info('Prepared fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+                    logger.info(
+                        'Prepared fake commit range for 3-way merge (%.12s..%.12s)',
+                        rstart,
+                        rend,
+                    )
 
     logger.critical('---')
     if lser.partial_reroll:
-        logger.critical('WARNING: v%s is a partial reroll from previous revisions', lser.revision)
-        logger.critical('         Please carefully review the resulting series to ensure correctness')
+        logger.critical(
+            'WARNING: v%s is a partial reroll from previous revisions', lser.revision
+        )
+        logger.critical(
+            '         Please carefully review the resulting series to ensure correctness'
+        )
         logger.critical('         Pass --no-partial-reroll to disable')
         logger.critical('---')
     if not lser.complete and not cmdargs.cherrypick:
@@ -341,12 +388,17 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
 
     if cmdargs.subcmd == 'shazam':
         if not topdir:
-            logger.critical('Could not figure out where your git dir is, cannot shazam.')
+            logger.critical(
+                'Could not figure out where your git dir is, cannot shazam.'
+            )
             sys.exit(1)
 
         ifh = io.BytesIO()
         if lser.prereq_patch_ids:
-            logger.info(' Deps: looking for dependencies matching %s patch-ids', len(lser.prereq_patch_ids))
+            logger.info(
+                ' Deps: looking for dependencies matching %s patch-ids',
+                len(lser.prereq_patch_ids),
+            )
             query = ' OR '.join([f'patchid:{x}' for x in lser.prereq_patch_ids])
             logger.debug('query=%s', query)
             dmsgs = b4.get_pi_search_results(query)
@@ -362,7 +414,10 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                         pmap[dlmsg.git_patch_id] = dlmsg
             for ppid in lser.prereq_patch_ids:
                 if ppid in pmap:
-                    logger.info(' Deps: Applying prerequisite patch: %s', pmap[ppid].full_subject)
+                    logger.info(
+                        ' Deps: Applying prerequisite patch: %s',
+                        pmap[ppid].full_subject,
+                    )
                     pam_msg = pmap[ppid].get_am_message(add_trailers=False)
                     b4.save_mboxrd_mbox([pam_msg], ifh)
 
@@ -373,7 +428,9 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             sp = shlex.shlex(amflags, posix=True)
             sp.whitespace_split = True
             amargs = list(sp) + ['--patch-format=mboxrd']
-            ecode, out = b4.git_run_command(topdir, ['am'] + amargs, stdin=ambytes, logstderr=True, rundir=topdir)
+            ecode, out = b4.git_run_command(
+                topdir, ['am'] + amargs, stdin=ambytes, logstderr=True, rundir=topdir
+            )
             logger.info(out.strip())
             if ecode == 0:
                 thanks_record_am(lser, cherrypick=cherrypick)
@@ -388,8 +445,10 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             try:
                 merge_template = b4.read_template(str(config['shazam-merge-template']))
             except FileNotFoundError:
-                logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
-                                config['shazam-merge-template'])
+                logger.critical(
+                    'ERROR: shazam-merge-template says to use %s, but it does not exist',
+                    config['shazam-merge-template'],
+                )
                 sys.exit(2)
 
         if lser.has_cover and lser.patches[0] is not None:
@@ -398,12 +457,16 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             covermessage = parts[1]
         else:
             if lser.patches[1] is None:
-                logger.critical('No cover letter provided by the author and no first patch, cannot shazam')
+                logger.critical(
+                    'No cover letter provided by the author and no first patch, cannot shazam'
+                )
                 sys.exit(1)
 
             clmsg = lser.patches[1]
-            covermessage = ('NOTE: No cover letter provided by the author.\n'
-                            '      Add merge commit message here.')
+            covermessage = (
+                'NOTE: No cover letter provided by the author.\n'
+                '      Add merge commit message here.'
+            )
 
         tptvals = {
             'seriestitle': clmsg.subject,
@@ -432,8 +495,13 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 logger.info(' Base: %s', base_commit)
             else:
                 logger.info(' Base: %s (use --merge-base to override)', base_commit)
-            b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit,
-                                       origin=linkurl, am_flags=am_flags)
+            b4.git_fetch_am_into_repo(
+                topdir,
+                ambytes=ambytes,
+                at_base=base_commit,
+                origin=linkurl,
+                am_flags=am_flags,
+            )
         except b4.AmConflictError as cex:
             gwt = cex.worktree_path
             if not getattr(cmdargs, 'shazam_resolve', False):
@@ -522,7 +590,9 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             logger.critical('       git checkout -b %s %s', gitbranch, base_commit)
 
     if cmdargs.outdir != '-':
-        logger.critical('       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename)
+        logger.critical(
+            '       git am %s%s', '-3 ' if cmdargs.threeway else '', am_filename
+        )
 
     thanks_record_am(lser, cherrypick=cherrypick)
 
@@ -561,7 +631,9 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: Optional[List[int]]) -> No
         msgids.append(pmsg.msgid)
 
         if pmsg.pwhash is None:
-            logger.debug('Unable to get hashes for all patches, not tracking for thanks')
+            logger.debug(
+                'Unable to get hashes for all patches, not tracking for thanks'
+            )
             return
 
         prefix = '%s/%s' % (str(pmsg.counter).zfill(padlen), pmsg.expected)
@@ -610,20 +682,28 @@ def thanks_record_am(lser: b4.LoreSeries, cherrypick: Optional[List[int]]) -> No
 
 def save_as_quilt(am_msgs: List[EmailMessage], q_dirname: str) -> None:
     if os.path.exists(q_dirname):
-        logger.critical('ERROR: Directory %s exists, not saving quilt patches', q_dirname)
+        logger.critical(
+            'ERROR: Directory %s exists, not saving quilt patches', q_dirname
+        )
         return
     pathlib.Path(q_dirname).mkdir(parents=True)
     patch_filenames = list()
     for msg in am_msgs:
         lsubj = b4.LoreSubject(msg.get('subject', ''))
-        slug = '%04d_%s' % (lsubj.counter, re.sub(r'\W+', '_', lsubj.subject).strip('_').lower())
+        slug = '%04d_%s' % (
+            lsubj.counter,
+            re.sub(r'\W+', '_', lsubj.subject).strip('_').lower(),
+        )
         patch_filename = f'{slug}.patch'
         patch_filenames.append(patch_filename)
         quilt_out = os.path.join(q_dirname, patch_filename)
         i, m, p = b4.get_mailinfo(msg.as_bytes(policy=b4.emlpolicy), scissors=True)
         with open(quilt_out, 'wb') as fh:
             if i.get('Author'):
-                fh.write(b'From: %s <%s>\n' % (i.get('Author', '').encode(), i.get('Email', '').encode()))
+                fh.write(
+                    b'From: %s <%s>\n'
+                    % (i.get('Author', '').encode(), i.get('Email', '').encode())
+                )
             else:
                 fh.write(b'From: %s\n' % i.get('Email', '').encode())
             fh.write(b'Subject: %s\n' % i.get('Subject', '').encode())
@@ -638,8 +718,12 @@ def save_as_quilt(am_msgs: List[EmailMessage], q_dirname: str) -> None:
             sfh.write('%s\n' % patch_filename)
 
 
-def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Optional[List[int]] = None,
-                     nocache: bool = False) -> List[EmailMessage]:
+def get_extra_series(
+    msgs: List[EmailMessage],
+    direction: int = 1,
+    wantvers: Optional[List[int]] = None,
+    nocache: bool = False,
+) -> List[EmailMessage]:
     base_msg: Optional[EmailMessage] = None
     latest_revision: Optional[int] = None
     seen_msgids: Set[str] = set()
@@ -720,8 +804,9 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
         logger.critical('Checking for older revisions')
         # Cap backward search to 12 months to avoid matching years of
         # identically-named series (common with subject+from fallback).
-        earliest = time.strftime('%Y%m%d', time.gmtime(
-            time.mktime(msgdate[:9]) - 365 * 86400))
+        earliest = time.strftime(
+            '%Y%m%d', time.gmtime(time.mktime(msgdate[:9]) - 365 * 86400)
+        )
         datelim = 'd:%s..%s' % (earliest, startdate)
 
     q = '(%s) AND %s' % (' OR '.join(queries), datelim)
@@ -756,7 +841,9 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
             logger.debug('Ignoring result (not old revision): %s', lsub.full_subject)
             continue
         if direction < 0 and wantvers and lsub.revision not in wantvers:
-            logger.debug('Ignoring result (not revision we want): %s', lsub.full_subject)
+            logger.debug(
+                'Ignoring result (not revision we want): %s', lsub.full_subject
+            )
             continue
 
         if lsub.revision == 1 and lsub.revision == latest_revision:
@@ -768,9 +855,15 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
                 # It's *probably* an older revision.
                 logger.debug('Likely an older revision: %s', lsub.full_subject)
         elif direction > 0 and lsub.revision > latest_revision:
-            logger.debug('Definitely a new revision [v%s]: %s', lsub.revision, lsub.full_subject)
+            logger.debug(
+                'Definitely a new revision [v%s]: %s', lsub.revision, lsub.full_subject
+            )
         elif direction < 0 and lsub.revision < latest_revision:
-            logger.debug('Definitely an older revision [v%s]: %s', lsub.revision, lsub.full_subject)
+            logger.debug(
+                'Definitely an older revision [v%s]: %s',
+                lsub.revision,
+                lsub.full_subject,
+            )
         else:
             logger.debug('No idea what this is: %s', lsub.subject)
             continue
@@ -793,7 +886,9 @@ def get_extra_series(msgs: List[EmailMessage], direction: int = 1, wantvers: Opt
             if not payload:
                 continue
             for cid in change_ids:
-                if re.search(rf'^change-id:\s*{re.escape(cid)}\s*$', payload, flags=re.I | re.M):
+                if re.search(
+                    rf'^change-id:\s*{re.escape(cid)}\s*$', payload, flags=re.I | re.M
+                ):
                     lsub = b4.LoreSubject(q_msg.get('Subject', ''))
                     valid_revisions.add(lsub.revision)
                     break
@@ -855,13 +950,13 @@ def refetch(dest: str) -> None:
 def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
     # We go through each message and minimize headers and body content
     wanthdrs = {
-                'From',
-                'Subject',
-                'Date',
-                'Message-ID',
-                'Reply-To',
-                'In-Reply-To',
-                }
+        'From',
+        'Subject',
+        'Date',
+        'Message-ID',
+        'Reply-To',
+        'In-Reply-To',
+    }
     mmsgs = list()
     for msg in msgs:
         mmsg = EmailMessage()
@@ -877,7 +972,7 @@ def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
             chunks: List[Tuple[bool, List[str]]] = list()
             chunk: List[str] = list()
             current = None
-            for line in (cmsg.rstrip().splitlines()):
+            for line in cmsg.rstrip().splitlines():
                 quoted = line.startswith('>') and True or False
                 if current is None:
                     current = quoted
@@ -922,8 +1017,9 @@ def minimize_thread(msgs: List[EmailMessage]) -> List[EmailMessage]:
     return mmsgs
 
 
-def _start_merge_resolve(topdir: str, cex: b4.AmConflictError,
-                          common_dir: str, state: Dict[str, Any]) -> None:
+def _start_merge_resolve(
+    topdir: str, cex: b4.AmConflictError, common_dir: str, state: Dict[str, Any]
+) -> None:
     gwt = cex.worktree_path
     logger.critical('---')
     logger.critical(cex.output)
@@ -931,8 +1027,9 @@ def _start_merge_resolve(topdir: str, cex: b4.AmConflictError,
     logger.critical('Patch series did not apply cleanly, resolving...')
 
     # Find rebase-apply in the worktree
-    ecode, gitdir = b4.git_run_command(gwt, ['rev-parse', '--git-dir'],
-                                        logstderr=True, rundir=gwt)
+    ecode, gitdir = b4.git_run_command(
+        gwt, ['rev-parse', '--git-dir'], logstderr=True, rundir=gwt
+    )
     if ecode > 0:
         logger.critical('Unable to find git directory in worktree')
         b4.git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
@@ -1011,8 +1108,12 @@ def _start_merge_resolve(topdir: str, cex: b4.AmConflictError,
 
     # Start merge of successfully applied patches
     logger.info('Merging successfully applied patches into your branch...')
-    ecode, out = b4.git_run_command(topdir, ['merge', '--no-ff', '--no-commit', 'FETCH_HEAD'],
-                                     logstderr=True, rundir=topdir)
+    ecode, out = b4.git_run_command(
+        topdir,
+        ['merge', '--no-ff', '--no-commit', 'FETCH_HEAD'],
+        logstderr=True,
+        rundir=topdir,
+    )
 
     if ecode > 0:
         logger.warning('Merge had conflicts:')
@@ -1026,8 +1127,13 @@ def _start_merge_resolve(topdir: str, cex: b4.AmConflictError,
     sys.exit(0)
 
 
-def _apply_remaining_patches(topdir: str, patches_dir: str, state: Dict[str, Any],
-                              state_file: str, common_dir: str) -> None:
+def _apply_remaining_patches(
+    topdir: str,
+    patches_dir: str,
+    state: Dict[str, Any],
+    state_file: str,
+    common_dir: str,
+) -> None:
     with open(os.path.join(patches_dir, 'total'), 'r') as fh:
         total = int(fh.read().strip())
     with open(os.path.join(patches_dir, 'current'), 'r') as fh:
@@ -1043,14 +1149,19 @@ def _apply_remaining_patches(topdir: str, patches_dir: str, state: Dict[str, Any
             patch_data = fh.read()
 
         logger.info('Applying remaining patch %d/%d...', current + 1, total)
-        ecode, out = b4.git_run_command(topdir, ['apply', '--3way'],
-                                         stdin=patch_data, logstderr=True, rundir=topdir)
+        ecode, out = b4.git_run_command(
+            topdir, ['apply', '--3way'], stdin=patch_data, logstderr=True, rundir=topdir
+        )
         if ecode > 0:
             logger.critical('---')
             logger.critical(out.strip())
             logger.critical('---')
-            logger.critical('Remaining patch %d/%d did not apply cleanly.', current + 1, total)
-            logger.critical('Resolve conflicts in your working tree, then run: b4 shazam --continue')
+            logger.critical(
+                'Remaining patch %d/%d did not apply cleanly.', current + 1, total
+            )
+            logger.critical(
+                'Resolve conflicts in your working tree, then run: b4 shazam --continue'
+            )
             logger.critical('To abort: b4 shazam --abort')
             # Advance past this patch, its changes (with conflict markers) are in the tree
             with open(os.path.join(patches_dir, 'current'), 'w') as fh:
@@ -1067,8 +1178,13 @@ def _apply_remaining_patches(topdir: str, patches_dir: str, state: Dict[str, Any
     _finish_shazam_merge(topdir, state, state_file, common_dir, patches_dir)
 
 
-def _finish_shazam_merge(topdir: str, state: Dict[str, Any], state_file: str,
-                          common_dir: str, patches_dir: str) -> None:
+def _finish_shazam_merge(
+    topdir: str,
+    state: Dict[str, Any],
+    state_file: str,
+    common_dir: str,
+    patches_dir: str,
+) -> None:
     b4.git_run_command(topdir, ['add', '-u'], logstderr=True, rundir=topdir)
 
     gitargs = ['rev-parse', '--git-dir']
@@ -1101,7 +1217,9 @@ def _finish_shazam_merge(topdir: str, state: Dict[str, Any], state_file: str,
         commitargs.extend(list(sp))
     if no_interactive:
         commitargs.append('--no-edit')
-        ecode, out = b4.git_run_command(topdir, commitargs, logstderr=True, rundir=topdir)
+        ecode, out = b4.git_run_command(
+            topdir, commitargs, logstderr=True, rundir=topdir
+        )
         if ecode > 0:
             logger.critical('Failed to commit merge:')
             logger.critical(out.strip())
@@ -1123,7 +1241,9 @@ def _finish_shazam_merge(topdir: str, state: Dict[str, Any], state_file: str,
     logger.info('Merge completed successfully.')
 
 
-def _load_shazam_state(require_state: bool = True) -> Tuple[str, str, str, Optional[Dict[str, Any]]]:
+def _load_shazam_state(
+    require_state: bool = True,
+) -> Tuple[str, str, str, Optional[Dict[str, Any]]]:
     topdir = b4.git_get_toplevel()
     if not topdir:
         logger.critical('Could not figure out where your git dir is.')
@@ -1159,8 +1279,12 @@ def shazam_continue(cmdargs: argparse.Namespace) -> None:
     b4.git_run_command(topdir, ['add', '-u'], logstderr=True, rundir=topdir)
 
     # Check for remaining unmerged files
-    _ecode, unmerged = b4.git_run_command(topdir, ['diff', '--name-only', '--diff-filter=U'],
-                                          logstderr=True, rundir=topdir)
+    _ecode, unmerged = b4.git_run_command(
+        topdir,
+        ['diff', '--name-only', '--diff-filter=U'],
+        logstderr=True,
+        rundir=topdir,
+    )
     if unmerged.strip():
         logger.critical('There are still unresolved conflicts:')
         logger.critical(unmerged.strip())

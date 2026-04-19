@@ -109,11 +109,11 @@ def get_thread_msgs(
 
 # Per-patch state indicators — same glyphs as _tracking_app._STATUS_SYMBOLS
 PATCH_STATE_MARKERS: Dict[str, str] = {
-    '':          ' ',
-    'external':  '\u00b1',  # ± plus-minus    (= external comments available)
-    'draft':     '\u270e',  # ✎ pencil        (= maintainer reviewing)
-    'done':      '\u2713',  # ✓ check         (= done)
-    'skip':      '\u2715',  # ✕ cross         (= skipped)
+    '': ' ',
+    'external': '\u00b1',  # ± plus-minus    (= external comments available)
+    'draft': '\u270e',  # ✎ pencil        (= maintainer reviewing)
+    'done': '\u2713',  # ✓ check         (= done)
+    'skip': '\u2715',  # ✕ cross         (= skipped)
     'unchanged': '\u2261',  # ≡ identical-to  (= patch unchanged from prior revision)
 }
 
@@ -124,8 +124,6 @@ CI_CHECK_LABELS = {
     'warning': '\u25cf warning',
     'fail': '\u25cf FAIL',
 }
-
-
 
 
 class CheckRunnerMixin:
@@ -165,31 +163,44 @@ class CheckRunnerMixin:
             self.notify('No message-id for this series', severity='error')  # type: ignore[attr-defined]
             return
         from b4.review_tui._modals import CheckLoadingScreen
+
         self._check_loading = CheckLoadingScreen()
         self.push_screen(self._check_loading)  # type: ignore[attr-defined]
         self.run_worker(  # type: ignore[attr-defined]
-            lambda: self._fetch_and_check(message_id, series_subject,
-                                          change_id=change_id, force=force),
-            name='_check_worker', thread=True)
+            lambda: self._fetch_and_check(
+                message_id, series_subject, change_id=change_id, force=force
+            ),
+            name='_check_worker',
+            thread=True,
+        )
 
     def _dismiss_loading(self, msg: str = '', severity: str = '') -> None:
         """Dismiss the check loading screen and optionally notify."""
+
         def _do() -> None:
             if self._check_loading is not None and self._check_loading.is_attached:
                 self._check_loading.dismiss(None)
             if msg:
                 self.notify(msg, severity=severity)  # type: ignore[attr-defined]
+
         self.app.call_from_thread(_do)  # type: ignore[attr-defined]
 
     def _update_loading(self, text: str) -> None:
         """Update the loading screen status text."""
+
         def _do() -> None:
             if self._check_loading is not None and self._check_loading.is_attached:
                 self._check_loading.update_status(text)
+
         self.app.call_from_thread(_do)  # type: ignore[attr-defined]
 
-    def _fetch_and_check(self, message_id: str, series_subject: str,
-                         change_id: str = '', force: bool = False) -> None:
+    def _fetch_and_check(
+        self,
+        message_id: str,
+        series_subject: str,
+        change_id: str = '',
+        force: bool = False,
+    ) -> None:
         """Fetch thread, run checks, and push results modal (worker thread)."""
         import b4.review.checks as checks
         from b4.review_tui._modals import TrackingCheckResultsScreen
@@ -219,7 +230,9 @@ class CheckRunnerMixin:
             try:
                 _cover, tracking = b4.review.load_tracking(topdir, review_branch)
                 blob_sha = tracking.get('series', {}).get('thread-blob', '')
-                fd, tracking_file = tempfile.mkstemp(prefix='b4-tracking-', suffix='.json')
+                fd, tracking_file = tempfile.mkstemp(
+                    prefix='b4-tracking-', suffix='.json'
+                )
                 with os.fdopen(fd, 'w') as fp:
                     json.dump(tracking, fp, indent=2)
                 extra_env['B4_TRACKING_FILE'] = tracking_file
@@ -229,8 +242,7 @@ class CheckRunnerMixin:
         # Fetch the thread (local blob first, then lore)
         self._update_loading('Loading thread\u2026')
         with _quiet_worker():
-            msgs = get_thread_msgs(topdir, message_id,
-                                   blob_sha=blob_sha, quiet=True)
+            msgs = get_thread_msgs(topdir, message_id, blob_sha=blob_sha, quiet=True)
         if not msgs:
             self._dismiss_loading('Could not fetch thread from lore', 'error')
             return
@@ -272,7 +284,9 @@ class CheckRunnerMixin:
         ordered_msgs: List[Tuple[str, email.message.EmailMessage]] = []
         if cover_msg:
             patch_labels.append(f'0/{num_patches}')
-            patch_subjects.append(b4.LoreSubject(cover_msg[1].get('subject', '')).subject)
+            patch_subjects.append(
+                b4.LoreSubject(cover_msg[1].get('subject', '')).subject
+            )
             ordered_msgs.append(cover_msg)
         for idx, (mid, msg) in enumerate(patches, 1):
             patch_labels.append(f'{idx}/{num_patches}')
@@ -313,8 +327,13 @@ class CheckRunnerMixin:
                 label = patch_labels[pidx]
                 self._update_loading(f'Running checks\u2026 {label}')
                 single_results = checks.run_perpatch_checks(
-                    [(mid, _msg)], perpatch_cmds, topdir, pwkey, pwurl,
-                    extra_env=extra_env)
+                    [(mid, _msg)],
+                    perpatch_cmds,
+                    topdir,
+                    pwkey,
+                    pwurl,
+                    extra_env=extra_env,
+                )
                 for result in single_results.get(mid, []):
                     tool = result['tool']
                     all_tools.add(tool)
@@ -323,12 +342,14 @@ class CheckRunnerMixin:
 
         # Run per-series checks (only if not cached)
         if series_cmds:
-            target = cover_msg if cover_msg else (ordered_msgs[0] if ordered_msgs else None)
+            target = (
+                cover_msg if cover_msg else (ordered_msgs[0] if ordered_msgs else None)
+            )
             if target and target[0] not in cached:
                 self._update_loading('Running series checks\u2026')
                 series_results = checks.run_series_checks(
-                    target, series_cmds, topdir, pwkey, pwurl,
-                    extra_env=extra_env)
+                    target, series_cmds, topdir, pwkey, pwurl, extra_env=extra_env
+                )
                 cover_idx = 0
                 for result in series_results:
                     tool = result['tool']
@@ -359,9 +380,12 @@ class CheckRunnerMixin:
         def _push_modal() -> None:
             if self._check_loading is not None and self._check_loading.is_attached:
                 self._check_loading.dismiss(None)
-            self.push_screen(TrackingCheckResultsScreen(  # type: ignore[attr-defined]
-                title, patch_labels, patch_subjects, tools_sorted, matrix),
-                callback=_on_result)
+            self.push_screen(  # type: ignore[attr-defined]
+                TrackingCheckResultsScreen(
+                    title, patch_labels, patch_subjects, tools_sorted, matrix
+                ),
+                callback=_on_result,
+            )
 
         self.app.call_from_thread(_push_modal)  # type: ignore[attr-defined]
 
@@ -391,7 +415,10 @@ def _make_initials(name: str) -> str:
 def _has_review_data(reviews: Dict[str, Dict[str, Any]]) -> bool:
     """Return True if any reviewer has trailers, reply, comments, or a note."""
     return any(
-        r.get('trailers') or r.get('reply', '') or r.get('comments') or r.get('note', '')
+        r.get('trailers')
+        or r.get('reply', '')
+        or r.get('comments')
+        or r.get('note', '')
         for r in reviews.values()
     )
 
@@ -423,11 +450,13 @@ def _strip_attribution(body: str) -> str:
     if attr_end is None:
         return body
     # Check that the next non-blank line starts with '>'
-    for ln in lines[attr_end + 1:]:
+    for ln in lines[attr_end + 1 :]:
         if ln.strip():
             if ln.startswith('> ') or ln.strip() == '>':
-                remaining = lines[attr_end + 1:]
-                while remaining and (not remaining[0].strip() or remaining[0].strip() == '>'):
+                remaining = lines[attr_end + 1 :]
+                while remaining and (
+                    not remaining[0].strip() or remaining[0].strip() == '>'
+                ):
                     remaining.pop(0)
                 return '\n'.join(remaining)
             break
@@ -452,10 +481,17 @@ def _write_followup_comments(
     """
     if not fc_list:
         return
-    rev_palette = reviewer_colours(ts) if ts else [
-        'dark_goldenrod', 'dark_cyan',
-        'dark_magenta', 'dark_red', 'dark_blue',
-    ]
+    rev_palette = (
+        reviewer_colours(ts)
+        if ts
+        else [
+            'dark_goldenrod',
+            'dark_cyan',
+            'dark_magenta',
+            'dark_red',
+            'dark_blue',
+        ]
+    )
     fc_emails = sorted({e['fromemail'] for e in fc_list})
     colour_map: Dict[str, str] = {}
     for ci, em in enumerate(fc_emails):
@@ -473,7 +509,9 @@ def _write_followup_comments(
         body = _strip_attribution(e['body'])
         body_text = Text()
         body_text.append(f'From:  {fromname} <{e["fromemail"]}>\n', style='bold')
-        body_text.append(f'Date:  {e["date"].strftime("%Y-%m-%d %H:%M %z")}\n', style='bold')
+        body_text.append(
+            f'Date:  {e["date"].strftime("%Y-%m-%d %H:%M %z")}\n', style='bold'
+        )
         if msgid := e.get('msgid', ''):
             body_text.append(f'Msgid: <{msgid}>\n', style='bold')
         body_text.append('\n')
@@ -590,7 +628,7 @@ def _write_comments(
     the same diff line are rendered as separate panels.
     *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
-    bg = f"on {ts['panel']}" if ts else 'on grey11'
+    bg = f'on {ts["panel"]}' if ts else 'on grey11'
     for name, colour, text in entries:
         panel = Panel(
             Text(text),
@@ -648,7 +686,8 @@ def _write_followup_trailers(
 
 
 def _write_diff_line(
-    viewer: 'RichLog', line: str,
+    viewer: 'RichLog',
+    line: str,
     ts: Optional[Dict[str, str]] = None,
 ) -> None:
     """Write a single diff line to a RichLog with appropriate colouring.
@@ -658,7 +697,7 @@ def _write_diff_line(
     if line.startswith(('diff --git ', '--- ', '+++ ')):
         viewer.write(Text(line, style='bold'))
     elif line.startswith('@@'):
-        viewer.write(Text(line, style=f"bold {ts['accent']}" if ts else 'bold cyan'))
+        viewer.write(Text(line, style=f'bold {ts["accent"]}' if ts else 'bold cyan'))
     elif line.startswith('+'):
         viewer.write(Text(line, style=ts['success'] if ts else 'green'))
     elif line.startswith('-'):
@@ -668,7 +707,8 @@ def _write_diff_line(
 
 
 def _render_email_to_viewer(
-    viewer: 'RichLog', msg: email.message.EmailMessage,
+    viewer: 'RichLog',
+    msg: email.message.EmailMessage,
     ts: Optional[Dict[str, str]] = None,
 ) -> None:
     """Render an EmailMessage into a RichLog, headers first then body.
@@ -684,14 +724,15 @@ def _render_email_to_viewer(
             continue
         val = str(val)
         if hdr.lower() in ('to', 'cc'):
-            wrapped = b4.LoreMessage.wrap_header(
-                (hdr, val), transform='decode').decode(errors='replace')
+            wrapped = b4.LoreMessage.wrap_header((hdr, val), transform='decode').decode(
+                errors='replace'
+            )
             first_line, *rest = wrapped.splitlines()
             colon = first_line.find(':')
             hdr_text = Text()
             if colon >= 0:
-                hdr_text.append(first_line[:colon + 1], style='bold')
-                hdr_text.append(first_line[colon + 1:])
+                hdr_text.append(first_line[: colon + 1], style='bold')
+                hdr_text.append(first_line[colon + 1 :])
             else:
                 hdr_text.append(first_line)
             for r in rest:
@@ -705,10 +746,14 @@ def _render_email_to_viewer(
             viewer.write(hdr_text)
     viewer.write('')
     payload = msg.get_payload(decode=True)
-    body = payload.decode(errors='replace') if isinstance(payload, bytes) else str(payload or '')
+    body = (
+        payload.decode(errors='replace')
+        if isinstance(payload, bytes)
+        else str(payload or '')
+    )
     for line in body.splitlines():
         if line.startswith('>'):
-            viewer.write(Text(line, style=f"dim {ts['accent']}" if ts else 'dim cyan'))
+            viewer.write(Text(line, style=f'dim {ts["accent"]}' if ts else 'dim cyan'))
         elif line.startswith('---'):
             viewer.write(Text(line, style='dim'))
         else:
@@ -764,9 +809,11 @@ def gather_attestation_info(lser: b4.LoreSeries) -> Dict[str, Any]:
                 check_at = 'HEAD'
 
             try:
-                apply_checked, mismatches = lser.check_applies_clean(topdir, at=check_at)
+                apply_checked, mismatches = lser.check_applies_clean(
+                    topdir, at=check_at
+                )
                 apply_mismatches = len(mismatches)
-                applies_clean = (apply_mismatches == 0)
+                applies_clean = apply_mismatches == 0
             except Exception:
                 pass
 
@@ -802,15 +849,25 @@ def gather_attestation_info(lser: b4.LoreSeries) -> Dict[str, Any]:
         patch_idx = f'{idx:0{width}d}/{total:0{width}d}'
 
         if lmsg is None:
-            per_patch.append({
-                'index': patch_idx,
-                'passing': False,
-                'attestations': [{'status': 'missing', 'identity': 'Patch not available', 'passing': False}],
-            })
+            per_patch.append(
+                {
+                    'index': patch_idx,
+                    'passing': False,
+                    'attestations': [
+                        {
+                            'status': 'missing',
+                            'identity': 'Patch not available',
+                            'passing': False,
+                        }
+                    ],
+                }
+            )
             same_attestation = False
             continue
 
-        attestations, overall_passing, critical = lmsg.get_attestation_status(attpolicy, maxdays)
+        attestations, overall_passing, critical = lmsg.get_attestation_status(
+            attpolicy, maxdays
+        )
         if critical:
             any_critical = True
 
@@ -826,11 +883,13 @@ def gather_attestation_info(lser: b4.LoreSeries) -> Dict[str, Any]:
             if ref_ids != cur_ids:
                 same_attestation = False
 
-        per_patch.append({
-            'index': patch_idx,
-            'passing': overall_passing,
-            'attestations': attestations,
-        })
+        per_patch.append(
+            {
+                'index': patch_idx,
+                'passing': overall_passing,
+                'attestations': attestations,
+            }
+        )
 
     return {
         'total': len(per_patch),
@@ -845,5 +904,3 @@ def gather_attestation_info(lser: b4.LoreSeries) -> Dict[str, Any]:
         'apply_checked': apply_checked,
         'apply_mismatches': apply_mismatches,
     }
-
-

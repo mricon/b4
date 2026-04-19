@@ -4,6 +4,7 @@
 # Copyright (C) 2024 by the Linux Foundation
 #
 """Shared TUI utilities for b4 Textual apps."""
+
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.utils
@@ -108,15 +109,14 @@ def ci_styles(ts: Dict[str, str]) -> Dict[str, str]:
         'pending': 'dim',
         'success': ts['success'],
         'warning': ts['warning'],
-        'fail': f"bold {ts['error']}",
+        'fail': f'bold {ts["error"]}',
     }
 
 
 def ci_markup(ts: Dict[str, str]) -> Dict[str, str]:
     """Return CI dot markup strings from a resolved theme dict."""
     return {
-        state: f'[{style}]\u25cf[/{style}]'
-        for state, style in ci_styles(ts).items()
+        state: f'[{style}]\u25cf[/{style}]' for state, style in ci_styles(ts).items()
     }
 
 
@@ -126,7 +126,7 @@ def ci_check_styles(ts: Dict[str, str]) -> Dict[str, str]:
         'pending': 'dim',
         'success': ts['success'],
         'warning': ts['warning'],
-        'fail': f"bold {ts['error']}",
+        'fail': f'bold {ts["error"]}',
     }
 
 
@@ -136,7 +136,7 @@ def reviewer_colours(ts: Dict[str, str]) -> List[str]:
     Index 0 is always the current user; the rest cycle for others.
     """
     return [
-        ts['warning'],      # index 0: current user (warm/distinct)
+        ts['warning'],  # index 0: current user (warm/distinct)
         ts['accent'],
         ts['secondary'],
         ts['error'],
@@ -189,7 +189,9 @@ def _suspend_to_shell(hint: str = 'b4', cwd: Optional[str] = None) -> None:
     is set so the user can incorporate it into their own prompt.
     """
     logger.info('---')
-    logger.info('You are now in shell mode. You can execute git commands or run checks.')
+    logger.info(
+        'You are now in shell mode. You can execute git commands or run checks.'
+    )
     logger.info('Cosmetic commit edits (reword subjects, fix trailers) are fine;')
     logger.info('b4 will reconcile tracking data when you return.')
     logger.info('Do NOT add, remove, squash, or reorder commits.')
@@ -205,8 +207,9 @@ def _suspend_to_shell(hint: str = 'b4', cwd: Optional[str] = None) -> None:
         bashrc = os.path.expanduser('~/.bashrc')
         source = f'[ -f {bashrc} ] && . {bashrc}\n'
         source += f'PS1="({hint}) $PS1"\n'
-        with tempfile.NamedTemporaryFile(mode='w', prefix='b4-shell-',
-                                         suffix='.sh', delete=False) as rcf:
+        with tempfile.NamedTemporaryFile(
+            mode='w', prefix='b4-shell-', suffix='.sh', delete=False
+        ) as rcf:
             rcf.write(source)
             rcfile = rcf.name
         try:

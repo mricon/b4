@@ -10,28 +10,71 @@ import b4.command
 import b4.mbox
 
 
-@pytest.mark.parametrize('mboxf, shazamargs, compareargs, compareout, b4cfg', [
-    ('shazam-git1-just-series', [],
-     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-defaults', {}),
-    ('shazam-git1-just-series', ['-H'],
-     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD..FETCH_HEAD'], 'shazam-git1-just-series-defaults', {}),
-    ('shazam-git1-just-series', ['-M'],
-     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD^..'], 'shazam-git1-just-series-merged', {}),
-    # --add-link: Link: trailers are appended to each patch
-    ('shazam-git1-just-series', ['--add-link'],
-     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-addlink', {}),
-    # --add-link with pre-existing Link: in patch bodies: no duplicates
-    ('shazam-git1-with-link', ['--add-link'],
-     ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'], 'shazam-git1-just-series-addlink', {}),
-])
-def test_shazam(sampledir: str, gitdir: str, mboxf: str, shazamargs: List[str], compareargs: List[str], compareout: str, b4cfg: Dict[str, Any]) -> None:
+@pytest.mark.parametrize(
+    'mboxf, shazamargs, compareargs, compareout, b4cfg',
+    [
+        (
+            'shazam-git1-just-series',
+            [],
+            ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'],
+            'shazam-git1-just-series-defaults',
+            {},
+        ),
+        (
+            'shazam-git1-just-series',
+            ['-H'],
+            ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD..FETCH_HEAD'],
+            'shazam-git1-just-series-defaults',
+            {},
+        ),
+        (
+            'shazam-git1-just-series',
+            ['-M'],
+            ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD^..'],
+            'shazam-git1-just-series-merged',
+            {},
+        ),
+        # --add-link: Link: trailers are appended to each patch
+        (
+            'shazam-git1-just-series',
+            ['--add-link'],
+            ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'],
+            'shazam-git1-just-series-addlink',
+            {},
+        ),
+        # --add-link with pre-existing Link: in patch bodies: no duplicates
+        (
+            'shazam-git1-with-link',
+            ['--add-link'],
+            ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD~4..'],
+            'shazam-git1-just-series-addlink',
+            {},
+        ),
+    ],
+)
+def test_shazam(
+    sampledir: str,
+    gitdir: str,
+    mboxf: str,
+    shazamargs: List[str],
+    compareargs: List[str],
+    compareout: str,
+    b4cfg: Dict[str, Any],
+) -> None:
     b4.MAIN_CONFIG.update(b4cfg)
     mfile = os.path.join(sampledir, f'{mboxf}.mbox')
     cfile = os.path.join(sampledir, f'{compareout}.verify')
     assert os.path.exists(mfile)
     assert os.path.exists(cfile)
     parser = b4.command.setup_parser()
-    shazamargs = ['--no-stdin', '--no-interactive', '--offline-mode', 'shazam', '-m', mfile] + shazamargs
+    shazamargs = [
+        '--no-stdin',
+        '--no-interactive',
+        '--offline-mode',
+        'shazam',
+        '-m',
+        mfile,
+    ] + shazamargs
     cmdargs = parser.parse_args(shazamargs)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
@@ -43,8 +86,9 @@ def test_shazam(sampledir: str, gitdir: str, mboxf: str, shazamargs: List[str], 
     assert logstr == cstr
 
 
-def _make_msg(subject: str, from_addr: str, date: str,
-              body: str = '', msgid: str = '') -> EmailMessage:
+def _make_msg(
+    subject: str, from_addr: str, date: str, body: str = '', msgid: str = ''
+) -> EmailMessage:
     msg = EmailMessage()
     msg['Subject'] = subject
     msg['From'] = from_addr
@@ -129,10 +173,7 @@ def test_get_extra_series_accepts_matching_change_id() -> None:
         '[PATCH v2 0/2] foo: fix bar syntax',
         'Author <author@example.com>',
         'Fri, 03 Jan 2026 10:00:00 +0000',
-        body=(
-            'v2: split into two patches.\n\n'
-            f'change-id: {change_id}\n'
-        ),
+        body=(f'v2: split into two patches.\n\nchange-id: {change_id}\n'),
         msgid='<v2-cover@example.com>',
     )
     v2_patches = [

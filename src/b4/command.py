@@ -16,134 +16,263 @@ logger = b4.logger
 
 
 def cmd_retrieval_common_opts(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument('msgid', nargs='?',
-                    help='Message ID to process, or pipe a raw message')
-    sp.add_argument('-m', '--use-local-mbox', dest='localmbox', default=None,
-                    help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)')
-    sp.add_argument('--stdin-pipe-sep',
-                    help='When accepting messages on stdin, split using this pipe separator string')
-    sp.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
-                    help='Do not use local cache')
-    sp.add_argument('--single-message', dest='singlemsg', action='store_true', default=False,
-                    help='Only retrieve the message matching the msgid and ignore the rest of the thread')
-    sp.add_argument('--rethread', nargs='+', metavar='MSGID', default=None,
-                    help='Rethread multiple unrelated messages into a single series '
-                         '(pass - to read message IDs from stdin, one per line)')
+    sp.add_argument(
+        'msgid', nargs='?', help='Message ID to process, or pipe a raw message'
+    )
+    sp.add_argument(
+        '-m',
+        '--use-local-mbox',
+        dest='localmbox',
+        default=None,
+        help='Instead of grabbing a thread from lore, process this mbox file (or - for stdin)',
+    )
+    sp.add_argument(
+        '--stdin-pipe-sep',
+        help='When accepting messages on stdin, split using this pipe separator string',
+    )
+    sp.add_argument(
+        '-C',
+        '--no-cache',
+        dest='nocache',
+        action='store_true',
+        default=False,
+        help='Do not use local cache',
+    )
+    sp.add_argument(
+        '--single-message',
+        dest='singlemsg',
+        action='store_true',
+        default=False,
+        help='Only retrieve the message matching the msgid and ignore the rest of the thread',
+    )
+    sp.add_argument(
+        '--rethread',
+        nargs='+',
+        metavar='MSGID',
+        default=None,
+        help='Rethread multiple unrelated messages into a single series '
+        '(pass - to read message IDs from stdin, one per line)',
+    )
 
 
 def cmd_mbox_common_opts(sp: argparse.ArgumentParser) -> None:
     cmd_retrieval_common_opts(sp)
-    sp.add_argument('-o', '--outdir', default='.',
-                    help='Output into this directory (or use - to output mailbox contents to stdout)')
-    sp.add_argument('-c', '--check-newer-revisions', dest='checknewer', action='store_true', default=False,
-                    help='Check if newer patch revisions exist')
-    sp.add_argument('-n', '--mbox-name', dest='wantname', default=None,
-                    help='Filename to name the mbox destination')
-    sp.add_argument('-M', '--save-as-maildir', dest='maildir', action='store_true', default=False,
-                    help='Save as maildir (avoids mbox format ambiguities)')
+    sp.add_argument(
+        '-o',
+        '--outdir',
+        default='.',
+        help='Output into this directory (or use - to output mailbox contents to stdout)',
+    )
+    sp.add_argument(
+        '-c',
+        '--check-newer-revisions',
+        dest='checknewer',
+        action='store_true',
+        default=False,
+        help='Check if newer patch revisions exist',
+    )
+    sp.add_argument(
+        '-n',
+        '--mbox-name',
+        dest='wantname',
+        default=None,
+        help='Filename to name the mbox destination',
+    )
+    sp.add_argument(
+        '-M',
+        '--save-as-maildir',
+        dest='maildir',
+        action='store_true',
+        default=False,
+        help='Save as maildir (avoids mbox format ambiguities)',
+    )
 
 
 def cmd_am_common_opts(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument('-v', '--use-version', dest='wantver', type=int, default=None,
-                    help='Get a specific version of the patch/series')
-    sp.add_argument('-t', '--apply-cover-trailers', dest='covertrailers', action='store_true', default=False,
-                    help='(This is now the default behavior; this option will be removed in the future.)')
-    sp.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
-                    help='Apply trailers without email address match checking')
-    sp.add_argument('-T', '--no-add-trailers', dest='noaddtrailers', action='store_true', default=False,
-                    help='Do not add any trailers from follow-up messages')
-    sp.add_argument('-s', '--add-my-sob', dest='addmysob', action='store_true', default=False,
-                    help='Add your own signed-off-by to every patch')
-    sp.add_argument('-P', '--cherry-pick', dest='cherrypick', default=None,
-                    help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
-                         '"-P _" to use just the msgid specified, or '
-                         '"-P *globbing*" to match on commit subject)')
-    sp.add_argument('-k', '--check', action='store_true', default=False,
-                    help='Run local checks for every patch (e.g. checkpatch)')
-    sp.add_argument('--cc-trailers', dest='copyccs', action='store_true', default=False,
-                    help='Copy all Cc\'d addresses into Cc: trailers')
-    sp.add_argument('--no-parent', dest='noparent', action='store_true', default=False,
-                    help='Break thread at the msgid specified and ignore any parent messages')
-    sp.add_argument('--allow-unicode-control-chars', dest='allowbadchars', action='store_true', default=False,
-                    help='Allow unicode control characters (very rarely legitimate)')
+    sp.add_argument(
+        '-v',
+        '--use-version',
+        dest='wantver',
+        type=int,
+        default=None,
+        help='Get a specific version of the patch/series',
+    )
+    sp.add_argument(
+        '-t',
+        '--apply-cover-trailers',
+        dest='covertrailers',
+        action='store_true',
+        default=False,
+        help='(This is now the default behavior; this option will be removed in the future.)',
+    )
+    sp.add_argument(
+        '-S',
+        '--sloppy-trailers',
+        dest='sloppytrailers',
+        action='store_true',
+        default=False,
+        help='Apply trailers without email address match checking',
+    )
+    sp.add_argument(
+        '-T',
+        '--no-add-trailers',
+        dest='noaddtrailers',
+        action='store_true',
+        default=False,
+        help='Do not add any trailers from follow-up messages',
+    )
+    sp.add_argument(
+        '-s',
+        '--add-my-sob',
+        dest='addmysob',
+        action='store_true',
+        default=False,
+        help='Add your own signed-off-by to every patch',
+    )
+    sp.add_argument(
+        '-P',
+        '--cherry-pick',
+        dest='cherrypick',
+        default=None,
+        help='Cherry-pick a subset of patches (e.g. "-P 1-2,4,6-", '
+        '"-P _" to use just the msgid specified, or '
+        '"-P *globbing*" to match on commit subject)',
+    )
+    sp.add_argument(
+        '-k',
+        '--check',
+        action='store_true',
+        default=False,
+        help='Run local checks for every patch (e.g. checkpatch)',
+    )
+    sp.add_argument(
+        '--cc-trailers',
+        dest='copyccs',
+        action='store_true',
+        default=False,
+        help="Copy all Cc'd addresses into Cc: trailers",
+    )
+    sp.add_argument(
+        '--no-parent',
+        dest='noparent',
+        action='store_true',
+        default=False,
+        help='Break thread at the msgid specified and ignore any parent messages',
+    )
+    sp.add_argument(
+        '--allow-unicode-control-chars',
+        dest='allowbadchars',
+        action='store_true',
+        default=False,
+        help='Allow unicode control characters (very rarely legitimate)',
+    )
     sa_g = sp.add_mutually_exclusive_group()
-    sa_g.add_argument('-l', '--add-link', dest='addlink', action='store_true', default=False,
-                      help='Add a Link: trailer with message-id lookup URL to every patch')
-    sa_g.add_argument('-i', '--add-message-id', dest='addmsgid', action='store_true', default=False,
-                      help='Add a Message-ID: trailer to every patch')
+    sa_g.add_argument(
+        '-l',
+        '--add-link',
+        dest='addlink',
+        action='store_true',
+        default=False,
+        help='Add a Link: trailer with message-id lookup URL to every patch',
+    )
+    sa_g.add_argument(
+        '-i',
+        '--add-message-id',
+        dest='addmsgid',
+        action='store_true',
+        default=False,
+        help='Add a Message-ID: trailer to every patch',
+    )
 
 
 def cmd_mbox(cmdargs: argparse.Namespace) -> None:
     import b4.mbox
+
     b4.mbox.main(cmdargs)
 
 
 def cmd_kr(cmdargs: argparse.Namespace) -> None:
     import b4.kr
+
     b4.kr.main(cmdargs)
 
 
 def cmd_prep(cmdargs: argparse.Namespace) -> None:
     import b4.ez
+
     b4.ez.cmd_prep(cmdargs)
 
 
 def cmd_trailers(cmdargs: argparse.Namespace) -> None:
     import b4.ez
+
     b4.ez.cmd_trailers(cmdargs)
 
 
 def cmd_send(cmdargs: argparse.Namespace) -> None:
     import b4.ez
+
     b4.ez.cmd_send(cmdargs)
 
 
 def cmd_am(cmdargs: argparse.Namespace) -> None:
     import b4.mbox
+
     b4.mbox.main(cmdargs)
 
 
 def cmd_shazam(cmdargs: argparse.Namespace) -> None:
     import b4.mbox
+
     b4.mbox.main(cmdargs)
 
 
 def cmd_review(cmdargs: argparse.Namespace) -> None:
     import b4.review
+
     b4.review.main(cmdargs)
 
 
 def cmd_bugs(cmdargs: argparse.Namespace) -> None:
     import b4.bugs
+
     b4.bugs.main(cmdargs)
 
 
 def cmd_pr(cmdargs: argparse.Namespace) -> None:
     import b4.pr
+
     b4.pr.main(cmdargs)
 
 
 def cmd_ty(cmdargs: argparse.Namespace) -> None:
     import b4.ty
+
     b4.ty.main(cmdargs)
 
 
 def cmd_diff(cmdargs: argparse.Namespace) -> None:
     import b4.diff
+
     b4.diff.main(cmdargs)
 
 
 def cmd_dig(cmdargs: argparse.Namespace) -> None:
     import b4.dig
+
     b4.dig.main(cmdargs)
 
 
 class ConfigOption(argparse.Action):
     """Action class for storing key=value arguments in a dict."""
-    def __call__(self, parser: argparse.ArgumentParser,
-                 namespace: argparse.Namespace,
-                 keyval: Union[str, Sequence[Any], None],
-                 option_string: Optional[str] = None) -> None:
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        keyval: Union[str, Sequence[Any], None],
+        option_string: Optional[str] = None,
+    ) -> None:
         config = getattr(namespace, self.dest, None)
 
         if config is None:
@@ -167,26 +296,55 @@ def setup_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument('--version', action='version', version=b4.__VERSION__)
-    parser.add_argument('-d', '--debug', action='store_true', default=False,
-                        help='Add more debugging info to the output')
-    parser.add_argument('-q', '--quiet', action='store_true', default=False,
-                        help='Output critical information only')
-    parser.add_argument('-n', '--no-interactive', action='store_true', default=False,
-                        help='Do not ask any interactive questions')
-    parser.add_argument('--offline-mode', action='store_true', default=False,
-                        help='Do not perform any network queries')
-    parser.add_argument('--no-stdin', action='store_true', default=False,
-                        help='Disable TTY detection for stdin')
-    parser.add_argument('-c', '--config', metavar='NAME=VALUE', action=ConfigOption,
-                        help='''Set config option NAME to VALUE. Override value
+    parser.add_argument(
+        '-d',
+        '--debug',
+        action='store_true',
+        default=False,
+        help='Add more debugging info to the output',
+    )
+    parser.add_argument(
+        '-q',
+        '--quiet',
+        action='store_true',
+        default=False,
+        help='Output critical information only',
+    )
+    parser.add_argument(
+        '-n',
+        '--no-interactive',
+        action='store_true',
+        default=False,
+        help='Do not ask any interactive questions',
+    )
+    parser.add_argument(
+        '--offline-mode',
+        action='store_true',
+        default=False,
+        help='Do not perform any network queries',
+    )
+    parser.add_argument(
+        '--no-stdin',
+        action='store_true',
+        default=False,
+        help='Disable TTY detection for stdin',
+    )
+    parser.add_argument(
+        '-c',
+        '--config',
+        metavar='NAME=VALUE',
+        action=ConfigOption,
+        help="""Set config option NAME to VALUE. Override value
                         from config files. NAME is in dotted section.key
                         format. Using NAME= and omitting VALUE will set the
                         value to the empty string. Using NAME and omitting
-                        =VALUE will set the value to "true".''')
+                        =VALUE will set the value to "true".""",
+    )
 
     try:
         import shtab
-        shtab.add_argument_to(parser, ["--print-completion"])
+
+        shtab.add_argument_to(parser, ['--print-completion'])
     except ImportError:
         pass
 
@@ -195,333 +353,889 @@ def setup_parser() -> argparse.ArgumentParser:
     # b4 mbox
     sp_mbox = subparsers.add_parser('mbox', help='Download a thread as an mbox file')
     cmd_mbox_common_opts(sp_mbox)
-    sp_mbox.add_argument('-f', '--filter-dupes', dest='filterdupes', action='store_true', default=False,
-                         help='When adding messages to existing maildir, filter out duplicates')
+    sp_mbox.add_argument(
+        '-f',
+        '--filter-dupes',
+        dest='filterdupes',
+        action='store_true',
+        default=False,
+        help='When adding messages to existing maildir, filter out duplicates',
+    )
     sm_g = sp_mbox.add_mutually_exclusive_group()
-    sm_g.add_argument('-r', '--refetch', dest='refetch', metavar='MBOX', default=False,
-                      help='Refetch all messages in specified mbox with their original headers')
-    sm_g.add_argument('--minimize', dest='minimize', action='store_true', default=False,
-                      help='Attempt to generate a minimal thread to simplify review.')
+    sm_g.add_argument(
+        '-r',
+        '--refetch',
+        dest='refetch',
+        metavar='MBOX',
+        default=False,
+        help='Refetch all messages in specified mbox with their original headers',
+    )
+    sm_g.add_argument(
+        '--minimize',
+        dest='minimize',
+        action='store_true',
+        default=False,
+        help='Attempt to generate a minimal thread to simplify review.',
+    )
     sp_mbox.set_defaults(func=cmd_mbox)
 
     # b4 am
-    sp_am = subparsers.add_parser('am', help='Create an mbox file that is ready to git-am')
+    sp_am = subparsers.add_parser(
+        'am', help='Create an mbox file that is ready to git-am'
+    )
     cmd_mbox_common_opts(sp_am)
     cmd_am_common_opts(sp_am)
-    sp_am.add_argument('-Q', '--quilt-ready', dest='quiltready', action='store_true', default=False,
-                       help='Save patches in a quilt-ready folder')
-    sp_am.add_argument('-g', '--guess-base', dest='guessbase', action='store_true', default=False,
-                       help='Try to guess the base of the series (if not specified)')
-    sp_am.add_argument('-b', '--guess-branch', dest='guessbranch', nargs='+', action='extend', type=str, default=None,
-                       help='When guessing base, restrict to this branch (use with -g)')
-    sp_am.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
-                       help='When guessing base, go back this many days from the patch date (default: 2 weeks)')
-    sp_am.add_argument('-3', '--prep-3way', dest='threeway', action='store_true', default=False,
-                       help='Prepare for a 3-way merge '
-                            '(tries to ensure that all index blobs exist by making a fake commit range)')
-    sp_am.add_argument('--no-cover', dest='nocover', action='store_true', default=False,
-                       help='Do not save the cover letter (on by default when using -o -)')
-    sp_am.add_argument('--no-partial-reroll', dest='nopartialreroll', action='store_true', default=False,
-                       help='Do not reroll partial series when detected')
+    sp_am.add_argument(
+        '-Q',
+        '--quilt-ready',
+        dest='quiltready',
+        action='store_true',
+        default=False,
+        help='Save patches in a quilt-ready folder',
+    )
+    sp_am.add_argument(
+        '-g',
+        '--guess-base',
+        dest='guessbase',
+        action='store_true',
+        default=False,
+        help='Try to guess the base of the series (if not specified)',
+    )
+    sp_am.add_argument(
+        '-b',
+        '--guess-branch',
+        dest='guessbranch',
+        nargs='+',
+        action='extend',
+        type=str,
+        default=None,
+        help='When guessing base, restrict to this branch (use with -g)',
+    )
+    sp_am.add_argument(
+        '--guess-lookback',
+        dest='guessdays',
+        type=int,
+        default=21,
+        help='When guessing base, go back this many days from the patch date (default: 2 weeks)',
+    )
+    sp_am.add_argument(
+        '-3',
+        '--prep-3way',
+        dest='threeway',
+        action='store_true',
+        default=False,
+        help='Prepare for a 3-way merge '
+        '(tries to ensure that all index blobs exist by making a fake commit range)',
+    )
+    sp_am.add_argument(
+        '--no-cover',
+        dest='nocover',
+        action='store_true',
+        default=False,
+        help='Do not save the cover letter (on by default when using -o -)',
+    )
+    sp_am.add_argument(
+        '--no-partial-reroll',
+        dest='nopartialreroll',
+        action='store_true',
+        default=False,
+        help='Do not reroll partial series when detected',
+    )
     sp_am.set_defaults(func=cmd_am)
 
     # b4 shazam
-    sp_sh = subparsers.add_parser('shazam', help='Like b4 am, but applies the series to your tree')
+    sp_sh = subparsers.add_parser(
+        'shazam', help='Like b4 am, but applies the series to your tree'
+    )
     cmd_retrieval_common_opts(sp_sh)
     cmd_am_common_opts(sp_sh)
     sh_g = sp_sh.add_mutually_exclusive_group()
-    sh_g.add_argument('-H', '--make-fetch-head', dest='makefetchhead', action='store_true', default=False,
-                      help='Attempt to treat series as a pull request and fetch it into FETCH_HEAD')
-    sh_g.add_argument('-M', '--merge', dest='merge', action='store_true', default=False,
-                      help='Attempt to merge series as if it were a pull request (execs git-merge)')
-    sp_sh.add_argument('--guess-lookback', dest='guessdays', type=int, default=21,
-                       help=('(use with -H or -M) When guessing base, go back this many days from the patch date '
-                             '(default: 3 weeks)'))
-    sp_sh.add_argument('--merge-base', dest='mergebase', type=str, default=None,
-                       help='(use with -H or -M) Force this base when merging')
-    sp_sh.add_argument('--resolve', dest='shazam_resolve', action='store_true', default=False,
-                       help='(use with -H or -M) Enable conflict resolution if patches fail to apply')
-    sp_sh.add_argument('--continue', dest='shazam_continue', action='store_true', default=False,
-                       help='Continue after resolving merge conflicts from --resolve')
-    sp_sh.add_argument('--abort', dest='shazam_abort', action='store_true', default=False,
-                       help='Abort a conflicted shazam and clean up')
+    sh_g.add_argument(
+        '-H',
+        '--make-fetch-head',
+        dest='makefetchhead',
+        action='store_true',
+        default=False,
+        help='Attempt to treat series as a pull request and fetch it into FETCH_HEAD',
+    )
+    sh_g.add_argument(
+        '-M',
+        '--merge',
+        dest='merge',
+        action='store_true',
+        default=False,
+        help='Attempt to merge series as if it were a pull request (execs git-merge)',
+    )
+    sp_sh.add_argument(
+        '--guess-lookback',
+        dest='guessdays',
+        type=int,
+        default=21,
+        help=(
+            '(use with -H or -M) When guessing base, go back this many days from the patch date '
+            '(default: 3 weeks)'
+        ),
+    )
+    sp_sh.add_argument(
+        '--merge-base',
+        dest='mergebase',
+        type=str,
+        default=None,
+        help='(use with -H or -M) Force this base when merging',
+    )
+    sp_sh.add_argument(
+        '--resolve',
+        dest='shazam_resolve',
+        action='store_true',
+        default=False,
+        help='(use with -H or -M) Enable conflict resolution if patches fail to apply',
+    )
+    sp_sh.add_argument(
+        '--continue',
+        dest='shazam_continue',
+        action='store_true',
+        default=False,
+        help='Continue after resolving merge conflicts from --resolve',
+    )
+    sp_sh.add_argument(
+        '--abort',
+        dest='shazam_abort',
+        action='store_true',
+        default=False,
+        help='Abort a conflicted shazam and clean up',
+    )
     sp_sh.set_defaults(func=cmd_shazam)
 
     # b4 review
-    sp_rev = subparsers.add_parser('review', help='Review patch series received on mailing lists')
+    sp_rev = subparsers.add_parser(
+        'review', help='Review patch series received on mailing lists'
+    )
     sp_rev.set_defaults(func=cmd_review)
-    rev_subparsers = sp_rev.add_subparsers(help='review sub-command help', dest='review_subcmd')
+    rev_subparsers = sp_rev.add_subparsers(
+        help='review sub-command help', dest='review_subcmd'
+    )
 
     # b4 review tui
     sp_rev_tui = rev_subparsers.add_parser('tui', help='Browse tracked series in a TUI')
-    sp_rev_tui.add_argument('-i', '--identifier', dest='identifier', default=None,
-                            help='Project identifier (required if not in an enrolled repository)')
-    sp_rev_tui.add_argument('--email-dry-run', dest='email_dryrun', action='store_true', default=False,
-                            help='Show all email dialogs but print messages to stdout instead of sending')
-    sp_rev_tui.add_argument('--no-sign', dest='no_sign', action='store_true', default=False,
-                            help='Do not patatt-sign outgoing review emails')
-    sp_rev_tui.add_argument('--no-mouse', dest='no_mouse', action='store_true', default=False,
-                            help='Disable mouse support in the TUI')
+    sp_rev_tui.add_argument(
+        '-i',
+        '--identifier',
+        dest='identifier',
+        default=None,
+        help='Project identifier (required if not in an enrolled repository)',
+    )
+    sp_rev_tui.add_argument(
+        '--email-dry-run',
+        dest='email_dryrun',
+        action='store_true',
+        default=False,
+        help='Show all email dialogs but print messages to stdout instead of sending',
+    )
+    sp_rev_tui.add_argument(
+        '--no-sign',
+        dest='no_sign',
+        action='store_true',
+        default=False,
+        help='Do not patatt-sign outgoing review emails',
+    )
+    sp_rev_tui.add_argument(
+        '--no-mouse',
+        dest='no_mouse',
+        action='store_true',
+        default=False,
+        help='Disable mouse support in the TUI',
+    )
 
     # b4 review enroll
-    sp_rev_enroll = rev_subparsers.add_parser('enroll', help='Enroll a repository for review tracking')
-    sp_rev_enroll.add_argument('repo_path', nargs='?', default=None,
-                               help='Path to the git repository to enroll (default: current directory)')
-    sp_rev_enroll.add_argument('-i', '--identifier', dest='identifier', default=None,
-                               help='Project identifier (default: repository directory name)')
+    sp_rev_enroll = rev_subparsers.add_parser(
+        'enroll', help='Enroll a repository for review tracking'
+    )
+    sp_rev_enroll.add_argument(
+        'repo_path',
+        nargs='?',
+        default=None,
+        help='Path to the git repository to enroll (default: current directory)',
+    )
+    sp_rev_enroll.add_argument(
+        '-i',
+        '--identifier',
+        dest='identifier',
+        default=None,
+        help='Project identifier (default: repository directory name)',
+    )
 
     # b4 review track
     sp_rev_track = rev_subparsers.add_parser('track', help='Track a series for review')
-    sp_rev_track.add_argument('series_id', nargs='?', default=None,
-                              help='Series identifier (message-id, URL, or change-id); or pipe message to stdin')
-    sp_rev_track.add_argument('-i', '--identifier', dest='identifier', default=None,
-                              help='Project identifier (required if not in an enrolled repository)')
-    sp_rev_track.add_argument('--rethread', nargs='+', metavar='MSGID', default=None,
-                              help='Rethread multiple unrelated messages into a single series for tracking '
-                                   '(pass - to read message IDs from stdin, one per line)')
+    sp_rev_track.add_argument(
+        'series_id',
+        nargs='?',
+        default=None,
+        help='Series identifier (message-id, URL, or change-id); or pipe message to stdin',
+    )
+    sp_rev_track.add_argument(
+        '-i',
+        '--identifier',
+        dest='identifier',
+        default=None,
+        help='Project identifier (required if not in an enrolled repository)',
+    )
+    sp_rev_track.add_argument(
+        '--rethread',
+        nargs='+',
+        metavar='MSGID',
+        default=None,
+        help='Rethread multiple unrelated messages into a single series for tracking '
+        '(pass - to read message IDs from stdin, one per line)',
+    )
 
     # b4 review show-info
-    sp_rev_showinfo = rev_subparsers.add_parser('show-info',
-        help='Show review branch info in a format suitable for scripting')
-    sp_rev_showinfo.add_argument('param', metavar='PARAM', nargs='?',
+    sp_rev_showinfo = rev_subparsers.add_parser(
+        'show-info', help='Show review branch info in a format suitable for scripting'
+    )
+    sp_rev_showinfo.add_argument(
+        'param',
+        metavar='PARAM',
+        nargs='?',
         default=':_all',
-        help='[branch:]key — branch and/or key to display (default: all)')
-    sp_rev_showinfo.add_argument('-l', '--list', dest='list_branches',
-        action='store_true', default=False,
-        help='List all review branches with summary info')
-    sp_rev_showinfo.add_argument('-j', '--json', dest='json_output',
-        action='store_true', default=False,
-        help='Output in JSON format')
-
+        help='[branch:]key — branch and/or key to display (default: all)',
+    )
+    sp_rev_showinfo.add_argument(
+        '-l',
+        '--list',
+        dest='list_branches',
+        action='store_true',
+        default=False,
+        help='List all review branches with summary info',
+    )
+    sp_rev_showinfo.add_argument(
+        '-j',
+        '--json',
+        dest='json_output',
+        action='store_true',
+        default=False,
+        help='Output in JSON format',
+    )
 
     # b4 pr
-    sp_pr = subparsers.add_parser('pr', help='Fetch a pull request found in a message ID')
-    sp_pr.add_argument('-g', '--gitdir', default=None,
-                       help='Operate on this git tree instead of current dir')
-    sp_pr.add_argument('-b', '--branch', default=None,
-                       help='Check out FETCH_HEAD into this branch after fetching')
-    sp_pr.add_argument('-c', '--check', action='store_true', default=False,
-                       help='Check if pull request has already been applied')
-    sp_pr.add_argument('-e', '--explode', action='store_true', default=False,
-                       help='Convert a pull request into an mbox full of patches')
-    sp_pr.add_argument('-o', '--output-mbox', dest='outmbox', default=None,
-                       help='Save exploded messages into this mailbox (default: msgid.mbx)')
-    sp_pr.add_argument('-f', '--from-addr', dest='mailfrom', default=None,
-                       help='Use this From: in exploded messages (use with -e)')
-    sp_pr.add_argument('-s', '--send-as-identity', dest='sendidentity', default=None,
-                       help=('Use git-send-email to send exploded series (use with -e);'
-                             'the identity must match a [sendemail "identity"] config section'))
-    sp_pr.add_argument('--dry-run', dest='dryrun', action='store_true', default=False,
-                       help='Force a --dry-run on git-send-email invocation (use with -s)')
-    sp_pr.add_argument('msgid', nargs='?',
-                       help='Message ID to process, or pipe a raw message')
+    sp_pr = subparsers.add_parser(
+        'pr', help='Fetch a pull request found in a message ID'
+    )
+    sp_pr.add_argument(
+        '-g',
+        '--gitdir',
+        default=None,
+        help='Operate on this git tree instead of current dir',
+    )
+    sp_pr.add_argument(
+        '-b',
+        '--branch',
+        default=None,
+        help='Check out FETCH_HEAD into this branch after fetching',
+    )
+    sp_pr.add_argument(
+        '-c',
+        '--check',
+        action='store_true',
+        default=False,
+        help='Check if pull request has already been applied',
+    )
+    sp_pr.add_argument(
+        '-e',
+        '--explode',
+        action='store_true',
+        default=False,
+        help='Convert a pull request into an mbox full of patches',
+    )
+    sp_pr.add_argument(
+        '-o',
+        '--output-mbox',
+        dest='outmbox',
+        default=None,
+        help='Save exploded messages into this mailbox (default: msgid.mbx)',
+    )
+    sp_pr.add_argument(
+        '-f',
+        '--from-addr',
+        dest='mailfrom',
+        default=None,
+        help='Use this From: in exploded messages (use with -e)',
+    )
+    sp_pr.add_argument(
+        '-s',
+        '--send-as-identity',
+        dest='sendidentity',
+        default=None,
+        help=(
+            'Use git-send-email to send exploded series (use with -e);'
+            'the identity must match a [sendemail "identity"] config section'
+        ),
+    )
+    sp_pr.add_argument(
+        '--dry-run',
+        dest='dryrun',
+        action='store_true',
+        default=False,
+        help='Force a --dry-run on git-send-email invocation (use with -s)',
+    )
+    sp_pr.add_argument(
+        'msgid', nargs='?', help='Message ID to process, or pipe a raw message'
+    )
     sp_pr.set_defaults(func=cmd_pr)
 
     # b4 ty
-    sp_ty = subparsers.add_parser('ty', help='Generate thanks email when something gets merged/applied')
-    sp_ty.add_argument('-g', '--gitdir', default=None,
-                       help='Operate on this git tree instead of current dir')
-    sp_ty.add_argument('-o', '--outdir', default='.',
-                       help='Write thanks files into this dir (default=.)')
-    sp_ty.add_argument('-l', '--list', action='store_true', default=False,
-                       help='List pull requests and patch series you have retrieved')
-    sp_ty.add_argument('-t', '--thank-for', dest='thankfor', default=None,
-                       help='Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")')
-    sp_ty.add_argument('-d', '--discard', default=None,
-                       help='Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")')
-    sp_ty.add_argument('-a', '--auto', action='store_true', default=False,
-                       help='Use the Auto-Thankanator to figure out what got applied/merged')
-    sp_ty.add_argument('-b', '--branch', default=None,
-                       help='The branch to check against, instead of current')
-    sp_ty.add_argument('--since', default='1.week',
-                       help='The --since option to use when auto-matching patches (default=1.week)')
-    sp_ty.add_argument('-S', '--send-email', action='store_true', dest='sendemail', default=False,
-                       help='Send email instead of writing out .thanks files')
-    sp_ty.add_argument('--dry-run', action='store_true', dest='dryrun', default=False,
-                       help='Print out emails instead of sending them')
-    sp_ty.add_argument('--pw-set-state', default=None,
-                       help='Set this patchwork state instead of default (use with -a, -t or -d)')
-    sp_ty.add_argument('--me-too', action='store_true', dest='metoo', default=False,
-                       help='Send a copy of the thank-you message to yourself as well')
+    sp_ty = subparsers.add_parser(
+        'ty', help='Generate thanks email when something gets merged/applied'
+    )
+    sp_ty.add_argument(
+        '-g',
+        '--gitdir',
+        default=None,
+        help='Operate on this git tree instead of current dir',
+    )
+    sp_ty.add_argument(
+        '-o',
+        '--outdir',
+        default='.',
+        help='Write thanks files into this dir (default=.)',
+    )
+    sp_ty.add_argument(
+        '-l',
+        '--list',
+        action='store_true',
+        default=False,
+        help='List pull requests and patch series you have retrieved',
+    )
+    sp_ty.add_argument(
+        '-t',
+        '--thank-for',
+        dest='thankfor',
+        default=None,
+        help='Generate thankyous for specific entries from -l (e.g.: 1,3-5,7-; or "all")',
+    )
+    sp_ty.add_argument(
+        '-d',
+        '--discard',
+        default=None,
+        help='Discard specific messages from -l (e.g.: 1,3-5,7-; or "all")',
+    )
+    sp_ty.add_argument(
+        '-a',
+        '--auto',
+        action='store_true',
+        default=False,
+        help='Use the Auto-Thankanator to figure out what got applied/merged',
+    )
+    sp_ty.add_argument(
+        '-b',
+        '--branch',
+        default=None,
+        help='The branch to check against, instead of current',
+    )
+    sp_ty.add_argument(
+        '--since',
+        default='1.week',
+        help='The --since option to use when auto-matching patches (default=1.week)',
+    )
+    sp_ty.add_argument(
+        '-S',
+        '--send-email',
+        action='store_true',
+        dest='sendemail',
+        default=False,
+        help='Send email instead of writing out .thanks files',
+    )
+    sp_ty.add_argument(
+        '--dry-run',
+        action='store_true',
+        dest='dryrun',
+        default=False,
+        help='Print out emails instead of sending them',
+    )
+    sp_ty.add_argument(
+        '--pw-set-state',
+        default=None,
+        help='Set this patchwork state instead of default (use with -a, -t or -d)',
+    )
+    sp_ty.add_argument(
+        '--me-too',
+        action='store_true',
+        dest='metoo',
+        default=False,
+        help='Send a copy of the thank-you message to yourself as well',
+    )
     sp_ty.set_defaults(func=cmd_ty)
 
     # b4 diff
-    sp_diff = subparsers.add_parser('diff', help='Show a range-diff to previous series revision')
-    sp_diff.add_argument('msgid', nargs='?',
-                         help='Message ID to process, or pipe a raw message')
-    sp_diff.add_argument('-g', '--gitdir', default=None,
-                         help='Operate on this git tree instead of current dir')
-    sp_diff.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
-                         help='Do not use local cache')
-    sp_diff.add_argument('-v', '--compare-versions', dest='wantvers', type=int, default=None, nargs='+',
-                         help='Compare specific versions instead of latest and one before that, e.g. -v 3 5')
-    sp_diff.add_argument('-n', '--no-diff', dest='nodiff', action='store_true', default=False,
-                         help='Do not generate a diff, just show the command to do it')
-    sp_diff.add_argument('-o', '--output-diff', dest='outdiff', default=None,
-                         help='Save diff into this file instead of outputting to stdout')
-    sp_diff.add_argument('-c', '--color', dest='color', action='store_true', default=False,
-                         help='Force color output even when writing to file')
-    sp_diff.add_argument('-m', '--compare-am-mboxes', dest='ambox', nargs=2, default=None,
-                         help='Compare two mbx files prepared with "b4 am"')
-    sp_diff.add_argument('--range-diff-opts', default=None,
-                         help='Arguments passed to git range-diff')
+    sp_diff = subparsers.add_parser(
+        'diff', help='Show a range-diff to previous series revision'
+    )
+    sp_diff.add_argument(
+        'msgid', nargs='?', help='Message ID to process, or pipe a raw message'
+    )
+    sp_diff.add_argument(
+        '-g',
+        '--gitdir',
+        default=None,
+        help='Operate on this git tree instead of current dir',
+    )
+    sp_diff.add_argument(
+        '-C',
+        '--no-cache',
+        dest='nocache',
+        action='store_true',
+        default=False,
+        help='Do not use local cache',
+    )
+    sp_diff.add_argument(
+        '-v',
+        '--compare-versions',
+        dest='wantvers',
+        type=int,
+        default=None,
+        nargs='+',
+        help='Compare specific versions instead of latest and one before that, e.g. -v 3 5',
+    )
+    sp_diff.add_argument(
+        '-n',
+        '--no-diff',
+        dest='nodiff',
+        action='store_true',
+        default=False,
+        help='Do not generate a diff, just show the command to do it',
+    )
+    sp_diff.add_argument(
+        '-o',
+        '--output-diff',
+        dest='outdiff',
+        default=None,
+        help='Save diff into this file instead of outputting to stdout',
+    )
+    sp_diff.add_argument(
+        '-c',
+        '--color',
+        dest='color',
+        action='store_true',
+        default=False,
+        help='Force color output even when writing to file',
+    )
+    sp_diff.add_argument(
+        '-m',
+        '--compare-am-mboxes',
+        dest='ambox',
+        nargs=2,
+        default=None,
+        help='Compare two mbx files prepared with "b4 am"',
+    )
+    sp_diff.add_argument(
+        '--range-diff-opts', default=None, help='Arguments passed to git range-diff'
+    )
     sp_diff.set_defaults(func=cmd_diff)
 
     # b4 kr
     sp_kr = subparsers.add_parser('kr', help='Keyring operations')
     cmd_retrieval_common_opts(sp_kr)
-    sp_kr.add_argument('--show-keys', dest='showkeys', action='store_true', default=False,
-                       help='Show all developer keys found in a thread')
+    sp_kr.add_argument(
+        '--show-keys',
+        dest='showkeys',
+        action='store_true',
+        default=False,
+        help='Show all developer keys found in a thread',
+    )
     sp_kr.set_defaults(func=cmd_kr)
 
     # b4 prep
-    sp_prep = subparsers.add_parser('prep', help='Work on patch series to submit for mailing list review')
-    sp_prep.add_argument('-c', '--auto-to-cc', action='store_true', default=False,
-                         help='Automatically populate cover letter trailers with To and Cc addresses')
-    sp_prep.add_argument('--force-revision', metavar='N', type=int,
-                         help='Force revision to be this number instead')
-    sp_prep.add_argument('--set-prefixes', metavar='PREFIX', nargs='+',
-                         help='Prefixes to include after [PATCH] (e.g.: RFC mydrv)')
-    sp_prep.add_argument('--add-prefixes', metavar='PREFIX', nargs='+',
-                         help='Additional prefixes to add to those already defined')
-    sp_prep.add_argument('--set-presubject', metavar='PRESUBJECT', type=str, default=None,
-                         help='Prefix to include before [PATCH] (e.g.: [mylist])')
-    sp_prep.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
-                         help='Do not use local cache')
-    sp_prep.add_argument('--range-diff-opts', default=None, type=str,
-                         help='Arguments passed to git range-diff when comparing series')
+    sp_prep = subparsers.add_parser(
+        'prep', help='Work on patch series to submit for mailing list review'
+    )
+    sp_prep.add_argument(
+        '-c',
+        '--auto-to-cc',
+        action='store_true',
+        default=False,
+        help='Automatically populate cover letter trailers with To and Cc addresses',
+    )
+    sp_prep.add_argument(
+        '--force-revision',
+        metavar='N',
+        type=int,
+        help='Force revision to be this number instead',
+    )
+    sp_prep.add_argument(
+        '--set-prefixes',
+        metavar='PREFIX',
+        nargs='+',
+        help='Prefixes to include after [PATCH] (e.g.: RFC mydrv)',
+    )
+    sp_prep.add_argument(
+        '--add-prefixes',
+        metavar='PREFIX',
+        nargs='+',
+        help='Additional prefixes to add to those already defined',
+    )
+    sp_prep.add_argument(
+        '--set-presubject',
+        metavar='PRESUBJECT',
+        type=str,
+        default=None,
+        help='Prefix to include before [PATCH] (e.g.: [mylist])',
+    )
+    sp_prep.add_argument(
+        '-C',
+        '--no-cache',
+        dest='nocache',
+        action='store_true',
+        default=False,
+        help='Do not use local cache',
+    )
+    sp_prep.add_argument(
+        '--range-diff-opts',
+        default=None,
+        type=str,
+        help='Arguments passed to git range-diff when comparing series',
+    )
 
     spp_g = sp_prep.add_mutually_exclusive_group()
-    spp_g.add_argument('-p', '--format-patch', metavar='OUTPUT_DIR',
-                       help='Output prep-tracked commits as patches')
-    spp_g.add_argument('--edit-cover', action='store_true', default=False,
-                       help='Edit the cover letter in the configured editor')
-    spp_g.add_argument('--edit-deps', action='store_true', default=False,
-                       help='Edit the series dependencies in the configured editor')
-    spp_g.add_argument('--check-deps', action='store_true', default=False,
-                       help='Run checks for any defined series dependencies')
-    spp_g.add_argument('--check', action='store_true', default=False,
-                       help='Run checks on the series')
-    spp_g.add_argument('--show-revision', action='store_true', default=False,
-                       help='Show current series revision number')
-    spp_g.add_argument('--compare-to', metavar='vN',
-                       help='Display a range-diff to previously sent revision N')
-    spp_g.add_argument('--manual-reroll', dest='reroll', default=None, metavar='COVER_MSGID',
-                       help='Mark current revision as sent and reroll (requires cover letter msgid)')
-    spp_g.add_argument('--show-info', metavar='PARAM', nargs='?', const=':_all',
-                       help='Show series info in a format that can be passed to other commands.')
-    spp_g.add_argument('--cleanup', metavar='BRANCHNAME', nargs='*',
-                       help='Archive and remove prep-tracked branches and all associated sent/ tags')
+    spp_g.add_argument(
+        '-p',
+        '--format-patch',
+        metavar='OUTPUT_DIR',
+        help='Output prep-tracked commits as patches',
+    )
+    spp_g.add_argument(
+        '--edit-cover',
+        action='store_true',
+        default=False,
+        help='Edit the cover letter in the configured editor',
+    )
+    spp_g.add_argument(
+        '--edit-deps',
+        action='store_true',
+        default=False,
+        help='Edit the series dependencies in the configured editor',
+    )
+    spp_g.add_argument(
+        '--check-deps',
+        action='store_true',
+        default=False,
+        help='Run checks for any defined series dependencies',
+    )
+    spp_g.add_argument(
+        '--check', action='store_true', default=False, help='Run checks on the series'
+    )
+    spp_g.add_argument(
+        '--show-revision',
+        action='store_true',
+        default=False,
+        help='Show current series revision number',
+    )
+    spp_g.add_argument(
+        '--compare-to',
+        metavar='vN',
+        help='Display a range-diff to previously sent revision N',
+    )
+    spp_g.add_argument(
+        '--manual-reroll',
+        dest='reroll',
+        default=None,
+        metavar='COVER_MSGID',
+        help='Mark current revision as sent and reroll (requires cover letter msgid)',
+    )
+    spp_g.add_argument(
+        '--show-info',
+        metavar='PARAM',
+        nargs='?',
+        const=':_all',
+        help='Show series info in a format that can be passed to other commands.',
+    )
+    spp_g.add_argument(
+        '--cleanup',
+        metavar='BRANCHNAME',
+        nargs='*',
+        help='Archive and remove prep-tracked branches and all associated sent/ tags',
+    )
 
-    ag_prepn = sp_prep.add_argument_group('Create new branch', 'Create a new branch for working on patch series')
-    ag_prepn.add_argument('-n', '--new', dest='new_series_name',
-                          help='Create a new branch for working on a patch series')
-    ag_prepn.add_argument('-f', '--fork-point', dest='fork_point',
-                          help='When creating a new branch, use this fork point instead of HEAD')
-    ag_prepn.add_argument('-F', '--from-thread', metavar='MSGID', dest='msgid',
-                          help='When creating a new branch, use this thread')
-    ag_prepe = sp_prep.add_argument_group('Enroll existing branch', 'Enroll existing branch for prep work')
-    ag_prepe.add_argument('-e', '--enroll', dest='enroll_base', nargs='?', const='@{upstream}',
-                          help='Enroll current branch, using its configured upstream branch as fork base, '
-                               'or the passed tag, branch, or commit')
+    ag_prepn = sp_prep.add_argument_group(
+        'Create new branch', 'Create a new branch for working on patch series'
+    )
+    ag_prepn.add_argument(
+        '-n',
+        '--new',
+        dest='new_series_name',
+        help='Create a new branch for working on a patch series',
+    )
+    ag_prepn.add_argument(
+        '-f',
+        '--fork-point',
+        dest='fork_point',
+        help='When creating a new branch, use this fork point instead of HEAD',
+    )
+    ag_prepn.add_argument(
+        '-F',
+        '--from-thread',
+        metavar='MSGID',
+        dest='msgid',
+        help='When creating a new branch, use this thread',
+    )
+    ag_prepe = sp_prep.add_argument_group(
+        'Enroll existing branch', 'Enroll existing branch for prep work'
+    )
+    ag_prepe.add_argument(
+        '-e',
+        '--enroll',
+        dest='enroll_base',
+        nargs='?',
+        const='@{upstream}',
+        help='Enroll current branch, using its configured upstream branch as fork base, '
+        'or the passed tag, branch, or commit',
+    )
     sp_prep.set_defaults(func=cmd_prep)
 
     # b4 trailers
-    sp_trl = subparsers.add_parser('trailers', help='Operate on trailers received for mailing list reviews')
-    sp_trl.add_argument('-u', '--update', action='store_true', default=False,
-                        help='Update branch commits with latest received trailers')
-    sp_trl.add_argument('-S', '--sloppy-trailers', dest='sloppytrailers', action='store_true', default=False,
-                        help='Apply trailers without email address match checking')
-    sp_trl.add_argument('-F', '--trailers-from', dest='trailers_from', metavar='MSGID',
-                        help='Look for trailers in the thread with this msgid instead of using the series change-id')
-    sp_trl.add_argument('--since', default='1.month', metavar='GITLOGDATE',
-                        help='The --since option to use with git-log when auto-matching patches (default=1.month)')
-    sp_trl.add_argument('--since-commit', metavar='COMMITISH',
-                        help='Look for any new trailers for commits starting with this one')
+    sp_trl = subparsers.add_parser(
+        'trailers', help='Operate on trailers received for mailing list reviews'
+    )
+    sp_trl.add_argument(
+        '-u',
+        '--update',
+        action='store_true',
+        default=False,
+        help='Update branch commits with latest received trailers',
+    )
+    sp_trl.add_argument(
+        '-S',
+        '--sloppy-trailers',
+        dest='sloppytrailers',
+        action='store_true',
+        default=False,
+        help='Apply trailers without email address match checking',
+    )
+    sp_trl.add_argument(
+        '-F',
+        '--trailers-from',
+        dest='trailers_from',
+        metavar='MSGID',
+        help='Look for trailers in the thread with this msgid instead of using the series change-id',
+    )
+    sp_trl.add_argument(
+        '--since',
+        default='1.month',
+        metavar='GITLOGDATE',
+        help='The --since option to use with git-log when auto-matching patches (default=1.month)',
+    )
+    sp_trl.add_argument(
+        '--since-commit',
+        metavar='COMMITISH',
+        help='Look for any new trailers for commits starting with this one',
+    )
     cmd_retrieval_common_opts(sp_trl)
     sp_trl.set_defaults(func=cmd_trailers)
 
     # b4 send
-    sp_send = subparsers.add_parser('send', help='Submit your work for review on the mailing lists')
+    sp_send = subparsers.add_parser(
+        'send', help='Submit your work for review on the mailing lists'
+    )
     sp_send_g = sp_send.add_mutually_exclusive_group()
-    sp_send_g.add_argument('-d', '--dry-run', dest='dryrun', action='store_true', default=False,
-                           help='Do not send, just dump out raw smtp messages to the stdout')
-    sp_send_g.add_argument('-o', '--output-dir',
-                           help='Do not send, write raw messages to this directory (forces --dry-run)')
-    sp_send_g.add_argument('--preview-to', nargs='+', metavar='ADDR',
-                           help='Send everything for a pre-review to specified addresses instead of actual recipients')
-    sp_send_g.add_argument('--reflect', action='store_true', default=False,
-                           help='Send everything to yourself instead of the actual recipients')
+    sp_send_g.add_argument(
+        '-d',
+        '--dry-run',
+        dest='dryrun',
+        action='store_true',
+        default=False,
+        help='Do not send, just dump out raw smtp messages to the stdout',
+    )
+    sp_send_g.add_argument(
+        '-o',
+        '--output-dir',
+        help='Do not send, write raw messages to this directory (forces --dry-run)',
+    )
+    sp_send_g.add_argument(
+        '--preview-to',
+        nargs='+',
+        metavar='ADDR',
+        help='Send everything for a pre-review to specified addresses instead of actual recipients',
+    )
+    sp_send_g.add_argument(
+        '--reflect',
+        action='store_true',
+        default=False,
+        help='Send everything to yourself instead of the actual recipients',
+    )
 
-    sp_send.add_argument('--no-trailer-to-cc', action='store_true', default=False,
-                         help='Do not add any addresses found in the cover or patch trailers to To: or Cc:')
-    sp_send.add_argument('--to', nargs='+', metavar='ADDR', help='Addresses to add to the To: list')
-    sp_send.add_argument('--cc', nargs='+', metavar='ADDR', help='Addresses to add to the Cc: list')
-    sp_send.add_argument('--not-me-too', action='store_true', default=False,
-                         help='Remove yourself from the To: or Cc: list')
-    sp_send.add_argument('--resend', metavar='vN', nargs='?', const='latest',
-                         help='Resend a previously sent version of the series')
-    sp_send.add_argument('--no-sign', action='store_true', default=False,
-                         help='Do not add the cryptographic attestation signature header')
-    sp_send.add_argument('--force-cover-letter', action='store_true', default=False,
-                         help='Send a cover letter even for single-patch series')
-    sp_send.add_argument('--use-web-endpoint', dest='send_web', action='store_true', default=False,
-                         help="Force going through the web endpoint")
-    ag_sendh = sp_send.add_argument_group('Web submission', 'Authenticate with the web submission endpoint')
-    ag_sendh.add_argument('--web-auth-new', dest='auth_new', action='store_true', default=False,
-                          help='Initiate a new web authentication request')
-    ag_sendh.add_argument('--web-auth-verify', dest='auth_verify', metavar='VERIFY_TOKEN',
-                          help='Submit the token received via verification email')
+    sp_send.add_argument(
+        '--no-trailer-to-cc',
+        action='store_true',
+        default=False,
+        help='Do not add any addresses found in the cover or patch trailers to To: or Cc:',
+    )
+    sp_send.add_argument(
+        '--to', nargs='+', metavar='ADDR', help='Addresses to add to the To: list'
+    )
+    sp_send.add_argument(
+        '--cc', nargs='+', metavar='ADDR', help='Addresses to add to the Cc: list'
+    )
+    sp_send.add_argument(
+        '--not-me-too',
+        action='store_true',
+        default=False,
+        help='Remove yourself from the To: or Cc: list',
+    )
+    sp_send.add_argument(
+        '--resend',
+        metavar='vN',
+        nargs='?',
+        const='latest',
+        help='Resend a previously sent version of the series',
+    )
+    sp_send.add_argument(
+        '--no-sign',
+        action='store_true',
+        default=False,
+        help='Do not add the cryptographic attestation signature header',
+    )
+    sp_send.add_argument(
+        '--force-cover-letter',
+        action='store_true',
+        default=False,
+        help='Send a cover letter even for single-patch series',
+    )
+    sp_send.add_argument(
+        '--use-web-endpoint',
+        dest='send_web',
+        action='store_true',
+        default=False,
+        help='Force going through the web endpoint',
+    )
+    ag_sendh = sp_send.add_argument_group(
+        'Web submission', 'Authenticate with the web submission endpoint'
+    )
+    ag_sendh.add_argument(
+        '--web-auth-new',
+        dest='auth_new',
+        action='store_true',
+        default=False,
+        help='Initiate a new web authentication request',
+    )
+    ag_sendh.add_argument(
+        '--web-auth-verify',
+        dest='auth_verify',
+        metavar='VERIFY_TOKEN',
+        help='Submit the token received via verification email',
+    )
     sp_send.set_defaults(func=cmd_send)
 
     # b4 dig
-    sp_dig = subparsers.add_parser('dig', help='Dig into the details of a specific commit')
-    sp_dig.add_argument('-c', '--commitish', dest='commitish', metavar='COMMITISH',
-                        help='Commit-ish object to dig into')
-    sp_dig.add_argument('-C', '--no-cache', dest='nocache', action='store_true', default=False,
-                        help='Do not use local cache')
+    sp_dig = subparsers.add_parser(
+        'dig', help='Dig into the details of a specific commit'
+    )
+    sp_dig.add_argument(
+        '-c',
+        '--commitish',
+        dest='commitish',
+        metavar='COMMITISH',
+        help='Commit-ish object to dig into',
+    )
+    sp_dig.add_argument(
+        '-C',
+        '--no-cache',
+        dest='nocache',
+        action='store_true',
+        default=False,
+        help='Do not use local cache',
+    )
     sp_dig_eg = sp_dig.add_mutually_exclusive_group()
-    sp_dig_eg.add_argument('-a', '--all-series', action='store_true', default=False,
-                           help='Show all series, not just the latest matching')
-    sp_dig_eg.add_argument('-m', '--save-mbox', metavar='DEST', default=None,
-                           help='Save matched thread to the specified mbox file')
-    sp_dig_eg.add_argument('-w', '--who', action='store_true', default=False,
-                           help='Show list of recipients in the original message')
+    sp_dig_eg.add_argument(
+        '-a',
+        '--all-series',
+        action='store_true',
+        default=False,
+        help='Show all series, not just the latest matching',
+    )
+    sp_dig_eg.add_argument(
+        '-m',
+        '--save-mbox',
+        metavar='DEST',
+        default=None,
+        help='Save matched thread to the specified mbox file',
+    )
+    sp_dig_eg.add_argument(
+        '-w',
+        '--who',
+        action='store_true',
+        default=False,
+        help='Show list of recipients in the original message',
+    )
     sp_dig.set_defaults(func=cmd_dig)
 
     # b4 bugs
-    sp_bugs = subparsers.add_parser('bugs', help='Manage bug reports from mailing list threads')
+    sp_bugs = subparsers.add_parser(
+        'bugs', help='Manage bug reports from mailing list threads'
+    )
     sp_bugs.set_defaults(func=cmd_bugs)
-    bugs_subparsers = sp_bugs.add_subparsers(help='bugs sub-command help', dest='bugs_subcmd')
+    bugs_subparsers = sp_bugs.add_subparsers(
+        help='bugs sub-command help', dest='bugs_subcmd'
+    )
 
     # b4 bugs tui
-    sp_bugs_tui = bugs_subparsers.add_parser('tui', help='Browse and triage bugs in a TUI')
-    sp_bugs_tui.add_argument('--no-mouse', dest='no_mouse', action='store_true', default=False,
-                              help='Disable mouse support in the TUI')
-    sp_bugs_tui.add_argument('--email-dry-run', dest='email_dryrun', action='store_true', default=False,
-                              help='Show email dialogs but print messages to stdout instead of sending')
-    sp_bugs_tui.add_argument('--no-sign', dest='no_sign', action='store_true', default=False,
-                              help='Do not patatt-sign outgoing emails')
+    sp_bugs_tui = bugs_subparsers.add_parser(
+        'tui', help='Browse and triage bugs in a TUI'
+    )
+    sp_bugs_tui.add_argument(
+        '--no-mouse',
+        dest='no_mouse',
+        action='store_true',
+        default=False,
+        help='Disable mouse support in the TUI',
+    )
+    sp_bugs_tui.add_argument(
+        '--email-dry-run',
+        dest='email_dryrun',
+        action='store_true',
+        default=False,
+        help='Show email dialogs but print messages to stdout instead of sending',
+    )
+    sp_bugs_tui.add_argument(
+        '--no-sign',
+        dest='no_sign',
+        action='store_true',
+        default=False,
+        help='Do not patatt-sign outgoing emails',
+    )
 
     # b4 bugs import
-    sp_bugs_import = bugs_subparsers.add_parser('import', help='Import a lore thread as a new bug')
+    sp_bugs_import = bugs_subparsers.add_parser(
+        'import', help='Import a lore thread as a new bug'
+    )
     sp_bugs_import.add_argument('msgid', help='Message-ID of the thread to import')
-    sp_bugs_import.add_argument('--no-parent', dest='noparent', action='store_true', default=False,
-                                 help='Break thread at the msgid and ignore parent messages')
+    sp_bugs_import.add_argument(
+        '--no-parent',
+        dest='noparent',
+        action='store_true',
+        default=False,
+        help='Break thread at the msgid and ignore parent messages',
+    )
 
     # b4 bugs delete
-    sp_bugs_delete = bugs_subparsers.add_parser('delete', help='Permanently delete a bug')
+    sp_bugs_delete = bugs_subparsers.add_parser(
+        'delete', help='Permanently delete a bug'
+    )
     sp_bugs_delete.add_argument('bugid', help='Bug ID to delete')
 
     # b4 bugs refresh
-    sp_bugs_refresh = bugs_subparsers.add_parser('refresh', help='Refresh bugs with new thread messages')
-    sp_bugs_refresh.add_argument('bugid', nargs='?', default=None,
-                                  help='Bug ID to refresh (default: refresh all open bugs)')
+    sp_bugs_refresh = bugs_subparsers.add_parser(
+        'refresh', help='Refresh bugs with new thread messages'
+    )
+    sp_bugs_refresh.add_argument(
+        'bugid',
+        nargs='?',
+        default=None,
+        help='Bug ID to refresh (default: refresh all open bugs)',
+    )
 
     # b4 bugs list
     sp_bugs_list = bugs_subparsers.add_parser('list', help='List tracked bugs')
-    sp_bugs_list.add_argument('--status', choices=['open', 'closed'], default=None,
-                               help='Filter by status')
+    sp_bugs_list.add_argument(
+        '--status', choices=['open', 'closed'], default=None, help='Filter by status'
+    )
     sp_bugs_list.add_argument('--label', default=None, help='Filter by label')
 
     return parser
@@ -564,7 +1278,9 @@ if __name__ == '__main__':
 
     try:
         if b4.__VERSION__.find('-dev') > 0:
-            base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+            base = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            )
             dotgit = os.path.join(base, '.git')
             ecode, short = b4.git_run_command(dotgit, ['rev-parse', '--short', 'HEAD'])
             if ecode == 0:

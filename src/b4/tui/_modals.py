@@ -4,6 +4,7 @@
 # Copyright (C) 2024 by the Linux Foundation
 #
 """Shared modal screens for b4 Textual apps."""
+
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
@@ -87,7 +88,9 @@ class ToCcScreen(ModalScreen[bool]):
             yield TextArea(self._bcc_text, id='bcc-area', classes='tocc-area')
             if self._show_apply_all:
                 yield Checkbox('Apply to all patches', id='apply-all')
-            yield Static('Ctrl+S save  |  Escape cancel  |  Tab next field', id='tocc-hint')
+            yield Static(
+                'Ctrl+S save  |  Escape cancel  |  Tab next field', id='tocc-hint'
+            )
 
     def on_mount(self) -> None:
         self.query_one('#to-area', TextArea).focus()
@@ -165,10 +168,14 @@ class ConfirmScreen(ModalScreen[bool]):
     # Map CSS variable names to CSS class suffixes for border/title colours.
     _COLOUR_CLASSES = {'$warning': 'warning', '$error': 'error'}
 
-    def __init__(self, title: str, body: List[str],
-                 border: str = '$accent',
-                 title_colour: Optional[str] = None,
-                 subject: str = '') -> None:
+    def __init__(
+        self,
+        title: str,
+        body: List[str],
+        border: str = '$accent',
+        title_colour: Optional[str] = None,
+        subject: str = '',
+    ) -> None:
         super().__init__()
         self._title = title
         self._body = body
@@ -226,9 +233,12 @@ class LimitScreen(ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, current_pattern: str = '',
-                 hint: Optional[str] = None,
-                 title: str = 'Limit') -> None:
+    def __init__(
+        self,
+        current_pattern: str = '',
+        hint: Optional[str] = None,
+        title: str = 'Limit',
+    ) -> None:
         super().__init__()
         self._current_pattern = current_pattern
         self._hint = hint
@@ -237,8 +247,11 @@ class LimitScreen(ModalScreen[Optional[str]]):
     def compose(self) -> ComposeResult:
         with Vertical(id='limit-dialog') as dialog:
             dialog.border_title = self._title
-            yield Input(value=self._current_pattern, id='limit-input',
-                        placeholder='substring to match (empty to clear)')
+            yield Input(
+                value=self._current_pattern,
+                id='limit-input',
+                placeholder='substring to match (empty to clear)',
+            )
             hint_lines = ''
             if self._hint:
                 hint_lines = self._hint + '\n'
@@ -303,8 +316,9 @@ class ActionScreen(JKListNavMixin, ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, actions: List[Tuple[str, str]],
-                 shortcuts: Optional[Dict[str, str]] = None) -> None:
+    def __init__(
+        self, actions: List[Tuple[str, str]], shortcuts: Optional[Dict[str, str]] = None
+    ) -> None:
         super().__init__()
         self._actions = actions
         self._shortcuts = shortcuts or {}

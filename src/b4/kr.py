@@ -58,10 +58,14 @@ def main(cmdargs: argparse.Namespace) -> None:
         ecc = False
         for identity, algo, selector, keyinfo in keydata:
             if not identity:
-                logger.warning('No identity found for key %s %s %s', algo, selector, keyinfo)
+                logger.warning(
+                    'No identity found for key %s %s %s', algo, selector, keyinfo
+                )
                 continue
             if not keyinfo:
-                logger.warning('No keyinfo found for key %s %s %s', algo, selector, identity)
+                logger.warning(
+                    'No keyinfo found for key %s %s %s', algo, selector, identity
+                )
                 continue
             keypath = patatt.make_pkey_path(algo, identity, selector)
             fullpath = os.path.join(krpath, keypath)

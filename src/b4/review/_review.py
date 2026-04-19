@@ -33,8 +33,7 @@ COMMIT_MESSAGE_PATH = ':message'
 _REPLY_CONTEXT_LINES = 5
 
 
-def _should_promote_waiting(newer_vers: List[int],
-                            previously_known: Set[int]) -> bool:
+def _should_promote_waiting(newer_vers: List[int], previously_known: Set[int]) -> bool:
     """Decide whether a waiting series should be promoted to reviewing.
 
     Only promotes when at least one of the newer versions was not
@@ -60,8 +59,10 @@ def _strip_subject(text: str) -> List[str]:
 
 
 def make_review_magic_json(data: Dict[str, Any]) -> str:
-    mj = (f'{REVIEW_MAGIC_MARKER}\n'
-          '# This section is used internally by b4 review for tracking purposes.\n')
+    mj = (
+        f'{REVIEW_MAGIC_MARKER}\n'
+        '# This section is used internally by b4 review for tracking purposes.\n'
+    )
     return mj + json.dumps(data, indent=2)
 
 
@@ -99,10 +100,14 @@ def _collect_reply_headers(lmsg: b4.LoreMessage) -> Dict[str, str]:
         allcc = []
         logger.debug('Unable to parse the Cc: header in %s: %s', lmsg.msgid, str(ex))
     try:
-        reply_to = email.utils.getaddresses([str(x) for x in lmsg.msg.get_all('reply-to', [])])
+        reply_to = email.utils.getaddresses(
+            [str(x) for x in lmsg.msg.get_all('reply-to', [])]
+        )
     except Exception as ex:
         reply_to = []
-        logger.debug('Unable to parse the Reply-To: header in %s: %s', lmsg.msgid, str(ex))
+        logger.debug(
+            'Unable to parse the Reply-To: header in %s: %s', lmsg.msgid, str(ex)
+        )
 
     headers: Dict[str, str] = {
         'msgid': lmsg.msgid,
@@ -148,7 +153,9 @@ def check_series_attestation(lser: b4.LoreSeries) -> Optional[str]:
     for lmsg in lser.patches[1:]:
         if lmsg is None:
             continue
-        attestations, _passing, _critical = lmsg.get_attestation_status(attpolicy, maxdays)
+        attestations, _passing, _critical = lmsg.get_attestation_status(
+            attpolicy, maxdays
+        )
         for att in attestations:
             key = (att.get('status', ''), att.get('identity', ''))
             seen.add(key)
@@ -178,8 +185,9 @@ def _retrieve_messages(message_id: str) -> List[email.message.EmailMessage]:
     return msgs
 
 
-def retrieve_series_messages(series: Dict[str, Any],
-                             identifier: str) -> List[email.message.EmailMessage]:
+def retrieve_series_messages(
+    series: Dict[str, Any], identifier: str
+) -> List[email.message.EmailMessage]:
     """Fetch messages for a tracked series, using stored patch info when available.
 
     For rethreaded series, reads the series_patches table to fetch each
@@ -202,7 +210,9 @@ def retrieve_series_messages(series: Dict[str, Any],
                 _msgids, all_msgs = b4.fetch_rethread_messages(msgids, nocache=True)
                 _cover_msgid, msgs = b4.LoreSeries.rethread_series(msgids, all_msgs)
                 if not msgs:
-                    raise LookupError(f'Could not retrieve series patches for {change_id}')
+                    raise LookupError(
+                        f'Could not retrieve series patches for {change_id}'
+                    )
                 return msgs
 
     if not message_id:
@@ -210,8 +220,11 @@ def retrieve_series_messages(series: Dict[str, Any],
     return _retrieve_messages(message_id)
 
 
-def _get_lore_series(msgs: List[email.message.EmailMessage], sloppytrailers: bool = False,
-                     wantver: Optional[int] = None) -> 'b4.LoreSeries':
+def _get_lore_series(
+    msgs: List[email.message.EmailMessage],
+    sloppytrailers: bool = False,
+    wantver: Optional[int] = None,
+) -> 'b4.LoreSeries':
     """Build a LoreMailbox from messages and return the requested series version.
 
     When *wantver* is ``None`` (the default), the highest version found
@@ -229,10 +242,11 @@ def _get_lore_series(msgs: List[email.message.EmailMessage], sloppytrailers: boo
     if wantver not in lmbx.series:
         found = ', '.join(f'v{v}' for v in sorted(lmbx.series.keys()))
         raise LookupError(
-            f'Series version {wantver} not found in retrieved messages'
-            f' (found: {found})')
-    lser = lmbx.get_series(wantver, sloppytrailers=sloppytrailers,
-                           codereview_trailers=False)
+            f'Series version {wantver} not found in retrieved messages (found: {found})'
+        )
+    lser = lmbx.get_series(
+        wantver, sloppytrailers=sloppytrailers, codereview_trailers=False
+    )
     if not lser:
         raise LookupError(f'Could not find series version {wantver}')
     return lser
@@ -253,12 +267,18 @@ def get_reference_message(lser: 'b4.LoreSeries') -> 'b4.LoreMessage':
     return ref_msg
 
 
-def create_review_branch(topdir: str, branch_name: str, base_commit: str,
-                         lser: b4.LoreSeries, linkurl: str, linkmask: str,
-                         num_prereqs: int = 0,
-                         identifier: Optional[str] = None,
-                         status: str = 'reviewing',
-                         is_rethreaded: bool = False) -> None:
+def create_review_branch(
+    topdir: str,
+    branch_name: str,
+    base_commit: str,
+    lser: b4.LoreSeries,
+    linkurl: str,
+    linkmask: str,
+    num_prereqs: int = 0,
+    identifier: Optional[str] = None,
+    status: str = 'reviewing',
+    is_rethreaded: bool = False,
+) -> None:
     # Verify branch does not already exist
     ecode, out = b4.git_run_command(topdir, ['rev-parse', '--verify', branch_name])
     if ecode == 0:
@@ -272,23 +292,27 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
         current_branch = out.strip()
 
     # Resolve base_commit to a concrete hash before checkout changes HEAD
-    ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{base_commit}^{{}}'], logstderr=True)
+    ecode, out = b4.git_run_command(
+        topdir, ['rev-parse', f'{base_commit}^{{}}'], logstderr=True
+    )
     if ecode > 0:
         logger.critical('Unable to resolve base commit %s', base_commit)
         sys.exit(1)
     resolved_base = out.strip()
 
     # Create and check out the review branch
-    ecode, out = b4.git_run_command(topdir, ['checkout', '-b', branch_name, resolved_base],
-                                    logstderr=True)
+    ecode, out = b4.git_run_command(
+        topdir, ['checkout', '-b', branch_name, resolved_base], logstderr=True
+    )
     if ecode > 0:
         logger.critical('Unable to create branch %s at %s', branch_name, resolved_base)
         logger.critical(out.strip())
         sys.exit(1)
 
     # Cherry-pick the applied patches from FETCH_HEAD
-    ecode, out = b4.git_run_command(topdir, ['cherry-pick', f'{resolved_base}..FETCH_HEAD'],
-                                    logstderr=True)
+    ecode, out = b4.git_run_command(
+        topdir, ['cherry-pick', f'{resolved_base}..FETCH_HEAD'], logstderr=True
+    )
     if ecode > 0:
         logger.critical('Unable to cherry-pick patches onto review branch')
         logger.critical(out.strip())
@@ -301,8 +325,9 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
         sys.exit(1)
 
     # Record the first patch commit (the one right after base)
-    ecode, out = b4.git_run_command(topdir, ['rev-list', '--reverse',
-                                             f'{resolved_base}..HEAD'], logstderr=True)
+    ecode, out = b4.git_run_command(
+        topdir, ['rev-list', '--reverse', f'{resolved_base}..HEAD'], logstderr=True
+    )
     if ecode > 0 or not out.strip():
         logger.critical('Unable to determine first patch commit')
         sys.exit(1)
@@ -317,8 +342,9 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
         cover_content = clmsg.subject + '\n\n' + clmsg.body
     elif lser.patches[1] is not None:
         clmsg = lser.patches[1]
-        cover_content = (clmsg.subject + '\n\n'
-                         'NOTE: No cover letter provided by the author.')
+        cover_content = (
+            clmsg.subject + '\n\nNOTE: No cover letter provided by the author.'
+        )
     else:
         cover_content = 'NOTE: No cover letter or first patch available.'
 
@@ -341,7 +367,7 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
         if pbasement.strip():
             # Keep only the notes before the diff (diffstat, changelog, etc.)
             diff_start = b4.DIFF_RE.search(pbasement)
-            notes = pbasement[:diff_start.start()] if diff_start else pbasement
+            notes = pbasement[: diff_start.start()] if diff_start else pbasement
             if notes.strip():
                 pmeta['basement'] = notes
         patches_meta.append(pmeta)
@@ -353,7 +379,8 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
             'identifier': identifier,
             'status': status,
             'revision': lser.revision,
-            'change-id': lser.change_id or branch_name.removeprefix(REVIEW_BRANCH_PREFIX),
+            'change-id': lser.change_id
+            or branch_name.removeprefix(REVIEW_BRANCH_PREFIX),
             'link': linkurl,
             'subject': clmsg.full_subject if clmsg else '',
             'fromname': lser.fromname or '',
@@ -374,8 +401,12 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
     # Create the tracking commit at the tip of the branch
     commit_msg = cover_content + '\n\n' + make_review_magic_json(tracking)
 
-    ecode, out = b4.git_run_command(topdir, ['commit', '--allow-empty', '-F', '-'],
-                                    stdin=commit_msg.encode(), logstderr=True)
+    ecode, out = b4.git_run_command(
+        topdir,
+        ['commit', '--allow-empty', '-F', '-'],
+        stdin=commit_msg.encode(),
+        logstderr=True,
+    )
     if ecode > 0:
         logger.critical('Unable to create tracking commit')
         logger.critical(out.strip())
@@ -388,6 +419,7 @@ def create_review_branch(topdir: str, branch_name: str, base_commit: str,
     # Mark cover + patch messages as Seen in the messages DB
     try:
         from b4.review import messages
+
         entries = []
         for pmsg in lser.patches:
             if pmsg is None or not pmsg.msgid:
@@ -419,7 +451,9 @@ def main(cmdargs: argparse.Namespace) -> None:
         cmd_show_info(cmdargs)
 
 
-def get_review_branch_patch_ids(topdir: str, branch: str) -> List[Tuple[int, str, Optional[str]]]:
+def get_review_branch_patch_ids(
+    topdir: str, branch: str
+) -> List[Tuple[int, str, Optional[str]]]:
     """Compute stable patch-ids for every patch commit on a review branch.
 
     Loads tracking data to find the first-patch-commit, then iterates
@@ -435,7 +469,8 @@ def get_review_branch_patch_ids(topdir: str, branch: str) -> List[Tuple[int, str
         return []
 
     ecode, out = b4.git_run_command(
-        topdir, ['rev-list', '--reverse', f'{first_patch}~1..{branch}~1'])
+        topdir, ['rev-list', '--reverse', f'{first_patch}~1..{branch}~1']
+    )
     if ecode > 0 or not out.strip():
         return []
 
@@ -450,7 +485,8 @@ def get_review_branch_patch_ids(topdir: str, branch: str) -> List[Tuple[int, str
             result.append((idx, sha, None))
             continue
         ecode, pid_out = b4.git_run_command(
-            topdir, ['patch-id', '--stable'], stdin=bpatch)
+            topdir, ['patch-id', '--stable'], stdin=bpatch
+        )
         if ecode > 0 or not pid_out.strip():
             result.append((idx, sha, None))
             continue
@@ -471,7 +507,9 @@ def load_tracking(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
 
     commit_msg = out.strip()
     if REVIEW_MAGIC_MARKER not in commit_msg:
-        logger.critical('Branch %s does not contain a valid review tracking commit', branch)
+        logger.critical(
+            'Branch %s does not contain a valid review tracking commit', branch
+        )
         sys.exit(1)
 
     parts = commit_msg.split(REVIEW_MAGIC_MARKER, maxsplit=1)
@@ -499,7 +537,7 @@ def get_review_info(topdir: str, branch: str) -> Dict[str, Union[str, int, bool,
 
     sender = ''
     if series.get('fromname') or series.get('fromemail'):
-        sender = f"{series.get('fromname', '')} <{series.get('fromemail', '')}>"
+        sender = f'{series.get("fromname", "")} <{series.get("fromemail", "")}>'
 
     first_patch = series.get('first-patch-commit')
     prereqs = series.get('prerequisite-commits', [])
@@ -531,9 +569,15 @@ def get_review_info(topdir: str, branch: str) -> Dict[str, Union[str, int, bool,
     if first_patch:
         # Range: first-patch-commit~1..branch~1 (excludes the tracking commit at tip)
         commit_range = f'{first_patch}~1..{branch}~1'
-        lines = b4.git_get_command_lines(topdir, [
-            'log', '--reverse', '--format=%h %s', commit_range,
-        ])
+        lines = b4.git_get_command_lines(
+            topdir,
+            [
+                'log',
+                '--reverse',
+                '--format=%h %s',
+                commit_range,
+            ],
+        )
         info['series-range'] = f'{first_patch}..{branch}~1'
         info['num-patches'] = len(lines)
         for line in lines:
@@ -579,8 +623,11 @@ def show_review_info(param: str, as_json: bool = False) -> None:
         sys.exit(1)
 
     if not mybranch.startswith(REVIEW_BRANCH_PREFIX):
-        logger.critical('Branch %s does not look like a review branch (expected prefix %s)',
-                        mybranch, REVIEW_BRANCH_PREFIX)
+        logger.critical(
+            'Branch %s does not look like a review branch (expected prefix %s)',
+            mybranch,
+            REVIEW_BRANCH_PREFIX,
+        )
         sys.exit(1)
 
     info = get_review_info(topdir, mybranch)
@@ -627,8 +674,16 @@ def list_review_branches(as_json: bool = False) -> None:
     for idx, info in enumerate(all_info):
         if idx > 0:
             print()
-        for key in ('branch', 'change-id', 'status', 'subject', 'sender',
-                     'revision', 'num-patches', 'complete'):
+        for key in (
+            'branch',
+            'change-id',
+            'status',
+            'subject',
+            'sender',
+            'revision',
+            'num-patches',
+            'complete',
+        ):
             val = info.get(key)
             if val is not None:
                 print(f'{key}: {val}')
@@ -642,8 +697,9 @@ def cmd_show_info(cmdargs: argparse.Namespace) -> None:
         show_review_info(cmdargs.param, as_json=cmdargs.json_output)
 
 
-def save_tracking_ref(topdir: str, branch: str,
-                      cover_text: str, tracking: Dict[str, Any]) -> bool:
+def save_tracking_ref(
+    topdir: str, branch: str, cover_text: str, tracking: Dict[str, Any]
+) -> bool:
     """Amend the tracking commit at the tip of a ref without checkout.
 
     Uses git commit-tree + git update-ref so that commit.gpgsign and
@@ -651,7 +707,9 @@ def save_tracking_ref(topdir: str, branch: str,
     not benefit from signing.  Returns True on success.
     """
     if not branch.startswith(REVIEW_BRANCH_PREFIX):
-        logger.critical('Refusing to write tracking commit to non-review branch: %s', branch)
+        logger.critical(
+            'Refusing to write tracking commit to non-review branch: %s', branch
+        )
         return False
     commit_msg = cover_text + '\n\n' + make_review_magic_json(tracking)
     ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{branch}^{{tree}}'])
@@ -662,14 +720,17 @@ def save_tracking_ref(topdir: str, branch: str,
     if ecode > 0:
         return False
     parent = out.strip()
-    ecode, out = b4.git_run_command(topdir,
-                                    ['commit-tree', tree, '-p', parent, '-F', '-'],
-                                    stdin=commit_msg.encode())
+    ecode, out = b4.git_run_command(
+        topdir,
+        ['commit-tree', tree, '-p', parent, '-F', '-'],
+        stdin=commit_msg.encode(),
+    )
     if ecode > 0:
         return False
     new_sha = out.strip()
-    ecode, out = b4.git_run_command(topdir,
-                                    ['update-ref', f'refs/heads/{branch}', new_sha])
+    ecode, out = b4.git_run_command(
+        topdir, ['update-ref', f'refs/heads/{branch}', new_sha]
+    )
     return ecode == 0
 
 
@@ -706,7 +767,9 @@ def _get_my_review(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> Dict[str,
     return result
 
 
-def _ensure_my_review(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> Dict[str, Any]:
+def _ensure_my_review(
+    target: Dict[str, Any], usercfg: b4.ConfigDictT
+) -> Dict[str, Any]:
     """Return the current user's review sub-dict, creating it if needed."""
     email = str(usercfg.get('email', 'unknown@example.com'))
     name = str(usercfg.get('name', 'Unknown'))
@@ -750,8 +813,7 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     if explicit in ('skip', 'done'):
         return explicit
     trailer_keys = {
-        t.split(':', 1)[0].strip().lower()
-        for t in review.get('trailers', [])
+        t.split(':', 1)[0].strip().lower() for t in review.get('trailers', [])
     }
     if _NACK_TRAILER_KEY in trailer_keys:
         return 'draft'
@@ -762,14 +824,16 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     # Check for external reviewer comments
     my_email = str(usercfg.get('email', ''))
     all_reviews = target.get('reviews', {})
-    if any(addr != my_email and rev.get('comments')
-           for addr, rev in all_reviews.items()):
+    if any(
+        addr != my_email and rev.get('comments') for addr, rev in all_reviews.items()
+    ):
         return 'external'
     return explicit if explicit else ''
 
 
-def _set_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT,
-                     state: str) -> None:
+def _set_patch_state(
+    target: Dict[str, Any], usercfg: b4.ConfigDictT, state: str
+) -> None:
     """Store an explicit patch state ('done', 'skip', 'unchanged', or '' to clear)."""
     if state:
         review = _ensure_my_review(target, usercfg)
@@ -866,8 +930,9 @@ def _resolve_comment_positions(
             # comment's current (source-derived) position and path.
             cur_path = c['path']
             cur_line = c['line']
-            best = min(positions,
-                       key=lambda p: (p[0] != cur_path, abs(p[1] - cur_line)))
+            best = min(
+                positions, key=lambda p: (p[0] != cur_path, abs(p[1] - cur_line))
+            )
             c['path'], c['line'] = best
 
 
@@ -894,8 +959,7 @@ def reanchor_patch_comments(
             if not comments or not any(c.get('content') for c in comments):
                 continue
             if real_diff is None:
-                ecode, real_diff = b4.git_run_command(
-                    topdir, ['diff', f'{sha}~1', sha])
+                ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
                 if ecode != 0:
                     break
             _resolve_comment_positions(real_diff, comments)
@@ -999,8 +1063,9 @@ def _integrate_agent_reviews(
 
     # Read NNNN.txt files (per-patch reviews, 1-indexed)
     try:
-        entries = sorted(f for f in os.listdir(review_dir)
-                         if re.match(r'^\d{4}\.txt$', f))
+        entries = sorted(
+            f for f in os.listdir(review_dir) if re.match(r'^\d{4}\.txt$', f)
+        )
     except OSError:
         entries = []
 
@@ -1008,12 +1073,19 @@ def _integrate_agent_reviews(
         patch_num = int(fname[:4])  # 1-indexed
         idx = patch_num - 1
         if idx < 0 or idx >= len(patches):
-            logger.warning('b4-review/%s/%s: patch number out of range, skipping',
-                           head_sha[:12], fname)
+            logger.warning(
+                'b4-review/%s/%s: patch number out of range, skipping',
+                head_sha[:12],
+                fname,
+            )
             continue
         if idx >= len(commit_shas):
-            logger.warning('b4-review/%s/%s: no commit SHA for patch %d, skipping',
-                           head_sha[:12], fname, patch_num)
+            logger.warning(
+                'b4-review/%s/%s: no commit SHA for patch %d, skipping',
+                head_sha[:12],
+                fname,
+                patch_num,
+            )
             continue
 
         fpath = os.path.join(review_dir, fname)
@@ -1031,7 +1103,7 @@ def _integrate_agent_reviews(
             diff_portion = file_text
         elif diff_idx >= 0:
             note_text = file_text[:diff_idx].strip()
-            diff_portion = file_text[diff_idx + 1:]
+            diff_portion = file_text[diff_idx + 1 :]
         else:
             note_text = file_text.strip()
 
@@ -1075,8 +1147,11 @@ def _integrate_agent_reviews(
         save_tracking_ref(topdir, branch, cover_text, tracking)
     else:
         save_tracking(topdir, cover_text, tracking)
-    logger.info('Integrated agent review data from %d file(s) in b4-review/%s',
-                integrated, head_sha[:12])
+    logger.info(
+        'Integrated agent review data from %d file(s) in b4-review/%s',
+        integrated,
+        head_sha[:12],
+    )
 
     # Clean up the consumed review directory
     shutil.rmtree(review_dir, ignore_errors=True)
@@ -1084,8 +1159,9 @@ def _integrate_agent_reviews(
     return True
 
 
-def _extract_comments_from_quoted_reply(text: str,
-                                        capture_preamble: bool = False) -> List[Dict[str, Any]]:
+def _extract_comments_from_quoted_reply(
+    text: str, capture_preamble: bool = False
+) -> List[Dict[str, Any]]:
     """Extract inline comments from a ``> ``-quoted email reply.
 
     This is the standard mailing-list code review format: the reviewer
@@ -1111,9 +1187,18 @@ def _extract_comments_from_quoted_reply(text: str,
     i = 0
     while i < len(raw_lines):
         line = raw_lines[i]
-        stripped = line[2:] if line.startswith('> ') else line[1:] if line.startswith('>') else None
-        if (stripped is not None
-                and stripped.startswith('diff --git a/') and ' b/' not in stripped):
+        stripped = (
+            line[2:]
+            if line.startswith('> ')
+            else line[1:]
+            if line.startswith('>')
+            else None
+        )
+        if (
+            stripped is not None
+            and stripped.startswith('diff --git a/')
+            and ' b/' not in stripped
+        ):
             # Peek at next line for the b/ continuation
             if i + 1 < len(raw_lines):
                 nxt = raw_lines[i + 1]
@@ -1170,11 +1255,13 @@ def _extract_comments_from_quoted_reply(text: str,
         """Store preamble text as a comment on commit message line 0."""
         text = '\n'.join(preamble_lines).strip()
         if text:
-            comments.append({
-                'path': COMMIT_MESSAGE_PATH,
-                'line': 0,
-                'text': text,
-            })
+            comments.append(
+                {
+                    'path': COMMIT_MESSAGE_PATH,
+                    'line': 0,
+                    'text': text,
+                }
+            )
         preamble_lines.clear()
 
     for line in text.splitlines():
@@ -1330,6 +1417,7 @@ def _integrate_sashiko_reviews(
         return False
 
     from b4.review.checks import _fetch_sashiko_patchset, clear_sashiko_cache
+
     clear_sashiko_cache()
     patchset = _fetch_sashiko_patchset(series_msgid, sashiko_url)
     if not patchset:
@@ -1444,8 +1532,8 @@ def _integrate_followup_inline_comments(
 
     cover_msgid = series.get('header-info', {}).get('msgid', '')
     followup_comments = b4.review.tracking._parse_msgs_to_followup_comments(
-        liblore.utils.split_mbox(mbox_bytes),
-        cover_msgid, patches)
+        liblore.utils.split_mbox(mbox_bytes), cover_msgid, patches
+    )
 
     integrated = 0
 
@@ -1633,8 +1721,9 @@ def _render_quoted_diff_with_comments(
     return '\n'.join(result) + '\n'
 
 
-def _extract_editor_comments(edited_text: str,
-                             diff_text: str = '') -> List[Dict[str, Any]]:
+def _extract_editor_comments(
+    edited_text: str, diff_text: str = ''
+) -> List[Dict[str, Any]]:
     """Extract comments from the quoted-diff editor format.
 
     Strips instruction lines (``#`` prefix) and external reviewer
@@ -1655,16 +1744,19 @@ def _extract_editor_comments(edited_text: str,
             continue
         filtered.append(line)
     comments = _extract_comments_from_quoted_reply(
-        '\n'.join(filtered), capture_preamble=True)
+        '\n'.join(filtered), capture_preamble=True
+    )
     if diff_text and comments:
         _resolve_comment_positions(diff_text, comments)
     return comments
 
 
-def _build_reply_from_comments(diff_text: str,
-                               comments: List[Dict[str, Any]],
-                               review_trailers: List[str],
-                               commit_msg: Optional[str] = None) -> str:
+def _build_reply_from_comments(
+    diff_text: str,
+    comments: List[Dict[str, Any]],
+    review_trailers: List[str],
+    commit_msg: Optional[str] = None,
+) -> str:
     """Build an email reply body from review comments.
 
     For each hunk that has comments, quotes the hunk up to the commented
@@ -1718,8 +1810,9 @@ def _build_reply_from_comments(diff_text: str,
         if msg_comment_indices:
             prev_quoted = 0  # last msg line index (1-based) emitted
             for comment_lineno in msg_comment_indices:
-                window_start = max(prev_quoted + 1,
-                                   comment_lineno - _REPLY_CONTEXT_LINES)
+                window_start = max(
+                    prev_quoted + 1, comment_lineno - _REPLY_CONTEXT_LINES
+                )
                 # Clamp to valid msg_lines range
                 window_start = min(window_start, len(msg_lines) + 1)
                 comment_quote_end = min(comment_lineno, len(msg_lines))
@@ -1913,16 +2006,19 @@ def update_series_tracking(
     if b4.can_network:
         try:
             _conn = b4.review.tracking.get_db(identifier)
-            _known = set(r['revision'] for r in b4.review.tracking.get_revisions(_conn, change_id))
+            _known = set(
+                r['revision']
+                for r in b4.review.tracking.get_revisions(_conn, change_id)
+            )
             _conn.close()
         except Exception:
             _known = set()
 
         msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
         if current_rev > 1 and not _known:
-            msgs = b4.mbox.get_extra_series(msgs, direction=-1,
-                                            wantvers=list(range(1, current_rev)),
-                                            nocache=True)
+            msgs = b4.mbox.get_extra_series(
+                msgs, direction=-1, wantvers=list(range(1, current_rev)), nocache=True
+            )
 
     lmbx = b4.LoreMailbox()
     for msg in msgs:
@@ -1935,15 +2031,16 @@ def update_series_tracking(
         lser_att = lmbx.get_series(sloppytrailers=False)
     if lser_att is not None:
         att = check_series_attestation(lser_att)
-        b4.review.tracking.update_attestation(
-            identifier, change_id, current_rev, att)
+        b4.review.tracking.update_attestation(identifier, change_id, current_rev, att)
 
     # Record all discovered revisions in SQLite, keeping track of what
     # was already known so we can distinguish genuinely new versions.
     previously_known: Set[int] = set()
     try:
         conn = b4.review.tracking.get_db(identifier)
-        previously_known = set(r['revision'] for r in b4.review.tracking.get_revisions(conn, change_id))
+        previously_known = set(
+            r['revision'] for r in b4.review.tracking.get_revisions(conn, change_id)
+        )
         for v in sorted(lmbx.series.keys()):
             v_ser = lmbx.series[v]
             v_msgid = ''
@@ -1952,10 +2049,14 @@ def update_series_tracking(
                 for p in v_ser.patches:
                     if p is not None:
                         v_msgid = p.msgid
-                        v_subject = getattr(p, 'full_subject', '') or getattr(p, 'subject', '')
+                        v_subject = getattr(p, 'full_subject', '') or getattr(
+                            p, 'subject', ''
+                        )
                         break
             v_link = (linkmask % v_msgid) if v_msgid and '%s' in str(linkmask) else ''
-            b4.review.tracking.add_revision(conn, change_id, v, v_msgid, v_subject, v_link)
+            b4.review.tracking.add_revision(
+                conn, change_id, v, v_msgid, v_subject, v_link
+            )
             if v not in previously_known:
                 result['new_revisions'] += 1
         conn.close()
@@ -1969,17 +2070,16 @@ def update_series_tracking(
     # prevents a broken version (e.g. v2 that fails to apply) from
     # repeatedly waking the series after the maintainer puts it back
     # into waiting.
-    if status == 'waiting' and _should_promote_waiting(
-            newer_vers, previously_known):
-            try:
-                conn = b4.review.tracking.get_db(identifier)
-                b4.review.tracking.update_series_status(
-                    conn, change_id, 'reviewing',
-                    revision=series.get('revision'))
-                conn.close()
-                result['promoted'] = True
-            except Exception as ex:
-                logger.warning('Could not promote waiting series: %s', ex)
+    if status == 'waiting' and _should_promote_waiting(newer_vers, previously_known):
+        try:
+            conn = b4.review.tracking.get_db(identifier)
+            b4.review.tracking.update_series_status(
+                conn, change_id, 'reviewing', revision=series.get('revision')
+            )
+            conn.close()
+            result['promoted'] = True
+        except Exception as ex:
+            logger.warning('Could not promote waiting series: %s', ex)
 
     # Update follow-up trailers if the series has a review branch
     if status in ('reviewing', 'replied', 'waiting') and topdir:
@@ -2000,14 +2100,15 @@ def update_series_tracking(
         else:
             t_series.pop('newer-versions', None)
 
-        lser = lmbx.get_series(wantver, sloppytrailers=False,
-                               codereview_trailers=True)
+        lser = lmbx.get_series(wantver, sloppytrailers=False, codereview_trailers=True)
         if lser is None:
             result['error'] = f'Could not find series v{wantver} in retrieved messages'
             return result
 
         # Collect fresh cover followups
-        clmsg = lser.patches[0] if lser.has_cover and lser.patches[0] is not None else None
+        clmsg = (
+            lser.patches[0] if lser.has_cover and lser.patches[0] is not None else None
+        )
         new_cover_followups = _collect_followups(clmsg, linkmask) if clmsg else list()
 
         # Collect fresh per-patch followups
@@ -2059,7 +2160,8 @@ def update_series_tracking(
         try:
             conn = b4.review.tracking.get_db(identifier)
             b4.review.tracking.update_message_count_from_msgs(
-                conn, change_id, current_rev, thread_msgs, topdir=topdir)
+                conn, change_id, current_rev, thread_msgs, topdir=topdir
+            )
             conn.close()
             result['counts_updated'] = True
         except Exception as ex:
@@ -2095,9 +2197,12 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
             logger.critical('Enroll with: b4 review enroll')
             sys.exit(1)
 
-    b4.review_tui.run_tracking_tui(identifier, email_dryrun=cmdargs.email_dryrun,
-                                   no_sign=cmdargs.no_sign,
-                                   no_mouse=cmdargs.no_mouse)
+    b4.review_tui.run_tracking_tui(
+        identifier,
+        email_dryrun=cmdargs.email_dryrun,
+        no_sign=cmdargs.no_sign,
+        no_mouse=cmdargs.no_mouse,
+    )
 
 
 def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
@@ -2121,8 +2226,11 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
         branch = out.strip()
 
     if not branch.startswith(REVIEW_BRANCH_PREFIX):
-        logger.critical('Branch %s does not look like a review branch (expected prefix %s)',
-                        branch, REVIEW_BRANCH_PREFIX)
+        logger.critical(
+            'Branch %s does not look like a review branch (expected prefix %s)',
+            branch,
+            REVIEW_BRANCH_PREFIX,
+        )
         sys.exit(1)
 
     # No checkout needed — all git operations use explicit refs.
@@ -2150,8 +2258,9 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     commit_shas = out.strip().splitlines()
 
     # Get commit subjects
-    ecode, out = b4.git_run_command(topdir, ['log', '--reverse', '--format=%s',
-                                              range_spec])
+    ecode, out = b4.git_run_command(
+        topdir, ['log', '--reverse', '--format=%s', range_spec]
+    )
     if ecode > 0:
         logger.critical('Unable to get commit subjects')
         sys.exit(1)
@@ -2167,7 +2276,9 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     cover_subject = series.get('subject', '')
     cover_subject_clean = b4.LoreSubject(cover_subject).subject
     if not cover_subject_clean:
-        cover_subject_clean = cover_text.split('\n', maxsplit=1)[0] if cover_text else '(no subject)'
+        cover_subject_clean = (
+            cover_text.split('\n', maxsplit=1)[0] if cover_text else '(no subject)'
+        )
 
     # Get user identity for trailers (needed throughout the loop)
     usercfg = b4.get_user_config()
@@ -2176,20 +2287,32 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     default_identity = f'{user_name} <{user_email}>'
 
     # Integrate agent reviews from .git/b4-review/
-    _integrate_agent_reviews(topdir, cover_text, tracking, commit_shas, patches, branch=branch)
+    _integrate_agent_reviews(
+        topdir, cover_text, tracking, commit_shas, patches, branch=branch
+    )
 
     # Integrate sashiko inline reviews (if configured)
-    _integrate_sashiko_reviews(topdir, cover_text, tracking, commit_shas, patches, branch=branch)
+    _integrate_sashiko_reviews(
+        topdir, cover_text, tracking, commit_shas, patches, branch=branch
+    )
 
     # Integrate inline comments from mailing-list follow-up messages
-    _integrate_followup_inline_comments(topdir, cover_text, tracking, commit_shas, patches, branch=branch)
+    _integrate_followup_inline_comments(
+        topdir, cover_text, tracking, commit_shas, patches, branch=branch
+    )
 
     # Ensure the plain-text thread-context-blob exists for the AI agent.
     # Runs only when thread-blob was stored before this feature existed
     # (migration) or is being seen for the first time this session.
     change_id = series.get('change-id')
-    if change_id and series.get('thread-blob') and not series.get('thread-context-blob'):
-        b4.review.tracking.ensure_thread_context_blob(topdir, change_id, series, patches)
+    if (
+        change_id
+        and series.get('thread-blob')
+        and not series.get('thread-context-blob')
+    ):
+        b4.review.tracking.ensure_thread_context_blob(
+            topdir, change_id, series, patches
+        )
 
     # Record current branch so ReviewApp can restore it if it checks
     # out the review branch for shell/agent operations.
@@ -2239,9 +2362,14 @@ def _ensure_trailers_in_body(body: str, trailers: List[str]) -> str:
     return main_body
 
 
-def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, Any]],
-                        review: Dict[str, Any], cover_text: str,
-                        topdir: str, commit_sha: Optional[str]) -> Optional[email.message.EmailMessage]:
+def _build_review_email(
+    series: Dict[str, Any],
+    patch_meta: Optional[Dict[str, Any]],
+    review: Dict[str, Any],
+    cover_text: str,
+    topdir: str,
+    commit_sha: Optional[str],
+) -> Optional[email.message.EmailMessage]:
     """Build an EmailMessage for a single review entry (cover or patch).
 
     Returns None if there is nothing to send.
@@ -2276,41 +2404,68 @@ def _build_review_email(series: Dict[str, Any], patch_meta: Optional[Dict[str, A
     elif comments and patch_meta is None:
         # Cover letter with structured comments — build reply from cover text
         reply_body = _build_reply_from_comments(
-            '', comments, trailers, commit_msg=cover_text)
+            '', comments, trailers, commit_msg=cover_text
+        )
         # Add blank line before preamble, but not before quoted content
         sep = '\n\n' if not reply_body.startswith('>') else '\n'
         body = attribution + sep + reply_body
     elif comments and commit_sha and topdir:
         # Auto-generate reply from inline review comments
         ecode, commit_msg = b4.git_run_command(
-            topdir, ['show', '--format=%B', '--no-patch', commit_sha])
+            topdir, ['show', '--format=%B', '--no-patch', commit_sha]
+        )
         if ecode > 0:
             logger.warning('Could not get commit message for %s', commit_sha)
             return None
         ecode, diff_text = b4.git_run_command(
-            topdir, ['diff', f'{commit_sha}~1', commit_sha])
+            topdir, ['diff', f'{commit_sha}~1', commit_sha]
+        )
         if ecode > 0:
             logger.warning('Could not get diff for %s', commit_sha)
             return None
         reply_body = _build_reply_from_comments(
-            diff_text, comments, trailers, commit_msg=commit_msg)
+            diff_text, comments, trailers, commit_msg=commit_msg
+        )
         sep = '\n\n' if not reply_body.startswith('>') else '\n'
         body = attribution + sep + reply_body
     else:
         # Trailer-only reply: quote the first paragraph of the original
         if patch_meta is not None and commit_sha and topdir:
             ecode, commit_msg = b4.git_run_command(
-                topdir, ['show', '--format=%B', '--no-patch', commit_sha])
+                topdir, ['show', '--format=%B', '--no-patch', commit_sha]
+            )
             if ecode == 0 and commit_msg.strip():
                 # Strip the subject line (already in Subject: Re: header)
                 cm_body = '\n'.join(_strip_subject(commit_msg))
-                body = attribution + '\n' + b4.make_quote(cm_body) + '\n\n' + '\n'.join(trailers) \
-                    if cm_body else \
-                    attribution + '\n' + b4.make_quote(cover_text) + '\n\n' + '\n'.join(trailers)
+                body = (
+                    attribution
+                    + '\n'
+                    + b4.make_quote(cm_body)
+                    + '\n\n'
+                    + '\n'.join(trailers)
+                    if cm_body
+                    else attribution
+                    + '\n'
+                    + b4.make_quote(cover_text)
+                    + '\n\n'
+                    + '\n'.join(trailers)
+                )
             else:
-                body = attribution + '\n' + b4.make_quote(cover_text) + '\n\n' + '\n'.join(trailers)
+                body = (
+                    attribution
+                    + '\n'
+                    + b4.make_quote(cover_text)
+                    + '\n\n'
+                    + '\n'.join(trailers)
+                )
         else:
-            body = attribution + '\n' + b4.make_quote(cover_text) + '\n\n' + '\n'.join(trailers)
+            body = (
+                attribution
+                + '\n'
+                + b4.make_quote(cover_text)
+                + '\n\n'
+                + '\n'.join(trailers)
+            )
 
     # Ensure all trailers appear in the body
     body = _ensure_trailers_in_body(body, trailers)
@@ -2388,11 +2543,12 @@ def collect_review_emails(
 
     # Cover letter review (maintainer only)
     cover_review = series.get('reviews', {}).get(my_email, {})
-    if (cover_review
-            and cover_review.get('patch-state') != 'skip'
-            and cover_review.get('sent-revision') is None):
-        msg = _build_review_email(series, None, cover_review, cover_text,
-                                  topdir, None)
+    if (
+        cover_review
+        and cover_review.get('patch-state') != 'skip'
+        and cover_review.get('sent-revision') is None
+    ):
+        msg = _build_review_email(series, None, cover_review, cover_text, topdir, None)
         if msg is not None:
             msgs.append(msg)
 
@@ -2404,8 +2560,9 @@ def collect_review_emails(
         if patch_review.get('sent-revision') is not None:
             continue
         commit_sha = commit_shas[idx] if idx < len(commit_shas) else None
-        msg = _build_review_email(series, patch_meta, patch_review, cover_text,
-                                  topdir, commit_sha)
+        msg = _build_review_email(
+            series, patch_meta, patch_review, cover_text, topdir, commit_sha
+        )
         if msg is not None:
             msgs.append(msg)
 
@@ -2455,7 +2612,9 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
                 series_map[sid] = {
                     'id': sid,
                     'name': s.get('name', '(no subject)'),
-                    'submitter': submitter.get('name', submitter.get('email', 'Unknown')),
+                    'submitter': submitter.get(
+                        'name', submitter.get('email', 'Unknown')
+                    ),
                     'submitter_email': submitter.get('email', ''),
                     'delegate': delegate.get('username', ''),
                     'date': patch.get('date', ''),
@@ -2477,7 +2636,9 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
                 # Aggregate CI check: worst status wins
                 patch_check = patch.get('check', 'pending')
                 cur_check = series_map[sid].get('check', 'pending')
-                if _check_priority.get(patch_check, 0) > _check_priority.get(cur_check, 0):
+                if _check_priority.get(patch_check, 0) > _check_priority.get(
+                    cur_check, 0
+                ):
                     series_map[sid]['check'] = patch_check
             if patch_id:
                 series_map[sid]['patch_ids'].append(patch_id)
@@ -2510,8 +2671,9 @@ def pw_fetch_states(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
     return [{'slug': s, 'name': s.replace('-', ' ').title()} for s in default_slugs]
 
 
-def pw_fetch_checks(pwkey: str, pwurl: str,
-                    patch_ids: List[int]) -> List[Dict[str, Any]]:
+def pw_fetch_checks(
+    pwkey: str, pwurl: str, patch_ids: List[int]
+) -> List[Dict[str, Any]]:
     """Fetch CI check details for a list of patch IDs.
 
     Returns a flat list of check dicts, each augmented with 'patch_id'.
@@ -2532,8 +2694,9 @@ def pw_fetch_checks(pwkey: str, pwurl: str,
     return all_checks
 
 
-def pw_set_series_state(pwkey: str, pwurl: str, patch_ids: List[int],
-                        state: str, archived: bool) -> Tuple[int, int]:
+def pw_set_series_state(
+    pwkey: str, pwurl: str, patch_ids: List[int], state: str, archived: bool
+) -> Tuple[int, int]:
     """Set state and archived flag on patches by patch ID.
 
     Returns (success_count, failure_count).
@@ -2558,7 +2721,9 @@ def pw_set_series_state(pwkey: str, pwurl: str, patch_ids: List[int],
     return ok, fail
 
 
-def pw_update_series_state(pw_series_id: int, state: str, archived: bool = False) -> bool:
+def pw_update_series_state(
+    pw_series_id: int, state: str, archived: bool = False
+) -> bool:
     """Update Patchwork state for a series tracked by pw_series_id.
 
     Looks up pw-key and pw-url from git config, fetches the patch IDs

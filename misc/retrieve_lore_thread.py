@@ -21,7 +21,7 @@ class Function(OpenAISchema):
     )
 
     class Config:
-        title = "retrieve_lore_thread"
+        title = 'retrieve_lore_thread'
 
     @classmethod
     def execute(cls, message_id: str) -> str:

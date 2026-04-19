@@ -25,12 +25,17 @@ def _tui_use_mouse() -> bool:
         return True
 
 
-def run_pw_tui(pwkey: str, pwurl: str, pwproj: str,
-               email_dryrun: bool = False,
-               patatt_sign: bool = True) -> None:
+def run_pw_tui(
+    pwkey: str,
+    pwurl: str,
+    pwproj: str,
+    email_dryrun: bool = False,
+    patatt_sign: bool = True,
+) -> None:
     """Launch the Patchwork series browser TUI."""
-    app = PwApp(pwkey, pwurl, pwproj,
-                email_dryrun=email_dryrun, patatt_sign=patatt_sign)
+    app = PwApp(
+        pwkey, pwurl, pwproj, email_dryrun=email_dryrun, patatt_sign=patatt_sign
+    )
     app.run(mouse=_tui_use_mouse())
 
 
@@ -40,9 +45,12 @@ def run_branch_tui(session: Dict[str, Any]) -> None:
     app.run(mouse=_tui_use_mouse())
 
 
-def run_tracking_tui(identifier: str, email_dryrun: bool = False,
-                     no_sign: bool = False,
-                     no_mouse: bool = False) -> None:
+def run_tracking_tui(
+    identifier: str,
+    email_dryrun: bool = False,
+    no_sign: bool = False,
+    no_mouse: bool = False,
+) -> None:
     """Entry point called from b4.review.cmd_tui().
 
     Loops between TrackingApp and ReviewApp as needed.
@@ -88,14 +96,21 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             review_app = ReviewApp(session)
             review_app.run(mouse=use_mouse)
         except SystemExit:
-            logger.warning('Could not prepare review session for branch: %s', original_branch)
+            logger.warning(
+                'Could not prepare review session for branch: %s', original_branch
+            )
         return
 
     # Normal tracking mode - loop between TrackingApp and ReviewApp
     focus_change_id: Optional[str] = None
     while True:
-        app = TrackingApp(identifier, original_branch, focus_change_id=focus_change_id,
-                          email_dryrun=email_dryrun, patatt_sign=patatt_sign)
+        app = TrackingApp(
+            identifier,
+            original_branch,
+            focus_change_id=focus_change_id,
+            email_dryrun=email_dryrun,
+            patatt_sign=patatt_sign,
+        )
         focus_change_id = None
         branch_name = app.run(mouse=use_mouse)
 
@@ -110,9 +125,13 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             pwurl = str(config.get('pw-url', ''))
             pwproj = str(config.get('pw-project', ''))
             if pwkey and pwurl and pwproj:
-                run_pw_tui(pwkey, pwurl, pwproj,
-                           email_dryrun=email_dryrun,
-                           patatt_sign=patatt_sign)
+                run_pw_tui(
+                    pwkey,
+                    pwurl,
+                    pwproj,
+                    email_dryrun=email_dryrun,
+                    patatt_sign=patatt_sign,
+                )
             continue
 
         # User selected a branch to review - prepare session and run ReviewApp
@@ -121,7 +140,9 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             session = b4.review._prepare_review_session(cmdargs)
         except SystemExit:
             # Session prep failed (e.g., branch doesn't exist)
-            logger.warning('Could not prepare review session for branch: %s', branch_name)
+            logger.warning(
+                'Could not prepare review session for branch: %s', branch_name
+            )
             continue
 
         session['email_dryrun'] = email_dryrun
@@ -143,7 +164,8 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
             if tracking_status and focus_change_id:
                 conn = b4.review.tracking.get_db(identifier)
                 b4.review.tracking.update_series_status(
-                    conn, focus_change_id, tracking_status, revision=revision)
+                    conn, focus_change_id, tracking_status, revision=revision
+                )
                 conn.close()
         except Exception as ex:
             logger.warning('Could not sync tracking status: %s', ex)
@@ -155,7 +177,13 @@ def run_tracking_tui(identifier: str, email_dryrun: bool = False,
         if original_branch:
             current = b4.git_get_current_branch(topdir)
             if current and current != original_branch:
-                logger.info('Checking out %s and starting tracking UI...', original_branch)
-                ecode, _out = b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                logger.info(
+                    'Checking out %s and starting tracking UI...', original_branch
+                )
+                ecode, _out = b4.git_run_command(
+                    topdir, ['checkout', original_branch], logstderr=True
+                )
                 if ecode != 0:
-                    logger.warning('Could not restore original branch: %s', original_branch)
+                    logger.warning(
+                        'Could not restore original branch: %s', original_branch
+                    )

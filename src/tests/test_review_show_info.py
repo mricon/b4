@@ -4,6 +4,7 @@
 # Copyright (C) 2024 by the Linux Foundation
 #
 """Tests for ``b4 review show-info``."""
+
 import json
 
 import pytest
@@ -20,15 +21,19 @@ from b4.review._review import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _create_review_branch(gitdir: str, change_id: str,
-                          identifier: str = 'test-project',
-                          revision: int = 1,
-                          status: str = 'reviewing',
-                          subject: str = 'Test series',
-                          sender_name: str = 'Test Author',
-                          sender_email: str = 'test@example.com',
-                          link: str = '',
-                          num_real_commits: int = 0) -> str:
+
+def _create_review_branch(
+    gitdir: str,
+    change_id: str,
+    identifier: str = 'test-project',
+    revision: int = 1,
+    status: str = 'reviewing',
+    subject: str = 'Test series',
+    sender_name: str = 'Test Author',
+    sender_email: str = 'test@example.com',
+    link: str = '',
+    num_real_commits: int = 0,
+) -> str:
     """Create a fake b4 review branch with a proper tracking commit.
 
     When *num_real_commits* > 0, that many empty commits are created between
@@ -54,7 +59,9 @@ def _create_review_branch(gitdir: str, change_id: str,
     first_patch_commit = None
     for i in range(num_real_commits):
         ecode, _ = b4.git_run_command(
-            gitdir, ['commit', '--allow-empty', '-m', f'patch {i+1}: do thing {i+1}'])
+            gitdir,
+            ['commit', '--allow-empty', '-m', f'patch {i + 1}: do thing {i + 1}'],
+        )
         assert ecode == 0
         if i == 0:
             ecode, sha = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
@@ -88,8 +95,7 @@ def _create_review_branch(gitdir: str, change_id: str,
     commit_msg = f'{subject}\n\n{b4.review.make_review_magic_json(trk)}'
 
     # Create the tracking commit
-    ecode, _ = b4.git_run_command(
-        gitdir, ['commit', '--allow-empty', '-m', commit_msg])
+    ecode, _ = b4.git_run_command(gitdir, ['commit', '--allow-empty', '-m', commit_msg])
     assert ecode == 0
 
     # Go back to master
@@ -103,12 +109,12 @@ def _create_review_branch(gitdir: str, change_id: str,
 # TestGetReviewInfo
 # ---------------------------------------------------------------------------
 
-class TestGetReviewInfo:
 
+class TestGetReviewInfo:
     def test_basic_info(self, gitdir: str) -> None:
-        branch = _create_review_branch(gitdir, 'basic-change-id',
-                                       subject='Basic test series',
-                                       status='reviewing')
+        branch = _create_review_branch(
+            gitdir, 'basic-change-id', subject='Basic test series', status='reviewing'
+        )
         info = get_review_info(gitdir, branch)
 
         assert info['branch'] == branch
@@ -122,15 +128,17 @@ class TestGetReviewInfo:
         assert info['first-patch-commit'] is not None
 
     def test_sender_format(self, gitdir: str) -> None:
-        branch = _create_review_branch(gitdir, 'sender-test',
-                                       sender_name='Alice Author',
-                                       sender_email='alice@example.com')
+        branch = _create_review_branch(
+            gitdir,
+            'sender-test',
+            sender_name='Alice Author',
+            sender_email='alice@example.com',
+        )
         info = get_review_info(gitdir, branch)
         assert info['sender'] == 'Alice Author <alice@example.com>'
 
     def test_commit_keys(self, gitdir: str) -> None:
-        branch = _create_review_branch(gitdir, 'commit-keys-test',
-                                       num_real_commits=3)
+        branch = _create_review_branch(gitdir, 'commit-keys-test', num_real_commits=3)
         info = get_review_info(gitdir, branch)
 
         assert info['num-patches'] == 3
@@ -147,8 +155,8 @@ class TestGetReviewInfo:
 # TestShowReviewInfo
 # ---------------------------------------------------------------------------
 
-class TestShowReviewInfo:
 
+class TestShowReviewInfo:
     def test_all_keys(self, gitdir: str, capsys: pytest.CaptureFixture[str]) -> None:
         _create_review_branch(gitdir, 'show-all-test', subject='All keys test')
         show_review_info('b4/review/show-all-test:_all')
@@ -163,7 +171,9 @@ class TestShowReviewInfo:
         out = capsys.readouterr().out
         assert out.strip() == 'applied'
 
-    def test_named_branch(self, gitdir: str, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_named_branch(
+        self, gitdir: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         branch = _create_review_branch(gitdir, 'named-branch-test')
         show_review_info(branch)
         out = capsys.readouterr().out
@@ -196,9 +206,11 @@ class TestShowReviewInfo:
 # TestListReviewBranches
 # ---------------------------------------------------------------------------
 
-class TestListReviewBranches:
 
-    def test_list_multiple(self, gitdir: str, capsys: pytest.CaptureFixture[str]) -> None:
+class TestListReviewBranches:
+    def test_list_multiple(
+        self, gitdir: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         _create_review_branch(gitdir, 'list-alpha', subject='Alpha series')
         _create_review_branch(gitdir, 'list-bravo', subject='Bravo series')
         list_review_branches()
@@ -229,8 +241,8 @@ class TestListReviewBranches:
 # TestTargetBranchInInfo
 # ---------------------------------------------------------------------------
 
-class TestTargetBranchInInfo:
 
+class TestTargetBranchInInfo:
     def test_target_branch_in_info(self, gitdir: str) -> None:
         """Branch with target-branch in tracking data includes it in info."""
         branch_name = 'b4/review/target-info-test'
@@ -264,14 +276,19 @@ class TestTargetBranchInInfo:
             'patches': [],
         }
         commit_msg = f'Target info test\n\n{b4.review.make_review_magic_json(trk)}'
-        ecode, tree = b4.git_run_command(gitdir, ['rev-parse', f'{branch_name}^{{tree}}'])
+        ecode, tree = b4.git_run_command(
+            gitdir, ['rev-parse', f'{branch_name}^{{tree}}']
+        )
         assert ecode == 0
         ecode, new_sha = b4.git_run_command(
-            gitdir, ['commit-tree', tree.strip(), '-p', base_sha],
-            stdin=commit_msg.encode())
+            gitdir,
+            ['commit-tree', tree.strip(), '-p', base_sha],
+            stdin=commit_msg.encode(),
+        )
         assert ecode == 0
         ecode, _ = b4.git_run_command(
-            gitdir, ['update-ref', f'refs/heads/{branch_name}', new_sha.strip()])
+            gitdir, ['update-ref', f'refs/heads/{branch_name}', new_sha.strip()]
+        )
         assert ecode == 0
 
         info = get_review_info(gitdir, branch_name)
@@ -280,16 +297,19 @@ class TestTargetBranchInInfo:
     def test_target_branch_fallback(self, gitdir: str) -> None:
         """No per-series target + single config value = fallback shown."""
         from unittest.mock import patch as mock_patch
-        branch = _create_review_branch(gitdir, 'target-fallback-test',
-                                       subject='Fallback test')
-        with mock_patch('b4.review.tracking.get_review_target_branch_default',
-                        return_value='regulator/for-next'):
+
+        branch = _create_review_branch(
+            gitdir, 'target-fallback-test', subject='Fallback test'
+        )
+        with mock_patch(
+            'b4.review.tracking.get_review_target_branch_default',
+            return_value='regulator/for-next',
+        ):
             info = get_review_info(gitdir, branch)
         assert info['target-branch'] == 'regulator/for-next'
 
     def test_target_branch_none(self, gitdir: str) -> None:
         """No per-series target + no config = None."""
-        branch = _create_review_branch(gitdir, 'target-none-test',
-                                       subject='None test')
+        branch = _create_review_branch(gitdir, 'target-none-test', subject='None test')
         info = get_review_info(gitdir, branch)
         assert info['target-branch'] is None

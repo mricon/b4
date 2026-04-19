@@ -46,7 +46,11 @@ PULL_BODY_REMOTE_REF_RE = [
 
 def git_get_commit_id_from_repo_ref(repo: str, ref: str) -> Optional[str]:
     # We only handle git and http/s URLs
-    if not (repo.find('git://') == 0 or repo.find('http://') == 0 or repo.find('https://') == 0):
+    if not (
+        repo.find('git://') == 0
+        or repo.find('http://') == 0
+        or repo.find('https://') == 0
+    ):
         logger.info('%s uses unsupported protocol', repo)
         return None
 
@@ -56,10 +60,14 @@ def git_get_commit_id_from_repo_ref(repo: str, ref: str) -> Optional[str]:
     # Is it a full ref name or a shortname?
     if ref.find('heads/') < 0 and ref.find('tags/') < 0:
         # Try grabbing it as a head first
-        lines = b4.git_get_command_lines(None, ['ls-remote', repo, 'refs/heads/%s' % ref])
+        lines = b4.git_get_command_lines(
+            None, ['ls-remote', repo, 'refs/heads/%s' % ref]
+        )
         if not lines:
             # try it as a tag, then
-            lines = b4.git_get_command_lines(None, ['ls-remote', repo, 'refs/tags/%s^{}' % ref])
+            lines = b4.git_get_command_lines(
+                None, ['ls-remote', repo, 'refs/tags/%s^{}' % ref]
+            )
 
     elif ref.find('tags/') == 0:
         # try as an annotated tag first
@@ -114,7 +122,9 @@ def parse_pr_data(msg: email.message.EmailMessage) -> Optional[b4.LoreMessage]:
             break
 
     if lmsg.pr_repo and lmsg.pr_ref:
-        lmsg.pr_remote_tip_commit = git_get_commit_id_from_repo_ref(lmsg.pr_repo, lmsg.pr_ref)
+        lmsg.pr_remote_tip_commit = git_get_commit_id_from_repo_ref(
+            lmsg.pr_repo, lmsg.pr_ref
+        )
 
     return lmsg
 
@@ -136,9 +146,13 @@ def attest_fetch_head(gitdir: Optional[str], lmsg: b4.LoreMessage) -> None:
     if len(htype):
         otype = htype[0]
     if otype == 'tag':
-        _ecode, out = b4.git_run_command(gitdir, ['verify-tag', '--raw', 'FETCH_HEAD'], logstderr=True)
+        _ecode, out = b4.git_run_command(
+            gitdir, ['verify-tag', '--raw', 'FETCH_HEAD'], logstderr=True
+        )
     elif otype == 'commit':
-        _ecode, out = b4.git_run_command(gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True)
+        _ecode, out = b4.git_run_command(
+            gitdir, ['verify-commit', '--raw', 'FETCH_HEAD'], logstderr=True
+        )
 
     good, valid, _trusted, keyid, _sigtime = b4.check_gpg_status(out)
     signer = None
@@ -172,7 +186,9 @@ def attest_fetch_head(gitdir: Optional[str], lmsg: b4.LoreMessage) -> None:
     if errors:
         logger.critical('  ---')
         if len(out):
-            logger.critical('  Pull request is signed, but verification did not succeed:')
+            logger.critical(
+                '  Pull request is signed, but verification did not succeed:'
+            )
         else:
             logger.critical('  Pull request verification did not succeed:')
         for error in errors:
@@ -180,24 +196,36 @@ def attest_fetch_head(gitdir: Optional[str], lmsg: b4.LoreMessage) -> None:
 
         if attpolicy == 'hardfail':
             import sys
+
             sys.exit(128)
 
 
-def fetch_remote(gitdir: Optional[str], lmsg: b4.LoreMessage, branch: Optional[str] = None,
-                 check_sig: bool = True, ty_track: bool = True) -> int:
+def fetch_remote(
+    gitdir: Optional[str],
+    lmsg: b4.LoreMessage,
+    branch: Optional[str] = None,
+    check_sig: bool = True,
+    ty_track: bool = True,
+) -> int:
     # Do we know anything about this base commit?
     if lmsg.pr_base_commit and not b4.git_commit_exists(gitdir, lmsg.pr_base_commit):
         logger.critical('ERROR: git knows nothing about commit %s', lmsg.pr_base_commit)
-        logger.critical('       Are you running inside a git checkout and is it up-to-date?')
+        logger.critical(
+            '       Are you running inside a git checkout and is it up-to-date?'
+        )
         return 1
 
     if lmsg.pr_tip_commit != lmsg.pr_remote_tip_commit:
         logger.critical('ERROR: commit-id mismatch between pull request and remote')
-        logger.critical('       msg=%s, remote=%s', lmsg.pr_tip_commit, lmsg.pr_remote_tip_commit)
+        logger.critical(
+            '       msg=%s, remote=%s', lmsg.pr_tip_commit, lmsg.pr_remote_tip_commit
+        )
         return 1
 
     if not lmsg.pr_repo or not lmsg.pr_ref:
-        logger.critical('ERROR: Could not find remote repository or ref in pull request')
+        logger.critical(
+            'ERROR: Could not find remote repository or ref in pull request'
+        )
         logger.critical('       msgid=%s', lmsg.msgid)
         return 1
 
@@ -252,7 +280,7 @@ def thanks_record_pr(lmsg: b4.LoreMessage) -> None:
         'remote': lmsg.pr_repo,
         'ref': lmsg.pr_ref,
         'sentdate': b4.LoreMessage.clean_header(lmsg.msg['Date']),
-        'quote': b4.make_quote(lmsg.body, maxlines=6)
+        'quote': b4.make_quote(lmsg.body, maxlines=6),
     }
     fullpath = os.path.join(datadir, filename)
     with open(fullpath, 'w', encoding='utf-8') as fh:
@@ -266,9 +294,11 @@ def thanks_record_pr(lmsg: b4.LoreMessage) -> None:
         b4.patchwork_set_state([lmsg.msgid], pwstate)
 
 
-def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
-            usefrom: Optional[str] = None) -> List[email.message.EmailMessage]:
+def explode(
+    gitdir: Optional[str], lmsg: b4.LoreMessage, usefrom: Optional[str] = None
+) -> List[email.message.EmailMessage]:
     import b4.ez
+
     ecode = fetch_remote(gitdir, lmsg, check_sig=False, ty_track=False)
     if ecode > 0:
         raise RuntimeError('Fetching unsuccessful')
@@ -313,22 +343,33 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
     config = b4.get_main_config()
     msgid_tpt = f'<b4-pr-%s-{lmsg.msgid}>'
 
-    pmsgs = b4.git_range_to_patches(gitdir, lmsg.pr_base_commit, 'FETCH_HEAD',
-                                    prefixes=prefixes, msgid_tpt=msgid_tpt,
-                                    seriests=int(lmsg.date.timestamp()), mailfrom=mailfrom)
+    pmsgs = b4.git_range_to_patches(
+        gitdir,
+        lmsg.pr_base_commit,
+        'FETCH_HEAD',
+        prefixes=prefixes,
+        msgid_tpt=msgid_tpt,
+        seriests=int(lmsg.date.timestamp()),
+        mailfrom=mailfrom,
+    )
 
     msgs = list()
     # Build the cover message from the pull request body
     linkmask = config.get('linkmask', 'https://lore.kernel.org/%s')
     assert isinstance(linkmask, str), 'linkmask must be a string'
     cbody = '%s\n\nbase-commit: %s\npull-request: %s\n' % (
-        lmsg.body.strip(), lmsg.pr_base_commit, linkmask % lmsg.msgid)
+        lmsg.body.strip(),
+        lmsg.pr_base_commit,
+        linkmask % lmsg.msgid,
+    )
 
     if len(pmsgs) == 1:
         b4.ez.mixin_cover(cbody, pmsgs)
     else:
         lmsg.lsubject.prefixes = prefixes
-        b4.ez.add_cover(lmsg.lsubject, msgid_tpt, pmsgs, cbody, int(lmsg.date.timestamp()))
+        b4.ez.add_cover(
+            lmsg.lsubject, msgid_tpt, pmsgs, cbody, int(lmsg.date.timestamp())
+        )
 
     for _at, (_commit, msg) in enumerate(pmsgs):
         msg.add_header('To', b4.format_addrs(allto))
@@ -336,7 +377,9 @@ def explode(gitdir: Optional[str], lmsg: b4.LoreMessage,
             msg.add_header('Cc', b4.format_addrs(allcc))
 
         if lmsg.msg['List-Id']:
-            msg.add_header('X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id']))
+            msg.add_header(
+                'X-Original-List-Id', b4.LoreMessage.clean_header(lmsg.msg['List-Id'])
+            )
 
         msgs.append(msg)
         logger.info('  %s', re.sub(r'\n\s*', ' ', msg.get('Subject', '(no subject)')))
@@ -394,7 +437,11 @@ def get_pr_from_github(ghurl: str) -> Optional[b4.LoreMessage]:
         idstring=f'{rproj}-{rrepo}-pr-{rpull}',
         domain='github.com',
     )
-    created_at = utils.format_datetime(datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc))
+    created_at = utils.format_datetime(
+        datetime.strptime(prdata.get('created_at'), '%Y-%m-%dT%H:%M:%SZ').replace(
+            tzinfo=timezone.utc
+        )
+    )
     msg['Date'] = created_at
     msg.set_charset('utf-8')
     body = prdata.get('body')
@@ -416,12 +463,17 @@ def main(cmdargs: argparse.Namespace) -> None:
 
     if not cmdargs.no_stdin and not sys.stdin.isatty():
         logger.debug('Getting PR message from stdin')
-        msg = email.parser.BytesParser(policy=b4.emlpolicy,
-                                       _class=email.message.EmailMessage).parse(sys.stdin.buffer)
+        msg = email.parser.BytesParser(
+            policy=b4.emlpolicy, _class=email.message.EmailMessage
+        ).parse(sys.stdin.buffer)
         cmdargs.msgid = b4.LoreMessage.get_clean_msgid(msg)
         lmsg = parse_pr_data(msg)
     else:
-        if cmdargs.msgid and 'github.com' in cmdargs.msgid and '/pull/' in cmdargs.msgid:
+        if (
+            cmdargs.msgid
+            and 'github.com' in cmdargs.msgid
+            and '/pull/' in cmdargs.msgid
+        ):
             logger.debug('Getting PR info from Github')
             lmsg = get_pr_from_github(cmdargs.msgid)
         else:
@@ -459,13 +511,24 @@ def main(cmdargs: argparse.Namespace) -> None:
         if msgs:
             if cmdargs.sendidentity:
                 # Pass exploded series via git-send-email
-                config = b4.get_config_from_git(rf'sendemail\.{cmdargs.sendidentity}\..*')
+                config = b4.get_config_from_git(
+                    rf'sendemail\.{cmdargs.sendidentity}\..*'
+                )
                 if not len(config):
-                    logger.critical('Not able to find sendemail.%s configuration', cmdargs.sendidentity)
+                    logger.critical(
+                        'Not able to find sendemail.%s configuration',
+                        cmdargs.sendidentity,
+                    )
                     sys.exit(1)
                 # Make sure from is not overridden by current user
                 mailfrom = msgs[0].get('from')
-                gitargs = ['send-email', '--identity', cmdargs.sendidentity, '--from', mailfrom]
+                gitargs = [
+                    'send-email',
+                    '--identity',
+                    cmdargs.sendidentity,
+                    '--from',
+                    mailfrom,
+                ]
                 if cmdargs.dryrun:
                     gitargs.append('--dry-run')
                 # Write out everything into a temporary dir
@@ -477,7 +540,9 @@ def main(cmdargs: argparse.Namespace) -> None:
                             tfh.write(msg.as_bytes(policy=b4.emlpolicy))
                         gitargs.append(outfile)
                         counter += 1
-                    ecode, out = b4.git_run_command(cmdargs.gitdir, gitargs, logstderr=True)
+                    ecode, out = b4.git_run_command(
+                        cmdargs.gitdir, gitargs, logstderr=True
+                    )
                     if cmdargs.dryrun:
                         logger.info(out)
                     sys.exit(ecode)
@@ -521,7 +586,9 @@ def main(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
 
         # Is it at the tip of FETCH_HEAD?
-        loglines = b4.git_get_command_lines(gitdir, ['log', '-1', '--pretty=oneline', 'FETCH_HEAD'])
+        loglines = b4.git_get_command_lines(
+            gitdir, ['log', '-1', '--pretty=oneline', 'FETCH_HEAD']
+        )
         if len(loglines) and loglines[0].find(lmsg.pr_tip_commit) == 0:
             logger.info('Pull request is at the tip of FETCH_HEAD')
             if cmdargs.check:

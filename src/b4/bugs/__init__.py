@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
 """b4 bugs: manage bug reports from mailing list threads."""
+
 import argparse
 import json
 import logging
@@ -46,14 +47,21 @@ def _ensure_identity(topdir: str) -> bool:
             git_email = git_email.strip() if ecode_e == 0 else ''
             for user in users:
                 if user.get('email', '') == git_email:
-                    ecode, _out, _err = git_bug_cli(topdir, ['user', 'adopt', user['id']])
+                    ecode, _out, _err = git_bug_cli(
+                        topdir, ['user', 'adopt', user['id']]
+                    )
                     if ecode == 0:
-                        logger.info('Adopted existing git-bug identity: %s', user.get('name', ''))
+                        logger.info(
+                            'Adopted existing git-bug identity: %s',
+                            user.get('name', ''),
+                        )
                         return True
             # No email match -- adopt the first one
             ecode, _out, _err = git_bug_cli(topdir, ['user', 'adopt', users[0]['id']])
             if ecode == 0:
-                logger.info('Adopted existing git-bug identity: %s', users[0].get('name', ''))
+                logger.info(
+                    'Adopted existing git-bug identity: %s', users[0].get('name', '')
+                )
                 return True
 
     # No identities at all -- create from git config after confirmation
@@ -62,7 +70,9 @@ def _ensure_identity(topdir: str) -> bool:
     git_name = git_name.strip() if ecode_n == 0 else ''
     git_email = git_email.strip() if ecode_e == 0 else ''
     if not git_name or not git_email:
-        logger.critical('Cannot create git-bug identity: git user.name/user.email not configured')
+        logger.critical(
+            'Cannot create git-bug identity: git user.name/user.email not configured'
+        )
         return False
 
     logger.info('No git-bug identity found for this repository.')
@@ -74,9 +84,18 @@ def _ensure_identity(topdir: str) -> bool:
     if answer and answer != 'y':
         return False
 
-    ecode, out, err = git_bug_cli(topdir, [
-        'user', 'new', '-n', git_name, '-e', git_email, '--non-interactive',
-    ])
+    ecode, out, err = git_bug_cli(
+        topdir,
+        [
+            'user',
+            'new',
+            '-n',
+            git_name,
+            '-e',
+            git_email,
+            '--non-interactive',
+        ],
+    )
     if ecode != 0:
         logger.critical('Failed to create git-bug identity: %s', err.strip())
         return False
@@ -115,8 +134,9 @@ def cmd_import(cmdargs: argparse.Namespace) -> None:
     except RuntimeError as exc:
         logger.critical('Import failed: %s', exc)
         sys.exit(1)
-    logger.info('Created bug %s: %s (%d comments)',
-                bug.id[:7], bug.title, len(bug.comments))
+    logger.info(
+        'Created bug %s: %s (%d comments)', bug.id[:7], bug.title, len(bug.comments)
+    )
 
 
 def cmd_refresh(cmdargs: argparse.Namespace) -> None:
@@ -140,8 +160,7 @@ def cmd_refresh(cmdargs: argparse.Namespace) -> None:
             if count:
                 logger.info('Bug %s: %d new comment(s)', bug.id[:7], count)
                 total += count
-        logger.info('Refreshed %d bug(s), %d new comment(s) total',
-                    len(bugs), total)
+        logger.info('Refreshed %d bug(s), %d new comment(s) total', len(bugs), total)
 
 
 def cmd_list(cmdargs: argparse.Namespace) -> None:
@@ -161,8 +180,7 @@ def cmd_list(cmdargs: argparse.Namespace) -> None:
     for bug in bugs:
         icon = '\u25cf' if bug.status == Status.OPEN else '\u25cb'
         labels = ' '.join(f'[{label}]' for label in sorted(bug.labels))
-        logger.info('%s %s  %s  %s',
-                    icon, bug.id[:7], bug.title, labels)
+        logger.info('%s %s  %s  %s', icon, bug.id[:7], bug.title, labels)
 
 
 def cmd_delete(cmdargs: argparse.Namespace) -> None:

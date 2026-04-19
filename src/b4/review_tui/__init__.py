@@ -18,10 +18,18 @@ from b4.review_tui._review_app import ReviewApp
 from b4.review_tui._tracking_app import TrackingApp
 
 __all__ = [
-    'logger', 'PATCH_STATE_MARKERS',
-    'resolve_styles', 'reviewer_colours',
+    'logger',
+    'PATCH_STATE_MARKERS',
+    'resolve_styles',
+    'reviewer_colours',
     'gather_attestation_info',
-    '_addrs_to_lines', '_lines_to_header', '_validate_addrs',
-    'ReviewApp', 'TrackingApp', 'PwApp',
-    'run_branch_tui', 'run_pw_tui', 'run_tracking_tui',
+    '_addrs_to_lines',
+    '_lines_to_header',
+    '_validate_addrs',
+    'ReviewApp',
+    'TrackingApp',
+    'PwApp',
+    'run_branch_tui',
+    'run_pw_tui',
+    'run_tracking_tui',
 ]

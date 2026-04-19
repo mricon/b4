@@ -29,9 +29,7 @@ class TestGetDb:
 
     def test_sets_schema_version(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = messages.get_db()
-        version = conn.execute(
-            'SELECT version FROM schema_version'
-        ).fetchone()[0]
+        version = conn.execute('SELECT version FROM schema_version').fetchone()[0]
         assert version == messages.SCHEMA_VERSION
         conn.close()
 
@@ -85,8 +83,9 @@ class TestSetFlag:
 
     def test_creates_new_row(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = messages.get_db()
-        messages.set_flag(conn, 'new@example.com', 'Seen',
-                          msg_date='2026-03-05T10:00:00')
+        messages.set_flag(
+            conn, 'new@example.com', 'Seen', msg_date='2026-03-05T10:00:00'
+        )
         flags = messages.get_flags(conn, 'new@example.com')
         assert 'Seen' in flags
         conn.close()
@@ -197,13 +196,15 @@ class TestCleanupOld:
     def test_removes_old_entries(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = messages.get_db()
         old_date = (
-            datetime.datetime.now(datetime.timezone.utc)
-            - datetime.timedelta(days=200)
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=200)
         ).isoformat()
         messages.set_flag(conn, 'old@example.com', 'Seen', msg_date=old_date)
-        messages.set_flag(conn, 'recent@example.com', 'Seen',
-                          msg_date=datetime.datetime.now(
-                              datetime.timezone.utc).isoformat())
+        messages.set_flag(
+            conn,
+            'recent@example.com',
+            'Seen',
+            msg_date=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
         deleted = messages.cleanup_old(conn, max_days=180)
         assert deleted == 1
         assert messages.get_flags(conn, 'old@example.com') == ''

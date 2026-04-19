@@ -46,16 +46,18 @@ index 3333333..4444444 100644
 """
 
 
-
 class TestRenderQuotedDiffWithComments:
     """Tests for _render_quoted_diff_with_comments()."""
 
     def test_no_comments_quotes_diff(self) -> None:
         """Without comments, every diff line gets a '> ' prefix."""
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, {}, 'me@example.com')
+            SIMPLE_DIFF, {}, 'me@example.com'
+        )
         for line in result.splitlines():
-            assert line.startswith(('> ', '#')) or line == '', f'Unquoted line: {line!r}'
+            assert line.startswith(('> ', '#')) or line == '', (
+                f'Unquoted line: {line!r}'
+            )
 
     def test_own_comment_is_unquoted(self) -> None:
         """Own comments appear as unquoted text between quoted diff."""
@@ -63,12 +65,17 @@ class TestRenderQuotedDiffWithComments:
             'me@example.com': {
                 'name': 'Me',
                 'comments': [
-                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check NULL return'},
+                    {
+                        'path': 'b/lib/helpers.c',
+                        'line': 12,
+                        'text': 'Check NULL return',
+                    },
                 ],
             },
         }
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com')
+            SIMPLE_DIFF, all_reviews, 'me@example.com'
+        )
         assert 'Check NULL return' in result
         # Comment should NOT be quoted
         for line in result.splitlines():
@@ -87,7 +94,8 @@ class TestRenderQuotedDiffWithComments:
             },
         }
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com')
+            SIMPLE_DIFF, all_reviews, 'me@example.com'
+        )
         assert '| Looks wrong.' in result
         assert '| Other <other@example.com>:' in result
 
@@ -109,7 +117,8 @@ class TestRenderQuotedDiffWithComments:
             },
         }
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com')
+            SIMPLE_DIFF, all_reviews, 'me@example.com'
+        )
         assert 'My comment' in result
         assert '| Ext comment' in result
 
@@ -125,15 +134,16 @@ class TestRenderQuotedDiffWithComments:
             },
         }
         result = review._render_quoted_diff_with_comments(
-            TWO_FILE_DIFF, all_reviews, 'me@example.com')
+            TWO_FILE_DIFF, all_reviews, 'me@example.com'
+        )
         assert 'Comment in a.c' in result
         assert 'Comment in b.c' in result
-
 
     def test_editor_instructions_at_top(self) -> None:
         """Rendered output starts with # instruction lines."""
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, {}, 'me@example.com')
+            SIMPLE_DIFF, {}, 'me@example.com'
+        )
         lines = result.splitlines()
         # First non-empty line should be an instruction
         assert lines[0].startswith('# ')
@@ -147,8 +157,11 @@ class TestRenderQuotedDiffWithComments:
     def test_commit_msg_quoted_before_diff(self) -> None:
         """Commit message body is quoted before the diff when provided."""
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, {}, 'me@example.com',
-            commit_msg='Subject line\n\nThis is the body.\nSecond line.')
+            SIMPLE_DIFF,
+            {},
+            'me@example.com',
+            commit_msg='Subject line\n\nThis is the body.\nSecond line.',
+        )
         lines = result.splitlines()
         # Body lines should appear quoted before the diff
         assert '> This is the body.' in lines
@@ -169,8 +182,11 @@ class TestRenderQuotedDiffWithComments:
             },
         }
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com',
-            commit_msg='Subject\n\nFirst body line.')
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            commit_msg='Subject\n\nFirst body line.',
+        )
         assert 'Body comment' in result
         for line in result.splitlines():
             if 'Body comment' in line:
@@ -189,8 +205,11 @@ class TestRenderQuotedDiffWithComments:
             },
         }
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com',
-            commit_msg='Subject\n\nFirst body line.')
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            commit_msg='Subject\n\nFirst body line.',
+        )
         assert '| Ext msg comment' in result
         assert '| Other <other@example.com>:' in result
         assert '| via: https://lore.kernel.org/test' in result
@@ -206,8 +225,11 @@ class TestRenderQuotedDiffWithComments:
             },
         }
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com',
-            commit_msg='Subject\n\nFirst body line.')
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            commit_msg='Subject\n\nFirst body line.',
+        )
         lines = result.splitlines()
         assert 'General note' in lines
         note_idx = lines.index('General note')
@@ -368,7 +390,8 @@ class TestQuotedEditorRoundTrip:
             'me@example.com': {'name': 'Me', 'comments': comments},
         }
         rendered = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com')
+            SIMPLE_DIFF, all_reviews, 'me@example.com'
+        )
         extracted = review._extract_editor_comments(rendered)
         assert len(extracted) == 1
         assert extracted[0]['path'] == 'b/lib/helpers.c'
@@ -386,7 +409,8 @@ class TestQuotedEditorRoundTrip:
             },
         }
         rendered = review._render_quoted_diff_with_comments(
-            TWO_FILE_DIFF, all_reviews, 'me@example.com')
+            TWO_FILE_DIFF, all_reviews, 'me@example.com'
+        )
         extracted = review._extract_editor_comments(rendered)
         assert len(extracted) == 2
         assert extracted[0]['path'] == 'b/src/a.c'
@@ -401,14 +425,16 @@ class TestQuotedEditorRoundTrip:
             'me@example.com': {'name': 'Me', 'comments': comments},
         }
         rendered1 = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com')
+            SIMPLE_DIFF, all_reviews, 'me@example.com'
+        )
         extracted1 = review._extract_editor_comments(rendered1)
 
         all_reviews2: Dict[str, Any] = {
             'me@example.com': {'name': 'Me', 'comments': extracted1},
         }
         rendered2 = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews2, 'me@example.com')
+            SIMPLE_DIFF, all_reviews2, 'me@example.com'
+        )
         extracted2 = review._extract_editor_comments(rendered2)
 
         assert len(extracted1) == len(extracted2)
@@ -434,7 +460,8 @@ class TestQuotedEditorRoundTrip:
             },
         }
         rendered = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com')
+            SIMPLE_DIFF, all_reviews, 'me@example.com'
+        )
         extracted = review._extract_editor_comments(rendered)
         assert len(extracted) == 1
         assert extracted[0]['text'] == 'My note'
@@ -446,8 +473,11 @@ class TestQuotedEditorRoundTrip:
             'me@example.com': {'name': 'Me', 'comments': comments},
         }
         rendered = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com',
-            commit_msg='Subject\n\nFirst body line.\nSecond line.')
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            commit_msg='Subject\n\nFirst body line.\nSecond line.',
+        )
         extracted = review._extract_editor_comments(rendered)
         msg_comments = [c for c in extracted if c['path'] == ':message']
         assert len(msg_comments) == 1
@@ -461,8 +491,11 @@ class TestQuotedEditorRoundTrip:
             'me@example.com': {'name': 'Me', 'comments': comments},
         }
         rendered = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com',
-            commit_msg='Subject\n\nBody line.')
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            commit_msg='Subject\n\nBody line.',
+        )
         extracted = review._extract_editor_comments(rendered)
         preamble = [c for c in extracted if c['path'] == ':message' and c['line'] == 0]
         assert len(preamble) == 1
@@ -478,8 +511,11 @@ class TestQuotedEditorRoundTrip:
             'me@example.com': {'name': 'Me', 'comments': comments},
         }
         rendered = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com',
-            commit_msg='Subject\n\nFirst body line.')
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            commit_msg='Subject\n\nFirst body line.',
+        )
         extracted = review._extract_editor_comments(rendered)
         msg_c = [c for c in extracted if c['path'] == ':message']
         diff_c = [c for c in extracted if c['path'] != ':message']
@@ -495,11 +531,9 @@ class TestBuildReplyFromComments:
     def test_trailing_hunk_lines_truncated(self) -> None:
         """Diff lines after the last comment in a hunk are omitted."""
         comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12,
-             'text': 'Check return value.'},
+            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check return value.'},
         ]
-        result = review._build_reply_from_comments(
-            SIMPLE_DIFF, comments, [])
+        result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
         # The comment should be present
         assert 'Check return value.' in result
         # The +kzalloc line (line 12) should be quoted
@@ -513,11 +547,9 @@ class TestBuildReplyFromComments:
     def test_lines_before_comment_preserved(self) -> None:
         """Diff lines before the comment are preserved as quoted context."""
         comments = [
-            {'path': 'b/lib/helpers.c', 'line': 13,
-             'text': 'Check field assignment.'},
+            {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Check field assignment.'},
         ]
-        result = review._build_reply_from_comments(
-            SIMPLE_DIFF, comments, [])
+        result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
         # The kzalloc line (line 12) precedes the comment target
         assert 'kzalloc' in result
         # The ptr->field line (line 13) is the commented line
@@ -530,8 +562,7 @@ class TestBuildReplyFromComments:
             {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'First.'},
             {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Second.'},
         ]
-        result = review._build_reply_from_comments(
-            SIMPLE_DIFF, comments, [])
+        result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
         assert 'First.' in result
         assert 'Second.' in result
         assert 'kzalloc' in result
@@ -565,7 +596,8 @@ index abc..def 100644
             {'path': ':message', 'line': 3, 'text': 'Comment on line three.'},
         ]
         result = review._build_reply_from_comments(
-            SIMPLE_DIFF, comments, [], commit_msg=commit_msg)
+            SIMPLE_DIFF, comments, [], commit_msg=commit_msg
+        )
         assert 'Comment on line three.' in result
         assert '> Line three.' in result
 
@@ -576,7 +608,8 @@ index abc..def 100644
             {'path': ':message', 'line': 0, 'text': 'General feedback.'},
         ]
         result = review._build_reply_from_comments(
-            '', comments, [], commit_msg=commit_msg)
+            '', comments, [], commit_msg=commit_msg
+        )
         lines = result.splitlines()
         assert 'General feedback.' in lines
         # Preamble should come before any quoted line
@@ -592,7 +625,8 @@ index abc..def 100644
             {'path': ':message', 'line': 1, 'text': 'A comment.'},
         ]
         result = review._build_reply_from_comments(
-            '', comments, [], commit_msg=commit_msg)
+            '', comments, [], commit_msg=commit_msg
+        )
         # Should not end with a bare >
         stripped = result.rstrip()
         assert not stripped.endswith('\n>')
@@ -607,7 +641,8 @@ index abc..def 100644
             {'path': ':message', 'line': 25, 'text': 'Comment here.'},
         ]
         result = review._build_reply_from_comments(
-            '', comments, [], commit_msg=commit_msg)
+            '', comments, [], commit_msg=commit_msg
+        )
         # Line 25 and a few lines of context above should be quoted
         assert '> Line 25' in result
         assert 'Comment here.' in result
@@ -623,45 +658,47 @@ index abc..def 100644
             {'path': ':message', 'line': 4, 'text': 'General comment.'},
         ]
         result = review._build_reply_from_comments(
-            SIMPLE_DIFF, comments, [], commit_msg=commit_msg)
+            SIMPLE_DIFF, comments, [], commit_msg=commit_msg
+        )
         assert 'General comment.' in result
 
     def test_comment_above_diff_git_roundtrips(self) -> None:
         """Comment above first diff --git line survives parse and render."""
         commit_msg = 'Subject\n\nBody.\n\nSigned-off-by: A <a@b.c>'
         diff = (
-            "diff --git a/f.c b/f.c\n"
-            "--- a/f.c\n"
-            "+++ b/f.c\n"
-            "@@ -1,3 +1,4 @@\n"
-            " ctx\n"
-            "+new\n"
-            " more\n"
+            'diff --git a/f.c b/f.c\n'
+            '--- a/f.c\n'
+            '+++ b/f.c\n'
+            '@@ -1,3 +1,4 @@\n'
+            ' ctx\n'
+            '+new\n'
+            ' more\n'
         )
         # Simulate what the editor would produce: quoted commit message,
         # separator, user comment, then quoted diff
         edited = (
-            "> Body.\n"
-            ">\n"
-            "> Signed-off-by: A <a@b.c>\n"
-            ">\n"
-            "\n"
-            "My general comment.\n"
-            "\n"
-            "> diff --git a/f.c b/f.c\n"
-            "> --- a/f.c\n"
-            "> +++ b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
-            ">  more\n"
+            '> Body.\n'
+            '>\n'
+            '> Signed-off-by: A <a@b.c>\n'
+            '>\n'
+            '\n'
+            'My general comment.\n'
+            '\n'
+            '> diff --git a/f.c b/f.c\n'
+            '> --- a/f.c\n'
+            '> +++ b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
+            '>  more\n'
         )
         comments = review._extract_editor_comments(edited, diff_text=diff)
         assert len(comments) == 1
         assert comments[0]['text'] == 'My general comment.'
         # Now rebuild the reply from those comments
         result = review._build_reply_from_comments(
-            diff, comments, [], commit_msg=commit_msg)
+            diff, comments, [], commit_msg=commit_msg
+        )
         assert 'My general comment.' in result
 
 
@@ -809,52 +846,67 @@ class TestBuildReviewEmailBcc:
         return {'trailers': ['Reviewed-by: Test <test@example.com>']}
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_bcc_set_when_present(self, _mock_cfg: mock.Mock,
-                                  _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_bcc_set_when_present(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         series = self._make_series(bcc='secret@example.com')
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['Bcc'] == 'secret@example.com'
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_no_bcc_when_absent(self, _mock_cfg: mock.Mock,
-                                _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_no_bcc_when_absent(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         series = self._make_series()
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['Bcc'] is None
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_no_bcc_when_empty(self, _mock_cfg: mock.Mock,
-                               _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_no_bcc_when_empty(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         series = self._make_series(bcc='')
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['Bcc'] is None
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_cc_still_works(self, _mock_cfg: mock.Mock,
-                            _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_cc_still_works(self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock) -> None:
         series = self._make_series(cc='other@example.com')
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert 'other@example.com' in msg['Cc']
         assert 'maintainer@example.com' in msg['Cc']
 
 
 # -- Tests for make_review_magic_json() --------------------------------------
+
 
 class TestMakeReviewMagicJson:
     """Tests for make_review_magic_json()."""
@@ -878,6 +930,7 @@ class TestMakeReviewMagicJson:
 
 
 # -- Tests for _get_my_review() ----------------------------------------------
+
 
 class TestGetMyReview:
     """Tests for _get_my_review()."""
@@ -912,12 +965,16 @@ class TestGetMyReview:
 
 # -- Tests for _ensure_my_review() -------------------------------------------
 
+
 class TestEnsureMyReview:
     """Tests for _ensure_my_review()."""
 
     def test_creates_entry_when_empty(self) -> None:
         target: Dict[str, Any] = {}
-        usercfg: Dict[str, Union[str, List[str], None]] = {'email': 'user@example.com', 'name': 'User'}
+        usercfg: Dict[str, Union[str, List[str], None]] = {
+            'email': 'user@example.com',
+            'name': 'User',
+        }
         entry = review._ensure_my_review(target, usercfg)
         assert entry['name'] == 'User'
         assert target['reviews']['user@example.com'] is entry
@@ -925,7 +982,10 @@ class TestEnsureMyReview:
     def test_returns_existing_and_updates_name(self) -> None:
         existing = {'name': 'Old Name', 'trailers': ['Reviewed-by: Old']}
         target = {'reviews': {'user@example.com': existing}}
-        usercfg: Dict[str, Union[str, List[str], None]] = {'email': 'user@example.com', 'name': 'New Name'}
+        usercfg: Dict[str, Union[str, List[str], None]] = {
+            'email': 'user@example.com',
+            'name': 'New Name',
+        }
         entry = review._ensure_my_review(target, usercfg)
         assert entry is existing
         assert entry['name'] == 'New Name'
@@ -939,6 +999,7 @@ class TestEnsureMyReview:
 
 
 # -- Tests for _cleanup_review() ---------------------------------------------
+
 
 class TestCleanupReview:
     """Tests for _cleanup_review()."""
@@ -988,6 +1049,7 @@ class TestCleanupReview:
 
 
 # -- Tests for _clear_other_comments() ---------------------------------------
+
 
 class TestClearOtherComments:
     """Tests for _clear_other_comments()."""
@@ -1047,6 +1109,7 @@ class TestClearOtherComments:
 
 # -- Tests for _ensure_trailers_in_body() ------------------------------------
 
+
 class TestEnsureTrailersInBody:
     """Tests for _ensure_trailers_in_body()."""
 
@@ -1085,6 +1148,7 @@ class TestEnsureTrailersInBody:
 
 # -- Tests for _build_review_email() (expanded) ------------------------------
 
+
 class TestBuildReviewEmailHeaders:
     """Expanded tests for _build_review_email() header and body construction."""
 
@@ -1112,138 +1176,190 @@ class TestBuildReviewEmailHeaders:
         return base
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_returns_none_when_empty_review(self, _mock_cfg: mock.Mock,
-                                            _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_returns_none_when_empty_review(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         msg = review._build_review_email(
-            self._make_series(), None, {'trailers': [], 'reply': '', 'comments': []},
-            'cover', '', None)
+            self._make_series(),
+            None,
+            {'trailers': [], 'reply': '', 'comments': []},
+            'cover',
+            '',
+            None,
+        )
         assert msg is None
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_returns_none_when_no_msgid(self, _mock_cfg: mock.Mock,
-                                        _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_returns_none_when_no_msgid(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         series = self._make_series()
         series['header-info']['msgid'] = ''
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is None
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_subject_gets_re_prefix(self, _mock_cfg: mock.Mock,
-                                    _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_subject_gets_re_prefix(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None)
+            self._make_series(), None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['Subject'] == 'Re: Test patch'
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_re_prefix_not_doubled(self, _mock_cfg: mock.Mock,
-                                   _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_re_prefix_not_doubled(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         series = self._make_series()
         series['subject'] = 'Re: Already prefixed'
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['Subject'] == 'Re: Already prefixed'
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_reply_to_used_as_to(self, _mock_cfg: mock.Mock,
-                                 _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_reply_to_used_as_to(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         series = self._make_series(**{'reply-to': 'list@lists.example.com'})
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert 'list@lists.example.com' in msg['To']
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_from_is_series_author_when_no_reply_to(self, _mock_cfg: mock.Mock,
-                                                    _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_from_is_series_author_when_no_reply_to(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None)
+            self._make_series(), None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert 'author@example.com' in msg['To']
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_references_without_existing(self, _mock_cfg: mock.Mock,
-                                         _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_references_without_existing(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None)
+            self._make_series(), None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['References'] == '<test-msgid@example.com>'
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_references_with_existing(self, _mock_cfg: mock.Mock,
-                                      _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_references_with_existing(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         series = self._make_series(references='<prev@example.com>')
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert '<prev@example.com>' in msg['References']
         assert '<test-msgid@example.com>' in msg['References']
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_body_contains_trailers(self, _mock_cfg: mock.Mock,
-                                    _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_body_contains_trailers(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover text', '', None)
+            self._make_series(), None, self._make_review(), 'cover text', '', None
+        )
         assert msg is not None
         payload = msg.get_payload(decode=True)
         assert isinstance(payload, bytes)
         assert 'Reviewed-by: Test <test@example.com>' in payload.decode()
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_explicit_reply_text_used(self, _mock_cfg: mock.Mock,
-                                      _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_explicit_reply_text_used(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         rev = self._make_review(reply='This is my explicit reply.')
         msg = review._build_review_email(
-            self._make_series(), None, rev, 'cover', '', None)
+            self._make_series(), None, rev, 'cover', '', None
+        )
         assert msg is not None
         payload = msg.get_payload(decode=True)
         assert isinstance(payload, bytes)
         assert 'This is my explicit reply.' in payload.decode()
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_in_reply_to_set(self, _mock_cfg: mock.Mock,
-                             _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_in_reply_to_set(self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock) -> None:
         msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None)
+            self._make_series(), None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['In-Reply-To'] == '<test-msgid@example.com>'
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_from_header_is_reviewer(self, _mock_cfg: mock.Mock,
-                                     _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_from_header_is_reviewer(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None)
+            self._make_series(), None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert 'reviewer@example.com' in msg['From']
         assert 'Reviewer' in msg['From']
 
+
 # -- Tests for _build_review_email() user-edited To/Cc -----------------------
+
 
 class TestBuildReviewEmailToCcEdited:
     """Tests for user-edited To/Cc handling in _build_review_email()."""
@@ -1270,72 +1386,93 @@ class TestBuildReviewEmailToCcEdited:
         return {'trailers': ['Reviewed-by: Test <test@example.com>']}
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_default_to_is_author(self, _mock_cfg: mock.Mock,
-                                  _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_default_to_is_author(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         """Without tocc-edited, To should be the original author."""
         msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None)
+            self._make_series(), None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert 'author@example.com' in msg['To']
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_default_demotes_to_header_to_cc(self, _mock_cfg: mock.Mock,
-                                             _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_default_demotes_to_header_to_cc(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         """Without tocc-edited, original To gets folded into Cc."""
         series = self._make_series(to='list@lists.example.com')
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert 'author@example.com' in msg['To']
         assert 'list@lists.example.com' in msg['Cc']
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_edited_to_is_honoured(self, _mock_cfg: mock.Mock,
-                                   _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_edited_to_is_honoured(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         """With tocc-edited, user's To choice should be used as-is."""
         series = self._make_series(to='custom@example.com')
         series['header-info']['tocc-edited'] = True
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert 'custom@example.com' in msg['To']
         assert 'author@example.com' not in (msg['To'] or '')
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_edited_cc_is_honoured(self, _mock_cfg: mock.Mock,
-                                   _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_edited_cc_is_honoured(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         """With tocc-edited, user's Cc choice should be used as-is."""
         series = self._make_series(to='custom@example.com', cc='other@example.com')
         series['header-info']['tocc-edited'] = True
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['To'] == 'custom@example.com'
         assert msg['Cc'] == 'other@example.com'
 
     @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch('b4.get_user_config', return_value={
-        'name': 'Reviewer', 'email': 'reviewer@example.com'})
-    def test_edited_empty_cc_omitted(self, _mock_cfg: mock.Mock,
-                                     _mock_sig: mock.Mock) -> None:
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_edited_empty_cc_omitted(
+        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    ) -> None:
         """With tocc-edited, empty Cc should not produce a Cc header."""
         series = self._make_series(to='custom@example.com', cc='')
         series['header-info']['tocc-edited'] = True
         msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None)
+            series, None, self._make_review(), 'cover', '', None
+        )
         assert msg is not None
         assert msg['Cc'] is None
 
 
 # -- Tests for get_reference_message() ---------------------------------------
+
 
 class TestGetReferenceMessage:
     """Tests for get_reference_message()."""
@@ -1370,8 +1507,8 @@ class TestGetReferenceMessage:
             review.get_reference_message(lser)
 
 
-
 # -- Tests for _collect_reply_headers() --------------------------------------
+
 
 class TestCollectReplyHeaders:
     """Tests for _collect_reply_headers()."""
@@ -1425,6 +1562,7 @@ class TestCollectReplyHeaders:
 
 # -- Tests for _collect_followups() ------------------------------------------
 
+
 class TestCollectFollowups:
     """Tests for _collect_followups()."""
 
@@ -1432,7 +1570,8 @@ class TestCollectFollowups:
 
     @staticmethod
     def _make_followup_trailer(
-        name: str, value: str,
+        name: str,
+        value: str,
         msgid: str = 'reply@example.com',
         fromname: str = 'Reviewer',
         fromemail: str = 'reviewer@example.com',
@@ -1446,7 +1585,9 @@ class TestCollectFollowups:
         return lt
 
     def _make_lmsg(
-        self, body: str, followup_trailers: List[Any],
+        self,
+        body: str,
+        followup_trailers: List[Any],
     ) -> mock.Mock:
         """Build a mock LoreMessage with body and followup_trailers."""
         lmsg = mock.Mock()
@@ -1457,7 +1598,8 @@ class TestCollectFollowups:
     def test_basic_followup(self) -> None:
         """A single follow-up trailer is collected."""
         ft = self._make_followup_trailer(
-            'Reviewed-by', 'Reviewer <reviewer@example.com>',
+            'Reviewed-by',
+            'Reviewer <reviewer@example.com>',
         )
         lmsg = self._make_lmsg('Some patch body\n', [ft])
         result = review._collect_followups(lmsg, self.LINKMASK)
@@ -1484,7 +1626,8 @@ class TestCollectFollowups:
             'Signed-off-by: Author <author@example.com>\n'
         )
         ft = self._make_followup_trailer(
-            'Reviewed-by', 'Reviewer <reviewer@example.com>',
+            'Reviewed-by',
+            'Reviewer <reviewer@example.com>',
         )
         lmsg = self._make_lmsg(body, [ft])
         result = review._collect_followups(lmsg, self.LINKMASK)
@@ -1492,13 +1635,10 @@ class TestCollectFollowups:
 
     def test_keeps_trailer_not_in_body(self) -> None:
         """Follow-up trailers NOT in the body are kept."""
-        body = (
-            'Patch description\n'
-            '\n'
-            'Signed-off-by: Author <author@example.com>\n'
-        )
+        body = 'Patch description\n\nSigned-off-by: Author <author@example.com>\n'
         ft = self._make_followup_trailer(
-            'Acked-by', 'Acker <acker@example.com>',
+            'Acked-by',
+            'Acker <acker@example.com>',
         )
         lmsg = self._make_lmsg(body, [ft])
         result = review._collect_followups(lmsg, self.LINKMASK)
@@ -1514,11 +1654,13 @@ class TestCollectFollowups:
             'Signed-off-by: Author <author@example.com>\n'
         )
         ft_dup = self._make_followup_trailer(
-            'Reviewed-by', 'Reviewer <reviewer@example.com>',
+            'Reviewed-by',
+            'Reviewer <reviewer@example.com>',
             msgid='reply1@example.com',
         )
         ft_new = self._make_followup_trailer(
-            'Tested-by', 'Tester <tester@example.com>',
+            'Tested-by',
+            'Tester <tester@example.com>',
             msgid='reply2@example.com',
             fromname='Tester',
             fromemail='tester@example.com',
@@ -1532,11 +1674,13 @@ class TestCollectFollowups:
     def test_groups_by_msgid(self) -> None:
         """Multiple trailers from the same reply are grouped together."""
         ft1 = self._make_followup_trailer(
-            'Reviewed-by', 'Reviewer <reviewer@example.com>',
+            'Reviewed-by',
+            'Reviewer <reviewer@example.com>',
             msgid='reply@example.com',
         )
         ft2 = self._make_followup_trailer(
-            'Tested-by', 'Reviewer <reviewer@example.com>',
+            'Tested-by',
+            'Reviewer <reviewer@example.com>',
             msgid='reply@example.com',
         )
         lmsg = self._make_lmsg('body\n', [ft1, ft2])
@@ -1553,36 +1697,53 @@ class TestCollectFollowups:
 
 # -- Tests for _get_art_counts() ---------------------------------------------
 
+
 class TestGetArtCounts:
     """Tests for _get_art_counts() in _tracking_app."""
 
     @staticmethod
-    def _make_tracking_json(followups: Optional[List[Dict[str, Any]]] = None, patches: Optional[List[Dict[str, Any]]] = None) -> str:
+    def _make_tracking_json(
+        followups: Optional[List[Dict[str, Any]]] = None,
+        patches: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """Build a tracking commit message with the given followup data."""
         tracking: Dict[str, Any] = {}
         if followups is not None:
             tracking['followups'] = followups
         if patches is not None:
             tracking['patches'] = patches
-        return 'Cover letter text\n\n--- b4-review-tracking ---\n' + json.dumps(tracking)
+        return 'Cover letter text\n\n--- b4-review-tracking ---\n' + json.dumps(
+            tracking
+        )
 
     @mock.patch('b4.git_run_command')
     def test_counts_all_trailer_types(self, mock_git: mock.Mock) -> None:
         """Counts Acked-by, Reviewed-by, and Tested-by from followups."""
         commit_msg = self._make_tracking_json(
             followups=[
-                {'trailers': ['Acked-by: A <a@example.com>',
-                               'Reviewed-by: R <r@example.com>']},
+                {
+                    'trailers': [
+                        'Acked-by: A <a@example.com>',
+                        'Reviewed-by: R <r@example.com>',
+                    ]
+                },
             ],
             patches=[
-                {'followups': [
-                    {'trailers': ['Tested-by: T <t@example.com>',
-                                  'Acked-by: B <b@example.com>']},
-                ]},
+                {
+                    'followups': [
+                        {
+                            'trailers': [
+                                'Tested-by: T <t@example.com>',
+                                'Acked-by: B <b@example.com>',
+                            ]
+                        },
+                    ]
+                },
             ],
         )
         mock_git.return_value = (0, commit_msg)
         from b4.review_tui._tracking_app import _get_art_counts
+
         result = _get_art_counts('/tmp', 'b4/review/test')
         assert result == (2, 1, 1)
 
@@ -1590,12 +1751,14 @@ class TestGetArtCounts:
     def test_returns_none_on_git_failure(self, mock_git: mock.Mock) -> None:
         mock_git.return_value = (1, '')
         from b4.review_tui._tracking_app import _get_art_counts
+
         assert _get_art_counts('/tmp', 'b4/review/test') is None
 
     @mock.patch('b4.git_run_command')
     def test_returns_none_without_marker(self, mock_git: mock.Mock) -> None:
         mock_git.return_value = (0, 'Just a commit message without marker')
         from b4.review_tui._tracking_app import _get_art_counts
+
         assert _get_art_counts('/tmp', 'b4/review/test') is None
 
     @mock.patch('b4.git_run_command')
@@ -1603,6 +1766,7 @@ class TestGetArtCounts:
         commit_msg = self._make_tracking_json(patches=[{'followups': []}])
         mock_git.return_value = (0, commit_msg)
         from b4.review_tui._tracking_app import _get_art_counts
+
         assert _get_art_counts('/tmp', 'b4/review/test') == (0, 0, 0)
 
     @mock.patch('b4.git_run_command')
@@ -1610,21 +1774,29 @@ class TestGetArtCounts:
         """Trailers like Signed-off-by are not counted."""
         commit_msg = self._make_tracking_json(
             followups=[
-                {'trailers': ['Signed-off-by: S <s@example.com>',
-                               'Reviewed-by: R <r@example.com>']},
+                {
+                    'trailers': [
+                        'Signed-off-by: S <s@example.com>',
+                        'Reviewed-by: R <r@example.com>',
+                    ]
+                },
             ],
         )
         mock_git.return_value = (0, commit_msg)
         from b4.review_tui._tracking_app import _get_art_counts
+
         assert _get_art_counts('/tmp', 'b4/review/test') == (0, 1, 0)
 
     @mock.patch('b4.git_run_command')
     def test_skips_comment_lines_in_json(self, mock_git: mock.Mock) -> None:
         """Lines starting with # in the JSON block are ignored."""
-        tracking = json.dumps({'followups': [{'trailers': ['Acked-by: A <a@example.com>']}]})
+        tracking = json.dumps(
+            {'followups': [{'trailers': ['Acked-by: A <a@example.com>']}]}
+        )
         commit_msg = 'Cover\n\n--- b4-review-tracking ---\n# comment line\n' + tracking
         mock_git.return_value = (0, commit_msg)
         from b4.review_tui._tracking_app import _get_art_counts
+
         assert _get_art_counts('/tmp', 'b4/review/test') == (1, 0, 0)
 
 
@@ -1632,34 +1804,51 @@ class TestParseArtFromMessage:
     """Tests for the extracted _parse_art_from_message() helper."""
 
     @staticmethod
-    def _make_msg(followups: Optional[List[Dict[str, Any]]] = None,
-                  patches: Optional[List[Dict[str, Any]]] = None) -> str:
+    def _make_msg(
+        followups: Optional[List[Dict[str, Any]]] = None,
+        patches: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         tracking: Dict[str, Any] = {}
         if followups is not None:
             tracking['followups'] = followups
         if patches is not None:
             tracking['patches'] = patches
-        return 'Cover letter text\n\n--- b4-review-tracking ---\n' + json.dumps(tracking)
+        return 'Cover letter text\n\n--- b4-review-tracking ---\n' + json.dumps(
+            tracking
+        )
 
     def test_counts_trailers(self) -> None:
         from b4.review_tui._tracking_app import _parse_art_from_message
+
         msg = self._make_msg(
-            followups=[{'trailers': ['Acked-by: A <a@example.com>',
-                                     'Reviewed-by: R <r@example.com>']}],
+            followups=[
+                {
+                    'trailers': [
+                        'Acked-by: A <a@example.com>',
+                        'Reviewed-by: R <r@example.com>',
+                    ]
+                }
+            ],
             patches=[{'followups': [{'trailers': ['Tested-by: T <t@example.com>']}]}],
         )
         assert _parse_art_from_message(msg) == (1, 1, 1)
 
     def test_returns_none_without_marker(self) -> None:
         from b4.review_tui._tracking_app import _parse_art_from_message
+
         assert _parse_art_from_message('no marker here') is None
 
     def test_returns_none_on_bad_json(self) -> None:
         from b4.review_tui._tracking_app import _parse_art_from_message
-        assert _parse_art_from_message('text\n\n--- b4-review-tracking ---\n{bad json') is None
+
+        assert (
+            _parse_art_from_message('text\n\n--- b4-review-tracking ---\n{bad json')
+            is None
+        )
 
 
 # -- Tests for note comment stripping ----------------------------------------
+
 
 class TestNoteCommentStripping:
     """Tests for the # comment stripping logic used in note editing."""
@@ -1667,7 +1856,9 @@ class TestNoteCommentStripping:
     @staticmethod
     def _strip_comments(raw_text: str) -> str:
         """Replicate the stripping logic from _edit_note_in_editor."""
-        return '\n'.join(ln for ln in raw_text.splitlines() if not ln.startswith('#')).strip()
+        return '\n'.join(
+            ln for ln in raw_text.splitlines() if not ln.startswith('#')
+        ).strip()
 
     def test_strips_comment_lines(self) -> None:
         raw = 'This is my note\n# This is a comment\nSecond line'
@@ -1700,19 +1891,25 @@ class TestNoteCommentStripping:
 
 # -- Helpers for attestation tests -------------------------------------------
 
+
 def _make_mock_attestation(status: str, identity: str, passing: bool) -> Dict[str, Any]:
     """Build an attestation dict as returned by LoreMessage.get_attestation_status()."""
     return {'status': status, 'identity': identity, 'passing': passing}
 
 
-def _make_mock_lmsg(attestations: List[Dict[str, Any]], passing: bool = True, critical: bool = False) -> mock.Mock:
+def _make_mock_lmsg(
+    attestations: List[Dict[str, Any]], passing: bool = True, critical: bool = False
+) -> mock.Mock:
     """Build a mock LoreMessage with a canned get_attestation_status() response."""
     lmsg = mock.Mock()
-    lmsg.get_attestation_status = mock.Mock(return_value=(attestations, passing, critical))
+    lmsg.get_attestation_status = mock.Mock(
+        return_value=(attestations, passing, critical)
+    )
     return lmsg
 
 
 # -- Tests for check_series_attestation() ------------------------------------
+
 
 class TestCheckSeriesAttestation:
     """Tests for check_series_attestation()."""
@@ -1726,20 +1923,26 @@ class TestCheckSeriesAttestation:
     def test_policy_off_returns_none(self) -> None:
         """When attestation-policy is 'off', returns None immediately."""
         lser = self._make_series([_make_mock_lmsg([])])
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'off'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'off'}
+        ):
             assert check_series_attestation(lser) is None
 
     def test_no_signatures_returns_none_string(self) -> None:
         """When no attestors found on any patch, returns 'none'."""
         lser = self._make_series([_make_mock_lmsg([]), _make_mock_lmsg([])])
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
             assert check_series_attestation(lser) == 'none'
 
     def test_single_signed_dkim(self) -> None:
         """A single passing DKIM attestor is reported correctly."""
         att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
         lser = self._make_series([_make_mock_lmsg(att)])
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
             result = check_series_attestation(lser)
         assert result == 'signed:DKIM/kernel.org'
 
@@ -1747,7 +1950,9 @@ class TestCheckSeriesAttestation:
         """A nokey attestor is reported with status 'nokey'."""
         att = [_make_mock_attestation('nokey', 'ed25519/user@example.com', False)]
         lser = self._make_series([_make_mock_lmsg(att)])
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
             result = check_series_attestation(lser)
         assert result == 'nokey:ed25519/user@example.com'
 
@@ -1755,7 +1960,9 @@ class TestCheckSeriesAttestation:
         """A badsig attestor is reported with status 'badsig'."""
         att = [_make_mock_attestation('badsig', 'ed25519/user@example.com', False)]
         lser = self._make_series([_make_mock_lmsg(att)])
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
             result = check_series_attestation(lser)
         assert result == 'badsig:ed25519/user@example.com'
 
@@ -1766,7 +1973,9 @@ class TestCheckSeriesAttestation:
             _make_mock_attestation('nokey', 'ed25519/user@example.com', False),
         ]
         lser = self._make_series([_make_mock_lmsg(att)])
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
             result = check_series_attestation(lser)
         # Sorted by (status, identity): nokey < signed alphabetically
         assert result is not None
@@ -1779,7 +1988,9 @@ class TestCheckSeriesAttestation:
         """Same attestor on multiple patches is only reported once."""
         att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
         lser = self._make_series([_make_mock_lmsg(att), _make_mock_lmsg(att)])
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
             result = check_series_attestation(lser)
         assert result == 'signed:DKIM/kernel.org'
 
@@ -1788,7 +1999,9 @@ class TestCheckSeriesAttestation:
         att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
         lser = mock.Mock()
         lser.patches = [None, None, _make_mock_lmsg(att), None]
-        with mock.patch('b4.get_main_config', return_value={'attestation-policy': 'softfail'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
             result = check_series_attestation(lser)
         assert result == 'signed:DKIM/kernel.org'
 
@@ -1807,7 +2020,10 @@ class TestCheckSeriesAttestation:
         att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
         lmsg = _make_mock_lmsg(att)
         lser = self._make_series([lmsg])
-        config = {'attestation-policy': 'softfail', 'attestation-staleness-days': 'garbage'}
+        config = {
+            'attestation-policy': 'softfail',
+            'attestation-staleness-days': 'garbage',
+        }
         with mock.patch('b4.get_main_config', return_value=config):
             check_series_attestation(lser)
         lmsg.get_attestation_status.assert_called_once_with('softfail', 0)
@@ -1880,19 +2096,19 @@ class TestExtractCommentsFromQuotedReply:
     def test_single_hunk_single_comment(self) -> None:
         """A minimal single-hunk inline review produces one comment."""
         inline = (
-            "commit abc123\n"
-            "Author: Test <test@test.com>\n"
-            "\n"
-            "Test patch\n"
-            "\n"
-            "> diff --git a/fs/file.c b/fs/file.c\n"
-            "> @@ -10,4 +10,5 @@ void func(void)\n"
-            ">  \tint x;\n"
-            "> +\tptr = malloc(sz);\n"
-            "\n"
-            "Missing NULL check after malloc.\n"
-            "\n"
-            ">  \treturn 0;\n"
+            'commit abc123\n'
+            'Author: Test <test@test.com>\n'
+            '\n'
+            'Test patch\n'
+            '\n'
+            '> diff --git a/fs/file.c b/fs/file.c\n'
+            '> @@ -10,4 +10,5 @@ void func(void)\n'
+            '>  \tint x;\n'
+            '> +\tptr = malloc(sz);\n'
+            '\n'
+            'Missing NULL check after malloc.\n'
+            '\n'
+            '>  \treturn 0;\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -1903,27 +2119,27 @@ class TestExtractCommentsFromQuotedReply:
 
     def test_no_diff_produces_no_comments(self) -> None:
         """Text with no quoted diff content produces nothing."""
-        inline = "commit abc123\nAuthor: Test\n\nJust text, no diffs.\n"
+        inline = 'commit abc123\nAuthor: Test\n\nJust text, no diffs.\n'
         comments = review._extract_comments_from_quoted_reply(inline)
         assert comments == []
 
     def test_truncation_markers_skipped(self) -> None:
         """'[ ... ]' markers don't appear in comment text."""
         inline = (
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
-            "\n"
-            "Comment here.\n"
-            "\n"
-            "[ ... ]\n"
-            "\n"
-            "> @@ -10,3 +10,4 @@\n"
-            ">  ctx2\n"
-            "> +new2\n"
-            "\n"
-            "Another comment.\n"
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
+            '\n'
+            'Comment here.\n'
+            '\n'
+            '[ ... ]\n'
+            '\n'
+            '> @@ -10,3 +10,4 @@\n'
+            '>  ctx2\n'
+            '> +new2\n'
+            '\n'
+            'Another comment.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 2
@@ -1934,15 +2150,15 @@ class TestExtractCommentsFromQuotedReply:
     def test_multiline_comment(self) -> None:
         """Multiple non-quoted lines between diff sections form one comment."""
         inline = (
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -5,3 +5,4 @@ void f(void)\n"
-            ">  \tint a;\n"
-            "> +\tint b;\n"
-            "\n"
-            "This variable name is confusing.\n"
-            "Consider using a more descriptive name.\n"
-            "\n"
-            ">  \treturn;\n"
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -5,3 +5,4 @@ void f(void)\n'
+            '>  \tint a;\n'
+            '> +\tint b;\n'
+            '\n'
+            'This variable name is confusing.\n'
+            'Consider using a more descriptive name.\n'
+            '\n'
+            '>  \treturn;\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -1952,19 +2168,19 @@ class TestExtractCommentsFromQuotedReply:
     def test_multi_paragraph_comment_stays_merged(self) -> None:
         """Two paragraphs separated by a blank line become one comment."""
         inline = (
-            "> diff --git a/f.c b/f.c\n"
-            "> --- a/f.c\n"
-            "> +++ b/f.c\n"
-            "> @@ -5,3 +5,5 @@ void f(void)\n"
-            ">  \tint a;\n"
-            "> +\tint b;\n"
-            "> +\tint c;\n"
-            "\n"
-            "First paragraph of review.\n"
-            "\n"
-            "Second paragraph of review.\n"
-            "\n"
-            ">  \treturn;\n"
+            '> diff --git a/f.c b/f.c\n'
+            '> --- a/f.c\n'
+            '> +++ b/f.c\n'
+            '> @@ -5,3 +5,5 @@ void f(void)\n'
+            '>  \tint a;\n'
+            '> +\tint b;\n'
+            '> +\tint c;\n'
+            '\n'
+            'First paragraph of review.\n'
+            '\n'
+            'Second paragraph of review.\n'
+            '\n'
+            '>  \treturn;\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -1974,23 +2190,23 @@ class TestExtractCommentsFromQuotedReply:
     def test_comments_in_different_hunks_stay_separate(self) -> None:
         """Comments in different hunks (far apart) stay separate."""
         inline = (
-            "> diff --git a/f.c b/f.c\n"
-            "> --- a/f.c\n"
-            "> +++ b/f.c\n"
-            "> @@ -5,3 +5,4 @@\n"
-            ">  \tint a;\n"
-            "> +\tint b;\n"
-            "\n"
-            "Comment on hunk 1.\n"
-            "\n"
-            ">  \treturn;\n"
-            "> @@ -100,3 +101,4 @@\n"
-            ">  \tvoid x;\n"
-            "> +\tvoid y;\n"
-            "\n"
-            "Comment on hunk 2.\n"
-            "\n"
-            ">  \treturn;\n"
+            '> diff --git a/f.c b/f.c\n'
+            '> --- a/f.c\n'
+            '> +++ b/f.c\n'
+            '> @@ -5,3 +5,4 @@\n'
+            '>  \tint a;\n'
+            '> +\tint b;\n'
+            '\n'
+            'Comment on hunk 1.\n'
+            '\n'
+            '>  \treturn;\n'
+            '> @@ -100,3 +101,4 @@\n'
+            '>  \tvoid x;\n'
+            '> +\tvoid y;\n'
+            '\n'
+            'Comment on hunk 2.\n'
+            '\n'
+            '>  \treturn;\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 2
@@ -2000,18 +2216,18 @@ class TestExtractCommentsFromQuotedReply:
     def test_email_reply_with_file_headers(self) -> None:
         """Email follow-ups include --- a/ and +++ b/ lines; parser handles them."""
         email_reply = (
-            "On Mon, Jan 1, 2024, Dev <dev@test.com> wrote:\n"
-            "> diff --git a/fs/file.c b/fs/file.c\n"
-            "> index abc123..def456 100644\n"
-            "> --- a/fs/file.c\n"
-            "> +++ b/fs/file.c\n"
-            "> @@ -10,3 +10,4 @@ void f(void)\n"
-            ">  \tint x;\n"
-            "> +\tptr = malloc(sz);\n"
-            "\n"
-            "Missing NULL check.\n"
-            "\n"
-            ">  \treturn 0;\n"
+            'On Mon, Jan 1, 2024, Dev <dev@test.com> wrote:\n'
+            '> diff --git a/fs/file.c b/fs/file.c\n'
+            '> index abc123..def456 100644\n'
+            '> --- a/fs/file.c\n'
+            '> +++ b/fs/file.c\n'
+            '> @@ -10,3 +10,4 @@ void f(void)\n'
+            '>  \tint x;\n'
+            '> +\tptr = malloc(sz);\n'
+            '\n'
+            'Missing NULL check.\n'
+            '\n'
+            '>  \treturn 0;\n'
         )
         comments = review._extract_comments_from_quoted_reply(email_reply)
         assert len(comments) == 1
@@ -2022,12 +2238,7 @@ class TestExtractCommentsFromQuotedReply:
     def test_bare_gt_prefix(self) -> None:
         """Lines starting with just '>' (no space) are also parsed."""
         inline = (
-            ">diff --git a/f.c b/f.c\n"
-            ">@@ -1,3 +1,4 @@\n"
-            "> ctx\n"
-            ">+new\n"
-            "\n"
-            "Looks good.\n"
+            '>diff --git a/f.c b/f.c\n>@@ -1,3 +1,4 @@\n> ctx\n>+new\n\nLooks good.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2036,19 +2247,19 @@ class TestExtractCommentsFromQuotedReply:
     def test_comments_in_different_files(self) -> None:
         """Comments in different files produce separate entries with correct paths."""
         inline = (
-            "> diff --git a/a.c b/a.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new_a\n"
-            "\n"
-            "Comment in a.c.\n"
-            "\n"
-            "> diff --git a/b.c b/b.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new_b\n"
-            "\n"
-            "Comment in b.c.\n"
+            '> diff --git a/a.c b/a.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new_a\n'
+            '\n'
+            'Comment in a.c.\n'
+            '\n'
+            '> diff --git a/b.c b/b.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new_b\n'
+            '\n'
+            'Comment in b.c.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 2
@@ -2060,14 +2271,14 @@ class TestExtractCommentsFromQuotedReply:
     def test_preamble_before_diff_ignored(self) -> None:
         """Text before the first quoted diff line is not treated as a comment."""
         inline = (
-            "Hi, some general feedback below:\n"
-            "\n"
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
-            "\n"
-            "Actual inline comment.\n"
+            'Hi, some general feedback below:\n'
+            '\n'
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
+            '\n'
+            'Actual inline comment.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2076,12 +2287,12 @@ class TestExtractCommentsFromQuotedReply:
     def test_trailing_comment_flushed(self) -> None:
         """A comment at the very end (no trailing quoted line) is still captured."""
         inline = (
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
-            "\n"
-            "Final comment with no trailing diff.\n"
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
+            '\n'
+            'Final comment with no trailing diff.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2090,14 +2301,14 @@ class TestExtractCommentsFromQuotedReply:
     def test_deletion_line_anchors_to_a_file(self) -> None:
         """Comment after a deletion line anchors to the a-side file and line."""
         inline = (
-            "> diff --git a/old.c b/old.c\n"
-            "> @@ -10,4 +10,3 @@\n"
-            ">  ctx\n"
-            "> -removed_line\n"
-            "\n"
-            "Why was this removed?\n"
-            "\n"
-            ">  more ctx\n"
+            '> diff --git a/old.c b/old.c\n'
+            '> @@ -10,4 +10,3 @@\n'
+            '>  ctx\n'
+            '> -removed_line\n'
+            '\n'
+            'Why was this removed?\n'
+            '\n'
+            '>  more ctx\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2105,19 +2316,18 @@ class TestExtractCommentsFromQuotedReply:
         # Deletion at a_line=11, so comment anchors to line 11
         assert comments[0]['line'] == 11
 
-
     def test_commit_message_comment_extracted(self) -> None:
         """Comments on quoted commit message lines get :message path."""
         inline = (
-            "> This is the commit body.\n"
-            "> It explains the change.\n"
-            "\n"
-            "Why is this needed?\n"
-            "\n"
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
+            '> This is the commit body.\n'
+            '> It explains the change.\n'
+            '\n'
+            'Why is this needed?\n'
+            '\n'
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2128,17 +2338,18 @@ class TestExtractCommentsFromQuotedReply:
     def test_preamble_captured_when_enabled(self) -> None:
         """With capture_preamble=True, text before first quote is a comment."""
         inline = (
-            "General feedback on this patch.\n"
-            "\n"
-            "> Commit body line.\n"
-            "\n"
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
+            'General feedback on this patch.\n'
+            '\n'
+            '> Commit body line.\n'
+            '\n'
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
         )
         comments = review._extract_comments_from_quoted_reply(
-            inline, capture_preamble=True)
+            inline, capture_preamble=True
+        )
         preamble = [c for c in comments if c['line'] == 0]
         assert len(preamble) == 1
         assert preamble[0]['path'] == ':message'
@@ -2147,14 +2358,14 @@ class TestExtractCommentsFromQuotedReply:
     def test_preamble_not_captured_by_default(self) -> None:
         """Without capture_preamble, text before first quote is ignored."""
         inline = (
-            "General feedback on this patch.\n"
-            "\n"
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
-            "\n"
-            "Actual comment.\n"
+            'General feedback on this patch.\n'
+            '\n'
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
+            '\n'
+            'Actual comment.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2163,18 +2374,19 @@ class TestExtractCommentsFromQuotedReply:
     def test_attribution_line_skipped_in_preamble(self) -> None:
         """The 'On ..., ... wrote:' attribution line is not captured."""
         inline = (
-            "On Thu, 12 Mar 2026 15:54:20 +0100, Author <a@b.com> wrote:\n"
-            "> Commit body.\n"
-            "\n"
-            "My comment.\n"
-            "\n"
-            "> diff --git a/f.c b/f.c\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
+            'On Thu, 12 Mar 2026 15:54:20 +0100, Author <a@b.com> wrote:\n'
+            '> Commit body.\n'
+            '\n'
+            'My comment.\n'
+            '\n'
+            '> diff --git a/f.c b/f.c\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
         )
         comments = review._extract_comments_from_quoted_reply(
-            inline, capture_preamble=True)
+            inline, capture_preamble=True
+        )
         # Attribution line should NOT become a comment
         for c in comments:
             assert 'wrote:' not in c.get('text', '')
@@ -2182,11 +2394,7 @@ class TestExtractCommentsFromQuotedReply:
     def test_orphan_hunk_header_enters_diff_mode(self) -> None:
         """A @@ hunk header without diff --git still enters diff mode."""
         inline = (
-            "> @@ -10,3 +10,4 @@ some_func\n"
-            ">  ctx\n"
-            "> +new line\n"
-            "\n"
-            "This needs a test.\n"
+            '> @@ -10,3 +10,4 @@ some_func\n>  ctx\n> +new line\n\nThis needs a test.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2197,13 +2405,13 @@ class TestExtractCommentsFromQuotedReply:
     def test_orphan_file_headers_enter_diff_mode(self) -> None:
         """--- a/ and +++ b/ without diff --git still enter diff mode."""
         inline = (
-            "> --- a/kernel/sched.c\n"
-            "> +++ b/kernel/sched.c\n"
-            "> @@ -5,3 +5,4 @@\n"
-            ">  existing\n"
-            "> +added\n"
-            "\n"
-            "Why this change?\n"
+            '> --- a/kernel/sched.c\n'
+            '> +++ b/kernel/sched.c\n'
+            '> @@ -5,3 +5,4 @@\n'
+            '>  existing\n'
+            '> +added\n'
+            '\n'
+            'Why this change?\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2214,11 +2422,7 @@ class TestExtractCommentsFromQuotedReply:
     def test_trimmed_diff_with_content_resolution(self) -> None:
         """Trimmed reply resolved against real diff gets correct position."""
         # User trimmed everything except the line they're commenting on
-        inline = (
-            "> +new line\n"
-            "\n"
-            "Looks good.\n"
-        )
+        inline = '> +new line\n\nLooks good.\n'
         comments = review._extract_comments_from_quoted_reply(inline)
         # Comment is captured (even without file path from headers)
         assert len(comments) == 1
@@ -2227,13 +2431,13 @@ class TestExtractCommentsFromQuotedReply:
 
         # Now resolve against the real diff
         real_diff = (
-            "diff --git a/f.c b/f.c\n"
-            "--- a/f.c\n"
-            "+++ b/f.c\n"
-            "@@ -1,3 +1,4 @@\n"
-            " ctx\n"
-            "+new line\n"
-            " more\n"
+            'diff --git a/f.c b/f.c\n'
+            '--- a/f.c\n'
+            '+++ b/f.c\n'
+            '@@ -1,3 +1,4 @@\n'
+            ' ctx\n'
+            '+new line\n'
+            ' more\n'
         )
         review._resolve_comment_positions(real_diff, comments)
         assert comments[0]['path'] == 'b/f.c'
@@ -2243,15 +2447,15 @@ class TestExtractCommentsFromQuotedReply:
         """A diff --git line wrapped by the editor is rejoined."""
         # Editor wraps at 72 chars, splitting diff --git into two lines
         inline = (
-            "> diff --git a/tools/lib/python/kdoc/xforms_lists.py\n"
-            "b/tools/lib/python/kdoc/xforms_lists.py\n"
-            "> --- a/tools/lib/python/kdoc/xforms_lists.py\n"
-            "> +++ b/tools/lib/python/kdoc/xforms_lists.py\n"
-            "> @@ -4,7 +4,8 @@\n"
-            ">  existing\n"
-            "> +from kdoc.c_lex import CMatch\n"
-            "\n"
-            "Only editing 2nd file.\n"
+            '> diff --git a/tools/lib/python/kdoc/xforms_lists.py\n'
+            'b/tools/lib/python/kdoc/xforms_lists.py\n'
+            '> --- a/tools/lib/python/kdoc/xforms_lists.py\n'
+            '> +++ b/tools/lib/python/kdoc/xforms_lists.py\n'
+            '> @@ -4,7 +4,8 @@\n'
+            '>  existing\n'
+            '> +from kdoc.c_lex import CMatch\n'
+            '\n'
+            'Only editing 2nd file.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2262,15 +2466,15 @@ class TestExtractCommentsFromQuotedReply:
     def test_wrapped_diff_git_line_quoted_continuation(self) -> None:
         """A diff --git line wrapped with quoted continuation is rejoined."""
         inline = (
-            "> diff --git a/tools/lib/python/kdoc/xforms_lists.py\n"
-            "> b/tools/lib/python/kdoc/xforms_lists.py\n"
-            "> --- a/tools/lib/python/kdoc/xforms_lists.py\n"
-            "> +++ b/tools/lib/python/kdoc/xforms_lists.py\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new\n"
-            "\n"
-            "Comment here.\n"
+            '> diff --git a/tools/lib/python/kdoc/xforms_lists.py\n'
+            '> b/tools/lib/python/kdoc/xforms_lists.py\n'
+            '> --- a/tools/lib/python/kdoc/xforms_lists.py\n'
+            '> +++ b/tools/lib/python/kdoc/xforms_lists.py\n'
+            '> @@ -1,3 +1,4 @@\n'
+            '>  ctx\n'
+            '> +new\n'
+            '\n'
+            'Comment here.\n'
         )
         comments = review._extract_comments_from_quoted_reply(inline)
         assert len(comments) == 1
@@ -2280,21 +2484,16 @@ class TestExtractCommentsFromQuotedReply:
     def test_extract_editor_comments_with_diff_resolution(self) -> None:
         """_extract_editor_comments resolves positions when diff provided."""
         edited = (
-            "# instructions\n"
-            "> @@ -1,3 +1,4 @@\n"
-            ">  ctx\n"
-            "> +new line\n"
-            "\n"
-            "My comment.\n"
+            '# instructions\n> @@ -1,3 +1,4 @@\n>  ctx\n> +new line\n\nMy comment.\n'
         )
         real_diff = (
-            "diff --git a/f.c b/f.c\n"
-            "--- a/f.c\n"
-            "+++ b/f.c\n"
-            "@@ -1,3 +1,4 @@\n"
-            " ctx\n"
-            "+new line\n"
-            " more\n"
+            'diff --git a/f.c b/f.c\n'
+            '--- a/f.c\n'
+            '+++ b/f.c\n'
+            '@@ -1,3 +1,4 @@\n'
+            ' ctx\n'
+            '+new line\n'
+            ' more\n'
         )
         comments = review._extract_editor_comments(edited, diff_text=real_diff)
         assert len(comments) == 1
@@ -2347,20 +2546,24 @@ class TestResolveCommentPositions:
         # Sashiko uses fake context hunks even for new files, so the
         # content key has a space prefix while the real diff has + prefix.
         real_diff = (
-            "diff --git a/f.c b/f.c\n"
-            "new file mode 100644\n"
-            "--- /dev/null\n"
-            "+++ b/f.c\n"
-            "@@ -0,0 +1,5 @@\n"
-            "+int x;\n"
-            "+int y;\n"
-            "+return -EINVAL;\n"
-            "+if (check)\n"
-            "+\treturn 0;\n"
+            'diff --git a/f.c b/f.c\n'
+            'new file mode 100644\n'
+            '--- /dev/null\n'
+            '+++ b/f.c\n'
+            '@@ -0,0 +1,5 @@\n'
+            '+int x;\n'
+            '+int y;\n'
+            '+return -EINVAL;\n'
+            '+if (check)\n'
+            '+\treturn 0;\n'
         )
         comments = [
-            {'path': 'f.c', 'line': 90, 'text': 'Bug here.',
-             'content': ' return -EINVAL;'},
+            {
+                'path': 'f.c',
+                'line': 90,
+                'text': 'Bug here.',
+                'content': ' return -EINVAL;',
+            },
         ]
         review._resolve_comment_positions(real_diff, comments)
         assert comments[0]['line'] == 3
@@ -2369,24 +2572,23 @@ class TestResolveCommentPositions:
     def test_exact_prefix_match_still_works(self) -> None:
         """Content with matching prefix (both +) still resolves correctly."""
         real_diff = (
-            "diff --git a/f.c b/f.c\n"
-            "--- a/f.c\n"
-            "+++ b/f.c\n"
-            "@@ -10,3 +10,4 @@\n"
-            " ctx\n"
-            "+new_line\n"
-            " more\n"
+            'diff --git a/f.c b/f.c\n'
+            '--- a/f.c\n'
+            '+++ b/f.c\n'
+            '@@ -10,3 +10,4 @@\n'
+            ' ctx\n'
+            '+new_line\n'
+            ' more\n'
         )
         comments = [
-            {'path': 'f.c', 'line': 99, 'text': 'Review.',
-             'content': '+new_line'},
+            {'path': 'f.c', 'line': 99, 'text': 'Review.', 'content': '+new_line'},
         ]
         review._resolve_comment_positions(real_diff, comments)
         assert comments[0]['line'] == 11
 
     def test_no_content_key_keeps_original_position(self) -> None:
         """Comments without content key are not touched."""
-        real_diff = "diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+        real_diff = 'diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n@@ -1,1 +1,1 @@\n-old\n+new\n'
         comments = [{'path': 'f.c', 'line': 42, 'text': 'Note.'}]
         review._resolve_comment_positions(real_diff, comments)
         assert comments[0]['line'] == 42
@@ -2395,22 +2597,26 @@ class TestResolveCommentPositions:
         """When the same line appears multiple times, pick the closest match."""
         # Simulates a new file with return -EINVAL; at lines 10, 30, and 50
         real_diff = (
-            "diff --git a/f.c b/f.c\n"
-            "new file mode 100644\n"
-            "--- /dev/null\n"
-            "+++ b/f.c\n"
-            "@@ -0,0 +1,50 @@\n"
-            + "".join(f"+line{i}\n" for i in range(1, 10))
-            + "+\treturn -EINVAL;\n"        # line 10
-            + "".join(f"+line{i}\n" for i in range(11, 30))
-            + "+\treturn -EINVAL;\n"        # line 30
-            + "".join(f"+line{i}\n" for i in range(31, 50))
-            + "+\treturn -EINVAL;\n"        # line 50
+            'diff --git a/f.c b/f.c\n'
+            'new file mode 100644\n'
+            '--- /dev/null\n'
+            '+++ b/f.c\n'
+            '@@ -0,0 +1,50 @@\n'
+            + ''.join(f'+line{i}\n' for i in range(1, 10))
+            + '+\treturn -EINVAL;\n'  # line 10
+            + ''.join(f'+line{i}\n' for i in range(11, 30))
+            + '+\treturn -EINVAL;\n'  # line 30
+            + ''.join(f'+line{i}\n' for i in range(31, 50))
+            + '+\treturn -EINVAL;\n'  # line 50
         )
         # Sashiko says line 30 with context-prefix content
         comments = [
-            {'path': 'f.c', 'line': 30, 'text': 'Bug here.',
-             'content': ' \treturn -EINVAL;'},
+            {
+                'path': 'f.c',
+                'line': 30,
+                'text': 'Bug here.',
+                'content': ' \treturn -EINVAL;',
+            },
         ]
         review._resolve_comment_positions(real_diff, comments)
         # Should pick line 30 (closest to source position 30)
@@ -2436,17 +2642,17 @@ class TestIntegrateSashikoReviews:
                 'status': 'Reviewed',
                 'output': '{}',
                 'inline_review': (
-                    "commit aaa\n"
-                    "Author: Test\n\n"
-                    "Test patch 1\n\n"
-                    "> diff --git a/f.c b/f.c\n"
-                    "> @@ -10,3 +10,4 @@ void f(void)\n"
-                    ">  \tint x;\n"
-                    "> +\tptr = alloc();\n"
-                    "\n"
-                    "Missing error check.\n"
-                    "\n"
-                    ">  \treturn 0;\n"
+                    'commit aaa\n'
+                    'Author: Test\n\n'
+                    'Test patch 1\n\n'
+                    '> diff --git a/f.c b/f.c\n'
+                    '> @@ -10,3 +10,4 @@ void f(void)\n'
+                    '>  \tint x;\n'
+                    '> +\tptr = alloc();\n'
+                    '\n'
+                    'Missing error check.\n'
+                    '\n'
+                    '>  \treturn 0;\n'
                 ),
             },
             {
@@ -2463,26 +2669,33 @@ class TestIntegrateSashikoReviews:
         """When sashiko-url is not configured, returns False immediately."""
         with mock.patch('b4.get_main_config', return_value={}):
             result = review._integrate_sashiko_reviews(
-                '/tmp', '', {'series': {}, 'patches': []}, [], [])
+                '/tmp', '', {'series': {}, 'patches': []}, [], []
+            )
         assert result is False
 
     def test_no_series_msgid_returns_false(self) -> None:
         """When series has no message_id, returns False."""
-        with mock.patch('b4.get_main_config',
-                        return_value={'sashiko-url': 'https://sashiko.dev'}):
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
             result = review._integrate_sashiko_reviews(
-                '/tmp', '', {'series': {}, 'patches': []}, [], [])
+                '/tmp', '', {'series': {}, 'patches': []}, [], []
+            )
         assert result is False
 
     def test_api_returns_none(self) -> None:
         """When sashiko API returns nothing, returns False."""
         series = {'message_id': 'test@example.com'}
-        with mock.patch('b4.get_main_config',
-                        return_value={'sashiko-url': 'https://sashiko.dev'}):
-            with mock.patch('b4.review.checks._fetch_sashiko_patchset', return_value=None):
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset', return_value=None
+            ):
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
                     result = review._integrate_sashiko_reviews(
-                        '/tmp', '', {'series': series, 'patches': []}, [], [])
+                        '/tmp', '', {'series': series, 'patches': []}, [], []
+                    )
         assert result is False
 
     def test_integrates_inline_comments(self) -> None:
@@ -2496,26 +2709,34 @@ class TestIntegrateSashikoReviews:
         commit_shas = ['aaaa', 'bbbb']
         # Real diff matching the inline review structure
         real_diff = (
-            "diff --git a/f.c b/f.c\n"
-            "index 111..222 100644\n"
-            "--- a/f.c\n"
-            "+++ b/f.c\n"
-            "@@ -10,3 +10,4 @@ void f(void)\n"
-            " \tint x;\n"
-            "+\tptr = alloc();\n"
-            " \treturn 0;\n"
+            'diff --git a/f.c b/f.c\n'
+            'index 111..222 100644\n'
+            '--- a/f.c\n'
+            '+++ b/f.c\n'
+            '@@ -10,3 +10,4 @@ void f(void)\n'
+            ' \tint x;\n'
+            '+\tptr = alloc();\n'
+            ' \treturn 0;\n'
         )
-        with mock.patch('b4.get_main_config',
-                        return_value={'sashiko-url': 'https://sashiko.dev'}):
-            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
-                            return_value=self._SASHIKO_RESPONSE):
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset',
+                return_value=self._SASHIKO_RESPONSE,
+            ):
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
                     with mock.patch('b4.git_run_command') as mock_git:
                         mock_git.return_value = (0, real_diff)
                         with mock.patch.object(review, 'save_tracking_ref'):
                             result = review._integrate_sashiko_reviews(
-                                '/tmp', 'cover', tracking, commit_shas, patches,
-                                branch='b4/review/test')
+                                '/tmp',
+                                'cover',
+                                tracking,
+                                commit_shas,
+                                patches,
+                                branch='b4/review/test',
+                            )
 
         assert result is True
         # Patch 1 should have sashiko comments
@@ -2535,26 +2756,31 @@ class TestIntegrateSashikoReviews:
         ]
         series = {'message_id': 'cover@example.com'}
         tracking = {'series': series, 'patches': patches}
-        with mock.patch('b4.get_main_config',
-                        return_value={'sashiko-url': 'https://sashiko.dev'}):
-            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
-                            return_value=self._SASHIKO_RESPONSE):
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset',
+                return_value=self._SASHIKO_RESPONSE,
+            ):
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
                     result = review._integrate_sashiko_reviews(
-                        '/tmp', '', tracking, ['aaa'], patches)
+                        '/tmp', '', tracking, ['aaa'], patches
+                    )
         assert result is False
 
     def test_uses_header_info_msgid_fallback(self) -> None:
         """Falls back to header-info.msgid when message_id is missing."""
         series = {'header-info': {'msgid': 'cover@example.com'}}
         tracking = {'series': series, 'patches': []}
-        with mock.patch('b4.get_main_config',
-                        return_value={'sashiko-url': 'https://sashiko.dev'}):
-            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
-                            return_value=None) as mock_fetch:
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset', return_value=None
+            ) as mock_fetch:
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
-                    review._integrate_sashiko_reviews(
-                        '/tmp', '', tracking, [], [])
+                    review._integrate_sashiko_reviews('/tmp', '', tracking, [], [])
         # Should have been called with the header-info msgid
         mock_fetch.assert_called_once_with('cover@example.com', 'https://sashiko.dev')
 
@@ -2573,10 +2799,10 @@ class TestIntegrateSashikoReviews:
                     'patch_id': 100,
                     'status': 'Reviewed',
                     'inline_review': (
-                        "commit aaa\nAuthor: Test\n\nOld\n\n"
-                        "> diff --git a/f.c b/f.c\n"
-                        "> @@ -1,3 +1,4 @@\n>  ctx\n> +new\n"
-                        "\nOld review comment.\n"
+                        'commit aaa\nAuthor: Test\n\nOld\n\n'
+                        '> diff --git a/f.c b/f.c\n'
+                        '> @@ -1,3 +1,4 @@\n>  ctx\n> +new\n'
+                        '\nOld review comment.\n'
                     ),
                 },
                 {
@@ -2584,31 +2810,40 @@ class TestIntegrateSashikoReviews:
                     'patch_id': 100,
                     'status': 'Reviewed',
                     'inline_review': (
-                        "commit bbb\nAuthor: Test\n\nNew\n\n"
-                        "> diff --git a/f.c b/f.c\n"
-                        "> @@ -1,3 +1,4 @@\n>  ctx\n> +new\n"
-                        "\nNew review comment.\n"
+                        'commit bbb\nAuthor: Test\n\nNew\n\n'
+                        '> diff --git a/f.c b/f.c\n'
+                        '> @@ -1,3 +1,4 @@\n>  ctx\n> +new\n'
+                        '\nNew review comment.\n'
                     ),
                 },
             ],
         }
-        patches: List[Dict[str, Any]] = [{'header-info': {'msgid': 'patch1@example.com'}}]
+        patches: List[Dict[str, Any]] = [
+            {'header-info': {'msgid': 'patch1@example.com'}}
+        ]
         series = {'message_id': 'cover@example.com'}
         tracking = {'series': series, 'patches': patches}
         real_diff = (
-            "diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n"
-            "@@ -1,3 +1,4 @@\n ctx\n+new\n ctx\n"
+            'diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n'
+            '@@ -1,3 +1,4 @@\n ctx\n+new\n ctx\n'
         )
-        with mock.patch('b4.get_main_config',
-                        return_value={'sashiko-url': 'https://sashiko.dev'}):
-            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
-                            return_value=patchset):
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset', return_value=patchset
+            ):
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
                         with mock.patch.object(review, 'save_tracking_ref'):
                             review._integrate_sashiko_reviews(
-                                '/tmp', '', tracking, ['aaa'], patches,
-                                branch='b4/review/test')
+                                '/tmp',
+                                '',
+                                tracking,
+                                ['aaa'],
+                                patches,
+                                branch='b4/review/test',
+                            )
         comments = patches[0]['reviews']['sashiko@sashiko.dev']['comments']
         # Should have the newer review's comment
         assert any('New review comment' in c['text'] for c in comments)
@@ -2624,66 +2859,79 @@ class TestIntegrateSashikoReviews:
                     'sashiko@sashiko.dev': {
                         'name': 'sashiko.dev',
                         'sashiko-review-id': 200,
-                        'comments': [{'path': 'f.c', 'line': 11, 'text': 'Already here.'}],
+                        'comments': [
+                            {'path': 'f.c', 'line': 11, 'text': 'Already here.'}
+                        ],
                     },
                 },
             },
         ]
         series = {'message_id': 'cover@example.com'}
         tracking = {'series': series, 'patches': patches}
-        with mock.patch('b4.get_main_config',
-                        return_value={'sashiko-url': 'https://sashiko.dev'}):
-            with mock.patch('b4.review.checks._fetch_sashiko_patchset',
-                            return_value=self._SASHIKO_RESPONSE):
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset',
+                return_value=self._SASHIKO_RESPONSE,
+            ):
                 with mock.patch('b4.review.checks.clear_sashiko_cache'):
                     with mock.patch('b4.git_run_command') as mock_git:
                         result = review._integrate_sashiko_reviews(
-                            '/tmp', '', tracking, ['aaaa'], patches)
+                            '/tmp', '', tracking, ['aaaa'], patches
+                        )
         # Should not have called git diff (skipped re-parsing)
         mock_git.assert_not_called()
         assert result is False
         # Original comments untouched
-        assert patches[0]['reviews']['sashiko@sashiko.dev']['comments'][0]['text'] == 'Already here.'
+        assert (
+            patches[0]['reviews']['sashiko@sashiko.dev']['comments'][0]['text']
+            == 'Already here.'
+        )
 
 
 class TestIntegrateFollowupInlineComments:
     """Tests for _integrate_followup_inline_comments()."""
 
     _FOLLOWUP_BODY_WITH_DIFF = (
-        "On Mon, Jan 1, 2024, Dev <dev@test.com> wrote:\n"
-        "> diff --git a/fs/file.c b/fs/file.c\n"
-        "> index abc123..def456 100644\n"
-        "> --- a/fs/file.c\n"
-        "> +++ b/fs/file.c\n"
-        "> @@ -10,3 +10,4 @@ void f(void)\n"
-        ">  \tint x;\n"
-        "> +\tptr = malloc(sz);\n"
-        "\n"
-        "Missing NULL check after malloc.\n"
-        "\n"
-        ">  \treturn 0;\n"
+        'On Mon, Jan 1, 2024, Dev <dev@test.com> wrote:\n'
+        '> diff --git a/fs/file.c b/fs/file.c\n'
+        '> index abc123..def456 100644\n'
+        '> --- a/fs/file.c\n'
+        '> +++ b/fs/file.c\n'
+        '> @@ -10,3 +10,4 @@ void f(void)\n'
+        '>  \tint x;\n'
+        '> +\tptr = malloc(sz);\n'
+        '\n'
+        'Missing NULL check after malloc.\n'
+        '\n'
+        '>  \treturn 0;\n'
     )
 
     _FOLLOWUP_BODY_NO_DIFF = (
-        "I think this approach makes sense, but can we also\n"
-        "add a test for the error path?\n"
+        'I think this approach makes sense, but can we also\n'
+        'add a test for the error path?\n'
     )
 
-    def _make_followup_comments(self, bodies_by_patch: Dict[int, List[str]]) -> Dict[int, List[Dict[str, Any]]]:
+    def _make_followup_comments(
+        self, bodies_by_patch: Dict[int, List[str]]
+    ) -> Dict[int, List[Dict[str, Any]]]:
         """Build a followup_comments dict like _parse_msgs_to_followup_comments returns."""
         result: Dict[int, List[Dict[str, Any]]] = {}
         for display_idx, body_list in bodies_by_patch.items():
             entries = []
             for i, body in enumerate(body_list):
-                entries.append({
-                    'body': body,
-                    'fromname': f'Reviewer {i}',
-                    'fromemail': f'reviewer{i}@example.com',
-                    'date': '2024-01-01',
-                    'msgid': f'followup{display_idx}-{i}@example.com',
-                    'subject': 'Re: [PATCH]',
-                    'depth': 0,
-                })
+                entries.append(
+                    {
+                        'body': body,
+                        'fromname': f'Reviewer {i}',
+                        'fromemail': f'reviewer{i}@example.com',
+                        'date': '2024-01-01',
+                        'msgid': f'followup{display_idx}-{i}@example.com',
+                        'subject': 'Re: [PATCH]',
+                        'depth': 0,
+                    }
+                )
             result[display_idx] = entries
         return result
 
@@ -2691,7 +2939,8 @@ class TestIntegrateFollowupInlineComments:
         """Without a thread-blob, returns False immediately."""
         tracking: Dict[str, Any] = {'series': {}, 'patches': []}
         result = review._integrate_followup_inline_comments(
-            '/tmp', '', tracking, [], [])
+            '/tmp', '', tracking, [], []
+        )
         assert result is False
 
     def test_extracts_inline_comments_from_followup(self) -> None:
@@ -2707,30 +2956,39 @@ class TestIntegrateFollowupInlineComments:
         commit_shas = ['aaaa']
 
         # Follow-up body that quotes diff with a comment
-        followup_comments = self._make_followup_comments({
-            1: [self._FOLLOWUP_BODY_WITH_DIFF],  # display_idx 1 = patch 0
-        })
+        followup_comments = self._make_followup_comments(
+            {
+                1: [self._FOLLOWUP_BODY_WITH_DIFF],  # display_idx 1 = patch 0
+            }
+        )
 
         real_diff = (
-            "diff --git a/fs/file.c b/fs/file.c\n"
-            "index abc123..def456 100644\n"
-            "--- a/fs/file.c\n"
-            "+++ b/fs/file.c\n"
-            "@@ -10,3 +10,4 @@ void f(void)\n"
-            " \tint x;\n"
-            "+\tptr = malloc(sz);\n"
-            " \treturn 0;\n"
+            'diff --git a/fs/file.c b/fs/file.c\n'
+            'index abc123..def456 100644\n'
+            '--- a/fs/file.c\n'
+            '+++ b/fs/file.c\n'
+            '@@ -10,3 +10,4 @@ void f(void)\n'
+            ' \tint x;\n'
+            '+\tptr = malloc(sz);\n'
+            ' \treturn 0;\n'
         )
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
             with mock.patch('liblore.utils.split_mbox', return_value=[]):
-                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
-                                return_value=followup_comments):
+                with mock.patch(
+                    'b4.review.tracking._parse_msgs_to_followup_comments',
+                    return_value=followup_comments,
+                ):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
                         with mock.patch.object(review, 'save_tracking_ref'):
                             result = review._integrate_followup_inline_comments(
-                                '/tmp', 'cover', tracking, commit_shas, patches,
-                                branch='b4/review/test')
+                                '/tmp',
+                                'cover',
+                                tracking,
+                                commit_shas,
+                                patches,
+                                branch='b4/review/test',
+                            )
 
         assert result is True
         assert 'reviews' in patches[0]
@@ -2750,16 +3008,21 @@ class TestIntegrateFollowupInlineComments:
             'thread-blob': 'abc123',
         }
         tracking = {'series': series, 'patches': patches}
-        followup_comments = self._make_followup_comments({
-            1: [self._FOLLOWUP_BODY_NO_DIFF],
-        })
+        followup_comments = self._make_followup_comments(
+            {
+                1: [self._FOLLOWUP_BODY_NO_DIFF],
+            }
+        )
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
             with mock.patch('liblore.utils.split_mbox', return_value=[]):
-                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
-                                return_value=followup_comments):
+                with mock.patch(
+                    'b4.review.tracking._parse_msgs_to_followup_comments',
+                    return_value=followup_comments,
+                ):
                     result = review._integrate_followup_inline_comments(
-                        '/tmp', '', tracking, ['aaa'], patches)
+                        '/tmp', '', tracking, ['aaa'], patches
+                    )
         assert result is False
         assert 'reviews' not in patches[0]
 
@@ -2773,16 +3036,21 @@ class TestIntegrateFollowupInlineComments:
             'thread-blob': 'abc123',
         }
         tracking = {'series': series, 'patches': patches}
-        followup_comments = self._make_followup_comments({
-            0: [self._FOLLOWUP_BODY_WITH_DIFF],  # cover letter
-        })
+        followup_comments = self._make_followup_comments(
+            {
+                0: [self._FOLLOWUP_BODY_WITH_DIFF],  # cover letter
+            }
+        )
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
             with mock.patch('liblore.utils.split_mbox', return_value=[]):
-                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
-                                return_value=followup_comments):
+                with mock.patch(
+                    'b4.review.tracking._parse_msgs_to_followup_comments',
+                    return_value=followup_comments,
+                ):
                     result = review._integrate_followup_inline_comments(
-                        '/tmp', '', tracking, ['aaa'], patches)
+                        '/tmp', '', tracking, ['aaa'], patches
+                    )
         assert result is False
 
     def test_multiple_reviewers_same_patch(self) -> None:
@@ -2795,30 +3063,39 @@ class TestIntegrateFollowupInlineComments:
             'thread-blob': 'abc123',
         }
         tracking = {'series': series, 'patches': patches}
-        followup_comments = self._make_followup_comments({
-            1: [self._FOLLOWUP_BODY_WITH_DIFF, self._FOLLOWUP_BODY_WITH_DIFF],
-        })
+        followup_comments = self._make_followup_comments(
+            {
+                1: [self._FOLLOWUP_BODY_WITH_DIFF, self._FOLLOWUP_BODY_WITH_DIFF],
+            }
+        )
 
         real_diff = (
-            "diff --git a/fs/file.c b/fs/file.c\n"
-            "index abc123..def456 100644\n"
-            "--- a/fs/file.c\n"
-            "+++ b/fs/file.c\n"
-            "@@ -10,3 +10,4 @@ void f(void)\n"
-            " \tint x;\n"
-            "+\tptr = malloc(sz);\n"
-            " \treturn 0;\n"
+            'diff --git a/fs/file.c b/fs/file.c\n'
+            'index abc123..def456 100644\n'
+            '--- a/fs/file.c\n'
+            '+++ b/fs/file.c\n'
+            '@@ -10,3 +10,4 @@ void f(void)\n'
+            ' \tint x;\n'
+            '+\tptr = malloc(sz);\n'
+            ' \treturn 0;\n'
         )
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
             with mock.patch('liblore.utils.split_mbox', return_value=[]):
-                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
-                                return_value=followup_comments):
+                with mock.patch(
+                    'b4.review.tracking._parse_msgs_to_followup_comments',
+                    return_value=followup_comments,
+                ):
                     with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
                         with mock.patch.object(review, 'save_tracking_ref'):
                             result = review._integrate_followup_inline_comments(
-                                '/tmp', 'cover', tracking, ['aaa'], patches,
-                                branch='b4/review/test')
+                                '/tmp',
+                                'cover',
+                                tracking,
+                                ['aaa'],
+                                patches,
+                                branch='b4/review/test',
+                            )
 
         assert result is True
         reviews = patches[0]['reviews']
@@ -2835,7 +3112,9 @@ class TestIntegrateFollowupInlineComments:
                     'reviewer0@example.com': {
                         'name': 'Reviewer 0',
                         'followup-msgid': 'followup1-0@example.com',
-                        'comments': [{'path': 'fs/file.c', 'line': 11, 'text': 'Already here.'}],
+                        'comments': [
+                            {'path': 'fs/file.c', 'line': 11, 'text': 'Already here.'}
+                        ],
                     },
                 },
             },
@@ -2845,22 +3124,30 @@ class TestIntegrateFollowupInlineComments:
             'thread-blob': 'abc123',
         }
         tracking = {'series': series, 'patches': patches}
-        followup_comments = self._make_followup_comments({
-            1: [self._FOLLOWUP_BODY_WITH_DIFF],
-        })
+        followup_comments = self._make_followup_comments(
+            {
+                1: [self._FOLLOWUP_BODY_WITH_DIFF],
+            }
+        )
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
             with mock.patch('liblore.utils.split_mbox', return_value=[]):
-                with mock.patch('b4.review.tracking._parse_msgs_to_followup_comments',
-                                return_value=followup_comments):
+                with mock.patch(
+                    'b4.review.tracking._parse_msgs_to_followup_comments',
+                    return_value=followup_comments,
+                ):
                     with mock.patch('b4.git_run_command') as mock_git:
                         result = review._integrate_followup_inline_comments(
-                            '/tmp', '', tracking, ['aaa'], patches)
+                            '/tmp', '', tracking, ['aaa'], patches
+                        )
         # Should not have called git diff (skipped re-parsing)
         mock_git.assert_not_called()
         assert result is False
         # Original comments untouched
-        assert patches[0]['reviews']['reviewer0@example.com']['comments'][0]['text'] == 'Already here.'
+        assert (
+            patches[0]['reviews']['reviewer0@example.com']['comments'][0]['text']
+            == 'Already here.'
+        )
 
 
 class TestFollowupItemPerMessage:
@@ -2888,6 +3175,7 @@ class TestFollowupItemPerMessage:
     def test_followup_item_keyed_by_msgid(self) -> None:
         """FollowupItem stores msgid, not fromemail."""
         from b4.review_tui._review_app import FollowupItem
+
         item = FollowupItem('Alice', 1, 'reply-1@example.com')
         assert item.msgid == 'reply-1@example.com'
         assert item.display_idx == 1
@@ -2895,6 +3183,7 @@ class TestFollowupItemPerMessage:
     def test_selected_followup_enables_reply_in_preview(self) -> None:
         """check_action returns True for edit_reply when a follow-up is selected."""
         from b4.review_tui._review_app import ReviewApp
+
         app = ReviewApp(self._make_session())
         app._preview_mode = True
         app._selected_followup_msgid = 'reply@example.com'
@@ -2903,6 +3192,7 @@ class TestFollowupItemPerMessage:
     def test_selected_followup_cleared_on_show_content(self) -> None:
         """_selected_followup_msgid is reset when switching patches."""
         from b4.review_tui._review_app import ReviewApp
+
         app = ReviewApp(self._make_session())
         app._selected_followup_msgid = 'reply@example.com'
         # Verify it was set
@@ -2935,8 +3225,9 @@ index aaa..bbb 100644
 """
 
 
-def _make_patch_msg(subject: str, from_addr: str, date: str,
-                    body: str = '', msgid: str = '') -> email.message.EmailMessage:
+def _make_patch_msg(
+    subject: str, from_addr: str, date: str, body: str = '', msgid: str = ''
+) -> email.message.EmailMessage:
     """Build a minimal EmailMessage that LoreMailbox can parse as a patch."""
     msg = email.message.EmailMessage()
     msg['Subject'] = subject
@@ -3017,6 +3308,7 @@ class TestGetLoreSeriesVersionMismatch:
 
 # -- Tests for collect_review_emails() ----------------------------------------
 
+
 class TestCollectReviewEmails:
     """Tests for collect_review_emails() filtering logic.
 
@@ -3059,60 +3351,65 @@ class TestCollectReviewEmails:
     # Use a sentinel email message so we can count how many were produced.
     _FAKE_MSG = mock.sentinel.email_msg
 
-    @mock.patch('b4.review._review._build_review_email',
-                return_value=_FAKE_MSG)
-    @mock.patch('b4.get_user_config',
-                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
-    def test_sends_normal_cover_review(self, _cfg: mock.Mock,
-                                       _build: mock.Mock) -> None:
+    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
+    @mock.patch(
+        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    )
+    def test_sends_normal_cover_review(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
         """A cover review without sent-revision produces one email."""
         series = self._make_series({self.MY_EMAIL: self._review()})
         msgs = review.collect_review_emails(series, [], 'cover', '', [])
         assert len(msgs) == 1
 
-    @mock.patch('b4.review._review._build_review_email',
-                return_value=_FAKE_MSG)
-    @mock.patch('b4.get_user_config',
-                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
-    def test_skips_cover_with_sent_revision(self, _cfg: mock.Mock,
-                                             _build: mock.Mock) -> None:
+    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
+    @mock.patch(
+        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    )
+    def test_skips_cover_with_sent_revision(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
         """Cover review stamped with sent-revision is not re-sent."""
         series = self._make_series(
-            {self.MY_EMAIL: self._review(**{'sent-revision': 1})})
+            {self.MY_EMAIL: self._review(**{'sent-revision': 1})}
+        )
         msgs = review.collect_review_emails(series, [], 'cover', '', [])
         assert msgs == []
 
-    @mock.patch('b4.review._review._build_review_email',
-                return_value=_FAKE_MSG)
-    @mock.patch('b4.get_user_config',
-                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
-    def test_sends_normal_patch_review(self, _cfg: mock.Mock,
-                                       _build: mock.Mock) -> None:
+    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
+    @mock.patch(
+        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    )
+    def test_sends_normal_patch_review(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
         """A patch review without sent-revision produces one email."""
         series = self._make_series()
         patch = self._make_patch({self.MY_EMAIL: self._review()})
         msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
         assert len(msgs) == 1
 
-    @mock.patch('b4.review._review._build_review_email',
-                return_value=_FAKE_MSG)
-    @mock.patch('b4.get_user_config',
-                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
-    def test_skips_patch_with_sent_revision(self, _cfg: mock.Mock,
-                                             _build: mock.Mock) -> None:
+    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
+    @mock.patch(
+        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    )
+    def test_skips_patch_with_sent_revision(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
         """Patch review stamped with sent-revision is not re-sent."""
         series = self._make_series()
-        patch = self._make_patch(
-            {self.MY_EMAIL: self._review(**{'sent-revision': 1})})
+        patch = self._make_patch({self.MY_EMAIL: self._review(**{'sent-revision': 1})})
         msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
         assert msgs == []
 
-    @mock.patch('b4.review._review._build_review_email',
-                return_value=_FAKE_MSG)
-    @mock.patch('b4.get_user_config',
-                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
-    def test_skips_patch_auto_skipped_after_upgrade(self, _cfg: mock.Mock,
-                                                     _build: mock.Mock) -> None:
+    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
+    @mock.patch(
+        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    )
+    def test_skips_patch_auto_skipped_after_upgrade(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
         """Patch auto-marked skip+skip-reason during upgrade is not re-sent.
 
         This is the combo A+B fix: the upgrade step sets patch-state=skip
@@ -3121,38 +3418,49 @@ class TestCollectReviewEmails:
         prevent re-sending; this test exercises the skip-state path.
         """
         series = self._make_series()
-        patch = self._make_patch({self.MY_EMAIL: self._review(
-            **{'sent-revision': 1,
-               'patch-state': 'skip',
-               'skip-reason': 'Patch unchanged from v1; review already sent'})})
+        patch = self._make_patch(
+            {
+                self.MY_EMAIL: self._review(
+                    **{
+                        'sent-revision': 1,
+                        'patch-state': 'skip',
+                        'skip-reason': 'Patch unchanged from v1; review already sent',
+                    }
+                )
+            }
+        )
         msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
         assert msgs == []
 
-    @mock.patch('b4.review._review._build_review_email',
-                return_value=_FAKE_MSG)
-    @mock.patch('b4.get_user_config',
-                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
-    def test_only_unsent_patches_included(self, _cfg: mock.Mock,
-                                          _build: mock.Mock) -> None:
+    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
+    @mock.patch(
+        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    )
+    def test_only_unsent_patches_included(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
         """Mix of sent and unsent patches: only unsent ones produce emails."""
         series = self._make_series()
         sent_patch = self._make_patch(
-            {self.MY_EMAIL: self._review(**{'sent-revision': 1})})
-        fresh_patch = self._make_patch(
-            {self.MY_EMAIL: self._review()})
+            {self.MY_EMAIL: self._review(**{'sent-revision': 1})}
+        )
+        fresh_patch = self._make_patch({self.MY_EMAIL: self._review()})
         msgs = review.collect_review_emails(
-            series, [sent_patch, fresh_patch], 'cover', '', ['sha1', 'sha2'])
+            series, [sent_patch, fresh_patch], 'cover', '', ['sha1', 'sha2']
+        )
         assert len(msgs) == 1
 
-    @mock.patch('b4.review._review._build_review_email',
-                return_value=_FAKE_MSG)
-    @mock.patch('b4.get_user_config',
-                return_value={'name': 'Maintainer', 'email': MY_EMAIL})
+    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
+    @mock.patch(
+        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    )
     def test_skip_state_without_sent_revision_still_skipped(
-            self, _cfg: mock.Mock, _build: mock.Mock) -> None:
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
         """Explicit skip state (manually set, no sent-revision) is honoured."""
         series = self._make_series()
         patch = self._make_patch(
-            {self.MY_EMAIL: self._review(**{'patch-state': 'skip'})})
+            {self.MY_EMAIL: self._review(**{'patch-state': 'skip'})}
+        )
         msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
         assert msgs == []
