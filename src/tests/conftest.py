@@ -1,3 +1,4 @@
+import copy
 import os
 import pathlib
 import sys
@@ -9,20 +10,38 @@ import b4
 
 
 @pytest.fixture(scope='function', autouse=True)
-def settestdefaults(tmp_path: pathlib.Path) -> None:
+def settestdefaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
     topdir = b4.git_get_toplevel()
     if topdir and topdir != os.getcwd():
         os.chdir(topdir)
-    b4.can_network = False
-    b4.MAIN_CONFIG = dict(b4.DEFAULT_CONFIG)
-    b4.USER_CONFIG = {
-        'name': 'Test Override',
-        'email': 'test-override@example.com',
-    }
-    os.environ['XDG_DATA_HOME'] = str(tmp_path)
-    os.environ['XDG_CACHE_HOME'] = str(tmp_path)
+    monkeypatch.setattr(b4, 'can_network', False)
+    monkeypatch.setattr(
+        b4,
+        'MAIN_CONFIG',
+        {
+            **copy.deepcopy(b4.DEFAULT_CONFIG),
+            'attestation-policy': 'off',
+        },
+    )
+    monkeypatch.setattr(
+        b4,
+        'USER_CONFIG',
+        {
+            'name': 'Test Override',
+            'email': 'test-override@example.com',
+        },
+    )
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    git_config_count = int(os.environ.get('GIT_CONFIG_COUNT', '0'))
+    monkeypatch.setenv('GIT_CONFIG_COUNT', str(git_config_count + 1))
+    monkeypatch.setenv(f'GIT_CONFIG_KEY_{git_config_count}', 'commit.gpgsign')
+    monkeypatch.setenv(f'GIT_CONFIG_VALUE_{git_config_count}', 'false')
     # This lets us avoid execvp-ing from inside b4 when testing
-    sys._running_in_pytest = True  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys, '_running_in_pytest', True, raising=False)
 
 
 @pytest.fixture(scope='function')
