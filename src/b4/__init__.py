@@ -28,6 +28,7 @@ import tempfile
 import textwrap
 import time
 import urllib.parse
+from collections import defaultdict
 from contextlib import contextmanager
 from email import charset
 from email.message import EmailMessage
@@ -198,7 +199,7 @@ class LoreMailbox:
     msgid_map: Dict[str, 'LoreMessage']
     series: Dict[int, 'LoreSeries']
     covers: Dict[int, 'LoreMessage']
-    trailer_map: Dict[str, List['LoreMessage']]
+    trailer_map: defaultdict[str, List['LoreMessage']]
     followups: List['LoreMessage']
     unknowns: List['LoreMessage']
 
@@ -206,7 +207,7 @@ class LoreMailbox:
         self.msgid_map = dict()
         self.series = dict()
         self.covers = dict()
-        self.trailer_map = dict()
+        self.trailer_map = defaultdict(list)
         self.followups = list()
         self.unknowns = list()
 
@@ -222,11 +223,6 @@ class LoreMailbox:
             out.append('  %s' % lmsg.full_subject)
 
         return '\n'.join(out)
-
-    def get_by_msgid(self, msgid: str) -> Optional['LoreMessage']:
-        if msgid in self.msgid_map:
-            return self.msgid_map[msgid]
-        return None
 
     def partial_reroll(self, revision: int, sloppytrailers: bool) -> None:
         # Is it a partial reroll?
@@ -244,11 +240,13 @@ class LoreMailbox:
         for patch in lser.patches:
             if patch is None:
                 continue
-            if patch.in_reply_to is None or patch.in_reply_to not in self.msgid_map:
+            if (
+                patch.in_reply_to is None
+                or (ppatch := self.msgid_map.get(patch.in_reply_to)) is None
+            ):
                 logger.debug('Patch not sent as a reply-to')
                 sane = False
                 break
-            ppatch = self.msgid_map[patch.in_reply_to]
             found = False
             while True:
                 if (
@@ -263,10 +261,10 @@ class LoreMailbox:
                 # Do we have another level up?
                 if (
                     ppatch.in_reply_to is None
-                    or ppatch.in_reply_to not in self.msgid_map
+                    or (npatch := self.msgid_map.get(ppatch.in_reply_to)) is None
                 ):
                     break
-                ppatch = self.msgid_map[ppatch.in_reply_to]
+                ppatch = npatch
 
             if not found:
                 sane = False
@@ -330,9 +328,7 @@ class LoreMailbox:
             qmsgs, ignore_msgids=set(self.msgid_map.keys())
         )
         for patchid, fmsgs in patchid_map.items():
-            if patchid not in self.trailer_map:
-                self.trailer_map[patchid] = list()
-            self.trailer_map[patchid] += fmsgs
+            self.trailer_map[patchid].extend(fmsgs)
 
     def get_latest_revision(self) -> Optional[int]:
         if not len(self.series):
@@ -356,10 +352,10 @@ class LoreMailbox:
             revision = self.get_latest_revision()
             if revision is None:
                 return None
-        elif revision not in self.series:
-            return None
 
-        lser = self.series[revision]
+        lser = self.series.get(revision)
+        if lser is None:
+            return None
 
         # Is it empty?
         empty = True
@@ -375,15 +371,15 @@ class LoreMailbox:
             self.partial_reroll(revision, sloppytrailers)
 
         # Grab our cover letter if we have one
-        if revision in self.covers:
-            lser.add_patch(self.covers[revision])
+        if (cover := self.covers.get(revision)) is not None:
+            lser.add_patch(cover)
             lser.has_cover = True
         else:
             # Let's find the first patch with an in-reply-to and see if that
             # is our cover letter
             for member in lser.patches:
                 if member is not None and member.in_reply_to is not None:
-                    potential = self.get_by_msgid(member.in_reply_to)
+                    potential = self.msgid_map.get(member.in_reply_to)
                     if (
                         potential is not None
                         and potential.has_diffstat
@@ -414,12 +410,13 @@ class LoreMailbox:
             if fmsg.in_reply_to is None:
                 # Check if there's something matching in References
                 for refid in fmsg.references:
-                    if refid in self.msgid_map and refid != fmsg.msgid:
-                        pmsg = self.msgid_map[refid]
+                    if (
+                        refid != fmsg.msgid
+                        and (pmsg := self.msgid_map.get(refid)) is not None
+                    ):
                         logger.debug('Found a references entry %s in msgid_map', refid)
                         break
-            elif fmsg.in_reply_to in self.msgid_map:
-                pmsg = self.msgid_map[fmsg.in_reply_to]
+            elif (pmsg := self.msgid_map.get(fmsg.in_reply_to)) is not None:
                 logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
             if pmsg is None:
                 # Can't find the message we're replying to here
@@ -443,8 +440,6 @@ class LoreMailbox:
                         # previous revisions to current revision if patch id did
                         # not change
                         if pmsg.git_patch_id:
-                            if pmsg.git_patch_id not in self.trailer_map:
-                                self.trailer_map[pmsg.git_patch_id] = list()
                             self.trailer_map[pmsg.git_patch_id].append(fmsg)
                     pmsg.followup_trailers += trailers
                     break
@@ -452,15 +447,18 @@ class LoreMailbox:
                     # Could be a cover letter
                     pmsg.followup_trailers += trailers
                     break
-                if pmsg.in_reply_to and pmsg.in_reply_to in self.msgid_map:
+                if (
+                    pmsg.in_reply_to
+                    and (nmsg := self.msgid_map.get(pmsg.in_reply_to)) is not None
+                ):
                     # Avoid bad message id causing infinite loop
-                    if pmsg == self.msgid_map[pmsg.in_reply_to]:
+                    if pmsg == nmsg:
                         break
                     lvl += 1
                     for pltr in pmsg.trailers:
                         pltr.lmsg = pmsg
                         trailers.append(pltr)
-                    pmsg = self.msgid_map[pmsg.in_reply_to]
+                    pmsg = nmsg
                     continue
                 break
 
@@ -472,29 +470,28 @@ class LoreMailbox:
             logger.debug(
                 '  matching patch_id %s from: %s', lmsg.git_patch_id, lmsg.full_subject
             )
-            if lmsg.git_patch_id in self.trailer_map:
-                for fmsg in self.trailer_map[lmsg.git_patch_id]:
-                    logger.debug('  matched: %s', fmsg.msgid)
-                    fltrs, fmis = fmsg.get_trailers(sloppy=sloppytrailers)
-                    for fltr in fltrs:
-                        if fltr in lmsg.trailers:
-                            logger.debug('  trailer already exists')
-                            continue
-                        if fltr in lmsg.followup_trailers:
-                            logger.debug('  identical trailer received for this series')
-                            continue
-                        logger.debug(
-                            '  carrying over the trailer to this series (may be duplicate)'
-                        )
-                        logger.debug('  %s', lmsg.full_subject)
-                        logger.debug('    + %s', fltr.as_string())
-                        if fltr.lmsg:
-                            logger.debug('      via: %s', fltr.lmsg.msgid)
-                        lmsg.followup_trailers.append(fltr)
-                    for fltr in fmis:
-                        lser.trailer_mismatches.add(
-                            (fltr.name, fltr.value, fmsg.fromname, fmsg.fromemail)
-                        )
+            for fmsg in self.trailer_map.get(lmsg.git_patch_id, ()):
+                logger.debug('  matched: %s', fmsg.msgid)
+                fltrs, fmis = fmsg.get_trailers(sloppy=sloppytrailers)
+                for fltr in fltrs:
+                    if fltr in lmsg.trailers:
+                        logger.debug('  trailer already exists')
+                        continue
+                    if fltr in lmsg.followup_trailers:
+                        logger.debug('  identical trailer received for this series')
+                        continue
+                    logger.debug(
+                        '  carrying over the trailer to this series (may be duplicate)'
+                    )
+                    logger.debug('  %s', lmsg.full_subject)
+                    logger.debug('    + %s', fltr.as_string())
+                    if fltr.lmsg:
+                        logger.debug('      via: %s', fltr.lmsg.msgid)
+                    lmsg.followup_trailers.append(fltr)
+                for fltr in fmis:
+                    lser.trailer_mismatches.add(
+                        (fltr.name, fltr.value, fmsg.fromname, fmsg.fromemail)
+                    )
 
         return lser
 
@@ -529,7 +526,7 @@ class LoreMailbox:
                 if lmsg.revision_inferred and lmsg.in_reply_to:
                     # We have an inferred revision here.
                     # Do we have an upthread cover letter that specifies a revision?
-                    irt = self.get_by_msgid(lmsg.in_reply_to)
+                    irt = self.msgid_map.get(lmsg.in_reply_to)
                     if irt is not None and irt.has_diffstat and not irt.has_diff:
                         # Yes, this is very likely our cover letter
                         logger.debug('  fixed revision to v%s', irt.revision)
@@ -3796,7 +3793,7 @@ def get_config_from_git(
             chunks = key.split('.')
             cfgkey = chunks[-1].lower()
             if cfgkey in multivals:
-                if cfgkey not in gitconfig or gitconfig[cfgkey] is None:
+                if gitconfig.get(cfgkey) is None:
                     gitconfig[cfgkey] = list()
                 gitconfig[cfgkey].append(value)
             else:

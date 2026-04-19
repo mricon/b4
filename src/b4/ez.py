@@ -26,6 +26,7 @@ import textwrap
 import time
 import urllib.parse
 import uuid
+from collections import defaultdict
 from email.message import EmailMessage
 from string import Template
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -2262,7 +2263,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     seen: Set[str] = set()
     excludes: Set[str] = set()
-    pccs: Dict[str, List[Tuple[str, str]]] = dict()
+    pccs: defaultdict[str, List[Tuple[str, str]]] = defaultdict(list)
 
     if cmdargs.preview_to or cmdargs.no_trailer_to_cc:
         todests = list()
@@ -2285,10 +2286,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 if btr.addr[1] in seen:
                     continue
                 if commit:
-                    if commit not in pccs:
-                        pccs[commit] = list()
-                    if btr.addr not in pccs[commit]:
-                        pccs[commit].append(btr.addr)
+                    cpccs = pccs[commit]
+                    if btr.addr not in cpccs:
+                        cpccs.append(btr.addr)
                     continue
                 seen.add(btr.addr[1])
                 if btr.lname == 'to':
