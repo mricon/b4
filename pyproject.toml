@@ -111,4 +111,5 @@ typeCheckingMode = "off"
 
 # Configure mypy in strict mode
 [tool.mypy]
+exclude = ["^ezgb/", "^liblore/", "^misc/", "^patatt/"]
 strict = true
