@@ -43,7 +43,7 @@ import sys
 
 def main() -> None:
     msg = email.message_from_binary_file(sys.stdin.buffer)
-    subject = msg.get('subject', '(no subject)')  # noqa: F841
+    subject = msg.get('subject', '(no subject)')  # noqa: F841  # pyright: ignore[reportUnusedVariable]
     msgid = msg.get('message-id', '').strip('<> ')
 
     # Example: read tracking data for commit-based CI lookups
@@ -51,9 +51,9 @@ def main() -> None:
     if tracking_file:
         with open(tracking_file) as fp:
             tracking = json.load(fp)
-        branch_tips = tracking.get('series', {}).get('branch-tips', [])
+        branch_tips = tracking.get('series', {}).get('branch-tips', [])  # pyright: ignore[reportUnusedVariable]
     else:
-        branch_tips = []  # noqa: F841
+        branch_tips = []  # noqa: F841  # pyright: ignore[reportUnusedVariable]
 
     # Seed the RNG with the message-id so results are stable across
     # repeated runs of the same message (simulates cached CI results).

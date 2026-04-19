@@ -530,8 +530,8 @@ def send_messages(
 
         outgoing += 1
         if send_email:
-            if not fromaddr and isinstance(jsondata['myemail'], str):
-                fromaddr = jsondata['myemail']
+            if not fromaddr:
+                fromaddr = user_email
             logger.info(
                 '  Sending: %s', b4.LoreMessage.clean_header(msg.get('subject'))
             )
@@ -959,7 +959,7 @@ def get_branch_info(gitdir: Optional[str], branch: str) -> Dict[str, str]:
     BRANCH_INFO = dict()
 
     remotecfg = b4.get_config_from_git('branch\\.%s\\..*' % branch)
-    if remotecfg is None or 'remote' not in remotecfg:
+    if 'remote' not in remotecfg:
         # Did not find a matching branch entry, so look at remotes
         gitargs = ['remote', 'show']
         lines = b4.git_get_command_lines(gitdir, gitargs)

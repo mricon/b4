@@ -134,8 +134,19 @@ warn_unreachable = true
 # once we specify `exclude`, we're on our own. See
 # https://github.com/microsoft/pyright/issues/9057#issuecomment-2366938099.
 exclude = [".venv", "ezgb", "liblore", "patatt"]
-typeCheckingMode = "standard"
-reportUnusedImport = true
+typeCheckingMode = "strict"
+
+# Overly strict rules.
+reportConstantRedefinition = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+
+# False positives caused by underscore-prefixed functions used across files.
+# Might be good to clean this up.
+reportPrivateUsage = false
+reportUnusedFunction = false
 
 [tool.ty.src]
 exclude = ["ezgb/", "liblore/", "patatt/"]

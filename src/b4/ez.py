@@ -2679,20 +2679,21 @@ def get_sent_tagname(
     tagbase: str, tagprefix: str, revstr: Union[str, int]
 ) -> Tuple[str, Optional[int]]:
     revision = None
-    if isinstance(revstr, int):
-        revision = revstr
-    elif isinstance(revstr, str):
-        try:
-            revision = int(revstr)
-        except ValueError:
-            matches = re.search(r'^v(\d+)$', revstr)
-            if not matches:
-                # assume we got a full tag name, so try to find the revision there
-                matches = re.search(r'v(\d+)$', revstr)
-                if matches:
-                    revision = int(matches.groups()[0])
-                return revstr.replace('refs/tags/', ''), revision
-            revision = int(matches.groups()[0])
+    match revstr:
+        case int():
+            revision = revstr
+        case str():
+            try:
+                revision = int(revstr)
+            except ValueError:
+                matches = re.search(r'^v(\d+)$', revstr)
+                if not matches:
+                    # assume we got a full tag name, so try to find the revision there
+                    matches = re.search(r'v(\d+)$', revstr)
+                    if matches:
+                        revision = int(matches.groups()[0])
+                    return revstr.replace('refs/tags/', ''), revision
+                revision = int(matches.groups()[0])
 
     if tagbase.startswith('b4/'):
         return f'{tagprefix}{tagbase[3:]}-v{revision}', revision

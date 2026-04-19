@@ -1057,13 +1057,15 @@ def get_review_target_branches() -> list[str]:
     """Return all configured review-target-branch values."""
     config = b4.get_main_config()
     val = config.get('review-target-branch')
-    if val is None:
-        return []
-    if isinstance(val, list):
-        return [str(v) for v in val if v]
-    if isinstance(val, str) and val:
-        return [val]
-    return []
+    match val:
+        case None:
+            return []
+        case list():
+            return [v for v in val if v]
+        case str():
+            if val:
+                return [val]
+            return []
 
 
 def get_review_target_branch_default() -> Optional[str]:

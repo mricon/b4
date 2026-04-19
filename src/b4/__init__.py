@@ -62,7 +62,7 @@ ConfigDictT = Dict[str, Union[str, List[str], None]]
 
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
-emlpolicy = email.policy.EmailPolicy(
+emlpolicy: email.policy.EmailPolicy[EmailMessage] = email.policy.EmailPolicy(
     utf8=True, cte_type='8bit', max_line_length=None, message_factory=EmailMessage
 )
 
@@ -4399,7 +4399,9 @@ def git_range_to_patches(
         msg.set_charset('utf-8')
         # Clean From to remove any 7bit-safe encoding
         origfrom = LoreMessage.clean_header(msg.get('From'))
-        lsubject = LoreSubject(msg.get('Subject'), presubject=presubject)
+        lsubject = LoreSubject(
+            LoreMessage.clean_header(msg.get('Subject')), presubject=presubject
+        )
         lsubject.counter = counter + 1
         lsubject.expected = expected
         if revision is not None:
@@ -5820,8 +5822,7 @@ def get_git_bool(gitbool: str) -> bool:
 
 def mailbox_email_factory(fh: BinaryIO) -> EmailMessage:
     """Factory function to create EmailMessage objects"""
-    msg = email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh)  # type: EmailMessage
-    return msg
+    return email.parser.BytesParser(policy=emlpolicy, _class=EmailMessage).parse(fh)
 
 
 def get_msgs_from_mailbox_or_maildir(mbmd: str) -> List[EmailMessage]:
