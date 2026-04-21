@@ -31,10 +31,9 @@ from email.message import EmailMessage
 from string import Template
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-import git_filter_repo as fr  # type: ignore[import-untyped]
-
 import b4
 import patatt
+from b4._rewrite import rewrite_commit_messages
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -133,30 +132,6 @@ def run_rewrite_hook(stage: str) -> None:
         logger.warning('Post-rewrite hook exited with code %d', ecode)
         if errmsg:
             logger.warning(errmsg)
-
-
-def run_frf(frf: fr.RepoFilter) -> None:
-    """
-    Run git-filter-repo with the provided RepoFilter configuration
-    and then clean up any trace files that are created during the process.
-
-    Recent versions of git-filter-repo create a .git/filter-repo/already_ran
-    file after each run that may be useful for other uses of git-filter-repo,
-    but is completely unnecessary for b4's purposes. Delete this file after
-    each invocation, so it doesn't interfere with subsequent runs.
-    """
-    run_rewrite_hook('pre')
-    logger.debug('Running git-filter-repo...')
-    frf.run()
-    logger.debug('git-filter-repo complete')
-    gitdir = b4.git_get_gitdir()
-    if isinstance(gitdir, str):
-        # Remove $GIT_DIR/filter-repo/already_ran
-        already_ran = os.path.join(gitdir, 'filter-repo', 'already_ran')
-        if os.path.exists(already_ran):
-            logger.debug('Removing %s', already_ran)
-            os.remove(already_ran)
-    run_rewrite_hook('post')
 
 
 def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
@@ -803,15 +778,13 @@ def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> No
             if not commit:
                 logger.critical('CRITICAL: Could not find the cover letter commit.')
                 raise RuntimeError('Error saving cover letter (commit not found)')
-            fred = FRCommitMessageEditor()
-            fred.add(commit, cover_message)
-            frargs = fr.FilteringOptions.parse_args(
-                ['--force', '--quiet', '--refs', f'{commit}~1..HEAD']
+            logger.info('Updating cover letter commit.')
+            rewrite_commit_messages(
+                edit_map={commit: cover_message},
+                start=f'{commit}~1',
+                end='HEAD',
+                reflog_msg='b4: update cover letter',
             )
-            frargs.refs = [f'{commit}~1..HEAD']
-            frf = fr.RepoFilter(frargs, commit_callback=fred.callback)
-            logger.info('Invoking git-filter-repo to update the cover letter.')
-            run_frf(frf)
 
     if strategy == 'branch-description':
         mybranch = b4.git_get_current_branch(None)
@@ -936,23 +909,6 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
     found = lines[0].split()[0]
     logger.debug('Cover commit found in %s', found)
     return found
-
-
-class FRCommitMessageEditor:
-    edit_map: Dict[bytes, bytes]
-
-    def __init__(self, edit_map: Optional[Dict[bytes, bytes]] = None):
-        if edit_map:
-            self.edit_map = edit_map
-        else:
-            self.edit_map = dict()
-
-    def add(self, commit: str, message: str) -> None:
-        self.edit_map[commit.encode()] = message.encode()
-
-    def callback(self, commit: fr.Commit, metadata: Dict[str, str]) -> None:
-        if commit.original_id in self.edit_map:
-            commit.message = self.edit_map[commit.original_id]
 
 
 def edit_cover() -> None:
@@ -1524,7 +1480,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             sys.exit(130)
 
     # Create the map of new messages
-    fred = FRCommitMessageEditor()
+    edit_map: Dict[str, str] = {}
     for commit, newtrailers in updates.items():
         clmsg = commit_map[commit]
         logger.info('  %s', clmsg.subject)
@@ -1533,15 +1489,15 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
             clmsg.followup_trailers = newtrailers
         clmsg.fix_trailers()
         logger.debug('commit=%s, message=%s', commit, clmsg.message)
-        fred.add(commit, clmsg.message)
+        edit_map[commit] = clmsg.message
     logger.info('---')
-    args = fr.FilteringOptions.parse_args(
-        ['--force', '--quiet', '--refs', f'{start}..']
+    logger.info('Updating trailers on %d commit(s).', len(edit_map))
+    rewrite_commit_messages(
+        edit_map=edit_map,
+        start=start,
+        end='HEAD',
+        reflog_msg='b4: update trailers',
     )
-    args.refs = [f'{start}..']
-    frf = fr.RepoFilter(args, commit_callback=fred.callback)
-    logger.info('Invoking git-filter-repo to update trailers.')
-    run_frf(frf)
     logger.info('Trailers updated.')
 
 

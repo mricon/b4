@@ -1,6 +1,34 @@
 Release notes
 =============
 
+.. _release-unreleased:
+
+Unreleased
+----------
+
+Native history rewriting (replaces ``git-filter-repo``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+b4 no longer depends on ``git-filter-repo`` for the two operations that
+rewrite commit history on a prep branch (cover-letter updates and
+trailer application via ``b4 trailers -u``). The rewrite is now
+implemented natively using ``pygit2``, which b4 already pulls in
+through the ``ezgb`` dependency. Existing safety backups continue to
+live at ``refs/original/<branch>``.
+
+The migration also fixes a long-standing issue where git notes
+attached to rewritten commits were silently orphaned on the old commit
+OIDs (upstream ``git-filter-repo`` issue #22). b4 now migrates entries
+under any ``refs/notes/*`` ref onto the new commit OIDs after a
+rewrite, preserving note message bytes verbatim.
+
+GPG signatures on rewritten commits continue to be stripped, as they
+were previously with ``git-filter-repo``. Re-sign from
+``refs/original/<branch>`` if needed — for example::
+
+    git rebase --exec 'git commit --amend -S --no-edit' \
+        refs/original/<branch>
+
 .. _release-0.15:
 
 v0.15
@@ -129,7 +157,7 @@ resolution session instead of aborting::
 
 Two new configuration keys let you run commands before and after b4
 rewrites history on a prep branch (for example, when updating the
-cover letter or applying trailers via ``git-filter-repo``):
+cover letter or applying trailers):
 
 ``b4.prep-pre-rewrite-hook``
   Command to run before the rewrite. A non-zero exit aborts the

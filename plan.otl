@@ -5,6 +5,18 @@ v0.16
 	: Auto-discovers sibling patches from a single msgid via lore search
 	: Integrates with review track, TUI update, and thanks/trailers paths
 	: Persists is_rethreaded in tracking commit JSON for DB rebuild safety
+[X] Native history rewriting (replace git-filter-repo)
+	: New src/b4/_rewrite.py with rewrite_commit_messages() backed by pygit2
+	: Drops git-filter-repo dep; adds explicit pygit2>=1.15,<2.0
+	[X] Native rewrite for cover-letter and trailer updates in ez.py
+		: Deletes run_frf(), FRCommitMessageEditor, check_can_gfr(), already_ran kludge
+	[X] Migrate refs/notes/* entries onto new commit OIDs after rewrite
+		: Fixes upstream filter-repo silent-orphan behavior (newren/git-filter-repo#22)
+		: Yazen Ghannam, https://msgid.link/20250130-rich-orangutan-from-eldorado-04f621@lemur
+		: Supports any refs/notes/* ref (default commits ref and custom refs)
+	[X] refs/original/<branch> backup + branch reflog entry preserved
+	[X] Pre/post rewrite hooks moved into the new routine
+	[X] src/tests/test_rewrite.py — 13 unit tests (core + notes + hook integration)
 [_] `b4 review` improvements
 	[_] Manual revision linking when auto-discovery fails (no change-id or in-reply-to chain)
 		: Mark Brown, https://msgid.link/88549a4a-cc82-4200-b73b-e335cbb2b024@sirena.org.uk

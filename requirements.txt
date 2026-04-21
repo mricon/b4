@@ -234,10 +234,6 @@ ezgb==0.1.1 \
     --hash=sha256:c7b9619d82b4579c0fa6aca5c6273371c37ea1fd657cc5c8b05ca7447518ac65 \
     --hash=sha256:d350fa0a14aa2a5b0fa1f3fd703867c1258b0b82d8cc880f25435ef50b0b1fce
     # via b4 (pyproject.toml)
-git-filter-repo==2.47.0 \
-    --hash=sha256:2cd04929b9024e83e65db571cbe36aec65ead0cb5f9ec5abe42158654af5ad83 \
-    --hash=sha256:411b27e68a080c07a69c233cb526dbc2d848b09a72f10477f4444dd0822cf290
-    # via b4 (pyproject.toml)
 idna==3.11 \
     --hash=sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea \
     --hash=sha256:795dafcc9c04ed0c1fb032c2aa73654d8e8c5023a7df64a53f39190ada629902
@@ -311,7 +307,9 @@ pygit2==1.19.2 \
     --hash=sha256:f064748202928f4e882501521229e378e0b7b69b0e7c433cdb2626d007745973 \
     --hash=sha256:f5effee3f4ad0d9c89b34ebecf1acee26f6b117ef3c51345ad022bd521fd8dca \
     --hash=sha256:ff32adce1a48d76b10e790b36784f6cb5ef40699b758c8b84f7f53f13b13d237
-    # via ezgb
+    # via
+    #   b4 (pyproject.toml)
+    #   ezgb
 pynacl==1.6.2 \
     --hash=sha256:018494d6d696ae03c7e656e5e74cdfd8ea1326962cc401bcf018f1ed8436811c \
     --hash=sha256:04316d1fc625d860b6c162fff704eb8426b1a8bcd3abacea11142cbd99a6b574 \

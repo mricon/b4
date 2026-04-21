@@ -24,9 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.24,<3.0",
-    # Use unreleased fix for multiline git config values.
-    # https://github.com/newren/git-filter-repo/issues/638
-    "git-filter-repo @ git+https://github.com/newren/git-filter-repo.git@4697eeb37b7c3c30b0492e344f6b89f7139cef26",
+    "pygit2>=1.15,<2.0",
     "dkimpy>=1.0,<2.0",
     "patatt>=0.6,<2.0",
     "ezgb>=0.1",
