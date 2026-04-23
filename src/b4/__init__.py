@@ -62,7 +62,9 @@ ConfigDictT = Dict[str, Union[str, List[str], None]]
 
 charset.add_charset('utf-8', None)
 # Policy we use for saving mail locally
-emlpolicy: email.policy.EmailPolicy[EmailMessage] = email.policy.EmailPolicy(
+# Quoted because email.policy.EmailPolicy is generic in typeshed stubs but not
+# subscriptable at runtime on any current CPython.
+emlpolicy: 'email.policy.EmailPolicy[EmailMessage]' = email.policy.EmailPolicy(
     utf8=True, cte_type='8bit', max_line_length=None, message_factory=EmailMessage
 )
 
