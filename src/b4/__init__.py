@@ -1352,25 +1352,25 @@ class LoreSeries:
                         seenfiles.add(nfn)
                     # Try to grab full ref_id of this hash
                     try:
-                        hash = git_revparse_obj(ofi)
+                        bound_hash = git_revparse_obj(ofi)
                         logger.debug('  Found matching blob for: %s', ofn)
                         gitargs = [
                             'update-index',
                             '--add',
                             '--cacheinfo',
-                            f'{fmod},{hash},{ofn}',
+                            f'{fmod},{bound_hash},{ofn}',
                         ]
                     except RuntimeError:
                         logger.debug(
                             'Could not find matching blob for %s (%s)', ofn, ofi
                         )
                         try:
-                            hash = git_revparse_obj(f':{ofn}', topdir)
+                            bound_hash = git_revparse_obj(f':{ofn}', topdir)
                             gitargs = [
                                 'update-index',
                                 '--add',
                                 '--cacheinfo',
-                                f'{fmod},{hash},{ofn}',
+                                f'{fmod},{bound_hash},{ofn}',
                             ]
                         except RuntimeError:
                             logger.critical(
@@ -1381,7 +1381,9 @@ class LoreSeries:
                     ecode, out = git_run_command(None, gitargs)
                     if ecode > 0:
                         logger.critical(
-                            '  ERROR: Could not run update-index for %s (%s)', ofn, hash
+                            '  ERROR: Could not run update-index for %s (%s)',
+                            ofn,
+                            bound_hash,
                         )
                         return None, None
 

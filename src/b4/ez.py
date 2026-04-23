@@ -1805,6 +1805,9 @@ def get_prep_branch_as_patches(
     base_commit, start_commit, end_commit = get_series_range(usebranch=usebranch)
     change_id = tracking['series'].get('change-id')
     revision = tracking['series'].get('revision')
+    assert isinstance(revision, int), (
+        f'tracking series revision must be an int, got {type(revision).__name__}'
+    )
     msgid_tpt = make_msgid_tpt(change_id, revision)
     seriests = int(time.time())
 
@@ -1904,14 +1907,14 @@ def get_prep_branch_as_patches(
                 pcid = chunks[1]
             pver = chunks[-1]
             if expandprereqs and pcid and pver:
-                tagname, revision = get_sent_tagname(pcid, SENT_TAG_PREFIX, pver)
-                if revision is None:
+                tagname, prereq_revision = get_sent_tagname(pcid, SENT_TAG_PREFIX, pver)
+                if prereq_revision is None:
                     logger.debug('No revision found for change-id %s, skipping', pcid)
                     continue
                 logger.debug('Checking if we have a sent version')
                 try:
                     _, _, ppatches = get_sent_tag_as_patches(
-                        tagname, revision=revision, presubject=presubject
+                        tagname, revision=prereq_revision, presubject=presubject
                     )
                     for _psha, ppatch in ppatches:
                         spatches.append(ppatch)
@@ -1954,10 +1957,6 @@ def get_prep_branch_as_patches(
         'prerequisites': prerequisites,
         'signature': b4.get_email_signature(),
     }
-    # Possible type confusion here; revision is initially a string, but is
-    # then assigned an integer in the loop above. What happens if that loop
-    # runs zero times? Unclear.
-    assert isinstance(revision, int)
     if cover_template.find('${range_diff}') >= 0:
         if revision > 1:
             oldrev = revision - 1
