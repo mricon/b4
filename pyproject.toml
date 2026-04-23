@@ -12,7 +12,7 @@ license = {file = "COPYING"}
 authors = [
     {name = "Konstantin Ryabitsev", email="konstantin@linuxfoundation.org"},
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 classifiers = [
     "Environment :: Console",
     "Operating System :: POSIX :: Linux",
@@ -24,7 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.24,<3.0",
-    "git-filter-repo>=2.30,<3.0",
+    # Use unreleased fix for multiline git config values.
+    # https://github.com/newren/git-filter-repo/issues/638
+    "git-filter-repo @ git+https://github.com/newren/git-filter-repo.git@4697eeb37b7c3c30b0492e344f6b89f7139cef26",
     "dkimpy>=1.0,<2.0",
     "patatt>=0.6,<2.0",
     "ezgb>=0.1",
@@ -35,10 +37,19 @@ dependencies = [
 dev = [
     "mypy",
     "pip-tools",
+    "pyright",
     "pytest",
     "pytest-asyncio",
     "ruff",
+    "ty",
     "types-requests",
+]
+misc = [
+    "ezpi",
+    "falcon",
+    "instructor",
+    "pydantic",
+    "sqlalchemy",
 ]
 
 [project.optional-dependencies]
@@ -68,7 +79,7 @@ b4 = "b4.command:cmd"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = "ignore:.*(pyopenssl|invalid escape sequence).*:DeprecationWarning"
-norecursedirs = ["tests/helpers", "patatt"]
+norecursedirs = ["tests/helpers", "ezgb", "liblore", "patatt"]
 log_file = "pytest.log"
 log_file_level = "DEBUG"
 log_file_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
@@ -82,13 +93,17 @@ files = [
     {filename = "src/b4/man/b4.1"},
 ]
 
+[tool.ruff]
+extend-exclude = ["ezgb", "liblore", "patatt"]
+
 [tool.ruff.lint]
-select = [
+extend-select = [
     "F",       # https://docs.astral.sh/ruff/rules/#pyflakes-f
     "B007",    # https://docs.astral.sh/ruff/rules/unused-loop-control-variable/
     "B904",    # https://docs.astral.sh/ruff/rules/raise-without-from-err/
     "DTZ",     # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
     "G",       # https://docs.astral.sh/ruff/rules/#flake8-logging-format-g
+    "I",       # https://docs.astral.sh/ruff/rules/#isort-i
     "PERF102", # https://docs.astral.sh/ruff/rules/incorrect-dict-iterator/
     "PGH004",  # https://docs.astral.sh/ruff/rules/blanket-noqa/
     "PIE790",  # https://docs.astral.sh/ruff/rules/unnecessary-placeholder/
@@ -106,9 +121,35 @@ select = [
 ]
 flake8-quotes.inline-quotes = "single"
 
-[tool.pyright]
-typeCheckingMode = "off"
+[tool.ruff.format]
+quote-style = "single"
 
-# Configure mypy in strict mode
 [tool.mypy]
+exclude = ["^ezgb/", "^liblore/", "^patatt/"]
 strict = true
+warn_unreachable = true
+
+[tool.pyright]
+# pyright automatically ignores virtual environments and other directories, but
+# once we specify `exclude`, we're on our own. See
+# https://github.com/microsoft/pyright/issues/9057#issuecomment-2366938099.
+exclude = [".venv", "ezgb", "liblore", "patatt"]
+typeCheckingMode = "strict"
+
+# Overly strict rules.
+reportConstantRedefinition = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+
+# False positives caused by underscore-prefixed functions used across files.
+# Might be good to clean this up.
+reportPrivateUsage = false
+reportUnusedFunction = false
+
+[tool.ty.src]
+exclude = ["ezgb/", "liblore/", "patatt/"]
+
+[tool.ty.rules]
+all = "error"

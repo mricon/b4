@@ -12,9 +12,8 @@ import os
 import pathlib
 import shlex
 import sqlite3
-
 from email.message import EmailMessage
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 
@@ -34,9 +33,10 @@ def clear_sashiko_cache() -> None:
     """Clear the sashiko patchset cache between check runs."""
     _sashiko_patchset_cache.clear()
 
+
 SCHEMA_VERSION = 1
 
-SCHEMA_SQL = '''
+SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
 );
@@ -51,12 +51,13 @@ CREATE TABLE IF NOT EXISTS check_results (
     checked_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
     PRIMARY KEY (msgid, tool)
 );
-'''
+"""
 
 
 # ---------------------------------------------------------------------------
 # Cache database
 # ---------------------------------------------------------------------------
+
 
 def _get_db_path() -> str:
     """Return the path to the CI check cache database."""
@@ -76,23 +77,25 @@ def get_db() -> sqlite3.Connection:
         conn.executescript(SCHEMA_SQL)
         conn.execute(
             'INSERT OR REPLACE INTO schema_version (version) VALUES (?)',
-            (SCHEMA_VERSION,))
+            (SCHEMA_VERSION,),
+        )
         conn.commit()
     return conn
 
 
 def cleanup_old(conn: sqlite3.Connection, max_days: int = 180) -> int:
     """Delete check results older than *max_days*. Returns count deleted."""
-    cutoff = (datetime.datetime.now(datetime.timezone.utc)
-              - datetime.timedelta(days=max_days)).isoformat()
-    cursor = conn.execute(
-        'DELETE FROM check_results WHERE checked_at < ?', (cutoff,))
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=max_days)
+    ).isoformat()
+    cursor = conn.execute('DELETE FROM check_results WHERE checked_at < ?', (cutoff,))
     conn.commit()
     return cursor.rowcount
 
 
-def get_cached_results(conn: sqlite3.Connection,
-                       msgids: List[str]) -> Dict[str, List[Dict[str, str]]]:
+def get_cached_results(
+    conn: sqlite3.Connection, msgids: List[str]
+) -> Dict[str, List[Dict[str, str]]]:
     """Return cached check results keyed by msgid.
 
     Returns ``{msgid: [{tool, status, summary, url, details}, ...]}``.
@@ -103,7 +106,8 @@ def get_cached_results(conn: sqlite3.Connection,
     cursor = conn.execute(
         'SELECT msgid, tool, status, summary, url, details'
         f' FROM check_results WHERE msgid IN ({placeholders})',
-        msgids)
+        msgids,
+    )
     results: Dict[str, List[Dict[str, str]]] = {}
     for row in cursor.fetchall():
         entry = {
@@ -117,35 +121,40 @@ def get_cached_results(conn: sqlite3.Connection,
     return results
 
 
-def store_results(conn: sqlite3.Connection, msgid: str,
-                  results: List[Dict[str, str]]) -> None:
+def store_results(
+    conn: sqlite3.Connection, msgid: str, results: List[Dict[str, str]]
+) -> None:
     """Store check results for a single message."""
     for entry in results:
         conn.execute(
             'INSERT OR REPLACE INTO check_results'
             ' (msgid, tool, status, summary, url, details)'
             ' VALUES (?, ?, ?, ?, ?, ?)',
-            (msgid, entry['tool'], entry['status'],
-             entry.get('summary', ''), entry.get('url', ''),
-             entry.get('details', '')))
+            (
+                msgid,
+                entry['tool'],
+                entry['status'],
+                entry.get('summary', ''),
+                entry.get('url', ''),
+                entry.get('details', ''),
+            ),
+        )
     conn.commit()
 
 
-def delete_results(conn: sqlite3.Connection,
-                   msgids: List[str]) -> None:
+def delete_results(conn: sqlite3.Connection, msgids: List[str]) -> None:
     """Delete all cached check results for the given message-ids."""
     if not msgids:
         return
     placeholders = ','.join('?' * len(msgids))
-    conn.execute(
-        f'DELETE FROM check_results WHERE msgid IN ({placeholders})',
-        msgids)
+    conn.execute(f'DELETE FROM check_results WHERE msgid IN ({placeholders})', msgids)
     conn.commit()
 
 
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
+
 
 def load_check_cmds() -> Tuple[List[str], List[str]]:
     """Read check commands from git config.
@@ -154,12 +163,14 @@ def load_check_cmds() -> Tuple[List[str], List[str]]:
     """
     config = b4.get_main_config()
 
-    def _as_list(val: Any) -> List[str]:
-        if isinstance(val, str):
-            return [val]
-        if isinstance(val, list):
-            return list(val)
-        return []
+    def _as_list(val: Union[str, List[str], None]) -> List[str]:
+        match val:
+            case str():
+                return [val]
+            case list():
+                return val
+            case None:
+                return []
 
     perpatch = _as_list(config.get('review-perpatch-check-cmd'))
     if not perpatch:
@@ -169,7 +180,11 @@ def load_check_cmds() -> Tuple[List[str], List[str]]:
             if os.access(checkpatch, os.X_OK):
                 perpatch = ['_builtin_checkpatch']
     # Auto-wire patchwork CI when project is configured
-    if '_builtin_patchwork' not in perpatch and config.get('pw-project') and config.get('pw-url'):
+    if (
+        '_builtin_patchwork' not in perpatch
+        and config.get('pw-project')
+        and config.get('pw-url')
+    ):
         perpatch.append('_builtin_patchwork')
     series = _as_list(config.get('review-series-check-cmd'))
     # Auto-wire sashiko AI review when URL is configured
@@ -192,16 +207,18 @@ def parse_cmd(cmdstr: str) -> List[str]:
 # Built-in handlers
 # ---------------------------------------------------------------------------
 
-def _run_builtin_checkpatch(msg: EmailMessage,
-                            topdir: str) -> List[Dict[str, str]]:
+
+def _run_builtin_checkpatch(msg: EmailMessage, topdir: str) -> List[Dict[str, str]]:
     """Run scripts/checkpatch.pl on a single patch message."""
     checkpatch = os.path.join(topdir, 'scripts', 'checkpatch.pl')
     if not os.access(checkpatch, os.X_OK):
-        return [{
-            'tool': 'checkpatch',
-            'status': 'fail',
-            'summary': 'checkpatch.pl not found or not executable',
-        }]
+        return [
+            {
+                'tool': 'checkpatch',
+                'status': 'fail',
+                'summary': 'checkpatch.pl not found or not executable',
+            }
+        ]
 
     cmdargs = [checkpatch, '-q', '--terse', '--no-summary', '--mailback']
     bdata = b4.LoreMessage.get_msg_as_bytes(msg)
@@ -212,7 +229,7 @@ def _run_builtin_checkpatch(msg: EmailMessage,
 
     findings: List[Dict[str, str]] = []
     worst = 'pass'
-    for raw in (out_str.splitlines() + err_str.splitlines()):
+    for raw in out_str.splitlines() + err_str.splitlines():
         line = raw[2:] if raw.startswith('-:') else raw
         if not line:
             continue
@@ -232,16 +249,20 @@ def _run_builtin_checkpatch(msg: EmailMessage,
 
     if not findings:
         if ecode:
-            return [{
+            return [
+                {
+                    'tool': 'checkpatch',
+                    'status': 'fail',
+                    'summary': f'exited with error code {ecode}',
+                }
+            ]
+        return [
+            {
                 'tool': 'checkpatch',
-                'status': 'fail',
-                'summary': f'exited with error code {ecode}',
-            }]
-        return [{
-            'tool': 'checkpatch',
-            'status': 'pass',
-            'summary': 'passed all checks',
-        }]
+                'status': 'pass',
+                'summary': 'passed all checks',
+            }
+        ]
 
     errors = sum(1 for f in findings if f['status'] == 'fail')
     warnings = sum(1 for f in findings if f['status'] == 'warn')
@@ -252,16 +273,19 @@ def _run_builtin_checkpatch(msg: EmailMessage,
         parts.append(f'{warnings} warning{"s" if warnings != 1 else ""}')
     summary = ', '.join(parts) if parts else findings[0]['description']
 
-    return [{
-        'tool': 'checkpatch',
-        'status': worst,
-        'summary': summary,
-        'details': json.dumps(findings),
-    }]
+    return [
+        {
+            'tool': 'checkpatch',
+            'status': worst,
+            'summary': summary,
+            'details': json.dumps(findings),
+        }
+    ]
 
 
-def _run_builtin_patchwork(msg: EmailMessage, pwkey: str,
-                           pwurl: str) -> List[Dict[str, str]]:
+def _run_builtin_patchwork(
+    msg: EmailMessage, pwkey: str, pwurl: str
+) -> List[Dict[str, str]]:
     """Query Patchwork REST API for checks on a single patch."""
     msgid = msg.get('message-id', '').strip('<> ')
     if not msgid:
@@ -279,6 +303,7 @@ def _run_builtin_patchwork(msg: EmailMessage, pwkey: str,
 
     try:
         from b4.review import pw_fetch_checks
+
         checks = pw_fetch_checks(pwkey, pwurl, [int(patch_id)])
     except Exception as ex:
         logger.debug('Patchwork check query failed: %s', ex)
@@ -302,25 +327,29 @@ def _run_builtin_patchwork(msg: EmailMessage, pwkey: str,
         if _STATUS_ORDER.get(status, 0) > _STATUS_ORDER.get(worst, 0):
             worst = status
         counts[status] = counts.get(status, 0) + 1
-        individual.append({
-            'context': check.get('context', 'unknown'),
-            'status': status,
-            'state': state,
-            'description': check.get('description', ''),
-            'url': check.get('url', ''),
-        })
+        individual.append(
+            {
+                'context': check.get('context', 'unknown'),
+                'status': status,
+                'state': state,
+                'description': check.get('description', ''),
+                'url': check.get('url', ''),
+            }
+        )
 
     summary_parts = []
     for s in ('pass', 'warn', 'fail'):
         if counts.get(s):
             summary_parts.append(f'{counts[s]} {s}')
 
-    return [{
-        'tool': 'patchwork',
-        'status': worst,
-        'summary': ', '.join(summary_parts),
-        'details': json.dumps(individual),
-    }]
+    return [
+        {
+            'tool': 'patchwork',
+            'status': worst,
+            'summary': ', '.join(summary_parts),
+            'details': json.dumps(individual),
+        }
+    ]
 
 
 def _fetch_sashiko_patchset(msgid: str, sashiko_url: str) -> Optional[Dict[str, Any]]:
@@ -386,12 +415,14 @@ def _parse_sashiko_findings(review: Dict[str, Any]) -> List[Dict[str, str]]:
         desc = str(problem)
         if suggestion:
             desc += f' \u2014 {suggestion}'
-        findings.append({
-            'status': status,
-            'context': f'sashiko/{severity}',
-            'state': severity,
-            'description': desc,
-        })
+        findings.append(
+            {
+                'status': status,
+                'context': f'sashiko/{severity}',
+                'state': severity,
+                'description': desc,
+            }
+        )
     return findings
 
 
@@ -416,8 +447,7 @@ def _sashiko_findings_summary(findings: List[Dict[str, str]]) -> Tuple[str, str]
     return worst, ', '.join(parts)
 
 
-def _run_builtin_sashiko(msg: EmailMessage,
-                         sashiko_url: str) -> List[Dict[str, str]]:
+def _run_builtin_sashiko(msg: EmailMessage, sashiko_url: str) -> List[Dict[str, str]]:
     """Query sashiko AI review service for findings on a patch."""
     msgid = msg.get('message-id', '').strip('<> ')
     if not msgid:
@@ -443,20 +473,37 @@ def _run_builtin_sashiko(msg: EmailMessage,
             patch_id_by_msgid[p_msgid] = int(p_id)
 
     cover_msgid = data.get('message_id', '')
-    is_cover = (msgid == cover_msgid)
+    is_cover = msgid == cover_msgid
 
     # Overall patchset status check (applies to cover letter row or
     # when the series is not yet reviewed).
     if ps_status in ('Pending', 'In Review', 'Applying'):
-        return [{'tool': 'sashiko', 'status': 'warn',
-                 'summary': f'Review {ps_status.lower()}',
-                 'url': patchset_url}]
+        return [
+            {
+                'tool': 'sashiko',
+                'status': 'warn',
+                'summary': f'Review {ps_status.lower()}',
+                'url': patchset_url,
+            }
+        ]
     if ps_status in ('Failed', 'Failed To Apply'):
-        return [{'tool': 'sashiko', 'status': 'fail',
-                 'summary': ps_status, 'url': patchset_url}]
+        return [
+            {
+                'tool': 'sashiko',
+                'status': 'fail',
+                'summary': ps_status,
+                'url': patchset_url,
+            }
+        ]
     if ps_status == 'Incomplete':
-        return [{'tool': 'sashiko', 'status': 'warn',
-                 'summary': 'Series incomplete', 'url': patchset_url}]
+        return [
+            {
+                'tool': 'sashiko',
+                'status': 'warn',
+                'summary': 'Series incomplete',
+                'url': patchset_url,
+            }
+        ]
 
     if is_cover:
         # Aggregate findings across all reviews for the cover letter
@@ -465,8 +512,10 @@ def _run_builtin_sashiko(msg: EmailMessage,
             all_findings.extend(_parse_sashiko_findings(review))
         worst, summary = _sashiko_findings_summary(all_findings)
         result: Dict[str, str] = {
-            'tool': 'sashiko', 'status': worst,
-            'summary': summary, 'url': patchset_url,
+            'tool': 'sashiko',
+            'status': worst,
+            'summary': summary,
+            'url': patchset_url,
         }
         if all_findings:
             result['details'] = json.dumps(all_findings)
@@ -482,40 +531,68 @@ def _run_builtin_sashiko(msg: EmailMessage,
             review_status = review.get('status', '')
             if review_status == 'Skipped':
                 result_msg = review.get('result', '') or 'Skipped'
-                return [{'tool': 'sashiko', 'status': 'pass',
-                         'summary': result_msg, 'url': patchset_url}]
+                return [
+                    {
+                        'tool': 'sashiko',
+                        'status': 'pass',
+                        'summary': result_msg,
+                        'url': patchset_url,
+                    }
+                ]
             if review_status in ('Pending', 'In Review'):
-                return [{'tool': 'sashiko', 'status': 'warn',
-                         'summary': 'Review in progress',
-                         'url': patchset_url}]
+                return [
+                    {
+                        'tool': 'sashiko',
+                        'status': 'warn',
+                        'summary': 'Review in progress',
+                        'url': patchset_url,
+                    }
+                ]
             if review_status == 'Failed':
                 result_msg = review.get('result', '') or 'Review failed'
-                return [{'tool': 'sashiko', 'status': 'fail',
-                         'summary': result_msg, 'url': patchset_url}]
+                return [
+                    {
+                        'tool': 'sashiko',
+                        'status': 'fail',
+                        'summary': result_msg,
+                        'url': patchset_url,
+                    }
+                ]
             # Reviewed — parse findings
             findings = _parse_sashiko_findings(review)
             worst, summary = _sashiko_findings_summary(findings)
             result = {
-                'tool': 'sashiko', 'status': worst,
-                'summary': summary, 'url': patchset_url,
+                'tool': 'sashiko',
+                'status': worst,
+                'summary': summary,
+                'url': patchset_url,
             }
             if findings:
                 result['details'] = json.dumps(findings)
             return [result]
 
     # No review found for this patch
-    return [{'tool': 'sashiko', 'status': 'pass',
-             'summary': 'No review', 'url': patchset_url}]
+    return [
+        {
+            'tool': 'sashiko',
+            'status': 'pass',
+            'summary': 'No review',
+            'url': patchset_url,
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
 # External command runner
 # ---------------------------------------------------------------------------
 
-def _run_external_cmd(cmdargs: List[str], msg: EmailMessage,
-                      topdir: str,
-                      extra_env: Optional[Dict[str, str]] = None,
-                      ) -> List[Dict[str, str]]:
+
+def _run_external_cmd(
+    cmdargs: List[str],
+    msg: EmailMessage,
+    topdir: str,
+    extra_env: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
     """Run an external check command and parse its JSON output."""
     bdata = b4.LoreMessage.get_msg_as_bytes(msg)
     saved_env: Dict[str, Optional[str]] = {}
@@ -536,24 +613,28 @@ def _run_external_cmd(cmdargs: List[str], msg: EmailMessage,
         if ecode:
             mycmd = os.path.basename(cmdargs[0])
             err_msg = err.strip().decode(errors='replace') if err else ''
-            return [{
-                'tool': mycmd,
-                'status': 'fail',
-                'summary': f'exited with error code {ecode}',
-                'details': err_msg,
-            }]
+            return [
+                {
+                    'tool': mycmd,
+                    'status': 'fail',
+                    'summary': f'exited with error code {ecode}',
+                    'details': err_msg,
+                }
+            ]
         return []
 
     try:
         data = json.loads(out)
     except json.JSONDecodeError as ex:
         mycmd = os.path.basename(cmdargs[0])
-        return [{
-            'tool': mycmd,
-            'status': 'fail',
-            'summary': f'invalid JSON output: {ex}',
-            'details': out.decode(errors='replace'),
-        }]
+        return [
+            {
+                'tool': mycmd,
+                'status': 'fail',
+                'summary': f'invalid JSON output: {ex}',
+                'details': out.decode(errors='replace'),
+            }
+        ]
 
     if not isinstance(data, list):
         data = [data]
@@ -566,13 +647,15 @@ def _run_external_cmd(cmdargs: List[str], msg: EmailMessage,
         status = entry.get('status', 'fail')
         if status not in ('pass', 'warn', 'fail'):
             status = 'fail'
-        results.append({
-            'tool': tool,
-            'status': status,
-            'summary': entry.get('summary', ''),
-            'url': entry.get('url', ''),
-            'details': entry.get('details', ''),
-        })
+        results.append(
+            {
+                'tool': tool,
+                'status': status,
+                'summary': entry.get('summary', ''),
+                'url': entry.get('url', ''),
+                'details': entry.get('details', ''),
+            }
+        )
     return results
 
 
@@ -580,10 +663,15 @@ def _run_external_cmd(cmdargs: List[str], msg: EmailMessage,
 # High-level runners
 # ---------------------------------------------------------------------------
 
-def _dispatch_cmd(cmdstr: str, msg: EmailMessage, topdir: str,
-                  pwkey: str = '', pwurl: str = '',
-                  extra_env: Optional[Dict[str, str]] = None,
-                  ) -> List[Dict[str, str]]:
+
+def _dispatch_cmd(
+    cmdstr: str,
+    msg: EmailMessage,
+    topdir: str,
+    pwkey: str = '',
+    pwurl: str = '',
+    extra_env: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
     """Run a single check command (built-in or external) against a message."""
     if cmdstr == '_builtin_checkpatch':
         return _run_builtin_checkpatch(msg, topdir)
@@ -605,12 +693,12 @@ def _dispatch_cmd(cmdstr: str, msg: EmailMessage, topdir: str,
 
 
 def run_perpatch_checks(
-        patches: List[Tuple[str, EmailMessage]],
-        cmds: List[str],
-        topdir: str,
-        pwkey: str = '',
-        pwurl: str = '',
-        extra_env: Optional[Dict[str, str]] = None,
+    patches: List[Tuple[str, EmailMessage]],
+    cmds: List[str],
+    topdir: str,
+    pwkey: str = '',
+    pwurl: str = '',
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, List[Dict[str, str]]]:
     """Run per-patch check commands on each patch.
 
@@ -623,27 +711,31 @@ def run_perpatch_checks(
         patch_results: List[Dict[str, str]] = []
         for cmdstr in cmds:
             try:
-                patch_results.extend(_dispatch_cmd(cmdstr, msg, topdir,
-                                                   pwkey, pwurl,
-                                                   extra_env=extra_env))
+                patch_results.extend(
+                    _dispatch_cmd(
+                        cmdstr, msg, topdir, pwkey, pwurl, extra_env=extra_env
+                    )
+                )
             except Exception as ex:
                 logger.debug('Check command %s failed: %s', cmdstr, ex)
-                patch_results.append({
-                    'tool': cmdstr.split()[0] if cmdstr else 'unknown',
-                    'status': 'fail',
-                    'summary': str(ex),
-                })
+                patch_results.append(
+                    {
+                        'tool': cmdstr.split()[0] if cmdstr else 'unknown',
+                        'status': 'fail',
+                        'summary': str(ex),
+                    }
+                )
         results[msgid] = patch_results
     return results
 
 
 def run_series_checks(
-        cover_msg: Tuple[str, EmailMessage],
-        cmds: List[str],
-        topdir: str,
-        pwkey: str = '',
-        pwurl: str = '',
-        extra_env: Optional[Dict[str, str]] = None,
+    cover_msg: Tuple[str, EmailMessage],
+    cmds: List[str],
+    topdir: str,
+    pwkey: str = '',
+    pwurl: str = '',
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, str]]:
     """Run per-series check commands on the cover letter.
 
@@ -655,14 +747,16 @@ def run_series_checks(
     results: List[Dict[str, str]] = []
     for cmdstr in cmds:
         try:
-            results.extend(_dispatch_cmd(cmdstr, msg, topdir,
-                                         pwkey, pwurl,
-                                         extra_env=extra_env))
+            results.extend(
+                _dispatch_cmd(cmdstr, msg, topdir, pwkey, pwurl, extra_env=extra_env)
+            )
         except Exception as ex:
             logger.debug('Series check command %s failed: %s', cmdstr, ex)
-            results.append({
-                'tool': cmdstr.split()[0] if cmdstr else 'unknown',
-                'status': 'fail',
-                'summary': str(ex),
-            })
+            results.append(
+                {
+                    'tool': cmdstr.split()[0] if cmdstr else 'unknown',
+                    'status': 'fail',
+                    'summary': str(ex),
+                }
+            )
     return results

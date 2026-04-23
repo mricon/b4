@@ -6,14 +6,10 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.utils
-
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-import b4
-import b4.review
-import b4.review.tracking
-
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -21,11 +17,16 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, LoadingIndicator, RichLog, Static
 from textual.worker import Worker, WorkerState
 
-from rich.text import Text
-
+import b4
+import b4.review
+import b4.review.tracking
 from b4.review_tui._common import (
-    resolve_styles, _quiet_worker, _fix_ansi_theme,
-    _write_diff_line, display_width, pad_display,
+    _fix_ansi_theme,
+    _quiet_worker,
+    _write_diff_line,
+    display_width,
+    pad_display,
+    resolve_styles,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
 
@@ -33,6 +34,7 @@ from b4.review_tui._modals import FollowupReplyPreviewScreen
 @dataclass
 class ThreadNode:
     """A single message in the thread tree."""
+
     lmsg: b4.LoreMessage
     children: List['ThreadNode'] = field(default_factory=list)
     depth: int = 0
@@ -53,7 +55,7 @@ def _flatten_tree(
     """DFS-flatten a list of roots into a list with tree_art set."""
     result: List[ThreadNode] = []
     for i, node in enumerate(roots):
-        is_last = (i == len(roots) - 1)
+        is_last = i == len(roots) - 1
         if is_root:
             node.tree_art = ''
         else:
@@ -87,7 +89,9 @@ def build_thread_tree(lmbx: b4.LoreMailbox) -> List[ThreadNode]:
         att_list: List[Dict[str, Any]] = []
         att_passing = True
         if attpolicy != 'off':
-            att_list, att_passing, _critical = lmsg.get_attestation_status(attpolicy, maxdays)
+            att_list, att_passing, _critical = lmsg.get_attestation_status(
+                attpolicy, maxdays
+            )
         nodes[msgid] = ThreadNode(
             lmsg=lmsg,
             is_patch=lmsg.has_diff,
@@ -120,8 +124,7 @@ def build_thread_tree(lmbx: b4.LoreMailbox) -> List[ThreadNode]:
     return flat
 
 
-def _build_thread_label(node: ThreadNode,
-                        ts: Optional[Dict[str, str]] = None) -> Text:
+def _build_thread_label(node: ThreadNode, ts: Optional[Dict[str, str]] = None) -> Text:
     """Build the Text label for a thread index row."""
     lmsg = node.lmsg
     if lmsg.date:
@@ -135,15 +138,15 @@ def _build_thread_label(node: ThreadNode,
         author += '\u2026'
     author = pad_display(author, 20)
     is_unseen = node.is_unseen
-    unseen_style = f"bold {ts['warning']}" if ts else 'bold'
-    flag_style = f"bold {ts['accent']}" if ts else 'bold'
+    unseen_style = f'bold {ts["warning"]}' if ts else 'bold'
+    flag_style = f'bold {ts["accent"]}' if ts else 'bold'
     answered_style = ts['success'] if ts else ''
     if node.is_answered:
-        row_style = f"dim {ts['success']}" if ts else 'dim'
+        row_style = f'dim {ts["success"]}' if ts else 'dim'
     elif is_unseen:
         row_style = ''
     elif node.is_flagged:
-        row_style = f"bold {ts['accent']}" if ts else 'bold'
+        row_style = f'bold {ts["accent"]}' if ts else 'bold'
     else:
         row_style = 'dim'
     text = Text(no_wrap=True, overflow='ellipsis')
@@ -225,9 +228,16 @@ class MessageViewScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='msg-dialog'):
-            yield Static(f'Subject: {self._node.lmsg.full_subject}', id='msg-title', markup=False)
-            yield RichLog(id='msg-viewer', highlight=False, wrap=True,
-                          markup=False, auto_scroll=False)
+            yield Static(
+                f'Subject: {self._node.lmsg.full_subject}', id='msg-title', markup=False
+            )
+            yield RichLog(
+                id='msg-viewer',
+                highlight=False,
+                wrap=True,
+                markup=False,
+                auto_scroll=False,
+            )
             yield Static(
                 'r reply  |  F flag  |  S skip quoted  |  j/k prev/next msg  |  q back',
                 id='msg-hint',
@@ -245,7 +255,7 @@ class MessageViewScreen(ModalScreen[None]):
         if self._node.is_flagged:
             ts = resolve_styles(self.app)
             text = Text()
-            text.append(f'Subject: {subject} \u2605', style=f"bold {ts['accent']}")
+            text.append(f'Subject: {subject} \u2605', style=f'bold {ts["accent"]}')
             title.update(text)
         else:
             title.update(f'Subject: {subject}')
@@ -285,7 +295,7 @@ class MessageViewScreen(ModalScreen[None]):
             linkurl = linkmask % lmsg.msgid
             hdr_text = Text()
             hdr_text.append('Link: ', style='dim bold')
-            hdr_text.append(linkurl, style=f"dim link {linkurl}")
+            hdr_text.append(linkurl, style=f'dim link {linkurl}')
             viewer.write(hdr_text)
 
         # Attestation status
@@ -301,14 +311,20 @@ class MessageViewScreen(ModalScreen[None]):
                 if att.get('passing'):
                     att_text.append(f'\u2713 {identity}', style=ts['success'])
                     if 'mismatch' in att:
-                        att_text.append(f' (From: {att["mismatch"]})', style=ts['warning'])
+                        att_text.append(
+                            f' (From: {att["mismatch"]})', style=ts['warning']
+                        )
                 else:
                     if status == 'badsig':
                         att_text.append(f'\u2717 BADSIG: {identity}', style=ts['error'])
                     elif status == 'nokey':
-                        att_text.append(f'\u2717 No key: {identity}', style=ts['warning'])
+                        att_text.append(
+                            f'\u2717 No key: {identity}', style=ts['warning']
+                        )
                     else:
-                        att_text.append(f'\u2717 {status}: {identity}', style=ts['error'])
+                        att_text.append(
+                            f'\u2717 {status}: {identity}', style=ts['error']
+                        )
             viewer.write(att_text)
 
         viewer.write('')
@@ -322,7 +338,7 @@ class MessageViewScreen(ModalScreen[None]):
             if in_diff:
                 _write_diff_line(viewer, line, ts=ts)
             elif line.startswith('>'):
-                viewer.write(Text(line, style=f"dim {ts['accent']}"))
+                viewer.write(Text(line, style=f'dim {ts["accent"]}'))
             elif line.startswith('---'):
                 viewer.write(Text(line, style='dim'))
             else:
@@ -330,8 +346,10 @@ class MessageViewScreen(ModalScreen[None]):
 
     @staticmethod
     def _write_addr_header(
-        viewer: RichLog, hdr_name: str,
-        pairs: List[Any], width: int,
+        viewer: RichLog,
+        hdr_name: str,
+        pairs: List[Any],
+        width: int,
     ) -> None:
         """Write an address header, packing addresses to fill each line."""
         indent_len = len(hdr_name) + 2  # "Cc: "
@@ -560,6 +578,7 @@ class LiteThreadScreen(ModalScreen[None]):
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             msgids = [n.lmsg.msgid for n in self._thread_nodes if n.lmsg.msgid]
             flags_map = messages.get_flags_bulk(conn, msgids)
@@ -596,6 +615,7 @@ class LiteThreadScreen(ModalScreen[None]):
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             messages.set_flag(conn, msgid, 'Seen', self._msg_date(node))
             conn.close()
@@ -610,6 +630,7 @@ class LiteThreadScreen(ModalScreen[None]):
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             messages.set_flag(conn, msgid, 'Answered', self._msg_date(node))
             conn.close()
@@ -643,30 +664,34 @@ class LiteThreadScreen(ModalScreen[None]):
             # Maintainer's own message → Seen
             if node.is_unseen:
                 node.is_unseen = False
-                seen_entries.append({'msgid': node.lmsg.msgid,
-                                     'msg_date': self._msg_date(node)})
+                seen_entries.append(
+                    {'msgid': node.lmsg.msgid, 'msg_date': self._msg_date(node)}
+                )
             # Immediate parent → Answered
             parent_id = node.lmsg.in_reply_to
             if parent_id and parent_id in node_map:
                 parent = node_map[parent_id]
                 if not parent.is_answered:
                     parent.is_answered = True
-                    answered_entries.append({'msgid': parent_id,
-                                             'msg_date': self._msg_date(parent)})
+                    answered_entries.append(
+                        {'msgid': parent_id, 'msg_date': self._msg_date(parent)}
+                    )
             # All ancestors → Seen
             ancestor_id = node.lmsg.in_reply_to
             while ancestor_id and ancestor_id in node_map:
                 ancestor = node_map[ancestor_id]
                 if ancestor.is_unseen:
                     ancestor.is_unseen = False
-                    seen_entries.append({'msgid': ancestor_id,
-                                         'msg_date': self._msg_date(ancestor)})
+                    seen_entries.append(
+                        {'msgid': ancestor_id, 'msg_date': self._msg_date(ancestor)}
+                    )
                 ancestor_id = ancestor.lmsg.in_reply_to
 
         if not seen_entries and not answered_entries:
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             if seen_entries:
                 messages.set_flags_bulk(conn, seen_entries, 'Seen')
@@ -684,6 +709,7 @@ class LiteThreadScreen(ModalScreen[None]):
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             if node.is_flagged:
                 messages.set_flag(conn, msgid, 'Flagged', self._msg_date(node))
@@ -724,7 +750,9 @@ class LiteThreadScreen(ModalScreen[None]):
         for item in lv.query(ThreadIndexItem):
             item.query_one(Label).update(_build_thread_label(item.node, ts))
 
-    def compose_reply(self, node: ThreadNode, initial_text: Optional[str] = None) -> None:
+    def compose_reply(
+        self, node: ThreadNode, initial_text: Optional[str] = None
+    ) -> None:
         """Compose a reply to the given thread node using external editor."""
         lmsg = node.lmsg
         if initial_text is not None:
@@ -767,10 +795,15 @@ class LiteThreadScreen(ModalScreen[None]):
         try:
             with self.app.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
-                sent = b4.send_mail(smtp, [msg], fromaddr=fromaddr,
-                                    patatt_sign=self._patatt_sign,
-                                    dryrun=self._email_dryrun,
-                                    output_dir=None, reflect=False)
+                sent = b4.send_mail(
+                    smtp,
+                    [msg],
+                    fromaddr=fromaddr,
+                    patatt_sign=self._patatt_sign,
+                    dryrun=self._email_dryrun,
+                    output_dir=None,
+                    reflect=False,
+                )
             if sent is None:
                 self.app.notify('Failed to send reply.', severity='error')
             elif self._email_dryrun:

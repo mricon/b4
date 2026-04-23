@@ -1,12 +1,13 @@
 import argparse
 import json
 import os
-import pytest
-import b4
-import b4.mbox
-
 from typing import Any, Dict, Optional, Tuple
 from unittest.mock import patch
+
+import pytest
+
+import b4
+import b4.mbox
 
 
 class TestAmConflictError:
@@ -43,8 +44,9 @@ class TestRewriteFetchHeadOrigin:
         with open(fh_path, 'w') as fh:
             fh.write("abc123\t\tnot-for-merge\tbranch 'master' of /tmp/b4-worktree\n")
 
-        b4._rewrite_fetch_head_origin(gitdir, '/tmp/b4-worktree',
-                                      'https://lore.kernel.org/r/test@msg')
+        b4._rewrite_fetch_head_origin(
+            gitdir, '/tmp/b4-worktree', 'https://lore.kernel.org/r/test@msg'
+        )
 
         with open(fh_path, 'r') as fh:
             contents = fh.read()
@@ -57,8 +59,7 @@ class TestRewriteFetchHeadOrigin:
         with open(fh_path, 'w') as fh:
             fh.write(original)
 
-        b4._rewrite_fetch_head_origin(gitdir, '/tmp/nonexistent',
-                                      'https://example.com')
+        b4._rewrite_fetch_head_origin(gitdir, '/tmp/nonexistent', 'https://example.com')
 
         with open(fh_path, 'r') as fh:
             contents = fh.read()
@@ -67,8 +68,10 @@ class TestRewriteFetchHeadOrigin:
     def test_rewrites_multiple_occurrences(self, gitdir: str) -> None:
         fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
         with open(fh_path, 'w') as fh:
-            fh.write("aaa\t\tnot-for-merge\tbranch 'master' of /tmp/wt\n"
-                     "bbb\t\tnot-for-merge\tbranch 'master' of /tmp/wt\n")
+            fh.write(
+                "aaa\t\tnot-for-merge\tbranch 'master' of /tmp/wt\n"
+                "bbb\t\tnot-for-merge\tbranch 'master' of /tmp/wt\n"
+            )
 
         b4._rewrite_fetch_head_origin(gitdir, '/tmp/wt', 'https://example.com')
 
@@ -123,8 +126,7 @@ def _build_conflicting_patches(gitdir: str) -> Tuple[bytes, str]:
     # Create patch on a temp branch (from original HEAD)
     b4.git_run_command(gitdir, ['checkout', '-b', 'conflict-patch'])
     with open(os.path.join(gitdir, 'file1.txt'), 'w') as fh:
-        fh.write('PATCH version of file 1.\n'
-                 'Rewritten entirely by the patch.\n')
+        fh.write('PATCH version of file 1.\nRewritten entirely by the patch.\n')
     b4.git_run_command(gitdir, ['add', 'file1.txt'])
     b4.git_run_command(gitdir, ['commit', '-m', 'Rewrite file1 (patch side)'])
 
@@ -135,8 +137,7 @@ def _build_conflicting_patches(gitdir: str) -> Tuple[bytes, str]:
     b4.git_run_command(gitdir, ['checkout', 'master'])
     b4.git_run_command(gitdir, ['branch', '-D', 'conflict-patch'])
     with open(os.path.join(gitdir, 'file1.txt'), 'w') as fh:
-        fh.write('MASTER version of file 1.\n'
-                 'Also rewritten, but differently.\n')
+        fh.write('MASTER version of file 1.\nAlso rewritten, but differently.\n')
     b4.git_run_command(gitdir, ['add', 'file1.txt'])
     b4.git_run_command(gitdir, ['commit', '-m', 'Rewrite file1 (master side)'])
 
@@ -153,8 +154,7 @@ class TestGitFetchAmIntoRepo:
         assert common_dir is not None
         gwt = os.path.join(common_dir, 'b4-shazam-worktree')
 
-        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base,
-                                  am_flags=['-3'])
+        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base, am_flags=['-3'])
 
         # Worktree should be cleaned up after success
         assert not os.path.exists(gwt)
@@ -168,8 +168,9 @@ class TestGitFetchAmIntoRepo:
         ambytes, base = _build_clean_patches(gitdir)
         origin = 'https://lore.kernel.org/r/test@example.com'
 
-        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base,
-                                  origin=origin, am_flags=['-3'])
+        b4.git_fetch_am_into_repo(
+            gitdir, ambytes, at_base=base, origin=origin, am_flags=['-3']
+        )
 
         fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
         with open(fh_path, 'r') as fh:
@@ -182,8 +183,9 @@ class TestGitFetchAmIntoRepo:
 
         try:
             with pytest.raises(b4.AmConflictError) as exc_info:
-                b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                          am_flags=['-3'])
+                b4.git_fetch_am_into_repo(
+                    gitdir, ambytes, at_base='HEAD', am_flags=['-3']
+                )
 
             assert exc_info.value.worktree_path != ''
             assert exc_info.value.output != ''
@@ -201,16 +203,17 @@ class TestGitFetchAmIntoRepo:
 
         try:
             with pytest.raises(b4.AmConflictError) as exc_info:
-                b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                          am_flags=['-3'])
+                b4.git_fetch_am_into_repo(
+                    gitdir, ambytes, at_base='HEAD', am_flags=['-3']
+                )
 
             wt_path = exc_info.value.worktree_path
             # Worktree must still exist for user to resolve
             assert os.path.isdir(wt_path)
             # rebase-apply should be present (am still in progress)
             ecode, wt_gitdir = b4.git_run_command(
-                wt_path, ['rev-parse', '--git-dir'],
-                logstderr=True, rundir=wt_path)
+                wt_path, ['rev-parse', '--git-dir'], logstderr=True, rundir=wt_path
+            )
             assert ecode == 0
             rebase_apply = os.path.join(wt_gitdir.strip(), 'rebase-apply')
             assert os.path.isdir(rebase_apply)
@@ -226,8 +229,7 @@ class TestGitFetchAmIntoRepo:
         """Patches also apply cleanly without -3 (baseline)."""
         ambytes, base = _build_clean_patches(gitdir)
 
-        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base,
-                                  am_flags=[])
+        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base, am_flags=[])
 
         fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
         assert os.path.exists(fh_path)
@@ -241,8 +243,9 @@ class TestGitFetchAmIntoRepo:
         if os.path.exists(fh_path):
             os.unlink(fh_path)
 
-        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base,
-                                  check_only=True, am_flags=['-3'])
+        b4.git_fetch_am_into_repo(
+            gitdir, ambytes, at_base=base, check_only=True, am_flags=['-3']
+        )
 
         # check_only should not fetch (no FETCH_HEAD created)
         assert not os.path.exists(fh_path)
@@ -258,9 +261,11 @@ class TestSuspendToShellCwd:
     """Test that _suspend_to_shell passes cwd to subprocess.run."""
 
     @patch('b4.tui._common.subprocess.run')
-    def test_cwd_passed_through(self, mock_run: Any,
-                                monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cwd_passed_through(
+        self, mock_run: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from b4.review_tui._common import _suspend_to_shell
+
         # Use a shell name that is neither bash nor zsh so we hit
         # the simple else branch (no tempfile/rcfile logic).
         monkeypatch.setenv('SHELL', '/tmp/fakeshell')
@@ -272,9 +277,11 @@ class TestSuspendToShellCwd:
         assert kwargs.get('cwd') == '/tmp/test-worktree'
 
     @patch('b4.tui._common.subprocess.run')
-    def test_cwd_none_by_default(self, mock_run: Any,
-                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cwd_none_by_default(
+        self, mock_run: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from b4.review_tui._common import _suspend_to_shell
+
         monkeypatch.setenv('SHELL', '/tmp/fakeshell')
 
         _suspend_to_shell()
@@ -284,9 +291,11 @@ class TestSuspendToShellCwd:
         assert kwargs.get('cwd') is None
 
     @patch('b4.tui._common.subprocess.run')
-    def test_hint_appears_in_env(self, mock_run: Any,
-                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_hint_appears_in_env(
+        self, mock_run: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from b4.review_tui._common import _suspend_to_shell
+
         monkeypatch.setenv('SHELL', '/tmp/fakeshell')
 
         _suspend_to_shell(hint='b4 conflict', cwd='/tmp/wt')
@@ -309,30 +318,29 @@ class TestConflictResolutionFlow:
         ambytes, _base = _build_conflicting_patches(gitdir)
 
         with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                      am_flags=['-3'])
+            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
 
         wt = exc_info.value.worktree_path
 
         # --- same steps the TUI handler takes ---
         # 1. Disable sparse checkout so files are visible
-        b4.git_run_command(wt, ['sparse-checkout', 'disable'],
-                           logstderr=True, rundir=wt)
+        b4.git_run_command(
+            wt, ['sparse-checkout', 'disable'], logstderr=True, rundir=wt
+        )
         assert os.path.exists(os.path.join(wt, 'file1.txt'))
 
         # 2. Simulate user resolving: accept theirs and continue
-        b4.git_run_command(wt, ['checkout', '--theirs', '.'],
-                           logstderr=True, rundir=wt)
-        b4.git_run_command(wt, ['add', '-A'],
-                           logstderr=True, rundir=wt)
-        ecode, _out = b4.git_run_command(wt, ['am', '--continue'],
-                                         logstderr=True, rundir=wt)
+        b4.git_run_command(wt, ['checkout', '--theirs', '.'], logstderr=True, rundir=wt)
+        b4.git_run_command(wt, ['add', '-A'], logstderr=True, rundir=wt)
+        ecode, _out = b4.git_run_command(
+            wt, ['am', '--continue'], logstderr=True, rundir=wt
+        )
         assert ecode == 0
 
         # 3. Verify rebase-apply is gone (am completed)
         ecode, wt_gitdir = b4.git_run_command(
-            wt, ['rev-parse', '--git-dir'],
-            logstderr=True, rundir=wt)
+            wt, ['rev-parse', '--git-dir'], logstderr=True, rundir=wt
+        )
         assert ecode == 0
         rebase_apply = os.path.join(wt_gitdir.strip(), 'rebase-apply')
         assert not os.path.isdir(rebase_apply)
@@ -352,15 +360,14 @@ class TestConflictResolutionFlow:
         ambytes, _base = _build_conflicting_patches(gitdir)
 
         with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                      am_flags=['-3'])
+            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
 
         wt = exc_info.value.worktree_path
 
         # User returns from shell without resolving
         ecode, wt_gitdir = b4.git_run_command(
-            wt, ['rev-parse', '--git-dir'],
-            logstderr=True, rundir=wt)
+            wt, ['rev-parse', '--git-dir'], logstderr=True, rundir=wt
+        )
         assert ecode == 0
         rebase_apply = os.path.join(wt_gitdir.strip(), 'rebase-apply')
         assert os.path.isdir(rebase_apply)
@@ -374,15 +381,15 @@ class TestConflictResolutionFlow:
         ambytes, _base = _build_conflicting_patches(gitdir)
 
         with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                      am_flags=['-3'])
+            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
 
         wt = exc_info.value.worktree_path
 
         # Before: sparse checkout may hide files
         # (the worktree was created with sparse-checkout set to empty)
-        b4.git_run_command(wt, ['sparse-checkout', 'disable'],
-                           logstderr=True, rundir=wt)
+        b4.git_run_command(
+            wt, ['sparse-checkout', 'disable'], logstderr=True, rundir=wt
+        )
 
         # All repo files should now be visible
         assert os.path.exists(os.path.join(wt, 'file1.txt'))
@@ -396,20 +403,17 @@ class TestConflictResolutionFlow:
         ambytes, _base = _build_conflicting_patches(gitdir)
 
         with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                      am_flags=['-3'])
+            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
 
         wt = exc_info.value.worktree_path
 
         # Resolve and fetch
-        b4.git_run_command(wt, ['sparse-checkout', 'disable'],
-                           logstderr=True, rundir=wt)
-        b4.git_run_command(wt, ['checkout', '--theirs', '.'],
-                           logstderr=True, rundir=wt)
-        b4.git_run_command(wt, ['add', '-A'],
-                           logstderr=True, rundir=wt)
-        b4.git_run_command(wt, ['am', '--continue'],
-                           logstderr=True, rundir=wt)
+        b4.git_run_command(
+            wt, ['sparse-checkout', 'disable'], logstderr=True, rundir=wt
+        )
+        b4.git_run_command(wt, ['checkout', '--theirs', '.'], logstderr=True, rundir=wt)
+        b4.git_run_command(wt, ['add', '-A'], logstderr=True, rundir=wt)
+        b4.git_run_command(wt, ['am', '--continue'], logstderr=True, rundir=wt)
         b4.git_run_command(gitdir, ['fetch', wt], logstderr=True)
 
         # Rewrite FETCH_HEAD (as the TUI handler does)
@@ -437,8 +441,9 @@ class TestDirectAmConflictFlow:
         ambytes, _base = _build_conflicting_patches(gitdir)
 
         # Run git-am directly (as _do_take_am does)
-        ecode, _out = b4.git_run_command(gitdir, ['am', '-3'],
-                                         stdin=ambytes, logstderr=True)
+        ecode, _out = b4.git_run_command(
+            gitdir, ['am', '-3'], stdin=ambytes, logstderr=True
+        )
         assert ecode != 0
 
         # rebase-apply should exist
@@ -446,11 +451,9 @@ class TestDirectAmConflictFlow:
         assert os.path.isdir(rebase_apply)
 
         # Resolve: accept theirs and continue
-        b4.git_run_command(gitdir, ['checkout', '--theirs', '.'],
-                           logstderr=True)
+        b4.git_run_command(gitdir, ['checkout', '--theirs', '.'], logstderr=True)
         b4.git_run_command(gitdir, ['add', '-A'], logstderr=True)
-        ecode, _out = b4.git_run_command(gitdir, ['am', '--continue'],
-                                         logstderr=True)
+        ecode, _out = b4.git_run_command(gitdir, ['am', '--continue'], logstderr=True)
         assert ecode == 0
         assert not os.path.isdir(rebase_apply)
 
@@ -458,8 +461,9 @@ class TestDirectAmConflictFlow:
         """Direct git-am -3 conflict, user aborts."""
         ambytes, _base = _build_conflicting_patches(gitdir)
 
-        ecode, _out = b4.git_run_command(gitdir, ['am', '-3'],
-                                         stdin=ambytes, logstderr=True)
+        ecode, _out = b4.git_run_command(
+            gitdir, ['am', '-3'], stdin=ambytes, logstderr=True
+        )
         assert ecode != 0
 
         # rebase-apply is present (handler detects this)
@@ -474,6 +478,7 @@ class TestDirectAmConflictFlow:
 # ---------------------------------------------------------------------------
 # Tier 4 — Shazam state machine tests
 # ---------------------------------------------------------------------------
+
 
 def _build_multi_patch_conflict(gitdir: str) -> Tuple[bytes, str]:
     """Create a 3-patch mbox where patches 1-2 are clean but patch 3 conflicts.
@@ -521,8 +526,9 @@ def _build_multi_patch_conflict(gitdir: str) -> Tuple[bytes, str]:
     return mbox.encode(), base
 
 
-def _make_shazam_state(common_dir: str,
-                       state: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+def _make_shazam_state(
+    common_dir: str, state: Optional[Dict[str, Any]] = None
+) -> Tuple[str, str]:
     """Create shazam state file and patches dir.
 
     Returns (state_file_path, patches_dir_path).
@@ -545,10 +551,11 @@ class TestLoadShazamState:
         assert common_dir is not None
         state_file, patches_dir = _make_shazam_state(common_dir)
         try:
-            _topdir, _cdir, sf, loaded = b4.mbox._load_shazam_state(
-                require_state=True)
-            assert loaded == {'origin': 'https://example.com',
-                              'merge_flags': '--signoff'}
+            _topdir, _cdir, sf, loaded = b4.mbox._load_shazam_state(require_state=True)
+            assert loaded == {
+                'origin': 'https://example.com',
+                'merge_flags': '--signoff',
+            }
             assert sf == state_file
         finally:
             os.unlink(state_file)
@@ -560,8 +567,7 @@ class TestLoadShazamState:
         assert exc_info.value.code == 1
 
     def test_optional_state_returns_none(self, gitdir: str) -> None:
-        _topdir, _cdir, _sf, loaded = b4.mbox._load_shazam_state(
-            require_state=False)
+        _topdir, _cdir, _sf, loaded = b4.mbox._load_shazam_state(require_state=False)
         assert loaded is None
 
     def test_missing_patches_dir_exits(self, gitdir: str) -> None:
@@ -637,8 +643,7 @@ class TestStartMergeResolve:
         assert common_dir is not None
 
         with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                      am_flags=['-3'])
+            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
 
         state = {
             'origin': 'https://example.com',
@@ -650,8 +655,7 @@ class TestStartMergeResolve:
 
         # _start_merge_resolve exits(1) because remaining patch 3 conflicts
         with pytest.raises(SystemExit) as exit_info:
-            b4.mbox._start_merge_resolve(
-                gitdir, exc_info.value, common_dir, state)
+            b4.mbox._start_merge_resolve(gitdir, exc_info.value, common_dir, state)
         assert exit_info.value.code == 1
 
         # State file and patches dir should exist
@@ -679,8 +683,7 @@ class TestStartMergeResolve:
 
         # Step 1: trigger conflict
         with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                      am_flags=['-3'])
+            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
 
         state = {
             'origin': 'https://example.com',
@@ -693,8 +696,7 @@ class TestStartMergeResolve:
         # Step 2: _start_merge_resolve extracts patches, starts merge,
         # applies remaining patch 3 which conflicts -> exit(1)
         with pytest.raises(SystemExit):
-            b4.mbox._start_merge_resolve(
-                gitdir, exc_info.value, common_dir, state)
+            b4.mbox._start_merge_resolve(gitdir, exc_info.value, common_dir, state)
 
         # Step 3: resolve the conflict (accept any content)
         with open(os.path.join(gitdir, 'file1.txt'), 'w') as fh:
@@ -708,12 +710,14 @@ class TestStartMergeResolve:
 
         # Step 5: verify merge commit was created
         ecode, _log_out = b4.git_run_command(
-            gitdir, ['log', '--oneline', '-1', '--format=%s'])
+            gitdir, ['log', '--oneline', '-1', '--format=%s']
+        )
         assert ecode == 0
         # The commit was made with -F (the merge template content)
         # Just verify a commit exists on top of our branch
         ecode, parents = b4.git_run_command(
-            gitdir, ['rev-list', '--parents', '-1', 'HEAD'])
+            gitdir, ['rev-list', '--parents', '-1', 'HEAD']
+        )
         assert ecode == 0
         # Merge commit has 2 parents
         parent_list = parents.strip().split()
@@ -732,8 +736,7 @@ class TestStartMergeResolve:
         assert common_dir is not None
 
         with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD',
-                                      am_flags=['-3'])
+            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
 
         state = {
             'origin': 'https://example.com',
@@ -744,8 +747,7 @@ class TestStartMergeResolve:
         }
 
         with pytest.raises(SystemExit):
-            b4.mbox._start_merge_resolve(
-                gitdir, exc_info.value, common_dir, state)
+            b4.mbox._start_merge_resolve(gitdir, exc_info.value, common_dir, state)
 
         # Abort instead of resolving
         cmdargs = argparse.Namespace()

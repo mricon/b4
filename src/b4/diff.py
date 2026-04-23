@@ -5,24 +5,26 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
-import sys
-import b4
-import b4.mbox
+import argparse
 import email
 import email.parser
-import shutil
+import os
 import pathlib
-import argparse
 import shlex
-
-from typing import Tuple, Optional, List
+import shutil
+import sys
 from email.message import EmailMessage
+from typing import List, Optional, Tuple
+
+import b4
+import b4.mbox
 
 logger = b4.logger
 
 
-def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.LoreSeries], Optional[b4.LoreSeries]]:
+def diff_same_thread_series(
+    cmdargs: argparse.Namespace,
+) -> Tuple[Optional[b4.LoreSeries], Optional[b4.LoreSeries]]:
     msgid = b4.get_msgid(cmdargs)
     if not msgid:
         logger.critical('Please pass msgid on the command-line')
@@ -45,7 +47,11 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
         msgs = list()
         for cachemsg in os.listdir(cachedir):
             with open(os.path.join(cachedir, cachemsg), 'rb') as fh:
-                msgs.append(email.parser.BytesParser(policy=b4.emlpolicy, _class=EmailMessage).parse(fh))
+                msgs.append(
+                    email.parser.BytesParser(
+                        policy=b4.emlpolicy, _class=EmailMessage
+                    ).parse(fh)
+                )
     else:
         msgs = b4.get_pi_thread_by_msgid(msgid, nocache=cmdargs.nocache)
         if not msgs:
@@ -107,7 +113,9 @@ def diff_same_thread_series(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.Lo
     return lmbx.series[lower], lmbx.series[upper]
 
 
-def diff_mboxes(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.LoreSeries], Optional[b4.LoreSeries]]:
+def diff_mboxes(
+    cmdargs: argparse.Namespace,
+) -> Tuple[Optional[b4.LoreSeries], Optional[b4.LoreSeries]]:
     chunks = list()
     for mboxfile in cmdargs.ambox:
         if not os.path.exists(mboxfile):
@@ -125,7 +133,9 @@ def diff_mboxes(cmdargs: argparse.Namespace) -> Tuple[Optional[b4.LoreSeries], O
             logger.critical('No valid patches found in %s', mboxfile)
             sys.exit(1)
         if len(lmbx.series) > 1:
-            logger.critical('More than one series version in %s, will use latest', mboxfile)
+            logger.critical(
+                'More than one series version in %s, will use latest', mboxfile
+            )
 
         chunks.append(lmbx.series[max(lmbx.series.keys())])
 
@@ -145,13 +155,17 @@ def main(cmdargs: argparse.Namespace) -> None:
     lsc, lec = lser.make_fake_am_range(gitdir=cmdargs.gitdir)
     if lsc is None or lec is None:
         logger.critical('---')
-        logger.critical('Could not create fake-am range for lower series v%s', lser.revision)
+        logger.critical(
+            'Could not create fake-am range for lower series v%s', lser.revision
+        )
         sys.exit(1)
     # Prepare the upper fake-am range
     usc, uec = user.make_fake_am_range(gitdir=cmdargs.gitdir)
     if usc is None or uec is None:
         logger.critical('---')
-        logger.critical('Could not create fake-am range for upper series v%s', user.revision)
+        logger.critical(
+            'Could not create fake-am range for upper series v%s', user.revision
+        )
         sys.exit(1)
     rd_opts = []
     if cmdargs.range_diff_opts:
@@ -159,8 +173,12 @@ def main(cmdargs: argparse.Namespace) -> None:
         sp.whitespace_split = True
         rd_opts = list(sp)
     grdcmd = 'git range-diff %s%.12s..%.12s %.12s..%.12s' % (
-        " ".join(rd_opts) + " " if rd_opts else "",
-        lsc, lec, usc, uec)
+        ' '.join(rd_opts) + ' ' if rd_opts else '',
+        lsc,
+        lec,
+        usc,
+        uec,
+    )
     if cmdargs.nodiff:
         logger.info('Success, to compare v%s and v%s:', lser.revision, user.revision)
         logger.info('    %s', grdcmd)

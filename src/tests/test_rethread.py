@@ -1,20 +1,24 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
-import b4
 import email.message
+from typing import List, Optional, Tuple
 from unittest import mock
 
-from typing import List, Optional, Tuple
+import b4
 
 
 # ---------------------------------------------------------------------------
 # Helpers for building synthetic EmailMessage objects
 # ---------------------------------------------------------------------------
-def _make_msg(msgid: str, subject: str, from_addr: str = 'Test Author <test@example.com>',
-              date: str = 'Mon, 23 Mar 2026 12:00:00 +0000',
-              in_reply_to: Optional[str] = None,
-              references: Optional[str] = None,
-              body: str = 'Hello\n') -> email.message.EmailMessage:
+def _make_msg(
+    msgid: str,
+    subject: str,
+    from_addr: str = 'Test Author <test@example.com>',
+    date: str = 'Mon, 23 Mar 2026 12:00:00 +0000',
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
+    body: str = 'Hello\n',
+) -> email.message.EmailMessage:
     msg = email.message.EmailMessage()
     msg['Message-ID'] = f'<{msgid}>'
     msg['Subject'] = subject
@@ -33,40 +37,50 @@ def _make_msg(msgid: str, subject: str, from_addr: str = 'Test Author <test@exam
 # ===========================================================================
 class TestParseMsgid:
     def test_bare_msgid(self) -> None:
-        assert b4.parse_msgid('20260323041505.2088-1-user@example.com') == \
-            '20260323041505.2088-1-user@example.com'
+        assert (
+            b4.parse_msgid('20260323041505.2088-1-user@example.com')
+            == '20260323041505.2088-1-user@example.com'
+        )
 
     def test_angle_brackets(self) -> None:
-        assert b4.parse_msgid('<20260323041505.2088-1-user@example.com>') == \
-            '20260323041505.2088-1-user@example.com'
+        assert (
+            b4.parse_msgid('<20260323041505.2088-1-user@example.com>')
+            == '20260323041505.2088-1-user@example.com'
+        )
 
     def test_lore_url(self) -> None:
         result = b4.parse_msgid(
-            'https://lore.kernel.org/all/20260323041505.2088-1-user@example.com/')
+            'https://lore.kernel.org/all/20260323041505.2088-1-user@example.com/'
+        )
         assert result == '20260323041505.2088-1-user@example.com'
 
     def test_lore_url_with_r_shorthand(self) -> None:
         result = b4.parse_msgid(
-            'https://lore.kernel.org/r/20260323041505.2088-1-user@example.com')
+            'https://lore.kernel.org/r/20260323041505.2088-1-user@example.com'
+        )
         assert result == '20260323041505.2088-1-user@example.com'
 
     def test_lore_url_percent_encoded(self) -> None:
-        result = b4.parse_msgid(
-            'https://lore.kernel.org/all/abc%2Bdef@example.com/')
+        result = b4.parse_msgid('https://lore.kernel.org/all/abc%2Bdef@example.com/')
         assert result == 'abc+def@example.com'
 
     def test_patchwork_url(self) -> None:
         result = b4.parse_msgid(
-            'https://patchwork.kernel.org/project/linux-mm/patch/20260323041505.2088-1-user@example.com/')
+            'https://patchwork.kernel.org/project/linux-mm/patch/20260323041505.2088-1-user@example.com/'
+        )
         assert result == '20260323041505.2088-1-user@example.com'
 
     def test_id_prefix(self) -> None:
-        assert b4.parse_msgid('id:20260323041505.2088-1-user@example.com') == \
-            '20260323041505.2088-1-user@example.com'
+        assert (
+            b4.parse_msgid('id:20260323041505.2088-1-user@example.com')
+            == '20260323041505.2088-1-user@example.com'
+        )
 
     def test_rfc822msgid_prefix(self) -> None:
-        assert b4.parse_msgid('rfc822msgid:20260323041505.2088-1-user@example.com') == \
-            '20260323041505.2088-1-user@example.com'
+        assert (
+            b4.parse_msgid('rfc822msgid:20260323041505.2088-1-user@example.com')
+            == '20260323041505.2088-1-user@example.com'
+        )
 
     def test_whitespace_stripped(self) -> None:
         assert b4.parse_msgid('  <foo@bar.com>  ') == 'foo@bar.com'
@@ -285,9 +299,9 @@ class TestRethreadMessages:
     def test_child_messages_untouched(self) -> None:
         cover = _make_msg('cover@x', '[PATCH 0/2] Cover')
         p1 = _make_msg('p1@x', '[PATCH 1/2] First')
-        reply = _make_msg('reply@x', 'Re: [PATCH 1/2] First',
-                          in_reply_to='p1@x',
-                          references='<p1@x>')
+        reply = _make_msg(
+            'reply@x', 'Re: [PATCH 1/2] First', in_reply_to='p1@x', references='<p1@x>'
+        )
         all_msgs = [cover, p1, reply]
 
         b4.LoreSeries.rethread_messages(all_msgs, 'cover@x', {'p1@x'})
@@ -298,9 +312,12 @@ class TestRethreadMessages:
 
     def test_strips_old_threading_from_cover(self) -> None:
         """If the cover had pre-existing threading, it should be stripped."""
-        cover = _make_msg('cover@x', '[PATCH 0/2] Cover',
-                          in_reply_to='old-parent@x',
-                          references='<old-parent@x>')
+        cover = _make_msg(
+            'cover@x',
+            '[PATCH 0/2] Cover',
+            in_reply_to='old-parent@x',
+            references='<old-parent@x>',
+        )
         p1 = _make_msg('p1@x', '[PATCH 1/2] First')
         all_msgs = [cover, p1]
 
@@ -312,9 +329,12 @@ class TestRethreadMessages:
     def test_replaces_old_threading_on_patches(self) -> None:
         """Patches should lose their old threading and get cover as parent."""
         cover = _make_msg('cover@x', '[PATCH 0/1] Cover')
-        p1 = _make_msg('p1@x', '[PATCH 1/1] Fix',
-                        in_reply_to='unrelated@x',
-                        references='<unrelated@x> <other@x>')
+        p1 = _make_msg(
+            'p1@x',
+            '[PATCH 1/1] Fix',
+            in_reply_to='unrelated@x',
+            references='<unrelated@x> <other@x>',
+        )
         all_msgs = [cover, p1]
 
         b4.LoreSeries.rethread_messages(all_msgs, 'cover@x', {'p1@x'})
@@ -344,9 +364,9 @@ class TestRethreadMessages:
 # ===========================================================================
 class TestRethreadIntegration:
     @staticmethod
-    def _run_pipeline(msgids: List[str],
-                      all_msgs: List[email.message.EmailMessage]
-                      ) -> Tuple[str, b4.LoreSeries]:
+    def _run_pipeline(
+        msgids: List[str], all_msgs: List[email.message.EmailMessage]
+    ) -> Tuple[str, b4.LoreSeries]:
         """Run the rethread pipeline and feed into LoreMailbox."""
         cover_msgid, all_msgs = b4.LoreSeries.rethread_series(msgids, all_msgs)
 
@@ -359,12 +379,21 @@ class TestRethreadIntegration:
 
     def test_numbered_patches_with_cover(self) -> None:
         """Properly numbered patches with a cover letter should produce a complete series."""
-        cover = _make_msg('cover@x', '[PATCH 0/2] Widget overhaul',
-                          body='This series overhauls widgets.\n')
-        p1 = _make_msg('p1@x', '[PATCH 1/2] Refactor widget core',
-                        body='---\n widget.c | 10 +\n 1 file changed\n\ndiff --git a/widget.c b/widget.c\n--- a/widget.c\n+++ b/widget.c\n@@ -1 +1 @@\n-old\n+new\n')
-        p2 = _make_msg('p2@x', '[PATCH 2/2] Add widget tests',
-                        body='---\n test.c | 5 +\n 1 file changed\n\ndiff --git a/test.c b/test.c\n--- a/test.c\n+++ b/test.c\n@@ -1 +1 @@\n-old\n+new\n')
+        cover = _make_msg(
+            'cover@x',
+            '[PATCH 0/2] Widget overhaul',
+            body='This series overhauls widgets.\n',
+        )
+        p1 = _make_msg(
+            'p1@x',
+            '[PATCH 1/2] Refactor widget core',
+            body='---\n widget.c | 10 +\n 1 file changed\n\ndiff --git a/widget.c b/widget.c\n--- a/widget.c\n+++ b/widget.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
+        p2 = _make_msg(
+            'p2@x',
+            '[PATCH 2/2] Add widget tests',
+            body='---\n test.c | 5 +\n 1 file changed\n\ndiff --git a/test.c b/test.c\n--- a/test.c\n+++ b/test.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
         all_msgs = [cover, p1, p2]
         msgids = ['cover@x', 'p1@x', 'p2@x']
 
@@ -376,10 +405,16 @@ class TestRethreadIntegration:
 
     def test_unnumbered_patches_no_cover(self) -> None:
         """Unnumbered patches without a cover should get renumbered and threaded under patch 1."""
-        p1 = _make_msg('p1@x', '[PATCH] Add alpha feature',
-                        body='---\n a.c | 1 +\n 1 file changed\n\ndiff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1 +1 @@\n-old\n+new\n')
-        p2 = _make_msg('p2@x', '[PATCH] Add beta feature',
-                        body='---\n b.c | 1 +\n 1 file changed\n\ndiff --git a/b.c b/b.c\n--- a/b.c\n+++ b/b.c\n@@ -1 +1 @@\n-old\n+new\n')
+        p1 = _make_msg(
+            'p1@x',
+            '[PATCH] Add alpha feature',
+            body='---\n a.c | 1 +\n 1 file changed\n\ndiff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
+        p2 = _make_msg(
+            'p2@x',
+            '[PATCH] Add beta feature',
+            body='---\n b.c | 1 +\n 1 file changed\n\ndiff --git a/b.c b/b.c\n--- a/b.c\n+++ b/b.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
         all_msgs = [p1, p2]
         msgids = ['p1@x', 'p2@x']
 
@@ -391,15 +426,24 @@ class TestRethreadIntegration:
 
     def test_followup_trailers_preserved(self) -> None:
         """Review replies should be associated with the correct patch after rethreading."""
-        p1 = _make_msg('p1@x', '[PATCH 1/2] First patch',
-                        body='---\n a.c | 1 +\n 1 file changed\n\ndiff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1 +1 @@\n-old\n+new\n')
-        review = _make_msg('rev@x', 'Re: [PATCH 1/2] First patch',
-                           in_reply_to='p1@x',
-                           references='<p1@x>',
-                           from_addr='Reviewer <rev@example.com>',
-                           body='Looks good.\n\nReviewed-by: Reviewer <rev@example.com>\n')
-        p2 = _make_msg('p2@x', '[PATCH 2/2] Second patch',
-                        body='---\n b.c | 1 +\n 1 file changed\n\ndiff --git a/b.c b/b.c\n--- a/b.c\n+++ b/b.c\n@@ -1 +1 @@\n-old\n+new\n')
+        p1 = _make_msg(
+            'p1@x',
+            '[PATCH 1/2] First patch',
+            body='---\n a.c | 1 +\n 1 file changed\n\ndiff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
+        review = _make_msg(
+            'rev@x',
+            'Re: [PATCH 1/2] First patch',
+            in_reply_to='p1@x',
+            references='<p1@x>',
+            from_addr='Reviewer <rev@example.com>',
+            body='Looks good.\n\nReviewed-by: Reviewer <rev@example.com>\n',
+        )
+        p2 = _make_msg(
+            'p2@x',
+            '[PATCH 2/2] Second patch',
+            body='---\n b.c | 1 +\n 1 file changed\n\ndiff --git a/b.c b/b.c\n--- a/b.c\n+++ b/b.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
         all_msgs = [p1, review, p2]
         msgids = ['p1@x', 'p2@x']
 
@@ -414,10 +458,16 @@ class TestRethreadIntegration:
 
     def test_wrong_expected_fixed(self) -> None:
         """Patches claiming 1/1 each should have expected fixed to match actual count."""
-        p1 = _make_msg('p1@x', '[PATCH 1/1] First',
-                        body='---\n a.c | 1 +\n 1 file changed\n\ndiff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1 +1 @@\n-old\n+new\n')
-        p2 = _make_msg('p2@x', '[PATCH 1/1] Second',
-                        body='---\n b.c | 1 +\n 1 file changed\n\ndiff --git a/b.c b/b.c\n--- a/b.c\n+++ b/b.c\n@@ -1 +1 @@\n-old\n+new\n')
+        p1 = _make_msg(
+            'p1@x',
+            '[PATCH 1/1] First',
+            body='---\n a.c | 1 +\n 1 file changed\n\ndiff --git a/a.c b/a.c\n--- a/a.c\n+++ b/a.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
+        p2 = _make_msg(
+            'p2@x',
+            '[PATCH 1/1] Second',
+            body='---\n b.c | 1 +\n 1 file changed\n\ndiff --git a/b.c b/b.c\n--- a/b.c\n+++ b/b.c\n@@ -1 +1 @@\n-old\n+new\n',
+        )
         all_msgs = [p1, p2]
         msgids = ['p1@x', 'p2@x']
 
@@ -435,13 +485,17 @@ class TestRethreadIntegration:
 # ===========================================================================
 class TestDiscoverRethreadSeries:
     @staticmethod
-    def _mock_discover(seed_msg: email.message.EmailMessage,
-                       search_results: List[email.message.EmailMessage]) -> List[str]:
+    def _mock_discover(
+        seed_msg: email.message.EmailMessage,
+        search_results: List[email.message.EmailMessage],
+    ) -> List[str]:
         """Run discover_rethread_series with mocked network calls."""
         seed_msgid = b4.LoreMessage.get_clean_msgid(seed_msg)
         assert seed_msgid is not None
-        with mock.patch('b4.get_pi_thread_by_msgid', return_value=[seed_msg]), \
-             mock.patch('b4.get_pi_search_results', return_value=search_results):
+        with (
+            mock.patch('b4.get_pi_thread_by_msgid', return_value=[seed_msg]),
+            mock.patch('b4.get_pi_search_results', return_value=search_results),
+        ):
             return b4.discover_rethread_series(seed_msgid)
 
     def test_discovers_numbered_series(self) -> None:
@@ -507,7 +561,9 @@ class TestDiscoverRethreadSeries:
         seed = _make_msg('p1@x', '[PATCH 1/2] Fix')
         seed_msgid = b4.LoreMessage.get_clean_msgid(seed)
         assert seed_msgid is not None
-        with mock.patch('b4.get_pi_thread_by_msgid', return_value=[seed]), \
-             mock.patch('b4.get_pi_search_results', return_value=None):
+        with (
+            mock.patch('b4.get_pi_thread_by_msgid', return_value=[seed]),
+            mock.patch('b4.get_pi_search_results', return_value=None),
+        ):
             result = b4.discover_rethread_series(seed_msgid)
         assert result == ['p1@x']

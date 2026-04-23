@@ -9,7 +9,6 @@ import copy
 import datetime
 import email.message
 import email.parser
-import email.policy
 import email.utils
 import io
 import json
@@ -17,14 +16,8 @@ import os
 import pathlib
 import re
 import sqlite3
-
 from string import Template
 from typing import Any, Dict, List, Literal, Optional, Tuple
-
-import b4
-import b4.mbox
-import b4.review
-import b4.review.tracking
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -33,19 +26,49 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Footer, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
+
+import b4
+import b4.ez
+import b4.mbox
+import b4.review
+import b4.review.tracking
+import b4.ty
 from b4.review_tui._common import (
-    logger, resolve_styles, _wait_for_enter, _suspend_to_shell,
-    SeparatedFooter, _quiet_worker, CheckRunnerMixin,
-    _fix_ansi_theme, display_width, pad_display,
+    CheckRunnerMixin,
+    SeparatedFooter,
+    _fix_ansi_theme,
+    _quiet_worker,
+    _suspend_to_shell,
+    _wait_for_enter,
+    display_width,
+    logger,
+    pad_display,
+    resolve_styles,
 )
 from b4.review_tui._modals import (
-    BaseSelectionScreen, WorkerScreen, TakeScreen, TakeConfirmScreen,
-    CherryPickScreen, NewerRevisionWarningScreen,
-    RevisionChoiceScreen, RebaseScreen, TargetBranchScreen,
+    TRACKING_HELP_LINES,
     AbandonConfirmScreen,
-    ArchiveConfirmScreen, RangeDiffScreen, ThankScreen, QueueScreen, QueueDeliveryScreen,
-    LimitScreen, UpdateRevisionScreen, UpdateAllScreen,
-    ActionScreen, HelpScreen, SnoozeScreen, TRACKING_HELP_LINES,
+    ActionScreen,
+    ArchiveConfirmScreen,
+    BaseSelectionScreen,
+    CheckLoadingScreen,
+    CherryPickScreen,
+    HelpScreen,
+    LimitScreen,
+    NewerRevisionWarningScreen,
+    QueueDeliveryScreen,
+    QueueScreen,
+    RangeDiffScreen,
+    RebaseScreen,
+    RevisionChoiceScreen,
+    SnoozeScreen,
+    TakeConfirmScreen,
+    TakeScreen,
+    TargetBranchScreen,
+    ThankScreen,
+    UpdateAllScreen,
+    UpdateRevisionScreen,
+    WorkerScreen,
 )
 
 # Shortcut keys for the tracking-app action selector.
@@ -65,15 +88,15 @@ _ACTION_SHORTCUTS: Dict[str, str] = {
 
 # Single-character Unicode symbols for each series status.
 _STATUS_SYMBOLS: Dict[str, str] = {
-    'new':       '★',  # U+2605 black star
+    'new': '★',  # U+2605 black star
     'reviewing': '✎',  # U+270E lower right pencil (matches review app)
-    'replied':   '↩',  # U+21A9 leftwards arrow with hook
-    'waiting':   '↻',  # U+21BB clockwise open circle arrow
-    'accepted':  '∈',  # U+2208 element of
-    'queued':    '◷',  # U+25F7 white circle with upper right quadrant
-    'snoozed':   '⏸',  # U+23F8 double vertical bar
-    'thanked':   '✓',  # U+2713 check mark
-    'gone':      'ø',  # U+00F8 latin small letter o with stroke
+    'replied': '↩',  # U+21A9 leftwards arrow with hook
+    'waiting': '↻',  # U+21BB clockwise open circle arrow
+    'accepted': '∈',  # U+2208 element of
+    'queued': '◷',  # U+25F7 white circle with upper right quadrant
+    'snoozed': '⏸',  # U+23F8 double vertical bar
+    'thanked': '✓',  # U+2713 check mark
+    'gone': 'ø',  # U+00F8 latin small letter o with stroke
 }
 
 # Sort tier for each status.  Lower tier sorts higher in the list.
@@ -81,21 +104,26 @@ _STATUS_SYMBOLS: Dict[str, str] = {
 #   1 = action required (awaiting maintainer decision)
 #   2 = inactive (no action needed)
 _STATUS_TIER: Dict[str, int] = {
-    'new':       0,
+    'new': 0,
     'reviewing': 0,
-    'replied':   1,
-    'accepted':  1,
-    'queued':    2,
-    'snoozed':   2,
-    'waiting':   2,
-    'thanked':   2,
-    'gone':      2,
+    'replied': 1,
+    'accepted': 1,
+    'queued': 2,
+    'snoozed': 2,
+    'waiting': 2,
+    'thanked': 2,
+    'gone': 2,
 }
 
 # Statuses where the maintainer can take action right now.
-_ACTIONABLE_STATUSES: frozenset[str] = frozenset({
-    'new', 'reviewing', 'replied', 'accepted',
-})
+_ACTIONABLE_STATUSES: frozenset[str] = frozenset(
+    {
+        'new',
+        'reviewing',
+        'replied',
+        'accepted',
+    }
+)
 
 
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
@@ -114,20 +142,32 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
     logger.critical('---')
     logger.critical('Patch did not apply cleanly.')
     # Disable sparse checkout so user can see and edit files
-    b4.git_run_command(cex.worktree_path, ['sparse-checkout', 'disable'],
-                       logstderr=True, rundir=cex.worktree_path)
+    b4.git_run_command(
+        cex.worktree_path,
+        ['sparse-checkout', 'disable'],
+        logstderr=True,
+        rundir=cex.worktree_path,
+    )
     # Save worktree HEAD before shell so we can detect abort
     _ecode, wt_head_before = b4.git_run_command(
-        cex.worktree_path, ['rev-parse', 'HEAD'],
-        logstderr=True, rundir=cex.worktree_path)
+        cex.worktree_path,
+        ['rev-parse', 'HEAD'],
+        logstderr=True,
+        rundir=cex.worktree_path,
+    )
     wt_head_before = wt_head_before.strip()
     logger.info('You can resolve the conflict in the worktree.')
-    logger.info('Use "git am --continue" after resolving, or "git am --abort" to give up.')
+    logger.info(
+        'Use "git am --continue" after resolving, or "git am --abort" to give up.'
+    )
     _suspend_to_shell(hint='b4 conflict', cwd=cex.worktree_path)
     # Check if am is still in progress (user exited without finishing)
     ecode, wt_gitdir = b4.git_run_command(
-        cex.worktree_path, ['rev-parse', '--git-dir'],
-        logstderr=True, rundir=cex.worktree_path)
+        cex.worktree_path,
+        ['rev-parse', '--git-dir'],
+        logstderr=True,
+        rundir=cex.worktree_path,
+    )
     if ecode == 0:
         rebase_apply = os.path.join(wt_gitdir.strip(), 'rebase-apply')
     else:
@@ -138,15 +178,20 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
         return False
     # Check if am was aborted (HEAD unchanged from before shell)
     _ecode, wt_head_after = b4.git_run_command(
-        cex.worktree_path, ['rev-parse', 'HEAD'],
-        logstderr=True, rundir=cex.worktree_path)
+        cex.worktree_path,
+        ['rev-parse', 'HEAD'],
+        logstderr=True,
+        rundir=cex.worktree_path,
+    )
     if wt_head_after.strip() == wt_head_before:
         logger.warning('Conflict resolution aborted')
         b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
         return False
     # am completed -- fetch result into FETCH_HEAD
     logger.info('Conflict resolved, fetching result...')
-    ecode, _out = b4.git_run_command(topdir, ['fetch', cex.worktree_path], logstderr=True)
+    ecode, _out = b4.git_run_command(
+        topdir, ['fetch', cex.worktree_path], logstderr=True
+    )
     b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
     if ecode > 0:
         logger.critical('Unable to fetch from resolved worktree')
@@ -236,8 +281,11 @@ def _get_review_branch_tips(topdir: str) -> Dict[str, str]:
 
     Uses a single git for-each-ref call instead of per-branch rev-parse.
     """
-    gitargs = ['for-each-ref', '--format=%(refname:short) %(objectname)',
-               'refs/heads/b4/review/']
+    gitargs = [
+        'for-each-ref',
+        '--format=%(refname:short) %(objectname)',
+        'refs/heads/b4/review/',
+    ]
     lines = b4.git_get_command_lines(topdir, gitargs)
     result: Dict[str, str] = {}
     for line in lines:
@@ -293,7 +341,7 @@ def _get_art_counts_batch(
         msg_start = content.find('\n\n')
         if msg_start < 0:
             continue
-        commit_msg = content[msg_start + 2:]
+        commit_msg = content[msg_start + 2 :]
 
         art = _parse_art_from_message(commit_msg)
         if art is not None:
@@ -426,7 +474,7 @@ class TrackedSeriesItem(ListItem):
         badge_style = ''
         if base_accent or fu_badge:
             ts = resolve_styles(self.app)
-            accent = f"bold {ts['warning']}"
+            accent = f'bold {ts["warning"]}'
             if base_accent:
                 base_style = accent
             if fu_badge:
@@ -531,11 +579,20 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     """
 
     BINDING_GROUPS = {
-        'review': 'Series', 'check': 'Series', 'thread': 'Series',
-        'range_diff': 'Series', 'action': 'Series', 'update_one': 'Series',
+        'review': 'Series',
+        'check': 'Series',
+        'thread': 'Series',
+        'range_diff': 'Series',
+        'action': 'Series',
+        'update_one': 'Series',
         'target_branch': 'Series',
-        'update_all': 'App', 'process_queue': 'App', 'limit': 'App',
-        'suspend': 'App', 'patchwork': 'App', 'quit': 'App', 'help': 'App',
+        'update_all': 'App',
+        'process_queue': 'App',
+        'limit': 'App',
+        'suspend': 'App',
+        'patchwork': 'App',
+        'quit': 'App',
+        'help': 'App',
     }
 
     BINDINGS = [
@@ -561,10 +618,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         Binding('question_mark', 'help', 'help', key_display='?'),
     ]
 
-    def __init__(self, identifier: str, original_branch: Optional[str] = None,
-                 focus_change_id: Optional[str] = None,
-                 email_dryrun: bool = False,
-                 patatt_sign: bool = True) -> None:
+    def __init__(
+        self,
+        identifier: str,
+        original_branch: Optional[str] = None,
+        focus_change_id: Optional[str] = None,
+        email_dryrun: bool = False,
+        patatt_sign: bool = True,
+    ) -> None:
         super().__init__()
         self._identifier = identifier
         self._original_branch = original_branch
@@ -584,12 +645,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._last_snooze_source: str = ''
         self._last_snooze_input: str = ''
         # CI check modal state
-        self._check_loading: Optional[Any] = None
+        self._check_loading: Optional[CheckLoadingScreen] = None
         # Thanks queue count
         self._queue_count: int = 0
         # Show target branch binding only when configured
         self._has_target_branches = bool(
-            b4.review.tracking.get_review_target_branches())
+            b4.review.tracking.get_review_target_branches()
+        )
         # Cached data for _load_series — invalidated by _invalidate_caches()
         # when u/U update runs or actions change tracking data.
         self._cached_branch_tips: Optional[Dict[str, str]] = None
@@ -617,8 +679,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._cached_revisions = None
         self._cached_art_counts = None
 
-    def _refresh_msg_count(self, series: Dict[str, Any],
-                           total_messages: int) -> None:
+    def _refresh_msg_count(self, series: Dict[str, Any], total_messages: int) -> None:
         """Opportunistically refresh message count after fetching messages."""
         if not self._identifier:
             return
@@ -676,8 +737,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self.set_interval(1, self._check_db_changed)
         topdir = b4.git_get_toplevel()
         if topdir and b4.review.tracking.db_exists(self._identifier):
-            self.run_worker(lambda: self._startup_rescan(topdir),
-                            name='_startup_rescan', thread=True)
+            self.run_worker(
+                lambda: self._startup_rescan(topdir),
+                name='_startup_rescan',
+                thread=True,
+            )
 
     def _startup_rescan(self, topdir: str) -> Dict[str, int]:
         """Rescan review branches in the background on app startup."""
@@ -751,9 +815,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         finally:
             conn.close()
 
-    def _wake_one(self, conn: 'sqlite3.Connection',
-                  entry: Dict[str, Any],
-                  topdir: Optional[str]) -> None:
+    def _wake_one(
+        self, conn: 'sqlite3.Connection', entry: Dict[str, Any], topdir: Optional[str]
+    ) -> None:
         """Restore a single snoozed series to its previous state."""
         cid = entry['change_id']
         rev = entry['revision']
@@ -767,7 +831,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
 
     def _load_series(self) -> None:
-        import b4.ty
         self._auto_wake_snoozed()
 
         all_series = b4.review.tracking.get_all_tracked_series(self._identifier)
@@ -794,9 +857,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             conn = None
         if self._cached_newest_revisions is None and conn:
             try:
-                self._cached_newest_revisions = b4.review.tracking.get_all_newest_revisions(conn)
-                self._cached_revision_counts = b4.review.tracking.get_all_revision_counts(conn)
-                self._cached_revisions = b4.review.tracking.get_all_revisions_grouped(conn)
+                self._cached_newest_revisions = (
+                    b4.review.tracking.get_all_newest_revisions(conn)
+                )
+                self._cached_revision_counts = (
+                    b4.review.tracking.get_all_revision_counts(conn)
+                )
+                self._cached_revisions = b4.review.tracking.get_all_revisions_grouped(
+                    conn
+                )
             except Exception:
                 pass
         newest_revisions = self._cached_newest_revisions or {}
@@ -822,7 +891,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             rev_count = revision_counts.get(change_id, 0)
             if rev_count > 1:
                 series['has_multiple_revisions'] = True
-            if rev_count == 0 and series.get('status') not in ('new', 'gone', 'snoozed'):
+            if rev_count == 0 and series.get('status') not in (
+                'new',
+                'gone',
+                'snoozed',
+            ):
                 series['needs_update'] = True
             # Stash revisions list for the detail panel
             series['_revisions'] = all_revisions.get(change_id, [])
@@ -846,8 +919,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # This is a display-only pseudo-state, not stored in the DB.
         queued_cids = b4.ty.get_queued_change_ids(dryrun=self._email_dryrun)
         for series in self._all_series:
-            if (series.get('status') == 'accepted'
-                    and series.get('change_id', '') in queued_cids):
+            if (
+                series.get('status') == 'accepted'
+                and series.get('change_id', '') in queued_cids
+            ):
                 series['queued'] = True
         # Sort into three tiers: active → action required → inactive.
         # Within each tier, sort by when the maintainer started tracking
@@ -858,7 +933,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         )
         self._all_series.sort(
             key=lambda s: _STATUS_TIER.get(
-                'queued' if s.get('queued') else s.get('status', 'new'), 2)
+                'queued' if s.get('queued') else s.get('status', 'new'), 2
+            )
         )
         self.call_later(self._refresh_list)
 
@@ -898,8 +974,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 if needle not in (series.get('target_branch', '') or '').lower():
                     return False
             else:
-                if (token not in (series.get('subject', '') or '').lower()
-                        and token not in (series.get('sender_name', '') or '').lower()):
+                if (
+                    token not in (series.get('subject', '') or '').lower()
+                    and token not in (series.get('sender_name', '') or '').lower()
+                ):
                     return False
         return True
 
@@ -907,8 +985,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         display_series = self._all_series
         if self._limit_pattern:
             display_series = [
-                s for s in display_series
-                if self._matches_limit(s, self._limit_pattern)
+                s for s in display_series if self._matches_limit(s, self._limit_pattern)
             ]
 
         try:
@@ -932,11 +1009,16 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # the new list is mounted.
         with self.app.batch_update():
             # Remove existing list/empty widgets
-            for widget in list(self.query('#tracking-header, #tracking-list, #tracking-empty')):
+            for widget in list(
+                self.query('#tracking-header, #tracking-list, #tracking-empty')
+            ):
                 await widget.remove()
 
             if not display_series:
-                empty = Static('No tracked series. Use "b4 review track" to add series.', id='tracking-empty')
+                empty = Static(
+                    'No tracked series. Use "b4 review track" to add series.',
+                    id='tracking-empty',
+                )
                 await self.mount(empty, before=self.query_one(Footer))
                 return
 
@@ -950,7 +1032,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         if self._focus_change_id:
             for idx, item in enumerate(list_items):
-                if isinstance(item, TrackedSeriesItem) and item.series.get('change_id') == self._focus_change_id:
+                if (
+                    isinstance(item, TrackedSeriesItem)
+                    and item.series.get('change_id') == self._focus_change_id
+                ):
                     lv.index = idx
                     break
             self._focus_change_id = None
@@ -964,9 +1049,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self._show_details(highlighted.series)
 
     def action_limit(self) -> None:
-        self.push_screen(LimitScreen(self._limit_pattern,
-                                     hint='Prefixes: s:<status>  t:<target-branch>'),
-                         callback=self._on_limit)
+        self.push_screen(
+            LimitScreen(
+                self._limit_pattern, hint='Prefixes: s:<status>  t:<target-branch>'
+            ),
+            callback=self._on_limit,
+        )
 
     def _on_limit(self, result: Optional[str]) -> None:
         if result is None:
@@ -1007,14 +1095,42 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             else:
                 self.action_action()
 
-
     _STATE_ACTIONS: Dict[str, frozenset[str]] = {
-        'new': frozenset({'review', 'range_diff', 'abandon', 'snooze', 'waiting', 'target_branch'}),
-        'reviewing': frozenset({'review', 'update_revision', 'range_diff', 'take', 'rebase', 'abandon', 'waiting', 'snooze', 'target_branch'}),
-        'replied': frozenset({'review', 'range_diff', 'take', 'rebase', 'archive', 'waiting', 'snooze', 'target_branch'}),
-        'waiting': frozenset({'review', 'range_diff', 'abandon', 'archive', 'snooze', 'target_branch'}),
+        'new': frozenset(
+            {'review', 'range_diff', 'abandon', 'snooze', 'waiting', 'target_branch'}
+        ),
+        'reviewing': frozenset(
+            {
+                'review',
+                'update_revision',
+                'range_diff',
+                'take',
+                'rebase',
+                'abandon',
+                'waiting',
+                'snooze',
+                'target_branch',
+            }
+        ),
+        'replied': frozenset(
+            {
+                'review',
+                'range_diff',
+                'take',
+                'rebase',
+                'archive',
+                'waiting',
+                'snooze',
+                'target_branch',
+            }
+        ),
+        'waiting': frozenset(
+            {'review', 'range_diff', 'abandon', 'archive', 'snooze', 'target_branch'}
+        ),
         'accepted': frozenset({'review', 'range_diff', 'thank', 'archive'}),
-        'snoozed': frozenset({'review', 'range_diff', 'unsnooze', 'abandon', 'target_branch'}),
+        'snoozed': frozenset(
+            {'review', 'range_diff', 'unsnooze', 'abandon', 'target_branch'}
+        ),
         'thanked': frozenset({'archive'}),
         'gone': frozenset({'abandon', 'review'}),
     }
@@ -1126,15 +1242,19 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                             pass
                     if conn:
                         b4.review.tracking.unsnooze_series(
-                            conn, change_id, 'reviewing', revision=revision)
+                            conn, change_id, 'reviewing', revision=revision
+                        )
                 elif status in ('waiting', 'accepted'):
                     # Bring back to reviewing on re-entry
                     if conn:
                         b4.review.tracking.update_series_status(
-                            conn, change_id, 'reviewing', revision=revision)
+                            conn, change_id, 'reviewing', revision=revision
+                        )
                     topdir = b4.git_get_toplevel()
                     if topdir:
-                        b4.review.update_tracking_status(topdir, branch_name, 'reviewing')
+                        b4.review.update_tracking_status(
+                            topdir, branch_name, 'reviewing'
+                        )
                 # Clear the followup badge — user is about to read this series
                 if conn and self._identifier and isinstance(revision, int):
                     b4.review.tracking.mark_all_messages_seen(conn, change_id, revision)
@@ -1189,8 +1309,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     rev_info = rev
                     break
             if rev_info is None:
-                self.notify(f'Revision v{chosen} not found in database',
-                            severity='error')
+                self.notify(
+                    f'Revision v{chosen} not found in database', severity='error'
+                )
                 return
             series['message_id'] = rev_info['message_id']
             series['revision'] = chosen
@@ -1198,8 +1319,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
                 b4.review.tracking.update_series_revision(
-                    conn, change_id, current_rev, chosen,
-                    rev_info['message_id'], rev_info.get('subject'))
+                    conn,
+                    change_id,
+                    current_rev,
+                    chosen,
+                    rev_info['message_id'],
+                    rev_info.get('subject'),
+                )
                 conn.close()
             except Exception:
                 pass
@@ -1222,10 +1348,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             }
         self._focus_change_id = self._selected_series.get('change_id')
         from b4.review_tui._lite_app import LiteThreadScreen
-        self.push_screen(LiteThreadScreen(message_id,
-                                          email_dryrun=self._email_dryrun,
-                                          patatt_sign=self._patatt_sign,
-                                          tracking_info=tracking_info))
+
+        self.push_screen(
+            LiteThreadScreen(
+                message_id,
+                email_dryrun=self._email_dryrun,
+                patatt_sign=self._patatt_sign,
+                tracking_info=tracking_info,
+            )
+        )
 
     def _checkout_new_series(self) -> None:
         """Retrieve series, build am-ready mbox, and show base selection."""
@@ -1250,21 +1381,24 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                         # The stored message-id may point to a different
                         # version's thread.  Search for the wanted version
                         # in other threads before giving up.
-                        msgs = b4.mbox.get_extra_series(
-                            msgs, direction=1, nocache=True)
+                        msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
                         if wantver > 1:
                             msgs = b4.mbox.get_extra_series(
-                                msgs, direction=-1,
-                                wantvers=[wantver], nocache=True)
-                        lser = b4.review._get_lore_series(
-                            msgs, wantver=wantver)
+                                msgs, direction=-1, wantvers=[wantver], nocache=True
+                            )
+                        lser = b4.review._get_lore_series(msgs, wantver=wantver)
                     else:
                         raise
 
                 am_msgs = lser.get_am_ready(
-                    noaddtrailers=True, addmysob=False, addlink=False,
-                    cherrypick=None, copyccs=False, allowbadchars=False,
-                    showchecks=False)
+                    noaddtrailers=True,
+                    addmysob=False,
+                    addlink=False,
+                    cherrypick=None,
+                    copyccs=False,
+                    allowbadchars=False,
+                    showchecks=False,
+                )
                 if not am_msgs:
                     raise LookupError('No patches ready for applying')
 
@@ -1291,25 +1425,27 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     try:
                         guessed, nblobs, mismatches = lser.find_base(
                             topdir,
-                            branches=['--exclude=refs/heads/b4/review/*',
-                                      '--all'],
-                            maxdays=30)
+                            branches=['--exclude=refs/heads/b4/review/*', '--all'],
+                            maxdays=30,
+                        )
                         if guessed:
                             # find_base returns a describe name (e.g. heads/foo);
                             # resolve it to a SHA for the input field
                             ecode, sha_out = b4.git_run_command(
-                                topdir, ['rev-parse', '--verify', guessed])
+                                topdir, ['rev-parse', '--verify', guessed]
+                            )
                             sha = sha_out.strip() if ecode == 0 else ''
                             short_sha = sha[:12] if sha else guessed
                             if mismatches == 0:
                                 initial_base = short_sha
-                                base_hint = (f'Guessed base: {guessed}'
-                                             f' (exact match)')
+                                base_hint = f'Guessed base: {guessed} (exact match)'
                             elif nblobs != mismatches:
                                 matched = nblobs - mismatches
                                 initial_base = short_sha
-                                base_hint = (f'Guessed base: {guessed}'
-                                             f' ({matched}/{nblobs} blobs)')
+                                base_hint = (
+                                    f'Guessed base: {guessed}'
+                                    f' ({matched}/{nblobs} blobs)'
+                                )
                             else:
                                 base_hint = 'Could not find a matching base'
                     except (IndexError, Exception):
@@ -1322,7 +1458,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                         self._identifier,
                         series.get('change_id', ''),
                         series.get('revision', 1),
-                        att)
+                        att,
+                    )
 
                 return lser, ambytes, initial_base, base_hint
 
@@ -1331,8 +1468,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             callback=lambda result: self._on_series_fetched(result, series),
         )
 
-    def _on_series_fetched(self, result: Any,
-                            series: Dict[str, Any]) -> None:
+    def _on_series_fetched(self, result: Any, series: Dict[str, Any]) -> None:
         """Handle the result from the series fetch worker."""
         if result is None:
             return
@@ -1355,28 +1491,35 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                             base_suggestions.append(rb)
 
         self.push_screen(
-            BaseSelectionScreen(initial_base, lser, ambytes,
-                                base_suggestions=base_suggestions,
-                                base_hint=base_hint,
-                                subject=series.get('subject', '')),
+            BaseSelectionScreen(
+                initial_base,
+                lser,
+                ambytes,
+                base_suggestions=base_suggestions,
+                base_hint=base_hint,
+                subject=series.get('subject', ''),
+            ),
             callback=lambda base_sha: self._on_base_selected(
-                base_sha, lser, series, ambytes),
+                base_sha, lser, series, ambytes
+            ),
         )
 
-    def _on_base_selected(self, base_sha: Optional[str],
-                           lser: b4.LoreSeries,
-                           series: Dict[str, Any],
-                           ambytes: bytes) -> None:
+    def _on_base_selected(
+        self,
+        base_sha: Optional[str],
+        lser: b4.LoreSeries,
+        series: Dict[str, Any],
+        ambytes: bytes,
+    ) -> None:
         """Handle base selection screen result."""
         if base_sha is None:
             self.notify('Checkout cancelled', severity='information')
             return
-        self._do_checkout(lser, series, base_commit=base_sha,
-                          ambytes=ambytes)
+        self._do_checkout(lser, series, base_commit=base_sha, ambytes=ambytes)
 
-    def _discover_newer_versions(self, change_id: str,
-                                 current_rev: int,
-                                 review_branch: str) -> List[int]:
+    def _discover_newer_versions(
+        self, change_id: str, current_rev: int, review_branch: str
+    ) -> List[int]:
         """Look up newer revision numbers from tracking data and DB."""
         newer_versions: List[int] = []
         topdir = b4.git_get_toplevel()
@@ -1398,8 +1541,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         return newer_versions
 
     @staticmethod
-    def _resolve_base_commit(topdir: str,
-                             lser: 'b4.LoreSeries') -> Optional[str]:
+    def _resolve_base_commit(topdir: str, lser: 'b4.LoreSeries') -> Optional[str]:
         """Determine the base commit for a series, guessing if needed.
 
         Returns the base commit SHA or None if it cannot be determined.
@@ -1408,8 +1550,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         need_guess = False
         if base_commit:
             if not b4.git_commit_exists(topdir, base_commit):
-                logger.warning('Base commit %s not found in repository, will try to guess',
-                               base_commit)
+                logger.warning(
+                    'Base commit %s not found in repository, will try to guess',
+                    base_commit,
+                )
                 need_guess = True
         else:
             need_guess = True
@@ -1418,23 +1562,33 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             logger.info('Guessing base commit...')
             try:
                 base_commit, nblobs, mismatches = lser.find_base(
-                    topdir, branches=None, maxdays=30)
+                    topdir, branches=None, maxdays=30
+                )
                 if mismatches == 0:
                     logger.info('Base: %s (exact match)', base_commit)
                 elif nblobs == mismatches:
                     logger.warning('Base: failed to find matching base')
                     base_commit = None
                 else:
-                    logger.info('Base: %s (best guess, %s/%s blobs matched)',
-                                base_commit, nblobs - mismatches, nblobs)
+                    logger.info(
+                        'Base: %s (best guess, %s/%s blobs matched)',
+                        base_commit,
+                        nblobs - mismatches,
+                        nblobs,
+                    )
             except IndexError as ex:
                 logger.warning('Base: failed to guess (%s)', ex)
                 base_commit = None
 
         return base_commit
 
-    def _do_checkout(self, lser: b4.LoreSeries, series: Dict[str, Any],
-                     base_commit: str, ambytes: bytes) -> None:
+    def _do_checkout(
+        self,
+        lser: b4.LoreSeries,
+        series: Dict[str, Any],
+        base_commit: str,
+        ambytes: bytes,
+    ) -> None:
         """Create the review branch for the series.
 
         Args:
@@ -1484,20 +1638,36 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 if mismatches:
                     rstart, rend = lser.make_fake_am_range(gitdir=topdir)
                     if rstart and rend:
-                        logger.info('Prepared fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+                        logger.info(
+                            'Prepared fake commit range for 3-way merge (%.12s..%.12s)',
+                            rstart,
+                            rend,
+                        )
 
+            _is_rt = bool(series.get('is_rethreaded'))
             try:
                 logger.info('Base: %s', base_commit)
-                b4.git_fetch_am_into_repo(topdir, ambytes=ambytes, at_base=base_commit,
-                                          origin=linkurl, am_flags=['-3'])
+                b4.git_fetch_am_into_repo(
+                    topdir,
+                    ambytes=ambytes,
+                    at_base=base_commit,
+                    origin=linkurl,
+                    am_flags=['-3'],
+                )
 
                 # Create the review branch
-                _is_rt = bool(series.get('is_rethreaded'))
-                b4.review.create_review_branch(topdir, branch_name, base_commit, lser,
-                                               linkurl, linkmask, num_prereqs=0,
-                                               identifier=self._identifier,
-                                               status='reviewing',
-                                               is_rethreaded=_is_rt)
+                b4.review.create_review_branch(
+                    topdir,
+                    branch_name,
+                    base_commit,
+                    lser,
+                    linkurl,
+                    linkmask,
+                    num_prereqs=0,
+                    identifier=self._identifier,
+                    status='reviewing',
+                    is_rethreaded=_is_rt,
+                )
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
             except b4.AmConflictError as cex:
@@ -1506,11 +1676,18 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     return
                 b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
                 # Create the review branch from resolved result
-                b4.review.create_review_branch(topdir, branch_name, base_commit, lser,
-                                               linkurl, linkmask, num_prereqs=0,
-                                               identifier=self._identifier,
-                                               status='reviewing',
-                                               is_rethreaded=_is_rt)
+                b4.review.create_review_branch(
+                    topdir,
+                    branch_name,
+                    base_commit,
+                    lser,
+                    linkurl,
+                    linkmask,
+                    num_prereqs=0,
+                    identifier=self._identifier,
+                    status='reviewing',
+                    is_rethreaded=_is_rt,
+                )
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
             except Exception as ex:
@@ -1524,9 +1701,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if self._identifier:
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
-                conn.execute('UPDATE series SET status = ?, revision = ?, message_id = ? WHERE track_id = ?',
-                             ('reviewing', series.get('revision'), series.get('message_id'),
-                              series.get('track_id')))
+                conn.execute(
+                    'UPDATE series SET status = ?, revision = ?, message_id = ? WHERE track_id = ?',
+                    (
+                        'reviewing',
+                        series.get('revision'),
+                        series.get('message_id'),
+                        series.get('track_id'),
+                    ),
+                )
                 conn.commit()
                 conn.close()
             except Exception as ex:
@@ -1538,7 +1721,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
                 db_target = b4.review.tracking.get_target_branch(
-                    conn, _co_change_id, revision=series.get('revision'))
+                    conn, _co_change_id, revision=series.get('revision')
+                )
                 conn.close()
                 if db_target and b4.git_branch_exists(topdir, branch_name):
                     cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
@@ -1546,7 +1730,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     if not trk_series.get('target-branch'):
                         trk_series['target-branch'] = db_target
                         tracking['series'] = trk_series
-                        b4.review.save_tracking_ref(topdir, branch_name, cover_text, tracking)
+                        b4.review.save_tracking_ref(
+                            topdir, branch_name, cover_text, tracking
+                        )
             except (SystemExit, Exception):
                 pass
 
@@ -1561,7 +1747,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if self._identifier and _co_change_id and isinstance(_co_revision, int):
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
-                b4.review.tracking.mark_all_messages_seen(conn, _co_change_id, _co_revision)
+                b4.review.tracking.mark_all_messages_seen(
+                    conn, _co_change_id, _co_revision
+                )
                 conn.close()
             except Exception:
                 pass
@@ -1688,7 +1876,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # Show target branch from preloaded series data or config default
         target_row = self.query_one('#detail-target-row', Horizontal)
-        target_branch = series.get('target_branch') or b4.review.tracking.get_review_target_branch_default()
+        target_branch = (
+            series.get('target_branch')
+            or b4.review.tracking.get_review_target_branch_default()
+        )
         if target_branch:
             self.query_one('#detail-target', Static).update(target_branch)
             target_row.display = True
@@ -1723,7 +1914,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         try:
             conn = b4.review.tracking.get_db(self._identifier)
             db_target = b4.review.tracking.get_target_branch(
-                conn, change_id, revision=series.get('revision'))
+                conn, change_id, revision=series.get('revision')
+            )
             conn.close()
             if db_target:
                 return db_target
@@ -1764,11 +1956,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 review_branch = rb
 
         self.push_screen(
-            TargetBranchScreen(current_target, suggestions=suggestions or None,
-                               subject=series.get('subject', ''),
-                               message_id=series.get('message_id', ''),
-                               revision=series.get('revision'),
-                               review_branch=review_branch),
+            TargetBranchScreen(
+                current_target,
+                suggestions=suggestions or None,
+                subject=series.get('subject', ''),
+                message_id=series.get('message_id', ''),
+                revision=series.get('revision'),
+                review_branch=review_branch,
+            ),
             callback=self._on_target_branch_set,
         )
 
@@ -1792,22 +1987,27 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if topdir and status in ('reviewing', 'replied', 'waiting', 'snoozed'):
             if b4.git_branch_exists(topdir, review_branch):
                 try:
-                    cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                    cover_text, tracking = b4.review.load_tracking(
+                        topdir, review_branch
+                    )
                     trk_series = tracking.get('series', {})
                     if target_value:
                         trk_series['target-branch'] = target_value
                     else:
                         trk_series.pop('target-branch', None)
                     tracking['series'] = trk_series
-                    b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+                    b4.review.save_tracking_ref(
+                        topdir, review_branch, cover_text, tracking
+                    )
                 except (SystemExit, Exception) as ex:
                     logger.warning('Could not update tracking commit: %s', ex)
 
         # Update database
         try:
             conn = b4.review.tracking.get_db(self._identifier)
-            b4.review.tracking.update_target_branch(conn, change_id, target_value,
-                                                    revision=revision)
+            b4.review.tracking.update_target_branch(
+                conn, change_id, target_value, revision=revision
+            )
             conn.close()
         except Exception as ex:
             logger.warning('Could not update target branch in DB: %s', ex)
@@ -1832,8 +2032,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         self._focus_change_id = self._selected_series.get('change_id')
         self.push_screen(
-            UpdateAllScreen([self._selected_series], self._identifier,
-                            linkmask, topdir),
+            UpdateAllScreen(
+                [self._selected_series], self._identifier, linkmask, topdir
+            ),
             callback=self._on_update_complete,
         )
 
@@ -1879,7 +2080,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if errors:
             parts.append(f'{errors} error(s)')
 
-        severity: Literal['information', 'warning'] = 'warning' if errors else 'information'
+        severity: Literal['information', 'warning'] = (
+            'warning' if errors else 'information'
+        )
         self.notify(', '.join(parts), severity=severity)
         for submitter, error in error_details:
             logger.warning('Update error (%s): %s', submitter, error)
@@ -1926,42 +2129,58 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Check if a newer revision is known to exist
         current_rev = series.get('revision', 1)
         newer_versions = self._discover_newer_versions(
-            change_id, current_rev, review_branch)
+            change_id, current_rev, review_branch
+        )
 
         if newer_versions:
             # Require explicit confirmation before taking an older revision
             self.push_screen(
                 NewerRevisionWarningScreen(current_rev, newer_versions),
                 callback=lambda proceed: self._on_newer_revision_acknowledged(
-                    proceed, target_branch, change_id, review_branch, series),
+                    proceed, target_branch, change_id, review_branch, series
+                ),
             )
         else:
             self._show_take_screen(target_branch, change_id, review_branch, series)
 
-    def _on_newer_revision_acknowledged(self, proceed: bool, target_branch: str,
-                                        change_id: str, review_branch: str,
-                                        series: Dict[str, Any]) -> None:
+    def _on_newer_revision_acknowledged(
+        self,
+        proceed: Optional[bool],
+        target_branch: str,
+        change_id: str,
+        review_branch: str,
+        series: Dict[str, Any],
+    ) -> None:
         """Handle result of the newer-revision warning."""
         if not proceed:
             return
         self._show_take_screen(target_branch, change_id, review_branch, series)
 
-    def _show_take_screen(self, target_branch: str, change_id: str,
-                          review_branch: str, series: Dict[str, Any]) -> None:
+    def _show_take_screen(
+        self,
+        target_branch: str,
+        change_id: str,
+        review_branch: str,
+        series: Dict[str, Any],
+    ) -> None:
         """Push the TakeScreen dialog."""
         num_patches = series.get('num_patches', 0) or 0
         # Start with user config preference; skip detection below may override it.
         _valid_take_methods = {'merge', 'linear', 'cherry-pick'}
         b4cfg = b4.get_config_from_git(r'b4\..*')
         cfg_method = str(b4cfg.get('review-default-take-method', ''))
-        default_method: Optional[str] = cfg_method if cfg_method in _valid_take_methods else None
+        default_method: Optional[str] = (
+            cfg_method if cfg_method in _valid_take_methods else None
+        )
         topdir = b4.git_get_toplevel()
         if topdir:
             try:
                 _cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
                 usercfg = b4.get_user_config()
                 patches = tracking.get('patches', [])
-                if any(b4.review._get_patch_state(p, usercfg) == 'skip' for p in patches):
+                if any(
+                    b4.review._get_patch_state(p, usercfg) == 'skip' for p in patches
+                ):
                     default_method = 'cherry-pick'
             except Exception:
                 pass
@@ -1974,7 +2193,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if recent_branches and not per_series_target:
             target_branch = recent_branches[0]
         # Build the suggestion list: config branches + recent take branches
-        all_suggestions: List[str] = list(b4.review.tracking.get_review_target_branches())
+        all_suggestions: List[str] = list(
+            b4.review.tracking.get_review_target_branches()
+        )
         if recent_branches:
             for rb in recent_branches:
                 if rb not in all_suggestions:
@@ -1982,19 +2203,29 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if target_branch and target_branch not in all_suggestions:
             all_suggestions.append(target_branch)
         recent_branches = all_suggestions or None
-        take_screen = TakeScreen(target_branch, review_branch, num_patches=num_patches,
-                                 default_method=default_method,
-                                 recent_branches=recent_branches,
-                                 subject=series.get('subject', ''))
+        take_screen = TakeScreen(
+            target_branch,
+            review_branch,
+            num_patches=num_patches,
+            default_method=default_method,
+            recent_branches=recent_branches,
+            subject=series.get('subject', ''),
+        )
         self.push_screen(
             take_screen,
             callback=lambda confirmed: self._on_take_confirmed(
-                confirmed, change_id, review_branch, take_screen, series),
+                confirmed, change_id, review_branch, take_screen, series
+            ),
         )
 
-    def _on_take_confirmed(self, confirmed: bool, change_id: str,
-                           review_branch: str, take_screen: 'TakeScreen',
-                           series: Dict[str, Any]) -> None:
+    def _on_take_confirmed(
+        self,
+        confirmed: Optional[bool],
+        change_id: str,
+        review_branch: str,
+        take_screen: 'TakeScreen',
+        series: Dict[str, Any],
+    ) -> None:
         """Handle take screen result — proceed to cherry-pick or confirm."""
         if not confirmed:
             return
@@ -2015,7 +2246,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return
             usercfg = b4.get_user_config()
             preselected = [
-                i + 1 for i, p in enumerate(patches)
+                i + 1
+                for i, p in enumerate(patches)
                 if b4.review._get_patch_state(p, usercfg) != 'skip'
             ]
             # Only pre-populate if some patches are actually skipped
@@ -2025,49 +2257,81 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.push_screen(
                 pick_screen,
                 callback=lambda picked: self._on_cherrypick_confirmed(
-                    picked, change_id, review_branch, take_screen, series,
-                    pick_screen),
+                    picked, change_id, review_branch, take_screen, series, pick_screen
+                ),
             )
         else:
             self._show_take_confirm(
-                take_screen.method_result, take_screen.target_result,
-                change_id, review_branch, take_screen, series)
+                take_screen.method_result,
+                take_screen.target_result,
+                change_id,
+                review_branch,
+                take_screen,
+                series,
+            )
 
-    def _on_cherrypick_confirmed(self, confirmed: bool, change_id: str,
-                                 review_branch: str, take_screen: 'TakeScreen',
-                                 series: Dict[str, Any],
-                                 pick_screen: 'CherryPickScreen') -> None:
+    def _on_cherrypick_confirmed(
+        self,
+        confirmed: Optional[bool],
+        change_id: str,
+        review_branch: str,
+        take_screen: 'TakeScreen',
+        series: Dict[str, Any],
+        pick_screen: 'CherryPickScreen',
+    ) -> None:
         """Handle cherry-pick selection — proceed to confirm screen."""
         if not confirmed:
             return
         self._show_take_confirm(
-            'cherry-pick', take_screen.target_result,
-            change_id, review_branch, take_screen, series,
-            cherrypick=pick_screen.selected_indices)
+            'cherry-pick',
+            take_screen.target_result,
+            change_id,
+            review_branch,
+            take_screen,
+            series,
+            cherrypick=pick_screen.selected_indices,
+        )
 
-    def _show_take_confirm(self, method: str, target_branch: str,
-                           change_id: str, review_branch: str,
-                           take_screen: 'TakeScreen',
-                           series: Dict[str, Any],
-                           cherrypick: Optional[List[int]] = None) -> None:
+    def _show_take_confirm(
+        self,
+        method: str,
+        target_branch: str,
+        change_id: str,
+        review_branch: str,
+        take_screen: 'TakeScreen',
+        series: Dict[str, Any],
+        cherrypick: Optional[List[int]] = None,
+    ) -> None:
         """Push the TakeConfirmScreen for final confirmation."""
         subject = series.get('subject', '')
         confirm_screen = TakeConfirmScreen(
-            method, target_branch, review_branch, subject=subject,
-            cherrypick=cherrypick)
+            method, target_branch, review_branch, subject=subject, cherrypick=cherrypick
+        )
         self.push_screen(
             confirm_screen,
             callback=lambda ok: self._on_take_final(
-                ok, method, change_id, review_branch, take_screen,
-                series, confirm_screen, cherrypick),
+                ok,
+                method,
+                change_id,
+                review_branch,
+                take_screen,
+                series,
+                confirm_screen,
+                cherrypick,
+            ),
         )
 
-    def _on_take_final(self, confirmed: bool, method: str,
-                       change_id: str, review_branch: str,
-                       take_screen: 'TakeScreen',
-                       series: Dict[str, Any],
-                       confirm_screen: 'TakeConfirmScreen',
-                       cherrypick: Optional[List[int]] = None) -> None:
+    def _on_take_final(
+        self,
+        confirmed: Optional[bool],
+        method: str,
+        change_id: str,
+        review_branch: str,
+        take_screen: 'TakeScreen',
+        series: Dict[str, Any],
+        confirm_screen: 'TakeConfirmScreen',
+        cherrypick: Optional[List[int]] = None,
+    ) -> None:
         """Execute the actual take after final confirmation."""
         if not confirmed:
             return
@@ -2080,15 +2344,20 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self._load_series()
         else:
             with self.suspend():
-                self._do_take_am(change_id, review_branch, take_screen, series,
-                                 cherrypick=cherrypick)
+                self._do_take_am(
+                    change_id, review_branch, take_screen, series, cherrypick=cherrypick
+                )
             self._load_series()
 
     @staticmethod
-    def _record_take_metadata(topdir: str, review_branch: str,
-                              target_branch: str, commit_ids: List[str],
-                              cherrypick: Optional[List[int]] = None,
-                              accepted: bool = True) -> None:
+    def _record_take_metadata(
+        topdir: str,
+        review_branch: str,
+        target_branch: str,
+        commit_ids: List[str],
+        cherrypick: Optional[List[int]] = None,
+        accepted: bool = True,
+    ) -> None:
         """Record taken commit IDs in the tracking data on the review branch.
 
         Args:
@@ -2145,9 +2414,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking):
             logger.warning('Could not save take metadata to tracking commit')
 
-    def _do_take_merge(self, change_id: str, review_branch: str,
-                       take_screen: 'TakeScreen',
-                       series: Dict[str, Any]) -> None:
+    def _do_take_merge(
+        self,
+        change_id: str,
+        review_branch: str,
+        take_screen: 'TakeScreen',
+        series: Dict[str, Any],
+    ) -> None:
         """Perform a merge-based take operation."""
         target_branch = take_screen.target_result
 
@@ -2178,15 +2451,19 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             try:
                 merge_template = b4.read_template(str(config['shazam-merge-template']))
             except FileNotFoundError:
-                logger.critical('ERROR: shazam-merge-template says to use %s, but it does not exist',
-                                config['shazam-merge-template'])
+                logger.critical(
+                    'ERROR: shazam-merge-template says to use %s, but it does not exist',
+                    config['shazam-merge-template'],
+                )
                 _wait_for_enter()
                 return
 
         # Extract cover message body
         covermessage = ''
         if cover_text:
-            _githeaders, message, _trailers, _basement, _sig = b4.LoreMessage.get_body_parts(cover_text)
+            _githeaders, message, _trailers, _basement, _sig = (
+                b4.LoreMessage.get_body_parts(cover_text)
+            )
             covermessage = message.strip()
         if not covermessage:
             covermessage = '(no cover letter message)'
@@ -2256,7 +2533,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             base_commit = out.strip()
 
         try:
-            b4.git_fetch_am_into_repo(topdir, ambytes, at_base=base_commit, am_flags=['-3'])
+            b4.git_fetch_am_into_repo(
+                topdir, ambytes, at_base=base_commit, am_flags=['-3']
+            )
         except b4.AmConflictError as cex:
             if not _resolve_worktree_am_conflict(topdir, cex):
                 _wait_for_enter()
@@ -2271,7 +2550,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             prev_branch = b4.git_revparse_obj('HEAD', gitdir=topdir)
 
         # Checkout target branch
-        ecode, out = b4.git_run_command(topdir, ['checkout', target_branch], logstderr=True)
+        ecode, out = b4.git_run_command(
+            topdir, ['checkout', target_branch], logstderr=True
+        )
         if ecode != 0:
             logger.critical('Could not checkout %s: %s', target_branch, out.strip())
             _wait_for_enter()
@@ -2313,20 +2594,31 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # After --no-ff merge, HEAD^2 is the tip of the merged side;
         # the individual patch commits are base_commit..HEAD^2.
         ecode, out = b4.git_run_command(
-            topdir, ['rev-list', '--reverse', f'{base_commit}..HEAD^2'])
+            topdir, ['rev-list', '--reverse', f'{base_commit}..HEAD^2']
+        )
         if ecode == 0 and out.strip():
             commit_ids = out.strip().splitlines()
-            self._record_take_metadata(topdir, review_branch, target_branch,
-                                       commit_ids,
-                                       accepted=take_screen.accept_series)
+            self._record_take_metadata(
+                topdir,
+                review_branch,
+                target_branch,
+                commit_ids,
+                accepted=take_screen.accept_series,
+            )
 
-        self._finalize_take(topdir, target_branch, change_id, t_series,
-                            take_screen.accept_series)
+        self._finalize_take(
+            topdir, target_branch, change_id, t_series, take_screen.accept_series
+        )
         _wait_for_enter()
 
-    def _finalize_take(self, topdir: str, target_branch: str,
-                       change_id: str, series: Dict[str, Any],
-                       accepted: bool) -> None:
+    def _finalize_take(
+        self,
+        topdir: str,
+        target_branch: str,
+        change_id: str,
+        series: Dict[str, Any],
+        accepted: bool,
+    ) -> None:
         """Common post-take steps: record branch, update DB, update Patchwork."""
         common_dir = b4.git_get_common_dir(topdir)
         if common_dir:
@@ -2337,14 +2629,17 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             existing_target = None
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
-                b4.review.tracking.update_series_status(conn, change_id, 'accepted',
-                                                        revision=revision)
+                b4.review.tracking.update_series_status(
+                    conn, change_id, 'accepted', revision=revision
+                )
                 # Record the take target as the series target branch if not already set
                 existing_target = b4.review.tracking.get_target_branch(
-                    conn, change_id, revision=revision)
+                    conn, change_id, revision=revision
+                )
                 if not existing_target:
                     b4.review.tracking.update_target_branch(
-                        conn, change_id, target_branch, revision=revision)
+                        conn, change_id, target_branch, revision=revision
+                    )
                 conn.close()
             except Exception as ex:
                 logger.warning('Could not update series status: %s', ex)
@@ -2352,13 +2647,16 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             review_branch = f'b4/review/{change_id}'
             if not existing_target and b4.git_branch_exists(topdir, review_branch):
                 try:
-                    cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                    cover_text, tracking = b4.review.load_tracking(
+                        topdir, review_branch
+                    )
                     trk_series = tracking.get('series', {})
                     if not trk_series.get('target-branch'):
                         trk_series['target-branch'] = target_branch
                         tracking['series'] = trk_series
-                        b4.review.save_tracking_ref(topdir, review_branch,
-                                                    cover_text, tracking)
+                        b4.review.save_tracking_ref(
+                            topdir, review_branch, cover_text, tracking
+                        )
                 except (SystemExit, Exception):
                     pass
 
@@ -2414,8 +2712,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Generate patches from local commits
         revision = t_series.get('revision', 1)
         try:
-            local_patches = b4.git_range_to_patches(topdir, range_start, range_end,
-                                                    revision=revision)
+            local_patches = b4.git_range_to_patches(
+                topdir, range_start, range_end, revision=revision
+            )
         except RuntimeError as ex:
             logger.critical('Could not generate patches: %s', ex)
             _wait_for_enter()
@@ -2439,8 +2738,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         for _commit, msg in local_patches:
             lmbx.add_message(msg)
 
-        lser = lmbx.get_series(revision, sloppytrailers=False,
-                               codereview_trailers=False)
+        lser = lmbx.get_series(
+            revision, sloppytrailers=False, codereview_trailers=False
+        )
         if lser is None:
             logger.critical('Could not build series from local patches')
             _wait_for_enter()
@@ -2476,20 +2776,25 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                         patch.followup_trailers.append(fltr)
 
         # Get am-ready messages
-        am_msgs = lser.get_am_ready(noaddtrailers=False,
-                                    addmysob=take_screen.add_signoff,
-                                    addlink=take_screen.add_link,
-                                    cherrypick=cherrypick,
-                                    copyccs=False,
-                                    allowbadchars=False)
+        am_msgs = lser.get_am_ready(
+            noaddtrailers=False,
+            addmysob=take_screen.add_signoff,
+            addlink=take_screen.add_link,
+            cherrypick=cherrypick,
+            copyccs=False,
+            allowbadchars=False,
+        )
         if not am_msgs:
             logger.critical('No patches ready for applying')
             _wait_for_enter()
             return None
 
         if cherrypick:
-            logger.info('Prepared %d patch(es) (cherry-picked: %s)',
-                        len(am_msgs), ', '.join(str(x) for x in cherrypick))
+            logger.info(
+                'Prepared %d patch(es) (cherry-picked: %s)',
+                len(am_msgs),
+                ', '.join(str(x) for x in cherrypick),
+            )
         else:
             logger.info('Prepared %d patch(es)', len(am_msgs))
 
@@ -2498,9 +2803,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         b4.save_git_am_mbox(am_msgs, ifh)
         return ifh.getvalue()
 
-    def _do_take_am(self, change_id: str, review_branch: str,
-                    take_screen: 'TakeScreen', series: Dict[str, Any],
-                    cherrypick: Optional[List[int]]) -> None:
+    def _do_take_am(
+        self,
+        change_id: str,
+        review_branch: str,
+        take_screen: 'TakeScreen',
+        series: Dict[str, Any],
+        cherrypick: Optional[List[int]],
+    ) -> None:
         """Perform a linear or cherry-pick take via git-am."""
         target_branch = take_screen.target_result
 
@@ -2509,8 +2819,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             logger.critical('Not in a git repository')
             return
 
-        ambytes = self._prepare_am_messages(review_branch, take_screen, series,
-                                            cherrypick=cherrypick)
+        ambytes = self._prepare_am_messages(
+            review_branch, take_screen, series, cherrypick=cherrypick
+        )
         if ambytes is None:
             return
 
@@ -2520,7 +2831,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             prev_branch = b4.git_revparse_obj('HEAD', gitdir=topdir)
 
         # Checkout target branch
-        ecode, out = b4.git_run_command(topdir, ['checkout', target_branch], logstderr=True)
+        ecode, out = b4.git_run_command(
+            topdir, ['checkout', target_branch], logstderr=True
+        )
         if ecode != 0:
             logger.critical('Could not checkout %s: %s', target_branch, out.strip())
             _wait_for_enter()
@@ -2531,12 +2844,16 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         pre_am_head = out.strip() if ecode == 0 else ''
 
         # Run git-am with three-way merge
-        ecode, out = b4.git_run_command(topdir, ['am', '-3'], stdin=ambytes, logstderr=True)
+        ecode, out = b4.git_run_command(
+            topdir, ['am', '-3'], stdin=ambytes, logstderr=True
+        )
         if ecode != 0:
             logger.critical('git-am failed:')
             logger.critical(out.strip())
             logger.info('You can resolve the conflict now.')
-            logger.info('Use "git am --continue" after resolving, or "git am --abort" to give up.')
+            logger.info(
+                'Use "git am --continue" after resolving, or "git am --abort" to give up.'
+            )
             _suspend_to_shell(hint='b4 conflict')
             # Check if am is still in progress (user exited without finishing)
             rebase_apply_path = os.path.join(topdir, '.git', 'rebase-apply')
@@ -2546,7 +2863,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 _wait_for_enter()
                 return
             # Check if am was aborted (HEAD unchanged)
-            ecode, current_head = b4.git_run_command(topdir, ['rev-parse', 'HEAD'], logstderr=True)
+            ecode, current_head = b4.git_run_command(
+                topdir, ['rev-parse', 'HEAD'], logstderr=True
+            )
             if ecode != 0 or current_head.strip() == pre_am_head:
                 logger.warning('Conflict resolution aborted')
                 _wait_for_enter()
@@ -2559,15 +2878,22 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Record per-patch commit IDs in the tracking data
         if pre_am_head:
             ecode, out = b4.git_run_command(
-                topdir, ['rev-list', '--reverse', f'{pre_am_head}..HEAD'])
+                topdir, ['rev-list', '--reverse', f'{pre_am_head}..HEAD']
+            )
             if ecode == 0:
                 commit_ids = out.strip().splitlines()
-                self._record_take_metadata(topdir, review_branch, target_branch,
-                                           commit_ids, cherrypick=cherrypick,
-                                           accepted=take_screen.accept_series)
+                self._record_take_metadata(
+                    topdir,
+                    review_branch,
+                    target_branch,
+                    commit_ids,
+                    cherrypick=cherrypick,
+                    accepted=take_screen.accept_series,
+                )
 
-        self._finalize_take(topdir, target_branch, change_id, series,
-                            take_screen.accept_series)
+        self._finalize_take(
+            topdir, target_branch, change_id, series, take_screen.accept_series
+        )
         _wait_for_enter()
 
     def action_rebase(self) -> None:
@@ -2576,7 +2902,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             return
         status = self._selected_series.get('status', 'new')
         if status not in ('reviewing', 'replied'):
-            self.notify('Series must be checked out before rebasing', severity='warning')
+            self.notify(
+                'Series must be checked out before rebasing', severity='warning'
+            )
             return
 
         series = self._selected_series
@@ -2598,22 +2926,34 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         elif recent_branches:
             current_branch = recent_branches[0]
         # Ensure the original branch is always in the suggestion list
-        if current_branch and recent_branches is not None and current_branch not in recent_branches:
+        if (
+            current_branch
+            and recent_branches is not None
+            and current_branch not in recent_branches
+        ):
             recent_branches.append(current_branch)
         elif current_branch and recent_branches is None:
             recent_branches = [current_branch]
 
-        rebase_screen = RebaseScreen(current_branch, review_branch,
-                                     recent_branches=recent_branches,
-                                     subject=self._selected_series.get('subject', ''))
+        rebase_screen = RebaseScreen(
+            current_branch,
+            review_branch,
+            recent_branches=recent_branches,
+            subject=self._selected_series.get('subject', ''),
+        )
         self.push_screen(
             rebase_screen,
             callback=lambda confirmed: self._on_rebase_confirmed(
-                confirmed, review_branch, rebase_screen),
+                confirmed, review_branch, rebase_screen
+            ),
         )
 
-    def _on_rebase_confirmed(self, confirmed: bool, review_branch: str,
-                             rebase_screen: 'RebaseScreen') -> None:
+    def _on_rebase_confirmed(
+        self,
+        confirmed: Optional[bool],
+        review_branch: str,
+        rebase_screen: 'RebaseScreen',
+    ) -> None:
         """Handle rebase confirmation result."""
         if not confirmed:
             return
@@ -2670,12 +3010,16 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         try:
             with b4.git_temp_worktree(topdir, target_head) as gwt:
                 # Set up sparse checkout for minimal disk usage
-                ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'], logstderr=True)
+                ecode, out = b4.git_run_command(
+                    gwt, ['sparse-checkout', 'set'], logstderr=True
+                )
                 if ecode != 0:
                     logger.warning('Could not set up sparse checkout: %s', out.strip())
                 ecode, out = b4.git_run_command(gwt, ['checkout', '-f'], logstderr=True)
                 if ecode != 0:
-                    logger.warning('Could not checkout sparse worktree: %s', out.strip())
+                    logger.warning(
+                        'Could not checkout sparse worktree: %s', out.strip()
+                    )
 
                 # Try cherry-picking the commits
                 gitargs = ['cherry-pick', f'{base_commit}..{series_tip}']
@@ -2695,8 +3039,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         logger.info('Rebasing %s onto %s...', review_branch, target_branch)
 
         # Remember where we are so we can restore on failure
-        ecode, original_branch = b4.git_run_command(topdir, ['rev-parse', '--abbrev-ref', 'HEAD'],
-                                                     logstderr=True)
+        ecode, original_branch = b4.git_run_command(
+            topdir, ['rev-parse', '--abbrev-ref', 'HEAD'], logstderr=True
+        )
         if ecode != 0:
             logger.critical('Could not determine current branch')
             _wait_for_enter()
@@ -2704,14 +3049,18 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         original_branch = original_branch.strip()
 
         # First, checkout the review branch (at the tracking commit)
-        ecode, out = b4.git_run_command(topdir, ['checkout', review_branch], logstderr=True)
+        ecode, out = b4.git_run_command(
+            topdir, ['checkout', review_branch], logstderr=True
+        )
         if ecode != 0:
             logger.critical('Could not checkout review branch: %s', out.strip())
             _wait_for_enter()
             return
 
         # Save the tracking commit SHA so we can restore on failure
-        ecode, tracking_commit = b4.git_run_command(topdir, ['rev-parse', 'HEAD'], logstderr=True)
+        ecode, tracking_commit = b4.git_run_command(
+            topdir, ['rev-parse', 'HEAD'], logstderr=True
+        )
         if ecode != 0:
             logger.critical('Could not resolve tracking commit')
             b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
@@ -2720,25 +3069,37 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         tracking_commit = tracking_commit.strip()
 
         # Reset to before the tracking commit (now at series_tip)
-        ecode, out = b4.git_run_command(topdir, ['reset', '--hard', 'HEAD~1'], logstderr=True)
+        ecode, out = b4.git_run_command(
+            topdir, ['reset', '--hard', 'HEAD~1'], logstderr=True
+        )
         if ecode != 0:
-            logger.critical('Could not reset to before tracking commit: %s', out.strip())
-            b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
+            logger.critical(
+                'Could not reset to before tracking commit: %s', out.strip()
+            )
+            b4.git_run_command(
+                topdir, ['reset', '--hard', tracking_commit], logstderr=True
+            )
             b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
             _wait_for_enter()
             return
 
         # Rebase the patches onto target_head
         # --onto target_head base_commit means: take commits after base_commit and replay onto target_head
-        ecode, out = b4.git_run_command(topdir, ['rebase', '--onto', target_head, base_commit], logstderr=True)
+        ecode, out = b4.git_run_command(
+            topdir, ['rebase', '--onto', target_head, base_commit], logstderr=True
+        )
         if ecode != 0:
             if applies_clean:
                 # Test said clean but real rebase failed — something is wrong, abort
                 logger.critical('Rebase failed unexpectedly: %s', out.strip())
                 logger.critical('Aborting rebase...')
                 b4.git_run_command(topdir, ['rebase', '--abort'], logstderr=True)
-                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
-                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                b4.git_run_command(
+                    topdir, ['reset', '--hard', tracking_commit], logstderr=True
+                )
+                b4.git_run_command(
+                    topdir, ['checkout', original_branch], logstderr=True
+                )
                 _wait_for_enter()
                 return
 
@@ -2747,37 +3108,62 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             logger.critical('---')
             logger.critical('Rebase had conflicts.')
             logger.info('You can resolve the conflicts in your working tree.')
-            logger.info('Use "git rebase --continue" after resolving, or "git rebase --abort" to give up.')
+            logger.info(
+                'Use "git rebase --continue" after resolving, or "git rebase --abort" to give up.'
+            )
             _suspend_to_shell(hint='b4 rebase')
             # Check if rebase is still in progress (user exited without finishing)
-            ecode, gitdir = b4.git_run_command(topdir, ['rev-parse', '--git-dir'], logstderr=True)
+            ecode, gitdir = b4.git_run_command(
+                topdir, ['rev-parse', '--git-dir'], logstderr=True
+            )
             rebase_in_progress = False
             if ecode == 0:
                 gitdir = gitdir.strip()
-                rebase_in_progress = (os.path.isdir(os.path.join(gitdir, 'rebase-merge'))
-                                      or os.path.isdir(os.path.join(gitdir, 'rebase-apply')))
+                rebase_in_progress = os.path.isdir(
+                    os.path.join(gitdir, 'rebase-merge')
+                ) or os.path.isdir(os.path.join(gitdir, 'rebase-apply'))
             if rebase_in_progress:
                 logger.warning('Rebase not completed, aborting')
                 b4.git_run_command(topdir, ['rebase', '--abort'], logstderr=True)
-                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
-                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                b4.git_run_command(
+                    topdir, ['reset', '--hard', tracking_commit], logstderr=True
+                )
+                b4.git_run_command(
+                    topdir, ['checkout', original_branch], logstderr=True
+                )
                 _wait_for_enter()
                 return
             # Check if the rebase was aborted (HEAD back at pre-rebase state)
-            ecode, current_head = b4.git_run_command(topdir, ['rev-parse', 'HEAD'], logstderr=True)
+            ecode, current_head = b4.git_run_command(
+                topdir, ['rev-parse', 'HEAD'], logstderr=True
+            )
             if ecode != 0 or current_head.strip() == series_tip:
                 logger.warning('Rebase was aborted')
-                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
-                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                b4.git_run_command(
+                    topdir, ['reset', '--hard', tracking_commit], logstderr=True
+                )
+                b4.git_run_command(
+                    topdir, ['checkout', original_branch], logstderr=True
+                )
                 _wait_for_enter()
                 return
             # Verify target is an ancestor of HEAD (rebase actually landed)
             ecode, _out = b4.git_run_command(
-                topdir, ['merge-base', '--is-ancestor', target_head, 'HEAD'], logstderr=True)
+                topdir,
+                ['merge-base', '--is-ancestor', target_head, 'HEAD'],
+                logstderr=True,
+            )
             if ecode != 0:
-                logger.warning('Rebase result does not include %s, something went wrong', target_branch)
-                b4.git_run_command(topdir, ['reset', '--hard', tracking_commit], logstderr=True)
-                b4.git_run_command(topdir, ['checkout', original_branch], logstderr=True)
+                logger.warning(
+                    'Rebase result does not include %s, something went wrong',
+                    target_branch,
+                )
+                b4.git_run_command(
+                    topdir, ['reset', '--hard', tracking_commit], logstderr=True
+                )
+                b4.git_run_command(
+                    topdir, ['checkout', original_branch], logstderr=True
+                )
                 _wait_for_enter()
                 return
             logger.info('Rebase conflicts resolved')
@@ -2787,7 +3173,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # Enumerate new patch commit SHAs and update first-patch-commit
         ecode, out = b4.git_run_command(
-            topdir, ['rev-list', '--reverse', f'{target_head}..HEAD'])
+            topdir, ['rev-list', '--reverse', f'{target_head}..HEAD']
+        )
         if ecode == 0 and out.strip():
             new_shas = out.strip().splitlines()
             series['first-patch-commit'] = new_shas[0]
@@ -2799,8 +3186,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # Re-create the tracking commit
         commit_msg = cover_text + '\n\n' + b4.review.make_review_magic_json(tracking)
-        ecode, out = b4.git_run_command(topdir, ['commit', '--allow-empty', '-F', '-'],
-                                        stdin=commit_msg.encode(), logstderr=True)
+        ecode, out = b4.git_run_command(
+            topdir,
+            ['commit', '--allow-empty', '-F', '-'],
+            stdin=commit_msg.encode(),
+            logstderr=True,
+        )
         if ecode != 0:
             logger.critical('Could not create new tracking commit: %s', out.strip())
             _wait_for_enter()
@@ -2842,11 +3233,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         self.push_screen(
             RangeDiffScreen(current_rev, revisions),
-            callback=lambda chosen: self._on_range_diff_selected(chosen, change_id, current_rev),
+            callback=lambda chosen: self._on_range_diff_selected(
+                chosen, change_id, current_rev
+            ),
         )
 
-    def _on_range_diff_selected(self, chosen: Optional[int], change_id: str,
-                                 current_rev: int) -> None:
+    def _on_range_diff_selected(
+        self, chosen: Optional[int], change_id: str, current_rev: int
+    ) -> None:
         """Handle the revision chosen from the range-diff modal."""
         if chosen is None:
             return
@@ -2855,7 +3249,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     @staticmethod
     def _fetch_fake_am_range(
-        topdir: str, revisions: List[Dict[str, Any]], rev: int,
+        topdir: str,
+        revisions: List[Dict[str, Any]],
+        rev: int,
     ) -> Optional[Tuple[str, str]]:
         """Fetch a revision and create a fake-am commit range.
 
@@ -2902,8 +3298,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         for msg in msgs:
             lmbx.add_message(msg)
 
-        lser = lmbx.get_series(rev, sloppytrailers=False,
-                               codereview_trailers=False)
+        lser = lmbx.get_series(rev, sloppytrailers=False, codereview_trailers=False)
         if lser is None:
             logger.critical('Could not find series v%d in retrieved messages', rev)
             return None
@@ -2977,9 +3372,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # --- Run git range-diff ---
         logger.info('Running range-diff...')
-        gitargs = ['range-diff', '--color',
-                    f'{left_start}..{left_end}',
-                    f'{right_start}..{right_end}']
+        gitargs = [
+            'range-diff',
+            '--color',
+            f'{left_start}..{left_end}',
+            f'{right_start}..{right_end}',
+        ]
         ecode, out = b4.git_run_command(topdir, gitargs)
         if ecode != 0:
             logger.critical('git range-diff failed (exit %d)', ecode)
@@ -2989,42 +3387,49 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             return
 
         if not out.strip():
-            logger.info('No differences found between v%d and v%d',
-                        min(other_rev, current_rev), max(other_rev, current_rev))
+            logger.info(
+                'No differences found between v%d and v%d',
+                min(other_rev, current_rev),
+                max(other_rev, current_rev),
+            )
             _wait_for_enter()
             return
 
         b4.view_in_pager(out.encode(), filehint='range-diff.txt')
 
-    def _delete_review_branch(self, topdir: str, review_branch: str,
-                              notify: bool = True) -> bool:
+    def _delete_review_branch(
+        self, topdir: str, review_branch: str, notify: bool = True
+    ) -> bool:
         """Delete a review branch, switching away if currently on it.
 
         Returns True on success, False on failure.
         """
         if b4.git_get_current_branch(topdir) == review_branch:
             ecode, out = b4.git_run_command(
-                topdir, ['rev-parse', f'{review_branch}~1'],
-                logstderr=True)
+                topdir, ['rev-parse', f'{review_branch}~1'], logstderr=True
+            )
             if ecode > 0:
                 if notify:
-                    self.notify('Could not determine parent commit',
-                                severity='error')
+                    self.notify('Could not determine parent commit', severity='error')
                 return False
             parent = out.strip()
             ecode, out = b4.git_run_command(
-                topdir, ['checkout', parent], logstderr=True)
+                topdir, ['checkout', parent], logstderr=True
+            )
             if ecode > 0:
                 if notify:
-                    self.notify(f'Could not switch away from {review_branch}',
-                                severity='error')
+                    self.notify(
+                        f'Could not switch away from {review_branch}', severity='error'
+                    )
                 return False
         ecode, out = b4.git_run_command(
-            topdir, ['branch', '-D', review_branch], logstderr=True)
+            topdir, ['branch', '-D', review_branch], logstderr=True
+        )
         if ecode > 0:
             if notify:
-                self.notify(f'Failed to delete branch {review_branch}',
-                            severity='error')
+                self.notify(
+                    f'Failed to delete branch {review_branch}', severity='error'
+                )
             return False
         return True
 
@@ -3037,16 +3442,25 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         review_branch = f'b4/review/{change_id}'
         has_branch = b4.git_branch_exists(None, review_branch)
         self.push_screen(
-            AbandonConfirmScreen(change_id, review_branch, has_branch,
-                                 subject=self._selected_series.get('subject', '')),
+            AbandonConfirmScreen(
+                change_id,
+                review_branch,
+                has_branch,
+                subject=self._selected_series.get('subject', ''),
+            ),
             callback=lambda confirmed: self._on_abandon_confirmed(
-                confirmed, change_id, review_branch, has_branch,
-                revision=revision),
+                confirmed, change_id, review_branch, has_branch, revision=revision
+            ),
         )
 
-    def _on_abandon_confirmed(self, confirmed: bool, change_id: str,
-                               review_branch: str, has_branch: bool,
-                               revision: Optional[int] = None) -> None:
+    def _on_abandon_confirmed(
+        self,
+        confirmed: Optional[bool],
+        change_id: str,
+        review_branch: str,
+        has_branch: bool,
+        revision: Optional[int] = None,
+    ) -> None:
         if not confirmed:
             return
         topdir = b4.git_get_toplevel()
@@ -3077,8 +3491,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             return
         status = self._selected_series.get('status', 'new')
         if status not in ('reviewing', 'new'):
-            self.notify('Series must be checked out or new to upgrade',
-                        severity='warning')
+            self.notify(
+                'Series must be checked out or new to upgrade', severity='warning'
+            )
             return
 
         change_id = self._selected_series.get('change_id', '')
@@ -3087,12 +3502,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         # Discover newer revisions from tracking data and DB
         newer_versions = self._discover_newer_versions(
-            change_id, current_rev, review_branch)
+            change_id, current_rev, review_branch
+        )
 
         if not newer_versions:
             self.notify(
-                'No newer revisions known. Try \\[u]pdate first.',
-                severity='warning')
+                'No newer revisions known. Try \\[u]pdate first.', severity='warning'
+            )
             return
 
         # Look up revision metadata from the DB
@@ -3107,42 +3523,44 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         newer_revs = [r for r in revisions if r['revision'] in newer_versions]
         if not newer_revs:
             self.notify(
-                'No newer revisions known. Try \\[u]pdate first.',
-                severity='warning')
+                'No newer revisions known. Try \\[u]pdate first.', severity='warning'
+            )
             return
 
         if status == 'new':
             # No review branch — just update the DB record
             if len(newer_revs) == 1:
-                self._do_switch_revision(change_id, current_rev,
-                                         newer_revs[0])
+                self._do_switch_revision(change_id, current_rev, newer_revs[0])
                 return
             self.push_screen(
                 UpdateRevisionScreen(current_rev, revisions),
                 callback=lambda chosen: (
                     self._switch_revision_by_number(
-                        change_id, current_rev, chosen, revisions)
-                    if chosen is not None else None
+                        change_id, current_rev, chosen, revisions
+                    )
+                    if chosen is not None
+                    else None
                 ),
             )
             return
 
         if len(newer_revs) == 1:
             # Only one newer revision — go straight to the upgrade
-            self._do_update_revision(change_id, current_rev,
-                                     newer_revs[0]['revision'])
+            self._do_update_revision(change_id, current_rev, newer_revs[0]['revision'])
             return
 
         self.push_screen(
             UpdateRevisionScreen(current_rev, revisions),
             callback=lambda chosen: (
                 self._do_update_revision(change_id, current_rev, chosen)
-                if chosen is not None else None
+                if chosen is not None
+                else None
             ),
         )
 
-    def _do_switch_revision(self, change_id: str, current_rev: int,
-                            rev_info: Dict[str, Any]) -> None:
+    def _do_switch_revision(
+        self, change_id: str, current_rev: int, rev_info: Dict[str, Any]
+    ) -> None:
         """Switch a not-yet-checked-out series to a different revision.
 
         Simply updates the database record — no branch operations needed.
@@ -3153,8 +3571,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         try:
             conn = b4.review.tracking.get_db(self._identifier)
             b4.review.tracking.update_series_revision(
-                conn, change_id, current_rev, target_rev,
-                new_msgid, new_subject)
+                conn, change_id, current_rev, target_rev, new_msgid, new_subject
+            )
             conn.close()
         except Exception as ex:
             self.notify(f'Could not update revision: {ex}', severity='error')
@@ -3164,9 +3582,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._invalidate_caches(change_id)
         self._load_series()
 
-    def _switch_revision_by_number(self, change_id: str, current_rev: int,
-                                   chosen: int,
-                                   revisions: List[Dict[str, Any]]) -> None:
+    def _switch_revision_by_number(
+        self,
+        change_id: str,
+        current_rev: int,
+        chosen: int,
+        revisions: List[Dict[str, Any]],
+    ) -> None:
         """Callback wrapper: find the revision dict and call _do_switch_revision."""
         for rev in revisions:
             if rev['revision'] == chosen:
@@ -3174,8 +3596,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return
         self.notify(f'Revision v{chosen} not found', severity='error')
 
-    def _do_update_revision(self, change_id: str, current_rev: int,
-                            target_rev: int) -> None:
+    def _do_update_revision(
+        self, change_id: str, current_rev: int, target_rev: int
+    ) -> None:
         """Upgrade the review branch from *current_rev* to *target_rev*.
 
         Uses a three-phase workflow so the old review branch is never
@@ -3206,8 +3629,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 break
 
         if not target_msgid:
-            self.notify(f'No message-id recorded for v{target_rev}',
-                        severity='error')
+            self.notify(f'No message-id recorded for v{target_rev}', severity='error')
             return
 
         # Phase 1: fetch series and compute base in a worker thread
@@ -3216,13 +3638,20 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 target_series = dict(self._selected_series or {})
                 target_series['message_id'] = target_msgid
                 target_series['revision'] = target_rev
-                msgs = b4.review.retrieve_series_messages(target_series, self._identifier)
+                msgs = b4.review.retrieve_series_messages(
+                    target_series, self._identifier
+                )
                 lser = b4.review._get_lore_series(msgs)
 
                 am_msgs = lser.get_am_ready(
-                    noaddtrailers=True, addmysob=False, addlink=False,
-                    cherrypick=None, copyccs=False, allowbadchars=False,
-                    showchecks=False)
+                    noaddtrailers=True,
+                    addmysob=False,
+                    addlink=False,
+                    cherrypick=None,
+                    copyccs=False,
+                    allowbadchars=False,
+                    showchecks=False,
+                )
                 if not am_msgs:
                     raise LookupError('No patches ready for applying')
 
@@ -3246,23 +3675,25 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     try:
                         guessed, nblobs, mismatches = lser.find_base(
                             topdir,
-                            branches=['--exclude=refs/heads/b4/review/*',
-                                      '--all'],
-                            maxdays=30)
+                            branches=['--exclude=refs/heads/b4/review/*', '--all'],
+                            maxdays=30,
+                        )
                         if guessed:
                             ecode, sha_out = b4.git_run_command(
-                                topdir, ['rev-parse', '--verify', guessed])
+                                topdir, ['rev-parse', '--verify', guessed]
+                            )
                             sha = sha_out.strip() if ecode == 0 else ''
                             short_sha = sha[:12] if sha else guessed
                             if mismatches == 0:
                                 initial_base = short_sha
-                                base_hint = (f'Guessed base: {guessed}'
-                                             f' (exact match)')
+                                base_hint = f'Guessed base: {guessed} (exact match)'
                             elif nblobs != mismatches:
                                 matched = nblobs - mismatches
                                 initial_base = short_sha
-                                base_hint = (f'Guessed base: {guessed}'
-                                             f' ({matched}/{nblobs} blobs)')
+                                base_hint = (
+                                    f'Guessed base: {guessed}'
+                                    f' ({matched}/{nblobs} blobs)'
+                                )
                             else:
                                 base_hint = 'Could not find a matching base'
                     except (IndexError, Exception):
@@ -3273,15 +3704,26 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self.push_screen(
             WorkerScreen('Fetching new revision\u2026', _fetch_update),
             callback=lambda result: self._on_update_prepared(
-                result, change_id, current_rev, target_rev,
-                target_msgid, target_subject, review_branch),
+                result,
+                change_id,
+                current_rev,
+                target_rev,
+                target_msgid,
+                target_subject,
+                review_branch,
+            ),
         )
 
-    def _on_update_prepared(self, result: Any,
-                            change_id: str, current_rev: int,
-                            target_rev: int, target_msgid: str,
-                            target_subject: str,
-                            review_branch: str) -> None:
+    def _on_update_prepared(
+        self,
+        result: Any,
+        change_id: str,
+        current_rev: int,
+        target_rev: int,
+        target_msgid: str,
+        target_subject: str,
+        review_branch: str,
+    ) -> None:
         """Phase 2: show BaseSelectionScreen after fetching the new series."""
         if result is None:
             return
@@ -3304,22 +3746,41 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                             base_suggestions.append(rb)
 
         self.push_screen(
-            BaseSelectionScreen(initial_base, lser, ambytes,
-                                base_suggestions=base_suggestions,
-                                base_hint=base_hint,
-                                subject=target_subject),
+            BaseSelectionScreen(
+                initial_base,
+                lser,
+                ambytes,
+                base_suggestions=base_suggestions,
+                base_hint=base_hint,
+                subject=target_subject,
+            ),
             callback=lambda base_sha: self._on_update_base_selected(
-                base_sha, lser, ambytes, num_am, change_id, current_rev,
-                target_rev, target_msgid, target_subject,
-                review_branch),
+                base_sha,
+                lser,
+                ambytes,
+                num_am,
+                change_id,
+                current_rev,
+                target_rev,
+                target_msgid,
+                target_subject,
+                review_branch,
+            ),
         )
 
     def _on_update_base_selected(
-            self, base_sha: Optional[str],
-            lser: b4.LoreSeries, ambytes: bytes, num_am: int,
-            change_id: str, current_rev: int, target_rev: int,
-            target_msgid: str, target_subject: str,
-            review_branch: str) -> None:
+        self,
+        base_sha: Optional[str],
+        lser: b4.LoreSeries,
+        ambytes: bytes,
+        num_am: int,
+        change_id: str,
+        current_rev: int,
+        target_rev: int,
+        target_msgid: str,
+        target_subject: str,
+        review_branch: str,
+    ) -> None:
         """Phase 3: apply new revision to upgrade branch, then swap.
 
         The old review branch is never touched until the apply succeeds.
@@ -3364,7 +3825,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             usercfg = b4.get_user_config()
             maintainer_email = str(usercfg.get('email', ''))
             prior_context = b4.review.tracking.render_prior_review_context(
-                maintainer_email, current_rev, old_series, patches)
+                maintainer_email, current_rev, old_series, patches
+            )
             prior_thread_blob = old_series.get('thread-context-blob', '')
             prior_msgid = old_series.get('header-info', {}).get('msgid', '')
 
@@ -3377,11 +3839,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     try:
                         _conn = b4.review.tracking.get_db(self._identifier)
                         b4.review.tracking.set_revision_thread_blob(
-                            _conn, change_id, current_rev, cur_mbox_blob)
+                            _conn, change_id, current_rev, cur_mbox_blob
+                        )
                         _conn.close()
                     except Exception as _ex:
-                        logger.debug('Could not record thread blob for v%d: %s',
-                                     current_rev, _ex)
+                        logger.debug(
+                            'Could not record thread blob for v%d: %s', current_rev, _ex
+                        )
 
             # --- 2. Resolve metadata for git-am ---
             top_msgid = None
@@ -3411,53 +3875,73 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 if mismatches:
                     rstart, rend = lser.make_fake_am_range(gitdir=topdir)
                     if rstart and rend:
-                        logger.info('Prepared fake commit range for 3-way merge (%.12s..%.12s)', rstart, rend)
+                        logger.info(
+                            'Prepared fake commit range for 3-way merge (%.12s..%.12s)',
+                            rstart,
+                            rend,
+                        )
 
             # --- 3. Apply to temporary upgrade branch ---
+            _is_rt = bool((self._selected_series or {}).get('is_rethreaded'))
             try:
                 logger.info('Base: %s', base_sha)
-                b4.git_fetch_am_into_repo(topdir, ambytes=ambytes,
-                                          at_base=base_sha, origin=linkurl,
-                                          am_flags=['-3'])
-                _is_rt = bool((self._selected_series or {}).get('is_rethreaded'))
-                b4.review.create_review_branch(topdir, upgrade_branch,
-                                               base_sha, lser, linkurl,
-                                               linkmask, num_prereqs=0,
-                                               identifier=self._identifier,
-                                               status='reviewing',
-                                               is_rethreaded=_is_rt)
+                b4.git_fetch_am_into_repo(
+                    topdir,
+                    ambytes=ambytes,
+                    at_base=base_sha,
+                    origin=linkurl,
+                    am_flags=['-3'],
+                )
+                b4.review.create_review_branch(
+                    topdir,
+                    upgrade_branch,
+                    base_sha,
+                    lser,
+                    linkurl,
+                    linkmask,
+                    num_prereqs=0,
+                    identifier=self._identifier,
+                    status='reviewing',
+                    is_rethreaded=_is_rt,
+                )
                 logger.info('Upgrade branch created: %s', upgrade_branch)
             except b4.AmConflictError as cex:
                 if not _resolve_worktree_am_conflict(topdir, cex):
                     # User aborted — clean up upgrade branch if it was
                     # partially created before the conflict
                     if b4.git_branch_exists(topdir, upgrade_branch):
-                        b4.git_run_command(
-                            topdir, ['branch', '-D', upgrade_branch])
+                        b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
                     _wait_for_enter()
                     return
                 b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
-                b4.review.create_review_branch(topdir, upgrade_branch,
-                                               base_sha, lser, linkurl,
-                                               linkmask, num_prereqs=0,
-                                               identifier=self._identifier,
-                                               status='reviewing',
-                                               is_rethreaded=_is_rt)
+                b4.review.create_review_branch(
+                    topdir,
+                    upgrade_branch,
+                    base_sha,
+                    lser,
+                    linkurl,
+                    linkmask,
+                    num_prereqs=0,
+                    identifier=self._identifier,
+                    status='reviewing',
+                    is_rethreaded=_is_rt,
+                )
                 logger.info('Upgrade branch created: %s', upgrade_branch)
             except Exception as ex:
                 logger.critical('Error creating review branch: %s', ex)
                 if b4.git_branch_exists(topdir, upgrade_branch):
-                    b4.git_run_command(
-                        topdir, ['branch', '-D', upgrade_branch])
+                    b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
                 _wait_for_enter()
                 return
 
             # --- 4. Apply succeeded — restore reviews onto upgrade branch ---
             logger.info('Restoring reviews...')
             new_patch_ids = b4.review.get_review_branch_patch_ids(
-                topdir, upgrade_branch)
+                topdir, upgrade_branch
+            )
             new_cover_text, new_tracking = b4.review.load_tracking(
-                topdir, upgrade_branch)
+                topdir, upgrade_branch
+            )
             new_patches = new_tracking.get('patches', [])
 
             usercfg = b4.get_user_config()
@@ -3470,7 +3954,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             # sent anything yet (e.g. the submitter sent a new version while
             # the maintainer was still drafting their review).
             old_status = old_series.get('status', '')
-            carry_over_reviews = (old_status != 'replied')
+            carry_over_reviews = old_status != 'replied'
             restored = 0
             for idx, _sha, patch_id in new_patch_ids:
                 if patch_id is None or idx >= len(new_patches):
@@ -3487,7 +3971,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 # _get_patch_state() will override this with any derived state
                 # (draft, done, …) if the maintainer already has review content.
                 my_review = reviews.setdefault(
-                    my_email, {'name': str(usercfg.get('name', ''))})
+                    my_email, {'name': str(usercfg.get('name', ''))}
+                )
                 my_review['patch-state'] = 'unchanged'
                 reviews['b4-upgrade@internal'] = {
                     'name': 'B4 Upgrade',
@@ -3511,18 +3996,25 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 new_tracking['series']['prior-thread-context-blob'] = prior_thread_blob
             if prior_msgid:
                 new_tracking['series']['prior-revision-msgid'] = prior_msgid
-            b4.review.save_tracking_ref(topdir, upgrade_branch,
-                                        new_cover_text, new_tracking)
-            logger.info('Restored reviews for %d of %d patch(es)',
-                        restored, len(new_patch_ids))
+            b4.review.save_tracking_ref(
+                topdir, upgrade_branch, new_cover_text, new_tracking
+            )
+            logger.info(
+                'Restored reviews for %d of %d patch(es)', restored, len(new_patch_ids)
+            )
 
             # --- 5. Archive old branch and rename upgrade → review ---
             logger.info('Archiving v%d...', current_rev)
             pw_series_id = None
             if self._selected_series:
                 pw_series_id = self._selected_series.get('pw_series_id')
-            if not self._archive_branch(change_id, current_rev, review_branch,
-                                        pw_series_id=pw_series_id, notify=False):
+            if not self._archive_branch(
+                change_id,
+                current_rev,
+                review_branch,
+                pw_series_id=pw_series_id,
+                notify=False,
+            ):
                 logger.critical('Failed to archive v%d', current_rev)
                 # Upgrade branch has new data but old branch could not be
                 # archived.  Leave both branches so the user can recover.
@@ -3530,10 +4022,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 return
 
             ecode, out = b4.git_run_command(
-                topdir, ['branch', '-m', upgrade_branch, review_branch])
+                topdir, ['branch', '-m', upgrade_branch, review_branch]
+            )
             if ecode > 0:
-                logger.critical('Failed to rename upgrade branch: %s',
-                                out.strip())
+                logger.critical('Failed to rename upgrade branch: %s', out.strip())
                 _wait_for_enter()
                 return
 
@@ -3552,16 +4044,22 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     if ref_msg and ref_msg.date:
                         sent_at = ref_msg.date.isoformat()
                     b4.review.tracking.add_series_to_db(
-                        conn, change_id, target_rev,
-                        target_subject, sender_name, sender_email,
-                        sent_at, target_msgid,
-                        lser.expected or num_am)
+                        conn,
+                        change_id,
+                        target_rev,
+                        target_subject,
+                        sender_name,
+                        sender_email,
+                        sent_at,
+                        target_msgid,
+                        lser.expected or num_am,
+                    )
                     b4.review.tracking.update_series_status(
-                        conn, change_id, 'reviewing', revision=target_rev)
+                        conn, change_id, 'reviewing', revision=target_rev
+                    )
                     conn.close()
                 except Exception as ex:
-                    logger.warning('Failed to update DB for v%d: %s',
-                                   target_rev, ex)
+                    logger.warning('Failed to update DB for v%d: %s', target_rev, ex)
 
             logger.info('Upgrade to v%d complete', target_rev)
             _wait_for_enter()
@@ -3583,7 +4081,8 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         try:
             conn = b4.review.tracking.get_db(self._identifier)
             b4.review.tracking.update_series_status(
-                conn, change_id, 'waiting', revision=revision)
+                conn, change_id, 'waiting', revision=revision
+            )
             conn.close()
         except Exception as ex:
             self.notify(f'Error: {ex}', severity='error')
@@ -3606,9 +4105,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             self.notify('Cannot snooze a series in this state', severity='warning')
             return
         self.push_screen(
-            SnoozeScreen(last_source=self._last_snooze_source,
-                         last_input=self._last_snooze_input,
-                         subject=self._selected_series.get('subject', '')),
+            SnoozeScreen(
+                last_source=self._last_snooze_source,
+                last_input=self._last_snooze_input,
+                subject=self._selected_series.get('subject', ''),
+            ),
             callback=self._on_snooze_confirmed,
         )
 
@@ -3644,8 +4145,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Update database
         try:
             conn = b4.review.tracking.get_db(self._identifier)
-            b4.review.tracking.snooze_series(conn, change_id, until_value,
-                                             revision=revision)
+            b4.review.tracking.snooze_series(
+                conn, change_id, until_value, revision=revision
+            )
             conn.close()
         except Exception as ex:
             self.notify(f'Error: {ex}', severity='error')
@@ -3682,8 +4184,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Update database
         try:
             conn = b4.review.tracking.get_db(self._identifier)
-            b4.review.tracking.unsnooze_series(conn, change_id, previous_status,
-                                               revision=revision)
+            b4.review.tracking.unsnooze_series(
+                conn, change_id, previous_status, revision=revision
+            )
             conn.close()
         except Exception as ex:
             self.notify(f'Error: {ex}', severity='error')
@@ -3704,16 +4207,30 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         review_branch = f'b4/review/{change_id}'
         has_branch = b4.git_branch_exists(None, review_branch)
         self.push_screen(
-            ArchiveConfirmScreen(change_id, review_branch, has_branch,
-                                 subject=self._selected_series.get('subject', '')),
+            ArchiveConfirmScreen(
+                change_id,
+                review_branch,
+                has_branch,
+                subject=self._selected_series.get('subject', ''),
+            ),
             callback=lambda confirmed: self._on_archive_confirmed(
-                confirmed, change_id, review_branch, has_branch, pw_series_id,
-                revision=revision),
+                confirmed,
+                change_id,
+                review_branch,
+                has_branch,
+                pw_series_id,
+                revision=revision,
+            ),
         )
 
-    def _archive_branch(self, change_id: str, revision: Optional[int],
-                        review_branch: str, pw_series_id: Optional[int] = None,
-                        notify: bool = True) -> bool:
+    def _archive_branch(
+        self,
+        change_id: str,
+        revision: Optional[int],
+        review_branch: str,
+        pw_series_id: Optional[int] = None,
+        notify: bool = True,
+    ) -> bool:
         """Archive a review branch and update the tracking database.
 
         Creates a tar.gz archive of the cover letter, tracking metadata,
@@ -3725,7 +4242,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         """
         import tarfile
         import time
-        import b4.ez
 
         topdir = b4.git_get_toplevel()
         if not topdir:
@@ -3747,8 +4263,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             first_patch = series_info.get('first-patch-commit', '')
             if not first_patch:
                 if notify:
-                    self.notify('No patch commits found in tracking data',
-                                severity='error')
+                    self.notify(
+                        'No patch commits found in tracking data', severity='error'
+                    )
                 return False
 
             with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
@@ -3764,12 +4281,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 ifh.close()
                 # Add patches as mbox
                 patches = b4.git_range_to_patches(
-                    None, f'{first_patch}~1', f'{review_branch}~1')
+                    None, f'{first_patch}~1', f'{review_branch}~1'
+                )
                 if patches:
                     ifh = io.BytesIO()
                     b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
-                    b4.ez.write_to_tar(
-                        tfh, f'{change_id}/patches.mbx', mnow, ifh)
+                    b4.ez.write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
                     ifh.close()
 
             # Write archive to data directory
@@ -3787,8 +4304,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Update tracking database
         try:
             conn = b4.review.tracking.get_db(self._identifier)
-            b4.review.tracking.update_series_status(conn, change_id, 'archived',
-                                                    revision=revision)
+            b4.review.tracking.update_series_status(
+                conn, change_id, 'archived', revision=revision
+            )
             conn.close()
         except Exception as ex:
             if notify:
@@ -3806,14 +4324,20 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 self.notify(f'Archived {change_id}')
         return True
 
-    def _on_archive_confirmed(self, confirmed: bool, change_id: str,
-                               review_branch: str, has_branch: bool,
-                               pw_series_id: Optional[int] = None,
-                               revision: Optional[int] = None) -> None:
+    def _on_archive_confirmed(
+        self,
+        confirmed: Optional[bool],
+        change_id: str,
+        review_branch: str,
+        has_branch: bool,
+        pw_series_id: Optional[int] = None,
+        revision: Optional[int] = None,
+    ) -> None:
         if not confirmed:
             return
-        if self._archive_branch(change_id, revision, review_branch,
-                                pw_series_id=pw_series_id):
+        if self._archive_branch(
+            change_id, revision, review_branch, pw_series_id=pw_series_id
+        ):
             self._selected_series = None
             panel = self.query_one('#details-panel', Vertical)
             panel.styles.height = 0
@@ -3823,14 +4347,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def action_thank(self) -> None:
         """Compose and preview a thank-you reply for a taken series."""
         import argparse
-        import b4.review
-        import b4.ty
 
         series = self._selected_series
         if not series:
             return
         if series.get('status', 'new') != 'accepted':
-            self.notify('Series must be accepted before sending thanks', severity='warning')
+            self.notify(
+                'Series must be accepted before sending thanks', severity='warning'
+            )
             return
 
         change_id = series.get('change_id', '')
@@ -3918,8 +4442,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         self._show_thank_preview(msg, checkurl=checkurl)
 
-    def _show_thank_preview(self, msg: email.message.EmailMessage,
-                            checkurl: Optional[str] = None) -> None:
+    def _show_thank_preview(
+        self, msg: email.message.EmailMessage, checkurl: Optional[str] = None
+    ) -> None:
         """Push the ThankScreen modal and handle edit/send/queue/cancel."""
 
         def _on_thank_result(result: Optional[str]) -> None:
@@ -3934,8 +4459,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
         self.push_screen(ThankScreen(msg, checkurl=checkurl), _on_thank_result)
 
-    def _edit_thank_message(self, msg: email.message.EmailMessage,
-                            checkurl: Optional[str] = None) -> None:
+    def _edit_thank_message(
+        self, msg: email.message.EmailMessage, checkurl: Optional[str] = None
+    ) -> None:
         """Open the thank-you message in $EDITOR and re-show preview."""
         msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
         try:
@@ -3947,19 +4473,19 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         new_msg = email.parser.BytesParser(policy=b4.emlpolicy).parsebytes(edited)
         self._show_thank_preview(new_msg, checkurl=checkurl)
 
-    def _queue_thank_message(self, msg: email.message.EmailMessage, checkurl: str) -> None:
+    def _queue_thank_message(
+        self, msg: email.message.EmailMessage, checkurl: str
+    ) -> None:
         """Queue the thanks message for delivery once commits are public."""
-        import b4.ty
-
         series = self._selected_series
         if not series:
             return
         change_id = series.get('change_id', '')
         revision = series.get('revision', 1)
         try:
-            b4.ty.queue_message(msg, checkurl,
-                                change_id, revision,
-                                dryrun=self._email_dryrun)
+            b4.ty.queue_message(
+                msg, checkurl, change_id, revision, dryrun=self._email_dryrun
+            )
         except Exception as ex:
             self.notify(f'Failed to queue message: {ex}', severity='error')
             return
@@ -3975,9 +4501,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         try:
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
-                sent = b4.send_mail(smtp, [msg], fromaddr=fromaddr,
-                                    patatt_sign=self._patatt_sign, dryrun=self._email_dryrun,
-                                    output_dir=None, reflect=False)
+                sent = b4.send_mail(
+                    smtp,
+                    [msg],
+                    fromaddr=fromaddr,
+                    patatt_sign=self._patatt_sign,
+                    dryrun=self._email_dryrun,
+                    output_dir=None,
+                    reflect=False,
+                )
             if sent is None:
                 self.notify('Failed to send thank-you message', severity='error')
                 return
@@ -3987,8 +4519,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             if self._identifier and change_id:
                 try:
                     conn = b4.review.tracking.get_db(self._identifier)
-                    b4.review.tracking.update_series_status(conn, change_id, 'thanked',
-                                                            revision=revision)
+                    b4.review.tracking.update_series_status(
+                        conn, change_id, 'thanked', revision=revision
+                    )
                     conn.close()
                 except Exception as ex:
                     logger.warning('Could not update series status: %s', ex)
@@ -4005,7 +4538,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def _refresh_queue_indicator(self) -> None:
         """Update the title-bar queue count and Q binding visibility."""
-        import b4.ty
         self._queue_count = b4.ty.get_queued_count(dryrun=self._email_dryrun)
         try:
             right = self.query_one('#title-right', Static)
@@ -4019,7 +4551,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     def action_process_queue(self) -> None:
         """Show the queue modal and optionally deliver."""
-        import b4.ty
         entries = b4.ty.get_queued_messages(dryrun=self._email_dryrun)
         if not entries:
             self.notify('No queued thanks messages')
@@ -4034,7 +4565,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def _deliver_queue(self) -> None:
         """Push a delivery modal with progress bar."""
 
-        def _on_delivery_result(result: Optional[Tuple[int, int, List[Tuple[str, int]]]]) -> None:
+        def _on_delivery_result(
+            result: Optional[Tuple[int, int, List[Tuple[str, int]]]],
+        ) -> None:
             if result is None:
                 self.notify('Queue delivery cancelled or failed', severity='warning')
                 self._refresh_queue_indicator()
@@ -4046,14 +4579,17 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     try:
                         conn = b4.review.tracking.get_db(self._identifier)
                         b4.review.tracking.update_series_status(
-                            conn, change_id, 'thanked', revision=revision)
+                            conn, change_id, 'thanked', revision=revision
+                        )
                         conn.close()
                     except Exception as ex:
                         logger.warning('Could not update series status: %s', ex)
                     topdir = b4.git_get_toplevel()
                     if topdir:
                         review_branch = f'b4/review/{change_id}'
-                        b4.review.update_tracking_status(topdir, review_branch, 'thanked')
+                        b4.review.update_tracking_status(
+                            topdir, review_branch, 'thanked'
+                        )
             parts = []
             if delivered:
                 parts.append(f'{delivered} delivered')
@@ -4081,8 +4617,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
     def action_patchwork(self) -> None:
         """Exit to the outer loop so it can launch the Patchwork TUI."""
         if not (self._pwkey and self._pwurl and self._pwproj):
-            self.notify('Patchwork not configured (need b4.pw-key, b4.pw-url, b4.pw-project)',
-                        severity='error')
+            self.notify(
+                'Patchwork not configured (need b4.pw-key, b4.pw-url, b4.pw-project)',
+                severity='error',
+            )
             return
         self.exit(self.PATCHWORK_SENTINEL)
 
@@ -4097,4 +4635,3 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
 
     async def action_quit(self) -> None:
         self.exit()
-

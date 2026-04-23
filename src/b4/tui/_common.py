@@ -4,6 +4,7 @@
 # Copyright (C) 2024 by the Linux Foundation
 #
 """Shared TUI utilities for b4 Textual apps."""
+
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.utils
@@ -11,17 +12,15 @@ import os
 import subprocess
 import tempfile
 import unicodedata
-
-from typing import Any, Dict, List, Optional
-
-import b4
-
 from collections import defaultdict
+from typing import Any, Dict, List, Optional, Protocol
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, ListView
 from textual.widgets._footer import FooterKey
+
+import b4
 
 logger = b4.logger
 
@@ -110,15 +109,14 @@ def ci_styles(ts: Dict[str, str]) -> Dict[str, str]:
         'pending': 'dim',
         'success': ts['success'],
         'warning': ts['warning'],
-        'fail': f"bold {ts['error']}",
+        'fail': f'bold {ts["error"]}',
     }
 
 
 def ci_markup(ts: Dict[str, str]) -> Dict[str, str]:
     """Return CI dot markup strings from a resolved theme dict."""
     return {
-        state: f'[{style}]\u25cf[/{style}]'
-        for state, style in ci_styles(ts).items()
+        state: f'[{style}]\u25cf[/{style}]' for state, style in ci_styles(ts).items()
     }
 
 
@@ -128,7 +126,7 @@ def ci_check_styles(ts: Dict[str, str]) -> Dict[str, str]:
         'pending': 'dim',
         'success': ts['success'],
         'warning': ts['warning'],
-        'fail': f"bold {ts['error']}",
+        'fail': f'bold {ts["error"]}',
     }
 
 
@@ -138,7 +136,7 @@ def reviewer_colours(ts: Dict[str, str]) -> List[str]:
     Index 0 is always the current user; the rest cycle for others.
     """
     return [
-        ts['warning'],      # index 0: current user (warm/distinct)
+        ts['warning'],  # index 0: current user (warm/distinct)
         ts['accent'],
         ts['secondary'],
         ts['error'],
@@ -191,7 +189,9 @@ def _suspend_to_shell(hint: str = 'b4', cwd: Optional[str] = None) -> None:
     is set so the user can incorporate it into their own prompt.
     """
     logger.info('---')
-    logger.info('You are now in shell mode. You can execute git commands or run checks.')
+    logger.info(
+        'You are now in shell mode. You can execute git commands or run checks.'
+    )
     logger.info('Cosmetic commit edits (reword subjects, fix trailers) are fine;')
     logger.info('b4 will reconcile tracking data when you return.')
     logger.info('Do NOT add, remove, squash, or reorder commits.')
@@ -207,8 +207,9 @@ def _suspend_to_shell(hint: str = 'b4', cwd: Optional[str] = None) -> None:
         bashrc = os.path.expanduser('~/.bashrc')
         source = f'[ -f {bashrc} ] && . {bashrc}\n'
         source += f'PS1="({hint}) $PS1"\n'
-        with tempfile.NamedTemporaryFile(mode='w', prefix='b4-shell-',
-                                         suffix='.sh', delete=False) as rcf:
+        with tempfile.NamedTemporaryFile(
+            mode='w', prefix='b4-shell-', suffix='.sh', delete=False
+        ) as rcf:
             rcf.write(source)
             rcfile = rcf.name
         try:
@@ -274,6 +275,12 @@ def _validate_addrs(text: str) -> Optional[str]:
     return None
 
 
+class _ListViewHost(Protocol):
+    _list_id: str
+
+    def query_one(self, selector: str, expect_type: type[ListView]) -> ListView: ...
+
+
 class JKListNavMixin:
     """Mixin providing j/k cursor navigation for a named ListView.
 
@@ -281,15 +288,13 @@ class JKListNavMixin:
     target :class:`ListView` (e.g. ``'#action-list'``).
     """
 
-    _list_id: str = ''
-
-    def action_cursor_down(self) -> None:
-        lv = self.query_one(self._list_id, ListView)  # type: ignore[attr-defined]
+    def action_cursor_down(self: _ListViewHost) -> None:
+        lv = self.query_one(self._list_id, ListView)
         if lv.index is not None and lv.index < len(lv.children) - 1:
             lv.index += 1
 
-    def action_cursor_up(self) -> None:
-        lv = self.query_one(self._list_id, ListView)  # type: ignore[attr-defined]
+    def action_cursor_up(self: _ListViewHost) -> None:
+        lv = self.query_one(self._list_id, ListView)
         if lv.index is not None and lv.index > 0:
             lv.index -= 1
 

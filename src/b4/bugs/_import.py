@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
 """Thread import engine: lore.kernel.org -> git-bug via ezgb."""
+
 import email.utils
 import logging
 import re
@@ -101,6 +102,7 @@ def _get_clean_msgid(msg: EmailMessage) -> Optional[str]:
 
 def _sort_by_date(msgs: list[EmailMessage]) -> list[EmailMessage]:
     """Sort messages by their Date header, oldest first."""
+
     def _date_key(msg: EmailMessage) -> float:
         raw = msg.get('Date')
         if raw:
@@ -109,11 +111,14 @@ def _sort_by_date(msgs: list[EmailMessage]) -> list[EmailMessage]:
             )
             return parsed.timestamp()
         return 0.0
+
     return sorted(msgs, key=_date_key)
 
 
 def import_thread(
-    repo: GitBugRepo, msgid: str, noparent: bool = False,
+    repo: GitBugRepo,
+    msgid: str,
+    noparent: bool = False,
 ) -> Bug:
     """Import a lore.kernel.org thread as a new git-bug bug.
 
@@ -132,9 +137,7 @@ def import_thread(
     if noparent:
         filtered = b4.get_strict_thread(msgs, msgid, noparent=True)
         if not filtered:
-            raise RuntimeError(
-                f'No messages in sub-thread for {msgid}'
-            )
+            raise RuntimeError(f'No messages in sub-thread for {msgid}')
         msgs = filtered
 
     msgs = b4.mbox.minimize_thread(msgs)
@@ -181,7 +184,8 @@ def import_thread(
         subject = '(no subject)'
     scope = 'no-parent' if noparent else ''
     bug = repo.create_bug(
-        title=subject, body=format_comment(root, scope=scope),
+        title=subject,
+        body=format_comment(root, scope=scope),
     )
 
     # Add follow-up messages as comments, sorted by date

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
 """Textual TUI for b4 bugs."""
+
 import email.message
 import email.utils
 import hashlib
@@ -14,14 +15,13 @@ from typing import TYPE_CHECKING, Optional, Union
 if TYPE_CHECKING:
     from textual.events import Key
 
-from textual.events import Click, MouseScrollDown, MouseScrollUp
-
 from rich import box
 from rich.panel import Panel
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Click, MouseScrollDown, MouseScrollUp
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.widgets import (
@@ -34,6 +34,8 @@ from textual.widgets import (
 )
 from textual.worker import Worker, WorkerState
 
+import b4
+from b4.bugs._import import is_comment_removed, make_tombstone, parse_comment_header
 from b4.tui import (
     ActionScreen,
     ConfirmScreen,
@@ -47,8 +49,6 @@ from b4.tui import (
     resolve_styles,
     reviewer_colours,
 )
-import b4
-from b4.bugs._import import is_comment_removed, make_tombstone, parse_comment_header
 from ezgb import Bug, BugSummary, Comment, GitBugRepo, Status
 
 # Union type for items that can appear in the bug list.
@@ -60,25 +60,25 @@ logger = logging.getLogger('b4')
 # Material UI colors used by git-bug for deterministic label coloring.
 # See entities/common/label.go in git-bug.
 _LABEL_COLORS = [
-    (244, 67, 54),    # red
-    (233, 30, 99),    # pink
-    (156, 39, 176),   # purple
-    (103, 58, 183),   # deepPurple
-    (63, 81, 181),    # indigo
-    (33, 150, 243),   # blue
-    (3, 169, 244),    # lightBlue
-    (0, 188, 212),    # cyan
-    (0, 150, 136),    # teal
-    (76, 175, 80),    # green
-    (139, 195, 74),   # lightGreen
-    (205, 220, 57),   # lime
-    (255, 235, 59),   # yellow
-    (255, 193, 7),    # amber
-    (255, 152, 0),    # orange
-    (255, 87, 34),    # deepOrange
-    (121, 85, 72),    # brown
+    (244, 67, 54),  # red
+    (233, 30, 99),  # pink
+    (156, 39, 176),  # purple
+    (103, 58, 183),  # deepPurple
+    (63, 81, 181),  # indigo
+    (33, 150, 243),  # blue
+    (3, 169, 244),  # lightBlue
+    (0, 188, 212),  # cyan
+    (0, 150, 136),  # teal
+    (76, 175, 80),  # green
+    (139, 195, 74),  # lightGreen
+    (205, 220, 57),  # lime
+    (255, 235, 59),  # yellow
+    (255, 193, 7),  # amber
+    (255, 152, 0),  # orange
+    (255, 87, 34),  # deepOrange
+    (121, 85, 72),  # brown
     (158, 158, 158),  # grey
-    (96, 125, 139),   # blueGrey
+    (96, 125, 139),  # blueGrey
 ]
 
 
@@ -95,13 +95,13 @@ def label_color(label: str) -> str:
 
 
 _LIFECYCLE_SYMBOLS: dict[str, str] = {
-    'new':        '\u2605',  # ★ black star
-    'confirmed':  '\u00a4',  # ¤ currency sign (bug-like)
+    'new': '\u2605',  # ★ black star
+    'confirmed': '\u00a4',  # ¤ currency sign (bug-like)
     'worksforme': '\u00f8',  # ø latin small letter o with stroke
-    'needinfo':   '\u203d',  # ‽ interrobang
-    'wontfix':    '\u2260',  # ≠ not equal to
-    'fixed':      '\u2713',  # ✓ check mark
-    'duplicate':  '\u2261',  # ≡ identical to
+    'needinfo': '\u203d',  # ‽ interrobang
+    'wontfix': '\u2260',  # ≠ not equal to
+    'fixed': '\u2713',  # ✓ check mark
+    'duplicate': '\u2261',  # ≡ identical to
 }
 
 
@@ -110,13 +110,13 @@ _LIFECYCLE_SYMBOLS: dict[str, str] = {
 #   1 = waiting (pending external input)
 #   2 = resolved (no action needed)
 _LIFECYCLE_TIER: dict[str, int] = {
-    'new':        0,
-    'confirmed':  0,
-    'needinfo':   1,
+    'new': 0,
+    'confirmed': 0,
+    'needinfo': 1,
     'worksforme': 2,
-    'wontfix':    2,
-    'fixed':      2,
-    'duplicate':  2,
+    'wontfix': 2,
+    'fixed': 2,
+    'duplicate': 2,
 }
 
 
@@ -126,7 +126,7 @@ def _bug_tier(bug: BugLike) -> int:
         return 2
     for lb in bug.labels:
         if lb.startswith('lifecycle:'):
-            state = lb[len('lifecycle:'):]
+            state = lb[len('lifecycle:') :]
             return _LIFECYCLE_TIER.get(state, 0)
     return 0
 
@@ -149,7 +149,7 @@ def _bug_lifecycle(bug: BugLike) -> str:
     """
     for lb in bug.labels:
         if lb.startswith('lifecycle:'):
-            state = lb[len('lifecycle:'):]
+            state = lb[len('lifecycle:') :]
             return _LIFECYCLE_SYMBOLS.get(state, '?')
     if bug.status == Status.CLOSED:
         return '\u00d7'  # × multiplication sign
@@ -194,8 +194,7 @@ def _relative_time(dt: datetime) -> str:
     return f'{years}y ago'
 
 
-def _render_comment(viewer: RichLog, text: str,
-                    ts: dict[str, str]) -> None:
+def _render_comment(viewer: RichLog, text: str, ts: dict[str, str]) -> None:
     """Render an RFC 2822 formatted comment into a RichLog."""
     if '\n\n' in text:
         header_block, body = text.split('\n\n', 1)
@@ -207,8 +206,8 @@ def _render_comment(viewer: RichLog, text: str,
         colon = line.find(':')
         if colon > 0:
             hdr_text = Text()
-            hdr_text.append(line[:colon + 1], style='bold')
-            hdr_text.append(line[colon + 1:])
+            hdr_text.append(line[: colon + 1], style='bold')
+            hdr_text.append(line[colon + 1 :])
             viewer.write(hdr_text)
         else:
             viewer.write(Text(line))
@@ -225,6 +224,7 @@ def _render_comment(viewer: RichLog, text: str,
 
 
 # -- List item widget --------------------------------------------------------
+
 
 def _bug_submitter(bug: Bug) -> str:
     """Get the submitter name from the first comment's From header."""
@@ -254,8 +254,7 @@ class BugListItem(ListItem):
             count = bug.comment_count
         else:
             submitter = _bug_submitter(bug)
-            count = sum(1 for c in bug.comments
-                        if not is_comment_removed(c.text))
+            count = sum(1 for c in bug.comments if not is_comment_removed(c.text))
         if display_width(submitter) > 20:
             while display_width(submitter) > 19:
                 submitter = submitter[:-1]
@@ -277,10 +276,11 @@ class BugListItem(ListItem):
 
 # -- Modal screens -----------------------------------------------------------
 
+
 class ImportScreen(ModalScreen[Optional[str]]):
     """Modal for importing a lore thread by message-id."""
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     ImportScreen {
         align: center middle;
     }
@@ -296,7 +296,7 @@ class ImportScreen(ModalScreen[Optional[str]]):
         height: auto;
         margin-top: 1;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('escape', 'cancel', 'cancel'),
@@ -306,8 +306,7 @@ class ImportScreen(ModalScreen[Optional[str]]):
         with Vertical(id='import-dialog') as dialog:
             dialog.border_title = 'Import thread from lore'
             yield Input(placeholder='Message-ID or lore URL', id='import-msgid')
-            yield Checkbox('Ignore parent messages in thread',
-                           id='import-noparent')
+            yield Checkbox('Ignore parent messages in thread', id='import-noparent')
             yield Static('', id='import-status')
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -326,11 +325,14 @@ class ImportScreen(ModalScreen[Optional[str]]):
         status.update('Importing...')
         self.run_worker(
             lambda: self._do_import(msgid, noparent),
-            name='import', thread=True, exit_on_error=False,
+            name='import',
+            thread=True,
+            exit_on_error=False,
         )
 
     def _do_import(self, msgid: str, noparent: bool) -> str:
         from b4.bugs._import import import_thread
+
         app = self.app
         if not isinstance(app, BugListApp):
             raise RuntimeError('ImportScreen must be used with BugListApp')
@@ -338,9 +340,7 @@ class ImportScreen(ModalScreen[Optional[str]]):
             with _quiet_worker():
                 bug = import_thread(app.repo, msgid, noparent=noparent)
         except RuntimeError:
-            raise RuntimeError(
-                'Could not retrieve message thread'
-            ) from None
+            raise RuntimeError('Could not retrieve message thread') from None
         return bug.id
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
@@ -367,6 +367,7 @@ class CommentItem(ListItem):
 
     def compose(self) -> ComposeResult:
         from textual.widgets import Label
+
         st = Label(f'  {self._display_name}', markup=False)
         st.styles.text_style = 'dim'
         yield st
@@ -375,7 +376,7 @@ class CommentItem(ListItem):
 class BugDetailScreen(ModalScreen[None]):
     """Full-screen bug detail view with left pane navigation."""
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     BugDetailScreen {
         background: $surface;
     }
@@ -420,7 +421,7 @@ class BugDetailScreen(ModalScreen[None]):
     #detail-log {
         width: 3fr;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('a', 'bug_action', 'action'),
@@ -470,8 +471,7 @@ class BugDetailScreen(ModalScreen[None]):
         with Horizontal(id='detail-body'):
             with Vertical(id='comment-list-pane'):
                 yield ListView(id='comment-list')
-            yield RichLog(id='detail-log', wrap=True, markup=False,
-                          auto_scroll=False)
+            yield RichLog(id='detail-log', wrap=True, markup=False, auto_scroll=False)
         yield SeparatedFooter()
 
     def on_mount(self) -> None:
@@ -480,10 +480,17 @@ class BugDetailScreen(ModalScreen[None]):
             self._ts = app._ts
 
         # Build colour map for commenters
-        palette = reviewer_colours(self._ts) if self._ts else [
-            'dark_goldenrod', 'dark_cyan', 'dark_magenta',
-            'dark_red', 'dark_blue',
-        ]
+        palette = (
+            reviewer_colours(self._ts)
+            if self._ts
+            else [
+                'dark_goldenrod',
+                'dark_cyan',
+                'dark_magenta',
+                'dark_red',
+                'dark_blue',
+            ]
+        )
         emails: list[str] = []
         for comment in self.bug.comments:
             addr = ''
@@ -510,15 +517,15 @@ class BugDetailScreen(ModalScreen[None]):
                 if parent_idx is not None:
                     parent_depth = self._comment_depths.get(parent_idx, 0)
                     self._comment_depths[i] = min(
-                        parent_depth + 1, self._MAX_DEPTH,
+                        parent_depth + 1,
+                        self._MAX_DEPTH,
                     )
                     continue
             self._comment_depths[i] = 0
 
         # Build visible comment indices (skip removed)
         self._visible_indices = [
-            i for i, c in enumerate(self.bug.comments)
-            if not is_comment_removed(c.text)
+            i for i, c in enumerate(self.bug.comments) if not is_comment_removed(c.text)
         ]
 
         # Populate left pane
@@ -531,6 +538,7 @@ class BugDetailScreen(ModalScreen[None]):
         def _initial_populate() -> None:
             self._populate_richlog()
             self.query_one('#comment-list', ListView).focus()
+
         self.call_after_refresh(_initial_populate)
 
     def _build_comment_items(self) -> list[CommentItem]:
@@ -572,8 +580,7 @@ class BugDetailScreen(ModalScreen[None]):
         subsequent appends, causing stale child counts.
         """
         self._visible_indices = [
-            i for i, c in enumerate(self.bug.comments)
-            if not is_comment_removed(c.text)
+            i for i, c in enumerate(self.bug.comments) if not is_comment_removed(c.text)
         ]
         # Replace the ListView widget and rebuild the RichLog in a
         # single batch so the screen doesn't flicker mid-rebuild.
@@ -601,7 +608,10 @@ class BugDetailScreen(ModalScreen[None]):
         return self._ts.get('accent', 'cyan')
 
     def _render_comment_panel(
-        self, viewer: RichLog, comment: Comment, idx: int,
+        self,
+        viewer: RichLog,
+        comment: Comment,
+        idx: int,
         depth: int = 0,
     ) -> None:
         """Render a comment as a bordered panel in the review app style."""
@@ -612,7 +622,7 @@ class BugDetailScreen(ModalScreen[None]):
             header_block, body = text, ''
 
         colour = self._get_comment_colour(comment)
-        bg = f"on {self._ts['panel']}" if self._ts.get('panel') else 'on grey11'
+        bg = f'on {self._ts["panel"]}' if self._ts.get('panel') else 'on grey11'
 
         # Extract sender name for panel title
         from_hdr = parse_comment_header(text, 'From')
@@ -634,7 +644,7 @@ class BugDetailScreen(ModalScreen[None]):
             colon = line.find(':')
             if colon > 0:
                 hdr_name = line[:colon]
-                hdr_val = line[colon + 1:].strip()
+                hdr_val = line[colon + 1 :].strip()
                 if hdr_name == 'In-Reply-To':
                     continue
                 if hdr_name == 'Message-ID':
@@ -673,6 +683,7 @@ class BugDetailScreen(ModalScreen[None]):
         )
         if depth > 0:
             from rich.padding import Padding
+
             viewer.write(Padding(panel, pad=(0, 0, 0, depth * 2)))
         else:
             viewer.write(panel)
@@ -803,13 +814,15 @@ class BugDetailScreen(ModalScreen[None]):
         with self.app.suspend():
             try:
                 result = b4.edit_in_editor(
-                    template.encode(), filehint='bug-comment.md',
+                    template.encode(),
+                    filehint='bug-comment.md',
                 )
             except Exception as exc:
                 logger.critical('Editor error: %s', exc)
                 return
         # Strip HTML comments and check if anything remains
         import re
+
         text = result.decode(errors='replace')
         text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL).strip()
         if not text:
@@ -826,7 +839,8 @@ class BugDetailScreen(ModalScreen[None]):
         """Return the currently selected comment, or None."""
         lv = self.query_one('#comment-list', ListView)
         if lv.highlighted_child is not None and isinstance(
-            lv.highlighted_child, CommentItem,
+            lv.highlighted_child,
+            CommentItem,
         ):
             idx = lv.highlighted_child.comment_idx
             if idx < len(self.bug.comments):
@@ -842,8 +856,9 @@ class BugDetailScreen(ModalScreen[None]):
         # Get message-id from comment — required for reply
         msgid = parse_comment_header(comment.text, 'Message-ID')
         if not msgid:
-            self.notify('No Message-ID in this comment, cannot reply',
-                        severity='warning')
+            self.notify(
+                'No Message-ID in this comment, cannot reply', severity='warning'
+            )
             return
 
         # Fetch the original message from lore
@@ -858,10 +873,12 @@ class BugDetailScreen(ModalScreen[None]):
         """Fetch the original message and compose a reply."""
         # Determine if this bug uses --no-parent scope
         scope = parse_comment_header(
-            self.bug.comments[0].text, 'X-B4-Bug-Scope',
+            self.bug.comments[0].text,
+            'X-B4-Bug-Scope',
         )
         root_msgid = parse_comment_header(
-            self.bug.comments[0].text, 'Message-ID',
+            self.bug.comments[0].text,
+            'Message-ID',
         )
         if not root_msgid:
             root_msgid = msgid
@@ -872,7 +889,8 @@ class BugDetailScreen(ModalScreen[None]):
             msgs = b4.get_pi_thread_by_msgid(fetch_id)
         if not msgs:
             self.app.call_from_thread(
-                self.notify, 'Could not retrieve thread from lore',
+                self.notify,
+                'Could not retrieve thread from lore',
                 severity='error',
             )
             return
@@ -880,7 +898,9 @@ class BugDetailScreen(ModalScreen[None]):
         # Apply --no-parent filter if applicable
         if scope == 'no-parent':
             filtered = b4.get_strict_thread(
-                msgs, fetch_id, noparent=True,
+                msgs,
+                fetch_id,
+                noparent=True,
             )
             if filtered:
                 msgs = filtered
@@ -897,7 +917,8 @@ class BugDetailScreen(ModalScreen[None]):
 
         if target_msg is None:
             self.app.call_from_thread(
-                self.notify, f'Message {msgid} not found in thread',
+                self.notify,
+                f'Message {msgid} not found in thread',
                 severity='error',
             )
             return
@@ -923,21 +944,23 @@ class BugDetailScreen(ModalScreen[None]):
 
         # Schedule the editor open on the main thread
         self.app.call_from_thread(
-            self._open_reply_editor, lmsg, reply_text,
+            self._open_reply_editor,
+            lmsg,
+            reply_text,
         )
 
-    def _open_reply_editor(self, lmsg: 'b4.LoreMessage',
-                           reply_text: str) -> None:
+    def _open_reply_editor(self, lmsg: 'b4.LoreMessage', reply_text: str) -> None:
         """Open editor and show preview (runs on main thread)."""
         self._reply_edit_loop(lmsg, reply_text)
 
-    def _reply_edit_loop(self, lmsg: 'b4.LoreMessage',
-                         reply_text: str,
-                         is_reedit: bool = False) -> None:
+    def _reply_edit_loop(
+        self, lmsg: 'b4.LoreMessage', reply_text: str, is_reedit: bool = False
+    ) -> None:
         with self.app.suspend():
             try:
                 result = b4.edit_in_editor(
-                    reply_text.encode(), filehint='reply.eml',
+                    reply_text.encode(),
+                    filehint='reply.eml',
                 )
             except Exception as exc:
                 logger.critical('Editor error: %s', exc)
@@ -961,7 +984,8 @@ class BugDetailScreen(ModalScreen[None]):
                 self._reply_edit_loop(lmsg, final_text, is_reedit=True)
 
         self.app.push_screen(
-            ReplyPreviewScreen(reply_msg), callback=_on_preview,
+            ReplyPreviewScreen(reply_msg),
+            callback=_on_preview,
         )
 
     def _send_reply(self, msg: 'email.message.EmailMessage') -> None:
@@ -974,7 +998,8 @@ class BugDetailScreen(ModalScreen[None]):
             try:
                 smtp, fromaddr = b4.get_smtp(dryrun=dryrun)
                 sent = b4.send_mail(
-                    smtp, [msg],
+                    smtp,
+                    [msg],
                     fromaddr=fromaddr,
                     patatt_sign=patatt_sign,
                     dryrun=dryrun,
@@ -991,6 +1016,7 @@ class BugDetailScreen(ModalScreen[None]):
             self.notify('Reply sent')
         # Record the reply as a comment on the bug
         from b4.bugs._import import format_comment
+
         comment_text = format_comment(msg)
         app.repo.add_comment(self.bug.id, comment_text)
         app.repo.invalidate(self.bug.id)
@@ -1022,8 +1048,9 @@ class BugDetailScreen(ModalScreen[None]):
             if not isinstance(app, BugListApp):
                 return
             usercfg = b4.get_user_config()
-            identity = (f'{usercfg.get("name", "Unknown")} '
-                        f'<{usercfg.get("email", "unknown")}>')
+            identity = (
+                f'{usercfg.get("name", "Unknown")} <{usercfg.get("email", "unknown")}>'
+            )
             tombstone = make_tombstone(comment.text, identity)
             app.repo.edit_comment(self.bug.id, comment.id, tombstone)
             self._refresh_bug_view()
@@ -1033,8 +1060,10 @@ class BugDetailScreen(ModalScreen[None]):
         self.app.push_screen(
             ConfirmScreen(
                 title='Remove comment?',
-                body=[f'From: {sender}',
-                      'The comment body will be permanently removed.'],
+                body=[
+                    f'From: {sender}',
+                    'The comment body will be permanently removed.',
+                ],
                 border='$warning',
             ),
             callback=_on_confirm,
@@ -1042,6 +1071,7 @@ class BugDetailScreen(ModalScreen[None]):
 
     def action_edit_title(self) -> None:
         """Edit the bug title."""
+
         def _on_result(new_title: Optional[str]) -> None:
             if not new_title:
                 return
@@ -1058,7 +1088,8 @@ class BugDetailScreen(ModalScreen[None]):
             self.query_one('#detail-header', Static).update(header)
 
         self.app.push_screen(
-            EditTitleScreen(self.bug.title), callback=_on_result,
+            EditTitleScreen(self.bug.title),
+            callback=_on_result,
         )
 
     def action_add_label(self) -> None:
@@ -1094,12 +1125,14 @@ class BugDetailScreen(ModalScreen[None]):
                 return
             bid = self.bug.id
             if action == 'delete':
+
                 def _on_delete(confirmed: bool | None) -> None:
                     if not confirmed:
                         return
                     app.repo.remove_bug(bid)
                     app.repo.invalidate()
                     self.dismiss(None)
+
                 self.app.push_screen(
                     ConfirmScreen(
                         title='Delete bug?',
@@ -1111,14 +1144,14 @@ class BugDetailScreen(ModalScreen[None]):
                 )
                 return
             if action == 'duplicate':
+
                 def _on_dup(target_id: Optional[str]) -> None:
                     if not target_id:
                         return
                     target = app.repo.get_bug(target_id)
                     app.repo.add_comment(
                         bid,
-                        f'Closing as duplicate of {target.id[:7]}: '
-                        f'{target.title}',
+                        f'Closing as duplicate of {target.id[:7]}: {target.title}',
                     )
                     for lb in self.bug.labels:
                         if lb.startswith('lifecycle:'):
@@ -1127,6 +1160,7 @@ class BugDetailScreen(ModalScreen[None]):
                     app.repo.set_status(bid, Status.CLOSED)
                     app.repo.invalidate()
                     self.dismiss(None)
+
                 self.app.push_screen(
                     DuplicateScreen(app.repo, self.bug),
                     callback=_on_dup,
@@ -1152,8 +1186,8 @@ class BugDetailScreen(ModalScreen[None]):
                 self._refresh_bug_view()
 
         self.app.push_screen(
-            ActionScreen(actions, shortcuts=_ACTION_SHORTCUTS),
-            callback=_on_result)
+            ActionScreen(actions, shortcuts=_ACTION_SHORTCUTS), callback=_on_result
+        )
 
     def action_back(self) -> None:
         self.dismiss(None)
@@ -1165,7 +1199,7 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
     Returns 'send' to send, 'edit' to re-edit, or None to abandon.
     """
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     ReplyPreviewScreen {
         background: $surface;
     }
@@ -1184,7 +1218,7 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
         padding: 0 1;
         color: $text-muted;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('S', 'send', 'Send'),
@@ -1243,6 +1277,7 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
 
     def action_edit_tocc(self) -> None:
         from b4.tui import ToCcScreen
+
         to_val = b4.LoreMessage.clean_header(self._msg.get('To', ''))
         cc_val = b4.LoreMessage.clean_header(self._msg.get('Cc', ''))
         screen = ToCcScreen(to_val, cc_val, '', show_apply_all=False)
@@ -1282,7 +1317,6 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
         self.query_one('#reply-preview-log', RichLog).scroll_page_up()
 
 
-
 class LabelOption(ListItem):
     """A toggleable label option in the label selection dialog."""
 
@@ -1293,6 +1327,7 @@ class LabelOption(ListItem):
 
     def compose(self) -> ComposeResult:
         from textual.widgets import Label
+
         mark = 'x' if self.selected else ' '
         text = Text()
         text.append(f'[{mark}] ')
@@ -1303,6 +1338,7 @@ class LabelOption(ListItem):
     def toggle(self) -> None:
         self.selected = not self.selected
         from textual.widgets import Label
+
         mark = 'x' if self.selected else ' '
         text = Text()
         text.append(f'[{mark}] ')
@@ -1323,7 +1359,7 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
 
     _list_id = '#label-list'
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     LabelScreen {
         align: center middle;
     }
@@ -1343,7 +1379,7 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
         margin-top: 1;
         color: $text-muted;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('space', 'toggle_item', 'Toggle', show=False),
@@ -1356,7 +1392,8 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
     ]
 
     def __init__(
-        self, current_labels: set[str] | frozenset[str],
+        self,
+        current_labels: set[str] | frozenset[str],
         suggestions: list[str],
     ) -> None:
         super().__init__()
@@ -1366,10 +1403,7 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
         self._suggestions = suggestions
 
     def compose(self) -> ComposeResult:
-        items = [
-            LabelOption(lb, initially_selected=True)
-            for lb in self._current
-        ]
+        items = [LabelOption(lb, initially_selected=True) for lb in self._current]
         with Vertical(id='label-dialog') as dialog:
             dialog.border_title = 'Select labels'
             if not items:
@@ -1382,7 +1416,9 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
             else:
                 yield ListView(*items, id='label-list')
                 yield Static(
-                    Text('space toggle  |  [a] add new  |  Enter save  |  Escape cancel'),
+                    Text(
+                        'space toggle  |  [a] add new  |  Enter save  |  Escape cancel'
+                    ),
                     id='label-hint',
                 )
 
@@ -1392,7 +1428,8 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
     def action_toggle_item(self) -> None:
         lv = self.query_one('#label-list', ListView)
         if lv.highlighted_child is not None and isinstance(
-            lv.highlighted_child, LabelOption,
+            lv.highlighted_child,
+            LabelOption,
         ):
             lv.highlighted_child.toggle()
 
@@ -1406,7 +1443,9 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
         has_items = len(lv.children) > 0
         hint = self.query_one('#label-hint', Static)
         if has_items:
-            hint.update(Text('space toggle  |  [a] add new  |  Enter save  |  Escape cancel'))
+            hint.update(
+                Text('space toggle  |  [a] add new  |  Enter save  |  Escape cancel')
+            )
         else:
             hint.update(Text('[a] add new  |  Escape cancel'))
 
@@ -1426,6 +1465,7 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
                 lv.index = len(lv.children) - 1
                 lv.focus()
                 self._update_hint()
+
         self.app.push_screen(
             AddLabelScreen(self._suggestions),
             callback=_on_added,
@@ -1458,7 +1498,7 @@ class LabelScreen(JKListNavMixin, ModalScreen[Optional[dict[str, list[str]]]]):
 class AddLabelScreen(ModalScreen[Optional[str]]):
     """Text input for adding a brand-new label, with suggestions."""
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     AddLabelScreen {
         align: center middle;
     }
@@ -1469,7 +1509,7 @@ class AddLabelScreen(ModalScreen[Optional[str]]):
         background: $surface;
         padding: 1 2;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('escape', 'cancel', 'cancel'),
@@ -1482,7 +1522,8 @@ class AddLabelScreen(ModalScreen[Optional[str]]):
     def compose(self) -> ComposeResult:
         suggester = (
             SuggestFromList(self._suggestions, case_sensitive=False)
-            if self._suggestions else None
+            if self._suggestions
+            else None
         )
         with Vertical(id='addlabel-dialog') as dialog:
             dialog.border_title = 'Add label'
@@ -1506,21 +1547,21 @@ class AddLabelScreen(ModalScreen[Optional[str]]):
 
 # Shortcut keys for the bug action selector.
 _ACTION_SHORTCUTS: dict[str, str] = {
-    'confirmed':  'c',
-    'needinfo':   'n',
+    'confirmed': 'c',
+    'needinfo': 'n',
     'worksforme': 'w',
-    'wontfix':    'x',
-    'fixed':      'f',
-    'duplicate':  'd',
-    'reopen':     'r',
-    'delete':     'D',
+    'wontfix': 'x',
+    'fixed': 'f',
+    'duplicate': 'd',
+    'reopen': 'r',
+    'delete': 'D',
 }
 
 
 class UpdateBugsScreen(ModalScreen[Optional[dict[str, int]]]):
     """Modal showing progress while updating bugs from lore."""
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     UpdateBugsScreen {
         align: center middle;
     }
@@ -1538,7 +1579,7 @@ class UpdateBugsScreen(ModalScreen[Optional[dict[str, int]]]):
         margin-top: 1;
         color: $text-muted;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('escape', 'cancel', 'cancel'),
@@ -1551,11 +1592,14 @@ class UpdateBugsScreen(ModalScreen[Optional[dict[str, int]]]):
         self._repo = repo
         self._cancelled = False
         self._result: dict[str, int] = {
-            'checked': 0, 'updated': 0, 'new_comments': 0,
+            'checked': 0,
+            'updated': 0,
+            'new_comments': 0,
         }
 
     def compose(self) -> ComposeResult:
         from textual.widgets import Label, ProgressBar
+
         count = len(self._bugs)
         title = f'Updating {count} bug(s)' if count > 1 else 'Updating bug'
         with Vertical(id='update-dialog') as dialog:
@@ -1566,16 +1610,21 @@ class UpdateBugsScreen(ModalScreen[Optional[dict[str, int]]]):
             )
             yield Label('', id='update-bug', markup=False)
             yield ProgressBar(
-                total=count, show_eta=False, id='update-progress',
+                total=count,
+                show_eta=False,
+                id='update-progress',
             )
 
     def on_mount(self) -> None:
         self.run_worker(
-            self._do_updates, name='_do_updates', thread=True,
+            self._do_updates,
+            name='_do_updates',
+            thread=True,
         )
 
     def _update_progress(self, completed: int, title: str) -> None:
         from textual.widgets import Label, ProgressBar
+
         count = len(self._bugs)
         self.query_one('#update-status', Label).update(
             f'Checking {completed}/{count} bugs...',
@@ -1585,12 +1634,15 @@ class UpdateBugsScreen(ModalScreen[Optional[dict[str, int]]]):
 
     def _do_updates(self) -> dict[str, int]:
         from b4.bugs._import import refresh_bug
+
         with _quiet_worker():
             for i, bug in enumerate(self._bugs):
                 if self._cancelled:
                     break
                 self.app.call_from_thread(
-                    self._update_progress, i, bug.title,
+                    self._update_progress,
+                    i,
+                    bug.title,
                 )
                 try:
                     count = refresh_bug(self._repo, bug.id)
@@ -1601,12 +1653,15 @@ class UpdateBugsScreen(ModalScreen[Optional[dict[str, int]]]):
                     self._result['updated'] += 1
                     self._result['new_comments'] += count
                 self.app.call_from_thread(
-                    self._update_progress, i + 1, bug.title,
+                    self._update_progress,
+                    i + 1,
+                    bug.title,
                 )
         return self._result
 
     async def on_worker_state_changed(
-        self, event: Worker.StateChanged,
+        self,
+        event: Worker.StateChanged,
     ) -> None:
         if event.worker.name != '_do_updates':
             return
@@ -1625,7 +1680,7 @@ class DuplicateScreen(ModalScreen[Optional[str]]):
     Returns the resolved bug ID on confirm, or None on cancel.
     """
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     DuplicateScreen {
         align: center middle;
     }
@@ -1641,7 +1696,7 @@ class DuplicateScreen(ModalScreen[Optional[str]]):
         margin-top: 1;
         color: $text-muted;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('escape', 'cancel', 'cancel'),
@@ -1656,8 +1711,7 @@ class DuplicateScreen(ModalScreen[Optional[str]]):
         with Vertical(id='dup-dialog') as dialog:
             dialog.border_title = 'Close as duplicate of'
             yield Input(placeholder='Bug ID', id='dup-input')
-            yield Static('Enter confirm  |  Escape cancel',
-                         id='dup-status')
+            yield Static('Enter confirm  |  Escape cancel', id='dup-status')
 
     def on_mount(self) -> None:
         self.query_one('#dup-input', Input).focus()
@@ -1686,7 +1740,7 @@ class DuplicateScreen(ModalScreen[Optional[str]]):
 class EditTitleScreen(ModalScreen[Optional[str]]):
     """Edit a bug's title."""
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     EditTitleScreen {
         align: center middle;
     }
@@ -1701,7 +1755,7 @@ class EditTitleScreen(ModalScreen[Optional[str]]):
         margin-top: 1;
         color: $text-muted;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('escape', 'cancel', 'cancel'),
@@ -1715,8 +1769,7 @@ class EditTitleScreen(ModalScreen[Optional[str]]):
         with Vertical(id='edit-title-dialog') as dialog:
             dialog.border_title = 'Edit title'
             yield Input(value=self._current_title, id='edit-title-input')
-            yield Static('Enter save  |  Escape cancel',
-                         id='edit-title-hint')
+            yield Static('Enter save  |  Escape cancel', id='edit-title-hint')
 
     def on_mount(self) -> None:
         self.query_one('#edit-title-input', Input).focus()
@@ -1734,6 +1787,7 @@ class EditTitleScreen(ModalScreen[Optional[str]]):
 
 # -- Main app ----------------------------------------------------------------
 
+
 class BugListApp(JKListNavMixin, App[None]):
     """Bug management TUI backed by git-bug via ezgb."""
 
@@ -1741,7 +1795,7 @@ class BugListApp(JKListNavMixin, App[None]):
 
     _list_id = '#bug-list'
 
-    DEFAULT_CSS = '''
+    DEFAULT_CSS = """
     BugListApp {
         layout: vertical;
     }
@@ -1781,7 +1835,7 @@ class BugListApp(JKListNavMixin, App[None]):
         width: 14;
         text-style: bold;
     }
-    '''
+    """
 
     BINDINGS = [
         Binding('j', 'cursor_down', 'down', show=False),
@@ -1813,9 +1867,9 @@ class BugListApp(JKListNavMixin, App[None]):
         'action_quit': 'global',
     }
 
-    def __init__(self, repo: GitBugRepo, *,
-                 email_dryrun: bool = False,
-                 no_sign: bool = False) -> None:
+    def __init__(
+        self, repo: GitBugRepo, *, email_dryrun: bool = False, no_sign: bool = False
+    ) -> None:
         super().__init__()
         self.repo = repo
         self.email_dryrun = email_dryrun
@@ -1833,7 +1887,9 @@ class BugListApp(JKListNavMixin, App[None]):
 
     def compose(self) -> ComposeResult:
         yield Static('b4 bugs', id='title-bar')
-        header_text = f'{"ID":<7s}  {"Submitter":<20s}  {"Msgs":>4s}     {"S"}  {"Subject"}'
+        header_text = (
+            f'{"ID":<7s}  {"Submitter":<20s}  {"Msgs":>4s}     {"S"}  {"Subject"}'
+        )
         yield Static(header_text, id='column-header')
         yield ListView(id='bug-list')
         with Vertical(id='details-panel'):
@@ -1883,8 +1939,7 @@ class BugListApp(JKListNavMixin, App[None]):
         if current_mtime != self._cache_mtime:
             self._cache_mtime = current_mtime
             self._save_focus()
-            self.run_worker(self._load_bugs, name='load_bugs',
-                            thread=True)
+            self.run_worker(self._load_bugs, name='load_bugs', thread=True)
 
     def on_mount(self) -> None:
         self._ts = resolve_styles(self)
@@ -1948,20 +2003,18 @@ class BugListApp(JKListNavMixin, App[None]):
         # or the limit pattern has an explicit s: token
         has_explicit_status = self._has_status_token(self._limit_pattern)
         if not self._show_closed and not has_explicit_status:
-            display_bugs = [
-                b for b in display_bugs if b.status == Status.OPEN
-            ]
+            display_bugs = [b for b in display_bugs if b.status == Status.OPEN]
 
         if self._limit_pattern:
             display_bugs = [
-                b for b in display_bugs
-                if self._matches_limit(b, self._limit_pattern)
+                b for b in display_bugs if self._matches_limit(b, self._limit_pattern)
             ]
 
         # Sort: by last activity (newest first) within each tier,
         # then by tier (active → waiting → resolved).
         display_bugs.sort(
-            key=_bug_last_activity, reverse=True,
+            key=_bug_last_activity,
+            reverse=True,
         )
         display_bugs.sort(key=_bug_tier)
 
@@ -1969,7 +2022,9 @@ class BugListApp(JKListNavMixin, App[None]):
 
         items: list[BugListItem] = []
         for bug in display_bugs:
-            count = bug.comment_count if isinstance(bug, BugSummary) else len(bug.comments)
+            count = (
+                bug.comment_count if isinstance(bug, BugSummary) else len(bug.comments)
+            )
             seen = self._seen_counts.get(bug.id, count)
             unseen = max(0, count - seen)
             items.append(BugListItem(bug, unseen=unseen))
@@ -2000,7 +2055,11 @@ class BugListApp(JKListNavMixin, App[None]):
             # new comments that arrived since the baseline.
             for bug in self._all_bugs:
                 if bug.id not in self._seen_counts:
-                    count = bug.comment_count if isinstance(bug, BugSummary) else len(bug.comments)
+                    count = (
+                        bug.comment_count
+                        if isinstance(bug, BugSummary)
+                        else len(bug.comments)
+                    )
                     self._seen_counts[bug.id] = count
             # Collect all known labels across all bugs
             all_labels: set[str] = set()
@@ -2024,7 +2083,7 @@ class BugListApp(JKListNavMixin, App[None]):
         lifecycle = ''
         for lb in bug.labels:
             if lb.startswith('lifecycle:'):
-                lifecycle = lb[len('lifecycle:'):]
+                lifecycle = lb[len('lifecycle:') :]
                 break
         git_status = 'open' if bug.status == Status.OPEN else 'closed'
         if lifecycle:
@@ -2051,15 +2110,13 @@ class BugListApp(JKListNavMixin, App[None]):
             self.query_one('#detail-labels', Static).update('none')
 
         created_str = (
-            f'{bug.created_at:%Y-%m-%d %H:%M} '
-            f'({_relative_time(bug.created_at)})'
+            f'{bug.created_at:%Y-%m-%d %H:%M} ({_relative_time(bug.created_at)})'
         )
         self.query_one('#detail-created', Static).update(created_str)
 
         if isinstance(bug, BugSummary):
             edited_str = (
-                f'{bug.edited_at:%Y-%m-%d %H:%M} '
-                f'({_relative_time(bug.edited_at)})'
+                f'{bug.edited_at:%Y-%m-%d %H:%M} ({_relative_time(bug.edited_at)})'
             )
             self.query_one('#detail-last-activity', Static).update(edited_str)
             self.query_one('#detail-comments', Static).update(
@@ -2073,8 +2130,7 @@ class BugListApp(JKListNavMixin, App[None]):
                 f'by {last.author.name}'
             )
             self.query_one('#detail-last-activity', Static).update(last_str)
-            visible = sum(1 for c in bug.comments
-                          if not is_comment_removed(c.text))
+            visible = sum(1 for c in bug.comments if not is_comment_removed(c.text))
             self.query_one('#detail-comments', Static).update(
                 str(visible),
             )
@@ -2091,7 +2147,11 @@ class BugListApp(JKListNavMixin, App[None]):
             # Mark as seen so the badge clears on return
             bug_id = event.item.bug.id
             bug_obj = event.item.bug
-            count = bug_obj.comment_count if isinstance(bug_obj, BugSummary) else len(bug_obj.comments)
+            count = (
+                bug_obj.comment_count
+                if isinstance(bug_obj, BugSummary)
+                else len(bug_obj.comments)
+            )
             self._seen_counts[bug_id] = count
             # Load full Bug on demand (CachedBug doesn't have comments)
             bug = self.repo.get_bug(bug_id)
@@ -2099,17 +2159,17 @@ class BugListApp(JKListNavMixin, App[None]):
             def _on_dismiss(_result: None) -> None:
                 self.repo.invalidate()
                 self._save_focus()
-                self.run_worker(self._load_bugs, name='load_bugs',
-                                thread=True)
+                self.run_worker(self._load_bugs, name='load_bugs', thread=True)
 
-            self.push_screen(BugDetailScreen(bug),
-                             callback=_on_dismiss)
+            self.push_screen(BugDetailScreen(bug), callback=_on_dismiss)
 
     # -- Actions -------------------------------------------------------------
 
     def _get_selected_bug(self) -> Optional[BugLike]:
         lv = self.query_one('#bug-list', ListView)
-        if lv.highlighted_child is not None and isinstance(lv.highlighted_child, BugListItem):
+        if lv.highlighted_child is not None and isinstance(
+            lv.highlighted_child, BugListItem
+        ):
             return lv.highlighted_child.bug
         return None
 
@@ -2126,9 +2186,11 @@ class BugListApp(JKListNavMixin, App[None]):
 
     def action_limit(self) -> None:
         self.push_screen(
-            LimitScreen(self._limit_pattern,
-                        hint='Prefixes: s:<status>  l:<label>',
-                        title='Limit bugs'),
+            LimitScreen(
+                self._limit_pattern,
+                hint='Prefixes: s:<status>  l:<label>',
+                title='Limit bugs',
+            ),
             callback=self._on_limit,
         )
 
@@ -2162,8 +2224,8 @@ class BugListApp(JKListNavMixin, App[None]):
             if result:
                 self._focus_bug_id = result
                 self.repo.invalidate()
-                self.run_worker(self._load_bugs, name='load_bugs',
-                                thread=True)
+                self.run_worker(self._load_bugs, name='load_bugs', thread=True)
+
         self.push_screen(ImportScreen(), callback=_on_result)
 
     def _do_create_new_bug(self) -> None:
@@ -2176,12 +2238,14 @@ class BugListApp(JKListNavMixin, App[None]):
         with self.suspend():
             try:
                 result = b4.edit_in_editor(
-                    template.encode(), filehint='new-bug.md',
+                    template.encode(),
+                    filehint='new-bug.md',
                 )
             except Exception as exc:
                 logger.critical('Editor error: %s', exc)
                 return
         import re
+
         text = result.decode(errors='replace')
         text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL).strip()
         if not text:
@@ -2196,11 +2260,11 @@ class BugListApp(JKListNavMixin, App[None]):
         bug = self.repo.create_bug(title, body)
         self._focus_bug_id = bug.id
         self.repo.invalidate()
-        self.run_worker(self._load_bugs, name='load_bugs',
-                        thread=True)
+        self.run_worker(self._load_bugs, name='load_bugs', thread=True)
 
     def _on_update_complete(
-        self, result: Optional[dict[str, int]],
+        self,
+        result: Optional[dict[str, int]],
     ) -> None:
         if result:
             updated = result.get('updated', 0)
@@ -2282,8 +2346,7 @@ class BugListApp(JKListNavMixin, App[None]):
             for lb in result.get('add', []):
                 self.repo.add_label(bug.id, lb)
             self.repo.invalidate()
-            self.run_worker(self._load_bugs, name='load_bugs',
-                            thread=True)
+            self.run_worker(self._load_bugs, name='load_bugs', thread=True)
 
         self.push_screen(
             LabelScreen(bug.labels, self._known_labels),
@@ -2307,7 +2370,7 @@ class BugListApp(JKListNavMixin, App[None]):
         lifecycle = 'new'
         for lb in bug.labels:
             if lb.startswith('lifecycle:'):
-                lifecycle = lb[len('lifecycle:'):]
+                lifecycle = lb[len('lifecycle:') :]
                 break
 
         actions: list[tuple[str, str]] = []
@@ -2330,12 +2393,14 @@ class BugListApp(JKListNavMixin, App[None]):
                 ('needinfo', 'Need info'),
             ]
         # Close reasons are always available regardless of lifecycle
-        actions.extend([
-            ('fixed', 'Close: fixed'),
-            ('worksforme', 'Close: works for me'),
-            ('wontfix', "Close: won't fix"),
-            ('duplicate', 'Close: duplicate of\u2026'),
-        ])
+        actions.extend(
+            [
+                ('fixed', 'Close: fixed'),
+                ('worksforme', 'Close: works for me'),
+                ('wontfix', "Close: won't fix"),
+                ('duplicate', 'Close: duplicate of\u2026'),
+            ]
+        )
         actions.append(('delete', 'Delete bug'))
         return actions
 
@@ -2348,8 +2413,9 @@ class BugListApp(JKListNavMixin, App[None]):
         def _on_result(action: Optional[str]) -> None:
             self._apply_action(bug, action)
 
-        self.push_screen(ActionScreen(actions, shortcuts=_ACTION_SHORTCUTS),
-                         callback=_on_result)
+        self.push_screen(
+            ActionScreen(actions, shortcuts=_ACTION_SHORTCUTS), callback=_on_result
+        )
 
     # Lifecycle states that close the bug
     _CLOSING_STATES = {'worksforme', 'wontfix', 'fixed', 'duplicate'}
@@ -2391,8 +2457,8 @@ class BugListApp(JKListNavMixin, App[None]):
             if confirmed and bug:
                 self.repo.remove_bug(bug.id)
                 self.repo.invalidate()
-                self.run_worker(self._load_bugs, name='load_bugs',
-                                thread=True)
+                self.run_worker(self._load_bugs, name='load_bugs', thread=True)
+
         self.push_screen(
             ConfirmScreen(
                 title='Delete bug?',
@@ -2420,11 +2486,9 @@ class BugListApp(JKListNavMixin, App[None]):
             self.repo.add_label(bid, 'lifecycle:duplicate')
             self.repo.set_status(bid, Status.CLOSED)
             self.repo.invalidate()
-            self.run_worker(self._load_bugs, name='load_bugs',
-                            thread=True)
+            self.run_worker(self._load_bugs, name='load_bugs', thread=True)
 
         self.push_screen(
-            DuplicateScreen(self.repo, bug), callback=_on_result,
+            DuplicateScreen(self.repo, bug),
+            callback=_on_result,
         )
-
-

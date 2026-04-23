@@ -10,34 +10,33 @@ Uses real SQLite databases (via b4.review.tracking) and git repos
 core user workflows: series listing, navigation, filtering,
 status transitions, and modal interactions.
 """
-import pathlib
-import pytest
 
+import pathlib
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
+
+import pytest
+from textual.widgets import Input, ListView, Static
 
 import b4
 import b4.review
 import b4.review.tracking as tracking
-
-from textual.widgets import Input, ListView, Static
-
-from b4.review_tui._tracking_app import TrackingApp, TrackedSeriesItem
 from b4.review_tui._modals import (
-    ActionScreen,
     ActionItem,
+    ActionScreen,
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
     SnoozeScreen,
     TargetBranchScreen,
 )
-
+from b4.review_tui._tracking_app import TrackedSeriesItem, TrackingApp
 
 # ---------------------------------------------------------------------------
 # Compat helper — Textual ≥ 1.0 (pip) uses Static.content,
 # older builds (e.g. Fedora 43 package) still use Static.renderable.
 # ---------------------------------------------------------------------------
+
 
 def _static_text(widget: Any) -> str:
     """Return the text content of a Static widget across Textual versions."""
@@ -49,6 +48,7 @@ def _static_text(widget: Any) -> str:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _seed_db(identifier: str, series_list: List[Dict[str, Any]]) -> None:
     """Create and populate a tracking database with test series."""
@@ -79,20 +79,27 @@ def _seed_db(identifier: str, series_list: List[Dict[str, Any]]) -> None:
             conn.execute(
                 'UPDATE series SET message_count = ?, seen_message_count = ? '
                 'WHERE change_id = ? AND revision = ?',
-                (mc, s.get('seen_message_count', mc),
-                 s['change_id'], s.get('revision', 1)),
+                (
+                    mc,
+                    s.get('seen_message_count', mc),
+                    s['change_id'],
+                    s.get('revision', 1),
+                ),
             )
             conn.commit()
     conn.close()
 
 
-def _create_review_branch(gitdir: str, change_id: str,
-                          identifier: str = 'test-project',
-                          revision: int = 1,
-                          status: str = 'reviewing',
-                          subject: str = 'Test series',
-                          sender_name: str = 'Test Author',
-                          sender_email: str = 'test@example.com') -> str:
+def _create_review_branch(
+    gitdir: str,
+    change_id: str,
+    identifier: str = 'test-project',
+    revision: int = 1,
+    status: str = 'reviewing',
+    subject: str = 'Test series',
+    sender_name: str = 'Test Author',
+    sender_email: str = 'test@example.com',
+) -> str:
     """Create a fake b4 review branch with a proper tracking commit.
 
     Returns the branch name.
@@ -131,13 +138,15 @@ def _create_review_branch(gitdir: str, change_id: str,
     assert ecode == 0
     tree = tree.strip()
     ecode, new_sha = b4.git_run_command(
-        gitdir, ['commit-tree', tree, '-p', base_sha],
+        gitdir,
+        ['commit-tree', tree, '-p', base_sha],
         stdin=commit_msg.encode(),
     )
     assert ecode == 0
     new_sha = new_sha.strip()
     ecode, _ = b4.git_run_command(
-        gitdir, ['update-ref', f'refs/heads/{branch_name}', new_sha])
+        gitdir, ['update-ref', f'refs/heads/{branch_name}', new_sha]
+    )
     assert ecode == 0
     return branch_name
 
@@ -180,6 +189,7 @@ SAMPLE_SERIES: List[Dict[str, Any]] = [
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestTrackingAppStartup:
     """Tests for the TrackingApp startup and series listing."""
 
@@ -207,7 +217,9 @@ class TestTrackingAppStartup:
             assert len(list(lv.children)) == 3
 
     @pytest.mark.asyncio
-    async def test_title_shows_identifier_and_count(self, tmp_path: pathlib.Path) -> None:
+    async def test_title_shows_identifier_and_count(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         _seed_db('test-title', SAMPLE_SERIES)
 
         app = TrackingApp('test-title')
@@ -295,6 +307,7 @@ class TestTrackingLimit:
             assert isinstance(app.screen, LimitScreen)
 
             from textual.widgets import Input
+
             inp = app.screen.query_one('#limit-input', Input)
             inp.value = 'drm'
             await pilot.press('enter')
@@ -318,6 +331,7 @@ class TestTrackingLimit:
             await pilot.pause()
 
             from textual.widgets import Input
+
             inp = app.screen.query_one('#limit-input', Input)
             inp.value = 'Charlie'
             await pilot.press('enter')
@@ -340,13 +354,16 @@ class TestTrackingLimit:
             await pilot.press('l')
             await pilot.pause()
             from textual.widgets import Input
+
             inp = app.screen.query_one('#limit-input', Input)
             inp.value = 'alpha'
             await pilot.press('enter')
             await pilot.pause()
 
             lv = app.query_one('#tracking-list', ListView)
-            assert len([c for c in lv.children if isinstance(c, TrackedSeriesItem)]) == 1
+            assert (
+                len([c for c in lv.children if isinstance(c, TrackedSeriesItem)]) == 1
+            )
 
             # Clear the filter
             await pilot.press('l')
@@ -357,7 +374,9 @@ class TestTrackingLimit:
             await pilot.pause()
 
             lv = app.query_one('#tracking-list', ListView)
-            assert len([c for c in lv.children if isinstance(c, TrackedSeriesItem)]) == 3
+            assert (
+                len([c for c in lv.children if isinstance(c, TrackedSeriesItem)]) == 3
+            )
 
     @pytest.mark.asyncio
     async def test_limit_title_shows_count(self, tmp_path: pathlib.Path) -> None:
@@ -370,6 +389,7 @@ class TestTrackingLimit:
             await pilot.press('l')
             await pilot.pause()
             from textual.widgets import Input
+
             inp = app.screen.query_one('#limit-input', Input)
             inp.value = 'alpha'
             await pilot.press('enter')
@@ -385,19 +405,22 @@ class TestTrackingLimitPrefixes:
     @pytest.mark.asyncio
     async def test_limit_by_status(self, tmp_path: pathlib.Path) -> None:
         """s:snoozed should show only snoozed series."""
-        _seed_db('test-limit-status', [
-            {
-                'change_id': 'ls-new',
-                'subject': '[PATCH] new one',
-                'message_id': 'lsn@ex.com',
-            },
-            {
-                'change_id': 'ls-snoozed',
-                'subject': '[PATCH] snoozed one',
-                'status': 'snoozed',
-                'message_id': 'lss@ex.com',
-            },
-        ])
+        _seed_db(
+            'test-limit-status',
+            [
+                {
+                    'change_id': 'ls-new',
+                    'subject': '[PATCH] new one',
+                    'message_id': 'lsn@ex.com',
+                },
+                {
+                    'change_id': 'ls-snoozed',
+                    'subject': '[PATCH] snoozed one',
+                    'status': 'snoozed',
+                    'message_id': 'lss@ex.com',
+                },
+            ],
+        )
 
         app = TrackingApp('test-limit-status')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -405,6 +428,7 @@ class TestTrackingLimitPrefixes:
             await pilot.press('l')
             await pilot.pause()
             from textual.widgets import Input
+
             inp = app.screen.query_one('#limit-input', Input)
             inp.value = 's:snoozed'
             await pilot.press('enter')
@@ -447,7 +471,9 @@ class TestTrackingStatusGroups:
     """Tests for status grouping and display."""
 
     @pytest.mark.asyncio
-    async def test_actionable_before_non_actionable(self, tmp_path: pathlib.Path) -> None:
+    async def test_actionable_before_non_actionable(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         """Actionable series (new) should appear before non-actionable (snoozed).
 
         We use only statuses that don't require a real review branch
@@ -549,6 +575,7 @@ class TestTrackingQuit:
 # Tests with real git repos (review branches)
 # ---------------------------------------------------------------------------
 
+
 class TestTrackingWithReviewBranch:
     """Tests that use the gitdir fixture for real review branches."""
 
@@ -558,12 +585,17 @@ class TestTrackingWithReviewBranch:
         identifier = 'test-reviewing'
         change_id = 'test-review-branch-1'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] series with review branch',
-            'status': 'reviewing',
-            'message_id': 'review-branch-1@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] series with review branch',
+                    'status': 'reviewing',
+                    'message_id': 'review-branch-1@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -579,12 +611,17 @@ class TestTrackingWithReviewBranch:
         identifier = 'test-review-exit'
         change_id = 'test-exit-branch'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] exit test',
-            'status': 'reviewing',
-            'message_id': 'exit@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] exit test',
+                    'status': 'reviewing',
+                    'message_id': 'exit@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -600,12 +637,17 @@ class TestTrackingWithReviewBranch:
         identifier = 'test-enter-review'
         change_id = 'test-enter-branch'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] enter test',
-            'status': 'reviewing',
-            'message_id': 'enter@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] enter test',
+                    'status': 'reviewing',
+                    'message_id': 'enter@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -619,14 +661,20 @@ class TestTrackingWithReviewBranch:
         """Pressing 'r' on a waiting series should change it to reviewing."""
         identifier = 'test-wait-review'
         change_id = 'test-waiting-branch'
-        _create_review_branch(gitdir, change_id, identifier=identifier,
-                              status='waiting')
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] waiting test',
-            'status': 'waiting',
-            'message_id': 'waiting@ex.com',
-        }])
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='waiting'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] waiting test',
+                    'status': 'waiting',
+                    'message_id': 'waiting@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -640,8 +688,8 @@ class TestTrackingWithReviewBranch:
             # Verify status was updated in DB
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT status FROM series WHERE change_id = ?',
-                (change_id,))
+                'SELECT status FROM series WHERE change_id = ?', (change_id,)
+            )
             row = cursor.fetchone()
             conn.close()
             assert row[0] == 'reviewing'
@@ -652,14 +700,19 @@ class TestTrackingWithReviewBranch:
         identifier = 'test-seen'
         change_id = 'test-seen-branch'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] seen test',
-            'status': 'reviewing',
-            'message_id': 'seen@ex.com',
-            'message_count': 10,
-            'seen_message_count': 3,
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] seen test',
+                    'status': 'reviewing',
+                    'message_id': 'seen@ex.com',
+                    'message_count': 10,
+                    'seen_message_count': 3,
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -671,7 +724,8 @@ class TestTrackingWithReviewBranch:
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
                 'SELECT message_count, seen_message_count FROM series WHERE change_id = ?',
-                (change_id,))
+                (change_id,),
+            )
             row = cursor.fetchone()
             conn.close()
             assert row[0] == row[1]  # seen should equal total
@@ -683,11 +737,16 @@ class TestTrackingActionMenu:
     @pytest.mark.asyncio
     async def test_action_menu_for_new_series(self, tmp_path: pathlib.Path) -> None:
         """New series should show review/abandon/snooze actions."""
-        _seed_db('test-action-new', [{
-            'change_id': 'new-action-1',
-            'subject': '[PATCH] new action test',
-            'message_id': 'action-new@ex.com',
-        }])
+        _seed_db(
+            'test-action-new',
+            [
+                {
+                    'change_id': 'new-action-1',
+                    'subject': '[PATCH] new action test',
+                    'message_id': 'action-new@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp('test-action-new')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -699,6 +758,7 @@ class TestTrackingActionMenu:
             # Check available actions
             lv = app.screen.query_one('#action-list', ListView)
             from b4.review_tui._modals import ActionItem
+
             actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
             assert 'review' in actions
             assert 'abandon' in actions
@@ -718,12 +778,17 @@ class TestTrackingActionMenu:
         identifier = 'test-action-reviewing'
         change_id = 'reviewing-action-1'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] reviewing action test',
-            'status': 'reviewing',
-            'message_id': 'action-rev@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] reviewing action test',
+                    'status': 'reviewing',
+                    'message_id': 'action-rev@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -734,6 +799,7 @@ class TestTrackingActionMenu:
 
             lv = app.screen.query_one('#action-list', ListView)
             from b4.review_tui._modals import ActionItem
+
             actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
             assert 'take' in actions
             assert 'rebase' in actions
@@ -745,12 +811,17 @@ class TestTrackingActionMenu:
     @pytest.mark.asyncio
     async def test_action_menu_for_snoozed(self, tmp_path: pathlib.Path) -> None:
         """Snoozed series should show unsnooze/abandon actions."""
-        _seed_db('test-action-snoozed', [{
-            'change_id': 'snoozed-action-1',
-            'subject': '[PATCH] snoozed action test',
-            'status': 'snoozed',
-            'message_id': 'action-snz@ex.com',
-        }])
+        _seed_db(
+            'test-action-snoozed',
+            [
+                {
+                    'change_id': 'snoozed-action-1',
+                    'subject': '[PATCH] snoozed action test',
+                    'status': 'snoozed',
+                    'message_id': 'action-snz@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp('test-action-snoozed')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -761,6 +832,7 @@ class TestTrackingActionMenu:
 
             lv = app.screen.query_one('#action-list', ListView)
             from b4.review_tui._modals import ActionItem
+
             actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
             assert 'unsnooze' in actions
             assert 'abandon' in actions
@@ -773,11 +845,16 @@ class TestTrackingActionMenu:
     @pytest.mark.asyncio
     async def test_enter_on_new_opens_action_menu(self, tmp_path: pathlib.Path) -> None:
         """Enter on a 'new' series should open action menu (not review)."""
-        _seed_db('test-enter-new', [{
-            'change_id': 'enter-new-1',
-            'subject': '[PATCH] enter new test',
-            'message_id': 'enter-new@ex.com',
-        }])
+        _seed_db(
+            'test-enter-new',
+            [
+                {
+                    'change_id': 'enter-new-1',
+                    'subject': '[PATCH] enter new test',
+                    'message_id': 'enter-new@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp('test-enter-new')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -795,20 +872,27 @@ class TestTrackingUpgradeNewSeries:
 
     @pytest.mark.asyncio
     async def test_action_menu_shows_upgrade_for_new_with_newer(
-            self, tmp_path: pathlib.Path) -> None:
+        self, tmp_path: pathlib.Path
+    ) -> None:
         """New series with a newer revision available should offer upgrade."""
         identifier = 'test-upgrade-new'
         change_id = 'upgrade-new-1'
         conn = tracking.init_db(identifier)
         tracking.add_series_to_db(
-            conn, change_id=change_id, revision=12,
+            conn,
+            change_id=change_id,
+            revision=12,
             subject='[PATCH v12] test upgrade',
-            sender_name='Test', sender_email='t@ex.com',
+            sender_name='Test',
+            sender_email='t@ex.com',
             sent_at='2026-01-15T10:00:00+00:00',
-            message_id='v12@ex.com', num_patches=2)
+            message_id='v12@ex.com',
+            num_patches=2,
+        )
         # Add v13 to the revisions table so has_newer is set
-        tracking.add_revision(conn, change_id, 13, 'v13@ex.com',
-                              subject='[PATCH v13] test upgrade')
+        tracking.add_revision(
+            conn, change_id, 13, 'v13@ex.com', subject='[PATCH v13] test upgrade'
+        )
         conn.close()
 
         app = TrackingApp(identifier)
@@ -819,6 +903,7 @@ class TestTrackingUpgradeNewSeries:
             assert isinstance(app.screen, ActionScreen)
             lv = app.screen.query_one('#action-list', ListView)
             from b4.review_tui._modals import ActionItem
+
             actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
             assert 'upgrade' in actions
             assert 'review' in actions
@@ -826,13 +911,19 @@ class TestTrackingUpgradeNewSeries:
 
     @pytest.mark.asyncio
     async def test_action_menu_no_upgrade_without_newer(
-            self, tmp_path: pathlib.Path) -> None:
+        self, tmp_path: pathlib.Path
+    ) -> None:
         """New series without newer revisions should not offer upgrade."""
-        _seed_db('test-upgrade-none', [{
-            'change_id': 'upgrade-none-1',
-            'subject': '[PATCH] no newer test',
-            'message_id': 'only@ex.com',
-        }])
+        _seed_db(
+            'test-upgrade-none',
+            [
+                {
+                    'change_id': 'upgrade-none-1',
+                    'subject': '[PATCH] no newer test',
+                    'message_id': 'only@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp('test-upgrade-none')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -842,30 +933,38 @@ class TestTrackingUpgradeNewSeries:
             assert isinstance(app.screen, ActionScreen)
             lv = app.screen.query_one('#action-list', ListView)
             from b4.review_tui._modals import ActionItem
+
             actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
             assert 'upgrade' not in actions
             await pilot.press('escape')
 
     @pytest.mark.asyncio
-    async def test_upgrade_switches_revision(
-            self, tmp_path: pathlib.Path) -> None:
+    async def test_upgrade_switches_revision(self, tmp_path: pathlib.Path) -> None:
         """Upgrade on a new series should update the DB to the newer revision."""
         identifier = 'test-upgrade-switch'
         change_id = 'upgrade-switch-1'
         conn = tracking.init_db(identifier)
         tracking.add_series_to_db(
-            conn, change_id=change_id, revision=12,
+            conn,
+            change_id=change_id,
+            revision=12,
             subject='[PATCH v12] switch test',
-            sender_name='Test', sender_email='t@ex.com',
+            sender_name='Test',
+            sender_email='t@ex.com',
             sent_at='2026-01-15T10:00:00+00:00',
-            message_id='v12@ex.com', num_patches=2)
+            message_id='v12@ex.com',
+            num_patches=2,
+        )
         # Set message counts so we can verify they get reset
         conn.execute(
             'UPDATE series SET message_count = 6, seen_message_count = 4'
-            ' WHERE change_id = ?', (change_id,))
+            ' WHERE change_id = ?',
+            (change_id,),
+        )
         conn.commit()
-        tracking.add_revision(conn, change_id, 13, 'v13@ex.com',
-                              subject='[PATCH v13] switch test')
+        tracking.add_revision(
+            conn, change_id, 13, 'v13@ex.com', subject='[PATCH v13] switch test'
+        )
         conn.close()
 
         app = TrackingApp(identifier)
@@ -878,6 +977,7 @@ class TestTrackingUpgradeNewSeries:
             # Select 'upgrade' — it should be in the list
             lv = app.screen.query_one('#action-list', ListView)
             from b4.review_tui._modals import ActionItem
+
             for child in lv.children:
                 if isinstance(child, ActionItem) and child.key == 'upgrade':
                     lv.index = lv.children.index(child)
@@ -890,7 +990,9 @@ class TestTrackingUpgradeNewSeries:
             cursor = conn.execute(
                 'SELECT revision, message_id, message_count,'
                 ' seen_message_count FROM series'
-                ' WHERE change_id = ?', (change_id,))
+                ' WHERE change_id = ?',
+                (change_id,),
+            )
             row = cursor.fetchone()
             conn.close()
             assert row is not None
@@ -907,11 +1009,16 @@ class TestTrackingSnooze:
     async def test_snooze_new_series(self, tmp_path: pathlib.Path) -> None:
         """Snoozing a new series should update the database."""
         identifier = 'test-snooze'
-        _seed_db(identifier, [{
-            'change_id': 'snooze-test-1',
-            'subject': '[PATCH] snooze me',
-            'message_id': 'snooze@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'snooze-test-1',
+                    'subject': '[PATCH] snooze me',
+                    'message_id': 'snooze@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -937,10 +1044,13 @@ class TestTrackingSnooze:
             assert not isinstance(app.screen, SnoozeScreen)
 
             # Verify DB was updated
-            conn = tracking.get_db(identifier)
+            # https://github.com/python/mypy/issues/9457:
+            # app.screen is stale-narrowed across await.
+            conn = tracking.get_db(identifier)  # type: ignore[unreachable]
             cursor = conn.execute(
                 'SELECT status, snoozed_until FROM series WHERE change_id = ?',
-                ('snooze-test-1',))
+                ('snooze-test-1',),
+            )
             row = cursor.fetchone()
             conn.close()
             assert row[0] == 'snoozed'
@@ -950,11 +1060,16 @@ class TestTrackingSnooze:
     async def test_snooze_cancel(self, tmp_path: pathlib.Path) -> None:
         """Cancelling snooze should leave the series unchanged."""
         identifier = 'test-snooze-cancel'
-        _seed_db(identifier, [{
-            'change_id': 'snooze-cancel-1',
-            'subject': '[PATCH] do not snooze',
-            'message_id': 'nosnooze@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'snooze-cancel-1',
+                    'subject': '[PATCH] do not snooze',
+                    'message_id': 'nosnooze@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -971,8 +1086,8 @@ class TestTrackingSnooze:
             # Verify status unchanged
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT status FROM series WHERE change_id = ?',
-                ('snooze-cancel-1',))
+                'SELECT status FROM series WHERE change_id = ?', ('snooze-cancel-1',)
+            )
             row = cursor.fetchone()
             conn.close()
             assert row[0] == 'new'
@@ -983,12 +1098,17 @@ class TestTrackingSnooze:
         identifier = 'test-snooze-branch'
         change_id = 'snooze-branch-1'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] snooze branch test',
-            'status': 'reviewing',
-            'message_id': 'snzbr@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] snooze branch test',
+                    'status': 'reviewing',
+                    'message_id': 'snzbr@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1007,15 +1127,14 @@ class TestTrackingSnooze:
             # Verify DB
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT status FROM series WHERE change_id = ?',
-                (change_id,))
+                'SELECT status FROM series WHERE change_id = ?', (change_id,)
+            )
             row = cursor.fetchone()
             conn.close()
             assert row[0] == 'snoozed'
 
             # Verify tracking commit was updated
-            _cover_text, trk = b4.review.load_tracking(
-                gitdir, f'b4/review/{change_id}')
+            _cover_text, trk = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
             assert trk['series']['status'] == 'snoozed'
             assert 'snoozed' in trk['series']
             assert trk['series']['snoozed']['previous_state'] == 'reviewing'
@@ -1028,20 +1147,23 @@ class TestTrackingAbandon:
     async def test_abandon_new_series(self, tmp_path: pathlib.Path) -> None:
         """Abandoning a new series should remove it from the DB."""
         identifier = 'test-abandon'
-        _seed_db(identifier, [
-            {
-                'change_id': 'keep-1',
-                'subject': '[PATCH] keep me',
-                'sent_at': '2026-03-10T11:00:00+00:00',
-                'message_id': 'keep@ex.com',
-            },
-            {
-                'change_id': 'abandon-1',
-                'subject': '[PATCH] abandon me',
-                'sent_at': '2026-03-10T12:00:00+00:00',
-                'message_id': 'abandon@ex.com',
-            },
-        ])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'keep-1',
+                    'subject': '[PATCH] keep me',
+                    'sent_at': '2026-03-10T11:00:00+00:00',
+                    'message_id': 'keep@ex.com',
+                },
+                {
+                    'change_id': 'abandon-1',
+                    'subject': '[PATCH] abandon me',
+                    'sent_at': '2026-03-10T12:00:00+00:00',
+                    'message_id': 'abandon@ex.com',
+                },
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1076,11 +1198,16 @@ class TestTrackingAbandon:
     async def test_abandon_cancel(self, tmp_path: pathlib.Path) -> None:
         """Cancelling abandon should leave the series intact."""
         identifier = 'test-abandon-cancel'
-        _seed_db(identifier, [{
-            'change_id': 'noabandon-1',
-            'subject': '[PATCH] do not abandon',
-            'message_id': 'noabandon@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'noabandon-1',
+                    'subject': '[PATCH] do not abandon',
+                    'message_id': 'noabandon@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1097,8 +1224,8 @@ class TestTrackingAbandon:
             # Still in DB
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT change_id FROM series WHERE change_id = ?',
-                ('noabandon-1',))
+                'SELECT change_id FROM series WHERE change_id = ?', ('noabandon-1',)
+            )
             assert cursor.fetchone() is not None
             conn.close()
 
@@ -1107,14 +1234,18 @@ class TestTrackingAbandon:
         """Abandoning a series with a review branch should delete the branch."""
         identifier = 'test-abandon-branch'
         change_id = 'abandon-branch-1'
-        branch_name = _create_review_branch(
-            gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] abandon with branch',
-            'status': 'reviewing',
-            'message_id': 'abr@ex.com',
-        }])
+        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] abandon with branch',
+                    'status': 'reviewing',
+                    'message_id': 'abr@ex.com',
+                }
+            ],
+        )
 
         # Verify branch exists before
         assert b4.git_branch_exists(gitdir, branch_name)
@@ -1138,8 +1269,8 @@ class TestTrackingAbandon:
             # DB should be clean
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT change_id FROM series WHERE change_id = ?',
-                (change_id,))
+                'SELECT change_id FROM series WHERE change_id = ?', (change_id,)
+            )
             assert cursor.fetchone() is None
             conn.close()
 
@@ -1153,12 +1284,17 @@ class TestTrackingWaiting:
         identifier = 'test-waiting'
         change_id = 'waiting-test-1'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] wait for v2',
-            'status': 'reviewing',
-            'message_id': 'wait@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] wait for v2',
+                    'status': 'reviewing',
+                    'message_id': 'wait@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1173,15 +1309,14 @@ class TestTrackingWaiting:
             # Verify DB status
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT status FROM series WHERE change_id = ?',
-                (change_id,))
+                'SELECT status FROM series WHERE change_id = ?', (change_id,)
+            )
             row = cursor.fetchone()
             conn.close()
             assert row[0] == 'waiting'
 
             # Verify tracking commit
-            _cover_text, trk = b4.review.load_tracking(
-                gitdir, f'b4/review/{change_id}')
+            _cover_text, trk = b4.review.load_tracking(gitdir, f'b4/review/{change_id}')
             assert trk['series']['status'] == 'waiting'
 
     @pytest.mark.asyncio
@@ -1189,11 +1324,16 @@ class TestTrackingWaiting:
         """Marking a new (unimported) series as waiting should update DB only."""
         identifier = 'test-new-waiting'
         change_id = 'new-waiting-1'
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] needs v2',
-            'message_id': 'newwait@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] needs v2',
+                    'message_id': 'newwait@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1208,8 +1348,8 @@ class TestTrackingWaiting:
             # Verify DB status changed
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT status FROM series WHERE change_id = ?',
-                (change_id,))
+                'SELECT status FROM series WHERE change_id = ?', (change_id,)
+            )
             row = cursor.fetchone()
             conn.close()
             assert row[0] == 'waiting'
@@ -1219,7 +1359,9 @@ class TestTrackingDetailPanel:
     """Tests for the detail panel shown on series highlight."""
 
     @pytest.mark.asyncio
-    async def test_detail_panel_shows_on_highlight(self, tmp_path: pathlib.Path) -> None:
+    async def test_detail_panel_shows_on_highlight(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         _seed_db('test-detail', SAMPLE_SERIES)
 
         app = TrackingApp('test-detail')
@@ -1227,6 +1369,7 @@ class TestTrackingDetailPanel:
             await pilot.pause()
 
             from textual.containers import Vertical
+
             panel = app.query_one('#details-panel', Vertical)
             # Panel should have non-zero height (auto-shown on first highlight)
             assert panel.styles.height is not None
@@ -1243,11 +1386,15 @@ class TestTrackingDetailPanel:
             await pilot.pause()
 
             from textual.containers import Vertical
+
             panel = app.query_one('#details-panel', Vertical)
-            assert panel.styles.height.value == 0  # type: ignore[union-attr]
+            assert panel.styles.height is not None
+            assert panel.styles.height.value == 0
 
     @pytest.mark.asyncio
-    async def test_detail_panel_updates_on_navigation(self, tmp_path: pathlib.Path) -> None:
+    async def test_detail_panel_updates_on_navigation(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         """Navigating to a different series should update the detail panel."""
         _seed_db('test-detail-nav', SAMPLE_SERIES)
 
@@ -1277,30 +1424,34 @@ class TestTrackingMultipleSeries:
         """App should correctly display a mix of new and reviewing series."""
         identifier = 'test-mixed'
         change_id_rev = 'mixed-reviewing-1'
-        _create_review_branch(gitdir, change_id_rev, identifier=identifier,
-                              subject='Reviewing series')
-        _seed_db(identifier, [
-            {
-                'change_id': change_id_rev,
-                'subject': '[PATCH] reviewing series',
-                'status': 'reviewing',
-                'sent_at': '2026-03-10T12:00:00+00:00',
-                'message_id': 'rev@ex.com',
-            },
-            {
-                'change_id': 'mixed-new-1',
-                'subject': '[PATCH] new series',
-                'sent_at': '2026-03-10T11:00:00+00:00',
-                'message_id': 'new@ex.com',
-            },
-            {
-                'change_id': 'mixed-snoozed-1',
-                'subject': '[PATCH] snoozed series',
-                'status': 'snoozed',
-                'sent_at': '2026-03-10T10:00:00+00:00',
-                'message_id': 'snz@ex.com',
-            },
-        ])
+        _create_review_branch(
+            gitdir, change_id_rev, identifier=identifier, subject='Reviewing series'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id_rev,
+                    'subject': '[PATCH] reviewing series',
+                    'status': 'reviewing',
+                    'sent_at': '2026-03-10T12:00:00+00:00',
+                    'message_id': 'rev@ex.com',
+                },
+                {
+                    'change_id': 'mixed-new-1',
+                    'subject': '[PATCH] new series',
+                    'sent_at': '2026-03-10T11:00:00+00:00',
+                    'message_id': 'new@ex.com',
+                },
+                {
+                    'change_id': 'mixed-snoozed-1',
+                    'subject': '[PATCH] snoozed series',
+                    'status': 'snoozed',
+                    'sent_at': '2026-03-10T10:00:00+00:00',
+                    'message_id': 'snz@ex.com',
+                },
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1321,23 +1472,27 @@ class TestTrackingMultipleSeries:
         """Navigate to a non-first series and enter review mode."""
         identifier = 'test-nav-review'
         change_id = 'nav-review-target'
-        _create_review_branch(gitdir, change_id, identifier=identifier,
-                              subject='Target series')
-        _seed_db(identifier, [
-            {
-                'change_id': 'nav-review-first',
-                'subject': '[PATCH] first (new)',
-                'sent_at': '2026-03-10T12:00:00+00:00',
-                'message_id': 'first@ex.com',
-            },
-            {
-                'change_id': change_id,
-                'subject': '[PATCH] target (reviewing)',
-                'status': 'reviewing',
-                'sent_at': '2026-03-10T11:00:00+00:00',
-                'message_id': 'target@ex.com',
-            },
-        ])
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, subject='Target series'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'nav-review-first',
+                    'subject': '[PATCH] first (new)',
+                    'sent_at': '2026-03-10T12:00:00+00:00',
+                    'message_id': 'first@ex.com',
+                },
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] target (reviewing)',
+                    'status': 'reviewing',
+                    'sent_at': '2026-03-10T11:00:00+00:00',
+                    'message_id': 'target@ex.com',
+                },
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1360,18 +1515,21 @@ class TestTrackingSnoozeRemembersChoice:
     async def test_snooze_remembers_last_input(self, tmp_path: pathlib.Path) -> None:
         """Second snooze should pre-populate with the first snooze's input."""
         identifier = 'test-snooze-memory'
-        _seed_db(identifier, [
-            {
-                'change_id': 'mem-1',
-                'subject': '[PATCH] first',
-                'message_id': 'mem1@ex.com',
-            },
-            {
-                'change_id': 'mem-2',
-                'subject': '[PATCH] second',
-                'message_id': 'mem2@ex.com',
-            },
-        ])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'mem-1',
+                    'subject': '[PATCH] first',
+                    'message_id': 'mem1@ex.com',
+                },
+                {
+                    'change_id': 'mem-2',
+                    'subject': '[PATCH] second',
+                    'message_id': 'mem2@ex.com',
+                },
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1391,12 +1549,17 @@ class TestTrackingSnoozeRemembersChoice:
             # Move to the other (non-snoozed) series before snoozing it.
             # The cursor may still be on the just-snoozed item, so press
             # down then up to ensure we land on a non-snoozed item.
-            first_cid = app._selected_series.get('change_id') if app._selected_series else None
+            first_cid = (
+                app._selected_series.get('change_id') if app._selected_series else None
+            )
             if app._selected_series and app._selected_series.get('status') == 'snoozed':
                 await pilot.press('down')
                 await pilot.pause()
                 # If down didn't change, try up
-                if app._selected_series and app._selected_series.get('change_id') == first_cid:
+                if (
+                    app._selected_series
+                    and app._selected_series.get('change_id') == first_cid
+                ):
                     await pilot.press('up')
                     await pilot.pause()
 
@@ -1417,12 +1580,11 @@ class TestTrackingSnoozeRemembersChoice:
 # Lifecycle / state-machine tests
 # ---------------------------------------------------------------------------
 
+
 def _get_db_status(identifier: str, change_id: str) -> str:
     """Read the current status of a series from the tracking database."""
     conn = tracking.get_db(identifier)
-    cursor = conn.execute(
-        'SELECT status FROM series WHERE change_id = ?',
-        (change_id,))
+    cursor = conn.execute('SELECT status FROM series WHERE change_id = ?', (change_id,))
     row = cursor.fetchone()
     conn.close()
     assert row is not None, f'Series {change_id} not found in DB'
@@ -1459,16 +1621,22 @@ class TestSeriesLifecycle:
         branch_name = f'b4/review/{change_id}'
 
         # Seed series as 'reviewing' with a real review branch
-        _create_review_branch(gitdir, change_id, identifier=identifier,
-                              status='reviewing')
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] lifecycle test series',
-            'sender_name': 'Lifecycle Author',
-            'sender_email': 'lifecycle@example.com',
-            'status': 'reviewing',
-            'message_id': 'lifecycle@ex.com',
-        }])
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='reviewing'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] lifecycle test series',
+                    'sender_name': 'Lifecycle Author',
+                    'sender_email': 'lifecycle@example.com',
+                    'status': 'reviewing',
+                    'message_id': 'lifecycle@ex.com',
+                }
+            ],
+        )
 
         # === Phase 1: reviewing → waiting ===
         app = TrackingApp(identifier)
@@ -1567,8 +1735,8 @@ class TestSeriesLifecycle:
         # The real 'take' flow needs suspend + am + editor, so we seed.
         conn = tracking.get_db(identifier)
         conn.execute(
-            'UPDATE series SET status = ? WHERE change_id = ?',
-            ('accepted', change_id))
+            'UPDATE series SET status = ? WHERE change_id = ?', ('accepted', change_id)
+        )
         conn.commit()
         conn.close()
         # Also update the tracking commit
@@ -1592,14 +1760,17 @@ class TestSeriesLifecycle:
             await pilot.press('escape')
 
         # === Phase 7: accepted → archived (mock _archive_branch) ===
-        def _mock_archive(self_app: TrackingApp, cid: str,
-                          rev: Optional[int], rbranch: str,
-                          pw_series_id: Optional[int] = None,
-                          notify: bool = True) -> bool:
+        def _mock_archive(
+            self_app: TrackingApp,
+            cid: str,
+            rev: Optional[int],
+            rbranch: str,
+            pw_series_id: Optional[int] = None,
+            notify: bool = True,
+        ) -> bool:
             """Simplified archive: just update DB status."""
             aconn = tracking.get_db(self_app._identifier)
-            tracking.update_series_status(aconn, cid, 'archived',
-                                          revision=rev)
+            tracking.update_series_status(aconn, cid, 'archived', revision=rev)
             aconn.close()
             return True
 
@@ -1626,11 +1797,16 @@ class TestSeriesLifecycle:
         """A new series can be snoozed without ever entering review."""
         identifier = 'test-lifecycle-snooze-new'
         change_id = 'direct-snooze-1'
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] snooze from new',
-            'message_id': 'ds@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] snooze from new',
+                    'message_id': 'ds@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1652,14 +1828,20 @@ class TestSeriesLifecycle:
         """A thanked series can only be archived."""
         identifier = 'test-lifecycle-thanked'
         change_id = 'thanked-series-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier,
-                              status='thanked')
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] thanked ready for archive',
-            'status': 'thanked',
-            'message_id': 'thanked@ex.com',
-        }])
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='thanked'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] thanked ready for archive',
+                    'status': 'thanked',
+                    'message_id': 'thanked@ex.com',
+                }
+            ],
+        )
 
         # Verify action menu: only 'archive' should be available
         app = TrackingApp(identifier)
@@ -1677,14 +1859,20 @@ class TestSeriesLifecycle:
         """Accepted series should show review, thank, abandon, and archive."""
         identifier = 'test-lifecycle-accepted'
         change_id = 'accepted-menu-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier,
-                              status='accepted')
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] accepted series menu test',
-            'status': 'accepted',
-            'message_id': 'acc@ex.com',
-        }])
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='accepted'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] accepted series menu test',
+                    'status': 'accepted',
+                    'message_id': 'acc@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1700,12 +1888,17 @@ class TestSeriesLifecycle:
         """A 'gone' series (branch deleted externally) should allow
         review and abandon."""
         identifier = 'test-lifecycle-gone'
-        _seed_db(identifier, [{
-            'change_id': 'gone-1',
-            'subject': '[PATCH] gone series',
-            'status': 'gone',
-            'message_id': 'gone@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'gone-1',
+                    'subject': '[PATCH] gone series',
+                    'status': 'gone',
+                    'message_id': 'gone@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1728,8 +1921,9 @@ class TestSeriesLifecycle:
         change_id = 'snooze-wait-1'
         branch_name = f'b4/review/{change_id}'
         # Create branch with 'snoozed' status + snoozed metadata
-        _create_review_branch(gitdir, change_id, identifier=identifier,
-                              status='snoozed')
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='snoozed'
+        )
         # Manually inject snoozed.previous_state into tracking commit
         cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         trk['series']['snoozed'] = {
@@ -1738,12 +1932,17 @@ class TestSeriesLifecycle:
         }
         b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
 
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] waiting then snoozed',
-            'status': 'snoozed',
-            'message_id': 'sw@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] waiting then snoozed',
+                    'status': 'snoozed',
+                    'message_id': 'sw@ex.com',
+                }
+            ],
+        )
 
         # Unsnooze should restore to 'waiting'
         app = TrackingApp(identifier)
@@ -1767,14 +1966,20 @@ class TestSeriesLifecycle:
         for status in ('reviewing', 'snoozed'):
             identifier = f'test-lifecycle-abandon-{status}'
             change_id = f'abandon-{status}'
-            _create_review_branch(gitdir, change_id, identifier=identifier,
-                                  status=status)
-            _seed_db(identifier, [{
-                'change_id': change_id,
-                'subject': f'[PATCH] abandon from {status}',
-                'status': status,
-                'message_id': f'ab-{status}@ex.com',
-            }])
+            _create_review_branch(
+                gitdir, change_id, identifier=identifier, status=status
+            )
+            _seed_db(
+                identifier,
+                [
+                    {
+                        'change_id': change_id,
+                        'subject': f'[PATCH] abandon from {status}',
+                        'status': status,
+                        'message_id': f'ab-{status}@ex.com',
+                    }
+                ],
+            )
 
             app = TrackingApp(identifier)
             async with app.run_test(size=(120, 30)) as pilot:
@@ -1792,16 +1997,18 @@ class TestSeriesLifecycle:
             # Verify series removed from DB
             conn = tracking.get_db(identifier)
             cursor = conn.execute(
-                'SELECT change_id FROM series WHERE change_id = ?',
-                (change_id,))
-            assert cursor.fetchone() is None, \
+                'SELECT change_id FROM series WHERE change_id = ?', (change_id,)
+            )
+            assert cursor.fetchone() is None, (
                 f'Series should be gone after abandon from {status}'
+            )
             conn.close()
 
             # Verify branch deleted
             branch_name = f'b4/review/{change_id}'
-            assert not b4.git_branch_exists(gitdir, branch_name), \
+            assert not b4.git_branch_exists(gitdir, branch_name), (
                 f'Branch should be deleted after abandon from {status}'
+            )
 
 
 @patch('b4.review.tracking.get_review_target_branches', return_value=['master'])
@@ -1809,15 +2016,22 @@ class TestTargetBranch:
     """Tests for per-series target branch tracking."""
 
     @pytest.mark.asyncio
-    async def test_set_target_branch_from_new(self, _mock_branches: Any, gitdir: str) -> None:
+    async def test_set_target_branch_from_new(
+        self, _mock_branches: Any, gitdir: str
+    ) -> None:
         """Press t on a new series, type a branch, confirm — DB is updated."""
         identifier = 'test-target-new'
         change_id = 'target-new-1'
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] target branch test',
-            'message_id': 'target-new@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] target branch test',
+                    'message_id': 'target-new@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1843,17 +2057,24 @@ class TestTargetBranch:
             assert target == 'master'
 
     @pytest.mark.asyncio
-    async def test_set_target_branch_from_reviewing(self, _mock_branches: Any, gitdir: str) -> None:
+    async def test_set_target_branch_from_reviewing(
+        self, _mock_branches: Any, gitdir: str
+    ) -> None:
         """Set target on a reviewing series — tracking commit updated too."""
         identifier = 'test-target-rev'
         change_id = 'target-rev-1'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] target reviewing test',
-            'status': 'reviewing',
-            'message_id': 'target-rev@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] target reviewing test',
+                    'status': 'reviewing',
+                    'message_id': 'target-rev@ex.com',
+                }
+            ],
+        )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1885,11 +2106,16 @@ class TestTargetBranch:
         """Verify detail panel shows Target: row when target is set."""
         identifier = 'test-target-detail'
         change_id = 'target-detail-1'
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] target detail test',
-            'message_id': 'target-detail@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] target detail test',
+                    'message_id': 'target-detail@ex.com',
+                }
+            ],
+        )
         # Set target in DB
         conn = tracking.get_db(identifier)
         tracking.update_target_branch(conn, change_id, 'sound/for-next')
@@ -1908,11 +2134,16 @@ class TestTargetBranch:
         """Ctrl+d in modal clears the target branch."""
         identifier = 'test-target-clear'
         change_id = 'target-clear-1'
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH] clear target test',
-            'message_id': 'target-clear@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] clear target test',
+                    'message_id': 'target-clear@ex.com',
+                }
+            ],
+        )
         # Set target first
         conn = tracking.get_db(identifier)
         tracking.update_target_branch(conn, change_id, 'old-branch')
@@ -1933,7 +2164,9 @@ class TestTargetBranch:
             assert not isinstance(app.screen, TargetBranchScreen)
 
             # Verify DB cleared
-            conn = tracking.get_db(identifier)
+            # https://github.com/python/mypy/issues/9457:
+            # app.screen is stale-narrowed across await.
+            conn = tracking.get_db(identifier)  # type: ignore[unreachable]
             target = tracking.get_target_branch(conn, change_id)
             conn.close()
             assert target is None
@@ -1943,14 +2176,17 @@ class TestTargetBranch:
 # Helpers for update-revision tests
 # ---------------------------------------------------------------------------
 
-def _make_mock_lser(revision: int = 2, expected: int = 1,
-                    complete: bool = False) -> b4.LoreSeries:
+
+def _make_mock_lser(
+    revision: int = 2, expected: int = 1, complete: bool = False
+) -> b4.LoreSeries:
     """Build a minimal LoreSeries usable by _on_update_* callbacks.
 
     Patches list contains a single MagicMock with msgid and body
     attributes so the Phase 3 metadata extraction succeeds.
     """
     from unittest.mock import MagicMock
+
     lser = b4.LoreSeries(revision, expected)
     lser.complete = complete
     lser.fromname = 'Test Author'
@@ -1963,29 +2199,45 @@ def _make_mock_lser(revision: int = 2, expected: int = 1,
     return lser
 
 
-def _setup_update_test(gitdir: str, identifier: str,
-                       change_id: str,
-                       current_rev: int = 1,
-                       target_rev: int = 2) -> str:
+def _setup_update_test(
+    gitdir: str,
+    identifier: str,
+    change_id: str,
+    current_rev: int = 1,
+    target_rev: int = 2,
+) -> str:
     """Seed a DB + review branch for update-revision tests.
 
     Returns the review branch name.
     """
     branch = _create_review_branch(
-        gitdir, change_id, identifier=identifier,
-        revision=current_rev, status='reviewing')
-    _seed_db(identifier, [{
-        'change_id': change_id,
-        'subject': f'[PATCH v{current_rev}] update test',
-        'revision': current_rev,
-        'status': 'reviewing',
-        'message_id': f'v{current_rev}@ex.com',
-    }])
+        gitdir,
+        change_id,
+        identifier=identifier,
+        revision=current_rev,
+        status='reviewing',
+    )
+    _seed_db(
+        identifier,
+        [
+            {
+                'change_id': change_id,
+                'subject': f'[PATCH v{current_rev}] update test',
+                'revision': current_rev,
+                'status': 'reviewing',
+                'message_id': f'v{current_rev}@ex.com',
+            }
+        ],
+    )
     # Register the target revision so _do_update_revision can look it up
     conn = tracking.get_db(identifier)
-    tracking.add_revision(conn, change_id, target_rev,
-                          f'v{target_rev}@ex.com',
-                          subject=f'[PATCH v{target_rev}] update test')
+    tracking.add_revision(
+        conn,
+        change_id,
+        target_rev,
+        f'v{target_rev}@ex.com',
+        subject=f'[PATCH v{target_rev}] update test',
+    )
     conn.close()
     return branch
 
@@ -2006,16 +2258,22 @@ class TestUpdateRevisionWorkflow:
         identifier = 'test-update-nomsgid'
         change_id = 'update-nomsgid-1'
         _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(identifier, [{
-            'change_id': change_id,
-            'subject': '[PATCH v1] no msgid test',
-            'status': 'reviewing',
-            'message_id': 'v1@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH v1] no msgid test',
+                    'status': 'reviewing',
+                    'message_id': 'v1@ex.com',
+                }
+            ],
+        )
         # Register v2 without a message-id
         conn = tracking.get_db(identifier)
-        tracking.add_revision(conn, change_id, 2, '',
-                              subject='[PATCH v2] no msgid test')
+        tracking.add_revision(
+            conn, change_id, 2, '', subject='[PATCH v2] no msgid test'
+        )
         conn.close()
 
         app = TrackingApp(identifier)
@@ -2025,9 +2283,12 @@ class TestUpdateRevisionWorkflow:
             app._do_update_revision(change_id, 1, 2)
             await pilot.pause()
             # Should stay on the main screen, not a WorkerScreen
-            assert not isinstance(app.screen,
-                                  __import__('b4.review_tui._modals',
-                                             fromlist=['WorkerScreen']).WorkerScreen)
+            assert not isinstance(
+                app.screen,
+                __import__(
+                    'b4.review_tui._modals', fromlist=['WorkerScreen']
+                ).WorkerScreen,
+            )
 
     # --- Phase 2: _on_update_prepared (base selection screen) ------------
 
@@ -2035,32 +2296,42 @@ class TestUpdateRevisionWorkflow:
     async def test_prepared_none_is_noop(self, tmp_path: pathlib.Path) -> None:
         """A None result (worker cancelled) should do nothing."""
         identifier = 'test-update-none'
-        _seed_db(identifier, [{
-            'change_id': 'noop-1',
-            'subject': '[PATCH] noop',
-            'message_id': 'noop@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'noop-1',
+                    'subject': '[PATCH] noop',
+                    'message_id': 'noop@ex.com',
+                }
+            ],
+        )
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             app._on_update_prepared(
-                None, 'noop-1', 1, 2, 'v2@ex.com', 'subj',
-                'b4/review/noop-1')
+                None, 'noop-1', 1, 2, 'v2@ex.com', 'subj', 'b4/review/noop-1'
+            )
             await pilot.pause()
             # No BaseSelectionScreen should be pushed
             from b4.review_tui._modals import BaseSelectionScreen
+
             assert not isinstance(app.screen, BaseSelectionScreen)
 
     @pytest.mark.asyncio
-    async def test_prepared_pushes_base_selection(
-            self, tmp_path: pathlib.Path) -> None:
+    async def test_prepared_pushes_base_selection(self, tmp_path: pathlib.Path) -> None:
         """Successful worker result should push BaseSelectionScreen."""
         identifier = 'test-update-base'
-        _seed_db(identifier, [{
-            'change_id': 'base-1',
-            'subject': '[PATCH] base select',
-            'message_id': 'base@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'base-1',
+                    'subject': '[PATCH] base select',
+                    'message_id': 'base@ex.com',
+                }
+            ],
+        )
         lser = _make_mock_lser()
         ambytes = b'fake mbox'
         result = (lser, ambytes, 'abc123456789', 'Guessed base: foo', 1)
@@ -2069,39 +2340,58 @@ class TestUpdateRevisionWorkflow:
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             app._on_update_prepared(
-                result, 'base-1', 1, 2, 'v2@ex.com',
-                '[PATCH v2] base select', 'b4/review/base-1')
+                result,
+                'base-1',
+                1,
+                2,
+                'v2@ex.com',
+                '[PATCH v2] base select',
+                'b4/review/base-1',
+            )
             await pilot.pause()
             from b4.review_tui._modals import BaseSelectionScreen
+
             assert isinstance(app.screen, BaseSelectionScreen)
 
     # --- Phase 3: _on_update_base_selected (apply + swap) ----------------
 
     @pytest.mark.asyncio
-    async def test_base_selected_none_cancels(
-            self, tmp_path: pathlib.Path) -> None:
+    async def test_base_selected_none_cancels(self, tmp_path: pathlib.Path) -> None:
         """Passing None as base_sha should cancel the update."""
         identifier = 'test-update-cancel'
-        _seed_db(identifier, [{
-            'change_id': 'cancel-1',
-            'subject': '[PATCH] cancel',
-            'message_id': 'cancel@ex.com',
-        }])
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'cancel-1',
+                    'subject': '[PATCH] cancel',
+                    'message_id': 'cancel@ex.com',
+                }
+            ],
+        )
         lser = _make_mock_lser()
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             app._on_update_base_selected(
-                None, lser, b'mbox', 1, 'cancel-1', 1, 2,
-                'v2@ex.com', 'subj', 'b4/review/cancel-1')
+                None,
+                lser,
+                b'mbox',
+                1,
+                'cancel-1',
+                1,
+                2,
+                'v2@ex.com',
+                'subj',
+                'b4/review/cancel-1',
+            )
             await pilot.pause()
             # App should still be running — not exited
             assert app.is_running
 
     @pytest.mark.asyncio
-    async def test_apply_failure_preserves_old_branch(
-            self, gitdir: str) -> None:
+    async def test_apply_failure_preserves_old_branch(self, gitdir: str) -> None:
         """When git-am fails the old review branch must remain intact."""
         identifier = 'test-update-fail'
         change_id = 'update-fail-1'
@@ -2109,8 +2399,7 @@ class TestUpdateRevisionWorkflow:
         upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
 
         # Snapshot old branch HEAD before the attempt
-        ecode, old_head = b4.git_run_command(
-            gitdir, ['rev-parse', review_branch])
+        ecode, old_head = b4.git_run_command(gitdir, ['rev-parse', review_branch])
         assert ecode == 0
         old_head = old_head.strip()
 
@@ -2119,21 +2408,34 @@ class TestUpdateRevisionWorkflow:
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            with patch.object(app, 'suspend', return_value=__import__(
-                    'contextlib').nullcontext()), \
-                 patch.object(app, 'exit'), \
-                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
-                 patch('b4.git_fetch_am_into_repo',
-                       side_effect=RuntimeError('apply failed')):
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch.object(app, 'exit'),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch(
+                    'b4.git_fetch_am_into_repo',
+                    side_effect=RuntimeError('apply failed'),
+                ),
+            ):
                 app._on_update_base_selected(
-                    'HEAD', lser, b'mbox', 1, change_id, 1, 2,
-                    'v2@ex.com', 'subj', review_branch)
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    review_branch,
+                )
             await pilot.pause()
 
         # Old review branch must still exist with unchanged HEAD
         assert b4.git_branch_exists(gitdir, review_branch)
-        ecode, cur_head = b4.git_run_command(
-            gitdir, ['rev-parse', review_branch])
+        ecode, cur_head = b4.git_run_command(gitdir, ['rev-parse', review_branch])
         assert ecode == 0
         assert cur_head.strip() == old_head
 
@@ -2143,24 +2445,22 @@ class TestUpdateRevisionWorkflow:
         # DB should still show original revision
         conn = tracking.get_db(identifier)
         cursor = conn.execute(
-            'SELECT revision, status FROM series WHERE change_id = ?',
-            (change_id,))
+            'SELECT revision, status FROM series WHERE change_id = ?', (change_id,)
+        )
         row = cursor.fetchone()
         conn.close()
         assert row[0] == 1
         assert row[1] == 'reviewing'
 
     @pytest.mark.asyncio
-    async def test_conflict_abort_preserves_old_branch(
-            self, gitdir: str) -> None:
+    async def test_conflict_abort_preserves_old_branch(self, gitdir: str) -> None:
         """When user aborts conflict resolution the old branch stays."""
         identifier = 'test-update-abort'
         change_id = 'update-abort-1'
         review_branch = _setup_update_test(gitdir, identifier, change_id)
         upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
 
-        ecode, old_head = b4.git_run_command(
-            gitdir, ['rev-parse', review_branch])
+        ecode, old_head = b4.git_run_command(gitdir, ['rev-parse', review_branch])
         assert ecode == 0
         old_head = old_head.strip()
 
@@ -2170,23 +2470,35 @@ class TestUpdateRevisionWorkflow:
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            with patch.object(app, 'suspend', return_value=__import__(
-                    'contextlib').nullcontext()), \
-                 patch.object(app, 'exit'), \
-                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
-                 patch('b4.git_fetch_am_into_repo',
-                       side_effect=conflict), \
-                 patch('b4.review_tui._tracking_app._resolve_worktree_am_conflict',
-                       return_value=False):
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch.object(app, 'exit'),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo', side_effect=conflict),
+                patch(
+                    'b4.review_tui._tracking_app._resolve_worktree_am_conflict',
+                    return_value=False,
+                ),
+            ):
                 app._on_update_base_selected(
-                    'HEAD', lser, b'mbox', 1, change_id, 1, 2,
-                    'v2@ex.com', 'subj', review_branch)
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    review_branch,
+                )
             await pilot.pause()
 
         # Old review branch must be untouched
         assert b4.git_branch_exists(gitdir, review_branch)
-        ecode, cur_head = b4.git_run_command(
-            gitdir, ['rev-parse', review_branch])
+        ecode, cur_head = b4.git_run_command(gitdir, ['rev-parse', review_branch])
         assert ecode == 0
         assert cur_head.strip() == old_head
 
@@ -2194,8 +2506,7 @@ class TestUpdateRevisionWorkflow:
         assert not b4.git_branch_exists(gitdir, upgrade_branch)
 
     @pytest.mark.asyncio
-    async def test_successful_upgrade_renames_branch(
-            self, gitdir: str) -> None:
+    async def test_successful_upgrade_renames_branch(self, gitdir: str) -> None:
         """On success the upgrade branch replaces the old review branch."""
         identifier = 'test-update-ok'
         change_id = 'update-ok-1'
@@ -2208,56 +2519,80 @@ class TestUpdateRevisionWorkflow:
         assert ecode == 0
         base = base.strip()
 
-        def _fake_create(topdir: str, branch: str, base_commit: str,
-                         lser_arg: b4.LoreSeries, linkurl: str,
-                         linkmask: str, num_prereqs: int = 0,
-                         identifier: Optional[str] = None,
-                         status: str = 'reviewing',
-                         **kwargs: Any) -> None:
+        def _fake_create(
+            topdir: str,
+            branch: str,
+            base_commit: str,
+            lser_arg: b4.LoreSeries,
+            linkurl: str,
+            linkmask: str,
+            num_prereqs: int = 0,
+            identifier: Optional[str] = None,
+            status: str = 'reviewing',
+            **kwargs: Any,
+        ) -> None:
             """Simulate create_review_branch by making a real branch."""
             branch_suffix = branch.removeprefix('b4/review/')
-            _create_review_branch(topdir, branch_suffix,
-                                  identifier=identifier or 'test',
-                                  revision=2, status='reviewing')
+            _create_review_branch(
+                topdir,
+                branch_suffix,
+                identifier=identifier or 'test',
+                revision=2,
+                status='reviewing',
+            )
 
-        def _mock_archive(self_app: TrackingApp, cid: str,
-                          rev: Optional[int], rbranch: str,
-                          pw_series_id: Optional[int] = None,
-                          notify: bool = True) -> bool:
+        def _mock_archive(
+            self_app: TrackingApp,
+            cid: str,
+            rev: Optional[int],
+            rbranch: str,
+            pw_series_id: Optional[int] = None,
+            notify: bool = True,
+        ) -> bool:
             """Delete branch + mark archived in DB."""
             b4.git_run_command(gitdir, ['branch', '-D', rbranch])
             aconn = tracking.get_db(self_app._identifier)
-            tracking.update_series_status(aconn, cid, 'archived',
-                                          revision=rev)
+            tracking.update_series_status(aconn, cid, 'archived', revision=rev)
             aconn.close()
             return True
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            with patch.object(app, 'suspend', return_value=__import__(
-                    'contextlib').nullcontext()), \
-                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
-                 patch('b4.git_fetch_am_into_repo'), \
-                 patch('b4.review.create_review_branch',
-                       side_effect=_fake_create), \
-                 patch('b4.review.get_review_branch_patch_ids',
-                       return_value=[]), \
-                 patch('b4.review.load_tracking',
-                       return_value=('', {'series': {}, 'patches': []})), \
-                 patch('b4.review.reanchor_patch_comments'), \
-                 patch('b4.review.save_tracking_ref'), \
-                 patch.object(TrackingApp, '_archive_branch',
-                              _mock_archive):
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+                patch('b4.review.get_review_branch_patch_ids', return_value=[]),
+                patch(
+                    'b4.review.load_tracking',
+                    return_value=('', {'series': {}, 'patches': []}),
+                ),
+                patch('b4.review.reanchor_patch_comments'),
+                patch('b4.review.save_tracking_ref'),
+                patch.object(TrackingApp, '_archive_branch', _mock_archive),
+            ):
                 app._on_update_base_selected(
-                    base, lser, b'mbox', 1, change_id, 1, 2,
-                    'v2@ex.com', '[PATCH v2] update test',
-                    review_branch)
+                    base,
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    '[PATCH v2] update test',
+                    review_branch,
+                )
             await pilot.pause()
 
             # Upgrade branch should be gone (was renamed)
             assert not b4.git_branch_exists(
-                gitdir, f'b4/review/_tmp-{change_id}-v2-upgrade')
+                gitdir, f'b4/review/_tmp-{change_id}-v2-upgrade'
+            )
             # Upgrade branch should have been renamed to review branch
             assert b4.git_branch_exists(gitdir, review_branch)
 
@@ -2266,7 +2601,8 @@ class TestUpdateRevisionWorkflow:
             cursor = conn.execute(
                 'SELECT revision, status FROM series'
                 ' WHERE change_id = ? AND revision = 2',
-                (change_id,))
+                (change_id,),
+            )
             row = cursor.fetchone()
             conn.close()
             assert row is not None
@@ -2276,8 +2612,7 @@ class TestUpdateRevisionWorkflow:
             assert app.is_running
 
     @pytest.mark.asyncio
-    async def test_archive_failure_leaves_both_branches(
-            self, gitdir: str) -> None:
+    async def test_archive_failure_leaves_both_branches(self, gitdir: str) -> None:
         """If archiving fails, both branches are left for manual recovery."""
         identifier = 'test-update-archfail'
         change_id = 'update-archfail-1'
@@ -2286,34 +2621,48 @@ class TestUpdateRevisionWorkflow:
 
         lser = _make_mock_lser()
 
-        def _fake_create(topdir: str, branch: str, *args: Any,
-                         **kwargs: Any) -> None:
+        def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
             branch_suffix = branch.removeprefix('b4/review/')
-            _create_review_branch(topdir, branch_suffix,
-                                  identifier=identifier,
-                                  revision=2, status='reviewing')
+            _create_review_branch(
+                topdir,
+                branch_suffix,
+                identifier=identifier,
+                revision=2,
+                status='reviewing',
+            )
 
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            with patch.object(app, 'suspend', return_value=__import__(
-                    'contextlib').nullcontext()), \
-                 patch.object(app, 'exit'), \
-                 patch('b4.review_tui._tracking_app._wait_for_enter'), \
-                 patch('b4.git_fetch_am_into_repo'), \
-                 patch('b4.review.create_review_branch',
-                       side_effect=_fake_create), \
-                 patch('b4.review.get_review_branch_patch_ids',
-                       return_value=[]), \
-                 patch('b4.review.load_tracking',
-                       return_value=('', {'series': {}, 'patches': []})), \
-                 patch('b4.review.reanchor_patch_comments'), \
-                 patch('b4.review.save_tracking_ref'), \
-                 patch.object(TrackingApp, '_archive_branch',
-                              return_value=False):
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch.object(app, 'exit'),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+                patch('b4.review.get_review_branch_patch_ids', return_value=[]),
+                patch(
+                    'b4.review.load_tracking',
+                    return_value=('', {'series': {}, 'patches': []}),
+                ),
+                patch('b4.review.reanchor_patch_comments'),
+                patch('b4.review.save_tracking_ref'),
+                patch.object(TrackingApp, '_archive_branch', return_value=False),
+            ):
                 app._on_update_base_selected(
-                    'HEAD', lser, b'mbox', 1, change_id, 1, 2,
-                    'v2@ex.com', 'subj', review_branch)
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    review_branch,
+                )
             await pilot.pause()
 
         # Both branches should exist — user can recover manually
@@ -2337,7 +2686,9 @@ class TestLoadSeriesCaching:
             assert app._cached_revision_counts is not None
 
     @pytest.mark.asyncio
-    async def test_caches_survive_db_poll_no_change(self, tmp_path: pathlib.Path) -> None:
+    async def test_caches_survive_db_poll_no_change(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         """Caches should persist when _check_db_changed finds no change."""
         _seed_db('cache-nochg', SAMPLE_SERIES)
 
@@ -2351,7 +2702,9 @@ class TestLoadSeriesCaching:
             assert id(app._cached_branch_tips) == tips_id
 
     @pytest.mark.asyncio
-    async def test_full_invalidation_clears_all_caches(self, tmp_path: pathlib.Path) -> None:
+    async def test_full_invalidation_clears_all_caches(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         """_invalidate_caches() without change_id clears everything."""
         _seed_db('cache-full-inv', SAMPLE_SERIES)
 
@@ -2361,13 +2714,16 @@ class TestLoadSeriesCaching:
             assert app._cached_branch_tips is not None
             app._invalidate_caches()
             assert app._cached_branch_tips is None
-            assert app._cached_newest_revisions is None
+            # https://github.com/python/mypy/issues/9457:
+            # app._cached_branch_tips is stale-narrowed across a method call.
+            assert app._cached_newest_revisions is None  # type: ignore[unreachable]
             assert app._cached_revision_counts is None
             assert app._cached_art_counts is None
 
     @pytest.mark.asyncio
     async def test_selective_invalidation_keeps_other_caches(
-            self, tmp_path: pathlib.Path) -> None:
+        self, tmp_path: pathlib.Path
+    ) -> None:
         """_invalidate_caches(change_id) only evicts that ART entry."""
         _seed_db('cache-sel-inv', SAMPLE_SERIES)
 
@@ -2401,8 +2757,11 @@ class TestLoadSeriesCaching:
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             # Find the charlie series and check its stashed revisions
-            charlie = [s for s in app._all_series
-                       if s.get('change_id') == 'test-change-charlie']
+            charlie = [
+                s
+                for s in app._all_series
+                if s.get('change_id') == 'test-change-charlie'
+            ]
             assert len(charlie) == 1
             revs = charlie[0].get('_revisions', [])
             assert len(revs) == 2
@@ -2411,16 +2770,19 @@ class TestLoadSeriesCaching:
     @pytest.mark.asyncio
     async def test_snoozed_until_in_series(self, tmp_path: pathlib.Path) -> None:
         """_load_series should include snoozed_until from the DB."""
-        series = [{
-            'change_id': 'test-snooze-detail',
-            'subject': '[PATCH] snooze test',
-            'sender_name': 'Tester',
-            'status': 'snoozed',
-        }]
+        series = [
+            {
+                'change_id': 'test-snooze-detail',
+                'subject': '[PATCH] snooze test',
+                'sender_name': 'Tester',
+                'status': 'snoozed',
+            }
+        ]
         _seed_db('cache-snooze', series)
         conn = tracking.get_db('cache-snooze')
-        tracking.snooze_series(conn, 'test-snooze-detail',
-                               '2026-06-01T00:00:00', revision=1)
+        tracking.snooze_series(
+            conn, 'test-snooze-detail', '2026-06-01T00:00:00', revision=1
+        )
         conn.close()
 
         app = TrackingApp('cache-snooze')

@@ -5,30 +5,28 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import os
-import sys
-
-import b4
-import re
+import argparse
 import email
 import email.parser
 import email.utils
 import json
-import argparse
-
-from string import Template
-from pathlib import Path
-
+import os
+import re
+import sys
 from email.message import EmailMessage
+from pathlib import Path
+from string import Template
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast
 
-from typing import Callable, cast, Optional, Set, Tuple, Union, List, Dict, Any
+import b4
 
 ConfigDictT = b4.ConfigDictT
 JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
 
 logger = b4.logger
 
-DEFAULT_PR_TEMPLATE = """
+DEFAULT_PR_TEMPLATE = (
+    """
 On ${sentdate}, ${fromname} wrote:
 ${quote}
 
@@ -37,11 +35,15 @@ Merged, thanks!
 ${summary}
 
 Best regards,
---""" + ' ' + """
+--"""
+    + ' '
+    + """
 ${signature}
 """
+)
 
-DEFAULT_AM_TEMPLATE = """
+DEFAULT_AM_TEMPLATE = (
+    """
 On ${sentdate}, ${fromname} wrote:
 ${quote}
 
@@ -50,9 +52,12 @@ Applied, thanks!
 ${summary}
 
 Best regards,
---""" + ' ' + """
+--"""
+    + ' '
+    + """
 ${signature}
 """
+)
 
 # Used to track commits created by current user
 MY_COMMITS: Optional[Dict[str, Tuple[str, str, List[str]]]] = None
@@ -60,7 +65,9 @@ MY_COMMITS: Optional[Dict[str, Tuple[str, str, List[str]]]] = None
 BRANCH_INFO: Optional[Dict[str, str]] = None
 
 
-def git_get_merge_id(gitdir: Optional[str], commit_id: str, branch: Optional[str] = None) -> Optional[str]:
+def git_get_merge_id(
+    gitdir: Optional[str], commit_id: str, branch: Optional[str] = None
+) -> Optional[str]:
     # get merge commit id
     args = ['rev-list', '%s..' % commit_id, '--ancestry-path']
     if branch is not None:
@@ -81,7 +88,12 @@ def git_get_commit_message(gitdir: Optional[str], rev: str) -> Tuple[int, str]:
     return b4.git_run_command(gitdir, args)
 
 
-def make_reply(reply_template: str, jsondata: JsonDictT, gitdir: Optional[str], cmdargs: argparse.Namespace) -> EmailMessage:
+def make_reply(
+    reply_template: str,
+    jsondata: JsonDictT,
+    gitdir: Optional[str],
+    cmdargs: argparse.Namespace,
+) -> EmailMessage:
     msg = EmailMessage()
     msg['From'] = '%s <%s>' % (jsondata['myname'], jsondata['myemail'])
     excludes = b4.get_excluded_addrs()
@@ -90,14 +102,20 @@ def make_reply(reply_template: str, jsondata: JsonDictT, gitdir: Optional[str], 
     assert isinstance(jsondata['to'], str), 'to must be a string'
     assert isinstance(jsondata['cc'], str), 'cc must be a string'
     assert isinstance(jsondata['myemail'], str), 'msgid must be a string'
-    newto = b4.cleanup_email_addrs([(jsondata['fromname'], jsondata['fromemail'])], excludes, gitdir)
+    newto = b4.cleanup_email_addrs(
+        [(jsondata['fromname'], jsondata['fromemail'])], excludes, gitdir
+    )
 
     # Exclude ourselves and original sender from allto or allcc
     if not cmdargs.metoo:
         excludes.add(jsondata['myemail'])
     excludes.add(jsondata['fromemail'])
-    allto = b4.cleanup_email_addrs(email.utils.getaddresses([jsondata['to']]), excludes, gitdir)
-    allcc = b4.cleanup_email_addrs(email.utils.getaddresses([jsondata['cc']]), excludes, gitdir)
+    allto = b4.cleanup_email_addrs(
+        email.utils.getaddresses([jsondata['to']]), excludes, gitdir
+    )
+    allcc = b4.cleanup_email_addrs(
+        email.utils.getaddresses([jsondata['cc']]), excludes, gitdir
+    )
 
     if newto:
         allto += newto
@@ -127,7 +145,9 @@ def make_reply(reply_template: str, jsondata: JsonDictT, gitdir: Optional[str], 
     return msg
 
 
-def auto_locate_pr(gitdir: Optional[str], jsondata: JsonDictT, branch: str) -> Optional[str]:
+def auto_locate_pr(
+    gitdir: Optional[str], jsondata: JsonDictT, branch: str
+) -> Optional[str]:
     pr_commit_id = jsondata['pr_commit_id']
     assert isinstance(pr_commit_id, str), 'pr_commit_id must be a string'
     logger.debug('Checking %s', jsondata['pr_commit_id'])
@@ -164,8 +184,12 @@ def auto_locate_pr(gitdir: Optional[str], jsondata: JsonDictT, branch: str) -> O
     return merge_commit_id
 
 
-def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
-                    committer: Optional[str] = None) -> Dict[str, Tuple[str, str, List[str]]]:
+def get_all_commits(
+    gitdir: Optional[str],
+    branch: str,
+    since: str = '1.week',
+    committer: Optional[str] = None,
+) -> Dict[str, Tuple[str, str, List[str]]]:
     global MY_COMMITS
     if MY_COMMITS is not None:
         return MY_COMMITS
@@ -177,11 +201,23 @@ def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
         if isinstance(_ce, str):
             committer = _ce
         else:
-            logger.critical('No committer email found in user config, please set user.email')
+            logger.critical(
+                'No committer email found in user config, please set user.email'
+            )
             sys.exit(1)
 
-    gitargs = ['log', '--committer', committer, '--no-mailmap', '--no-abbrev', '--no-decorate',
-               '--oneline', '--since', since, branch]
+    gitargs = [
+        'log',
+        '--committer',
+        committer,
+        '--no-mailmap',
+        '--no-abbrev',
+        '--no-decorate',
+        '--oneline',
+        '--since',
+        since,
+        branch,
+    ]
     lines = b4.git_get_command_lines(gitdir, gitargs)
     if not len(lines):
         logger.debug('No new commits from the current user --since=%s', since)
@@ -197,7 +233,9 @@ def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
         logger.debug('phash=%s', pwhash)
         # get all message-id or link trailers
         _ecode, out = git_get_commit_message(gitdir, commit_id)
-        matches = re.findall(r'^\s*(?:message-id|link):[ \t]+(\S+)\s*$', out, flags=re.I | re.M)
+        matches = re.findall(
+            r'^\s*(?:message-id|link):[ \t]+(\S+)\s*$', out, flags=re.I | re.M
+        )
         trackers: List[str] = list()
         if matches:
             for tvalue in matches:
@@ -208,8 +246,9 @@ def get_all_commits(gitdir: Optional[str], branch: str, since: str = '1.week',
     return MY_COMMITS
 
 
-def auto_locate_series(gitdir: Optional[str], jsondata: JsonDictT, branch: str,
-                       since: str = '1.week') -> List[Tuple[int, Optional[str]]]:
+def auto_locate_series(
+    gitdir: Optional[str], jsondata: JsonDictT, branch: str, since: str = '1.week'
+) -> List[Tuple[int, Optional[str]]]:
     commits = get_all_commits(gitdir, branch, since)
 
     patchids = set(commits.keys())
@@ -255,10 +294,9 @@ def auto_locate_series(gitdir: Optional[str], jsondata: JsonDictT, branch: str,
     return found
 
 
-def set_branch_details(gitdir: Optional[str],
-                       branch: str,
-                       jsondata: JsonDictT,
-                       config: ConfigDictT) -> Tuple[JsonDictT, ConfigDictT]:
+def set_branch_details(
+    gitdir: Optional[str], branch: str, jsondata: JsonDictT, config: ConfigDictT
+) -> Tuple[JsonDictT, ConfigDictT]:
     binfo = get_branch_info(gitdir, branch)
     jsondata['branch'] = branch
     for key, val in binfo.items():
@@ -289,7 +327,9 @@ def set_branch_details(gitdir: Optional[str],
     return jsondata, config
 
 
-def generate_pr_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace) -> EmailMessage:
+def generate_pr_thanks(
+    gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace
+) -> EmailMessage:
     config = b4.get_main_config()
     jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
     thanks_template = DEFAULT_PR_TEMPLATE
@@ -299,13 +339,17 @@ def generate_pr_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, 
         try:
             thanks_template = b4.read_template(_ctpr)
         except FileNotFoundError:
-            logger.critical('ERROR: thanks-pr-template says to use %s, but it does not exist',
-                            config['thanks-pr-template'])
+            logger.critical(
+                'ERROR: thanks-pr-template says to use %s, but it does not exist',
+                config['thanks-pr-template'],
+            )
             sys.exit(2)
 
     if 'merge_commit_id' not in jsondata:
         assert 'pr_commit_id' in jsondata, 'pr_commit_id must be present in jsondata'
-        assert isinstance(jsondata['pr_commit_id'], str), 'pr_commit_id must be a string'
+        assert isinstance(jsondata['pr_commit_id'], str), (
+            'pr_commit_id must be a string'
+        )
         merge_commit_id = git_get_merge_id(gitdir, jsondata['pr_commit_id'])
         if not merge_commit_id:
             logger.critical('Could not get merge commit id for %s', jsondata['subject'])
@@ -322,7 +366,9 @@ def generate_pr_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, 
     return msg
 
 
-def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace) -> EmailMessage:
+def generate_am_thanks(
+    gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace
+) -> EmailMessage:
     global BRANCH_INFO
     BRANCH_INFO = None
     config = b4.get_main_config()
@@ -334,8 +380,10 @@ def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, 
         try:
             thanks_template = b4.read_template(_ctat)
         except FileNotFoundError:
-            logger.critical('ERROR: thanks-am-template says to use %s, but it does not exist',
-                            config['thanks-am-template'])
+            logger.critical(
+                'ERROR: thanks-am-template says to use %s, but it does not exist',
+                config['thanks-am-template'],
+            )
             sys.exit(2)
     if 'commits' not in jsondata:
         commits = auto_locate_series(gitdir, jsondata, branch, cmdargs.since)
@@ -364,11 +412,17 @@ def generate_am_thanks(gitdir: Optional[str], jsondata: JsonDictT, branch: str, 
             slines.append('%s%s' % (' ' * len(prefix), cidmask % cid))
     jsondata['summary'] = '\n'.join(slines)
     if nomatch == len(commits):
-        logger.critical('  WARNING: None of the patches matched for: %s', jsondata['subject'])
+        logger.critical(
+            '  WARNING: None of the patches matched for: %s', jsondata['subject']
+        )
         logger.critical('           Please review the resulting message')
     elif nomatch > 0:
-        logger.critical('  WARNING: Could not match %s of %s patches in: %s',
-                        nomatch, len(commits), jsondata['subject'])
+        logger.critical(
+            '  WARNING: Could not match %s of %s patches in: %s',
+            nomatch,
+            len(commits),
+            jsondata['subject'],
+        )
         logger.critical('           Please review the resulting message')
 
     msg = make_reply(thanks_template, jsondata, gitdir, cmdargs)
@@ -394,7 +448,9 @@ def auto_thankanator(cmdargs: argparse.Namespace) -> None:
             jsondata['merge_commit_id'] = merge_commit_id
         else:
             # This is a patch series
-            commits = auto_locate_series(gitdir, jsondata, wantbranch, since=cmdargs.since)
+            commits = auto_locate_series(
+                gitdir, jsondata, wantbranch, since=cmdargs.since
+            )
             # Weed out series that have no matches at all
             found = False
             for commit in commits:
@@ -416,7 +472,9 @@ def auto_thankanator(cmdargs: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-def send_messages(listing: List[JsonDictT], branch: str, cmdargs: argparse.Namespace) -> None:
+def send_messages(
+    listing: List[JsonDictT], branch: str, cmdargs: argparse.Namespace
+) -> None:
     logger.info('Generating %s thank-you letters', len(listing))
     gitdir = cmdargs.gitdir
     datadir = b4.get_data_dir()
@@ -463,9 +521,6 @@ def send_messages(listing: List[JsonDictT], branch: str, cmdargs: argparse.Names
             # This is a patch series
             msg = generate_am_thanks(gitdir, jsondata, branch, cmdargs)
 
-        if msg is None:
-            continue
-
         assert isinstance(jsondata['msgid'], str), 'msgid must be a string'
         msgids.append(jsondata['msgid'])
         assert isinstance(jsondata['patches'], list), 'patches must be a list'
@@ -475,9 +530,11 @@ def send_messages(listing: List[JsonDictT], branch: str, cmdargs: argparse.Names
 
         outgoing += 1
         if send_email:
-            if not fromaddr and isinstance(jsondata['myemail'], str):
-                fromaddr = jsondata['myemail']
-            logger.info('  Sending: %s', b4.LoreMessage.clean_header(msg.get('subject')))
+            if not fromaddr:
+                fromaddr = user_email
+            logger.info(
+                '  Sending: %s', b4.LoreMessage.clean_header(msg.get('subject'))
+            )
             b4.send_mail(smtp, [msg], fromaddr, dryrun=cmdargs.dryrun)
         else:
             assert isinstance(jsondata['fromemail'], str), 'fromname must be a string'
@@ -513,9 +570,11 @@ def send_messages(listing: List[JsonDictT], branch: str, cmdargs: argparse.Names
         else:
             logger.info('Sent %s thank-you letters', outgoing)
             if pwstate:
+                assert isinstance(pwstate, str), 'pwstate must be a string'
                 b4.patchwork_set_state(msgids, pwstate)
     else:
         if pwstate and not cmdargs.dryrun:
+            assert isinstance(pwstate, str), 'pwstate must be a string'
             b4.patchwork_set_state(msgids, pwstate)
             logger.info('---')
         logger.debug('Wrote %s thank-you letters', outgoing)
@@ -527,7 +586,10 @@ def list_tracked() -> List[JsonDictT]:
     # find all tracked bits
     tracked = list()
     datadir = b4.get_data_dir()
-    paths = sorted(Path(datadir).iterdir(), key=os.path.getmtime)
+    # Work around https://github.com/astral-sh/ty/issues/2799, which widens the
+    # sorted element type when the key function accepts a broader path-like type
+    # than Path.
+    paths = sorted(Path(datadir).iterdir(), key=lambda path: path.stat().st_mtime)
     for fullpath in paths:
         if fullpath.suffix not in ('.pr', '.am'):
             continue
@@ -620,12 +682,14 @@ def discard_selected(cmdargs: argparse.Namespace) -> None:
     logger.info('Discarding %s messages', len(listing))
     msgids: List[str] = list()
     for jsondata in listing:
-        assert isinstance(jsondata['trackfile'], str), 'trackfile must be a string'
-        fullpath = os.path.join(datadir, jsondata['trackfile'])
+        trackfile = jsondata['trackfile']
+        assert isinstance(trackfile, str), 'trackfile must be a string'
+        fullpath = os.path.join(datadir, trackfile)
         os.rename(fullpath, '%s.discarded' % fullpath)
         logger.info('  Discarded: %s', jsondata['subject'])
-        assert isinstance(jsondata['msgid'], str), 'msgid must be a string'
-        msgids.append(jsondata['msgid'])
+        msgid = jsondata['msgid']
+        assert isinstance(msgid, str), 'msgid must be a string'
+        msgids.append(msgid)
         patches = cast(List[Tuple[str, str, str, str]], jsondata['patches'])
         for pdata in patches:
             msgids.append(pdata[2])
@@ -635,6 +699,7 @@ def discard_selected(cmdargs: argparse.Namespace) -> None:
     if not pwstate:
         pwstate = config.get('pw-discard-state')
     if pwstate:
+        assert isinstance(pwstate, str), 'pwstate must be a string'
         b4.patchwork_set_state(msgids, pwstate)
 
     sys.exit(0)
@@ -645,7 +710,9 @@ def check_stale_thanks(outdir: str) -> None:
         for entry in Path(outdir).iterdir():
             if entry.suffix == '.thanks':
                 logger.critical('ERROR: Found existing .thanks files in: %s', outdir)
-                logger.critical('       Please send them first (or delete if already sent).')
+                logger.critical(
+                    '       Please send them first (or delete if already sent).'
+                )
                 logger.critical('       Refusing to run to avoid potential confusion.')
                 sys.exit(1)
 
@@ -667,7 +734,10 @@ def get_wanted_branch(cmdargs: argparse.Namespace) -> str:
         gitargs = ['branch', '--format=%(refname)', '--list', '--all', cmdargs.branch]
         lines = b4.git_get_command_lines(gitdir, gitargs)
         if not len(lines):
-            logger.critical('Requested branch not found in git branch --list --all %s', cmdargs.branch)
+            logger.critical(
+                'Requested branch not found in git branch --list --all %s',
+                cmdargs.branch,
+            )
             sys.exit(1)
         wantbranch = cmdargs.branch
 
@@ -707,9 +777,13 @@ def _parse_queue_file(filepath: str) -> Optional[EmailMessage]:
         return None
 
 
-def queue_message(msg: EmailMessage, checkurl: str,
-                  change_id: str, revision: int,
-                  dryrun: bool = False) -> None:
+def queue_message(
+    msg: EmailMessage,
+    checkurl: str,
+    change_id: str,
+    revision: int,
+    dryrun: bool = False,
+) -> None:
     """Write a thanks message to the file-based queue."""
     qdir = _get_queue_dir(dryrun=dryrun)
     os.makedirs(qdir, exist_ok=True)
@@ -747,11 +821,13 @@ def get_queued_messages(dryrun: bool = False) -> List[Dict[str, str]]:
             continue
         subject = str(msg.get('Subject', '(no subject)'))
         checkurl = str(msg.get('X-Check-URL', ''))
-        results.append({
-            'filename': fname,
-            'subject': subject,
-            'checkurl': checkurl,
-        })
+        results.append(
+            {
+                'filename': fname,
+                'subject': subject,
+                'checkurl': checkurl,
+            }
+        )
     return results
 
 
@@ -789,9 +865,11 @@ def _parse_change_revision(fname: str) -> Tuple[str, int]:
     return (stem, 0)
 
 
-def process_queue(dryrun: bool = False,
-                  patatt_sign: bool = True,
-                  progress_cb: ProgressCallbackT = None) -> QueueResultT:
+def process_queue(
+    dryrun: bool = False,
+    patatt_sign: bool = True,
+    progress_cb: ProgressCallbackT = None,
+) -> QueueResultT:
     """Check queued messages and deliver those whose commits are visible.
 
     *progress_cb*, when provided, is called as
@@ -829,8 +907,7 @@ def process_queue(dryrun: bool = False,
         if not dryrun and checkurl:
             try:
                 session = b4.get_requests_session()
-                resp = session.head(checkurl, timeout=15,
-                                    allow_redirects=True)
+                resp = session.head(checkurl, timeout=15, allow_redirects=True)
                 if resp.status_code >= 300:
                     still_pending += 1
                     if progress_cb:
@@ -849,9 +926,15 @@ def process_queue(dryrun: bool = False,
         # Commit is visible — deliver the message
         try:
             smtp, fromaddr = b4.get_smtp(dryrun=dryrun)
-            b4.send_mail(smtp, [msg], fromaddr=fromaddr,
-                         patatt_sign=patatt_sign, dryrun=dryrun,
-                         output_dir=None, reflect=False)
+            b4.send_mail(
+                smtp,
+                [msg],
+                fromaddr=fromaddr,
+                patatt_sign=patatt_sign,
+                dryrun=dryrun,
+                output_dir=None,
+                reflect=False,
+            )
             # Move to sent/
             os.makedirs(sentdir, exist_ok=True)
             os.rename(filepath, os.path.join(sentdir, fname))
@@ -876,7 +959,7 @@ def get_branch_info(gitdir: Optional[str], branch: str) -> Dict[str, str]:
     BRANCH_INFO = dict()
 
     remotecfg = b4.get_config_from_git('branch\\.%s\\..*' % branch)
-    if remotecfg is None or 'remote' not in remotecfg:
+    if 'remote' not in remotecfg:
         # Did not find a matching branch entry, so look at remotes
         gitargs = ['remote', 'show']
         lines = b4.git_get_command_lines(gitdir, gitargs)

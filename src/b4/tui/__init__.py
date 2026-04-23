@@ -1,4 +1,5 @@
 """Shared TUI utilities and widgets for b4 Textual apps."""
+
 __all__ = [
     'ActionItem',
     'ActionScreen',

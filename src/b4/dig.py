@@ -5,18 +5,17 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
-import sys
-import b4
 import argparse
-import re
-import urllib.parse
 import datetime
-
-import b4.mbox
-
-from email.message import EmailMessage
 import email.utils
-from typing import List, Set, Optional
+import re
+import sys
+import urllib.parse
+from email.message import EmailMessage
+from typing import List, Optional, Set
+
+import b4
+import b4.mbox
 
 logger = b4.logger
 
@@ -61,7 +60,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     # Are we inside a git repo?
     topdir = b4.git_get_toplevel()
     if not topdir:
-        logger.error("Not inside a git repository.")
+        logger.error('Not inside a git repository.')
         sys.exit(1)
 
     # Can we resolve this commit to an object?
@@ -74,7 +73,8 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     logger.info('Digging into commit %s', commit)
     # Make sure it has exactly one parent (not a merge)
     ecode, out = b4.git_run_command(
-        topdir, ['show', '--no-patch', '--format=%p', commit],
+        topdir,
+        ['show', '--no-patch', '--format=%p', commit],
     )
     if ecode > 0:
         logger.error('Could not get commit info for %s', commit)
@@ -86,7 +86,8 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     # Look at the commit message and find any Link: trailers
     links: Set[str] = set()
     ecode, out = b4.git_run_command(
-        topdir, ['show', '--no-patch', '--format=%B', commit],
+        topdir,
+        ['show', '--no-patch', '--format=%B', commit],
     )
     if ecode > 0:
         logger.error('Could not get commit message for %s', commit)
@@ -102,13 +103,16 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
 
     # Find commit's author and subject from git
     ecode, out = b4.git_run_command(
-        topdir, ['show', '--no-patch', '--format=%as%x00%ae%x00%an%x00%s', commit],
+        topdir,
+        ['show', '--no-patch', '--format=%as%x00%ae%x00%an%x00%s', commit],
     )
     if ecode > 0:
         logger.error('Could not get commit info for %s', commit)
         sys.exit(1)
     cdate, fromeml, fromname, csubj = out.strip().split('\x00', maxsplit=3)
-    logger.debug('cdate=%s, fromeml=%s, fromname=%s, csubj=%s', cdate, fromeml, fromname, csubj)
+    logger.debug(
+        'cdate=%s, fromeml=%s, fromname=%s, csubj=%s', cdate, fromeml, fromname, csubj
+    )
     # Add 24 hours to the date to account for timezones
     # First, parse YYYY-MM-DD into datetime
     cdate_dt = datetime.datetime.strptime(cdate, '%Y-%m-%d')  # noqa: DTZ007
@@ -130,7 +134,8 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         algoarg = f'--diff-algorithm={algo}'
         logger.debug('showargs=%s', showargs + [algoarg])
         ecode, bpatch = b4.git_run_command(
-            topdir, ['show'] + showargs + [algoarg] + [commit],
+            topdir,
+            ['show'] + showargs + [algoarg] + [commit],
             decode=False,
         )
         if ecode > 0:
@@ -147,12 +152,16 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             sys.exit(1)
         patch_id = out.split(maxsplit=1)[0]
         logger.debug('Patch-id for commit %s is %s', commit, patch_id)
-        logger.info('Trying to find matching series by patch-id %s (%s)', patch_id, algo)
+        logger.info(
+            'Trying to find matching series by patch-id %s (%s)', patch_id, algo
+        )
         # Limit lookup by date prior to the commit date, to weed out any false-positives from
         # backports or from erroneously resent series
         extra_query = f'AND d:..{pidate}'
         logger.debug('extra_query=%s', extra_query)
-        msgs = b4.get_msgs_by_patch_id(patch_id, nocache=cmdargs.nocache, extra_query=extra_query)
+        msgs = b4.get_msgs_by_patch_id(
+            patch_id, nocache=cmdargs.nocache, extra_query=extra_query
+        )
         if msgs:
             logger.info('Found matching series by patch-id')
             for msg in msgs:
@@ -180,9 +189,15 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             # can search for that exact string on lore.
             inbody_from = f'From: {fromname} <{fromeml}>'
             logger.info('Attempting to match by in-body From: line...')
-            q = '(nq:"%s" AND s:"%s" AND d:..%s)' % (inbody_from.replace('"', ''), csubj.replace('"', ''), pidate)
+            q = '(nq:"%s" AND s:"%s" AND d:..%s)' % (
+                inbody_from.replace('"', ''),
+                csubj.replace('"', ''),
+                pidate,
+            )
             logger.debug('q=%s', q)
-            msgs = b4.get_pi_search_results(q, nocache=cmdargs.nocache, full_threads=False)
+            msgs = b4.get_pi_search_results(
+                q, nocache=cmdargs.nocache, full_threads=False
+            )
             if msgs:
                 for msg in msgs:
                     msgid = b4.LoreMessage.get_clean_msgid(msg)
@@ -233,11 +248,16 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             elif lser and lser.subject and lser.fromemail:
                 # We're going to match by first patch/cover letter subject and author.
                 # It's not perfect, but it's the best we can do without a change-id.
-                fillin_q = '(s:"%s" AND f:"%s")' % (lser.subject.replace('"', ''), lser.fromemail)
+                fillin_q = '(s:"%s" AND f:"%s")' % (
+                    lser.subject.replace('"', ''),
+                    lser.fromemail,
+                )
             if fillin_q:
                 fillin_q += f' AND d:..{pidate}'
                 logger.debug('fillin_q=%s', fillin_q)
-                q_msgs = b4.get_pi_search_results(fillin_q, nocache=cmdargs.nocache, full_threads=True)
+                q_msgs = b4.get_pi_search_results(
+                    fillin_q, nocache=cmdargs.nocache, full_threads=True
+                )
                 if q_msgs:
                     for q_msg in q_msgs:
                         lmbx.add_message(q_msg)
@@ -277,7 +297,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         if not best_match:
             # Next, try to find by exact patch-id
             for lmsg in all_lmsgs:
-                if lmsg.git_patch_id == patch_id:
+                if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # ty:ignore[possibly-unresolved-reference] # broken since 3ae277e9c7dd3e1df61a14884aabdd5834ad1201
                     logger.debug('matched by exact patch-id')
                     best_match = lmsg
                     break
@@ -312,7 +332,9 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             allrto = email.utils.getaddresses(best_match.msg.get_all('reply-to', []))
             if not allrto:
                 allrto = [(best_match.fromname, best_match.fromemail)]
-            deduped_to, deduped_cc = b4.LoreMessage.make_reply_addrs(allrto, allto + allcc)
+            deduped_to, deduped_cc = b4.LoreMessage.make_reply_addrs(
+                allrto, allto + allcc
+            )
             logger.info('---')
             logger.info('People originally included in this patch:')
             logger.info(b4.format_addrs(deduped_to + deduped_cc, header_safe=False))
@@ -332,7 +354,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
                 continue
             if firstmsg is None:
                 firstmsg = lmsg
-            if lmsg.git_patch_id == patch_id:
+            if lmsg.git_patch_id == patch_id:  # pyright: ignore[reportPossiblyUnboundVariable] # ty:ignore[possibly-unresolved-reference] # broken since inception in 16329336c1c8faba853b11238a16249306742505
                 logger.debug('Matched by exact patch-id')
                 break
             if lmsg.subject == csubj:
@@ -346,8 +368,13 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
             # Use the first patch in the series as a fallback
             lmsg = firstmsg
         logger.info('%s%s', pref, firstmsg.full_subject)
-        logger.info('%sDate: %s, From: %s <%s>', ' ' * len(pref),
-                    firstmsg.date.strftime('%Y-%m-%d'), firstmsg.fromname, firstmsg.fromemail)
+        logger.info(
+            '%sDate: %s, From: %s <%s>',
+            ' ' * len(pref),
+            firstmsg.date.strftime('%Y-%m-%d'),
+            firstmsg.fromname,
+            firstmsg.fromemail,
+        )
         logger.info('%s%s', ' ' * len(pref), linkmask % lmsg.msgid)
 
 

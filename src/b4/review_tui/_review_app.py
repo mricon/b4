@@ -10,38 +10,56 @@ import email.utils
 import os
 import re
 import subprocess
-
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import b4
-import b4.mbox
-import b4.review
-import b4.review.tracking
-
+from rich.rule import Rule
+from rich.syntax import Syntax
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
-from rich.rule import Rule
-from rich.syntax import Syntax
-from rich.text import Text
 
+import b4
+import b4.mbox
+import b4.review
+import b4.review.tracking
+from b4.review._review import COMMIT_MESSAGE_PATH
 from b4.review_tui._common import (
-    logger, PATCH_STATE_MARKERS,
-    resolve_styles, reviewer_colours, CheckRunnerMixin,
-    _quiet_worker, get_thread_msgs,
-    _has_review_data, _make_initials, _wait_for_enter,
-    _write_comments, _write_followup_comments,
-    _write_followup_trailers, _resolve_patch_for_followup, _chain_has_additional_patch,
-    _get_followup_depth, _render_email_to_viewer,
-    _suspend_to_shell, SeparatedFooter, _fix_ansi_theme,
+    PATCH_STATE_MARKERS,
+    CheckRunnerMixin,
+    SeparatedFooter,
+    _chain_has_additional_patch,
+    _fix_ansi_theme,
+    _get_followup_depth,
+    _has_review_data,
+    _make_initials,
+    _quiet_worker,
+    _render_email_to_viewer,
+    _resolve_patch_for_followup,
+    _suspend_to_shell,
+    _wait_for_enter,
+    _write_comments,
+    _write_followup_comments,
+    _write_followup_trailers,
+    get_thread_msgs,
+    logger,
+    resolve_styles,
+    reviewer_colours,
 )
 from b4.review_tui._modals import (
-    TrailerScreen, HelpScreen, _review_help_lines,
-    NoteScreen, PriorReviewScreen, ToCcScreen, SendScreen,
+    CheckLoadingScreen,
     FollowupReplyPreviewScreen,
+    HelpScreen,
+    NoteScreen,
+    PriorReviewScreen,
+    SendScreen,
+    ToCcScreen,
+    TrailerScreen,
+    _review_help_lines,
 )
+
 
 class PatchListItem(ListItem):
     """A single entry in the patch list."""
@@ -88,11 +106,6 @@ class FollowupItem(ListItem):
         st = Static(f'\u00a0\u00a0\u00a0\u00a0{self._display_name}', markup=False)
         st.styles.text_style = 'dim'
         yield st
-
-
-
-
-from b4.review._review import COMMIT_MESSAGE_PATH
 
 
 class ReviewApp(CheckRunnerMixin, App[None]):
@@ -185,12 +198,21 @@ class ReviewApp(CheckRunnerMixin, App[None]):
     _EMAIL_ACTIONS = frozenset({'edit_tocc', 'send'})
 
     BINDING_GROUPS = {
-        'trailer': 'Review', 'edit_note': 'Review',
-        'edit_reply': 'Review', 'followups': 'Review', 'agent': 'Review',
+        'trailer': 'Review',
+        'edit_note': 'Review',
+        'edit_reply': 'Review',
+        'followups': 'Review',
+        'agent': 'Review',
         'prior_review': 'Review',
-        'patch_done': 'Review', 'patch_skip': 'Review', 'check': 'Review',
-        'edit_tocc': 'Review', 'send': 'Review',
-        'toggle_preview': 'App', 'suspend': 'App', 'quit': 'App', 'help': 'App',
+        'patch_done': 'Review',
+        'patch_skip': 'Review',
+        'check': 'Review',
+        'edit_tocc': 'Review',
+        'send': 'Review',
+        'toggle_preview': 'App',
+        'suspend': 'App',
+        'quit': 'App',
+        'help': 'App',
     }
 
     BINDINGS = [
@@ -248,15 +270,21 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._abbrev_len: int = session['abbrev_len']
         self._default_identity: str = session['default_identity']
         self._usercfg: b4.ConfigDictT = session['usercfg']
-        self._reviewer_initials: str = _make_initials(session['usercfg'].get('name', ''))
+        self._reviewer_initials: str = _make_initials(
+            session['usercfg'].get('name', '')
+        )
         self._cover_subject_clean: str = session['cover_subject_clean']
         self._email_dryrun: bool = session.get('email_dryrun', False)
         self._patatt_sign: bool = session.get('patatt_sign', True)
         self._branch: str = session['branch']
         self._original_branch: Optional[str] = session.get('original_branch')
         self.branch_checked_out: bool = False
-        self._has_cover: bool = 'NOTE: No cover letter provided by the author.' not in self._cover_text
-        self._selected_idx: int = 0 if self._has_cover else 1  # 0 = cover, 1..N = patches
+        self._has_cover: bool = (
+            'NOTE: No cover letter provided by the author.' not in self._cover_text
+        )
+        self._selected_idx: int = (
+            0 if self._has_cover else 1
+        )  # 0 = cover, 1..N = patches
         self._preview_mode: bool = False
         self._comment_positions: List[int] = []
         self._followup_positions: Dict[str, int] = {}
@@ -267,7 +295,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._collapsed_comment_lines: Dict[int, Tuple[str, int]] = {}
         self._reply_sent: bool = False
         self._hide_skipped: bool = False
-        self._check_loading: Optional[Any] = None
+        self._check_loading: Optional[CheckLoadingScreen] = None
 
     def _get_check_context(self) -> Optional[Tuple[str, str, str]]:
         message_id = self._series.get('header-info', {}).get('msgid', '')
@@ -282,7 +310,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             with Vertical(id='left-pane'):
                 yield ListView(id='patch-list')
                 yield Static(id='trailer-overlay', markup=False)
-            yield RichLog(id='diff-viewer', highlight=False, wrap=False, markup=True, auto_scroll=False)
+            yield RichLog(
+                id='diff-viewer',
+                highlight=False,
+                wrap=False,
+                markup=True,
+                auto_scroll=False,
+            )
         yield SeparatedFooter()
 
     def on_mount(self) -> None:
@@ -294,7 +328,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         switch_hint = self._session.get('_switch_hint')
         if switch_hint:
             self.notify(
-                f'You\'re in a review branch. To see all tracked series, switch to {switch_hint}.',
+                f"You're in a review branch. To see all tracked series, switch to {switch_hint}.",
                 timeout=10,
             )
 
@@ -321,6 +355,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             widget.update(f' WARNING: newer version(s) available: {versions}')
             widget.styles.display = 'block'
         else:
+            # Textual infers StringEnumProperty from the default ("block"),
+            # so ty treats the valid "none" value as an invalid assignment.
             widget.styles.display = 'none'
 
     def _populate_patch_list(self) -> None:
@@ -349,7 +385,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         # Patch entries
         for idx, _sha in enumerate(self._commit_shas):
             patch_num = idx + 1
-            subject = self._commit_subjects[idx] if idx < len(self._commit_subjects) else '(unknown)'
+            subject = (
+                self._commit_subjects[idx]
+                if idx < len(self._commit_subjects)
+                else '(unknown)'
+            )
             patch_meta = self._patches[idx] if idx < len(self._patches) else {}
             state = b4.review._get_patch_state(patch_meta, self._usercfg)
             if self._hide_skipped and state == 'skip':
@@ -371,6 +411,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             def _restore() -> None:
                 lv.index = restore_index
                 lv.scroll_visible()
+
             self.call_after_refresh(_restore)
 
     def _append_followup_items(self, lv: ListView, display_idx: int) -> None:
@@ -400,7 +441,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             label_num = f'0/{total}'
         else:
             patch_idx = display_idx - 1
-            subject = self._commit_subjects[patch_idx] if patch_idx < len(self._commit_subjects) else '(unknown)'
+            subject = (
+                self._commit_subjects[patch_idx]
+                if patch_idx < len(self._commit_subjects)
+                else '(unknown)'
+            )
             target = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
             label_num = f'{display_idx}/{total}'
             subject = subject[:40]
@@ -435,7 +480,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._refresh_trailer_overlay()
 
     def _build_msg_comment_map(
-        self, target: Dict[str, Any], ts: Dict[str, str],
+        self,
+        target: Dict[str, Any],
+        ts: Dict[str, str],
     ) -> Dict[int, List[Tuple[str, str, str]]]:
         """Build a comment map for COMMIT_MESSAGE_PATH comments.
 
@@ -449,8 +496,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         colour = self._reviewer_colour(my_email, target, ts)
         for c in my_review.get('comments', []):
             if c['path'] == COMMIT_MESSAGE_PATH:
-                result.setdefault(c['line'], []).append(
-                    ('You', colour, c['text']))
+                result.setdefault(c['line'], []).append(('You', colour, c['text']))
         return result
 
     def _show_cover(self, viewer: RichLog) -> None:
@@ -459,7 +505,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         cover_lines = self._cover_text.strip().splitlines()
         # Render subject in accent colour, same as patches
         if cover_lines:
-            viewer.write(Text(cover_lines[0], style=f"bold {ts['accent']}"))
+            viewer.write(Text(cover_lines[0], style=f'bold {ts["accent"]}'))
             viewer.write(Text(''))
         body_lines = b4.review._strip_subject(self._cover_text)
         body = '\n'.join(body_lines)
@@ -488,9 +534,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         _write_followup_trailers(viewer, self._tracking.get('followups', []), ts=ts)
         # Show cover-level follow-up comments
         _write_followup_comments(
-            viewer, self._followup_comments.get(0, []),
+            viewer,
+            self._followup_comments.get(0, []),
             self._comment_positions,
-            header_position_map=self._followup_header_map, ts=ts)
+            header_position_map=self._followup_header_map,
+            ts=ts,
+        )
         for line_pos, entry in self._followup_header_map.items():
             msgid = str(entry.get('msgid', ''))
             if msgid:
@@ -506,17 +555,20 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
         # Show commit message with subject as a bright heading
         ecode, commit_msg = b4.git_run_command(
-            self._topdir, ['show', '--format=%B', '--no-patch', sha])
+            self._topdir, ['show', '--format=%B', '--no-patch', sha]
+        )
         if ecode == 0 and commit_msg.strip():
             all_lines = commit_msg.strip().splitlines()
             # Render subject in accent colour
             if all_lines:
-                viewer.write(Text(all_lines[0], style=f"bold {ts['accent']}"))
+                viewer.write(Text(all_lines[0], style=f'bold {ts["accent"]}'))
                 viewer.write(Text(''))
             body = '\n'.join(b4.review._strip_subject(commit_msg))
             if body:
                 # Build commit message comment map
-                patch_target_cm = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+                patch_target_cm = (
+                    self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+                )
                 msg_comment_map = self._build_msg_comment_map(patch_target_cm, ts)
 
                 # Render preamble comments (line 0 = before commit message)
@@ -525,8 +577,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     self._comment_positions.append(len(viewer.lines))
                     _write_comments(viewer, preamble_entries, ts=ts)
 
-                bheaders, message, btrailers, _basement, _signature = \
+                bheaders, message, btrailers, _basement, _signature = (
                     b4.LoreMessage.get_body_parts(body)
+                )
                 has_content = bool(preamble_entries)
                 # Track line number through the body (1-based, after
                 # subject and leading blanks — same as _build_annotated_diff)
@@ -568,12 +621,15 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
                 # Show follow-up trailers not already in the commit,
                 # including cover-letter trailers that apply to all patches
-                patch_meta = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+                patch_meta = (
+                    self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+                )
                 existing = set()
                 if btrailers:
                     existing = {lt.as_string().lower() for lt in btrailers}
-                all_followups = (self._tracking.get('followups', [])
-                                 + patch_meta.get('followups', []))
+                all_followups = self._tracking.get('followups', []) + patch_meta.get(
+                    'followups', []
+                )
                 _write_followup_trailers(viewer, all_followups, existing, ts=ts)
                 if all_followups:
                     has_content = True
@@ -598,7 +654,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             return
 
         # Get review comments — own comments always, external only on "f"
-        patch_target = self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+        patch_target = (
+            self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+        )
         all_reviews = patch_target.get('reviews', {})
         my_email = str(self._usercfg.get('email', ''))
         comment_map: Dict[Tuple[str, int], List[Tuple[str, str, str]]] = {}
@@ -615,7 +673,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 colour = self._reviewer_colour(rev_email, patch_target, ts)
                 for c in rev_data.get('comments', []):
                     key = (c['path'], c['line'])
-                    comment_map.setdefault(key, []).append((rev_name, colour, c['text']))
+                    comment_map.setdefault(key, []).append(
+                        (rev_name, colour, c['text'])
+                    )
             else:
                 rev_name = rev_data.get('name', rev_email)
                 for c in rev_data.get('comments', []):
@@ -629,7 +689,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         current_b_file = ''
         a_line = 0
         b_line = 0
-        hint_style = f"bold {ts['warning']}"
+        hint_style = f'bold {ts["warning"]}'
         self._collapsed_comment_lines = {}
 
         def _write_hints(key: Tuple[str, int]) -> None:
@@ -670,7 +730,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 # Colour only the @@...@@ marker, leave context in default
                 end = line.index(' @@', 3) + 3
                 hunk_text = Text()
-                hunk_text.append(line[:end], style=f"bold {ts['secondary']}")
+                hunk_text.append(line[:end], style=f'bold {ts["secondary"]}')
                 if len(line) > end:
                     hunk_text.append(line[end:])
                 viewer.write(hunk_text)
@@ -709,9 +769,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
         # Render follow-up comments at the bottom
         _write_followup_comments(
-            viewer, self._followup_comments.get(patch_idx + 1, []),
+            viewer,
+            self._followup_comments.get(patch_idx + 1, []),
             self._comment_positions,
-            header_position_map=self._followup_header_map, ts=ts)
+            header_position_map=self._followup_header_map,
+            ts=ts,
+        )
         for line_pos, entry in self._followup_header_map.items():
             msgid = str(entry.get('msgid', ''))
             if msgid:
@@ -731,7 +794,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             else:
                 review = {}
                 patch_meta = None
-            commit_sha = self._commit_shas[patch_idx] if patch_idx < len(self._commit_shas) else None
+            commit_sha = (
+                self._commit_shas[patch_idx]
+                if patch_idx < len(self._commit_shas)
+                else None
+            )
 
         target = self._series if display_idx == 0 else patch_meta
         if target and b4.review._get_patch_state(target, self._usercfg) == 'skip':
@@ -740,19 +807,27 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             my_review = b4.review._get_my_review(target, self._usercfg)
             skip_reason = str(my_review.get('skip-reason', ''))
             if skip_reason:
-                viewer.write(f'[dim]Patch {label} is marked as skipped: {skip_reason}[/dim]')
+                viewer.write(
+                    f'[dim]Patch {label} is marked as skipped: {skip_reason}[/dim]'
+                )
             else:
-                viewer.write(f'[dim]Patch {label} is marked as skipped — no email will be sent.[/dim]')
+                viewer.write(
+                    f'[dim]Patch {label} is marked as skipped — no email will be sent.[/dim]'
+                )
             return
 
-        if not review or not (review.get('trailers') or review.get('reply', '')
-                              or review.get('comments') or review.get('note', '')):
+        if not review or not (
+            review.get('trailers')
+            or review.get('reply', '')
+            or review.get('comments')
+            or review.get('note', '')
+        ):
             viewer.write('[dim]No reply will be sent for this patch.[/dim]')
             return
 
         msg = b4.review._build_review_email(
-            self._series, patch_meta, review, self._cover_text,
-            self._topdir, commit_sha)
+            self._series, patch_meta, review, self._cover_text, self._topdir, commit_sha
+        )
         if msg is None:
             viewer.write('[dim]No email to preview (missing message-id?).[/dim]')
             return
@@ -785,8 +860,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         text = Text()
         has_content = False
         for rev_email, review in ordered:
-            if not (review.get('trailers') or review.get('reply', '')
-                    or review.get('comments') or review.get('note', '')):
+            if not (
+                review.get('trailers')
+                or review.get('reply', '')
+                or review.get('comments')
+                or review.get('note', '')
+            ):
                 continue
 
             colour = self._reviewer_colour(rev_email, target, ts)
@@ -806,13 +885,20 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             comments = review.get('comments', [])
             if comments:
                 files: set[str] = set(c.get('path', '') for c in comments)
-                text.append(f'\n    {len(comments)} comments across '
-                            f'{len(files)} files', style=ts['warning'])
+                text.append(
+                    f'\n    {len(comments)} comments across {len(files)} files',
+                    style=ts['warning'],
+                )
             reply = review.get('reply', '')
             if reply:
-                non_quoted = sum(1 for ln in reply.splitlines()
-                                 if ln.strip() and not ln.startswith('>'))
-                text.append(f'\n    {non_quoted} non-quoted reply lines', style=ts['accent'])
+                non_quoted = sum(
+                    1
+                    for ln in reply.splitlines()
+                    if ln.strip() and not ln.startswith('>')
+                )
+                text.append(
+                    f'\n    {non_quoted} non-quoted reply lines', style=ts['accent']
+                )
             trailers = review.get('trailers', [])
             if trailers:
                 for t in trailers:
@@ -832,7 +918,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 if body_start is not None and body_start < len(lines):
                     body_words = ' '.join(lines[body_start:]).split()
                     if body_words:
-                        text.append('\n    (view full note with N)', style=ts['secondary'])
+                        text.append(
+                            '\n    (view full note with N)', style=ts['secondary']
+                        )
 
         if not has_content:
             overlay.display = False
@@ -880,18 +968,27 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         """Return the current user's review sub-dict, creating it if needed."""
         return b4.review._ensure_my_review(target, self._usercfg)
 
-    def _reviewer_colour(self, email: str, target: Dict[str, Any],
-                         ts: Optional[Dict[str, str]] = None) -> str:
+    def _reviewer_colour(
+        self, email: str, target: Dict[str, Any], ts: Optional[Dict[str, str]] = None
+    ) -> str:
         """Return a stable colour for a reviewer email.
 
         Current user always gets index 0; others are sorted by email
         and assigned cyclically from the rest of the palette.
         *ts* is a resolved theme styles dict from :func:`resolve_styles`.
         """
-        palette = reviewer_colours(ts) if ts else [
-            'dark_goldenrod', 'dark_green', 'dark_cyan',
-            'dark_magenta', 'dark_red', 'dark_blue',
-        ]
+        palette = (
+            reviewer_colours(ts)
+            if ts
+            else [
+                'dark_goldenrod',
+                'dark_green',
+                'dark_cyan',
+                'dark_magenta',
+                'dark_red',
+                'dark_blue',
+            ]
+        )
         my_email = self._usercfg.get('email', '')
         if email == my_email:
             return palette[0]
@@ -991,7 +1088,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             return True
         if action == 'agent':
             config = b4.get_main_config()
-            if not config.get('review-agent-command') or not config.get('review-agent-prompt-path'):
+            if not config.get('review-agent-command') or not config.get(
+                'review-agent-prompt-path'
+            ):
                 return False
             return not self._preview_mode
         if action == 'prior_review':
@@ -1018,7 +1117,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         target = self._get_current_review_target()
         if not target:
             return
-        existing_trailers = b4.review._get_my_review(target, self._usercfg).get('trailers', [])
+        existing_trailers = b4.review._get_my_review(target, self._usercfg).get(
+            'trailers', []
+        )
 
         def _on_trailer(result: Optional[List[str]]) -> None:
             if result is None:
@@ -1032,12 +1133,23 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 new_trailers = [f'{name}: {self._default_identity}' for name in result]
             # If adding to a patch, filter out trailers already on the cover letter
             if self._selected_idx > 0 and new_trailers:
-                cover_trailers = b4.review._get_my_review(self._series, self._usercfg).get('trailers', [])
-                cover_names = {t.split(':', 1)[0].strip().lower() for t in cover_trailers}
+                cover_trailers = b4.review._get_my_review(
+                    self._series, self._usercfg
+                ).get('trailers', [])
+                cover_names = {
+                    t.split(':', 1)[0].strip().lower() for t in cover_trailers
+                }
                 overlap = [r for r in result if r.lower() in cover_names]
                 if overlap:
-                    self.notify(f'{", ".join(overlap)} already on cover letter', severity='warning')
-                    new_trailers = [t for t in new_trailers if t.split(':', 1)[0].strip().lower() not in cover_names]
+                    self.notify(
+                        f'{", ".join(overlap)} already on cover letter',
+                        severity='warning',
+                    )
+                    new_trailers = [
+                        t
+                        for t in new_trailers
+                        if t.split(':', 1)[0].strip().lower() not in cover_names
+                    ]
             old_trailers: List[str] = review.get('trailers', [])
             if new_trailers == old_trailers:
                 return
@@ -1057,7 +1169,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                     pt = preview.get('trailers', [])
                     if not pt:
                         continue
-                    remaining = [t for t in pt if t.split(':', 1)[0].strip().lower() not in new_names]
+                    remaining = [
+                        t
+                        for t in pt
+                        if t.split(':', 1)[0].strip().lower() not in new_names
+                    ]
                     if remaining != pt:
                         if remaining:
                             preview['trailers'] = remaining
@@ -1113,43 +1229,48 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         existing_reply = review.get('reply', '')
 
         # Get the real diff for position resolution when parsing back
-        real_diff = ''
         if self._selected_idx > 0:
             patch_idx = self._selected_idx - 1
             if patch_idx >= len(self._commit_shas):
                 return
             sha = self._commit_shas[patch_idx]
             ecode, real_diff = b4.git_run_command(
-                self._topdir, ['diff', f'{sha}~1', sha])
+                self._topdir, ['diff', f'{sha}~1', sha]
+            )
             if ecode > 0:
                 self.notify('Could not get diff', severity='error')
                 return
-
-        if existing_reply:
-            editor_text = existing_reply
-        else:
-            all_reviews = target.get('reviews', {})
-            my_email = str(self._usercfg.get('email', ''))
-            if self._selected_idx == 0:
-                # Cover letter reply
-                editor_text = b4.review._render_quoted_diff_with_comments(
-                    '', all_reviews, my_email,
-                    commit_msg=self._cover_text)
+            if existing_reply:
+                editor_text = existing_reply
             else:
+                all_reviews = target.get('reviews', {})
+                my_email = str(self._usercfg.get('email', ''))
                 ecode, commit_msg = b4.git_run_command(
-                    self._topdir, ['show', '--format=%B', '--no-patch', sha])
+                    self._topdir, ['show', '--format=%B', '--no-patch', sha]
+                )
                 if ecode > 0:
                     self.notify('Could not get commit message', severity='error')
                     return
                 editor_text = b4.review._render_quoted_diff_with_comments(
-                    real_diff, all_reviews, my_email,
-                    commit_msg=commit_msg.strip())
+                    real_diff, all_reviews, my_email, commit_msg=commit_msg.strip()
+                )
+        else:
+            real_diff = ''
+            if existing_reply:
+                editor_text = existing_reply
+            else:
+                all_reviews = target.get('reviews', {})
+                my_email = str(self._usercfg.get('email', ''))
+                editor_text = b4.review._render_quoted_diff_with_comments(
+                    '', all_reviews, my_email, commit_msg=self._cover_text
+                )
 
         with self.suspend():
             result = b4.edit_in_editor(
-                editor_text.encode(), filehint='reply.b4-review.eml')
+                editor_text.encode(), filehint='reply.b4-review.eml'
+            )
 
-        if result is None:
+        if not result:
             self.notify('Editor returned no content')
             return
         reply_text = result.decode(errors='replace')
@@ -1178,7 +1299,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         # Parse inline comments from the quoted reply
         # _extract_editor_comments strips | lines (unadopted external
         # comments) before parsing, so only adopted ones are kept
-        new_comments = b4.review._extract_editor_comments(reply_text, diff_text=real_diff)
+        new_comments = b4.review._extract_editor_comments(
+            reply_text, diff_text=real_diff
+        )
         if new_comments:
             review['comments'] = new_comments
             if 'reply' in review:
@@ -1197,13 +1320,11 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         else:
             self.notify('Reply saved')
 
-
     def action_prior_review(self) -> None:
         """Show prior revision review context."""
         context = self._series.get('prior-review-context', '')
         if not context:
-            self.notify('No prior review context available',
-                        severity='information')
+            self.notify('No prior review context available', severity='information')
             return
         self.push_screen(PriorReviewScreen(context))
 
@@ -1248,7 +1369,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             if result is None:
                 return
             if result == '__EDIT__':
-                my_note = b4.review._get_my_review(target, self._usercfg).get('note', '')
+                my_note = b4.review._get_my_review(target, self._usercfg).get(
+                    'note', ''
+                )
                 self._edit_note_in_editor(target, my_note)
             elif result == '__DELETE__':
                 self._delete_all_notes(target)
@@ -1270,11 +1393,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         with self.suspend():
             result = b4.edit_in_editor(editor_text.encode(), filehint='note.txt')
 
-        if result is None:
+        if not result:
             self.notify('Editor returned no content')
             return
         raw_text = result.decode(errors='replace')
-        note_text = '\n'.join(ln for ln in raw_text.splitlines() if not ln.startswith('#')).strip()
+        note_text = '\n'.join(
+            ln for ln in raw_text.splitlines() if not ln.startswith('#')
+        ).strip()
         if note_text == existing.strip():
             self.notify('No changes made')
             return
@@ -1305,8 +1430,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             my_email = self._usercfg.get('email', '')
             for addr in list(all_reviews):
                 rev = all_reviews[addr]
-                if not (rev.get('trailers') or rev.get('reply', '')
-                        or rev.get('comments') or rev.get('note', '')):
+                if not (
+                    rev.get('trailers')
+                    or rev.get('reply', '')
+                    or rev.get('comments')
+                    or rev.get('note', '')
+                ):
                     if addr == my_email:
                         b4.review._cleanup_review(target, self._usercfg)
                     else:
@@ -1374,7 +1503,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self._refresh_patch_item(self._selected_idx)
         total = len(self._commit_shas)
         label = 'cover' if self._selected_idx == 0 else f'{self._selected_idx}/{total}'
-        self.notify(f'{label} marked as done' if new_state else f'{label} unmarked done')
+        self.notify(
+            f'{label} marked as done' if new_state else f'{label} unmarked done'
+        )
 
     def action_patch_skip(self) -> None:
         """Toggle the explicit 'skip' state on the current patch."""
@@ -1409,7 +1540,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 self._selected_idx = 0 if self._has_cover else 1
         self._populate_patch_list()
         self._show_content(self._selected_idx)
-        self.notify('Skipped patches hidden' if self._hide_skipped else 'Skipped patches shown')
+        self.notify(
+            'Skipped patches hidden' if self._hide_skipped else 'Skipped patches shown'
+        )
 
     def action_send(self) -> None:
         """Collect review emails and show send confirmation dialog."""
@@ -1427,12 +1560,17 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if draft_patches:
             self.notify(
                 f'Still in draft: {", ".join(draft_patches)}. Mark as done (d) or skip (x) first.',
-                severity='warning')
+                severity='warning',
+            )
             return
 
         msgs = b4.review.collect_review_emails(
-            self._series, self._patches, self._cover_text,
-            self._topdir, self._commit_shas)
+            self._series,
+            self._patches,
+            self._cover_text,
+            self._topdir,
+            self._commit_shas,
+        )
         if not msgs:
             self.notify('No review data to send.')
             return
@@ -1443,9 +1581,15 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             try:
                 with self.suspend():
                     smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
-                    sent = b4.send_mail(smtp, msgs, fromaddr=fromaddr,
-                                        patatt_sign=self._patatt_sign, dryrun=self._email_dryrun,
-                                        output_dir=None, reflect=False)
+                    sent = b4.send_mail(
+                        smtp,
+                        msgs,
+                        fromaddr=fromaddr,
+                        patatt_sign=self._patatt_sign,
+                        dryrun=self._email_dryrun,
+                        output_dir=None,
+                        reflect=False,
+                    )
                 if sent is None:
                     self.notify('Failed to send review emails.', severity='error')
                 else:
@@ -1492,8 +1636,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 self._compose_followup_reply(entry)
                 event.stop()
 
-    def _compose_followup_reply(self, entry: Dict[str, Any],
-                                 initial_text: Optional[str] = None) -> None:
+    def _compose_followup_reply(
+        self, entry: Dict[str, Any], initial_text: Optional[str] = None
+    ) -> None:
         """Compose a reply to a follow-up message using the external editor.
 
         If *initial_text* is given (re-edit loop), use it directly instead of
@@ -1529,9 +1674,15 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         try:
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
-                sent = b4.send_mail(smtp, [msg], fromaddr=fromaddr,
-                                    patatt_sign=self._patatt_sign, dryrun=self._email_dryrun,
-                                    output_dir=None, reflect=False)
+                sent = b4.send_mail(
+                    smtp,
+                    [msg],
+                    fromaddr=fromaddr,
+                    patatt_sign=self._patatt_sign,
+                    dryrun=self._email_dryrun,
+                    output_dir=None,
+                    reflect=False,
+                )
             if sent is None:
                 self.notify('Failed to send reply.', severity='error')
             elif self._email_dryrun:
@@ -1578,7 +1729,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         all_followups = lmbx.followups + lmbx.unknowns
         for lmsg in sorted(all_followups, key=lambda m: m.date):
             display_idx = _resolve_patch_for_followup(
-                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map)
+                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+            )
             if display_idx is None:
                 continue
 
@@ -1593,8 +1745,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 continue
             # minimize_thread strips trailers from the body; re-append
             # them so the follow-up panel shows the full message.
-            _htrs, _cmsg, mtrs, _basement, _sig = (
-                b4.LoreMessage.get_body_parts(lmsg.body))
+            _htrs, _cmsg, mtrs, _basement, _sig = b4.LoreMessage.get_body_parts(
+                lmsg.body
+            )
             if mtrs:
                 trailer_block = '\n'.join(t.as_string() for t in mtrs)
                 mbody = mbody.rstrip('\n') + '\n\n' + trailer_block
@@ -1607,10 +1760,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 'msgid': lmsg.msgid,
                 'subject': lmsg.full_subject,
                 'reply': lmsg.reply,
-                'depth': _get_followup_depth(lmsg.in_reply_to, patch_msgids, lmbx.msgid_map),
+                'depth': _get_followup_depth(
+                    lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+                ),
                 'lmsg': lmsg,
                 'replies-to-diff': _chain_has_additional_patch(
-                    lmsg.in_reply_to, patch_msgids, lmbx.msgid_map),
+                    lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+                ),
             }
             self._followup_comments.setdefault(display_idx, []).append(entry)
             count += 1
@@ -1694,7 +1850,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
                 sha = self._commit_shas[idx]
                 ecode, real_diff = b4.git_run_command(
-                    self._topdir, ['diff', f'{sha}~1', sha])
+                    self._topdir, ['diff', f'{sha}~1', sha]
+                )
                 if ecode == 0:
                     b4.review._resolve_comment_positions(real_diff, comments)
 
@@ -1737,9 +1894,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         self.notify('Loading follow-ups\u2026')
         self.run_worker(
             lambda: self._fetch_followups_bg(cover_msgid, blob_sha),
-            name='_followup_worker', thread=True)
+            name='_followup_worker',
+            thread=True,
+        )
 
-    def _fetch_rethreaded_threads(self, blob_sha: str) -> Optional[List[email.message.EmailMessage]]:
+    def _fetch_rethreaded_threads(
+        self, blob_sha: str
+    ) -> Optional[List[email.message.EmailMessage]]:
         """Fetch threads for each real patch in a rethreaded series."""
         all_msgs: List[email.message.EmailMessage] = []
         seen_msgids: Set[str] = set()
@@ -1749,8 +1910,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             if not pmsgid or pmsgid in fetched_patches:
                 continue
             fetched_patches.add(pmsgid)
-            thread = get_thread_msgs(self._topdir, pmsgid,
-                                     blob_sha=blob_sha, quiet=True)
+            thread = get_thread_msgs(
+                self._topdir, pmsgid, blob_sha=blob_sha, quiet=True
+            )
             if thread:
                 for msg in thread:
                     c_msgid = b4.LoreMessage.get_clean_msgid(msg)
@@ -1766,15 +1928,18 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 # Rethreaded series: fetch each real patch's thread
                 msgs = self._fetch_rethreaded_threads(blob_sha)
             else:
-                msgs = get_thread_msgs(self._topdir, cover_msgid,
-                                       blob_sha=blob_sha, quiet=True)
+                msgs = get_thread_msgs(
+                    self._topdir, cover_msgid, blob_sha=blob_sha, quiet=True
+                )
 
         if not msgs:
+
             def _no_msgs() -> None:
                 self.notify('Could not load thread', severity='error')
                 # Still refresh to show external comments (sashiko etc.)
                 self._populate_patch_list()
                 self._show_content(self._selected_idx)
+
             self.app.call_from_thread(_no_msgs)
             return
 
@@ -1784,7 +1949,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             if change_id:
                 with _quiet_worker():
                     new_sha = b4.review.tracking._store_thread_blob(
-                        self._topdir, change_id, msgs)
+                        self._topdir, change_id, msgs
+                    )
                 if new_sha:
                     self._series['thread-blob'] = new_sha
 
@@ -1792,6 +1958,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             self._load_followup_msgs(msgs)
             self._mark_followup_msgs_seen(msgs)
             self._detect_maintainer_replies(msgs)
+
         self.app.call_from_thread(_finish)
 
     def _mark_followup_msgs_seen(self, msgs: List[Any]) -> None:
@@ -1805,7 +1972,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 msg_date = None
                 if date_val:
                     try:
-                        msg_date = email.utils.parsedate_to_datetime(str(date_val)).isoformat()
+                        msg_date = email.utils.parsedate_to_datetime(
+                            str(date_val)
+                        ).isoformat()
                     except Exception:
                         pass
                 entries.append({'msgid': mid, 'msg_date': msg_date})
@@ -1813,6 +1982,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             messages.set_flags_bulk(conn, entries, 'Seen')
             conn.close()
@@ -1832,6 +2002,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             messages.set_flags_bulk(conn, entries, 'Answered')
             conn.close()
@@ -1879,6 +2050,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             return
         try:
             from b4.review import messages
+
             conn = messages.get_db()
             messages.set_flags_bulk(conn, answered_entries, 'Answered')
             conn.close()
@@ -1896,7 +2068,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if self.branch_checked_out:
             return True
         ecode, _out = b4.git_run_command(
-            self._topdir, ['checkout', self._branch], logstderr=True)
+            self._topdir, ['checkout', self._branch], logstderr=True
+        )
         if ecode != 0:
             self.notify(f'Could not check out {self._branch}', severity='error')
             return False
@@ -1908,7 +2081,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if not self.branch_checked_out or not self._original_branch:
             return
         ecode, _out = b4.git_run_command(
-            self._topdir, ['checkout', self._original_branch], logstderr=True)
+            self._topdir, ['checkout', self._original_branch], logstderr=True
+        )
         if ecode == 0:
             self.branch_checked_out = False
 
@@ -1920,8 +2094,10 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         agent_cmd = config.get('review-agent-command')
         agent_prompt = str(config.get('review-agent-prompt-path', ''))
         if not agent_cmd or not agent_prompt:
-            self.notify('Review agent not configured (set b4.review-agent-command and b4.review-agent-prompt-path)',
-                        severity='warning')
+            self.notify(
+                'Review agent not configured (set b4.review-agent-command and b4.review-agent-prompt-path)',
+                severity='warning',
+            )
             return
 
         assert isinstance(agent_cmd, str)
@@ -1931,8 +2107,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
         prompt_path = os.path.join(self._topdir, agent_prompt)
         if not os.path.isfile(prompt_path):
-            self.notify(f'Agent prompt file not found: {agent_prompt}',
-                        severity='error')
+            self.notify(
+                f'Agent prompt file not found: {agent_prompt}', severity='error'
+            )
             return
         cmdargs += [f'Read and execute the prompt from {prompt_path}']
 
@@ -1960,8 +2137,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
         # Integrate any review files the agent wrote
         integrated = b4.review._integrate_agent_reviews(
-            self._topdir, self._cover_text, self._tracking,
-            self._commit_shas, self._patches)
+            self._topdir,
+            self._cover_text,
+            self._tracking,
+            self._commit_shas,
+            self._patches,
+        )
         if integrated:
             self._populate_patch_list()
             self._show_content(self._selected_idx)
@@ -1970,7 +2151,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
 
     def _save_tracking(self) -> None:
         """Save tracking data to the review branch."""
-        b4.review.save_tracking_ref(self._topdir, self._branch, self._cover_text, self._tracking)
+        b4.review.save_tracking_ref(
+            self._topdir, self._branch, self._cover_text, self._tracking
+        )
 
     def action_suspend(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
@@ -1998,11 +2181,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             range_spec = f'{self._base_commit}..HEAD~1'
 
         ecode, out = b4.git_run_command(
-            self._topdir, ['rev-list', '--reverse', range_spec])
+            self._topdir, ['rev-list', '--reverse', range_spec]
+        )
         if ecode != 0 or not out.strip():
             # Could not enumerate — tracking commit may be damaged
-            self.notify('Could not enumerate patch commits after shell',
-                        severity='warning')
+            self.notify(
+                'Could not enumerate patch commits after shell', severity='warning'
+            )
             return
 
         new_shas = out.strip().splitlines()
@@ -2014,16 +2199,19 @@ class ReviewApp(CheckRunnerMixin, App[None]):
             self.notify(
                 f'Patch count changed ({len(old_shas)} → {len(new_shas)}). '
                 'Please exit and re-enter the review.',
-                severity='warning')
+                severity='warning',
+            )
             return
 
         # Reload tracking from the (possibly rewritten) tip commit
         try:
             self._cover_text, self._tracking = b4.review.load_tracking(
-                self._topdir, 'HEAD')
+                self._topdir, 'HEAD'
+            )
         except SystemExit:
-            self.notify('Could not reload tracking data after shell',
-                        severity='warning')
+            self.notify(
+                'Could not reload tracking data after shell', severity='warning'
+            )
             return
 
         series = self._tracking.get('series', {})
@@ -2034,23 +2222,24 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         series['first-patch-commit'] = new_shas[0]
 
         # Re-anchor inline comments against the rebased diffs
-        b4.review.reanchor_patch_comments(
-            self._topdir, new_shas, self._patches)
+        b4.review.reanchor_patch_comments(self._topdir, new_shas, self._patches)
 
         # Persist updated tracking
         self._tracking['series'] = series
         b4.review.save_tracking_ref(
-            self._topdir, self._branch, self._cover_text, self._tracking)
+            self._topdir, self._branch, self._cover_text, self._tracking
+        )
 
         # Refresh in-memory state
         self._commit_shas = new_shas
         ecode, out = b4.git_run_command(
-            self._topdir, ['log', '--reverse', '--format=%s', range_spec])
+            self._topdir, ['log', '--reverse', '--format=%s', range_spec]
+        )
         if ecode == 0 and out.strip():
             self._commit_subjects = out.strip().splitlines()
         self._sha_map = {}
         for idx, full_sha in enumerate(new_shas):
-            self._sha_map[full_sha[:self._abbrev_len]] = (full_sha, idx)
+            self._sha_map[full_sha[: self._abbrev_len]] = (full_sha, idx)
 
         # Refresh the patch list display
         self._populate_patch_list()
@@ -2064,6 +2253,8 @@ class ReviewApp(CheckRunnerMixin, App[None]):
     def action_help(self) -> None:
         """Show help overlay."""
         config = b4.get_main_config()
-        has_agent = bool(config.get('review-agent-command') and config.get('review-agent-prompt-path'))
+        has_agent = bool(
+            config.get('review-agent-command')
+            and config.get('review-agent-prompt-path')
+        )
         self.push_screen(HelpScreen(_review_help_lines(has_agent=has_agent)))
-

@@ -2,6 +2,7 @@
 
 Uses ephemeral ed25519 keys so no external key material is needed.
 """
+
 import base64
 import email.message
 import os
@@ -10,11 +11,10 @@ from collections.abc import Generator
 from typing import Tuple, Union
 
 import pytest
+from nacl.signing import SigningKey
 
 import b4
 import patatt
-
-from nacl.signing import SigningKey
 
 
 @pytest.fixture()
@@ -28,8 +28,7 @@ def ed25519_keypair() -> Generator[Tuple[str, str, str, str], None, None]:
     sk = SigningKey.generate()
     sk_b64 = base64.b64encode(sk.encode()).decode()
     vk_b64 = base64.b64encode(sk.verify_key.encode()).decode()
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.key',
-                                     delete=False) as fh:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.key', delete=False) as fh:
         fh.write(sk_b64)
         privkey_path = fh.name
     yield privkey_path, vk_b64, 'test@example.com', 'default'
@@ -37,7 +36,9 @@ def ed25519_keypair() -> Generator[Tuple[str, str, str, str], None, None]:
 
 
 @pytest.fixture()
-def keyring_dir(ed25519_keypair: Tuple[str, str, str, str]) -> Generator[str, None, None]:
+def keyring_dir(
+    ed25519_keypair: Tuple[str, str, str, str],
+) -> Generator[str, None, None]:
     """Create a temporary keyring directory with the ephemeral public key.
 
     The directory layout follows patatt's expected structure:
@@ -55,9 +56,11 @@ def keyring_dir(ed25519_keypair: Tuple[str, str, str, str]) -> Generator[str, No
         yield tmpdir
 
 
-def _make_test_message(from_addr: str = 'test@example.com',
-                       subject: str = 'Test patch',
-                       body: str = 'This is a test.\n') -> bytes:
+def _make_test_message(
+    from_addr: str = 'test@example.com',
+    subject: str = 'Test patch',
+    body: str = 'This is a test.\n',
+) -> bytes:
     """Build a minimal RFC2822 message as bytes."""
     msg = email.message.EmailMessage()
     msg['From'] = from_addr
@@ -71,8 +74,9 @@ def _make_test_message(from_addr: str = 'test@example.com',
 class TestPatattSignVerify:
     """Round-trip sign and verify using ephemeral ed25519 keys."""
 
-    def test_sign_and_verify(self, ed25519_keypair: Tuple[str, str, str, str],
-                             keyring_dir: str) -> None:
+    def test_sign_and_verify(
+        self, ed25519_keypair: Tuple[str, str, str, str], keyring_dir: str
+    ) -> None:
         """A signed message should validate with the matching public key."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
         msg_bytes = _make_test_message(from_addr=identity)
@@ -89,8 +93,9 @@ class TestPatattSignVerify:
         assert len(results) > 0
         assert results[0][0] == patatt.RES_VALID
 
-    def test_tampered_body_fails(self, ed25519_keypair: Tuple[str, str, str, str],
-                                 keyring_dir: str) -> None:
+    def test_tampered_body_fails(
+        self, ed25519_keypair: Tuple[str, str, str, str], keyring_dir: str
+    ) -> None:
         """Modifying the body after signing should fail validation."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
         msg_bytes = _make_test_message(from_addr=identity)
@@ -157,7 +162,9 @@ class TestPatattSignVerify:
         assert len(results) == 1
         assert results[0][0] == patatt.RES_NOSIG
 
-    def test_sign_adds_developer_key_header(self, ed25519_keypair: Tuple[str, str, str, str]) -> None:
+    def test_sign_adds_developer_key_header(
+        self, ed25519_keypair: Tuple[str, str, str, str]
+    ) -> None:
         """Signing adds both X-Developer-Signature and X-Developer-Key."""
         privkey_path, _vk_b64, identity, selector = ed25519_keypair
         msg_bytes = _make_test_message(from_addr=identity)

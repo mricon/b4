@@ -10,28 +10,52 @@ import email.utils
 import io
 import json
 import re
-
 from typing import Any, Dict, List, Optional, Tuple
 
-import b4
-
-from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.widgets import Checkbox, Input, Label, ListItem, ListView, LoadingIndicator, ProgressBar, RichLog, Select, Static
-from textual.screen import ModalScreen
-from textual.suggester import SuggestFromList
-from textual.worker import Worker, WorkerState
 from rich import box
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
-
-from b4.review_tui._common import (
-    CI_CHECK_LABELS, resolve_styles, ci_check_styles,
-    JKListNavMixin, logger,
-    _write_diff_line, _quiet_worker, _render_email_to_viewer,
+from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.suggester import SuggestFromList
+from textual.widgets import (
+    Checkbox,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    LoadingIndicator,
+    ProgressBar,
+    RichLog,
+    Select,
+    Static,
 )
+from textual.worker import Worker, WorkerState
+
+import b4
+import b4.review
+import b4.review.tracking
+import b4.ty
+from b4.review_tui._common import (
+    CI_CHECK_LABELS,
+    JKListNavMixin,
+    _quiet_worker,
+    _render_email_to_viewer,
+    _write_diff_line,
+    ci_check_styles,
+    logger,
+    resolve_styles,
+)
+
+# Re-exported from b4.tui (canonical home for shared modals)
+from b4.tui._modals import ActionItem as ActionItem
+from b4.tui._modals import ActionScreen as ActionScreen
+from b4.tui._modals import ConfirmScreen as ConfirmScreen
+from b4.tui._modals import LimitScreen as LimitScreen
+from b4.tui._modals import ToCcScreen as ToCcScreen
 
 
 class TrailerOption(ListItem):
@@ -111,7 +135,10 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
         with Vertical(id='trailer-dialog'):
             yield Label('Select trailers:')
             yield ListView(
-                *[TrailerOption(name, name in self._existing) for name in self.TRAILER_NAMES],
+                *[
+                    TrailerOption(name, name in self._existing)
+                    for name in self.TRAILER_NAMES
+                ],
                 id='trailer-list',
             )
             yield Static('a/r/t/n toggle  |  Enter save', id='trailer-hint')
@@ -124,7 +151,9 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
 
     def action_toggle_item(self) -> None:
         lv = self.query_one('#trailer-list', ListView)
-        if lv.highlighted_child is not None and isinstance(lv.highlighted_child, TrailerOption):
+        if lv.highlighted_child is not None and isinstance(
+            lv.highlighted_child, TrailerOption
+        ):
             lv.highlighted_child.toggle()
 
     def action_quick_toggle(self, name: str) -> None:
@@ -380,8 +409,13 @@ class NoteScreen(ModalScreen[Optional[str]]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='note-dialog'):
-            yield RichLog(id='note-viewer', highlight=False, wrap=True,
-                          markup=True, auto_scroll=False)
+            yield RichLog(
+                id='note-viewer',
+                highlight=False,
+                wrap=True,
+                markup=True,
+                auto_scroll=False,
+            )
             yield Static('Escape close  |  e edit  |  d delete all', id='note-hint')
 
     def on_mount(self) -> None:
@@ -450,8 +484,13 @@ class PriorReviewScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='prior-review-dialog'):
-            yield RichLog(id='prior-review-viewer', highlight=False, wrap=True,
-                          markup=False, auto_scroll=False)
+            yield RichLog(
+                id='prior-review-viewer',
+                highlight=False,
+                wrap=True,
+                markup=False,
+                auto_scroll=False,
+            )
             yield Static('Escape close', id='prior-review-hint')
 
     def on_mount(self) -> None:
@@ -459,7 +498,7 @@ class PriorReviewScreen(ModalScreen[None]):
         viewer = self.query_one('#prior-review-viewer', RichLog)
         for line in self._context_text.splitlines():
             if line.startswith('== ') and line.endswith(' =='):
-                viewer.write(Text(line, style=f"bold {ts['accent']}"))
+                viewer.write(Text(line, style=f'bold {ts["accent"]}'))
             else:
                 viewer.write(Text(line))
 
@@ -516,10 +555,16 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='followup-preview-dialog'):
-            yield RichLog(id='followup-preview-viewer', highlight=False,
-                          wrap=True, markup=False, auto_scroll=False)
-            yield Static('S  send  |  e  edit  |  Escape  abandon',
-                         id='followup-preview-hint')
+            yield RichLog(
+                id='followup-preview-viewer',
+                highlight=False,
+                wrap=True,
+                markup=False,
+                auto_scroll=False,
+            )
+            yield Static(
+                'S  send  |  e  edit  |  Escape  abandon', id='followup-preview-hint'
+            )
 
     def on_mount(self) -> None:
         body = self._reply_text
@@ -538,14 +583,6 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
 
     def action_abandon(self) -> None:
         self.dismiss(None)
-
-
-# Re-exported from b4.tui (canonical home for shared modals)
-from b4.tui._modals import ToCcScreen as ToCcScreen
-from b4.tui._modals import ConfirmScreen as ConfirmScreen
-from b4.tui._modals import LimitScreen as LimitScreen
-from b4.tui._modals import ActionItem as ActionItem
-from b4.tui._modals import ActionScreen as ActionScreen
 
 
 class SendScreen(ModalScreen[bool]):
@@ -678,11 +715,15 @@ class TakeScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, target_branch: str, review_branch: str,
-                 num_patches: int = 0,
-                 default_method: Optional[str] = None,
-                 recent_branches: Optional[List[str]] = None,
-                 subject: str = '') -> None:
+    def __init__(
+        self,
+        target_branch: str,
+        review_branch: str,
+        num_patches: int = 0,
+        default_method: Optional[str] = None,
+        recent_branches: Optional[List[str]] = None,
+        subject: str = '',
+    ) -> None:
         """Initialize take screen.
 
         Args:
@@ -696,7 +737,9 @@ class TakeScreen(ModalScreen[bool]):
         super().__init__()
         self._target_branch = target_branch
         self._review_branch = review_branch
-        self._default_method = default_method or ('linear' if num_patches == 1 else 'merge')
+        self._default_method = default_method or (
+            'linear' if num_patches == 1 else 'merge'
+        )
         self._recent_branches = recent_branches
         self._subject = subject
         # Results set after continue
@@ -718,12 +761,30 @@ class TakeScreen(ModalScreen[bool]):
                 yield Static(self._subject, id='take-title', markup=False)
             yield Static(f'Review branch: {self._review_branch}', classes='take-value')
             yield Static('Target branch:', classes='take-label')
-            suggester = SuggestFromList(self._recent_branches, case_sensitive=True) if self._recent_branches else None
-            yield Input(value=self._target_branch, id='take-target', suggester=suggester)
+            suggester = (
+                SuggestFromList(self._recent_branches, case_sensitive=True)
+                if self._recent_branches
+                else None
+            )
+            yield Input(
+                value=self._target_branch, id='take-target', suggester=suggester
+            )
             yield Static('Method:', classes='take-label')
-            yield Select(method_options, value=self._default_method, id='take-method', allow_blank=False)
-            yield Checkbox('add Link:', value=True, id='take-add-link', classes='take-checkbox')
-            yield Checkbox('add Signed-off-by:', value=True, id='take-add-signoff', classes='take-checkbox')
+            yield Select(
+                method_options,
+                value=self._default_method,
+                id='take-method',
+                allow_blank=False,
+            )
+            yield Checkbox(
+                'add Link:', value=True, id='take-add-link', classes='take-checkbox'
+            )
+            yield Checkbox(
+                'add Signed-off-by:',
+                value=True,
+                id='take-add-signoff',
+                classes='take-checkbox',
+            )
             yield Static('Ctrl-y continue  |  Escape cancel', id='take-hint')
 
     def on_mount(self) -> None:
@@ -735,7 +796,9 @@ class TakeScreen(ModalScreen[bool]):
             self.notify('Target branch is required', severity='error')
             return
         if not b4.git_branch_exists(None, self.target_result):
-            self.notify(f'Branch does not exist: {self.target_result}', severity='error')
+            self.notify(
+                f'Branch does not exist: {self.target_result}', severity='error'
+            )
             return
         self.method_result = str(self.query_one('#take-method', Select).value)
         self.add_link = self.query_one('#take-add-link', Checkbox).value
@@ -788,8 +851,9 @@ class CherryPickScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, patches: List[Dict[str, Any]],
-                 preselected: Optional[List[int]] = None) -> None:
+    def __init__(
+        self, patches: List[Dict[str, Any]], preselected: Optional[List[int]] = None
+    ) -> None:
         super().__init__()
         self._patches = patches
         self._preselected: List[int] = preselected if preselected is not None else []
@@ -800,14 +864,19 @@ class CherryPickScreen(ModalScreen[bool]):
         with Vertical(id='cherrypick-dialog'):
             yield Static('Select patches to apply', id='cherrypick-title')
             if has_preselected:
-                yield Static('Skipped patches are pre-deselected.',
-                             id='cherrypick-skip-note')
+                yield Static(
+                    'Skipped patches are pre-deselected.', id='cherrypick-skip-note'
+                )
             with Vertical(id='cherrypick-list'):
                 for i, patch in enumerate(self._patches):
                     title = patch.get('title', f'Patch {i + 1}')
                     checked = (i + 1) in self._preselected if has_preselected else False
-                    yield Checkbox(Text(f' {i + 1:3d}. {title}'), value=checked,
-                                   id=f'cherrypick-{i}', classes='cherrypick-checkbox')
+                    yield Checkbox(
+                        Text(f' {i + 1:3d}. {title}'),
+                        value=checked,
+                        id=f'cherrypick-{i}',
+                        classes='cherrypick-checkbox',
+                    )
             yield Static('Ctrl-y continue  |  Escape cancel', id='cherrypick-hint')
 
     def action_continue_pick(self) -> None:
@@ -874,9 +943,14 @@ class TakeConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, method: str, target_branch: str,
-                 review_branch: str, subject: str = '',
-                 cherrypick: Optional[List[int]] = None) -> None:
+    def __init__(
+        self,
+        method: str,
+        target_branch: str,
+        review_branch: str,
+        subject: str = '',
+        cherrypick: Optional[List[int]] = None,
+    ) -> None:
         super().__init__()
         self._method = method
         self._target_branch = target_branch
@@ -895,22 +969,18 @@ class TakeConfirmScreen(ModalScreen[bool]):
             if self._cherrypick:
                 yield Static(
                     f'Patches: {", ".join(str(i) for i in self._cherrypick)}',
-                    markup=False)
+                    markup=False,
+                )
             yield Static('Testing apply\u2026', id='takeconfirm-status')
             yield LoadingIndicator(id='takeconfirm-loading')
-            yield Checkbox('mark as accepted', value=True,
-                           id='takeconfirm-accept')
-            yield Static(
-                'Ctrl-y confirm  |  Escape cancel',
-                id='takeconfirm-hint')
+            yield Checkbox('mark as accepted', value=True, id='takeconfirm-accept')
+            yield Static('Ctrl-y confirm  |  Escape cancel', id='takeconfirm-hint')
 
     def on_mount(self) -> None:
         self.run_worker(self._test_take, name='_test_take', thread=True)
 
     def _test_take(self) -> Tuple[bool, str]:
         """Test-apply review branch patches at the target base."""
-        import b4.review
-
         with _quiet_worker():
             topdir = b4.git_get_toplevel()
             if not topdir:
@@ -918,8 +988,7 @@ class TakeConfirmScreen(ModalScreen[bool]):
 
             # Load tracking to find base-commit and patch count
             try:
-                _cover, tracking = b4.review.load_tracking(
-                    topdir, self._review_branch)
+                _cover, tracking = b4.review.load_tracking(topdir, self._review_branch)
             except SystemExit:
                 return False, 'could not load tracking data'
 
@@ -944,15 +1013,16 @@ class TakeConfirmScreen(ModalScreen[bool]):
 
             # Resolve the test base
             ecode, out = b4.git_run_command(
-                topdir, ['rev-parse', '--verify', test_base])
+                topdir, ['rev-parse', '--verify', test_base]
+            )
             if ecode != 0:
                 return False, f'cannot resolve base: {test_base}'
             resolved_base = out.strip()
 
             # Get patch commits
             commits = b4.git_get_command_lines(
-                topdir, ['rev-list', '--reverse',
-                         f'{patch_base}..{patch_tip}'])
+                topdir, ['rev-list', '--reverse', f'{patch_base}..{patch_tip}']
+            )
             if not commits:
                 return False, 'no commits found on review branch'
 
@@ -970,9 +1040,8 @@ class TakeConfirmScreen(ModalScreen[bool]):
             mbox_parts: list[bytes] = []
             for commit in commits:
                 ecode, patch_bytes = b4.git_run_command(
-                    topdir,
-                    ['format-patch', '--stdout', '-1', commit],
-                    decode=False)
+                    topdir, ['format-patch', '--stdout', '-1', commit], decode=False
+                )
                 if ecode != 0:
                     return False, f'format-patch failed for {commit[:12]}'
                 mbox_parts.append(patch_bytes)
@@ -981,16 +1050,13 @@ class TakeConfirmScreen(ModalScreen[bool]):
             # Test apply in a temporary sparse worktree
             try:
                 with b4.git_temp_worktree(topdir, resolved_base) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['am'], stdin=ambytes)
+                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
                     if ecode > 0:
                         for line in out.splitlines():
                             if line.startswith('Patch failed at '):
@@ -1003,29 +1069,25 @@ class TakeConfirmScreen(ModalScreen[bool]):
     def _update_status(self, text: str, level: str) -> None:
         widget = self.query_one('#takeconfirm-status', Static)
         widget.update(text)
-        widget.remove_class('takeconfirm-pass', 'takeconfirm-warn',
-                            'takeconfirm-fail')
+        widget.remove_class('takeconfirm-pass', 'takeconfirm-warn', 'takeconfirm-fail')
         widget.add_class(f'takeconfirm-{level}')
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name != '_test_take':
             return
         if event.state == WorkerState.SUCCESS and event.worker.result:
-            await self.query_one('#takeconfirm-loading', LoadingIndicator
-                                 ).remove()
+            await self.query_one('#takeconfirm-loading', LoadingIndicator).remove()
             ok, detail = event.worker.result
             if ok:
                 self._update_status(f'Test apply: {detail}', 'pass')
             else:
                 self._update_status(f'Test apply: {detail}', 'fail')
         elif event.state == WorkerState.ERROR:
-            await self.query_one('#takeconfirm-loading', LoadingIndicator
-                                 ).remove()
+            await self.query_one('#takeconfirm-loading', LoadingIndicator).remove()
             self._update_status('test apply error', 'fail')
 
     def action_confirm_take(self) -> None:
-        self.accept_series = self.query_one(
-            '#takeconfirm-accept', Checkbox).value
+        self.accept_series = self.query_one('#takeconfirm-accept', Checkbox).value
         self.dismiss(True)
 
     def action_cancel(self) -> None:
@@ -1074,8 +1136,9 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
     }
     """
 
-    def __init__(self, last_source: str = '', last_input: str = '',
-                 subject: str = '') -> None:
+    def __init__(
+        self, last_source: str = '', last_input: str = '', subject: str = ''
+    ) -> None:
         super().__init__()
         self._last_source = last_source
         self._last_input = last_input
@@ -1168,7 +1231,9 @@ class SnoozeScreen(ModalScreen[Optional[Dict[str, str]]]):
                 return
             # Convert date to midnight UTC datetime
             target = datetime.datetime(
-                target_date.year, target_date.month, target_date.day,
+                target_date.year,
+                target_date.month,
+                target_date.day,
                 tzinfo=datetime.timezone.utc,
             )
             until_value = target.strftime('%Y-%m-%dT%H:%M:%S')
@@ -1222,16 +1287,22 @@ class ThankScreen(ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, msg: email.message.EmailMessage,
-                 checkurl: Optional[str] = None) -> None:
+    def __init__(
+        self, msg: email.message.EmailMessage, checkurl: Optional[str] = None
+    ) -> None:
         super().__init__()
         self._msg = msg
         self._checkurl = checkurl
 
     def compose(self) -> ComposeResult:
         with Vertical(id='thank-dialog'):
-            yield RichLog(id='thank-viewer', highlight=False, wrap=True,
-                          markup=False, auto_scroll=False)
+            yield RichLog(
+                id='thank-viewer',
+                highlight=False,
+                wrap=True,
+                markup=False,
+                auto_scroll=False,
+            )
             if self._checkurl:
                 hint = 'e edit  |  S send now  |  W queue  |  Escape cancel'
             else:
@@ -1329,8 +1400,13 @@ class QueueScreen(ModalScreen[Optional[str]]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='queue-dialog'):
-            yield RichLog(id='queue-viewer', highlight=False, wrap=True,
-                          markup=False, auto_scroll=False)
+            yield RichLog(
+                id='queue-viewer',
+                highlight=False,
+                wrap=True,
+                markup=False,
+                auto_scroll=False,
+            )
             yield Static('Q deliver  |  Escape close', id='queue-hint')
 
     def on_mount(self) -> None:
@@ -1352,7 +1428,9 @@ class QueueScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class QueueDeliveryScreen(ModalScreen[Optional[Tuple[int, int, List[Tuple[str, int]]]]]):
+class QueueDeliveryScreen(
+    ModalScreen[Optional[Tuple[int, int, List[Tuple[str, int]]]]]
+):
     """Modal that processes the thanks queue with a progress bar.
 
     Dismisses with ``(delivered, still_pending, delivered_series)``
@@ -1377,9 +1455,9 @@ class QueueDeliveryScreen(ModalScreen[Optional[Tuple[int, int, List[Tuple[str, i
     }
     """
 
-    def __init__(self, total: int,
-                 dryrun: bool = False,
-                 patatt_sign: bool = True) -> None:
+    def __init__(
+        self, total: int, dryrun: bool = False, patatt_sign: bool = True
+    ) -> None:
         super().__init__()
         self._total = total
         self._dryrun = dryrun
@@ -1400,11 +1478,11 @@ class QueueDeliveryScreen(ModalScreen[Optional[Tuple[int, int, List[Tuple[str, i
         self._cancelled = True
 
     def _do_deliver(self) -> Tuple[int, int, List[Tuple[str, int]]]:
-        import b4.ty
-
         def _on_progress(completed: int, total: int, status: str) -> None:
             if not self._cancelled:
-                self.app.call_from_thread(self._update_progress, completed, total, status)
+                self.app.call_from_thread(
+                    self._update_progress, completed, total, status
+                )
 
         return b4.ty.process_queue(
             dryrun=self._dryrun,
@@ -1540,8 +1618,13 @@ class _FetchViewerScreen(ModalScreen[None]):
         with Vertical(id='fv-dialog'):
             yield Static(self._loading_text, id='fv-title', markup=False)
             yield LoadingIndicator(id='fv-loading')
-            yield RichLog(id='fv-viewer', highlight=False, wrap=True,
-                          markup=True, auto_scroll=False)
+            yield RichLog(
+                id='fv-viewer',
+                highlight=False,
+                wrap=True,
+                markup=True,
+                auto_scroll=False,
+            )
             yield Static('Escape close', id='fv-hint')
 
     def on_mount(self) -> None:
@@ -1595,7 +1678,8 @@ class ViewSeriesScreen(_FetchViewerScreen):
             msgs = b4.review._retrieve_messages(self._message_id)
             return b4.review._get_lore_series(msgs)
 
-    def _show_result(self, lser: 'b4.LoreSeries') -> None:
+    def _show_result(self, result: 'b4.LoreSeries') -> None:
+        lser = result
         subject = lser.subject or '(no subject)'
         self.query_one('#fv-title', Static).update(subject)
         viewer = self.query_one('#fv-viewer', RichLog)
@@ -1610,7 +1694,9 @@ class ViewSeriesScreen(_FetchViewerScreen):
             if not first:
                 viewer.write(Rule())
             first = False
-            viewer.write(Text(f'From: {lmsg.fromname} <{lmsg.fromemail}>', style='bold'))
+            viewer.write(
+                Text(f'From: {lmsg.fromname} <{lmsg.fromemail}>', style='bold')
+            )
             if lmsg.date:
                 viewer.write(Text(f'Date: {lmsg.date}', style='bold'))
             viewer.write(Text(f'Subject: {lmsg.full_subject}', style='bold'))
@@ -1631,24 +1717,21 @@ class CIChecksScreen(_FetchViewerScreen):
 
     _loading_text = 'Fetching CI checks\u2026'
 
-    def __init__(self, pwkey: str, pwurl: str,
-                 series: Dict[str, Any]) -> None:
+    def __init__(self, pwkey: str, pwurl: str, series: Dict[str, Any]) -> None:
         super().__init__()
         self._pwkey = pwkey
         self._pwurl = pwurl
         self._series = series
 
     def _fetch(self) -> List[Dict[str, Any]]:
-        import b4.review
         with _quiet_worker():
             patch_ids = self._series.get('patch_ids', [])
-            return b4.review.pw_fetch_checks(
-                self._pwkey, self._pwurl, patch_ids)
+            return b4.review.pw_fetch_checks(self._pwkey, self._pwurl, patch_ids)
 
-    def _show_result(self, checks: List[Dict[str, Any]]) -> None:
+    def _show_result(self, result: List[Dict[str, Any]]) -> None:
+        checks = result
         series_name = self._series.get('name') or '(no subject)'
-        self.query_one('#fv-title', Static).update(
-            f'CI checks \u2014 {series_name}')
+        self.query_one('#fv-title', Static).update(f'CI checks \u2014 {series_name}')
         viewer = self.query_one('#fv-viewer', RichLog)
 
         if not checks:
@@ -1702,7 +1785,9 @@ class CIChecksScreen(_FetchViewerScreen):
                     viewer.write(Text(f'    \u2192 {target_url}', style='dim'))
 
 
-def NewerRevisionWarningScreen(current_rev: int, newer_versions: List[int]) -> ConfirmScreen:
+def NewerRevisionWarningScreen(
+    current_rev: int, newer_versions: List[int]
+) -> ConfirmScreen:
     """Build a confirmation screen warning about newer revisions."""
     versions = ', '.join(f'v{v}' for v in newer_versions)
     return ConfirmScreen(
@@ -1760,14 +1845,16 @@ class RevisionChoiceScreen(ModalScreen[Optional[int]]):
             yield Static('Newer revision available', id='rev-choice-title')
             yield Static(
                 f'This series was tracked as v{self._current_rev}, but '
-                f'v{self._newest_rev} is now available.')
+                f'v{self._newest_rev} is now available.'
+            )
             yield Static('')
             yield Static('Which version would you like to review?')
             yield Static(
                 f'n review v{self._newest_rev} (newer)  |  '
                 f'o review v{self._current_rev} (older)  |  '
                 f'Escape cancel',
-                id='rev-choice-hint')
+                id='rev-choice-hint',
+            )
 
     def action_newer(self) -> None:
         self.dismiss(self._newest_rev)
@@ -1835,9 +1922,13 @@ class RebaseScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, current_branch: str, review_branch: str,
-                 recent_branches: Optional[List[str]] = None,
-                 subject: str = '') -> None:
+    def __init__(
+        self,
+        current_branch: str,
+        review_branch: str,
+        recent_branches: Optional[List[str]] = None,
+        subject: str = '',
+    ) -> None:
         super().__init__()
         self._current_branch = current_branch
         self._review_branch = review_branch
@@ -1852,14 +1943,22 @@ class RebaseScreen(ModalScreen[bool]):
             dialog.border_title = 'Rebase Series'
             if self._subject:
                 yield Static(self._subject, id='rebase-title', markup=False)
-            yield Static(f'Review branch: {self._review_branch}', classes='rebase-value')
+            yield Static(
+                f'Review branch: {self._review_branch}', classes='rebase-value'
+            )
             yield Static('Rebase on top of:', classes='rebase-label')
-            suggester = SuggestFromList(self._recent_branches, case_sensitive=True) if self._recent_branches else None
-            yield Input(value=self._current_branch, id='rebase-target', suggester=suggester)
+            suggester = (
+                SuggestFromList(self._recent_branches, case_sensitive=True)
+                if self._recent_branches
+                else None
+            )
+            yield Input(
+                value=self._current_branch, id='rebase-target', suggester=suggester
+            )
             yield Static('', id='rebase-status', markup=False)
             yield Static(
-                'Enter check  |  Ctrl-y confirm  |  Escape cancel',
-                id='rebase-hint')
+                'Enter check  |  Ctrl-y confirm  |  Escape cancel', id='rebase-hint'
+            )
 
     def on_mount(self) -> None:
         self.query_one('#rebase-target', Input).focus()
@@ -1885,18 +1984,15 @@ class RebaseScreen(ModalScreen[bool]):
             self._run_test_apply(value)
         else:
             self._update_status('Testing applicability\u2026', 'warn')
-            self.run_worker(
-                self._prepare_local, name='_prepare', thread=True)
+            self.run_worker(self._prepare_local, name='_prepare', thread=True)
 
     def _prepare_local(self) -> bytes:
         """Build mbox from the local review branch patches."""
-        import b4.review
         topdir = b4.git_get_toplevel()
         if not topdir:
             raise RuntimeError('Not in a git repository')
         with _quiet_worker():
-            _cover, tracking = b4.review.load_tracking(
-                topdir, self._review_branch)
+            _cover, tracking = b4.review.load_tracking(topdir, self._review_branch)
             series_data = tracking.get('series', {})
             base_commit = series_data.get('base-commit', '')
             first_patch = series_data.get('first-patch-commit', '')
@@ -1906,9 +2002,10 @@ class RebaseScreen(ModalScreen[bool]):
                 range_start = base_commit
             range_end = f'{self._review_branch}~1'
             ecode, ambytes = b4.git_run_command(
-                topdir, ['format-patch', '--stdout',
-                         f'{range_start}..{range_end}'],
-                decode=False)
+                topdir,
+                ['format-patch', '--stdout', f'{range_start}..{range_end}'],
+                decode=False,
+            )
             if ecode > 0:
                 raise RuntimeError('Could not generate patches from review branch')
             return ambytes
@@ -1919,28 +2016,25 @@ class RebaseScreen(ModalScreen[bool]):
         assert ambytes is not None
         self.run_worker(
             lambda: self._test_apply_at(ambytes, branch),
-            name='_test_apply', thread=True,
+            name='_test_apply',
+            thread=True,
         )
 
     @staticmethod
-    def _test_apply_at(ambytes: bytes,
-                       branch: str) -> Tuple[bool, str]:
+    def _test_apply_at(ambytes: bytes, branch: str) -> Tuple[bool, str]:
         topdir = b4.git_get_toplevel()
         if not topdir:
             return False, 'not in a git repository'
         with _quiet_worker():
             try:
                 with b4.git_temp_worktree(topdir, branch) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['am'], stdin=ambytes)
+                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
                     if ecode > 0:
                         for line in out.splitlines():
                             if line.startswith('Patch failed at '):
@@ -1974,7 +2068,9 @@ class RebaseScreen(ModalScreen[bool]):
             self.notify('Target branch is required', severity='error')
             return
         if not b4.git_branch_exists(None, self.target_result):
-            self.notify(f'Branch does not exist: {self.target_result}', severity='error')
+            self.notify(
+                f'Branch does not exist: {self.target_result}', severity='error'
+            )
             return
         self.dismiss(True)
 
@@ -2037,12 +2133,15 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, current_target: str = '',
-                 suggestions: Optional[List[str]] = None,
-                 subject: str = '',
-                 message_id: str = '',
-                 revision: Optional[int] = None,
-                 review_branch: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        current_target: str = '',
+        suggestions: Optional[List[str]] = None,
+        subject: str = '',
+        message_id: str = '',
+        revision: Optional[int] = None,
+        review_branch: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self._current_target = current_target
         self._suggestions = suggestions
@@ -2059,9 +2158,19 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
             dialog.border_title = 'Set Target Branch'
             if self._subject:
                 yield Static(self._subject, id='target-branch-title', markup=False)
-            yield Static('Target branch for this series:', classes='target-branch-label')
-            suggester = SuggestFromList(self._suggestions, case_sensitive=True) if self._suggestions else None
-            yield Input(value=self._current_target, id='target-branch-input', suggester=suggester)
+            yield Static(
+                'Target branch for this series:', classes='target-branch-label'
+            )
+            suggester = (
+                SuggestFromList(self._suggestions, case_sensitive=True)
+                if self._suggestions
+                else None
+            )
+            yield Input(
+                value=self._current_target,
+                id='target-branch-input',
+                suggester=suggester,
+            )
             yield Static('', id='target-branch-status', markup=False)
             yield Static(
                 'Enter check  |  Ctrl-y confirm  |  Ctrl-d clear  |  Escape cancel',
@@ -2093,12 +2202,10 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
             self._check_applicability(value)
         elif self._review_branch:
             self._update_status('Testing applicability\u2026', 'warn')
-            self.run_worker(
-                self._prepare_local, name='_prepare', thread=True)
+            self.run_worker(self._prepare_local, name='_prepare', thread=True)
         elif self._message_id:
             self._update_status('Fetching series\u2026', 'warn')
-            self.run_worker(
-                self._prepare_remote, name='_prepare', thread=True)
+            self.run_worker(self._prepare_remote, name='_prepare', thread=True)
         else:
             self._update_status(f'Branch exists: {value}', 'pass')
 
@@ -2109,8 +2216,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         if not topdir:
             raise RuntimeError('Not in a git repository')
         with _quiet_worker():
-            _cover, tracking = b4.review.load_tracking(
-                topdir, self._review_branch)
+            _cover, tracking = b4.review.load_tracking(topdir, self._review_branch)
             series_data = tracking.get('series', {})
             base_commit = series_data.get('base-commit', '')
             first_patch = series_data.get('first-patch-commit', '')
@@ -2120,9 +2226,10 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
                 range_start = base_commit
             range_end = f'{self._review_branch}~1'
             ecode, ambytes = b4.git_run_command(
-                topdir, ['format-patch', '--stdout',
-                         f'{range_start}..{range_end}'],
-                decode=False)
+                topdir,
+                ['format-patch', '--stdout', f'{range_start}..{range_end}'],
+                decode=False,
+            )
             if ecode > 0:
                 raise RuntimeError('Could not generate patches from review branch')
             return None, ambytes
@@ -2131,19 +2238,21 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         """Fetch series from lore and build LoreSeries + ambytes."""
         with _quiet_worker():
             msgs = b4.review._retrieve_messages(self._message_id)
-            lser = b4.review._get_lore_series(
-                msgs, wantver=self._revision)
+            lser = b4.review._get_lore_series(msgs, wantver=self._revision)
             am_msgs = lser.get_am_ready(
-                noaddtrailers=True, addmysob=False, addlink=False,
-                cherrypick=None, copyccs=False, allowbadchars=False,
-                showchecks=False)
+                noaddtrailers=True,
+                addmysob=False,
+                addlink=False,
+                cherrypick=None,
+                copyccs=False,
+                allowbadchars=False,
+                showchecks=False,
+            )
             if not am_msgs:
                 raise LookupError('No patches ready for applying')
             ifh = io.BytesIO()
             b4.save_git_am_mbox(am_msgs, ifh)
             ambytes = ifh.getvalue()
-            if lser.indexes is None:
-                lser.populate_indexes()
             return lser, ambytes
 
     def _check_applicability(self, branch: str) -> None:
@@ -2155,16 +2264,16 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         # Fast blob check if we have a LoreSeries with indexes (remote fetch)
         if self._lser and self._lser.indexes:
             try:
-                checked, mismatches = self._lser.check_applies_clean(
-                    topdir, at=branch)
+                checked, mismatches = self._lser.check_applies_clean(topdir, at=branch)
                 if len(mismatches) == 0:
-                    self._update_status(
-                        f'Apply results: clean ({branch})', 'pass')
+                    self._update_status(f'Apply results: clean ({branch})', 'pass')
                     return
                 matched = checked - len(mismatches)
                 self._update_status(
                     f'Apply results: {matched}/{checked} a/b blobs match'
-                    f' \u2014 testing\u2026', 'warn')
+                    f' \u2014 testing\u2026',
+                    'warn',
+                )
             except Exception:
                 self._update_status('Testing applicability\u2026', 'warn')
         else:
@@ -2177,28 +2286,25 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         ambytes = self._ambytes
         self.run_worker(
             lambda: self._test_apply_at(ambytes, branch),
-            name='_test_apply', thread=True,
+            name='_test_apply',
+            thread=True,
         )
 
     @staticmethod
-    def _test_apply_at(ambytes: bytes,
-                       branch: str) -> Tuple[bool, str]:
+    def _test_apply_at(ambytes: bytes, branch: str) -> Tuple[bool, str]:
         topdir = b4.git_get_toplevel()
         if not topdir:
             return False, 'not in a git repository'
         with _quiet_worker():
             try:
                 with b4.git_temp_worktree(topdir, branch) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['am'], stdin=ambytes)
+                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
                     if ecode > 0:
                         for line in out.splitlines():
                             if line.startswith('Patch failed at '):
@@ -2229,7 +2335,9 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
     def action_confirm(self) -> None:
         value = self.query_one('#target-branch-input', Input).value.strip()
         if not value:
-            self.notify('Branch name is required (use Ctrl-d to clear)', severity='error')
+            self.notify(
+                'Branch name is required (use Ctrl-d to clear)', severity='error'
+            )
             return
         if not b4.git_branch_exists(None, value):
             self.notify(f'Branch does not exist: {value}', severity='error')
@@ -2243,9 +2351,9 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-def AbandonConfirmScreen(change_id: str, review_branch: str,
-                         has_branch: bool,
-                         subject: str = '') -> ConfirmScreen:
+def AbandonConfirmScreen(
+    change_id: str, review_branch: str, has_branch: bool, subject: str = ''
+) -> ConfirmScreen:
     """Build a confirmation screen for abandon operation."""
     body = [f'Change-ID: {change_id}']
     if has_branch:
@@ -2264,9 +2372,9 @@ def AbandonConfirmScreen(change_id: str, review_branch: str,
     )
 
 
-def ArchiveConfirmScreen(change_id: str, review_branch: str,
-                         has_branch: bool,
-                         subject: str = '') -> ConfirmScreen:
+def ArchiveConfirmScreen(
+    change_id: str, review_branch: str, has_branch: bool, subject: str = ''
+) -> ConfirmScreen:
     """Build a confirmation screen for archive operation."""
     body = [f'Change-ID: {change_id}']
     if has_branch:
@@ -2324,11 +2432,15 @@ class RangeDiffScreen(JKListNavMixin, ModalScreen[Optional[int]]):
         self._current_revision = current_revision
         self._revisions = sorted(
             [r for r in revisions if r['revision'] != current_revision],
-            key=lambda r: r['revision'], reverse=True)
+            key=lambda r: r['revision'],
+            reverse=True,
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id='rangediff-dialog'):
-            yield Label(f'Range-diff against v{self._current_revision} \u2014 select version:')
+            yield Label(
+                f'Range-diff against v{self._current_revision} \u2014 select version:'
+            )
             items = []
             for r in self._revisions:
                 subject = r.get('subject', '(no subject)')
@@ -2418,8 +2530,10 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
         with Vertical(id='state-dialog'):
             yield Label('Set state (Enter=confirm, Esc=cancel):')
             yield ListView(
-                *[StateOption(s['slug'], s['name'], s['slug'] == self._current_state)
-                  for s in self._states],
+                *[
+                    StateOption(s['slug'], s['name'], s['slug'] == self._current_state)
+                    for s in self._states
+                ],
                 id='state-list',
             )
             yield Checkbox('Archived', False, id='state-archived')
@@ -2446,7 +2560,9 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
 
     def _do_confirm(self) -> None:
         lv = self.query_one('#state-list', ListView)
-        if lv.highlighted_child is not None and isinstance(lv.highlighted_child, StateOption):
+        if lv.highlighted_child is not None and isinstance(
+            lv.highlighted_child, StateOption
+        ):
             slug = lv.highlighted_child.slug
         else:
             self.dismiss(None)
@@ -2488,8 +2604,15 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
     }
     """
 
-    def __init__(self, pwkey: str, pwurl: str, patch_ids: List[int],
-                 new_state: str, archived: bool, series_name: str) -> None:
+    def __init__(
+        self,
+        pwkey: str,
+        pwurl: str,
+        patch_ids: List[int],
+        new_state: str,
+        archived: bool,
+        series_name: str,
+    ) -> None:
         super().__init__()
         self._pwkey = pwkey
         self._pwurl = pwurl
@@ -2504,8 +2627,12 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
         with Vertical(id='apply-dialog'):
             yield Label(f'Setting state to: {self._new_state}', id='apply-title')
             yield Label(self._series_name, id='apply-series', markup=False)
-            yield Label(f'Processing 0/{len(self._patch_ids)} patches...', id='apply-status')
-            yield ProgressBar(total=len(self._patch_ids), show_eta=False, id='apply-progress')
+            yield Label(
+                f'Processing 0/{len(self._patch_ids)} patches...', id='apply-status'
+            )
+            yield ProgressBar(
+                total=len(self._patch_ids), show_eta=False, id='apply-progress'
+            )
 
     def on_mount(self) -> None:
         self.run_worker(self._apply_states, name='_apply_states', thread=True)
@@ -2587,9 +2714,13 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
         Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
-    def __init__(self, series_list: List[Dict[str, Any]],
-                 identifier: str, linkmask: str,
-                 topdir: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        series_list: List[Dict[str, Any]],
+        identifier: str,
+        linkmask: str,
+        topdir: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self._series_list = series_list
         self._identifier = identifier
@@ -2611,9 +2742,13 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
             count = len(self._series_list)
             title = 'Updating series' if count == 1 else 'Updating all tracked series'
             yield Label(title, id='updateall-title')
-            yield Label(f'Checking 0/{len(self._series_list)} series...', id='updateall-status')
+            yield Label(
+                f'Checking 0/{len(self._series_list)} series...', id='updateall-status'
+            )
             yield Label('', id='updateall-series', markup=False)
-            yield ProgressBar(total=len(self._series_list), show_eta=False, id='updateall-progress')
+            yield ProgressBar(
+                total=len(self._series_list), show_eta=False, id='updateall-progress'
+            )
 
     def on_mount(self) -> None:
         self.run_worker(self._do_updates, name='_do_updates', thread=True)
@@ -2622,15 +2757,14 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
         self._cancelled = True
 
     def _do_updates(self) -> Dict[str, Any]:
-        import b4.review
-
         with _quiet_worker():
             # Rescan local review branches first so the DB reflects current
             # on-disk state before the network update runs.
             if self._topdir:
                 try:
                     rescan = b4.review.tracking.rescan_branches(
-                        self._identifier, self._topdir)
+                        self._identifier, self._topdir
+                    )
                     self._result['gone'] = rescan.get('gone', 0)
                 except Exception as ex:
                     logger.warning('Pre-update rescan failed: %s', ex)
@@ -2643,7 +2777,9 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
                 self.app.call_from_thread(self._update_progress, i, subject)
 
                 r = b4.review.update_series_tracking(
-                    series, self._identifier, self._linkmask,
+                    series,
+                    self._identifier,
+                    self._linkmask,
                     topdir=self._topdir,
                 )
                 self._result['series_checked'] += 1
@@ -2735,12 +2871,15 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, initial_base: str,
-                 lser: 'b4.LoreSeries',
-                 ambytes: bytes,
-                 base_suggestions: Optional[List[str]] = None,
-                 base_hint: str = '',
-                 subject: str = '') -> None:
+    def __init__(
+        self,
+        initial_base: str,
+        lser: 'b4.LoreSeries',
+        ambytes: bytes,
+        base_suggestions: Optional[List[str]] = None,
+        base_hint: str = '',
+        subject: str = '',
+    ) -> None:
         """Initialize the base selection screen.
 
         Args:
@@ -2766,18 +2905,24 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
             if self._subject:
                 yield Static(self._subject, id='base-title', markup=False)
             if self._base_hint:
-                yield Static(self._base_hint, id='base-hint',
-                             classes='base-warn', markup=False)
+                yield Static(
+                    self._base_hint, id='base-hint', classes='base-warn', markup=False
+                )
             yield Static('Base:', markup=False)
-            suggester = SuggestFromList(
-                self._base_suggestions, case_sensitive=True,
-            ) if self._base_suggestions else None
-            yield Input(value=self._initial_base, id='base-input',
-                        suggester=suggester)
+            suggester = (
+                SuggestFromList(
+                    self._base_suggestions,
+                    case_sensitive=True,
+                )
+                if self._base_suggestions
+                else None
+            )
+            yield Input(value=self._initial_base, id='base-input', suggester=suggester)
             yield Static('', id='base-status', markup=False)
             yield Static(
                 'Enter check  |  Ctrl-y confirm  |  Escape cancel',
-                id='base-footer', markup=False,
+                id='base-footer',
+                markup=False,
             )
 
     def on_mount(self) -> None:
@@ -2799,8 +2944,7 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
             self._update_status('not in a git repository', 'fail')
             return
 
-        ecode, out = b4.git_run_command(
-            topdir, ['rev-parse', '--verify', value])
+        ecode, out = b4.git_run_command(topdir, ['rev-parse', '--verify', value])
         if ecode != 0:
             self._update_status(f'not a valid ref: {value}', 'fail')
             self._resolved_base = None
@@ -2811,22 +2955,24 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         if self._lser.indexes:
             try:
                 checked, mismatches = self._lser.check_applies_clean(
-                    topdir, at=self._resolved_base)
+                    topdir, at=self._resolved_base
+                )
                 if len(mismatches) == 0:
                     self._update_status(
-                        f'Apply results: clean ({self._resolved_base[:12]})',
-                        'pass')
+                        f'Apply results: clean ({self._resolved_base[:12]})', 'pass'
+                    )
                 else:
                     matched = checked - len(mismatches)
                     self._update_status(
                         f'Apply results: {matched}/{checked} a/b blobs match'
-                        f' — testing\u2026', 'warn')
+                        f' — testing\u2026',
+                        'warn',
+                    )
                     self._run_test_apply()
             except Exception:
                 self._update_status('could not check applicability', 'warn')
         else:
-            self._update_status(
-                f'will use {self._resolved_base[:12]}', 'pass')
+            self._update_status(f'will use {self._resolved_base[:12]}', 'pass')
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Validate the entered base ref."""
@@ -2845,12 +2991,12 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
             return
         self.run_worker(
             lambda: self._test_apply_at(self._ambytes, base),
-            name='_test_apply', thread=True,
+            name='_test_apply',
+            thread=True,
         )
 
     @staticmethod
-    def _test_apply_at(ambytes: bytes,
-                       base: str) -> Tuple[bool, str]:
+    def _test_apply_at(ambytes: bytes, base: str) -> Tuple[bool, str]:
         """Run git-am in a throwaway sparse worktree. Returns (ok, detail)."""
         topdir = b4.git_get_toplevel()
         if not topdir:
@@ -2858,16 +3004,13 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         with _quiet_worker():
             try:
                 with b4.git_temp_worktree(topdir, base) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, ['am'], stdin=ambytes)
+                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
                     if ecode > 0:
                         # Extract just the "Patch failed" line
                         for line in out.splitlines():
@@ -2902,8 +3045,7 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         topdir = b4.git_get_toplevel()
         if not topdir:
             return
-        ecode, out = b4.git_run_command(
-            topdir, ['rev-parse', '--verify', value])
+        ecode, out = b4.git_run_command(topdir, ['rev-parse', '--verify', value])
         if ecode != 0:
             self.notify(f'Not a valid ref: {value}', severity='error')
             return
@@ -2957,14 +3099,10 @@ class UpdateRevisionScreen(JKListNavMixin, ModalScreen[Optional[int]]):
     }
     """
 
-    def __init__(self, current_revision: int,
-                 revisions: List[Dict[str, Any]]) -> None:
+    def __init__(self, current_revision: int, revisions: List[Dict[str, Any]]) -> None:
         super().__init__()
         self._current_revision = current_revision
-        self._revisions = [
-            r for r in revisions
-            if r['revision'] > current_revision
-        ]
+        self._revisions = [r for r in revisions if r['revision'] > current_revision]
 
     def compose(self) -> ComposeResult:
         with Vertical(id='update-rev-dialog'):
@@ -2972,15 +3110,15 @@ class UpdateRevisionScreen(JKListNavMixin, ModalScreen[Optional[int]]):
             yield Static(
                 f'Current revision: v{self._current_revision}\n'
                 'The current review branch will be archived.\n'
-                'Reviews on unchanged patches will be preserved.')
+                'Reviews on unchanged patches will be preserved.'
+            )
             items = []
             for r in self._revisions:
                 subject = r.get('subject', '(no subject)')
                 label = f'v{r["revision"]}  {subject}'
                 items.append(ListItem(Label(label, markup=False)))
             yield ListView(*items, id='update-rev-list')
-            yield Static('Enter confirm  |  Escape cancel',
-                         id='update-rev-hint')
+            yield Static('Enter confirm  |  Escape cancel', id='update-rev-hint')
 
     def on_mount(self) -> None:
         self.query_one('#update-rev-list', ListView).focus()
@@ -3102,12 +3240,12 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
     }
 
     def __init__(
-            self,
-            title: str,
-            patch_labels: List[str],
-            patch_subjects: List[str],
-            tools: List[str],
-            matrix: Dict[Tuple[int, str], Dict[str, str]],
+        self,
+        title: str,
+        patch_labels: List[str],
+        patch_subjects: List[str],
+        tools: List[str],
+        matrix: Dict[Tuple[int, str], Dict[str, str]],
     ) -> None:
         """Create a check results modal.
 
@@ -3128,12 +3266,24 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         with Vertical(id='tcr-dialog'):
             yield Static(self._title, id='tcr-title', markup=False)
-            yield RichLog(id='tcr-matrix', highlight=False, wrap=False,
-                          markup=True, auto_scroll=False)
-            yield RichLog(id='tcr-detail', highlight=False, wrap=True,
-                          markup=True, auto_scroll=False)
-            yield Static(Text('[j/k] navigate  [Enter] details  [R] rerun  [q] close'),
-                         id='tcr-hint')
+            yield RichLog(
+                id='tcr-matrix',
+                highlight=False,
+                wrap=False,
+                markup=True,
+                auto_scroll=False,
+            )
+            yield RichLog(
+                id='tcr-detail',
+                highlight=False,
+                wrap=True,
+                markup=True,
+                auto_scroll=False,
+            )
+            yield Static(
+                Text('[j/k] navigate  [Enter] details  [R] rerun  [q] close'),
+                id='tcr-hint',
+            )
 
     def on_mount(self) -> None:
         self.query_one('#tcr-detail', RichLog).display = False
@@ -3148,7 +3298,9 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
             return
 
         # Compute column widths
-        label_w = max(len(lbl) for lbl in self._patch_labels) if self._patch_labels else 5
+        label_w = (
+            max(len(lbl) for lbl in self._patch_labels) if self._patch_labels else 5
+        )
         col_w = max(max(len(t) for t in self._tools), 8)
         ci_total = (col_w + 2) * len(self._tools)
         # pointer(2) + label + gap(2) + subject + gap(2) + ci_columns
@@ -3167,16 +3319,18 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
 
         # Data rows with cursor highlight
         for pidx, label in enumerate(self._patch_labels):
-            is_selected = (pidx == self._cursor_row)
+            is_selected = pidx == self._cursor_row
             row = Text(style='on grey27' if is_selected else '')
             pointer = '\u25b6 ' if is_selected else '  '
             row.append(pointer)
             row.append(f'{label:>{label_w}s}', style='bold' if is_selected else '')
             row.append('  ')
             # Truncated subject
-            subj = self._patch_subjects[pidx] if pidx < len(self._patch_subjects) else ''
+            subj = (
+                self._patch_subjects[pidx] if pidx < len(self._patch_subjects) else ''
+            )
             if len(subj) > subj_w:
-                subj = subj[:subj_w - 1] + '\u2026'
+                subj = subj[: subj_w - 1] + '\u2026'
             row.append(f'{subj:<{subj_w}s}  ', style='' if is_selected else 'dim')
             for tool in self._tools:
                 cell = self._matrix.get((pidx, tool))
@@ -3193,8 +3347,7 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
 
         # Scroll so the cursor row is visible (2 header lines + data rows)
         cursor_line = 2 + self._cursor_row
-        viewer.scroll_to(y=max(0, cursor_line - viewer.size.height // 2),
-                         animate=False)
+        viewer.scroll_to(y=max(0, cursor_line - viewer.size.height // 2), animate=False)
 
     def _render_detail(self, pidx: int) -> None:
         detail = self.query_one('#tcr-detail', RichLog)
@@ -3296,7 +3449,8 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
             self.query_one('#tcr-detail', RichLog).display = False
             self.query_one('#tcr-matrix', RichLog).display = True
             self.query_one('#tcr-hint', Static).update(
-                Text('[j/k] navigate  [Enter] details  [R] rerun  [q] close'))
+                Text('[j/k] navigate  [Enter] details  [R] rerun  [q] close')
+            )
             return
         self.dismiss('close')
 

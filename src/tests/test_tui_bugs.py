@@ -8,11 +8,10 @@
 Tests the pure-logic functions in _import.py and _tui.py that don't
 need Textual, git-bug, or network access.
 """
+
 from datetime import datetime, timezone
 from typing import Set
 from unittest import mock
-
-from ezgb import Bug, BugSummary, Comment, Identity, Status
 
 from b4.bugs._import import (
     format_comment,
@@ -29,7 +28,7 @@ from b4.bugs._tui import (
     _relative_time,
     label_color,
 )
-
+from ezgb import Bug, BugSummary, Comment, Identity, Status
 
 # ---------------------------------------------------------------------------
 # Helpers -- factory functions for real Bug and BugSummary objects
@@ -95,6 +94,7 @@ def make_summary(
 # ===========================================================================
 # _import.py tests
 # ===========================================================================
+
 
 class TestParseCommentHeader:
     def test_extracts_from(self) -> None:
@@ -190,7 +190,9 @@ class TestFormatComment:
             'In-Reply-To': '<parent@test.com>',
         }.get(h)
         with mock.patch('b4.LoreMessage.clean_header', side_effect=lambda x: x):
-            with mock.patch('b4.LoreMessage.get_payload', return_value=('Body text', 'utf-8')):
+            with mock.patch(
+                'b4.LoreMessage.get_payload', return_value=('Body text', 'utf-8')
+            ):
                 result = format_comment(msg)
         assert 'From: Alice <alice@test.com>' in result
         assert 'Message-ID: <abc@test.com>' in result
@@ -203,7 +205,9 @@ class TestFormatComment:
             'Message-ID': '<abc@test.com>',
         }.get(h)
         with mock.patch('b4.LoreMessage.clean_header', side_effect=lambda x: x):
-            with mock.patch('b4.LoreMessage.get_payload', return_value=('Body', 'utf-8')):
+            with mock.patch(
+                'b4.LoreMessage.get_payload', return_value=('Body', 'utf-8')
+            ):
                 result = format_comment(msg, scope='no-parent')
         assert 'X-B4-Bug-Scope: no-parent' in result
 
@@ -211,6 +215,7 @@ class TestFormatComment:
 # ===========================================================================
 # _tui.py tests
 # ===========================================================================
+
 
 class TestLabelColor:
     def test_deterministic(self) -> None:
@@ -250,6 +255,7 @@ class TestBugTier:
 
     def test_closed_is_tier_2(self) -> None:
         from ezgb import Status
+
         bug = make_bug(status=Status.CLOSED)
         assert _bug_tier(bug) == 2
 
@@ -277,6 +283,7 @@ class TestBugLifecycle:
 
     def test_closed_no_lifecycle(self) -> None:
         from ezgb import Status
+
         bug = make_bug(status=Status.CLOSED)
         assert _bug_lifecycle(bug) == '\u00d7'  # ×
 
@@ -298,12 +305,16 @@ class TestBugLastActivity:
 
     def test_summary_uses_edited_at(self) -> None:
         from ezgb import BugSummary, Status
+
         edited_time = datetime(2026, 4, 1, tzinfo=timezone.utc)
         s = BugSummary(
-            id='a' * 64, title='Test', status=Status.OPEN,
+            id='a' * 64,
+            title='Test',
+            status=Status.OPEN,
             creator_id='b' * 64,
             created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            labels=frozenset(), comment_count=1,
+            labels=frozenset(),
+            comment_count=1,
             edited_at=edited_time,
         )
         assert _bug_last_activity(s) == edited_time
@@ -316,16 +327,19 @@ class TestRelativeTime:
 
     def test_minutes(self) -> None:
         from datetime import timedelta
+
         t = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
         assert '5m ago' == _relative_time(t)
 
     def test_hours(self) -> None:
         from datetime import timedelta
+
         t = datetime.now(tz=timezone.utc) - timedelta(hours=3)
         assert '3h ago' == _relative_time(t)
 
     def test_days(self) -> None:
         from datetime import timedelta
+
         t = datetime.now(tz=timezone.utc) - timedelta(days=7)
         assert '7d ago' == _relative_time(t)
 
@@ -345,12 +359,14 @@ class TestMatchesLimit:
 
     def test_status_filter_open(self) -> None:
         from ezgb import Status
+
         bug = make_bug(status=Status.OPEN)
         assert BugListApp._matches_limit(bug, 's:open') is True
         assert BugListApp._matches_limit(bug, 's:closed') is False
 
     def test_status_filter_closed(self) -> None:
         from ezgb import Status
+
         bug = make_bug(status=Status.CLOSED)
         assert BugListApp._matches_limit(bug, 's:closed') is True
         assert BugListApp._matches_limit(bug, 's:open') is False
@@ -374,6 +390,7 @@ class TestMatchesLimit:
 
     def test_summary_works(self) -> None:
         from ezgb import Status
+
         s = make_summary(
             title='Network bug',
             status=Status.OPEN,
@@ -442,27 +459,30 @@ class TestParseMsgidForImport:
 
     def test_bare_msgid(self) -> None:
         import b4
+
         result = b4.parse_msgid('abc123@example.com')
         assert result == 'abc123@example.com'
 
     def test_angle_bracketed(self) -> None:
         import b4
+
         result = b4.parse_msgid('<abc123@example.com>')
         assert result == 'abc123@example.com'
 
     def test_lore_url(self) -> None:
         import b4
-        result = b4.parse_msgid(
-            'https://lore.kernel.org/all/abc123@example.com/')
+
+        result = b4.parse_msgid('https://lore.kernel.org/all/abc123@example.com/')
         assert result == 'abc123@example.com'
 
     def test_patch_msgid_link(self) -> None:
         import b4
-        result = b4.parse_msgid(
-            'https://patch.msgid.link/abc123@example.com')
+
+        result = b4.parse_msgid('https://patch.msgid.link/abc123@example.com')
         assert result == 'abc123@example.com'
 
     def test_garbage_has_no_at(self) -> None:
         import b4
+
         result = b4.parse_msgid('not-a-msgid')
         assert '@' not in result
