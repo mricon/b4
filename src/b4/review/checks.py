@@ -333,7 +333,7 @@ def _run_builtin_patchwork(
                 'status': status,
                 'state': state,
                 'description': check.get('description', ''),
-                'url': check.get('url', ''),
+                'url': check.get('target_url', ''),
             }
         )
 
