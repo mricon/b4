@@ -861,7 +861,7 @@ class TestRunBuiltinSashiko:
         assert '1 critical' in results[0]['summary']
         assert '1 high' in results[0]['summary']
         assert '1 low' in results[0]['summary']
-        assert results[0]['url'] == 'https://sashiko.dev/patch/93'
+        assert results[0]['url'] == 'https://sashiko.dev/#/patchset/93'
         # Details should be valid JSON
         details = json.loads(results[0]['details'])
         assert len(details) == 3  # 1 low + 1 critical + 1 high
@@ -992,7 +992,7 @@ class TestRunBuiltinSashiko:
         msg = _make_msg(msgid='patch1@example.com')
         results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev/')
         # Trailing slash should not cause double slash
-        assert results[0]['url'] == 'https://sashiko.dev/patch/93'
+        assert results[0]['url'] == 'https://sashiko.dev/#/patchset/93?part=1'
 
 
 class TestSashikoAutoWire:
