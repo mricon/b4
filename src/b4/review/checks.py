@@ -361,7 +361,7 @@ def _fetch_sashiko_patchset(msgid: str, sashiko_url: str) -> Optional[Dict[str, 
     if msgid in _sashiko_patchset_cache:
         return _sashiko_patchset_cache[msgid]
 
-    url = f'{sashiko_url.rstrip("/")}/api/patch'
+    url = f'{sashiko_url.rstrip("/")}/api/patchset'
     try:
         session = b4.get_requests_session()
         resp = session.get(url, params={'id': msgid}, timeout=30)
