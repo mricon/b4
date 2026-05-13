@@ -902,6 +902,7 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
         '--no-mailmap',
         f'--committer={limit_committer}',
         usebranch,
+        '--',
     ]
     lines = b4.git_get_command_lines(None, gitargs)
     if not lines:
