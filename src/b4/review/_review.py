@@ -2173,7 +2173,7 @@ def update_series_tracking(
 
 def cmd_tui(cmdargs: argparse.Namespace) -> None:
     try:
-        import b4.review_tui as review_tui
+        from b4.review_tui._entry import run_tracking_tui
     except ImportError:
         logger.critical('The TUI requires the textual library.')
         logger.critical('Install it with: pip install b4[tui]')
@@ -2198,7 +2198,7 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
             logger.critical('Enroll with: b4 review enroll')
             sys.exit(1)
 
-    review_tui.run_tracking_tui(
+    run_tracking_tui(
         identifier,
         email_dryrun=cmdargs.email_dryrun,
         no_sign=cmdargs.no_sign,
