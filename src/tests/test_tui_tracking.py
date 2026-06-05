@@ -11,6 +11,7 @@ core user workflows: series listing, navigation, filtering,
 status transitions, and modal interactions.
 """
 
+import datetime
 import pathlib
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
@@ -2780,13 +2781,14 @@ class TestLoadSeriesCaching:
         ]
         _seed_db('cache-snooze', series)
         conn = tracking.get_db('cache-snooze')
-        tracking.snooze_series(
-            conn, 'test-snooze-detail', '2026-06-01T00:00:00', revision=1
-        )
+        snoozed_until = (
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+        ).strftime('%Y-%m-%dT%H:%M:%S')
+        tracking.snooze_series(conn, 'test-snooze-detail', snoozed_until, revision=1)
         conn.close()
 
         app = TrackingApp('cache-snooze')
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             assert len(app._all_series) == 1
-            assert app._all_series[0].get('snoozed_until') == '2026-06-01T00:00:00'
+            assert app._all_series[0].get('snoozed_until') == snoozed_until
