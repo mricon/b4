@@ -1181,7 +1181,12 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                             preview.pop('trailers', None)
                             b4.review._cleanup_review(patch, self._usercfg)
                         self._refresh_patch_item(pidx + 1)
-            elif self._selected_idx > 0 and new_trailers and self._patches:
+            elif (
+                self._has_cover
+                and self._selected_idx > 0
+                and new_trailers
+                and self._patches
+            ):
                 # Check if all patches now have the same trailer set —
                 # if so, promote to cover letter
                 new_names = {t.split(':', 1)[0].strip().lower() for t in new_trailers}

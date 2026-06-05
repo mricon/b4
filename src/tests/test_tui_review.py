@@ -10,6 +10,7 @@ cosmetic commit edits (e.g. reworded subjects via git rebase -i).
 """
 
 from typing import Any, Dict, List, Tuple
+from unittest import mock
 
 import pytest
 
@@ -177,6 +178,57 @@ def _rewrite_patches(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+class TestTrailerConsolidation:
+    """Tests for consolidating matching trailers onto a cover letter."""
+
+    @pytest.mark.asyncio
+    async def test_coverless_patch_keeps_trailer_with_comments(
+        self, gitdir: str
+    ) -> None:
+        """A coverless patch sends its trailer and comments in one email."""
+        branch, _patch_shas = _create_review_branch_with_patches(
+            gitdir, 'coverless-trailer', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['cover_text'] = (
+            'patch 1\n\nNOTE: No cover letter provided by the author.'
+        )
+        my_email = str(session['usercfg']['email'])
+        session['patches'][0]['reviews'] = {
+            my_email: {
+                'name': str(session['usercfg']['name']),
+                'comments': [{'path': 'file', 'line': 1, 'text': 'Comment'}],
+            }
+        }
+
+        app = ReviewApp(session)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('t')
+            await pilot.pause()
+            await pilot.press('r')
+            await pilot.press('q')
+            await pilot.pause()
+
+            assert 'reviews' not in app._series
+            patch_review = app._patches[0]['reviews'][my_email]
+            assert patch_review['trailers'] == [f'Reviewed-by: {app._default_identity}']
+            assert patch_review['comments']
+
+            with mock.patch(
+                'b4.review._review._build_review_email',
+                return_value=mock.sentinel.email,
+            ):
+                msgs = b4.review.collect_review_emails(
+                    app._series,
+                    app._patches,
+                    app._cover_text,
+                    app._topdir,
+                    app._commit_shas,
+                )
+            assert msgs == [mock.sentinel.email]
 
 
 class TestReconcileAfterShell:
