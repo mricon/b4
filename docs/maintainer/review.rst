@@ -117,16 +117,17 @@ Status         Meaning
 ``replied``    Review comments sent to the mailing list
 ``waiting``    Waiting for a new revision from the submitter
 ``snoozed``    Deferred until a date, duration, or git tag
-``accepted``   Patches applied to the target branch
+``partial``    Some patches applied; remainder still under review
+``accepted``   All patches applied to the target branch
 ``thanked``    Thank-you note sent to the contributor
 ``archived``   Review completed and archived
 ``gone``       Review branch deleted or missing (e.g. after a sync)
 =============  =========================================================
 
 Series are grouped by lifecycle stage — Active (reviewing/replied/
-accepted/thanked), New, Waiting, Snoozed, and Gone — and sorted within
-each group by the most recent activity, whether that is a new mailing
-list reply or a local status change.
+partial/accepted/thanked), New, Waiting, Snoozed, and Gone — and sorted
+within each group by the most recent activity, whether that is a new
+mailing list reply or a local status change.
 
 **Listing columns**
 
@@ -154,6 +155,7 @@ Symbol   Status
 ``↩``    replied
 ``↻``    waiting
 ``⏸``    snoozed
+``◐``    partial
 ``∈``    accepted
 ``✓``    thanked
 ``∅``    gone
@@ -208,6 +210,16 @@ actions depend on the series status:
 * ``[U]`` **Upgrade** — switch to a newer revision (when available)
 * ``[A]`` **Abandon** / ``[x]`` **Archive**
 
+**Partial** (some patches applied, remainder still in review):
+
+* ``[T]`` **Take remaining patches** — apply more patches from the series
+* ``[R]`` **Rebase** — rebase review branch onto HEAD
+* ``[t]`` **Thank** — send a thank-you for the patches already applied
+* ``[w]`` **Mark as waiting** — waiting on a new revision
+* ``[s]`` **Snooze** — defer until later
+* ``[U]`` **Upgrade** — switch to a newer revision (when available)
+* ``[A]`` **Abandon** / ``[x]`` **Archive**
+
 **New / gone:**
 
 * ``[r]`` **Review** — create or re-enter the review branch
@@ -227,7 +239,12 @@ actions depend on the series status:
 **Accepted:**
 
 * ``[t]`` **Thank** — send a thank-you note
+* ``[r]`` **Return to reviewing** — reopen if accepted prematurely
 * ``[A]`` **Abandon** / ``[x]`` **Archive**
+
+**Thanked:**
+
+* ``[r]`` **Return to reviewing** — reopen if thanked prematurely
 
 The details panel at the bottom shows the full original subject, sender,
 attestation status, send date, status, change-ID, lore link, known
@@ -638,6 +655,14 @@ Toggle ``Mark as accepted`` to update the series status after the take.
 Press ``Ctrl-y`` to proceed with the actual take, or ``Escape`` to back
 out without making any changes.
 
+**Partial takes (cherry-pick only)**. When you cherry-pick only a subset
+of the series' patches, b4 computes coverage and sets the status to
+``partial`` (◐) rather than ``accepted``. The review branch stays alive,
+the series remains in the active working set, and new revisions are
+ingested as normal. When you later take the remaining patches — completing
+coverage — b4 automatically promotes the status from ``partial`` to
+``accepted``, at which point the thank/archive flow becomes available.
+
 .. _review_conflict_resolution:
 
 Conflict resolution
@@ -705,8 +730,11 @@ range-diff``. B4 fetches the comparison revision from lore if needed.
 
 Thank-you
 ~~~~~~~~~
-Open the action menu (``a``) on an accepted series and select **Thank**
-to compose and send a thank-you note to the contributor. A preview
+Open the action menu (``a``) on an accepted **or partial** series and
+select **Thank** to compose and send a thank-you note to the contributor.
+Sending a thank-you for a ``partial`` series acknowledges the patches
+that have already landed without affecting the review of the remaining
+patches. A preview
 screen shows the generated message with keybindings to **Send** (``S``),
 **Edit** (``e``), or **Cancel** (``Escape``).
 

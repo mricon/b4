@@ -18,6 +18,13 @@ v0.16
 	[X] Pre/post rewrite hooks moved into the new routine
 	[X] src/tests/test_rewrite.py — 13 unit tests (core + notes + hook integration)
 [_] `b4 review` improvements
+	[X] Partial series acceptance without terminal state transition
+		: Mark Brown, https://msgid.link/afk5QvNAQDxFCbvT@sirena.co.uk
+		: New 'partial' state (◐) auto-detected when a cherry-pick take covers only a subset of patches
+		: Series stays alive and in the active working set — new revisions continue to be ingested
+		: Follow-up take completing coverage auto-promotes partial → accepted
+		: partial exposes all reviewing actions including thank, take, rebase, range-diff, upgrade
+		: Bonus: thanked series can be reopened back to reviewing via action menu
 	[_] Manual revision linking when auto-discovery fails (no change-id or in-reply-to chain)
 		: Mark Brown, https://msgid.link/88549a4a-cc82-4200-b73b-e335cbb2b024@sirena.org.uk
 	[_] Auto-detect existing trailers to mark patches as "done"
