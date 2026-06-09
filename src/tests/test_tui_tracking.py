@@ -2135,6 +2135,118 @@ class TestSeriesLifecycle:
         assert all(p.get('taken') for p in patches), 'all patches should be taken'
         assert updated['series']['status'] == 'accepted'
 
+    def test_partial_series_ingests_new_revision(self, gitdir: str) -> None:
+        """A 'partial' series must ingest an incoming v2 and record it.
+
+        Regression: before the partial state was introduced, cherry-picking
+        a subset of patches drove the whole series into the accepted→thanked→
+        archived terminal flow, so a v2 was never ingested.  This test verifies
+        that update_series_tracking() treats 'partial' as an active status:
+        it must write 'newer-versions: [2]' into the tracking commit and leave
+        the DB status unchanged at 'partial'.
+        """
+        from unittest import mock
+
+        identifier = 'test-partial-ingest'
+        change_id = 'partial-ingest-1'
+
+        # Seed DB: v1, partial (patches 1+2 taken, patch 3 still open)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH 0/3] a three-patch series',
+                    'status': 'partial',
+                    'message_id': f'{change_id}@example.com',
+                    'num_patches': 3,
+                    'revision': 1,
+                }
+            ],
+        )
+
+        # Record v1 in the revisions table so only v2 is counted as new
+        conn = tracking.get_db(identifier)
+        tracking.add_revision(conn, change_id, 1, f'{change_id}@example.com')
+        conn.close()
+
+        # Create review branch with partial state and per-patch tracking data
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='partial'
+        )
+        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        trk['patches'] = [
+            {'subject': 'patch 1', 'message-id': 'p1@example.com',
+             'taken': {'commit-id': 'aaa111'}},
+            {'subject': 'patch 2', 'message-id': 'p2@example.com',
+             'taken': {'commit-id': 'bbb222'}},
+            {'subject': 'patch 3', 'message-id': 'p3@example.com'},
+        ]
+        trk['series']['status'] = 'partial'
+        b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
+
+        # v1 mock: no cover, all-None patches → _collect_followups never called
+        v1_mock = mock.Mock()
+        v1_mock.revision = 1
+        v1_mock.expected = 3
+        v1_mock.change_id = change_id
+        v1_mock.has_cover = False
+        v1_mock.patches = [None, None, None, None]
+        v1_mock.fromname = 'Test Author'
+        v1_mock.fromemail = 'author@example.com'
+        v1_mock.subject = '[PATCH 0/3] a three-patch series'
+
+        # v2 mock: needs a patch with msgid so add_revision can record it
+        v2_patch = mock.Mock()
+        v2_patch.msgid = 'cover-v2@example.com'
+        v2_patch.full_subject = '[PATCH v2 0/3] a three-patch series'
+        v2_mock = mock.Mock()
+        v2_mock.revision = 2
+        v2_mock.change_id = change_id
+        v2_mock.patches = [v2_patch, None, None, None]
+
+        mock_lmbx = mock.Mock()
+        mock_lmbx.series = {1: v1_mock, 2: v2_mock}
+        mock_lmbx.get_series.return_value = v1_mock
+
+        series_dict = {
+            'change_id': change_id,
+            'revision': 1,
+            'status': 'partial',
+            'message_id': f'{change_id}@example.com',
+        }
+
+        with (
+            mock.patch('b4.review._review.retrieve_series_messages', return_value=[]),
+            mock.patch('b4.review._review.check_series_attestation', return_value=None),
+            mock.patch('b4.LoreMailbox', return_value=mock_lmbx),
+        ):
+            result = b4.review.update_series_tracking(
+                series_dict, identifier, 'https://example.com/%s', topdir=gitdir
+            )
+
+        assert result.get('error') is None, f'unexpected error: {result["error"]}'
+        assert result['new_revisions'] == 1, (
+            f'expected 1 new revision, got {result["new_revisions"]}'
+        )
+
+        # Tracking commit must carry newer-versions = [2]
+        _, updated = b4.review.load_tracking(gitdir, branch_name)
+        assert updated['series'].get('newer-versions') == [2], (
+            f'expected newer-versions=[2], got {updated["series"].get("newer-versions")!r}'
+        )
+
+        # DB status must remain 'partial' — revision discovery must not promote
+        conn = tracking.get_db(identifier)
+        row = conn.execute(
+            'SELECT status FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, 1),
+        ).fetchone()
+        conn.close()
+        assert row['status'] == 'partial', (
+            f'status should stay partial after v2 ingestion, got {row["status"]!r}'
+        )
+
 
 @patch('b4.review.tracking.get_review_target_branches', return_value=['master'])
 class TestTargetBranch:
