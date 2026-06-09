@@ -2011,6 +2011,130 @@ class TestSeriesLifecycle:
                 f'Branch should be deleted after abandon from {status}'
             )
 
+    @pytest.mark.asyncio
+    async def test_partial_action_menu(self, gitdir: str) -> None:
+        """A 'partial' series offers take/rebase/thank/etc."""
+        identifier = 'test-lifecycle-partial-menu'
+        change_id = 'partial-menu-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier, status='partial')
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH 0/4] partial series',
+                    'status': 'partial',
+                    'message_id': 'partial-menu@ex.com',
+                    'num_patches': 4,
+                }
+            ],
+        )
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            actions = _get_action_keys(app)
+            assert 'take' in actions
+            assert 'rebase' in actions
+            assert 'thank' in actions
+            assert 'waiting' in actions
+            assert 'snooze' in actions
+            assert 'abandon' in actions
+            assert 'archive' in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_partial_status_visible_in_listing(self, gitdir: str) -> None:
+        """A 'partial' series appears in the normal listing (not hidden)."""
+        identifier = 'test-lifecycle-partial-visible'
+        change_id = 'partial-visible-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier, status='partial')
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH 0/3] partially applied series',
+                    'status': 'partial',
+                    'message_id': 'partial-vis@ex.com',
+                    'num_patches': 3,
+                }
+            ],
+        )
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert len(app._all_series) == 1
+            assert app._all_series[0].get('status') == 'partial'
+
+    def test_record_take_metadata_partial_coverage(self, gitdir: str) -> None:
+        """Cherry-picking a subset of patches → status 'partial' in tracking blob."""
+        identifier = 'test-partial-coverage'
+        change_id = 'partial-cov-1'
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='reviewing'
+        )
+        # Inject 4-patch tracking data into the blob
+        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        trk['patches'] = [
+            {'subject': f'patch {i}', 'message-id': f'p{i}@ex.com'}
+            for i in range(1, 5)
+        ]
+        b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
+
+        app = TrackingApp.__new__(TrackingApp)
+
+        # Take only patches 1 and 2 (1-based cherry-pick indices)
+        result = app._record_take_metadata(
+            gitdir, branch_name, 'master', ['aaa', 'bbb'],
+            cherrypick=[1, 2], accepted=True,
+        )
+
+        assert result == 'partial', f'expected partial, got {result!r}'
+        _, updated = b4.review.load_tracking(gitdir, branch_name)
+        patches = updated.get('patches', [])
+        assert patches[0].get('taken') is not None   # patch 1 taken
+        assert patches[1].get('taken') is not None   # patch 2 taken
+        assert patches[2].get('taken') is None        # patch 3 untaken
+        assert patches[3].get('taken') is None        # patch 4 untaken
+        assert updated['series']['status'] == 'partial'
+
+    def test_record_take_metadata_full_coverage_promotes_accepted(
+        self, gitdir: str
+    ) -> None:
+        """Taking remaining patches after a partial take → auto-promotes to 'accepted'."""
+        identifier = 'test-full-coverage'
+        change_id = 'full-cov-1'
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='partial'
+        )
+        # Inject 3-patch tracking data with patches 1+2 already taken
+        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        trk['patches'] = [
+            {'subject': 'patch 1', 'message-id': 'p1@ex.com', 'taken': {'commit-id': 'abc'}},
+            {'subject': 'patch 2', 'message-id': 'p2@ex.com', 'taken': {'commit-id': 'def'}},
+            {'subject': 'patch 3', 'message-id': 'p3@ex.com'},
+        ]
+        trk['series']['status'] = 'partial'
+        b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
+
+        app = TrackingApp.__new__(TrackingApp)
+
+        # Take the remaining patch 3 (completing coverage)
+        result = app._record_take_metadata(
+            gitdir, branch_name, 'master', ['fff'],
+            cherrypick=[3], accepted=True,
+        )
+
+        assert result == 'accepted', f'expected accepted, got {result!r}'
+        _, updated = b4.review.load_tracking(gitdir, branch_name)
+        patches = updated.get('patches', [])
+        assert all(p.get('taken') for p in patches), 'all patches should be taken'
+        assert updated['series']['status'] == 'accepted'
+
 
 @patch('b4.review.tracking.get_review_target_branches', return_value=['master'])
 class TestTargetBranch:
