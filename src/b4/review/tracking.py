@@ -2019,7 +2019,7 @@ def rescan_branches(
     gone = 0
     if not branch:
         all_series = get_all_tracked_series(identifier)
-        active_statuses = ('reviewing', 'replied', 'waiting')
+        active_statuses = ('reviewing', 'replied', 'partial', 'waiting')
         for s in all_series:
             sid = s.get('change_id')
             if not sid:

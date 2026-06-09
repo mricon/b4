@@ -93,6 +93,7 @@ _STATUS_SYMBOLS: Dict[str, str] = {
     'replied': '↩',  # U+21A9 leftwards arrow with hook
     'waiting': '↻',  # U+21BB clockwise open circle arrow
     'accepted': '∈',  # U+2208 element of
+    'partial': '◐',  # U+25D0 circle with left half black (partially applied)
     'queued': '◷',  # U+25F7 white circle with upper right quadrant
     'snoozed': '⏸',  # U+23F8 double vertical bar
     'thanked': '✓',  # U+2713 check mark
@@ -106,6 +107,7 @@ _STATUS_SYMBOLS: Dict[str, str] = {
 _STATUS_TIER: Dict[str, int] = {
     'new': 0,
     'reviewing': 0,
+    'partial': 0,
     'replied': 1,
     'accepted': 1,
     'queued': 2,
@@ -121,6 +123,7 @@ _ACTIONABLE_STATUSES: frozenset[str] = frozenset(
         'new',
         'reviewing',
         'replied',
+        'partial',
         'accepted',
     }
 )
@@ -901,7 +904,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             series['_revisions'] = all_revisions.get(change_id, [])
 
             # Collect branches needing ART counts
-            if topdir and series.get('status') in ('reviewing', 'replied', 'waiting'):
+            if topdir and series.get('status') in ('reviewing', 'replied', 'partial', 'waiting'):
                 if branch_name in branch_tips:
                     art_branches[branch_name] = branch_tips[branch_name]
 
@@ -1128,10 +1131,25 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             {'review', 'range_diff', 'abandon', 'archive', 'snooze', 'target_branch'}
         ),
         'accepted': frozenset({'review', 'range_diff', 'thank', 'archive'}),
+        'partial': frozenset(
+            {
+                'review',
+                'update_revision',
+                'range_diff',
+                'take',
+                'rebase',
+                'thank',
+                'abandon',
+                'waiting',
+                'snooze',
+                'target_branch',
+                'archive',
+            }
+        ),
         'snoozed': frozenset(
             {'review', 'range_diff', 'unsnooze', 'abandon', 'target_branch'}
         ),
-        'thanked': frozenset({'archive'}),
+        'thanked': frozenset({'review', 'archive'}),
         'gone': frozenset({'abandon', 'review'}),
     }
     # All state-gated actions (union of all per-state sets)
@@ -1181,16 +1199,21 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         else:
             if status in ('reviewing', 'replied'):
                 actions.append(('take', 'Take (apply to branch)'))
+            if status == 'partial':
+                actions.append(('take', 'Take remaining patches'))
+            if status in ('reviewing', 'replied', 'partial'):
                 actions.append(('rebase', 'Rebase review branch'))
                 actions.append(('waiting', 'Mark as waiting on new revision'))
                 actions.append(('snooze', 'Snooze (defer until later)'))
-            if status == 'reviewing' and self._selected_series.get('has_newer'):
+            if status in ('reviewing', 'partial') and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
             if status == 'waiting':
                 actions.append(('review', 'Review'))
-            if status == 'accepted':
+            if status in ('accepted', 'partial'):
                 actions.append(('review', 'Return to reviewing'))
                 actions.append(('thank', 'Send thank-you'))
+            if status == 'thanked':
+                actions.append(('review', 'Return to reviewing'))
             if status != 'thanked':
                 actions.append(('abandon', 'Abandon series'))
             actions.append(('archive', 'Archive series'))
@@ -1222,11 +1245,17 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status in ('reviewing', 'replied', 'waiting', 'accepted', 'snoozed'):
+        if status in ('reviewing', 'replied', 'partial', 'waiting', 'accepted', 'snoozed', 'thanked'):
             # Already checked out - go to review mode
             change_id = self._selected_series.get('change_id', '')
             revision = self._selected_series.get('revision')
             branch_name = f'b4/review/{change_id}'
+            topdir = b4.git_get_toplevel()
+            if status == 'thanked' and (not topdir or not b4.git_branch_exists(topdir, branch_name)):
+                self.notify(
+                    'Review branch no longer exists; cannot reopen', severity='warning'
+                )
+                return
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
             except Exception:
@@ -1234,7 +1263,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             try:
                 if status == 'snoozed':
                     # Unsnooze: clear snoozed_until + restore tracking commit
-                    topdir = b4.git_get_toplevel()
                     if topdir and b4.git_branch_exists(topdir, branch_name):
                         try:
                             self._restore_snoozed_tracking(topdir, branch_name)
@@ -1244,17 +1272,25 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                         b4.review.tracking.unsnooze_series(
                             conn, change_id, 'reviewing', revision=revision
                         )
-                elif status in ('waiting', 'accepted'):
+                elif status in ('waiting', 'accepted', 'thanked'):
                     # Bring back to reviewing on re-entry
                     if conn:
                         b4.review.tracking.update_series_status(
                             conn, change_id, 'reviewing', revision=revision
                         )
-                    topdir = b4.git_get_toplevel()
                     if topdir:
                         b4.review.update_tracking_status(
                             topdir, branch_name, 'reviewing'
                         )
+                    if status == 'thanked':
+                        pw_sid = self._selected_series.get('pw_series_id')
+                        if pw_sid:
+                            try:
+                                b4.review.pw_update_series_state(
+                                    pw_sid, 'under-review', archived=False
+                                )
+                            except Exception:
+                                pass
                 # Clear the followup badge — user is about to read this series
                 if conn and self._identifier and isinstance(revision, int):
                     b4.review.tracking.mark_all_messages_seen(conn, change_id, revision)
@@ -1867,7 +1903,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # Show branch name for series with a review branch
         status = series.get('status', 'new')
         branch_row = self.query_one('#detail-branch-row', Horizontal)
-        if status in ('reviewing', 'replied', 'waiting', 'snoozed'):
+        if status in ('reviewing', 'replied', 'partial', 'waiting', 'snoozed'):
             branch_name = f'b4/review/{change_id}'
             self.query_one('#detail-branch', Static).update(branch_name)
             branch_row.display = True
@@ -1899,7 +1935,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         topdir = b4.git_get_toplevel()
 
         # Check tracking commit for states with a review branch
-        if status in ('reviewing', 'replied', 'waiting', 'snoozed') and topdir:
+        if status in ('reviewing', 'replied', 'partial', 'waiting', 'snoozed') and topdir:
             review_branch = f'b4/review/{change_id}'
             if b4.git_branch_exists(topdir, review_branch):
                 try:
@@ -1950,7 +1986,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         # message_id for lore fetch if no local branch
         status = series.get('status', 'new')
         review_branch: Optional[str] = None
-        if status in ('reviewing', 'replied', 'waiting', 'snoozed'):
+        if status in ('reviewing', 'replied', 'partial', 'waiting', 'snoozed'):
             rb = f'b4/review/{change_id}'
             if topdir and b4.git_branch_exists(topdir, rb):
                 review_branch = rb
@@ -1984,7 +2020,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         topdir = b4.git_get_toplevel()
         status = series.get('status', 'new')
         review_branch = f'b4/review/{change_id}'
-        if topdir and status in ('reviewing', 'replied', 'waiting', 'snoozed'):
+        if topdir and status in ('reviewing', 'replied', 'partial', 'waiting', 'snoozed'):
             if b4.git_branch_exists(topdir, review_branch):
                 try:
                     cover_text, tracking = b4.review.load_tracking(
@@ -2101,7 +2137,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status not in ('reviewing', 'replied'):
+        if status not in ('reviewing', 'replied', 'partial'):
             self.notify('Series must be checked out before taking', severity='warning')
             return
 
@@ -2357,8 +2393,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         commit_ids: List[str],
         cherrypick: Optional[List[int]] = None,
         accepted: bool = True,
-    ) -> None:
+    ) -> Optional[str]:
         """Record taken commit IDs in the tracking data on the review branch.
+
+        Computes patch coverage and returns the resulting series status:
+        'accepted' if all patches are now taken, 'partial' if some remain,
+        or None if *accepted* is False (no status change requested).
 
         Args:
             topdir: Repository top-level directory.
@@ -2366,17 +2406,15 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             target_branch: Branch the patches were applied to.
             commit_ids: Ordered list of commit SHAs that were applied.
             cherrypick: If set, the 1-based patch indices that were picked.
-            accepted: If True, mark the series status as 'accepted'.
+            accepted: If True, mark the series status based on patch coverage.
         """
         try:
             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
         except SystemExit:
             logger.warning('Could not load tracking data for recording take metadata')
-            return
+            return None
 
         series = tracking.get('series', {})
-        if accepted:
-            series['status'] = 'accepted'
         take_info = {
             'branch': target_branch,
             'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d'),
@@ -2396,8 +2434,6 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             }
             series.setdefault('branch-tips', []).append(tip_entry)
 
-        tracking['series'] = series
-
         patches = tracking.get('patches', [])
         if cherrypick:
             # Map selected 1-based indices to commit IDs
@@ -2411,8 +2447,18 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 if pi < len(commit_ids):
                     patch['taken'] = {'commit-id': commit_ids[pi]}
 
+        # Determine new status from coverage: if every patch now has a taken
+        # marker the series is fully accepted; otherwise it is partially applied.
+        new_status: Optional[str] = None
+        if accepted:
+            all_taken = patches and all(p.get('taken') for p in patches)
+            new_status = 'accepted' if all_taken else 'partial'
+            series['status'] = new_status
+
+        tracking['series'] = series
         if not b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking):
             logger.warning('Could not save take metadata to tracking commit')
+        return new_status
 
     def _do_take_merge(
         self,
@@ -2596,9 +2642,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         ecode, out = b4.git_run_command(
             topdir, ['rev-list', '--reverse', f'{base_commit}..HEAD^2']
         )
+        new_status: Optional[str] = None
         if ecode == 0 and out.strip():
             commit_ids = out.strip().splitlines()
-            self._record_take_metadata(
+            new_status = self._record_take_metadata(
                 topdir,
                 review_branch,
                 target_branch,
@@ -2606,9 +2653,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 accepted=take_screen.accept_series,
             )
 
-        self._finalize_take(
-            topdir, target_branch, change_id, t_series, take_screen.accept_series
-        )
+        self._finalize_take(topdir, target_branch, change_id, t_series, new_status)
         _wait_for_enter()
 
     def _finalize_take(
@@ -2617,20 +2662,24 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         target_branch: str,
         change_id: str,
         series: Dict[str, Any],
-        accepted: bool,
+        new_status: Optional[str],
     ) -> None:
-        """Common post-take steps: record branch, update DB, update Patchwork."""
+        """Common post-take steps: record branch, update DB, update Patchwork.
+
+        *new_status* is the status computed by _record_take_metadata: 'accepted',
+        'partial', or None (when the user did not request a status change).
+        """
         common_dir = b4.git_get_common_dir(topdir)
         if common_dir:
             b4.review.tracking.record_take_branch(common_dir, target_branch)
 
-        if accepted and self._identifier and change_id:
+        if new_status and self._identifier and change_id:
             revision = series.get('revision')
             existing_target = None
             try:
                 conn = b4.review.tracking.get_db(self._identifier)
                 b4.review.tracking.update_series_status(
-                    conn, change_id, 'accepted', revision=revision
+                    conn, change_id, new_status, revision=revision
                 )
                 # Record the take target as the series target branch if not already set
                 existing_target = b4.review.tracking.get_target_branch(
@@ -2660,7 +2709,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 except (SystemExit, Exception):
                     pass
 
-        if accepted and self._selected_series:
+        if new_status == 'accepted' and self._selected_series:
             pw_sid = self._selected_series.get('pw_series_id')
             if pw_sid:
                 b4.review.pw_update_series_state(pw_sid, 'accepted')
@@ -2876,13 +2925,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         logger.info('Applied patches to %s', target_branch)
 
         # Record per-patch commit IDs in the tracking data
+        new_status: Optional[str] = None
         if pre_am_head:
             ecode, out = b4.git_run_command(
                 topdir, ['rev-list', '--reverse', f'{pre_am_head}..HEAD']
             )
             if ecode == 0:
                 commit_ids = out.strip().splitlines()
-                self._record_take_metadata(
+                new_status = self._record_take_metadata(
                     topdir,
                     review_branch,
                     target_branch,
@@ -2891,9 +2941,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                     accepted=take_screen.accept_series,
                 )
 
-        self._finalize_take(
-            topdir, target_branch, change_id, series, take_screen.accept_series
-        )
+        self._finalize_take(topdir, target_branch, change_id, series, new_status)
         _wait_for_enter()
 
     def action_rebase(self) -> None:
@@ -2901,7 +2949,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status not in ('reviewing', 'replied'):
+        if status not in ('reviewing', 'replied', 'partial'):
             self.notify(
                 'Series must be checked out before rebasing', severity='warning'
             )
@@ -4074,7 +4122,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status not in ('new', 'reviewing', 'replied'):
+        if status not in ('new', 'reviewing', 'replied', 'partial'):
             return
         change_id = self._selected_series.get('change_id', '')
         revision = self._selected_series.get('revision')
@@ -4101,7 +4149,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status not in ('new', 'reviewing', 'replied'):
+        if status not in ('new', 'reviewing', 'replied', 'partial'):
             self.notify('Cannot snooze a series in this state', severity='warning')
             return
         self.push_screen(

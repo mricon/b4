@@ -2083,7 +2083,7 @@ def update_series_tracking(
             logger.warning('Could not promote waiting series: %s', ex)
 
     # Update follow-up trailers if the series has a review branch
-    if status in ('reviewing', 'replied', 'waiting') and topdir:
+    if status in ('reviewing', 'replied', 'partial', 'waiting') and topdir:
         branch = f'b4/review/{change_id}'
         wantver = current_rev
 

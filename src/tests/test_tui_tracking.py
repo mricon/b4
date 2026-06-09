@@ -1826,7 +1826,7 @@ class TestSeriesLifecycle:
 
     @pytest.mark.asyncio
     async def test_thanked_to_archived(self, gitdir: str) -> None:
-        """A thanked series can only be archived."""
+        """A thanked series offers reopen-to-reviewing and archive."""
         identifier = 'test-lifecycle-thanked'
         change_id = 'thanked-series-1'
         _create_review_branch(
@@ -1844,14 +1844,14 @@ class TestSeriesLifecycle:
             ],
         )
 
-        # Verify action menu: only 'archive' should be available
+        # Verify action menu: 'review' (reopen) and 'archive' should be available
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             await pilot.press('a')
             await pilot.pause()
             actions = _get_action_keys(app)
-            assert actions == ['archive']
+            assert actions == ['review', 'archive']
 
             await pilot.press('escape')
 
