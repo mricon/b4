@@ -725,6 +725,12 @@ Contributor-oriented settings
 
      Default: ``no``
 
+   :term:`b4.send-me-too`
+     Instructs b4 to include your own address when sending. Set by default,
+     use ``no`` to suppress sending to yourself.
+
+     Default: ``yes``
+
    :term:`b4.send-prefixes`
      Extra prefixes to add to ``[PATCH]`` (e.g. ``RFC mydrv``).
 

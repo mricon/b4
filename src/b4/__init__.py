@@ -177,6 +177,8 @@ DEFAULT_CONFIG: ConfigDictT = {
     'review-target-branch': None,
     # Do not patatt-sign outgoing review emails
     'review-no-patatt-sign': None,
+    # Send to myself
+    'send-me-too': 'yes',
 }
 
 # This is where we store actual config

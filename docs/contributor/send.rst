@@ -321,7 +321,9 @@ Command line flags
   :ref:`contributor_settings`).
 
 ``--not-me-too``
-  Removes your own email address from the recipients.
+  Removes your own email address from the recipients. This can be set in
+  the configuration using the :term:`b4.send-me-too`, setting to ``no``.
+  (see :ref:`contributor_settings`).
 
 ``--no-sign``
   Don't sign your patches with your configured attestation mechanism.
