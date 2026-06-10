@@ -10,7 +10,7 @@ import hashlib
 import logging
 import os
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Iterable, Optional, Union
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -92,6 +92,19 @@ def label_color(label: str) -> str:
     idx = sum(digest) % len(_LABEL_COLORS)
     r, g, b = _LABEL_COLORS[idx]
     return f'#{r:02x}{g:02x}{b:02x}'
+
+
+def build_label_text(labels: Iterable[str]) -> Text:
+    """Build a Rich Text with colored ■ glyphs for each visible label.
+
+    Skips ``lifecycle:`` labels (shown separately as the status symbol)
+    and sorts the remainder for a stable display order.
+    """
+    meta = Text()
+    for lb in sorted(lb for lb in labels if not lb.startswith('lifecycle:')):
+        meta.append('■ ', style=label_color(lb))
+        meta.append(f'{lb}  ')
+    return meta
 
 
 _LIFECYCLE_SYMBOLS: dict[str, str] = {
@@ -458,16 +471,7 @@ class BugDetailScreen(ModalScreen[None]):
         yield Static(header, id='detail-header')
         with Horizontal(id='detail-subheader'):
             yield Static('Commenters', id='detail-commenters-label')
-            if bug.labels:
-                meta = Text()
-                for lb in sorted(bug.labels):
-                    if lb.startswith('lifecycle:'):
-                        continue
-                    meta.append('\u25a0 ', style=label_color(lb))
-                    meta.append(f'{lb}  ')
-                yield Static(meta, id='detail-labels')
-            else:
-                yield Static('', id='detail-labels')
+            yield Static(build_label_text(bug.labels), id='detail-labels')
         with Horizontal(id='detail-body'):
             with Vertical(id='comment-list-pane'):
                 yield ListView(id='comment-list')
@@ -1028,6 +1032,10 @@ class BugDetailScreen(ModalScreen[None]):
         if isinstance(app, BugListApp):
             app.repo.invalidate(self.bug.id)
             self.bug = app.repo.get_bug(self.bug.id)
+        # Keep the top-right label list in sync with the reloaded bug.
+        self.query_one('#detail-labels', Static).update(
+            build_label_text(self.bug.labels)
+        )
         # Run the async rebuild so the ListView replacement (which
         # requires await) happens cleanly in the event loop.
         self.run_worker(
@@ -2097,14 +2105,8 @@ class BugListApp(JKListNavMixin, App[None]):
                 f'{sym}  {git_status}',
             )
 
-        visible_labels = sorted(
-            lb for lb in bug.labels if not lb.startswith('lifecycle:')
-        )
-        if visible_labels:
-            label_text = Text()
-            for lb in visible_labels:
-                label_text.append('\u25a0 ', style=label_color(lb))
-                label_text.append(f'{lb}  ')
+        label_text = build_label_text(bug.labels)
+        if label_text:
             self.query_one('#detail-labels', Static).update(label_text)
         else:
             self.query_one('#detail-labels', Static).update('none')

@@ -26,6 +26,7 @@ from b4.bugs._tui import (
     _bug_lifecycle,
     _bug_tier,
     _relative_time,
+    build_label_text,
     label_color,
 )
 from ezgb import Bug, BugSummary, Comment, Identity, Status
@@ -234,6 +235,37 @@ class TestLabelColor:
         c = label_color('test')
         assert c.startswith('#')
         assert len(c) == 7  # #rrggbb
+
+
+class TestBuildLabelText:
+    def test_empty_labels_returns_empty_text(self) -> None:
+        result = build_label_text([])
+        assert str(result) == ''
+
+    def test_lifecycle_labels_are_excluded(self) -> None:
+        result = build_label_text(['lifecycle:confirmed', 'lifecycle:fixed'])
+        assert str(result) == ''
+
+    def test_normal_label_appears(self) -> None:
+        result = build_label_text(['area/network'])
+        assert 'area/network' in str(result)
+
+    def test_lifecycle_mixed_with_normal(self) -> None:
+        result = build_label_text(['lifecycle:confirmed', 'priority/high'])
+        text = str(result)
+        assert 'priority/high' in text
+        assert 'lifecycle:confirmed' not in text
+
+    def test_labels_are_sorted(self) -> None:
+        result = build_label_text(['zzz', 'aaa', 'mmm'])
+        text = str(result)
+        assert text.index('aaa') < text.index('mmm') < text.index('zzz')
+
+    def test_only_lifecycle_labels_excluded_not_others(self) -> None:
+        # A label that merely *contains* 'lifecycle' but doesn't start with it
+        # should still be shown.
+        result = build_label_text(['not-lifecycle:foo'])
+        assert 'not-lifecycle:foo' in str(result)
 
 
 class TestBugTier:
