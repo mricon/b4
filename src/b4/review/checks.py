@@ -333,7 +333,7 @@ def _run_builtin_patchwork(
                 'status': status,
                 'state': state,
                 'description': check.get('description', ''),
-                'url': check.get('url', ''),
+                'url': check.get('target_url', ''),
             }
         )
 
@@ -361,7 +361,7 @@ def _fetch_sashiko_patchset(msgid: str, sashiko_url: str) -> Optional[Dict[str, 
     if msgid in _sashiko_patchset_cache:
         return _sashiko_patchset_cache[msgid]
 
-    url = f'{sashiko_url.rstrip("/")}/api/patch'
+    url = f'{sashiko_url.rstrip("/")}/api/patchset'
     try:
         session = b4.get_requests_session()
         resp = session.get(url, params={'id': msgid}, timeout=30)
@@ -462,7 +462,7 @@ def _run_builtin_sashiko(msg: EmailMessage, sashiko_url: str) -> List[Dict[str, 
     reviews = data.get('reviews', [])
     patches = data.get('patches', [])
     base_url = sashiko_url.rstrip('/')
-    patchset_url = f'{base_url}/patch/{ps_id}' if ps_id else ''
+    patchset_url = f'{base_url}/#/patchset/{ps_id if ps_id else msgid}'
 
     # Build a map from patch message-id to sashiko patch id
     patch_id_by_msgid: Dict[str, int] = {}
@@ -526,8 +526,10 @@ def _run_builtin_sashiko(msg: EmailMessage, sashiko_url: str) -> List[Dict[str, 
     if sashiko_patch_id is None:
         return []
 
+    i = 1
     for review in reviews:
         if review.get('patch_id') == sashiko_patch_id:
+            patchset_url += f'?part={i}'
             review_status = review.get('status', '')
             if review_status == 'Skipped':
                 result_msg = review.get('result', '') or 'Skipped'
@@ -570,6 +572,7 @@ def _run_builtin_sashiko(msg: EmailMessage, sashiko_url: str) -> List[Dict[str, 
             if findings:
                 result['details'] = json.dumps(findings)
             return [result]
+        i += 1
 
     # No review found for this patch
     return [
