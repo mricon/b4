@@ -500,16 +500,40 @@ comment lines.
 
 Copy or symlink the files into your Vim configuration::
 
-    mkdir -p ~/.vim/syntax ~/.vim/ftdetect
+    mkdir -p ~/.vim/syntax ~/.vim/ftdetect ~/.vim/ftplugin
     ln -s /path/to/b4/misc/vim/syntax/b4review.vim ~/.vim/syntax/
     ln -s /path/to/b4/misc/vim/ftdetect/b4review.vim ~/.vim/ftdetect/
+    ln -s /path/to/b4/misc/vim/ftplugin/b4review.vim ~/.vim/ftplugin/
 
-If ftdetect does not work with your plugin manager, add this to
-your ``~/.vimrc`` instead::
+The ftplugin disables auto-wrapping of quoted lines and adds the
+hunk-trimming mappings described below, so install it alongside the
+syntax file. If ftdetect does not work with your plugin manager, add
+this to your ``~/.vimrc`` instead::
 
     augroup filetypedetect
       autocmd BufNewFile,BufRead *.b4-review.eml set filetype=b4review
     augroup END
+
+**Trimming quoted context (Vim)**
+
+When you send a reply, b4 automatically drops the quoted diff left below
+your last comment. The Vim ftplugin adds two mappings for pruning the
+rest interactively as you read, each leaving a
+``[ ... NN lines skipped ... ]`` marker where context was removed
+(``<LocalLeader>`` is ``\`` by default):
+
+==================  ====================================================
+Key                 Action
+==================  ====================================================
+``<LocalLeader>h``  Delete the hunk under the cursor
+``<LocalLeader>H``  Delete the uncommented hunks above the current one
+==================  ====================================================
+
+The same actions are available as the ``:B4DelHunk`` and
+``:B4DelHunksBefore`` commands, and as ``<Plug>(B4DeleteHunk)`` /
+``<Plug>(B4DeleteHunksBefore)`` if you prefer to bind your own keys.
+Press ``u`` to undo. What you leave in the buffer is exactly what gets
+sent.
 
 *Emacs*
 
