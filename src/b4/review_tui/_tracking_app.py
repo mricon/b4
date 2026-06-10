@@ -4453,7 +4453,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         series = self._selected_series
         if not series:
             return
-        if series.get('status', 'new') != 'accepted':
+        if series.get('status', 'new') not in ('accepted', 'partial'):
             self.notify(
                 'Series must be accepted before sending thanks', severity='warning'
             )

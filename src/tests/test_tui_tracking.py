@@ -12,6 +12,7 @@ status transitions, and modal interactions.
 """
 
 import datetime
+import email.message
 import pathlib
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
@@ -2154,6 +2155,95 @@ class TestSeriesLifecycle:
         patches = updated.get('patches', [])
         assert all(p.get('taken') for p in patches), 'all patches should be taken'
         assert updated['series']['status'] == 'accepted'
+
+    @pytest.mark.asyncio
+    async def test_thank_partial_series_cherrypicks_taken(self, gitdir: str) -> None:
+        """Thanking a 'partial' series proceeds and thanks only taken patches.
+
+        Regression (bug a01c5b5): action_thank used to bail with "Series must
+        be accepted before sending thanks" for anything but 'accepted', so a
+        partially-applied series could never send a thank-you — blocking the
+        "I'm done, thanks for the bits I took" workflow.  Verify the guard now
+        admits 'partial' and that the generated thank-you is in cherry-pick
+        mode listing only the commits actually taken.
+        """
+        from unittest import mock
+
+        identifier = 'test-thank-partial'
+        change_id = 'thank-partial-1'
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='partial'
+        )
+        # 3-patch series: patches 1+2 taken, patch 3 still open.
+        cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
+        trk['series']['expected'] = 3
+        trk['series']['taken'] = {'branch': 'master'}
+        trk['patches'] = [
+            {
+                'title': '[PATCH 1/3] patch one',
+                'header-info': {'msgid': 'p1@ex.com'},
+                'taken': {'commit-id': 'aaa111'},
+            },
+            {
+                'title': '[PATCH 2/3] patch two',
+                'header-info': {'msgid': 'p2@ex.com'},
+                'taken': {'commit-id': 'bbb222'},
+            },
+            {
+                'title': '[PATCH 3/3] patch three',
+                'header-info': {'msgid': 'p3@ex.com'},
+            },
+        ]
+        b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
+
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH 0/3] partial thank series',
+                    'status': 'partial',
+                    'message_id': 'thank-partial@ex.com',
+                    'num_patches': 3,
+                }
+            ],
+        )
+
+        captured: Dict[str, Any] = {}
+
+        def _fake_generate(
+            topdir: str, jsondata: Dict[str, Any], target: str, cmdargs: Any
+        ) -> email.message.EmailMessage:
+            captured['jsondata'] = jsondata
+            return email.message.EmailMessage()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            problems: List[str] = []
+            orig_notify = app.notify
+
+            def _capture_notify(message: str, *a: Any, **k: Any) -> None:
+                if k.get('severity') in ('warning', 'error'):
+                    problems.append(f'{k.get("severity")}: {message}')
+                return orig_notify(message, *a, **k)
+
+            with (
+                mock.patch.object(app, 'notify', _capture_notify),
+                mock.patch.object(app, '_show_thank_preview') as mock_preview,
+                mock.patch('b4.ty.generate_am_thanks', side_effect=_fake_generate),
+            ):
+                app.action_thank()
+
+            assert not problems, f'unexpected notification(s): {problems}'
+            mock_preview.assert_called_once()
+
+        jsondata = captured.get('jsondata')
+        assert jsondata is not None, 'generate_am_thanks was never reached'
+        # Cherry-pick mode flagged because not every patch was taken.
+        assert jsondata['cherrypick'] is True
+        # Only the two taken patches contribute commits (by 1-based index).
+        assert jsondata['commits'] == [(1, 'aaa111'), (2, 'bbb222')]
 
     def test_partial_series_ingests_new_revision(self, gitdir: str) -> None:
         """A 'partial' series must ingest an incoming v2 and record it.
