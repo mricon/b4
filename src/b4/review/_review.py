@@ -1644,12 +1644,13 @@ def _render_quoted_diff_with_comments(
 
     diff_lines = diff_text.splitlines()
     result: List[str] = [
-        '# Add your code comments below. There is no need to trim or delete',
-        '# any existing content -- just insert your comments under the relevant',
-        '# lines of code. Lines starting with "> " are quoted diff context and',
-        '# lines starting with "| " are comments from other reviewers.',
-        '# The final email will be reformatted automatically to include only',
-        '# the sections that have your comments.',
+        '# Insert your comments under the relevant lines of code. Lines',
+        '# starting with "> " are quoted diff context and lines starting',
+        '# with "| " are comments from other reviewers. Everything you type',
+        '# is sent exactly as written and where you wrote it -- including any',
+        '# trailer (Reviewed-by:, etc.) you place inline. The only change made',
+        '# on send is to drop quoted diff left below your last comment; quoted',
+        '# context you keep above a comment is sent as-is. Trim freely.',
         '#',
     ]
     current_a_file = ''
@@ -2363,6 +2364,84 @@ def _ensure_trailers_in_body(body: str, trailers: List[str]) -> str:
     return main_body
 
 
+def _parse_reply_trailers(buffer: str) -> List[str]:
+    """Parse trailers from the maintainer's own (bare) lines in a buffer.
+
+    Quoted diff (``> ``), external-reviewer (``| ``) and instruction or
+    directive (``#``) lines are excluded.  Detection uses ``followup=True``
+    so that prose such as ``stable: without that fix`` is not mistaken for a
+    trailer.  Used purely to build the display index — never to construct the
+    outgoing email, which carries the trailers inline in the buffer itself.
+    """
+    bare = [
+        line for line in buffer.splitlines() if not line.startswith(('>', '|', '#'))
+    ]
+    found, _others = b4.LoreMessage.find_trailers('\n'.join(bare), followup=True)
+    return [lt.as_string() for lt in found]
+
+
+_BARE_TRAILER_RE = re.compile(r'^\s*([\w-]+):\s')
+
+
+def _insert_trailer_in_reply(reply_text: str, trailer: str) -> str:
+    """Append *trailer* as its own bare line in the reply buffer.
+
+    The line is added at the end of the maintainer's content, before any
+    trailing ``-- `` signature, grouped with any trailers already there.  The
+    maintainer can move it afterwards — placement is just a sensible default.
+    """
+    lines = reply_text.split('\n')
+    sig_idx = next((i for i, ln in enumerate(lines) if ln == '-- '), len(lines))
+    head = lines[:sig_idx]
+    tail = lines[sig_idx:]
+    while head and not head[-1].strip():
+        head.pop()
+    # Separate from non-trailer content with a blank line so the trailers
+    # form their own block.
+    if head and not _BARE_TRAILER_RE.match(head[-1]):
+        head.append('')
+    head.append(trailer)
+    return '\n'.join(head + tail)
+
+
+def _remove_trailer_from_reply(reply_text: str, name: str) -> str:
+    """Remove bare lines that are a *name* trailer from the reply buffer.
+
+    Quoted (``> ``), external (``| ``) and instruction (``#``) lines are left
+    untouched so a ``Foo-by:`` inside the quoted diff is never disturbed.
+    """
+    lname = name.lower()
+    out: List[str] = []
+    for line in reply_text.split('\n'):
+        if line.startswith(('>', '|', '#')):
+            out.append(line)
+            continue
+        m = _BARE_TRAILER_RE.match(line)
+        if m and m.group(1).lower() == lname:
+            continue
+        out.append(line)
+    return '\n'.join(out)
+
+
+def _trim_quoted_reply(buffer: str) -> str:
+    """Prepare a hand-edited reply buffer for sending.
+
+    The maintainer's text is sent as written.  The only changes are to strip
+    b4's own scaffolding — the ``#`` instruction header and ``| `` read-only
+    external-reviewer lines — and to drop the run of quoted diff at the very
+    bottom of the message that has no comment after it, the usual courtesy of
+    trimming quoted material below your last reply.  Quoted context the
+    maintainer left in place anywhere above their final comment is kept
+    exactly as written; nothing is collapsed, reordered, or relocated.
+    """
+    lines = [line for line in buffer.splitlines() if not line.startswith(('#', '|'))]
+    # Drop the trailing quoted/blank run below the maintainer's last comment.
+    end = len(lines)
+    while end > 0 and (lines[end - 1].startswith('>') or not lines[end - 1].strip()):
+        end -= 1
+    return '\n'.join(lines[:end])
+
+
 def _build_review_email(
     series: Dict[str, Any],
     patch_meta: Optional[Dict[str, Any]],
@@ -2401,7 +2480,10 @@ def _build_review_email(
 
     # Build body
     if reply_text:
-        body = reply_text.strip()
+        # The maintainer's edited buffer is authoritative: send it as the
+        # source of truth, trimming only quoted diff left below their last
+        # comment and never relocating prose or trailers.
+        body = _trim_quoted_reply(reply_text).strip()
     elif comments and patch_meta is None:
         # Cover letter with structured comments — build reply from cover text
         reply_body = _build_reply_from_comments(
@@ -2468,8 +2550,12 @@ def _build_review_email(
                 + '\n'.join(trailers)
             )
 
-    # Ensure all trailers appear in the body
-    body = _ensure_trailers_in_body(body, trailers)
+    # Ensure all trailers appear in the body.  Skip this for the verbatim
+    # reply path: the maintainer's buffer already carries the trailers
+    # wherever they placed them, and re-adding them here would duplicate or
+    # relocate them.
+    if not reply_text:
+        body = _ensure_trailers_in_body(body, trailers)
 
     # Append signature if not already present
     if '\n-- \n' not in body:

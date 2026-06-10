@@ -899,7 +899,13 @@ class ReviewApp(CheckRunnerMixin, App[None]):
                 text.append(
                     f'\n    {non_quoted} non-quoted reply lines', style=ts['accent']
                 )
-            trailers = review.get('trailers', [])
+            # When a hand-edited buffer exists it is the source of truth, so
+            # derive the trailers from it; otherwise fall back to the stored
+            # quick-path list.
+            if reply:
+                trailers = b4.review._parse_reply_trailers(reply)
+            else:
+                trailers = review.get('trailers', [])
             if trailers:
                 for t in trailers:
                     ttype = t.split(':', 1)[0] if ':' in t else t
@@ -1117,14 +1123,58 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         target = self._get_current_review_target()
         if not target:
             return
-        existing_trailers = b4.review._get_my_review(target, self._usercfg).get(
-            'trailers', []
-        )
+        review_now = b4.review._get_my_review(target, self._usercfg)
+        existing_reply = review_now.get('reply', '')
+        if existing_reply:
+            # Pre-toggle from what is actually in the buffer (the source of
+            # truth), not a possibly-stale trailers list.
+            existing_trailers = b4.review._parse_reply_trailers(existing_reply)
+        else:
+            existing_trailers = review_now.get('trailers', [])
 
         def _on_trailer(result: Optional[List[str]]) -> None:
             if result is None:
                 return
             review = self._ensure_review(target)
+
+            # When a hand-edited reply buffer exists it is authoritative:
+            # insert/remove the trailer line within the text itself and
+            # re-derive the display index, rather than maintaining a separate
+            # list and reassembling.  Cross-patch consolidation is skipped in
+            # this mode — the trailer lives inside the maintainer's prose.
+            reply_text = review.get('reply', '')
+            if reply_text:
+                desired = ['NACKed-by'] if 'NACKed-by' in result else list(result)
+                desired_lower = {n.lower() for n in desired}
+                current = {
+                    t.split(':', 1)[0].strip().lower(): t
+                    for t in b4.review._parse_reply_trailers(reply_text)
+                }
+                for lname in list(current):
+                    if lname not in desired_lower:
+                        reply_text = b4.review._remove_trailer_from_reply(
+                            reply_text, lname
+                        )
+                for name in desired:
+                    if name.lower() not in current:
+                        reply_text = b4.review._insert_trailer_in_reply(
+                            reply_text, f'{name}: {self._default_identity}'
+                        )
+                review['reply'] = reply_text
+                trailers_now = b4.review._parse_reply_trailers(reply_text)
+                if trailers_now:
+                    review['trailers'] = trailers_now
+                else:
+                    review.pop('trailers', None)
+                self._save_tracking()
+                self._refresh_patch_item(self._selected_idx)
+                self._show_content(self._selected_idx)
+                if trailers_now:
+                    self.notify(f'Trailers updated ({len(trailers_now)})')
+                else:
+                    self.notify('Trailers removed')
+                return
+
             # Build the new trailer list from the selected names
             if 'NACKed-by' in result:
                 # NACKed-by replaces all others
@@ -1282,40 +1332,31 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         if reply_text == editor_text:
             self.notify('No changes made')
             return
-        # Extract trailers from the unquoted portion of the reply
-        # (skip > quoted lines and | external comment lines)
-        unquoted_lines: List[str] = []
-        for line in reply_text.splitlines():
-            if not line.startswith('>') and not line.startswith('|'):
-                unquoted_lines.append(line)
-        unquoted_text = '\n'.join(unquoted_lines)
-        found_trailers, _others = b4.LoreMessage.find_trailers(unquoted_text)
-        if found_trailers:
-            trailer_strs = [lt.as_string() for lt in found_trailers]
-            review['trailers'] = trailer_strs
-            # Strip trailer lines from the reply before parsing comments
-            trailer_set = set(trailer_strs)
-            stripped_lines: List[str] = []
-            for line in reply_text.splitlines():
-                if line.strip() not in trailer_set:
-                    stripped_lines.append(line)
-            reply_text = '\n'.join(stripped_lines)
+        # The edited buffer is the single source of truth: store it verbatim
+        # and never mutate it here.  Trailers the maintainer typed stay where
+        # they put them, and the buffer is what gets sent (trimmed only on the
+        # quoted diff at send time).
+        review['reply'] = reply_text
 
-        # Parse inline comments from the quoted reply
+        # Derive the display index from the same buffer.  These drive the
+        # code-viewer annotations and the trailer overlay/menu only; they are
+        # never fed back to construct the outgoing email.
+        #
         # _extract_editor_comments strips | lines (unadopted external
-        # comments) before parsing, so only adopted ones are kept
+        # comments) before parsing, so only adopted ones are kept.
         new_comments = b4.review._extract_editor_comments(
             reply_text, diff_text=real_diff
         )
         if new_comments:
             review['comments'] = new_comments
-            if 'reply' in review:
-                del review['reply']
         else:
-            # No structured comments found — store as raw reply
-            review['reply'] = reply_text
-            if 'comments' in review:
-                del review['comments']
+            review.pop('comments', None)
+
+        trailer_strs = b4.review._parse_reply_trailers(reply_text)
+        if trailer_strs:
+            review['trailers'] = trailer_strs
+        else:
+            review.pop('trailers', None)
         self._save_tracking()
         self._refresh_patch_item(self._selected_idx)
         self._show_content(self._selected_idx)

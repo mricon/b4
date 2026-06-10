@@ -231,6 +231,59 @@ class TestTrailerConsolidation:
             assert msgs == [mock.sentinel.email]
 
 
+class TestReplyVerbatim:
+    """The edited reply buffer is the source of truth and is kept verbatim."""
+
+    @pytest.mark.asyncio
+    async def test_edit_reply_keeps_buffer_and_parses_trailers(
+        self, gitdir: str
+    ) -> None:
+        import contextlib
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'reply-verbatim', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        app = ReviewApp(session)
+        my_email = str(session['usercfg']['email'])
+
+        buffer = (
+            'Thanks for the new version!\n'
+            '\n'
+            'You need to Cc\n'
+            'stable: without that fix things break.\n'
+            '\n'
+            'Reviewed-by: Me <me@example.com>'
+        )
+        seen: List[str] = []
+
+        def fake_editor(data: bytes, filehint: str = '') -> bytes:
+            seen.append(data.decode())
+            return buffer.encode()
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_idx = 1
+            with (
+                mock.patch('b4.edit_in_editor', side_effect=fake_editor),
+                mock.patch.object(app, 'suspend', lambda: contextlib.nullcontext()),
+            ):
+                app.action_edit_reply()
+                await pilot.pause()
+
+                review = app._patches[0]['reviews'][my_email]
+                # Buffer stored verbatim — nothing relocated or stripped.
+                assert review['reply'] == buffer
+                # Trailer derived for display; prose "stable:" is NOT a trailer.
+                assert review['trailers'] == ['Reviewed-by: Me <me@example.com>']
+
+                # Re-opening seeds the editor with the verbatim buffer, so the
+                # trailer the maintainer typed is still visible.
+                app.action_edit_reply()
+                await pilot.pause()
+                assert 'Reviewed-by: Me <me@example.com>' in seen[-1]
+
+
 class TestReconcileAfterShell:
     """Tests for _reconcile_after_shell tracking fixup."""
 

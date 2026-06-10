@@ -702,6 +702,209 @@ index abc..def 100644
         assert 'My general comment.' in result
 
 
+class TestTrimQuotedReply:
+    """Tests for _trim_quoted_reply().
+
+    The only changes made are stripping b4 scaffolding (# and | lines) and
+    dropping the run of quoted diff below the maintainer's last comment.
+    """
+
+    def test_strips_scaffolding(self) -> None:
+        buf = '# instructions\nMy comment.\n> +code\n| Other <o@x.com>:\n| their note\n'
+        out = review._trim_quoted_reply(buf)
+        assert '# instructions' not in out
+        assert 'Other <o@x.com>' not in out
+        assert 'their note' not in out
+        assert 'My comment.' in out
+
+    def test_drops_trailing_quoted_below_last_comment(self) -> None:
+        buf = (
+            'Looks good here.\n'
+            '> +relevant line\n'
+            '\n'
+            'Please fix this.\n'
+            '\n'
+            '> @@ -50,5 +50,5 @@\n'
+            '> +trailing\n'
+            '> +untouched diff\n'
+        )
+        out = review._trim_quoted_reply(buf)
+        # Everything up to and including the last comment is verbatim.
+        assert 'Looks good here.' in out
+        assert '> +relevant line' in out  # quoted above a later comment kept
+        assert 'Please fix this.' in out
+        # The quoted tail after the last comment is gone.
+        assert '> +trailing' not in out
+        assert '> +untouched diff' not in out
+        assert '@@ -50' not in out
+        assert out.rstrip().endswith('Please fix this.')
+
+    def test_keeps_quoted_between_comments_verbatim(self) -> None:
+        # Quoted code sitting between two comments is NOT trimmed — only the
+        # trailing run below the last comment is.
+        buf = 'First.\n> a\n> b\n> c\n> d\n> e\n> f\nSecond.\n> g\n'
+        out = review._trim_quoted_reply(buf)
+        for q in ['> a', '> b', '> c', '> d', '> e', '> f']:
+            assert q in out
+        assert '> g' not in out  # trailing quoted dropped
+        assert out.rstrip().endswith('Second.')
+
+    def test_trailer_at_bottom_keeps_quoted_above(self) -> None:
+        # When a trailer is the last line, nothing trails it, so the quoted
+        # diff above it is kept verbatim.
+        buf = 'Comment.\n> +x\n> +y\nReviewed-by: Me <me@x.com>'
+        out = review._trim_quoted_reply(buf)
+        assert '> +x' in out and '> +y' in out
+        assert out.rstrip().endswith('Reviewed-by: Me <me@x.com>')
+
+    def test_only_quoted_is_all_trailing(self) -> None:
+        # No comments at all → the whole quoted body is trailing → dropped.
+        buf = '> diff --git a/f b/f\n> @@ -1,2 +1,2 @@\n> +new\n'
+        assert review._trim_quoted_reply(buf).strip() == ''
+
+    def test_empty_buffer(self) -> None:
+        assert review._trim_quoted_reply('') == ''
+
+
+class TestParseReplyTrailers:
+    """Tests for _parse_reply_trailers() — derived trailer display index."""
+
+    def test_picks_up_inline_trailer(self) -> None:
+        buf = 'Looks good.\n\nReviewed-by: Me <me@example.com>\n'
+        assert review._parse_reply_trailers(buf) == ['Reviewed-by: Me <me@example.com>']
+
+    def test_prose_colon_not_a_trailer(self) -> None:
+        # "stable: ..." is prose, not a trailer — must not be misclassified.
+        buf = (
+            'You need to Cc\n'
+            'stable: without that fix things break.\n'
+            '\n'
+            'Reviewed-by: Me <me@example.com>\n'
+        )
+        trailers = review._parse_reply_trailers(buf)
+        assert trailers == ['Reviewed-by: Me <me@example.com>']
+
+    def test_ignores_quoted_and_external_lines(self) -> None:
+        buf = (
+            '> Reviewed-by: NotMe <quoted@example.com>\n'
+            '| Acked-by: Other <ext@example.com>\n'
+            'Tested-by: Me <me@example.com>\n'
+        )
+        assert review._parse_reply_trailers(buf) == ['Tested-by: Me <me@example.com>']
+
+
+class TestReplyTrailerEditing:
+    """Tests for _insert_trailer_in_reply() / _remove_trailer_from_reply()."""
+
+    def test_insert_appends_as_block(self) -> None:
+        buf = 'Thanks!\n'
+        out = review._insert_trailer_in_reply(buf, 'Reviewed-by: Me <me@x.com>')
+        assert out == 'Thanks!\n\nReviewed-by: Me <me@x.com>'
+
+    def test_insert_before_signature(self) -> None:
+        buf = 'Thanks!\n-- \nmy sig\n'
+        out = review._insert_trailer_in_reply(buf, 'Acked-by: Me <me@x.com>')
+        lines = out.split('\n')
+        assert lines.index('Acked-by: Me <me@x.com>') < lines.index('-- ')
+
+    def test_insert_groups_with_existing_trailers(self) -> None:
+        buf = 'Thanks!\n\nReviewed-by: Me <me@x.com>'
+        out = review._insert_trailer_in_reply(buf, 'Tested-by: Me <me@x.com>')
+        # No blank line inserted between the two trailers.
+        assert 'Reviewed-by: Me <me@x.com>\nTested-by: Me <me@x.com>' in out
+
+    def test_remove_drops_matching_bare_line(self) -> None:
+        buf = 'Thanks!\n\nReviewed-by: Me <me@x.com>\nAcked-by: Me <me@x.com>'
+        out = review._remove_trailer_from_reply(buf, 'reviewed-by')
+        assert 'Reviewed-by' not in out
+        assert 'Acked-by: Me <me@x.com>' in out
+
+    def test_remove_leaves_quoted_trailer_alone(self) -> None:
+        buf = '> Reviewed-by: Quoted <q@x.com>\nReviewed-by: Me <me@x.com>'
+        out = review._remove_trailer_from_reply(buf, 'reviewed-by')
+        assert '> Reviewed-by: Quoted <q@x.com>' in out
+        assert 'Reviewed-by: Me <me@x.com>' not in out.replace(
+            '> Reviewed-by: Quoted <q@x.com>', ''
+        )
+
+
+class TestBuildReviewEmailReplyPath:
+    """The verbatim reply path must not relocate or duplicate trailers."""
+
+    @staticmethod
+    def _series() -> Dict[str, Any]:
+        return {
+            'subject': 'Test patch',
+            'fromname': 'Author',
+            'fromemail': 'author@example.com',
+            'header-info': {
+                'msgid': 'test-msgid@example.com',
+                'to': 'maintainer@example.com',
+                'cc': '',
+                'references': '',
+                'sentdate': 'Mon, 01 Jan 2024 00:00:00 +0000',
+            },
+        }
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_inline_trailer_not_duplicated(
+        self, _cfg: mock.Mock, _sig: mock.Mock
+    ) -> None:
+        reply = 'Looks good, thanks.\n\nReviewed-by: Me <me@example.com>\n'
+        rev = {
+            'reply': reply,
+            'trailers': ['Reviewed-by: Me <me@example.com>'],
+        }
+        msg = review._build_review_email(self._series(), None, rev, '', '', None)
+        assert msg is not None
+        body = msg.get_payload(decode=True).decode()
+        assert body.count('Reviewed-by: Me <me@example.com>') == 1
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_prose_colon_not_relocated(self, _cfg: mock.Mock, _sig: mock.Mock) -> None:
+        reply = (
+            'You need to Cc\n'
+            'stable: without that fix things break.\n'
+            '\n'
+            'Reviewed-by: Me <me@example.com>\n'
+        )
+        rev = {'reply': reply, 'trailers': ['Reviewed-by: Me <me@example.com>']}
+        msg = review._build_review_email(self._series(), None, rev, '', '', None)
+        assert msg is not None
+        body = msg.get_payload(decode=True).decode()
+        # The "stable:" line stays in place, once, right after the Cc line.
+        assert body.count('stable: without that fix things break.') == 1
+        cc_idx = body.index('You need to Cc')
+        stable_idx = body.index('stable: without that fix things break.')
+        rvb_idx = body.index('Reviewed-by: Me <me@example.com>')
+        assert cc_idx < stable_idx < rvb_idx
+
+    @mock.patch('b4.get_email_signature', return_value='sig')
+    @mock.patch(
+        'b4.get_user_config',
+        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    )
+    def test_trailing_quoted_dropped_in_email(
+        self, _cfg: mock.Mock, _sig: mock.Mock
+    ) -> None:
+        # Quoted diff left below the last comment is dropped from the mail.
+        reply = 'Please fix.\n\n> @@ -1,3 +1,3 @@\n> +a\n> +b\n'
+        rev = {'reply': reply}
+        msg = review._build_review_email(self._series(), None, rev, '', '', None)
+        assert msg is not None
+        body = msg.get_payload(decode=True).decode()
+        assert 'Please fix.' in body
+        assert '> +a' not in body and '> +b' not in body
+
+
 class TestAddrsToLines:
     """Tests for review_tui._addrs_to_lines()."""
 
