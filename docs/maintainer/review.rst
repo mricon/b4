@@ -551,7 +551,21 @@ Add this to your ``~/.emacs.d/init.el`` or ``~/.emacs``::
 
     (load "/path/to/b4/misc/emacs/b4-review-mode.el")
 
-The mode is automatically activated for ``*.b4-review.eml`` files.
+The mode is automatically activated for ``*.b4-review.eml`` files. It
+provides the same trimming and adopting helpers as the Vim ftplugin:
+
+===========  ====================================
+Key          Action
+===========  ====================================
+``C-c C-k``  Delete the hunk under point
+``C-c C-b``  Delete the uncommented hunks above
+``C-c C-a``  Adopt the ``|`` comment as your own
+===========  ====================================
+
+These run the ``b4-review-delete-hunk``, ``b4-review-delete-hunks-before``
+and ``b4-review-adopt-comment`` commands respectively. The trimming
+commands leave a ``[ ... NN lines skipped ... ]`` marker where context was
+removed; ``undo`` restores it.
 
 **Per-patch states**
 
