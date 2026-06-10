@@ -146,8 +146,15 @@ Quoted (> ), external (|), and instruction (#) lines are left alone."
 ;; happens in the buffer, so what you see is what gets sent; undo restores it.
 
 (defconst b4-review--skip-re
-  "^> \\[ \\.\\.\\. [0-9]+ lines skipped \\.\\.\\. \\]$"
-  "Match a quoted skip marker left by the trimming commands.")
+  "^> \\[ \\.\\.\\. \\([0-9]+\\) lines skipped \\.\\.\\. \\]$"
+  "Match a quoted skip marker; group 1 captures its line count.")
+
+(defun b4-review--marker-count ()
+  "Return the count in the skip marker on the current line, or nil."
+  (save-excursion
+    (beginning-of-line)
+    (when (looking-at b4-review--skip-re)
+      (string-to-number (match-string 1)))))
 
 (defun b4-review--hunk-header-pos ()
   "Return the position of the `> @@' header at or above point, or nil.
@@ -166,17 +173,32 @@ inside a hunk."
 
 (defun b4-review--replace-lines-with-marker (beg-pos end-pos)
   "Replace whole lines from BEG-POS through END-POS with one skip marker.
-The marker reports how many quoted diff lines were removed, excluding any
-pre-existing markers.  Point is left just after the inserted marker."
+Any skip markers directly adjacent to the range (above or below) are
+absorbed and their counts folded in, so consecutive trims collapse into
+one marker rather than stacking up.  Point is left just after the marker."
   (let ((beg (save-excursion (goto-char beg-pos) (line-beginning-position)))
         (end (save-excursion (goto-char end-pos) (forward-line 1) (point)))
         (count 0))
+    ;; Absorb consecutive markers immediately above and below the range.
+    (save-excursion
+      (goto-char beg)
+      (while (and (not (bobp))
+                  (save-excursion (forward-line -1) (b4-review--marker-count)))
+        (forward-line -1)
+        (setq beg (point))))
+    (save-excursion
+      (goto-char end)
+      (while (and (< (point) (point-max)) (b4-review--marker-count))
+        (forward-line 1)
+        (setq end (point))))
+    ;; Each quoted diff line counts as one; an absorbed marker contributes
+    ;; the number it already represents.
     (save-excursion
       (goto-char beg)
       (while (< (point) end)
-        (when (and (looking-at-p "^>")
-                   (not (looking-at-p b4-review--skip-re)))
-          (setq count (1+ count)))
+        (let ((mc (b4-review--marker-count)))
+          (cond (mc (setq count (+ count mc)))
+                ((looking-at-p "^>") (setq count (1+ count)))))
         (forward-line 1)))
     (delete-region beg end)
     (goto-char beg)

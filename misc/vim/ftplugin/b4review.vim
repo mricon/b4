@@ -40,7 +40,11 @@ endfunction
 " Also available as :B4DelHunk / :B4DelHunksBefore and as the mappable
 " <Plug>(B4DeleteHunk) / <Plug>(B4DeleteHunksBefore).
 
-let s:skip_re = '^> \[ \.\.\. \d\+ lines skipped \.\.\. \]$'
+" Parse the count out of a skip-marker line; -1 if the line isn't a marker.
+function! s:B4MarkerCount(line) abort
+  let l:m = matchlist(a:line, '^> \[ \.\.\. \(\d\+\) lines skipped \.\.\. \]$')
+  return empty(l:m) ? -1 : str2nr(l:m[1])
+endfunction
 
 " Line of the `> @@` hunk header at or above the cursor, or 0 if the cursor
 " is not inside a hunk (a file header is reached first, or there is none).
@@ -60,17 +64,32 @@ function! s:B4HunkHeaderAbove() abort
 endfunction
 
 " Delete lines [a, b] and leave a single marker reporting how many quoted
-" diff lines were removed (pre-existing markers are not re-counted).
+" diff lines were removed.  Any skip markers directly adjacent to the range
+" (above or below) are absorbed and their counts folded in, so consecutive
+" trims collapse into one marker rather than stacking up.
 function! s:B4ReplaceWithMarker(a, b) abort
+  let l:a = a:a
+  let l:b = a:b
+  while l:a > 1 && s:B4MarkerCount(getline(l:a - 1)) >= 0
+    let l:a -= 1
+  endwhile
+  while l:b < line('$') && s:B4MarkerCount(getline(l:b + 1)) >= 0
+    let l:b += 1
+  endwhile
+  " Each quoted diff line counts as one; an absorbed marker contributes the
+  " number it already represents.
   let l:c = 0
-  for l:i in range(a:a, a:b)
+  for l:i in range(l:a, l:b)
     let l:t = getline(l:i)
-    if l:t =~# '^>' && l:t !~# s:skip_re
+    let l:mc = s:B4MarkerCount(l:t)
+    if l:mc >= 0
+      let l:c += l:mc
+    elseif l:t =~# '^>'
       let l:c += 1
     endif
   endfor
-  execute a:a . ',' . a:b . 'delete _'
-  call append(a:a - 1, printf('> [ ... %d lines skipped ... ]', l:c))
+  execute l:a . ',' . l:b . 'delete _'
+  call append(l:a - 1, printf('> [ ... %d lines skipped ... ]', l:c))
 endfunction
 
 " Delete the hunk under the cursor: its `> @@` header through its last
