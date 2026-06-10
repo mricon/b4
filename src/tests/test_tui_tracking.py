@@ -2016,7 +2016,9 @@ class TestSeriesLifecycle:
         """A 'partial' series offers take/rebase/thank/etc."""
         identifier = 'test-lifecycle-partial-menu'
         change_id = 'partial-menu-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier, status='partial')
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='partial'
+        )
         _seed_db(
             identifier,
             [
@@ -2050,7 +2052,9 @@ class TestSeriesLifecycle:
         """A 'partial' series appears in the normal listing (not hidden)."""
         identifier = 'test-lifecycle-partial-visible'
         change_id = 'partial-visible-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier, status='partial')
+        _create_review_branch(
+            gitdir, change_id, identifier=identifier, status='partial'
+        )
         _seed_db(
             identifier,
             [
@@ -2080,8 +2084,7 @@ class TestSeriesLifecycle:
         # Inject 4-patch tracking data into the blob
         cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         trk['patches'] = [
-            {'subject': f'patch {i}', 'message-id': f'p{i}@ex.com'}
-            for i in range(1, 5)
+            {'subject': f'patch {i}', 'message-id': f'p{i}@ex.com'} for i in range(1, 5)
         ]
         b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
 
@@ -2089,17 +2092,21 @@ class TestSeriesLifecycle:
 
         # Take only patches 1 and 2 (1-based cherry-pick indices)
         result = app._record_take_metadata(
-            gitdir, branch_name, 'master', ['aaa', 'bbb'],
-            cherrypick=[1, 2], accepted=True,
+            gitdir,
+            branch_name,
+            'master',
+            ['aaa', 'bbb'],
+            cherrypick=[1, 2],
+            accepted=True,
         )
 
         assert result == 'partial', f'expected partial, got {result!r}'
         _, updated = b4.review.load_tracking(gitdir, branch_name)
         patches = updated.get('patches', [])
-        assert patches[0].get('taken') is not None   # patch 1 taken
-        assert patches[1].get('taken') is not None   # patch 2 taken
-        assert patches[2].get('taken') is None        # patch 3 untaken
-        assert patches[3].get('taken') is None        # patch 4 untaken
+        assert patches[0].get('taken') is not None  # patch 1 taken
+        assert patches[1].get('taken') is not None  # patch 2 taken
+        assert patches[2].get('taken') is None  # patch 3 untaken
+        assert patches[3].get('taken') is None  # patch 4 untaken
         assert updated['series']['status'] == 'partial'
 
     def test_record_take_metadata_full_coverage_promotes_accepted(
@@ -2114,8 +2121,16 @@ class TestSeriesLifecycle:
         # Inject 3-patch tracking data with patches 1+2 already taken
         cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         trk['patches'] = [
-            {'subject': 'patch 1', 'message-id': 'p1@ex.com', 'taken': {'commit-id': 'abc'}},
-            {'subject': 'patch 2', 'message-id': 'p2@ex.com', 'taken': {'commit-id': 'def'}},
+            {
+                'subject': 'patch 1',
+                'message-id': 'p1@ex.com',
+                'taken': {'commit-id': 'abc'},
+            },
+            {
+                'subject': 'patch 2',
+                'message-id': 'p2@ex.com',
+                'taken': {'commit-id': 'def'},
+            },
             {'subject': 'patch 3', 'message-id': 'p3@ex.com'},
         ]
         trk['series']['status'] = 'partial'
@@ -2125,8 +2140,12 @@ class TestSeriesLifecycle:
 
         # Take the remaining patch 3 (completing coverage)
         result = app._record_take_metadata(
-            gitdir, branch_name, 'master', ['fff'],
-            cherrypick=[3], accepted=True,
+            gitdir,
+            branch_name,
+            'master',
+            ['fff'],
+            cherrypick=[3],
+            accepted=True,
         )
 
         assert result == 'accepted', f'expected accepted, got {result!r}'
@@ -2176,10 +2195,16 @@ class TestSeriesLifecycle:
         )
         cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         trk['patches'] = [
-            {'subject': 'patch 1', 'message-id': 'p1@example.com',
-             'taken': {'commit-id': 'aaa111'}},
-            {'subject': 'patch 2', 'message-id': 'p2@example.com',
-             'taken': {'commit-id': 'bbb222'}},
+            {
+                'subject': 'patch 1',
+                'message-id': 'p1@example.com',
+                'taken': {'commit-id': 'aaa111'},
+            },
+            {
+                'subject': 'patch 2',
+                'message-id': 'p2@example.com',
+                'taken': {'commit-id': 'bbb222'},
+            },
             {'subject': 'patch 3', 'message-id': 'p3@example.com'},
         ]
         trk['series']['status'] = 'partial'

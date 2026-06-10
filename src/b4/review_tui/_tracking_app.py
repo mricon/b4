@@ -904,7 +904,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             series['_revisions'] = all_revisions.get(change_id, [])
 
             # Collect branches needing ART counts
-            if topdir and series.get('status') in ('reviewing', 'replied', 'partial', 'waiting'):
+            if topdir and series.get('status') in (
+                'reviewing',
+                'replied',
+                'partial',
+                'waiting',
+            ):
                 if branch_name in branch_tips:
                     art_branches[branch_name] = branch_tips[branch_name]
 
@@ -1205,7 +1210,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 actions.append(('rebase', 'Rebase review branch'))
                 actions.append(('waiting', 'Mark as waiting on new revision'))
                 actions.append(('snooze', 'Snooze (defer until later)'))
-            if status in ('reviewing', 'partial') and self._selected_series.get('has_newer'):
+            if status in ('reviewing', 'partial') and self._selected_series.get(
+                'has_newer'
+            ):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
             if status == 'waiting':
                 actions.append(('review', 'Review'))
@@ -1245,13 +1252,23 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         if not self._selected_series:
             return
         status = self._selected_series.get('status', 'new')
-        if status in ('reviewing', 'replied', 'partial', 'waiting', 'accepted', 'snoozed', 'thanked'):
+        if status in (
+            'reviewing',
+            'replied',
+            'partial',
+            'waiting',
+            'accepted',
+            'snoozed',
+            'thanked',
+        ):
             # Already checked out - go to review mode
             change_id = self._selected_series.get('change_id', '')
             revision = self._selected_series.get('revision')
             branch_name = f'b4/review/{change_id}'
             topdir = b4.git_get_toplevel()
-            if status == 'thanked' and (not topdir or not b4.git_branch_exists(topdir, branch_name)):
+            if status == 'thanked' and (
+                not topdir or not b4.git_branch_exists(topdir, branch_name)
+            ):
                 self.notify(
                     'Review branch no longer exists; cannot reopen', severity='warning'
                 )
@@ -1935,7 +1952,10 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         topdir = b4.git_get_toplevel()
 
         # Check tracking commit for states with a review branch
-        if status in ('reviewing', 'replied', 'partial', 'waiting', 'snoozed') and topdir:
+        if (
+            status in ('reviewing', 'replied', 'partial', 'waiting', 'snoozed')
+            and topdir
+        ):
             review_branch = f'b4/review/{change_id}'
             if b4.git_branch_exists(topdir, review_branch):
                 try:
@@ -2020,7 +2040,13 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         topdir = b4.git_get_toplevel()
         status = series.get('status', 'new')
         review_branch = f'b4/review/{change_id}'
-        if topdir and status in ('reviewing', 'replied', 'partial', 'waiting', 'snoozed'):
+        if topdir and status in (
+            'reviewing',
+            'replied',
+            'partial',
+            'waiting',
+            'snoozed',
+        ):
             if b4.git_branch_exists(topdir, review_branch):
                 try:
                     cover_text, tracking = b4.review.load_tracking(

@@ -131,7 +131,7 @@ warn_unreachable = true
 # pyright automatically ignores virtual environments and other directories, but
 # once we specify `exclude`, we're on our own. See
 # https://github.com/microsoft/pyright/issues/9057#issuecomment-2366938099.
-exclude = [".venv", "ezgb", "liblore", "patatt"]
+exclude = [".venv*", "ezgb", "liblore", "patatt"]
 typeCheckingMode = "strict"
 
 # Overly strict rules.
