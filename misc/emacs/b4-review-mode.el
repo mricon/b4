@@ -225,11 +225,13 @@ any of your comments interspersed within it."
         (b4-review--replace-lines-with-marker hdr last-quoted)))))
 
 (defun b4-review-delete-hunks-before ()
-  "Delete the quoted diff above the current hunk, leaving a skip marker.
-Walks up the contiguous quoted run directly above the hunk header,
-stopping at your last comment, so annotated context is preserved."
+  "Delete the diff hunks above the current one, leaving a skip marker.
+The upward walk stops at the file header (the ---/+++/diff --git lines)
+or at your last comment, so the file header, the quoted commit message
+and any annotated context above are all preserved."
   (interactive)
-  (let ((hdr (b4-review--hunk-header-pos)))
+  (let ((hdr (b4-review--hunk-header-pos))
+        (fhdr "^> \\(diff --git \\|--- \\|\\+\\+\\+ \\)"))
     (if (not hdr)
         (message "b4: not inside a hunk")
       (let (top bottom)
@@ -237,15 +239,17 @@ stopping at your last comment, so annotated context is preserved."
           (goto-char hdr)
           (unless (bobp)
             (forward-line -1)
-            (when (looking-at-p "^[>|]")
+            (when (and (looking-at-p "^[>|]") (not (looking-at-p fhdr)))
               (setq bottom (point))
               (while (and (not (bobp))
-                          (save-excursion (forward-line -1)
-                                          (looking-at-p "^[>|]")))
+                          (save-excursion
+                            (forward-line -1)
+                            (and (looking-at-p "^[>|]")
+                                 (not (looking-at-p fhdr)))))
                 (forward-line -1))
               (setq top (point)))))
         (if (not bottom)
-            (message "b4: nothing to trim above")
+            (message "b4: no hunks to trim above this one")
           (b4-review--replace-lines-with-marker top bottom))))))
 
 (defun b4-review-adopt-comment ()

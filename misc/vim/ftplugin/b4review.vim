@@ -115,20 +115,25 @@ function! s:B4DeleteHunk() abort
   call s:B4ReplaceWithMarker(l:hdr, l:last)
 endfunction
 
-" Delete the quoted diff above the current hunk, up to your last comment
-" (a bare line breaks the run), collapsing it into one marker.
+" Delete the diff hunks above the current one, collapsing them into one
+" marker.  The upward walk stops at the file header (the ---/+++/diff --git
+" lines) or at your last comment (a bare line), so the file header, the
+" quoted commit message and any annotated context above are all preserved.
 function! s:B4DeleteHunksBefore() abort
   let l:hdr = s:B4HunkHeaderAbove()
   if l:hdr == 0
     echohl WarningMsg | echo 'b4: not inside a hunk' | echohl None
     return
   endif
-  if l:hdr == 1 || getline(l:hdr - 1) !~# '^[>|]'
-    echohl WarningMsg | echo 'b4: nothing to trim above' | echohl None
+  let l:fhdr = '^> \(diff --git \|--- \|+++ \)'
+  if l:hdr == 1 || getline(l:hdr - 1) !~# '^[>|]' || getline(l:hdr - 1) =~# l:fhdr
+    echohl WarningMsg | echo 'b4: no hunks to trim above this one' | echohl None
     return
   endif
   let l:top = l:hdr - 1
-  while l:top > 1 && getline(l:top - 1) =~# '^[>|]'
+  while l:top > 1
+        \ && getline(l:top - 1) =~# '^[>|]'
+        \ && getline(l:top - 1) !~# l:fhdr
     let l:top -= 1
   endwhile
   call s:B4ReplaceWithMarker(l:top, l:hdr - 1)
