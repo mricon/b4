@@ -532,6 +532,26 @@ These settings control ``b4 review`` TUI behaviour.
 
      .. versionadded:: v0.15
 
+   :term:`b4.custom-msgid-cmd`
+     Command whose stdout is used as the Message-Id for outgoing replies
+     and notifications: review replies and follow-up replies (sent over
+     SMTP from the review TUI, bypassing any ``sendemail-validate`` hook),
+     and ``b4 ty`` thank-you notes. The surrounding angle brackets are
+     optional. If the command is unset, produces no output, or fails, b4
+     falls back to its built-in ``<...@b4>`` id::
+
+         git config b4.custom-msgid-cmd ~/bin/my-msgid.py
+
+     The command runs once per message, so it must emit a *unique* id each
+     time, or threading will break. Patch series sent with
+     ``b4 prep``/``b4 send`` are **not** affected -- they keep their own
+     templated message-ids -- and neither do synthetic ``b4 pr`` GIT PULL
+     messages, whose ids are deliberately derived from the pull request.
+
+     Default: ``None``
+
+     .. versionadded:: v0.16
+
    :term:`b4.review-tui-disable-mouse`
      Disable mouse support in the review TUI. When set, the terminal's
      native text selection works normally instead of being captured by the

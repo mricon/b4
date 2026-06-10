@@ -136,7 +136,7 @@ def make_reply(
     else:
         msg.add_header('Subject', 'Re: ' + subject)
 
-    msg['Message-Id'] = b4.make_msgid(idstring='b4-ty')
+    msg['Message-Id'] = b4.make_msgid(idstring='b4-ty', allow_custom_msgid_cmd=True)
     msg['Date'] = email.utils.formatdate(localtime=True)
     body = Template(reply_template).safe_substitute(jsondata)
     msg.set_payload(body, charset='utf-8')

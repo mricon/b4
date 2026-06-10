@@ -179,6 +179,10 @@ DEFAULT_CONFIG: ConfigDictT = {
     'review-no-patatt-sign': None,
     # Send to myself
     'send-me-too': 'yes',
+    # Command whose stdout is used as the Message-Id for replies and notifications
+    # (review replies, follow-up replies, and thank-you notes). Series patches sent
+    # with "b4 prep/send" keep their templated message-ids and are not affected.
+    'custom-msgid-cmd': None,
 }
 
 # This is where we store actual config
@@ -2533,7 +2537,7 @@ class LoreMessage:
         references = LoreMessage.clean_header(self.msg.get('References', '') or '')
         msg['References'] = f'{references} <{self.msgid}>'.strip()
         msg['Date'] = email.utils.formatdate(localtime=True)
-        msg['Message-Id'] = make_msgid(idstring='b4-reply')
+        msg['Message-Id'] = make_msgid(idstring='b4-reply', allow_custom_msgid_cmd=True)
         return msg
 
     @staticmethod
@@ -5890,8 +5894,38 @@ def get_mailfrom() -> Tuple[str, str]:
     return str(usercfg.get('name', '')), str(usercfg.get('email', ''))
 
 
-def make_msgid(idstring: Optional[str] = None, domain: str = 'b4') -> str:
-    """Wraps email.utils.make_msgid() to avoid hostname-derived message-ids."""
+def make_msgid(
+    idstring: Optional[str] = None,
+    domain: str = 'b4',
+    allow_custom_msgid_cmd: bool = False,
+) -> str:
+    """Wraps email.utils.make_msgid() to avoid hostname-derived message-ids.
+
+    When allow_custom_msgid_cmd is set and b4.custom-msgid-cmd is configured,
+    run that command and use its stdout as the Message-Id (angle brackets
+    optional), falling back to the built-in id when the command is unset,
+    produces no output, or fails.
+    """
+    if allow_custom_msgid_cmd:
+        config = get_main_config()
+        cmdstr = config.get('custom-msgid-cmd')
+        if isinstance(cmdstr, (list, tuple)):
+            cmdstr = cmdstr[0] if cmdstr else None
+        if cmdstr:
+            sp = shlex.shlex(str(cmdstr), posix=True)
+            sp.whitespace_split = True
+            args = [os.path.expanduser(os.path.expandvars(a)) for a in sp]
+            try:
+                out = subprocess.check_output(args, text=True).strip()
+                if out:
+                    if not out.startswith('<'):
+                        out = f'<{out}>'
+                    return out
+                logger.warning('custom-msgid-cmd %s produced no output', args)
+            except (OSError, subprocess.SubprocessError) as ex:
+                logger.warning(
+                    'custom-msgid-cmd failed (%s); using built-in message-id', ex
+                )
     return email.utils.make_msgid(idstring=idstring, domain=domain)
 
 

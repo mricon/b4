@@ -93,6 +93,54 @@ def test_make_msgid_avoids_host_domain_by_default() -> None:
     assert _msgid_domain(b4_msgid) != socket.getfqdn()
 
 
+def test_make_msgid_custom_cmd_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG, 'custom-msgid-cmd', 'echo custom-1234@example.com'
+    )
+    # The custom command is only consulted when explicitly allowed.
+    assert b4.make_msgid(allow_custom_msgid_cmd=True) == '<custom-1234@example.com>'
+    # Without the opt-in, the built-in id is used and the command is ignored.
+    assert _msgid_domain(b4.make_msgid(idstring='b4-review')) == 'b4'
+
+
+def test_make_msgid_custom_cmd_preserves_brackets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG, 'custom-msgid-cmd', 'echo <wrapped-5678@example.com>'
+    )
+    assert b4.make_msgid(allow_custom_msgid_cmd=True) == '<wrapped-5678@example.com>'
+
+
+def test_make_msgid_custom_cmd_list_uses_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Config options defined multiple times arrive as a list; use the first.
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG,
+        'custom-msgid-cmd',
+        ['echo first@example.com', 'echo second@example.com'],
+    )
+    assert b4.make_msgid(allow_custom_msgid_cmd=True) == '<first@example.com>'
+
+
+@pytest.mark.parametrize(
+    'cmdstr',
+    [
+        None,  # unset
+        'false',  # command fails
+        'true',  # command succeeds but produces no output
+    ],
+)
+def test_make_msgid_custom_cmd_falls_back(
+    monkeypatch: pytest.MonkeyPatch, cmdstr: Optional[str]
+) -> None:
+    monkeypatch.setitem(b4.MAIN_CONFIG, 'custom-msgid-cmd', cmdstr)
+    msgid = b4.make_msgid(idstring='b4-ty', allow_custom_msgid_cmd=True)
+    assert _msgid_domain(msgid) == 'b4'
+    assert msgid.endswith('.b4-ty@b4>')
+
+
 @pytest.mark.parametrize(
     'source,expected',
     [

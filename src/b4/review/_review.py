@@ -2697,7 +2697,7 @@ def _build_review_email(
     else:
         msg['References'] = f'<{header_info["msgid"]}>'
     msg['Date'] = email.utils.formatdate(localtime=True)
-    msg['Message-Id'] = b4.make_msgid(idstring='b4-review')
+    msg['Message-Id'] = b4.make_msgid(idstring='b4-review', allow_custom_msgid_cmd=True)
 
     return msg
 
