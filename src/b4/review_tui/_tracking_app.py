@@ -2288,11 +2288,18 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         take_screen: 'TakeScreen',
         series: Dict[str, Any],
     ) -> None:
-        """Handle take screen result — proceed to cherry-pick or confirm."""
+        """Handle take screen result — proceed to patch selection or confirm.
+
+        The cherry-pick method always offers the patch picker. The merge
+        method offers it only when some patches are skipped, so a merge can
+        still produce a cover-letter merge commit while excluding the
+        skipped patches; with nothing skipped it merges the whole series.
+        """
         if not confirmed:
             return
-        if take_screen.method_result == 'cherry-pick':
-            # Load tracking to get the patch list for cherry-pick selection
+        method = take_screen.method_result
+        if method in ('cherry-pick', 'merge'):
+            # Load tracking to get the patch list for selection
             topdir = b4.git_get_toplevel()
             if not topdir:
                 self.notify('Not in a git repository', severity='error')
@@ -2312,25 +2319,27 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 for i, p in enumerate(patches)
                 if b4.review._get_patch_state(p, usercfg) != 'skip'
             ]
-            # Only pre-populate if some patches are actually skipped
-            if len(preselected) == len(patches):
-                preselected = []
-            pick_screen = CherryPickScreen(patches, preselected=preselected or None)
-            self.push_screen(
-                pick_screen,
-                callback=lambda picked: self._on_cherrypick_confirmed(
-                    picked, change_id, review_branch, take_screen, series, pick_screen
-                ),
-            )
-        else:
-            self._show_take_confirm(
-                take_screen.method_result,
-                take_screen.target_result,
-                change_id,
-                review_branch,
-                take_screen,
-                series,
-            )
+            has_skips = len(preselected) != len(patches)
+            # Merge with nothing skipped takes the whole series, no picker.
+            if method == 'cherry-pick' or has_skips:
+                # Only pre-populate when some patches are actually skipped
+                pre = preselected if has_skips else None
+                pick_screen = CherryPickScreen(patches, preselected=pre)
+                self.push_screen(
+                    pick_screen,
+                    callback=lambda picked: self._on_cherrypick_confirmed(
+                        picked, change_id, review_branch, take_screen, series, pick_screen
+                    ),
+                )
+                return
+        self._show_take_confirm(
+            method,
+            take_screen.target_result,
+            change_id,
+            review_branch,
+            take_screen,
+            series,
+        )
 
     def _on_cherrypick_confirmed(
         self,
@@ -2341,11 +2350,16 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         series: Dict[str, Any],
         pick_screen: 'CherryPickScreen',
     ) -> None:
-        """Handle cherry-pick selection — proceed to confirm screen."""
+        """Handle patch selection — proceed to confirm screen.
+
+        Preserves the originally chosen method (cherry-pick or merge) so a
+        skip-trimmed merge still produces a merge commit rather than a
+        sequence of cherry-picks.
+        """
         if not confirmed:
             return
         self._show_take_confirm(
-            'cherry-pick',
+            take_screen.method_result,
             take_screen.target_result,
             change_id,
             review_branch,
@@ -2402,7 +2416,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         self._invalidate_caches(change_id)
         if method == 'merge':
             with self.suspend():
-                self._do_take_merge(change_id, review_branch, take_screen, series)
+                self._do_take_merge(
+                    change_id, review_branch, take_screen, series, cherrypick=cherrypick
+                )
             self._load_series()
         else:
             with self.suspend():
@@ -2492,8 +2508,14 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         review_branch: str,
         take_screen: 'TakeScreen',
         series: Dict[str, Any],
+        cherrypick: Optional[List[int]] = None,
     ) -> None:
-        """Perform a merge-based take operation."""
+        """Perform a merge-based take operation.
+
+        When *cherrypick* is set, only those 1-based patch indices are
+        included in the merged side, allowing a cover-letter merge commit
+        that excludes skipped patches.
+        """
         target_branch = take_screen.target_result
 
         # Setup
@@ -2503,7 +2525,9 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
             return
 
         # Prepare trailer-amended mbox bytes from local review branch
-        ambytes = self._prepare_am_messages(review_branch, take_screen, series)
+        ambytes = self._prepare_am_messages(
+            review_branch, take_screen, series, cherrypick=cherrypick
+        )
         if ambytes is None:
             return
 
@@ -2544,8 +2568,11 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
         subject = t_series.get('subject', '')
         clean_subject = b4.LoreSubject(subject).subject or subject
 
-        # Determine number of patches
-        num_patches = len(tracking.get('patches', []))
+        # Determine number of patches actually being merged
+        if cherrypick:
+            num_patches = len(cherrypick)
+        else:
+            num_patches = len(tracking.get('patches', []))
 
         # Populate template
         tptvals = {
@@ -2676,6 +2703,7 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 review_branch,
                 target_branch,
                 commit_ids,
+                cherrypick=cherrypick,
                 accepted=take_screen.accept_series,
             )
 

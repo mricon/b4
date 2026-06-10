@@ -25,6 +25,7 @@ import b4.review.tracking as tracking
 from b4.review_tui._modals import (
     ActionItem,
     ActionScreen,
+    CherryPickScreen,
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
@@ -2271,6 +2272,99 @@ class TestSeriesLifecycle:
         assert row['status'] == 'partial', (
             f'status should stay partial after v2 ingestion, got {row["status"]!r}'
         )
+
+
+class TestMergeTakeSkipRouting:
+    """Take routing when patches are skipped (bug 6d1d35c).
+
+    The merge method must still be usable with skipped patches: it should
+    offer the patch picker (pre-deselecting skipped patches) so a
+    cover-letter merge commit can exclude them, while a merge with nothing
+    skipped takes the whole series without prompting.
+    """
+
+    def _setup_branch(
+        self, gitdir: str, change_id: str, skip_indices: List[int]
+    ) -> str:
+        branch = _create_review_branch(gitdir, change_id, status='reviewing')
+        cover_text, trk = b4.review.load_tracking(gitdir, branch)
+        usercfg = b4.get_user_config()
+        patches: List[Dict[str, Any]] = []
+        for i in range(1, 4):
+            p: Dict[str, Any] = {'subject': f'patch {i}', 'message-id': f'p{i}@ex.com'}
+            if i in skip_indices:
+                b4.review._set_patch_state(p, usercfg, 'skip')
+            patches.append(p)
+        trk['patches'] = patches
+        b4.review.save_tracking_ref(gitdir, branch, cover_text, trk)
+        return branch
+
+    def _route(
+        self, gitdir: str, branch: str, method: str
+    ) -> tuple[list, list]:
+        from types import SimpleNamespace
+
+        app = TrackingApp.__new__(TrackingApp)
+        pushed: list = []
+        confirmed: list = []
+        app.push_screen = lambda screen, callback=None: pushed.append(screen)  # type: ignore[method-assign]
+        app._show_take_confirm = (  # type: ignore[method-assign]
+            lambda *a, **k: confirmed.append((a, k))
+        )
+        app.notify = lambda *a, **k: None  # type: ignore[method-assign]
+        take_screen = SimpleNamespace(method_result=method, target_result='master')
+        app._on_take_confirmed(
+            True, 'cid', branch, take_screen, {'subject': 'Test series'}
+        )
+        return pushed, confirmed
+
+    def test_merge_with_skips_opens_picker(self, gitdir: str) -> None:
+        """Merge + skipped patches → picker with skipped pre-deselected."""
+        branch = self._setup_branch(gitdir, 'merge-skip-1', skip_indices=[2])
+        pushed, confirmed = self._route(gitdir, branch, 'merge')
+        assert len(pushed) == 1, 'expected the patch picker to be pushed'
+        assert isinstance(pushed[0], CherryPickScreen)
+        assert not confirmed, 'should not skip straight to confirm'
+        # Patch 2 is skipped → only 1 and 3 pre-selected
+        assert pushed[0]._preselected == [1, 3]
+
+    def test_merge_without_skips_goes_straight_to_confirm(self, gitdir: str) -> None:
+        """Merge with nothing skipped → no picker, whole series merged."""
+        branch = self._setup_branch(gitdir, 'merge-noskip-1', skip_indices=[])
+        pushed, confirmed = self._route(gitdir, branch, 'merge')
+        assert not pushed, 'no picker expected when nothing is skipped'
+        assert len(confirmed) == 1
+        args, kwargs = confirmed[0]
+        assert args[0] == 'merge'
+        assert kwargs.get('cherrypick') is None
+
+    def test_cherrypick_always_opens_picker(self, gitdir: str) -> None:
+        """Cherry-pick offers the picker even with nothing skipped."""
+        branch = self._setup_branch(gitdir, 'cp-noskip-1', skip_indices=[])
+        pushed, confirmed = self._route(gitdir, branch, 'cherry-pick')
+        assert len(pushed) == 1
+        assert isinstance(pushed[0], CherryPickScreen)
+        assert not confirmed
+
+    def test_cherrypick_confirmed_preserves_merge_method(self, gitdir: str) -> None:
+        """A skip-trimmed merge keeps method='merge' after the picker."""
+        from types import SimpleNamespace
+
+        branch = self._setup_branch(gitdir, 'merge-keep-1', skip_indices=[2])
+        app = TrackingApp.__new__(TrackingApp)
+        confirmed: list = []
+        app._show_take_confirm = (  # type: ignore[method-assign]
+            lambda *a, **k: confirmed.append((a, k))
+        )
+        take_screen = SimpleNamespace(method_result='merge', target_result='master')
+        pick_screen = SimpleNamespace(selected_indices=[1, 3])
+        app._on_cherrypick_confirmed(
+            True, 'cid', branch, take_screen, {'subject': 'Test'}, pick_screen
+        )
+        assert len(confirmed) == 1
+        args, kwargs = confirmed[0]
+        assert args[0] == 'merge', 'method must remain merge, not cherry-pick'
+        assert kwargs.get('cherrypick') == [1, 3]
 
 
 @patch('b4.review.tracking.get_review_target_branches', return_value=['master'])
