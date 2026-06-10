@@ -526,10 +526,9 @@ def _run_builtin_sashiko(msg: EmailMessage, sashiko_url: str) -> List[Dict[str, 
     if sashiko_patch_id is None:
         return []
 
-    i = 1
-    for review in reviews:
+    for part, review in enumerate(reviews, start=1):
         if review.get('patch_id') == sashiko_patch_id:
-            patchset_url += f'?part={i}'
+            patchset_url += f'?part={part}'
             review_status = review.get('status', '')
             if review_status == 'Skipped':
                 result_msg = review.get('result', '') or 'Skipped'
@@ -572,7 +571,6 @@ def _run_builtin_sashiko(msg: EmailMessage, sashiko_url: str) -> List[Dict[str, 
             if findings:
                 result['details'] = json.dumps(findings)
             return [result]
-        i += 1
 
     # No review found for this patch
     return [
