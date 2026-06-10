@@ -144,11 +144,14 @@ nnoremap <silent> <buffer> <Plug>(B4DeleteHunk)        :call <SID>B4DeleteHunk()
 nnoremap <silent> <buffer> <Plug>(B4DeleteHunksBefore) :call <SID>B4DeleteHunksBefore()<CR>
 command! -buffer B4DelHunk        call <SID>B4DeleteHunk()
 command! -buffer B4DelHunksBefore call <SID>B4DeleteHunksBefore()
+" <nowait> so these fire immediately: without it, if another (global) plugin
+" maps a longer <LocalLeader> sequence -- e.g. AlignMaps' \Htd shares our \H
+" prefix -- vim would block for 'timeoutlen' waiting for the next key.
 if empty(maparg('<LocalLeader>h', 'n'))
-  nmap <buffer> <LocalLeader>h <Plug>(B4DeleteHunk)
+  nmap <buffer> <nowait> <LocalLeader>h <Plug>(B4DeleteHunk)
 endif
 if empty(maparg('<LocalLeader>H', 'n'))
-  nmap <buffer> <LocalLeader>H <Plug>(B4DeleteHunksBefore)
+  nmap <buffer> <nowait> <LocalLeader>H <Plug>(B4DeleteHunksBefore)
 endif
 
 " ---------------------------------------------------------------------------
@@ -193,7 +196,7 @@ endfunction
 nnoremap <silent> <buffer> <Plug>(B4AdoptComment) :call <SID>B4AdoptComment()<CR>
 command! -buffer B4Adopt call <SID>B4AdoptComment()
 if empty(maparg('<LocalLeader>a', 'n'))
-  nmap <buffer> <LocalLeader>a <Plug>(B4AdoptComment)
+  nmap <buffer> <nowait> <LocalLeader>a <Plug>(B4AdoptComment)
 endif
 
 let b:undo_ftplugin = get(b:, 'undo_ftplugin', '')
