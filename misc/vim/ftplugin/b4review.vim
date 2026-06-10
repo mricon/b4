@@ -127,10 +127,57 @@ if empty(maparg('<LocalLeader>H', 'n'))
   nmap <buffer> <LocalLeader>H <Plug>(B4DeleteHunksBefore)
 endif
 
+" ---------------------------------------------------------------------------
+" Adopting an external reviewer's comment as your own.
+"
+" Agent and other reviewers' comments are loaded as read-only "| "-quoted
+" blocks, which b4 drops when it sends.  Adopting one strips the | prefix so
+" the text becomes a bare comment of your own (which b4 keeps and sends), and
+" drops the reviewer attribution and "via:" provenance lines, leaving just the
+" comment text in place under the same diff line, ready for you to edit.
+"
+"   <LocalLeader>a   adopt the | comment block under the cursor
+"
+" Also available as :B4Adopt and <Plug>(B4AdoptComment).
+
+function! s:B4AdoptComment() abort
+  if getline('.') !~# '^|'
+    echohl WarningMsg | echo 'b4: not on a | comment line' | echohl None
+    return
+  endif
+  let l:s = line('.')
+  while l:s > 1 && getline(l:s - 1) =~# '^|' | let l:s -= 1 | endwhile
+  let l:e = line('.')
+  while l:e < line('$') && getline(l:e + 1) =~# '^|' | let l:e += 1 | endwhile
+  " Strip the | prefix from the comment text, dropping the "| Name <addr>:"
+  " attribution header and the "| via: ..." provenance line.
+  let l:out = []
+  for l:i in range(l:s, l:e)
+    let l:t = getline(l:i)
+    if l:t =~# '^| .*>:$' || l:t =~# '^| via: '
+      continue
+    endif
+    let l:out += [substitute(l:t, '^| \=', '', '')]
+  endfor
+  while len(l:out) && l:out[0] ==# '' | call remove(l:out, 0) | endwhile
+  while len(l:out) && l:out[-1] ==# '' | call remove(l:out, -1) | endwhile
+  execute l:s . ',' . l:e . 'delete _'
+  call append(l:s - 1, l:out)
+  call cursor(l:s, 1)
+endfunction
+
+nnoremap <silent> <buffer> <Plug>(B4AdoptComment) :call <SID>B4AdoptComment()<CR>
+command! -buffer B4Adopt call <SID>B4AdoptComment()
+if empty(maparg('<LocalLeader>a', 'n'))
+  nmap <buffer> <LocalLeader>a <Plug>(B4AdoptComment)
+endif
+
 let b:undo_ftplugin = get(b:, 'undo_ftplugin', '')
       \ . '| setlocal textwidth<'
       \ . '| silent! autocmd! b4review_wrap * <buffer>'
       \ . '| silent! delcommand B4DelHunk'
       \ . '| silent! delcommand B4DelHunksBefore'
+      \ . '| silent! delcommand B4Adopt'
       \ . '| silent! nunmap <buffer> <Plug>(B4DeleteHunk)'
       \ . '| silent! nunmap <buffer> <Plug>(B4DeleteHunksBefore)'
+      \ . '| silent! nunmap <buffer> <Plug>(B4AdoptComment)'

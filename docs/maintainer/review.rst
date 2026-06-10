@@ -535,6 +535,16 @@ The same actions are available as the ``:B4DelHunk`` and
 Press ``u`` to undo. What you leave in the buffer is exactly what gets
 sent.
 
+**Adopting reviewer comments (Vim)**
+
+Comments from AI agents and other reviewers are loaded as read-only
+``|``-quoted blocks, which b4 drops when it sends. To make one your own,
+put the cursor anywhere in the block and press ``<LocalLeader>a`` (or run
+``:B4Adopt``). The ``|`` prefix is stripped and the reviewer attribution
+and ``via:`` provenance lines are removed, leaving just the comment text
+in place under the same diff line, ready for you to edit. Once adopted it
+is treated like any comment you wrote and is included when you send.
+
 *Emacs*
 
 Add this to your ``~/.emacs.d/init.el`` or ``~/.emacs``::
