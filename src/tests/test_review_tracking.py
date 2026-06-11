@@ -2,6 +2,7 @@ import argparse
 import datetime
 import io
 import os
+import pathlib
 import re
 from email.message import EmailMessage
 from typing import Any, Dict
@@ -11,6 +12,7 @@ import pytest
 
 import b4
 import b4.review
+import liblore
 from b4.review import tracking as review_tracking
 from b4.review_tui._modals import SnoozeScreen
 from b4.review_tui._tracking_app import _format_attestation, _format_snooze_until
@@ -2629,3 +2631,82 @@ class TestFormatAttestation:
         text = _format_attestation('weirdvalue')
         assert text is not None
         assert 'weirdvalue' in text.plain
+
+
+# ---------------------------------------------------------------------------
+# Cancellation: update_series_tracking
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateSeriesTrackingCancellation:
+    """OperationCancelledError propagates rather than being swallowed."""
+
+    def test_propagates_when_retrieve_raises(self) -> None:
+        """OperationCancelledError from retrieve_series_messages is re-raised.
+
+        The broad ``except (LookupError, Exception)`` guard in
+        update_series_tracking must not swallow a cancellation — it must
+        bubble up so the TUI worker loop and CLI signal handler can act on it.
+        """
+        series: Dict[str, Any] = {
+            'change_id': 'cancel-test',
+            'revision': 1,
+            'status': 'new',
+            'message_id': 'test@example.com',
+        }
+        with mock.patch(
+            'b4.review._review.retrieve_series_messages',
+            side_effect=liblore.OperationCancelledError('network stalled'),
+        ):
+            with pytest.raises(liblore.OperationCancelledError):
+                b4.review.update_series_tracking(
+                    series, 'test-id', 'https://example.com/%s'
+                )
+
+
+# ---------------------------------------------------------------------------
+# Cancellation: cmd_track
+# ---------------------------------------------------------------------------
+
+
+class TestCmdTrackCancellation:
+    """cmd_track exits with code 130 when the network operation is interrupted."""
+
+    def _make_cmdargs(self) -> argparse.Namespace:
+        return argparse.Namespace(
+            series_id='test@example.com',
+            rethread=None,
+            wantver=None,
+            identifier='test-id',
+        )
+
+    def test_operation_cancelled_exits_130(self, tmp_path: pathlib.Path) -> None:
+        """OperationCancelledError from retrieve_messages causes sys.exit(130)."""
+        cmdargs = self._make_cmdargs()
+        with (
+            mock.patch('b4.review.tracking.resolve_identifier', return_value='test-id'),
+            mock.patch('b4.review.tracking.db_exists', return_value=True),
+            mock.patch(
+                'b4.retrieve_messages',
+                side_effect=liblore.OperationCancelledError('cancelled'),
+            ),
+            mock.patch('b4.git_get_toplevel', return_value=str(tmp_path)),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                review_tracking.cmd_track(cmdargs)
+
+        assert exc_info.value.code == 130
+
+    def test_keyboard_interrupt_exits_130(self, tmp_path: pathlib.Path) -> None:
+        """KeyboardInterrupt from retrieve_messages causes sys.exit(130)."""
+        cmdargs = self._make_cmdargs()
+        with (
+            mock.patch('b4.review.tracking.resolve_identifier', return_value='test-id'),
+            mock.patch('b4.review.tracking.db_exists', return_value=True),
+            mock.patch('b4.retrieve_messages', side_effect=KeyboardInterrupt()),
+            mock.patch('b4.git_get_toplevel', return_value=str(tmp_path)),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                review_tracking.cmd_track(cmdargs)
+
+        assert exc_info.value.code == 130

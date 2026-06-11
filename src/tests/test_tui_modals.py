@@ -10,12 +10,15 @@ tests run without a real terminal.  Only lightweight, self-contained
 modals are exercised here — no database, network, or git needed.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
+from unittest import mock
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Label, ListView
 
+import b4
+import liblore
 from b4.review_tui._modals import (
     TRACKING_HELP_LINES,
     ActionScreen,
@@ -28,6 +31,7 @@ from b4.review_tui._modals import (
     SetStateScreen,
     SnoozeScreen,
     TrailerScreen,
+    UpdateAllScreen,
     UpdateRevisionScreen,
 )
 
@@ -1043,3 +1047,107 @@ class TestUpdateRevisionScreen:
             await pilot.press('enter')
             await pilot.pause()
             assert results == [4]
+
+
+# ---------------------------------------------------------------------------
+# UpdateAllScreen — cancellation behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateAllScreenCancellation:
+    """UpdateAllScreen network-cancellation behaviour.
+
+    These tests verify the two cancellation paths introduced when fixing the
+    "goes off into space non-interruptably" bug:
+
+    * action_cancel() — called by the Escape/q binding while the TUI is live
+    * OperationCancelledError propagating up from update_series_tracking —
+      tested without needing a real HTTP connection
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_lore_node(self) -> Generator[None, None, None]:
+        """Reset the LORENODE singleton so tests don't share cancel state."""
+        saved = b4.LORENODE
+        b4.LORENODE = None
+        yield
+        b4.LORENODE = saved
+
+    # ------------------------------------------------------------------
+    # Sync test — no app context needed
+    # ------------------------------------------------------------------
+
+    def test_action_cancel_sets_flag_and_cancels_node(self) -> None:
+        """action_cancel() flips _cancelled and cancels the lore node.
+
+        Both actions must happen together: setting _cancelled guards the Python
+        loop, while cancel() closes the session so a blocked socket read
+        raises immediately in the worker thread.
+        """
+        screen = UpdateAllScreen(
+            [{'change_id': 'c1', 'subject': '[PATCH] test', 'revision': 1}],
+            'test-id',
+            'https://example.com/%s',
+        )
+        node = b4.get_lore_node()
+
+        screen.action_cancel()
+
+        assert screen._cancelled, '_cancelled must be True after action_cancel'
+        assert node._cancel_event.is_set(), 'cancel event must be set after action_cancel'
+
+    # ------------------------------------------------------------------
+    # Async TUI test — exercises _do_updates loop-break path
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_operation_cancelled_error_breaks_loop(self) -> None:
+        """OperationCancelledError breaks the update loop and preserves partial results.
+
+        The first series succeeds; the second raises OperationCancelledError.
+        The third series must never be attempted, and the modal must dismiss
+        with series_checked == 1.
+        """
+        series_list = [
+            {'change_id': 'c1', 'subject': '[PATCH] series 1', 'revision': 1},
+            {'change_id': 'c2', 'subject': '[PATCH] series 2', 'revision': 1},
+            {'change_id': 'c3', 'subject': '[PATCH] series 3', 'revision': 1},
+        ]
+
+        call_count = 0
+
+        def _mock_update(
+            series: Dict[str, Any],
+            identifier: str,
+            linkmask: str,
+            topdir: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise liblore.OperationCancelledError('network stalled')
+            return {
+                'new_revisions': 0,
+                'new_trailers': 0,
+                'error': None,
+                'counts_updated': False,
+                'promoted': False,
+            }
+
+        dismissed: List[Optional[Dict[str, Any]]] = []
+
+        app = ModalTestApp()
+        with mock.patch('b4.review.update_series_tracking', side_effect=_mock_update):
+            async with app.run_test(size=(120, 30)) as pilot:
+                app.push_screen(
+                    UpdateAllScreen(series_list, 'test-id', 'https://ex.com/%s'),
+                    dismissed.append,
+                )
+                for _ in range(5):
+                    await pilot.pause()
+
+        assert dismissed, 'modal should have dismissed with a result'
+        result = dismissed[0]
+        assert result is not None
+        assert result['series_checked'] == 1, 'only first series should be counted'
+        assert call_count == 2, 'cancelled on second call; third never attempted'
