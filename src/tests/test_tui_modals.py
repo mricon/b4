@@ -1094,7 +1094,9 @@ class TestUpdateAllScreenCancellation:
         screen.action_cancel()
 
         assert screen._cancelled, '_cancelled must be True after action_cancel'
-        assert node._cancel_event.is_set(), 'cancel event must be set after action_cancel'
+        assert node._cancel_event.is_set(), (
+            'cancel event must be set after action_cancel'
+        )
 
     # ------------------------------------------------------------------
     # Async TUI test — exercises _do_updates loop-break path

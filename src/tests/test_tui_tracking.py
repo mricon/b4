@@ -2389,9 +2389,7 @@ class TestMergeTakeSkipRouting:
         b4.review.save_tracking_ref(gitdir, branch, cover_text, trk)
         return branch
 
-    def _route(
-        self, gitdir: str, branch: str, method: str
-    ) -> tuple[list, list]:
+    def _route(self, gitdir: str, branch: str, method: str) -> tuple[list, list]:
         from types import SimpleNamespace
 
         app = TrackingApp.__new__(TrackingApp)

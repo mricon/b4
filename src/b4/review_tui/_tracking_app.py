@@ -2328,7 +2328,12 @@ class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
                 self.push_screen(
                     pick_screen,
                     callback=lambda picked: self._on_cherrypick_confirmed(
-                        picked, change_id, review_branch, take_screen, series, pick_screen
+                        picked,
+                        change_id,
+                        review_branch,
+                        take_screen,
+                        series,
+                        pick_screen,
                     ),
                 )
                 return

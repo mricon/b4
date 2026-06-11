@@ -477,7 +477,10 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
             msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
             if wanted_ver > 1:
                 msgs = b4.mbox.get_extra_series(
-                    msgs, direction=-1, wantvers=list(range(1, wanted_ver)), nocache=True
+                    msgs,
+                    direction=-1,
+                    wantvers=list(range(1, wanted_ver)),
+                    nocache=True,
                 )
             # Rebuild the mailbox with all discovered messages
             lmbx = b4.LoreMailbox()
