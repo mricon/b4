@@ -58,6 +58,8 @@ start tracking.
 
 B4 fetches the series from lore, discovers all available revisions
 (older and newer), and stores everything in the tracking database.
+Press ``Ctrl-C`` at any point to cancel the network operation; b4
+exits cleanly with status 130.
 
 Tracking unthreaded series
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -175,9 +177,11 @@ Key           Action
 ``a``         Action menu — context-sensitive actions (see below)
 ``d``         Range-diff between revisions
 ``u``         Update — fetch latest trailers and check for newer
-              revisions for the selected series
+              revisions for the selected series; press ``Escape`` or
+              ``q`` to cancel
 ``U``         Update all — same as ``u`` but for all tracked series
-              (skipping snoozed)
+              (skipping snoozed); press ``Escape`` or ``q`` to cancel
+              mid-run — series already updated are saved
 ``l``         Limit — filter the list of displayed series
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)

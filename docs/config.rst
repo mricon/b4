@@ -219,6 +219,24 @@ Example ``~/.gitconfig``::
 
      .. versionadded:: v0.16
 
+   :term:`lore.requesttimeout`
+     Per-request HTTP timeout in seconds.  Accepts a single float
+     (applied to both the connect and read phase) or a
+     ``connect,read`` pair for separate timeouts.  Lower the read
+     value if you want faster failover to a mirror on slow connections;
+     raise it if your network is consistently slow but eventually
+     succeeds.  Set to ``0`` to disable the timeout entirely (not
+     recommended — a stalled connection will hang indefinitely).
+
+     Example::
+
+         [lore]
+             requesttimeout = 5,60
+
+     Default: ``5.0,30.0`` (5 s connect, 30 s read)
+
+     .. versionadded:: v0.16
+
    :term:`lore.useragentplus`
      A unique identifier appended to the ``User-Agent`` header as
      ``b4/version+IDENTIFIER``.  This allows server operators to
