@@ -28,7 +28,7 @@ dependencies = [
     "dkimpy>=1.0,<2.0",
     "patatt>=0.6,<2.0",
     "ezgb>=0.1",
-    "liblore>=0.7",
+    "liblore>=0.8",
 ]
 
 [dependency-groups]
@@ -145,9 +145,6 @@ reportUnknownVariableType = false
 # Might be good to clean this up.
 reportPrivateUsage = false
 reportUnusedFunction = false
-
-[tool.uv.sources]
-liblore = { path = "liblore", editable = true }
 
 [tool.ty.src]
 exclude = ["ezgb/", "liblore/", "patatt/"]
