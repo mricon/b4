@@ -146,6 +146,9 @@ reportUnknownVariableType = false
 reportPrivateUsage = false
 reportUnusedFunction = false
 
+[tool.uv.sources]
+liblore = { path = "liblore", editable = true }
+
 [tool.ty.src]
 exclude = ["ezgb/", "liblore/", "patatt/"]
 

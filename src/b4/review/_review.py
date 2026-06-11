@@ -1992,6 +1992,8 @@ def update_series_tracking(
 
     try:
         msgs = retrieve_series_messages(series, identifier)
+    except liblore.OperationCancelledError:
+        raise
     except (LookupError, Exception) as ex:
         result['error'] = str(ex)
         return result

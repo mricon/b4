@@ -1938,6 +1938,7 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         # ── Try local blob first, fall back to lore in background ────────────
         blob_sha = self._series.get('thread-blob', '')
         self.notify('Loading follow-ups\u2026')
+        b4.get_lore_node().reset_cancel()
         self.run_worker(
             lambda: self._fetch_followups_bg(cover_msgid, blob_sha),
             name='_followup_worker',

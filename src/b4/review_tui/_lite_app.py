@@ -510,6 +510,7 @@ class LiteThreadScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         _fix_ansi_theme(self.app)
+        b4.get_lore_node().reset_cancel()
         self.run_worker(self._fetch_thread, name='_fetch_thread', thread=True)
 
     def _refresh_msg_count(self, total_messages: int) -> None:

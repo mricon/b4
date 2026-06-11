@@ -11,8 +11,10 @@ import email.utils
 import json
 import os
 import pathlib
+import signal
 import sqlite3
 import sys
+import types
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import b4
@@ -439,42 +441,53 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     cmdargs.wantname = None
     cmdargs.wantver = None
 
-    # Retrieve the series
-    if rethread:
-        logger.info('Rethreading series from %d message IDs', len(rethread))
-    else:
-        logger.info('Retrieving series: %s', series_id)
-    _msgid, msgs = b4.retrieve_messages(cmdargs)
-    if not msgs:
-        logger.critical('Could not retrieve series: %s', series_id)
-        sys.exit(1)
+    # Retrieve the series — cancellable via Ctrl-C
+    def _sigint_cancel(sig: int, frame: Optional[types.FrameType]) -> None:
+        b4.get_lore_node().cancel()
+        raise KeyboardInterrupt()
 
-    # Build the mailbox to determine the series revision
-    lmbx = b4.LoreMailbox()
-    for msg in msgs:
-        lmbx.add_message(msg)
+    _old_sigint = signal.signal(signal.SIGINT, _sigint_cancel)
+    try:
+        if rethread:
+            logger.info('Rethreading series from %d message IDs', len(rethread))
+        else:
+            logger.info('Retrieving series: %s', series_id)
+        _msgid, msgs = b4.retrieve_messages(cmdargs)
+        if not msgs:
+            logger.critical('Could not retrieve series: %s', series_id)
+            sys.exit(1)
 
-    if not lmbx.series:
-        logger.critical('No series found in retrieved messages')
-        sys.exit(1)
-
-    # Get the latest revision by default, or specified version
-    if hasattr(cmdargs, 'wantver') and cmdargs.wantver:
-        wanted_ver = cmdargs.wantver
-    else:
-        wanted_ver = max(lmbx.series.keys())
-
-    # Discover all available revisions (newer and older)
-    if b4.can_network:
-        msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
-        if wanted_ver > 1:
-            msgs = b4.mbox.get_extra_series(
-                msgs, direction=-1, wantvers=list(range(1, wanted_ver)), nocache=True
-            )
-        # Rebuild the mailbox with all discovered messages
+        # Build the mailbox to determine the series revision
         lmbx = b4.LoreMailbox()
         for msg in msgs:
             lmbx.add_message(msg)
+
+        if not lmbx.series:
+            logger.critical('No series found in retrieved messages')
+            sys.exit(1)
+
+        # Get the latest revision by default, or specified version
+        if hasattr(cmdargs, 'wantver') and cmdargs.wantver:
+            wanted_ver = cmdargs.wantver
+        else:
+            wanted_ver = max(lmbx.series.keys())
+
+        # Discover all available revisions (newer and older)
+        if b4.can_network:
+            msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
+            if wanted_ver > 1:
+                msgs = b4.mbox.get_extra_series(
+                    msgs, direction=-1, wantvers=list(range(1, wanted_ver)), nocache=True
+                )
+            # Rebuild the mailbox with all discovered messages
+            lmbx = b4.LoreMailbox()
+            for msg in msgs:
+                lmbx.add_message(msg)
+    except (KeyboardInterrupt, liblore.OperationCancelledError):
+        logger.info('Interrupted, aborting')
+        sys.exit(130)
+    finally:
+        signal.signal(signal.SIGINT, _old_sigint)
 
     lser = lmbx.get_series(wanted_ver, sloppytrailers=False, codereview_trailers=False)
     if not lser:

@@ -39,6 +39,7 @@ import b4
 import b4.review
 import b4.review.tracking
 import b4.ty
+import liblore
 from b4.review_tui._common import (
     CI_CHECK_LABELS,
     JKListNavMixin,
@@ -1628,6 +1629,7 @@ class _FetchViewerScreen(ModalScreen[None]):
             yield Static('Escape close', id='fv-hint')
 
     def on_mount(self) -> None:
+        b4.get_lore_node().reset_cancel()
         self.query_one('#fv-viewer', RichLog).display = False
         self.query_one('#fv-hint', Static).display = False
         self.run_worker(self._fetch, name='_fv_fetch', thread=True)
@@ -2205,6 +2207,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
             self.run_worker(self._prepare_local, name='_prepare', thread=True)
         elif self._message_id:
             self._update_status('Fetching series\u2026', 'warn')
+            b4.get_lore_node().reset_cancel()
             self.run_worker(self._prepare_remote, name='_prepare', thread=True)
         else:
             self._update_status(f'Branch exists: {value}', 'pass')
@@ -2348,6 +2351,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         self.dismiss('')
 
     def action_cancel(self) -> None:
+        b4.get_lore_node().cancel()
         self.dismiss(None)
 
 
@@ -2751,10 +2755,12 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
             )
 
     def on_mount(self) -> None:
+        b4.get_lore_node().reset_cancel()
         self.run_worker(self._do_updates, name='_do_updates', thread=True)
 
     def action_cancel(self) -> None:
         self._cancelled = True
+        b4.get_lore_node().cancel()
 
     def _do_updates(self) -> Dict[str, Any]:
         with _quiet_worker():
@@ -2776,12 +2782,16 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
                 subject = series.get('subject', '(no subject)')
                 self.app.call_from_thread(self._update_progress, i, subject)
 
-                r = b4.review.update_series_tracking(
-                    series,
-                    self._identifier,
-                    self._linkmask,
-                    topdir=self._topdir,
-                )
+                try:
+                    r = b4.review.update_series_tracking(
+                        series,
+                        self._identifier,
+                        self._linkmask,
+                        topdir=self._topdir,
+                    )
+                except liblore.OperationCancelledError:
+                    self._cancelled = True
+                    break
                 self._result['series_checked'] += 1
                 if r.get('new_revisions') or r.get('new_trailers'):
                     self._result['series_updated'] += 1
