@@ -2389,20 +2389,26 @@ class TestMergeTakeSkipRouting:
         b4.review.save_tracking_ref(gitdir, branch, cover_text, trk)
         return branch
 
-    def _route(self, gitdir: str, branch: str, method: str) -> tuple[list, list]:
+    def _route(
+        self, gitdir: str, branch: str, method: str
+    ) -> tuple[list[Any], list[Any]]:
         from types import SimpleNamespace
 
         app = TrackingApp.__new__(TrackingApp)
-        pushed: list = []
-        confirmed: list = []
-        app.push_screen = lambda screen, callback=None: pushed.append(screen)  # type: ignore[method-assign]
+        pushed: list[Any] = []
+        confirmed: list[Any] = []
+        app.push_screen = lambda screen, callback=None: pushed.append(screen)  # type: ignore[method-assign, assignment]
         app._show_take_confirm = (  # type: ignore[method-assign]
             lambda *a, **k: confirmed.append((a, k))
         )
         app.notify = lambda *a, **k: None  # type: ignore[method-assign]
-        take_screen = SimpleNamespace(method_result=method, target_result='master')
+        take_screen: Any = SimpleNamespace(method_result=method, target_result='master')
         app._on_take_confirmed(
-            True, 'cid', branch, take_screen, {'subject': 'Test series'}
+            True,
+            'cid',
+            branch,
+            take_screen,
+            {'subject': 'Test series'},
         )
         return pushed, confirmed
 
@@ -2440,14 +2446,21 @@ class TestMergeTakeSkipRouting:
 
         branch = self._setup_branch(gitdir, 'merge-keep-1', skip_indices=[2])
         app = TrackingApp.__new__(TrackingApp)
-        confirmed: list = []
+        confirmed: list[Any] = []
         app._show_take_confirm = (  # type: ignore[method-assign]
             lambda *a, **k: confirmed.append((a, k))
         )
-        take_screen = SimpleNamespace(method_result='merge', target_result='master')
-        pick_screen = SimpleNamespace(selected_indices=[1, 3])
+        take_screen: Any = SimpleNamespace(
+            method_result='merge', target_result='master'
+        )
+        pick_screen: Any = SimpleNamespace(selected_indices=[1, 3])
         app._on_cherrypick_confirmed(
-            True, 'cid', branch, take_screen, {'subject': 'Test'}, pick_screen
+            True,
+            'cid',
+            branch,
+            take_screen,
+            {'subject': 'Test'},
+            pick_screen,
         )
         assert len(confirmed) == 1
         args, kwargs = confirmed[0]

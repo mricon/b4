@@ -861,7 +861,9 @@ class TestBuildReviewEmailReplyPath:
         }
         msg = review._build_review_email(self._series(), None, rev, '', '', None)
         assert msg is not None
-        body = msg.get_payload(decode=True).decode()
+        raw = msg.get_payload(decode=True)
+        assert isinstance(raw, bytes)
+        body = raw.decode()
         assert body.count('Reviewed-by: Me <me@example.com>') == 1
 
     @mock.patch('b4.get_email_signature', return_value='sig')
@@ -879,7 +881,9 @@ class TestBuildReviewEmailReplyPath:
         rev = {'reply': reply, 'trailers': ['Reviewed-by: Me <me@example.com>']}
         msg = review._build_review_email(self._series(), None, rev, '', '', None)
         assert msg is not None
-        body = msg.get_payload(decode=True).decode()
+        raw = msg.get_payload(decode=True)
+        assert isinstance(raw, bytes)
+        body = raw.decode()
         # The "stable:" line stays in place, once, right after the Cc line.
         assert body.count('stable: without that fix things break.') == 1
         cc_idx = body.index('You need to Cc')
@@ -900,7 +904,9 @@ class TestBuildReviewEmailReplyPath:
         rev = {'reply': reply}
         msg = review._build_review_email(self._series(), None, rev, '', '', None)
         assert msg is not None
-        body = msg.get_payload(decode=True).decode()
+        raw = msg.get_payload(decode=True)
+        assert isinstance(raw, bytes)
+        body = raw.decode()
         assert 'Please fix.' in body
         assert '> +a' not in body and '> +b' not in body
 
