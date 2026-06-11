@@ -505,10 +505,11 @@ Copy or symlink the files into your Vim configuration::
     ln -s /path/to/b4/misc/vim/ftdetect/b4review.vim ~/.vim/ftdetect/
     ln -s /path/to/b4/misc/vim/ftplugin/b4review.vim ~/.vim/ftplugin/
 
-The ftplugin disables auto-wrapping of quoted lines and adds the
-hunk-trimming mappings described below, so install it alongside the
-syntax file. If ftdetect does not work with your plugin manager, add
-this to your ``~/.vimrc`` instead::
+The ftplugin disables auto-wrapping and auto-reflow of quoted lines (so
+an aggressive ``formatoptions`` cannot silently rewrap or join the diff)
+and adds the hunk-trimming mappings described below, so install it
+alongside the syntax file. If ftdetect does not work with your plugin
+manager, add this to your ``~/.vimrc`` instead::
 
     augroup filetypedetect
       autocmd BufNewFile,BufRead *.b4-review.eml set filetype=b4review
@@ -534,6 +535,30 @@ The same actions are available as the ``:B4DelHunk`` and
 ``<Plug>(B4DeleteHunksBefore)`` if you prefer to bind your own keys.
 Press ``u`` to undo. What you leave in the buffer is exactly what gets
 sent.
+
+By default only the mappings above leave a marker. If you would like the
+same breadcrumb whenever you delete quoted lines with ordinary editing
+commands — ``dd``, ``5dd``, ``dap``, a visual-mode ``d``, ``:d`` and so
+on — opt in from your ``~/.vimrc``::
+
+    let g:b4review_auto_marker = 1
+
+Only the quoted diff (``>``) lines you delete are counted; your own notes
+and ``|`` external comments are not, and a delete that removes no quoted
+lines leaves no marker. This is off by default because reacting to every
+edit can be surprising. Two global variables tune the feature:
+
+``g:b4review_skipped_marker``
+    Master switch, ``1`` by default. Set it to ``0`` to disable the whole
+    skip-marker feature — the mappings, the commands and the auto-marker
+    — leaving only the syntax highlighting and the comment adoption
+    described below.
+
+``g:b4review_auto_marker``
+    ``0`` by default. Set it to ``1`` to also leave a marker when you
+    delete quoted lines with ordinary editing commands, not just the
+    mappings. Has no effect when the master switch is off, and can be
+    overridden per-buffer with ``b:b4review_auto_marker``.
 
 **Adopting reviewer comments (Vim)**
 
@@ -566,6 +591,21 @@ These run the ``b4-review-delete-hunk``, ``b4-review-delete-hunks-before``
 and ``b4-review-adopt-comment`` commands respectively. The trimming
 commands leave a ``[ ... NN lines skipped ... ]`` marker where context was
 removed; ``undo`` restores it.
+
+As in Vim, only the trimming commands leave a marker by default. The same
+two settings tune the feature, customizable with ``M-x customize-group
+RET b4-review`` or set directly in your init file:
+
+``b4-review-skipped-marker``
+    Master switch, ``t`` by default. Set it to ``nil`` to disable the
+    whole skip-marker feature — the commands and the auto-marker —
+    leaving only syntax highlighting and comment adoption.
+
+``b4-review-auto-marker``
+    ``nil`` by default. Set it to ``t`` to also leave a marker when you
+    delete quoted lines with ordinary editing commands — ``kill-region``,
+    ``kill-whole-line``, evil ``dd`` and so on — not just the commands.
+    (Requires the master switch to be on.)
 
 **Per-patch states**
 

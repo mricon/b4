@@ -21,6 +21,36 @@
   "Major mode for b4 review editor."
   :group 'tools)
 
+(defcustom b4-review-skipped-marker t
+  "Master switch for the \"NN lines skipped\" marker feature.
+When non-nil (the default), the `b4-review-delete-hunk' /
+`b4-review-delete-hunks-before' commands and -- if `b4-review-auto-marker'
+is also on -- the automatic marker on a plain delete are available.  Set
+to nil to turn the whole feature off, leaving only syntax highlighting and
+`b4-review-adopt-comment'."
+  :type 'boolean
+  :group 'b4-review)
+
+(defcustom b4-review-auto-marker nil
+  "When non-nil, a plain delete of quoted lines leaves a skip marker.
+A line-wise delete with ordinary editing commands (kill-whole-line, evil
+`dd', killing a region of whole lines ...) that removes quoted diff lines
+drops the same \"[ ... NN lines skipped ... ]\" breadcrumb the trimming
+commands leave, counting only the quoted (>) lines that were removed.
+
+Off by default: reacting to every edit is invasive and can surprise
+people, so out of the box only the deliberate `b4-review-delete-hunk' /
+`b4-review-delete-hunks-before' commands leave a marker.  Requires
+`b4-review-skipped-marker' to also be on."
+  :type 'boolean
+  :group 'b4-review)
+
+(defvar-local b4-review--pending-delete nil
+  "Whole quoted lines about to be deleted, as a cons of (BEG . TEXT).
+Set by `b4-review--before-change' and consumed by
+`b4-review--after-change'; nil when the pending change is not a
+whole-line deletion worth a breadcrumb.")
+
 (defface b4-review-quote-prefix
   '((t :foreground "dark cyan"))
   "Face for the leading \"> \" prefix."
@@ -144,6 +174,14 @@ Quoted (> ), external (|), and instruction (#) lines are left alone."
 ;; read, leaving a "[ ... NN lines skipped ... ]" marker where context was
 ;; removed, and adopt an external reviewer's "| " comment as your own.  It all
 ;; happens in the buffer, so what you see is what gets sent; undo restores it.
+;;
+;; Beyond the explicit commands, a plain line-wise delete of quoted material
+;; with whatever editing commands you already use leaves the same marker
+;; automatically (see `b4-review-auto-marker').  Only the quoted diff (>)
+;; lines you removed are counted; your own notes and "| " external comments
+;; are not, and a delete that removed none of the former leaves no marker.
+;; The count is a reading aid, not something b4 parses, so being off by a
+;; line or two is harmless.
 
 (defconst b4-review--skip-re
   "^> \\[ \\.\\.\\. \\([0-9]+\\) lines skipped \\.\\.\\. \\]$"
@@ -178,7 +216,10 @@ absorbed and their counts folded in, so consecutive trims collapse into
 one marker rather than stacking up.  Point is left just after the marker."
   (let ((beg (save-excursion (goto-char beg-pos) (line-beginning-position)))
         (end (save-excursion (goto-char end-pos) (forward-line 1) (point)))
-        (count 0))
+        (count 0)
+        ;; This is a deliberate edit, not a user delete: keep the change
+        ;; hooks (and so the auto-marker) from reacting to our own work.
+        (inhibit-modification-hooks t))
     ;; Absorb consecutive markers immediately above and below the range.
     (save-excursion
       (goto-char beg)
@@ -204,11 +245,75 @@ one marker rather than stacking up.  Point is left just after the marker."
     (goto-char beg)
     (insert (format "> [ ... %d lines skipped ... ]\n" count))))
 
+(defun b4-review--marker-count-in (line)
+  "Return the skip-marker count in string LINE, or nil."
+  (when (string-match b4-review--skip-re line)
+    (string-to-number (match-string 1 line))))
+
+(defun b4-review--place-marker (pos base)
+  "Insert one skip marker for BASE quoted lines at POS.
+POS is a line beginning where a just-deleted block was.  Any skip markers
+now directly above or below that point are absorbed and their counts
+folded in, mirroring `b4-review--replace-lines-with-marker'.  This is its
+already-deleted counterpart: the lines are gone, so we only place and
+coalesce the marker rather than counting a live range."
+  (let ((count base)
+        (inhibit-modification-hooks t))
+    (save-excursion
+      (goto-char pos)
+      ;; Absorb markers now sitting at the deletion point and below it.
+      (let (mc)
+        (while (setq mc (b4-review--marker-count))
+          (setq count (+ count mc))
+          (delete-region (point)
+                         (min (point-max) (1+ (line-end-position))))))
+      ;; Absorb markers directly above it, walking the insertion point up.
+      (while (and (not (bobp))
+                  (save-excursion (forward-line -1) (b4-review--marker-count)))
+        (forward-line -1)
+        (setq count (+ count (b4-review--marker-count)))
+        (delete-region (point) (progn (forward-line 1) (point))))
+      (insert (format "> [ ... %d lines skipped ... ]\n" count)))))
+
+(defun b4-review--before-change (beg end)
+  "Stash whole quoted lines about to be deleted for `b4-review--after-change'.
+Only a removal that starts at a line beginning and spans complete lines
+qualifies, mirroring vim's line-wise-only rule."
+  (setq b4-review--pending-delete nil)
+  (when (and b4-review-auto-marker (> end beg))
+    (let ((text (buffer-substring-no-properties beg end)))
+      (when (and (save-excursion (goto-char beg) (bolp))
+                 (or (eq (char-before end) ?\n) (= end (point-max))))
+        (setq b4-review--pending-delete (cons beg text))))))
+
+(defun b4-review--after-change (beg end len)
+  "Drop a skip marker if a stashed whole-line delete of quoted lines just ran.
+A pure deletion inserts nothing (BEG = END) and reports LEN > 0.  Only the
+quoted diff (>) lines are counted; an absorbed marker folds in the number
+it already stood for, and a delete with no quoted lines leaves no marker."
+  (when (and b4-review--pending-delete
+             (= beg end)
+             (> len 0))
+    (let ((pos (car b4-review--pending-delete))
+          (text (cdr b4-review--pending-delete)))
+      (setq b4-review--pending-delete nil)
+      (when (= beg pos)
+        (let ((count 0) (hascode nil))
+          (dolist (line (split-string text "\n"))
+            (let ((mc (b4-review--marker-count-in line)))
+              (cond (mc (setq count (+ count mc)))
+                    ((string-prefix-p ">" line)
+                     (setq count (1+ count) hascode t)))))
+          (when hascode
+            (b4-review--place-marker pos count)))))))
+
 (defun b4-review-delete-hunk ()
   "Delete the diff hunk under point, leaving a skip marker.
 Removes the `> @@' header through the hunk's last quoted line, including
 any of your comments interspersed within it."
   (interactive)
+  (unless b4-review-skipped-marker
+    (user-error "b4: skip-marker feature disabled (b4-review-skipped-marker)"))
   (let ((hdr (b4-review--hunk-header-pos)))
     (if (not hdr)
         (message "b4: not inside a hunk")
@@ -230,6 +335,8 @@ The upward walk stops at the file header (the ---/+++/diff --git lines)
 or at your last comment, so the file header, the quoted commit message
 and any annotated context above are all preserved."
   (interactive)
+  (unless b4-review-skipped-marker
+    (user-error "b4: skip-marker feature disabled (b4-review-skipped-marker)"))
   (let ((hdr (b4-review--hunk-header-pos))
         (fhdr "^> \\(diff --git \\|--- \\|\\+\\+\\+ \\)"))
     (if (not hdr)
@@ -261,7 +368,9 @@ the comment text in place under the same diff line, ready to edit."
   (beginning-of-line)
   (if (not (looking-at-p "^|"))
       (message "b4: not on a | comment line")
-    (let (beg end (lines '()))
+    (let (beg end (lines '())
+          ;; A deliberate edit: keep the auto-marker from reacting to it.
+          (inhibit-modification-hooks t))
       (save-excursion
         (while (and (not (bobp))
                     (save-excursion (forward-line -1) (looking-at-p "^|")))
@@ -303,7 +412,17 @@ the comment text in place under the same diff line, ready to edit."
   (setq-local auto-fill-function #'b4-review--auto-fill)
   ;; Disable spell-checking on quoted and external lines
   (setq-local flyspell-generic-check-word-predicate
-              #'b4-review--flyspell-check-p))
+              #'b4-review--flyspell-check-p)
+  ;; Leave a skip marker when quoted diff is deleted with ordinary editing
+  ;; commands, the same breadcrumb the trimming commands drop.  before-change
+  ;; captures the soon-to-be-deleted text (so we can count its quoted lines)
+  ;; and after-change confirms it was a pure deletion before placing the
+  ;; marker.  Both run inside the deleting command, so a single undo reverts
+  ;; the delete and the marker together.  Opt-in (see `b4-review-auto-marker'):
+  ;; with it off we install no change hooks at all, so nothing reacts to edits.
+  (when (and b4-review-skipped-marker b4-review-auto-marker)
+    (add-hook 'before-change-functions #'b4-review--before-change nil t)
+    (add-hook 'after-change-functions #'b4-review--after-change nil t)))
 
 (defun b4-review--flyspell-check-p ()
   "Return non-nil if the word at point should be spell-checked.

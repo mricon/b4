@@ -7,9 +7,43 @@
 " never auto-wraps them; comment lines use the original textwidth.
 let b:b4review_textwidth = &l:textwidth ? &l:textwidth : 72
 
+" Reflowing quoted diff is never right in a review buffer -- a stray rewrap or
+" join silently corrupts the patch context.  Drop the formatoptions flags that
+" reformat existing text on the fly: 'a' (continuously auto-format paragraphs,
+" which treats a run of "> " lines as one paragraph and reflows it on any
+" edit, including a plain delete) and its helper 'w'.  The textwidth toggle
+" above still wraps your own comment lines as you type; it just can no longer
+" be turned against the quoted diff.
+setlocal formatoptions-=a formatoptions-=w
+
+" Master switch for the whole "NN lines skipped" marker feature: the
+" <LocalLeader>h / <LocalLeader>H mappings, the :B4Del* commands and the
+" automatic marker on a plain delete.  Set g:b4review_skipped_marker to 0 to
+" turn all of it off everywhere, leaving only syntax highlighting, the
+" wrapping hygiene above and the "adopt comment" mapping.
+let s:skipmarker = get(g:, 'b4review_skipped_marker', 1)
+
+" Finer, opt-in switch for the automatic marker on a plain delete (dd, dap,
+" visual d ...).  It is off by default: reacting to every edit is invasive and
+" can surprise people, so out of the box only the deliberate <LocalLeader>h /
+" <LocalLeader>H trims leave a marker.  Set g:b4review_auto_marker = 1 to opt
+" in.  Disabled (or with the master off) we install no change autocommand at
+" all, so there is nothing reacting to your edits.
+let s:automarker = s:skipmarker && get(g:, 'b4review_auto_marker', 0)
+
+" Remember the line count so the TextChanged autocmd below can tell when a
+" plain delete (dd, dap, 5dd, visual d, :d ...) removed quoted lines and drop
+" a skip marker for them, the same breadcrumb <LocalLeader>h leaves.  Every
+" programmatic edit in this plugin resyncs this to the post-change count, so
+" those edits never look like a delete and never trigger the auto-marker.
+let b:b4_lc = line('$')
+
 augroup b4review_wrap
   autocmd! * <buffer>
   autocmd CursorMovedI <buffer> call s:B4ReviewUpdateWrap()
+  if s:automarker
+    autocmd TextChanged <buffer> call s:B4ReviewAutoMarker()
+  endif
 augroup END
 
 function! s:B4ReviewUpdateWrap() abort
@@ -39,6 +73,25 @@ endfunction
 "
 " Also available as :B4DelHunk / :B4DelHunksBefore and as the mappable
 " <Plug>(B4DeleteHunk) / <Plug>(B4DeleteHunksBefore).
+"
+" Optionally (see g:b4review_auto_marker below; off by default), a plain
+" line-wise delete of quoted material -- dd, 5dd, dap, visual-mode d, :d and
+" friends -- leaves the same marker automatically, so you can prune with the
+" editing commands already in your fingers.  Only the
+" quoted diff lines (>) in what you deleted are counted; your own notes and
+" the external "| " comments are not, and a delete that removed none of the
+" former leaves no marker (so trimming your own prose stays silent, and
+" deleting a lone marker really removes it).  The count is a reading aid, not
+" something b4 parses, so being off by a line or two is harmless.
+"
+" Two switches:
+"   g:b4review_skipped_marker  master, on by default -- 0 turns the whole
+"                              feature off (the mappings, the commands and the
+"                              auto-marker), leaving only highlighting and
+"                              "adopt comment".
+"   g:b4review_auto_marker     off by default -- 1 opts in to the automatic
+"   (or b:b4review_auto_marker) marker on a plain delete, on top of the always-
+"                              available <LocalLeader>h / <LocalLeader>H trims.
 
 " Parse the count out of a skip-marker line; -1 if the line isn't a marker.
 function! s:B4MarkerCount(line) abort
@@ -90,6 +143,79 @@ function! s:B4ReplaceWithMarker(a, b) abort
   endfor
   execute l:a . ',' . l:b . 'delete _'
   call append(l:a - 1, printf('> [ ... %d lines skipped ... ]', l:c))
+  let b:b4_lc = line('$')
+endfunction
+
+" Insert a single skip marker for a:base quoted lines at a:lnum -- the line now
+" sitting where a just-deleted block was -- folding in any skip markers that
+" ended up directly above or below the deletion point.  This is the
+" already-deleted counterpart to s:B4ReplaceWithMarker: the lines are gone, so
+" we only place (and coalesce) the marker rather than counting a live range.
+function! s:B4PlaceMarker(lnum, base) abort
+  let l:c = a:base
+  " Absorb markers directly above the deletion point.
+  let l:top = a:lnum
+  while l:top > 1 && s:B4MarkerCount(getline(l:top - 1)) >= 0
+    let l:c += s:B4MarkerCount(getline(l:top - 1))
+    let l:top -= 1
+  endwhile
+  " Absorb markers directly below it (the line now at a:lnum and onwards).
+  let l:bot = a:lnum - 1
+  while l:bot < line('$') && s:B4MarkerCount(getline(l:bot + 1)) >= 0
+    let l:c += s:B4MarkerCount(getline(l:bot + 1))
+    let l:bot += 1
+  endwhile
+  " Fold the marker into the delete that triggered us so a single u reverts
+  " both; silent! swallows E790 if there is somehow no change to join onto.
+  silent! undojoin
+  if l:top <= l:bot
+    execute l:top . ',' . l:bot . 'delete _'
+  endif
+  call append(l:top - 1, printf('> [ ... %d lines skipped ... ]', l:c))
+  let b:b4_lc = line('$')
+endfunction
+
+" TextChanged handler: if a plain line-wise delete just removed quoted diff
+" lines, drop a skip marker reporting how many.  The just-deleted text is
+" still in the unnamed register, so we count its quoted lines without having
+" snapshotted the buffer.  b:b4_lc is resynced on every path (and by every
+" programmatic edit above), so this only fires on a genuine user delete.
+function! s:B4ReviewAutoMarker() abort
+  let l:removed = get(b:, 'b4_lc', line('$')) - line('$')
+  let b:b4_lc = line('$')
+  if !get(b:, 'b4review_auto_marker', get(g:, 'b4review_auto_marker', 0))
+    return
+  endif
+  " A net line drop whose count matches a line-wise ("V") unnamed register is
+  " our signal for an ordinary delete.  Char-wise deletes (x, dw, D) and edits
+  " that don't shrink the buffer are left alone; the length check also rejects
+  " black-hole ("_dd) deletes, whose register is stale.
+  if l:removed <= 0 || getregtype('"') !=# 'V'
+    return
+  endif
+  let l:reg = getreg('"', 1, 1)
+  if len(l:reg) != l:removed
+    return
+  endif
+  " Count quoted diff lines only.  An absorbed marker folds in the number it
+  " already stood for; the maintainer's own notes and "| " external comments
+  " don't count.  Require at least one real quoted line so deleting only notes
+  " -- or a lone marker -- leaves nothing behind.
+  let l:c = 0
+  let l:hascode = 0
+  for l:t in l:reg
+    let l:mc = s:B4MarkerCount(l:t)
+    if l:mc >= 0
+      let l:c += l:mc
+    elseif l:t =~# '^>'
+      let l:c += 1
+      let l:hascode = 1
+    endif
+  endfor
+  if !l:hascode
+    return
+  endif
+  call s:B4PlaceMarker(line("'["), l:c)
 endfunction
 
 " Delete the hunk under the cursor: its `> @@` header through its last
@@ -140,18 +266,23 @@ function! s:B4DeleteHunksBefore() abort
   call cursor(l:top + 1, 1)
 endfunction
 
-nnoremap <silent> <buffer> <Plug>(B4DeleteHunk)        :call <SID>B4DeleteHunk()<CR>
-nnoremap <silent> <buffer> <Plug>(B4DeleteHunksBefore) :call <SID>B4DeleteHunksBefore()<CR>
-command! -buffer B4DelHunk        call <SID>B4DeleteHunk()
-command! -buffer B4DelHunksBefore call <SID>B4DeleteHunksBefore()
-" <nowait> so these fire immediately: without it, if another (global) plugin
-" maps a longer <LocalLeader> sequence -- e.g. AlignMaps' \Htd shares our \H
-" prefix -- vim would block for 'timeoutlen' waiting for the next key.
-if empty(maparg('<LocalLeader>h', 'n'))
-  nmap <buffer> <nowait> <LocalLeader>h <Plug>(B4DeleteHunk)
-endif
-if empty(maparg('<LocalLeader>H', 'n'))
-  nmap <buffer> <nowait> <LocalLeader>H <Plug>(B4DeleteHunksBefore)
+" Only wire up the hunk-trimming mappings and commands when the feature is
+" enabled, so a maintainer who turned it off does not have <LocalLeader>h/H
+" (or the :B4Del* commands) claimed out from under them.
+if s:skipmarker
+  nnoremap <silent> <buffer> <Plug>(B4DeleteHunk)        :call <SID>B4DeleteHunk()<CR>
+  nnoremap <silent> <buffer> <Plug>(B4DeleteHunksBefore) :call <SID>B4DeleteHunksBefore()<CR>
+  command! -buffer B4DelHunk        call <SID>B4DeleteHunk()
+  command! -buffer B4DelHunksBefore call <SID>B4DeleteHunksBefore()
+  " <nowait> so these fire immediately: without it, if another (global) plugin
+  " maps a longer <LocalLeader> sequence -- e.g. AlignMaps' \Htd shares our \H
+  " prefix -- vim would block for 'timeoutlen' waiting for the next key.
+  if empty(maparg('<LocalLeader>h', 'n'))
+    nmap <buffer> <nowait> <LocalLeader>h <Plug>(B4DeleteHunk)
+  endif
+  if empty(maparg('<LocalLeader>H', 'n'))
+    nmap <buffer> <nowait> <LocalLeader>H <Plug>(B4DeleteHunksBefore)
+  endif
 endif
 
 " ---------------------------------------------------------------------------
@@ -191,6 +322,7 @@ function! s:B4AdoptComment() abort
   execute l:s . ',' . l:e . 'delete _'
   call append(l:s - 1, l:out)
   call cursor(l:s, 1)
+  let b:b4_lc = line('$')
 endfunction
 
 nnoremap <silent> <buffer> <Plug>(B4AdoptComment) :call <SID>B4AdoptComment()<CR>
@@ -204,7 +336,7 @@ endif
 " eat the following bar-separated clauses (turning the clear into an illegal
 " "define for all events", E1155) and leave the commands and maps undeleted.
 let b:undo_ftplugin = get(b:, 'undo_ftplugin', '')
-      \ . '| setlocal textwidth<'
+      \ . '| setlocal textwidth< formatoptions<'
       \ . "| execute 'silent! autocmd! b4review_wrap * <buffer>'"
       \ . '| silent! delcommand B4DelHunk'
       \ . '| silent! delcommand B4DelHunksBefore'
