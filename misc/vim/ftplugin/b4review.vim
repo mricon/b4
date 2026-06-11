@@ -199,9 +199,13 @@ if empty(maparg('<LocalLeader>a', 'n'))
   nmap <buffer> <nowait> <LocalLeader>a <Plug>(B4AdoptComment)
 endif
 
+" The autocmd! clause is wrapped in execute '...' because :autocmd swallows
+" the rest of the line as the command to bind -- without the wrapper it would
+" eat the following bar-separated clauses (turning the clear into an illegal
+" "define for all events", E1155) and leave the commands and maps undeleted.
 let b:undo_ftplugin = get(b:, 'undo_ftplugin', '')
       \ . '| setlocal textwidth<'
-      \ . '| silent! autocmd! b4review_wrap * <buffer>'
+      \ . "| execute 'silent! autocmd! b4review_wrap * <buffer>'"
       \ . '| silent! delcommand B4DelHunk'
       \ . '| silent! delcommand B4DelHunksBefore'
       \ . '| silent! delcommand B4Adopt'
