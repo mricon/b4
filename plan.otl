@@ -33,14 +33,58 @@ v0.16
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 	[_] Batch trailer selection across multiple patches
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
-	[_] Keep trailers in-place when added via reply editor
+	[X] Keep trailers in-place when added via reply editor
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+		: Resolved by the WYSIWYG reply redesign — the trailer menu now edits
+		  the buffer in place via _insert_trailer_in_reply/_remove_trailer_from_reply
 	[_] Show context in checkpatch output for commit message complaints
 		: Chris Samuel, https://msgid.link/2c1ab8a2-8a86-48a7-9a53-ef3a00ab4bd2@csamuel.org
-[_] `b4 review` editor directives
-	[_] #!notrim — preserve blank lines and trailing whitespace in comments
-	[_] #!verbatim — use editor text as-is for the outgoing email
-		: Stashed as "WIP: #!verbatim and #!notrim editor directives"
+	[X] Visual cue for patches unchanged from prior revision
+		: 'unchanged' patch-state (≡, U+2261), rendered dim in the patch list
+		: Low-priority fallback — superseded the moment a trailer/reply/comment lands
+		: Annotated with a 'B4 Upgrade' system note recording the last revision seen
+	[X] Keep coverless review trailers on patches
+		: Tamir Duberstein, https://patch.msgid.link/20260605-review-double-review-email-v1-1-d52c2ca14024@kernel.org
+		: Only promote per-patch trailers to the series record when a real cover exists,
+		  so a single-patch review stays in one reply instead of splitting in two
+	[X] Avoid downloading logs and fix CI-integration URLs (sashiko/patchwork)
+		: sashiko switched to the patchset endpoint; patchwork/sashiko use the target URL
+[X] WYSIWYG reply model + review editor plugins
+	: Supersedes the abandoned #!notrim / #!verbatim editor-directive approach —
+	  the buffer is now sent verbatim, so there is nothing left to opt out of
+	[X] Edited reply buffer is the single source of truth
+		: review['reply'] is sent as-is; structured comments/trailers are a derived
+		  display index, never fed back to rebuild the outgoing email
+		: _trim_quoted_reply() strips b4 scaffolding + trailing quoted diff only
+		: _parse_reply_trailers() uses followup=True so prose with a colon isn't
+		  misread as a trailer; fixes relocated/double-added/hidden trailers
+	[X] vim b4review ftplugin
+		: Syntax highlighting for quoted diff, comments and external "| " blocks
+		: Interactive hunk trimming — <LocalLeader>h / <LocalLeader>H (:B4DelHunk /
+		  :B4DelHunksBefore), leaving a "[ ... NN lines skipped ... ]" breadcrumb
+		: "Adopt comment" — <LocalLeader>a (:B4Adopt) strips the | prefix and
+		  attribution so an external reviewer's comment becomes your own
+		: Fix filetype detection (override built-in *.eml=mail); <nowait> mappings;
+		  formatoptions-=a -=w so edits never reflow quoted diff; undo_ftplugin teardown
+	[X] emacs b4review mode
+		: Ports hunk trimming (C-c C-k / C-c C-b) and adopt-comment from the vim plugin
+	[X] Optional auto skip-marker on plain line-wise deletes
+		: TextChanged (vim) / before+after-change (emacs) hooks mark deleted quoted
+		  lines; opt-in via g:b4review_auto_marker / b4-review-auto-marker (default off)
+		: Master switch g:b4review_skipped_marker / b4-review-skipped-marker (default on)
+		: "Delete hunks above" stops at the file header; adjacent markers coalesce
+	[X] src/tests coverage for the vim and emacs editor plugins
+[X] Cancellable network operations + request timeout
+	: Mark Brown, https://lore.kernel.org/tools/air1edZVrBclly3H@sirena.co.uk/
+	: update-all and other lore fetches could block forever on a stalled socket
+	[X] Wire liblore 0.8 cancel()/reset_cancel() into every lore-fetch site
+		: UpdateAllScreen Esc/q cancels the worker, preserving series already processed
+		: reset_cancel() guard on _FetchViewerScreen, TargetBranchScreen, followup
+		  worker and lite thread view so a stale cancel can't block a later fetch
+	[X] cmd_track SIGINT handler calls cancel() then exits 130; removed in finally
+	[X] update_series_tracking re-raises OperationCancelledError before its broad except
+	[X] lore.requesttimeout git config (connect,read pair; default 5.0,30.0)
+	[X] Tests for all three cancellation paths; docs in config.rst + maintainer/review.rst
 [_] Warn on empty commit message body during prep --check / send
 	: Dave Marquardt, https://msgid.link/20260320-ambrosial-strange-sidewinder-60216e@lemur
 	: Detect commits where the body is empty but below-the-cut content exists
@@ -113,6 +157,20 @@ v0.16
 		: Colored dot display in tracking list (git-bug deterministic color algorithm)
 		: Extend limit command to filter by label: prefix
 		: Depends on bugs subcommand for shared label UI components
+[X] Development tooling and stricter local checks
+	[X] ci.sh runs the full local check suite; ci-matrix.sh runs tests across
+	    the supported Python range (3.11–3.13)
+	[X] ruff lint + format checks in CI
+	[X] pyright strict mode; mypy unreachable warnings; ty added with config
+	[X] Fix b4 import crash on Python 3.11/3.12/3.13
+	[X] Make TUI packages importable without the textual extra
+	[X] liblore/ezgb/patatt carried as git submodules; [tool.uv.sources] points the
+	    dev venv at the liblore submodule so mypy and tests track the in-dev API
+[X] Miscellaneous enhancements
+	[X] send-me-too config option for b4 send (affirmative, defaults to yes)
+		: Jeremy Kerr, https://patch.msgid.link/20260610-master-v2-1-9913cfb7bb3e@codeconstruct.com.au
+	[X] Prevent interpreting usebranch as a path in find_cover_commit
+	[X] pr: scope the "already fetched" check to the target branch
 [ ] `b4 ty` interactive mode
 	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
 [ ] `b4 trailers` interactive mode
