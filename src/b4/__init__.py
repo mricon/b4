@@ -4496,6 +4496,15 @@ def git_branch_contains(
     return lines
 
 
+def git_commit_is_ancestor(gitdir: Optional[str], commit_id: str, ref: str) -> bool:
+    # Returns True if commit_id is reachable from ref (or is ref itself),
+    # i.e. ref already contains commit_id. Unlike git_branch_contains(),
+    # this is scoped to a single ref instead of every branch in the tree.
+    gitargs = ['merge-base', '--is-ancestor', commit_id, ref]
+    ecode, _out = git_run_command(gitdir, gitargs)
+    return ecode == 0
+
+
 def git_get_toplevel(path: Optional[str] = None) -> Optional[str]:
     topdir = None
     # Are we in a git tree and if so, what is our toplevel?

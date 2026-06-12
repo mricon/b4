@@ -580,16 +580,26 @@ def main(cmdargs: argparse.Namespace) -> None:
             logger.critical('Nothing exploded.')
             sys.exit(1)
 
+    # We only care whether the tip is already part of the branch this fetch
+    # would actually affect: the one named with -b, or the current branch
+    # otherwise. Whether some other local branch happens to contain the commit
+    # is irrelevant -- an unrelated local copy is no reason to refuse the fetch.
+    checkbranch = (
+        cmdargs.branch if cmdargs.branch else b4.git_get_current_branch(gitdir)
+    )
+
     exists = b4.git_commit_exists(gitdir, lmsg.pr_tip_commit)
     if exists:
-        # Is it in any branch, or just flapping in the wind?
-        branches = b4.git_branch_contains(gitdir, lmsg.pr_tip_commit)
-        if len(branches):
-            logger.info('Pull request tip commit exists in the following branches:')
-            for branch in branches:
-                logger.info('  %s', branch)
+        # Is the tip already part of the branch we care about?
+        if checkbranch and b4.git_commit_is_ancestor(
+            gitdir, lmsg.pr_tip_commit, checkbranch
+        ):
+            logger.info('Pull request tip commit already present in %s', checkbranch)
             if cmdargs.check:
                 sys.exit(0)
+            # We already have it locally, but record tracking info before
+            # bailing out so that "b4 ty" remains possible for it later.
+            thanks_record_pr(lmsg)
             sys.exit(1)
 
         # Is it at the tip of FETCH_HEAD?
