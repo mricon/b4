@@ -2024,6 +2024,106 @@ class TestPatchState:
         )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
 
+    def test_thread_reviewed_by_from_me(self) -> None:
+        """An approval trailer I sent to the list before tracking → 'done'."""
+        target = {
+            'followups': [
+                {
+                    'fromemail': self._EMAIL,
+                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
+                }
+            ]
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
+    def test_thread_acked_by_from_me(self) -> None:
+        """An Acked-by I sent to the list is detected too."""
+        target = {
+            'followups': [
+                {
+                    'fromemail': 'Reviewer@Example.COM',  # case-insensitive match
+                    'trailers': ['Acked-by: Test Reviewer <reviewer@example.com>'],
+                }
+            ]
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
+    def test_thread_approval_from_other_ignored(self) -> None:
+        """An approval from someone else does not mark the patch done."""
+        target = {
+            'followups': [
+                {
+                    'fromemail': 'somebody@else.example.com',
+                    'trailers': ['Reviewed-by: Some Body <somebody@else.example.com>'],
+                }
+            ]
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == ''
+
+    def test_thread_nack_from_me_vetoes(self) -> None:
+        """My own NACK in the thread vetoes auto-done (stays neutral)."""
+        target = {
+            'followups': [
+                {
+                    'fromemail': self._EMAIL,
+                    'trailers': [
+                        'Acked-by: Test Reviewer <reviewer@example.com>',
+                        'NACKed-by: Test Reviewer <reviewer@example.com>',
+                    ],
+                }
+            ]
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == ''
+
+    def test_manual_skip_beats_thread_approval(self) -> None:
+        """A manual skip supersedes an auto-detected thread approval."""
+        target = {
+            'reviews': {self._EMAIL: {'name': 'Test Reviewer', 'patch-state': 'skip'}},
+            'followups': [
+                {
+                    'fromemail': self._EMAIL,
+                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
+                }
+            ],
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'skip'
+
+    def test_draft_comment_beats_thread_approval(self) -> None:
+        """An in-progress inline comment supersedes auto-detected thread approval."""
+        target = {
+            'reviews': {
+                self._EMAIL: {
+                    'name': 'Test Reviewer',
+                    'comments': [{'path': 'a.c', 'line': 1, 'text': 'wait'}],
+                }
+            },
+            'followups': [
+                {
+                    'fromemail': self._EMAIL,
+                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
+                }
+            ],
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+    def test_thread_approval_beats_external(self) -> None:
+        """My prior list approval shows 'done', not 'external', when others commented."""
+        target = {
+            'reviews': {
+                'other@example.com': {
+                    'name': 'Other',
+                    'comments': [{'path': 'a.c', 'line': 1, 'text': 'nit'}],
+                }
+            },
+            'followups': [
+                {
+                    'fromemail': self._EMAIL,
+                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
+                }
+            ],
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
     def test_set_and_clear(self) -> None:
         """_set_patch_state done then clear → state '' and entry cleaned up."""
         target: dict[str, Any] = {}

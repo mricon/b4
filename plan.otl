@@ -27,8 +27,13 @@ v0.16
 		: Bonus: thanked series can be reopened back to reviewing via action menu
 	[_] Manual revision linking when auto-discovery fails (no change-id or in-reply-to chain)
 		: Mark Brown, https://msgid.link/88549a4a-cc82-4200-b73b-e335cbb2b024@sirena.org.uk
-	[_] Auto-detect existing trailers to mark patches as "done"
+	[X] Auto-detect existing trailers to mark patches as "done"
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+		: A Reviewed-by/Acked-by I sent to the list before tracking the series
+		  auto-marks the patch ✓ done, detected from my own thread followups
+		: Low-priority derived state (like 'unchanged') — re-derived each load,
+		  never written to review trailers so it can't be re-sent; any manual
+		  skip/comment/reply or my own Nacked-by supersedes it
 	[_] Cancel background processes (e.g. base check) on exit
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 	[_] Batch trailer selection across multiple patches

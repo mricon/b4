@@ -616,16 +616,16 @@ RET b4-review`` or set directly in your init file:
 Each patch in the series can be marked with a state to help you track
 your review progress:
 
-==========  ======  ======  ====================================================
+==========  ======  ======  =======================================================
 State       Marker  Key     Meaning
-==========  ======  ======  ====================================================
+==========  ======  ======  =======================================================
 *(none)*    |sp|    —       Not yet reviewed
 Unchanged   ``≡``   —       Patch identical to prior revision (auto, on upgrade)
 External    ``±``   —       External reviewers have inline comments (auto)
 Draft       ``✎``   —       You have comments, a reply, or a nack trailer (auto)
-Done        ``✓``   ``d``   Review complete, include in outgoing emails
+Done        ``✓``   ``d``   Review complete, include in outgoing emails (also auto)
 Skip        ``✕``   ``x``   Intentionally skipped, exclude from outgoing emails
-==========  ======  ======  ====================================================
+==========  ======  ======  =======================================================
 
 .. |sp| unicode:: U+0020
 
@@ -636,6 +636,15 @@ changes to ``✎``.  The ``≡`` marker is set automatically when upgrading
 a series to a newer revision — it indicates that the patch content has
 not changed, giving you a visual cue to focus on patches that did.  Any
 review action (adding a trailer, reply, or comment) supersedes it.
+
+If you had already reviewed some of the patches on the list *before*
+tracking the series in ``b4 review`` — by replying with a ``Reviewed-by``
+or ``Acked-by`` from your own address — those patches are detected from
+the thread follow-ups and marked ``✓`` Done automatically, so you can see
+at a glance what is left to look at.  This is a low-priority cue: it is
+derived fresh each time the series loads and is never re-sent, and any
+manual action (skip, an in-progress comment or reply, or a ``Nacked-by``
+you sent) takes precedence over it.
 
 Pressing ``d`` or ``x`` toggles the state for the current patch. The
 patch list on the left shows the state visually: done patches appear in

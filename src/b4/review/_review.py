@@ -798,6 +798,28 @@ _APPROVAL_TRAILER_KEYS = frozenset({'reviewed-by', 'acked-by'})
 _NACK_TRAILER_KEY = 'nacked-by'
 
 
+def _has_my_approval_in_thread(target: Dict[str, Any], my_email: str) -> bool:
+    """Return True if I already sent an approval trailer for this patch.
+
+    Scans the follow-up trailers collected at ingest (target['followups'])
+    for an entry sent from my own address carrying a Reviewed-by or Acked-by.
+    A Nacked-by from me vetoes the result, mirroring _get_patch_state()'s
+    handling of a NACK in my own trailer list.
+    """
+    my_email_l = my_email.lower()
+    found_approval = False
+    for followup in target.get('followups', []):
+        if str(followup.get('fromemail', '')).lower() != my_email_l:
+            continue
+        for trailer in followup.get('trailers', []):
+            key = trailer.split(':', 1)[0].strip().lower()
+            if key == _NACK_TRAILER_KEY:
+                return False
+            if key in _APPROVAL_TRAILER_KEYS:
+                found_approval = True
+    return found_approval
+
+
 def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     """Derive the effective per-patch state for the current user.
 
@@ -822,8 +844,16 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
         return 'done'
     if review.get('comments') or review.get('reply', ''):
         return 'draft'
-    # Check for external reviewer comments
     my_email = str(usercfg.get('email', ''))
+    # Auto-detect a review I already sent to the list before tracking this
+    # series in b4 review: an approval trailer carried in a follow-up from
+    # my own address marks the patch 'done'.  This is a low-priority derived
+    # signal -- any manual action above (skip/done/comments/reply/NACK) wins,
+    # and it is never written back into review['trailers'], so it can't be
+    # re-sent.
+    if my_email and _has_my_approval_in_thread(target, my_email):
+        return 'done'
+    # Check for external reviewer comments
     all_reviews = target.get('reviews', {})
     if any(
         addr != my_email and rev.get('comments') for addr, rev in all_reviews.items()
