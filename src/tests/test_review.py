@@ -3251,7 +3251,9 @@ class TestSashikoLocationsIntegration:
                         '\nNormal comment.\n'
                     ),
                     # No locations in findings
-                    'output': _json.dumps({'findings': [{'severity': 'Low', 'problem': 'style'}]}),
+                    'output': _json.dumps(
+                        {'findings': [{'severity': 'Low', 'problem': 'style'}]}
+                    ),
                 },
             ],
         }

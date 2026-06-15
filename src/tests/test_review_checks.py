@@ -846,7 +846,12 @@ class TestSashikoFindingsSummary:
 
     def test_single_critical(self) -> None:
         findings = [
-            {'status': 'fail', 'state': 'critical', 'description': 'bad', 'preexisting': False}
+            {
+                'status': 'fail',
+                'state': 'critical',
+                'description': 'bad',
+                'preexisting': False,
+            }
         ]
         worst, summary = checks._sashiko_findings_summary(findings)
         assert worst == 'fail'
@@ -854,9 +859,24 @@ class TestSashikoFindingsSummary:
 
     def test_mixed_severities(self) -> None:
         findings = [
-            {'status': 'fail', 'state': 'critical', 'description': '', 'preexisting': False},
-            {'status': 'fail', 'state': 'high', 'description': '', 'preexisting': False},
-            {'status': 'warn', 'state': 'medium', 'description': '', 'preexisting': False},
+            {
+                'status': 'fail',
+                'state': 'critical',
+                'description': '',
+                'preexisting': False,
+            },
+            {
+                'status': 'fail',
+                'state': 'high',
+                'description': '',
+                'preexisting': False,
+            },
+            {
+                'status': 'warn',
+                'state': 'medium',
+                'description': '',
+                'preexisting': False,
+            },
             {'status': 'pass', 'state': 'low', 'description': '', 'preexisting': False},
         ]
         worst, summary = checks._sashiko_findings_summary(findings)
@@ -878,8 +898,18 @@ class TestSashikoFindingsSummary:
     def test_all_preexisting_is_no_new_findings(self) -> None:
         """A series where every finding is pre-existing should report pass."""
         findings = [
-            {'status': 'pass', 'state': 'critical', 'description': '(pre-existing) bad', 'preexisting': True},
-            {'status': 'pass', 'state': 'high', 'description': '(pre-existing) also bad', 'preexisting': True},
+            {
+                'status': 'pass',
+                'state': 'critical',
+                'description': '(pre-existing) bad',
+                'preexisting': True,
+            },
+            {
+                'status': 'pass',
+                'state': 'high',
+                'description': '(pre-existing) also bad',
+                'preexisting': True,
+            },
         ]
         worst, summary = checks._sashiko_findings_summary(findings)
         assert worst == 'pass'
@@ -888,8 +918,18 @@ class TestSashikoFindingsSummary:
     def test_preexisting_not_counted_in_summary(self) -> None:
         """Pre-existing findings should not appear in the count string."""
         findings = [
-            {'status': 'fail', 'state': 'critical', 'description': 'fresh', 'preexisting': False},
-            {'status': 'pass', 'state': 'critical', 'description': '(pre-existing) old', 'preexisting': True},
+            {
+                'status': 'fail',
+                'state': 'critical',
+                'description': 'fresh',
+                'preexisting': False,
+            },
+            {
+                'status': 'pass',
+                'state': 'critical',
+                'description': '(pre-existing) old',
+                'preexisting': True,
+            },
         ]
         worst, summary = checks._sashiko_findings_summary(findings)
         assert worst == 'fail'
