@@ -4,6 +4,7 @@ import io
 import os
 import pathlib
 import re
+import sqlite3
 from email.message import EmailMessage
 from typing import Any, Dict
 from unittest import mock
@@ -2810,3 +2811,197 @@ class TestCmdTrackCancellation:
                 review_tracking.cmd_track(cmdargs)
 
         assert exc_info.value.code == 130
+
+# ---------------------------------------------------------------------------
+# Manual revision linking (feature/review-manual-revision-link)
+#
+# Red spec — written test-first, before the implementation exists.  These
+# pin down the schema-v9 groundwork (per-revision fingerprint + source
+# provenance) and the precedence rule that a manual link must win over, and
+# never be downgraded by, heuristic auto-discovery.  See plan.otl v0.16
+# "Manual revision linking", git-bug 47d5a4c.
+# ---------------------------------------------------------------------------
+
+
+def _make_legacy_v8_db(identifier: str) -> str:
+    """Create a schema-v8 database on disk (revisions without fingerprint/source).
+
+    Returns the database path.  Used to exercise the v8 -> v9 migration.
+    """
+    path = review_tracking.get_db_path(identifier)
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+        CREATE TABLE revisions (
+            change_id   TEXT NOT NULL,
+            revision    INTEGER NOT NULL,
+            message_id  TEXT NOT NULL,
+            subject     TEXT,
+            link        TEXT,
+            found_at    TEXT,
+            thread_blob TEXT,
+            PRIMARY KEY (change_id, revision)
+        );
+        """
+    )
+    conn.execute('INSERT INTO schema_version (version) VALUES (8)')
+    conn.execute(
+        'INSERT INTO revisions (change_id, revision, message_id, subject, link, found_at)'
+        ' VALUES (?, ?, ?, ?, ?, ?)',
+        ('legacy-change', 2, 'legacy-v2@example.com', 'Legacy v2', '', '2026-01-01T00:00:00+00:00'),
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+class TestRevisionFingerprintSchema:
+    """Tier 1: schema-v9 groundwork for manual revision linking."""
+
+    def test_schema_version_at_least_9(self) -> None:
+        """The fingerprint/source groundwork bumps the schema version."""
+        assert review_tracking.SCHEMA_VERSION >= 9
+
+    def test_revisions_has_fingerprint_and_source_columns(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Fresh databases carry fingerprint + source on the revisions table."""
+        conn = review_tracking.init_db('mrl-cols-test')
+        cols = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
+        conn.close()
+        assert 'fingerprint' in cols
+        assert 'source' in cols
+
+    def test_revisions_fingerprint_is_indexed(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """A fingerprint lookup index exists so absorption stays cheap at scale."""
+        conn = review_tracking.init_db('mrl-index-test')
+        indexed_cols = set()
+        for idx in conn.execute('PRAGMA index_list(revisions)'):
+            idx_name = idx[1]
+            for col in conn.execute(f'PRAGMA index_info({idx_name})'):
+                indexed_cols.add(col[2])
+        conn.close()
+        assert 'fingerprint' in indexed_cols
+
+    def test_migration_v8_to_v9_preserves_rows(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Migrating a populated v8 DB adds the columns without losing data."""
+        _make_legacy_v8_db('mrl-migrate-test')
+        # get_db() runs _migrate_db_if_needed() on open.
+        conn = review_tracking.get_db('mrl-migrate-test')
+
+        cols = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
+        assert 'fingerprint' in cols
+        assert 'source' in cols
+
+        version = conn.execute('SELECT version FROM schema_version').fetchone()[0]
+        assert version == review_tracking.SCHEMA_VERSION
+
+        revs = review_tracking.get_revisions(conn, 'legacy-change')
+        conn.close()
+        assert len(revs) == 1
+        assert revs[0]['message_id'] == 'legacy-v2@example.com'
+        # Pre-existing rows are auto-discovered, so they default to 'heuristic'.
+        assert revs[0]['source'] == 'heuristic'
+        assert revs[0]['fingerprint'] is None
+
+
+class TestRevisionSourceProvenance:
+    """Tier 2: add_revision fingerprint/source contract and precedence."""
+
+    def test_add_revision_stores_fingerprint_and_source(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-store-test')
+        review_tracking.add_revision(
+            conn, 'change-abc', 4, 'v4@example.com',
+            fingerprint='fp-deadbeef', source='manual',
+        )
+        revs = review_tracking.get_revisions(conn, 'change-abc')
+        conn.close()
+        assert revs[0]['fingerprint'] == 'fp-deadbeef'
+        assert revs[0]['source'] == 'manual'
+
+    def test_add_revision_defaults_to_heuristic(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-default-test')
+        review_tracking.add_revision(conn, 'change-abc', 1, 'v1@example.com')
+        revs = review_tracking.get_revisions(conn, 'change-abc')
+        conn.close()
+        assert revs[0]['source'] == 'heuristic'
+
+    def test_manual_link_upgrades_heuristic(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """A manual link over a heuristic row promotes the source to manual."""
+        conn = review_tracking.init_db('mrl-upgrade-test')
+        review_tracking.add_revision(conn, 'change-abc', 3, 'v3@example.com')
+        review_tracking.add_revision(
+            conn, 'change-abc', 3, 'v3@example.com', source='manual'
+        )
+        revs = review_tracking.get_revisions(conn, 'change-abc')
+        conn.close()
+        assert len(revs) == 1
+        assert revs[0]['source'] == 'manual'
+
+    def test_heuristic_does_not_downgrade_manual(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """A later heuristic pass must not clobber a manual link."""
+        conn = review_tracking.init_db('mrl-nodowngrade-test')
+        review_tracking.add_revision(
+            conn, 'change-abc', 3, 'v3@example.com', source='manual'
+        )
+        review_tracking.add_revision(
+            conn, 'change-abc', 3, 'v3@example.com', source='heuristic'
+        )
+        revs = review_tracking.get_revisions(conn, 'change-abc')
+        conn.close()
+        assert revs[0]['source'] == 'manual'
+
+    def test_add_revision_backfills_missing_fingerprint(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """A fingerprint-less row gets its fingerprint filled in on a later add."""
+        conn = review_tracking.init_db('mrl-backfill-test')
+        review_tracking.add_revision(conn, 'change-abc', 1, 'v1@example.com')
+        review_tracking.add_revision(
+            conn, 'change-abc', 1, 'v1@example.com', fingerprint='fp-late'
+        )
+        revs = review_tracking.get_revisions(conn, 'change-abc')
+        conn.close()
+        assert revs[0]['fingerprint'] == 'fp-late'
+        # message_id remains first-wins, as before.
+        assert revs[0]['message_id'] == 'v1@example.com'
+
+    def test_find_revision_by_fingerprint(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Fingerprint lookup locates the owning (change_id, revision)."""
+        conn = review_tracking.init_db('mrl-find-test')
+        review_tracking.add_revision(
+            conn, 'change-xyz', 5, 'v5@example.com', fingerprint='fp-unique'
+        )
+        hit = review_tracking.find_revision_by_fingerprint(conn, 'fp-unique')
+        conn.close()
+        assert hit is not None
+        assert hit['change_id'] == 'change-xyz'
+        assert hit['revision'] == 5
+
+    def test_find_revision_by_fingerprint_misses(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Unknown or empty fingerprints return None rather than raising."""
+        conn = review_tracking.init_db('mrl-find-miss-test')
+        review_tracking.add_revision(
+            conn, 'change-xyz', 5, 'v5@example.com', fingerprint='fp-unique'
+        )
+        assert review_tracking.find_revision_by_fingerprint(conn, 'nope') is None
+        assert review_tracking.find_revision_by_fingerprint(conn, '') is None
+        assert review_tracking.find_revision_by_fingerprint(conn, None) is None
+        conn.close()
