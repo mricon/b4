@@ -746,8 +746,7 @@ def add_revision(
         (change_id, revision, message_id, subject, link, found_at,
          fingerprint, source)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (change_id, revision, message_id, subject, link, found_at,
-         fingerprint, source),
+        (change_id, revision, message_id, subject, link, found_at, fingerprint, source),
     )
     # Backfill a missing fingerprint without disturbing an existing one.
     if fingerprint:
@@ -911,8 +910,14 @@ def absorb_series_as_revision(
         message_id, subject, link, fingerprint = srow[2], srow[1], None, srow[3]
 
     add_revision(
-        conn, into_change_id, revision, message_id,
-        subject=subject, link=link, fingerprint=fingerprint, source='manual',
+        conn,
+        into_change_id,
+        revision,
+        message_id,
+        subject=subject,
+        link=link,
+        fingerprint=fingerprint,
+        source='manual',
     )
 
     # Copy the stray's patches onto the target revision, replacing any present.
@@ -1024,9 +1029,14 @@ def record_linked_revision(
     else:
         message_id = ref_msg.msgid
         add_revision(
-            conn, change_id, revision, message_id,
-            subject=lser.subject, link=_linkmask_url(message_id),
-            fingerprint=fingerprint, source='manual',
+            conn,
+            change_id,
+            revision,
+            message_id,
+            subject=lser.subject,
+            link=_linkmask_url(message_id),
+            fingerprint=fingerprint,
+            source='manual',
         )
         add_series_patches(conn, change_id, revision, lser)
 
@@ -1034,9 +1044,7 @@ def record_linked_revision(
     return result
 
 
-def unlink_revision(
-    conn: sqlite3.Connection, change_id: str, revision: int
-) -> bool:
+def unlink_revision(conn: sqlite3.Connection, change_id: str, revision: int) -> bool:
     """Remove a manually linked revision (and its patches).
 
     Refuses to remove a heuristically discovered revision so a manual undo

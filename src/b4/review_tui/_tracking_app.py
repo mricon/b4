@@ -3729,8 +3729,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         try:
             conn = b4.review.tracking.get_db(self._identifier)
             known = {
-                r['revision']
-                for r in b4.review.tracking.get_revisions(conn, change_id)
+                r['revision'] for r in b4.review.tracking.get_revisions(conn, change_id)
             }
             stray = b4.review.tracking.find_revision_by_fingerprint(
                 conn, lser.fingerprint

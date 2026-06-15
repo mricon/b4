@@ -2812,6 +2812,7 @@ class TestCmdTrackCancellation:
 
         assert exc_info.value.code == 130
 
+
 # ---------------------------------------------------------------------------
 # Manual revision linking (feature/review-manual-revision-link)
 #
@@ -2849,7 +2850,14 @@ def _make_legacy_v8_db(identifier: str) -> str:
     conn.execute(
         'INSERT INTO revisions (change_id, revision, message_id, subject, link, found_at)'
         ' VALUES (?, ?, ?, ?, ?, ?)',
-        ('legacy-change', 2, 'legacy-v2@example.com', 'Legacy v2', '', '2026-01-01T00:00:00+00:00'),
+        (
+            'legacy-change',
+            2,
+            'legacy-v2@example.com',
+            'Legacy v2',
+            '',
+            '2026-01-01T00:00:00+00:00',
+        ),
     )
     conn.commit()
     conn.close()
@@ -2918,8 +2926,12 @@ class TestRevisionSourceProvenance:
     ) -> None:
         conn = review_tracking.init_db('mrl-store-test')
         review_tracking.add_revision(
-            conn, 'change-abc', 4, 'v4@example.com',
-            fingerprint='fp-deadbeef', source='manual',
+            conn,
+            'change-abc',
+            4,
+            'v4@example.com',
+            fingerprint='fp-deadbeef',
+            source='manual',
         )
         revs = review_tracking.get_revisions(conn, 'change-abc')
         conn.close()
@@ -3015,7 +3027,7 @@ class TestRevisionSourceProvenance:
 
 
 def _insert_patches(
-    conn: sqlite3.Connection, change_id: str, revision: int, msgids: list
+    conn: sqlite3.Connection, change_id: str, revision: int, msgids: list[str]
 ) -> None:
     """Directly seed series_patches rows for test setup."""
     for pos, mid in enumerate(msgids, start=1):
@@ -3045,11 +3057,17 @@ def _seed_stray_series(
         fingerprint=fingerprint,
     )
     review_tracking.add_revision(
-        conn, change_id, revision, f'{change_id}-v{revision}@example.com',
-        subject=f'Stray {change_id} v{revision}', fingerprint=fingerprint,
+        conn,
+        change_id,
+        revision,
+        f'{change_id}-v{revision}@example.com',
+        subject=f'Stray {change_id} v{revision}',
+        fingerprint=fingerprint,
     )
     _insert_patches(
-        conn, change_id, revision,
+        conn,
+        change_id,
+        revision,
         [f'{change_id}-p1@example.com', f'{change_id}-p2@example.com'],
     )
 
@@ -3084,7 +3102,8 @@ class TestAbsorbSeriesAsRevision:
         # Patches copied across.
         patches = review_tracking.get_series_patches(conn, 'series-A', 2)
         assert [p['message_id'] for p in patches] == [
-            'series-B-p1@example.com', 'series-B-p2@example.com'
+            'series-B-p1@example.com',
+            'series-B-p2@example.com',
         ]
 
         # Stray fully removed.
@@ -3169,7 +3188,9 @@ def _build_series(
     msg.set_payload(_MINIMAL_DIFF)
     lmbx = b4.LoreMailbox()
     lmbx.add_message(msg)
-    return lmbx.get_series(revision)
+    lser = lmbx.get_series(revision)
+    assert lser is not None
+    return lser
 
 
 class TestFingerprintSemantics:
@@ -3238,7 +3259,10 @@ def _seed_target(
         (status, change_id, revision),
     )
     review_tracking.add_revision(
-        conn, change_id, revision, f'{change_id}-v{revision}@example.com',
+        conn,
+        change_id,
+        revision,
+        f'{change_id}-v{revision}@example.com',
     )
     conn.commit()
 
@@ -3366,9 +3390,7 @@ class TestUnlinkRevision:
         assert revs == []
         assert patches == []
 
-    def test_unlink_refuses_heuristic(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_unlink_refuses_heuristic(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = review_tracking.init_db('mrl-unlink-refuse-test')
         review_tracking.add_revision(conn, 'series-A', 2, 'v2@example.com')
 

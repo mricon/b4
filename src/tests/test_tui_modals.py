@@ -1179,9 +1179,9 @@ class TestLinkRevisionScreen:
         async with app.run_test() as pilot:
             app.push_screen(LinkRevisionScreen(), results.append)
             await pilot.pause()
-            app.screen.query_one('#link-rev-input', Input).value = (
-                '  20260320@example.com  '
-            )
+            app.screen.query_one(
+                '#link-rev-input', Input
+            ).value = '  20260320@example.com  '
             await pilot.press('enter')
             await pilot.pause()
             assert results == ['20260320@example.com']
