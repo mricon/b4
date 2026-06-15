@@ -3561,7 +3561,7 @@ class LinkRevisionScreen(ModalScreen[Optional[str]]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='link-rev-dialog') as dialog:
-            dialog.border_title = 'Link a revision'
+            dialog.border_title = 'Manually link a revision'
             if self._subject:
                 yield Static(self._subject, id='link-rev-subject', markup=False)
             yield Static(
@@ -3647,7 +3647,7 @@ class LinkRevisionConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='link-confirm-dialog') as dialog:
-            dialog.border_title = 'Link this revision?'
+            dialog.border_title = 'Manually link this revision?'
             yield Static(self._subject, id='link-confirm-subject', markup=False)
             summary = f'v{self._revision}  ·  {self._num_patches} patch(es)'
             if self._sender:

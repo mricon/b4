@@ -1206,7 +1206,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if status == 'new' and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
             if status == 'new':
-                actions.append(('link', 'Link a revision by message-id'))
+                actions.append(('link', 'Manually link a revision'))
             actions.append(('abandon', 'Abandon series'))
             if status == 'new':
                 actions.append(('waiting', 'Mark as waiting on new revision'))
@@ -1228,8 +1228,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 'has_newer'
             ):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
-            if status in ('reviewing', 'replied', 'partial', 'waiting'):
-                actions.append(('link', 'Link a revision by message-id'))
             if status == 'waiting':
                 actions.append(('review', 'Review'))
             if status in ('accepted', 'partial'):
@@ -1237,6 +1235,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 actions.append(('thank', 'Send thank-you'))
             if status == 'thanked':
                 actions.append(('review', 'Return to reviewing'))
+            if status in ('reviewing', 'replied', 'partial', 'waiting'):
+                actions.append(('link', 'Manually link a revision'))
             if status != 'thanked':
                 actions.append(('abandon', 'Abandon series'))
             actions.append(('archive', 'Archive series'))
