@@ -3155,8 +3155,8 @@ class CheckLoadingScreen(ModalScreen[None]):
     """Lightweight loading overlay shown while CI checks are running."""
 
     BINDINGS = [
-        Binding('escape', 'dismiss', 'Cancel', show=False),
-        Binding('q', 'dismiss', 'Cancel', show=False),
+        Binding('escape', 'cancel', 'Cancel', show=False),
+        Binding('q', 'cancel', 'Cancel', show=False),
     ]
 
     DEFAULT_CSS = """
@@ -3179,6 +3179,9 @@ class CheckLoadingScreen(ModalScreen[None]):
     def __init__(self, title: str = 'Running checks\u2026') -> None:
         super().__init__()
         self._title = title
+        # Set by the check runner once the worker is started, so Esc/q can
+        # cancel the in-flight checks instead of just hiding the overlay.
+        self.worker: Optional[Worker[None]] = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id='cl-dialog'):
@@ -3188,6 +3191,18 @@ class CheckLoadingScreen(ModalScreen[None]):
     def update_status(self, text: str) -> None:
         """Update the title text from outside the modal."""
         self.query_one('#cl-title', Static).update(text)
+
+    def action_cancel(self) -> None:
+        """Cancel the running check worker and dismiss the overlay.
+
+        Cancellation is cooperative: the worker finishes the patch it is
+        currently checking, then bails out of the loop, so there may be a
+        brief delay before the thread actually unwinds.  Dismissing the
+        overlay immediately keeps the UI responsive in the meantime.
+        """
+        if self.worker is not None:
+            self.worker.cancel()
+        self.dismiss(None)
 
 
 class TrackingCheckResultsScreen(ModalScreen[str]):

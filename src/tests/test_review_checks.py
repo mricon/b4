@@ -2,7 +2,7 @@ import datetime
 import json
 import os
 from email.message import EmailMessage
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from unittest import mock
 
 import pytest
@@ -1277,3 +1277,145 @@ class TestSashikoDispatch:
         with mock.patch('b4.get_main_config', return_value=config):
             results = checks._dispatch_cmd('_builtin_sashiko', msg, '/fake')
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Cooperative cancellation of the check worker (_fetch_and_check)
+# ---------------------------------------------------------------------------
+
+
+class _FakeWorker:
+    """Minimal stand-in for textual.worker.Worker.
+
+    Only exposes the ``is_cancelled`` attribute that ``_fetch_and_check``
+    polls.  ``cancel()`` flips it, mimicking both an Esc/q press on the
+    loading overlay and Textual's ``workers.cancel_all()`` on app exit.
+    """
+
+    def __init__(self) -> None:
+        self.is_cancelled = False
+
+    def cancel(self) -> None:
+        self.is_cancelled = True
+
+
+class _FakeCheckHost:
+    """Bare host satisfying what ``_fetch_and_check`` touches on ``self``."""
+
+    def __init__(self) -> None:
+        self._check_loading = None
+        self.loading_updates: List[str] = []
+        self.dismissed: List[Tuple[str, str]] = []
+        self.pushed_modal = False
+        # call_from_thread runs its callback inline so the final modal-push
+        # path is exercised when the run is *not* cancelled.
+        self.app = mock.Mock()
+        self.app.call_from_thread.side_effect = lambda cb, *a, **k: cb(*a, **k)
+
+    def _update_loading(self, text: str) -> None:
+        self.loading_updates.append(text)
+
+    def _dismiss_loading(self, msg: str = '', severity: str = '') -> None:
+        self.dismissed.append((msg, severity))
+
+    def push_screen(self, screen: object, callback: object = None) -> None:
+        self.pushed_modal = True
+
+
+def _patch_msg(idx: int, total: int) -> EmailMessage:
+    """Build a patch EmailMessage with a ``[PATCH idx/total]`` subject."""
+    msg = EmailMessage()
+    msg['Subject'] = f'[PATCH {idx}/{total}] change number {idx}'
+    msg['Message-Id'] = f'<patch{idx}@example.com>'
+    msg.set_content('dummy body')
+    return msg
+
+
+class TestCheckWorkerCancellation:
+    """The per-patch check loop must bail out when the worker is cancelled."""
+
+    def _run(
+        self, worker: _FakeWorker, cancel_after: Optional[int]
+    ) -> Tuple[_FakeCheckHost, mock.Mock, mock.Mock]:
+        from b4.review_tui._common import CheckRunnerMixin
+
+        host = _FakeCheckHost()
+        msgs = [_patch_msg(i, 3) for i in (1, 2, 3)]
+
+        call_count = {'n': 0}
+
+        def _fake_perpatch(
+            patches: List[Tuple[str, EmailMessage]], *a: Any, **k: Any
+        ) -> Dict[str, List[Dict[str, str]]]:
+            call_count['n'] += 1
+            mid = patches[0][0]
+            # Simulate the user cancelling mid-run (or the app exiting) once
+            # the requested number of patches have been processed.
+            if cancel_after is not None and call_count['n'] >= cancel_after:
+                worker.cancel()
+            return {mid: [{'tool': 'ci', 'status': 'pass', 'summary': 'ok'}]}
+
+        perpatch = mock.Mock(side_effect=_fake_perpatch)
+        store = mock.Mock()
+
+        with (
+            mock.patch('b4.review_tui._common.get_current_worker', return_value=worker),
+            mock.patch('b4.review_tui._common.get_thread_msgs', return_value=msgs),
+            mock.patch('b4.git_get_toplevel', return_value='/fake'),
+            mock.patch('b4.get_main_config', return_value={}),
+            mock.patch('b4.review.checks.clear_sashiko_cache'),
+            mock.patch(
+                'b4.review.checks.load_check_cmds', return_value=(['mycheck'], [])
+            ),
+            mock.patch('b4.review.checks.get_db', return_value=mock.Mock()),
+            mock.patch('b4.review.checks.cleanup_old', return_value=0),
+            mock.patch('b4.review.checks.get_cached_results', return_value={}),
+            mock.patch('b4.review.checks.run_perpatch_checks', perpatch),
+            mock.patch('b4.review.checks.store_results', store),
+        ):
+            CheckRunnerMixin._fetch_and_check(  # type: ignore[arg-type]
+                host, 'patch1@example.com', 'a series', change_id='', force=False
+            )
+        return host, perpatch, store
+
+    def test_cancel_stops_remaining_perpatch_checks(self) -> None:
+        worker = _FakeWorker()
+        host, perpatch, store = self._run(worker, cancel_after=1)
+        # Only the first patch ran; the loop broke before patches 2 and 3.
+        assert perpatch.call_count == 1
+        # Partial results were still cached, so a re-run resumes where this
+        # one left off.
+        assert store.call_count == 1
+        # The results modal must NOT be shown for a cancelled run.
+        assert host.pushed_modal is False
+
+    def test_no_cancel_runs_all_and_pushes_modal(self) -> None:
+        worker = _FakeWorker()
+        host, perpatch, store = self._run(worker, cancel_after=None)
+        # All three patches checked, all cached, and the modal is shown.
+        assert perpatch.call_count == 3
+        assert store.call_count == 3
+        assert host.pushed_modal is True
+
+
+class TestCheckLoadingScreenCancel:
+    """The loading overlay's Esc/q action cancels the worker, not just hides."""
+
+    def test_action_cancel_cancels_worker_and_dismisses(self) -> None:
+        from b4.review_tui._modals import CheckLoadingScreen
+
+        screen = CheckLoadingScreen()
+        worker = _FakeWorker()
+        screen.worker = worker  # type: ignore[assignment]
+        with mock.patch.object(screen, 'dismiss') as dismiss:
+            screen.action_cancel()
+        assert worker.is_cancelled is True
+        dismiss.assert_called_once_with(None)
+
+    def test_action_cancel_without_worker_just_dismisses(self) -> None:
+        from b4.review_tui._modals import CheckLoadingScreen
+
+        screen = CheckLoadingScreen()
+        with mock.patch.object(screen, 'dismiss') as dismiss:
+            screen.action_cancel()
+        dismiss.assert_called_once_with(None)

@@ -31,7 +31,7 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 from textual.widgets import RichLog
-from textual.worker import Worker
+from textual.worker import Worker, get_current_worker
 
 import b4
 import b4.review
@@ -157,6 +157,7 @@ class _CallFromThreadHost(Protocol):
 
 class _CheckRunnerHost(Protocol):
     _check_loading: Optional['CheckLoadingScreen']
+    _check_worker: Optional[Worker[None]]
 
     @property
     def app(self) -> _CallFromThreadHost: ...
@@ -207,6 +208,7 @@ class CheckRunnerMixin:
     """
 
     _check_loading: Optional['CheckLoadingScreen']
+    _check_worker: Optional[Worker[None]] = None
 
     # -- interface for subclasses ------------------------------------------
 
@@ -238,13 +240,15 @@ class CheckRunnerMixin:
 
         self._check_loading = CheckLoadingScreen()
         self.push_screen(self._check_loading)
-        self.run_worker(
+        self._check_worker = self.run_worker(
             lambda: self._fetch_and_check(
                 message_id, series_subject, change_id=change_id, force=force
             ),
             name='_check_worker',
             thread=True,
         )
+        # Let the loading overlay cancel this worker on Esc/q.
+        self._check_loading.worker = self._check_worker
 
     def _dismiss_loading(
         self: _CheckRunnerHost, msg: str = '', severity: str = ''
@@ -275,9 +279,19 @@ class CheckRunnerMixin:
         change_id: str = '',
         force: bool = False,
     ) -> None:
-        """Fetch thread, run checks, and push results modal (worker thread)."""
+        """Fetch thread, run checks, and push results modal (worker thread).
+
+        Checks run sequentially and can be slow on large series, so the
+        per-patch loop polls :attr:`Worker.is_cancelled` and bails out
+        early.  Cancellation is raised both by the user pressing Esc/q on
+        the loading overlay and by Textual cancelling all workers when the
+        app exits, so quitting mid-check no longer blocks on the remaining
+        patches.  Results computed before the bail are still cached.
+        """
         import b4.review.checks as checks
         from b4.review_tui._modals import TrackingCheckResultsScreen
+
+        worker = get_current_worker()
 
         checks.clear_sashiko_cache()
         perpatch_cmds, series_cmds = checks.load_check_cmds()
@@ -398,6 +412,8 @@ class CheckRunnerMixin:
                     unchecked.append((pidx, mid, _msg))
 
             for pidx, mid, _msg in unchecked:
+                if worker.is_cancelled:
+                    break
                 label = patch_labels[pidx]
                 self._update_loading(f'Running checks\u2026 {label}')
                 single_results = checks.run_perpatch_checks(
@@ -414,8 +430,8 @@ class CheckRunnerMixin:
                     matrix[(pidx, tool)] = result
                     new_results.setdefault(mid, []).append(result)
 
-        # Run per-series checks (only if not cached)
-        if series_cmds:
+        # Run per-series checks (only if not cached and not cancelled)
+        if series_cmds and not worker.is_cancelled:
             target = (
                 cover_msg if cover_msg else (ordered_msgs[0] if ordered_msgs else None)
             )
@@ -442,6 +458,14 @@ class CheckRunnerMixin:
                 os.unlink(tracking_file)
             except OSError:
                 pass
+
+        # Bail out if the run was cancelled (Esc/q on the overlay, or the
+        # app quitting).  Any results gathered above are already cached, so
+        # a later re-run picks up where this one left off.  Don't touch the
+        # UI here: the overlay is already dismissed on user cancel, and the
+        # app is tearing down on exit.
+        if worker.is_cancelled:
+            return
 
         # Build title and swap loading screen for results
         title = f'CI Check Results: {series_subject}'
