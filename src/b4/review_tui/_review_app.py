@@ -29,6 +29,7 @@ from b4.review._review import COMMIT_MESSAGE_PATH
 from b4.review_tui._common import (
     PATCH_STATE_MARKERS,
     CheckRunnerMixin,
+    LoreNodeShutdownMixin,
     SeparatedFooter,
     _chain_has_additional_patch,
     _fix_ansi_theme,
@@ -109,7 +110,7 @@ class FollowupItem(ListItem):
         yield st
 
 
-class ReviewApp(CheckRunnerMixin, App[None]):
+class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     """Textual app for b4 review TUI."""
 
     TITLE = 'b4 review'

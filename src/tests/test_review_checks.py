@@ -1442,3 +1442,29 @@ class TestWorkerCancelledHelper:
             assert _common.worker_cancelled() is False
             worker.cancel()
             assert _common.worker_cancelled() is True
+
+
+class TestLoreNodeShutdownMixin:
+    """The mixin cancels the shared lore node from its on_unmount hook."""
+
+    def test_on_unmount_cancels_lore_node(self) -> None:
+        from b4.review_tui._common import LoreNodeShutdownMixin
+
+        class _App(LoreNodeShutdownMixin):
+            pass
+
+        node = mock.Mock()
+        with mock.patch('b4.get_lore_node', return_value=node):
+            _App().on_unmount()
+        node.cancel.assert_called_once_with()
+
+    def test_on_unmount_swallows_errors(self) -> None:
+        # Shutdown must never raise out of on_unmount, even if the lore
+        # node is unavailable or cancel() blows up.
+        from b4.review_tui._common import LoreNodeShutdownMixin
+
+        class _App(LoreNodeShutdownMixin):
+            pass
+
+        with mock.patch('b4.get_lore_node', side_effect=RuntimeError('boom')):
+            _App().on_unmount()  # must not raise

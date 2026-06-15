@@ -202,6 +202,36 @@ class _CheckRunnerHost(Protocol):
     ) -> Worker[_WorkerResult]: ...
 
 
+class LoreNodeShutdownMixin:
+    """App mixin that cancels in-flight lore fetches on shutdown.
+
+    A worker blocked inside a single liblore network fetch cannot be
+    stopped by polling :func:`worker_cancelled` -- there is no loop to
+    poll, just one long-running request.  When the app quits, Textual
+    flips the worker's cancellation flag but the fetch keeps blocking, so
+    the interpreter stalls at shutdown joining the worker thread until the
+    request returns on its own.
+
+    Textual dispatches an ``Unmount`` event to the app itself during
+    shutdown (on every exit path: ``q``, Ctrl-C, programmatic exit, or an
+    error), and that runs on the main thread while the worker is still
+    parked in its fetch.  Cancelling the shared lore node here makes the
+    in-flight request raise ``OperationCancelledError`` promptly, so the
+    worker unwinds and the app exits without waiting on the network.
+
+    This complements :func:`worker_cancelled`, which already covers the
+    workers that loop over many smaller fetches.
+    """
+
+    def on_unmount(self) -> None:
+        # Textual's internal teardown uses _on_unmount(), so overriding the
+        # public on_unmount() hook does not skip any framework cleanup.
+        try:
+            b4.get_lore_node().cancel()
+        except Exception:
+            logger.debug('lore node cancel on shutdown failed', exc_info=True)
+
+
 class CheckRunnerMixin:
     """Mixin providing CI check execution for Textual App subclasses.
 

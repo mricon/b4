@@ -19,6 +19,7 @@ import b4
 import b4.review
 import b4.review.tracking
 from b4.review_tui._common import (
+    LoreNodeShutdownMixin,
     SeparatedFooter,
     _fix_ansi_theme,
     ci_styles,
@@ -103,7 +104,7 @@ class PwSeriesItem(ListItem):
         )
 
 
-class PwApp(App[None]):
+class PwApp(LoreNodeShutdownMixin, App[None]):
     """Textual app for browsing Patchwork series."""
 
     TITLE = 'b4 review pw'

@@ -35,6 +35,7 @@ import b4.review.tracking
 import b4.ty
 from b4.review_tui._common import (
     CheckRunnerMixin,
+    LoreNodeShutdownMixin,
     SeparatedFooter,
     _fix_ansi_theme,
     _quiet_worker,
@@ -488,7 +489,7 @@ class TrackedSeriesItem(ListItem):
         yield Label(label, markup=False)
 
 
-class TrackingApp(CheckRunnerMixin, App[Optional[str]]):
+class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     """Textual app for browsing tracked series.
 
     Returns the branch name to review, or None to exit.

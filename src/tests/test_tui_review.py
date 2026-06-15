@@ -427,3 +427,32 @@ class TestReconcileAfterShell:
             disk_first = tracking['series']['first-patch-commit']
             assert disk_first == app._commit_shas[0]
             assert disk_first != old_shas[0]
+
+
+class TestLoreNodeShutdown:
+    """The app cancels the shared lore node when it quits.
+
+    Single-shot network workers block inside one fetch and cannot poll a
+    cancellation flag, so the app cancels the lore node on shutdown to
+    unblock any in-flight request instead of stalling on exit.
+    """
+
+    @pytest.mark.asyncio
+    async def test_quit_cancels_lore_node(self, gitdir: str) -> None:
+        branch, _patch_shas = _create_review_branch_with_patches(
+            gitdir, 'shutdown-cancel', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+
+        node = mock.Mock()
+        app = ReviewApp(session)
+        # Patch the singleton accessor so we observe the shutdown cancel
+        # without touching real lore state.
+        with mock.patch('b4.get_lore_node', return_value=node):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('q')
+                await pilot.pause()
+
+        # on_unmount fired during shutdown and cancelled the node.
+        assert node.cancel.called
