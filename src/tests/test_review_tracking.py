@@ -3005,3 +3005,191 @@ class TestRevisionSourceProvenance:
         assert review_tracking.find_revision_by_fingerprint(conn, '') is None
         assert review_tracking.find_revision_by_fingerprint(conn, None) is None
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: duplicate absorption.  When a posting being linked is already
+# tracked as its own stray series, absorb it as a revision of the target
+# change_id rather than leaving a duplicate behind.
+# ---------------------------------------------------------------------------
+
+
+def _insert_patches(
+    conn: sqlite3.Connection, change_id: str, revision: int, msgids: list
+) -> None:
+    """Directly seed series_patches rows for test setup."""
+    for pos, mid in enumerate(msgids, start=1):
+        conn.execute(
+            'INSERT INTO series_patches'
+            ' (change_id, revision, position, message_id, subject)'
+            ' VALUES (?, ?, ?, ?, ?)',
+            (change_id, revision, pos, mid, f'[PATCH {pos}] thing'),
+        )
+    conn.commit()
+
+
+def _seed_stray_series(
+    conn: sqlite3.Connection, change_id: str, revision: int, fingerprint: str
+) -> None:
+    """Seed a fully tracked stand-alone series (series + revision + patches)."""
+    review_tracking.add_series_to_db(
+        conn,
+        change_id=change_id,
+        revision=revision,
+        subject=f'Stray {change_id} v{revision}',
+        sender_name='Srinivas',
+        sender_email='srinivas@example.com',
+        sent_at='2026-03-20T00:00:00+00:00',
+        message_id=f'{change_id}-v{revision}@example.com',
+        num_patches=2,
+        fingerprint=fingerprint,
+    )
+    review_tracking.add_revision(
+        conn, change_id, revision, f'{change_id}-v{revision}@example.com',
+        subject=f'Stray {change_id} v{revision}', fingerprint=fingerprint,
+    )
+    _insert_patches(
+        conn, change_id, revision,
+        [f'{change_id}-p1@example.com', f'{change_id}-p2@example.com'],
+    )
+
+
+class TestAbsorbSeriesAsRevision:
+    """Tier 3: absorb_series_as_revision() re-homes a stray duplicate."""
+
+    def test_absorb_rehomes_revision_and_deletes_stray(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-absorb-test')
+        # Target series A with v1 already tracked (heuristic).
+        review_tracking.add_revision(conn, 'series-A', 1, 'a-v1@example.com')
+        # Stray series B independently tracked as its own v2.
+        _seed_stray_series(conn, 'series-B', 2, 'fp-stray-b')
+
+        absorbed = review_tracking.absorb_series_as_revision(
+            conn, 'series-A', 'series-B', 2
+        )
+        assert absorbed is True
+
+        revs_a = review_tracking.get_revisions(conn, 'series-A')
+        assert [r['revision'] for r in revs_a] == [1, 2]
+        rev2 = next(r for r in revs_a if r['revision'] == 2)
+        assert rev2['message_id'] == 'series-B-v2@example.com'
+        assert rev2['fingerprint'] == 'fp-stray-b'
+        assert rev2['source'] == 'manual'
+        # v1 left untouched.
+        rev1 = next(r for r in revs_a if r['revision'] == 1)
+        assert rev1['source'] == 'heuristic'
+
+        # Patches copied across.
+        patches = review_tracking.get_series_patches(conn, 'series-A', 2)
+        assert [p['message_id'] for p in patches] == [
+            'series-B-p1@example.com', 'series-B-p2@example.com'
+        ]
+
+        # Stray fully removed.
+        assert review_tracking.get_revisions(conn, 'series-B') == []
+        assert review_tracking.get_series_patches(conn, 'series-B', 2) == []
+        srow = conn.execute(
+            "SELECT COUNT(*) FROM series WHERE change_id = 'series-B'"
+        ).fetchone()
+        conn.close()
+        assert srow[0] == 0
+
+    def test_absorb_missing_stray_is_noop(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-absorb-noop-test')
+        review_tracking.add_revision(conn, 'series-A', 1, 'a-v1@example.com')
+        absorbed = review_tracking.absorb_series_as_revision(
+            conn, 'series-A', 'series-B', 2
+        )
+        revs_a = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert absorbed is False
+        assert [r['revision'] for r in revs_a] == [1]
+
+    def test_absorb_idempotent_when_called_twice(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-absorb-twice-test')
+        review_tracking.add_revision(conn, 'series-A', 1, 'a-v1@example.com')
+        _seed_stray_series(conn, 'series-B', 2, 'fp-stray-b')
+
+        first = review_tracking.absorb_series_as_revision(
+            conn, 'series-A', 'series-B', 2
+        )
+        second = review_tracking.absorb_series_as_revision(
+            conn, 'series-A', 'series-B', 2
+        )
+        revs_a = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert first is True
+        assert second is False
+        assert [r['revision'] for r in revs_a] == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# Tier 4: fingerprint semantics guard.  These pin the LoreSeries.fingerprint
+# and __eq__ contracts the absorption logic and the future consumer rely on.
+# They pass against current behaviour; their job is to fail loudly if a
+# refactor ever changes it.
+# ---------------------------------------------------------------------------
+
+_AUTHOR = 'Author <author@example.com>'
+
+_MINIMAL_DIFF = """\
+Fix bar.
+
+Signed-off-by: Author <author@example.com>
+---
+ foo.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/foo.c b/foo.c
+index aaa..bbb 100644
+--- a/foo.c
++++ b/foo.c
+@@ -1,3 +1,4 @@
+ void foo(void) {
++    bar();
+ }
+"""
+
+
+def _build_series(
+    subject: str, from_addr: str, revision: int, msgid: str = ''
+) -> 'b4.LoreSeries':
+    """Build a one-patch LoreSeries from a synthetic message."""
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = from_addr
+    msg['Date'] = 'Thu, 19 Mar 2026 08:51:12 +0530'
+    msg['Message-Id'] = msgid or f'<{abs(hash(subject + from_addr))}@test.com>'
+    msg.set_payload(_MINIMAL_DIFF)
+    lmbx = b4.LoreMailbox()
+    lmbx.add_message(msg)
+    return lmbx.get_series(revision)
+
+
+class TestFingerprintSemantics:
+    """Tier 4: guard the fingerprint/__eq__ contract."""
+
+    def test_different_revisions_differ(self) -> None:
+        """Two revisions never share a fingerprint (revision is folded in)."""
+        v1 = _build_series('[PATCH] foo: fix bar', _AUTHOR, 1)
+        v2 = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        assert v1.fingerprint != v2.fingerprint
+
+    def test_identical_posting_matches(self) -> None:
+        """The same exact posting hashes identically (idempotent ingest)."""
+        a = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2, msgid='<x@test.com>')
+        b = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2, msgid='<x@test.com>')
+        assert a.fingerprint == b.fingerprint
+
+    def test_same_patches_different_sender(self) -> None:
+        """Same patch-ids, different sender: fingerprints differ, __eq__ True."""
+        a = _build_series('[PATCH v2] foo: fix bar', 'Alice <alice@example.com>', 2)
+        b = _build_series('[PATCH v2] foo: fix bar', 'Bob <bob@example.com>', 2)
+        assert a.fingerprint != b.fingerprint
+        assert a == b
