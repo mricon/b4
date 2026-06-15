@@ -58,8 +58,11 @@ v0.16
 		: Low-priority derived state (like 'unchanged') — re-derived each load,
 		  never written to review trailers so it can't be re-sent; any manual
 		  skip/comment/reply or my own Nacked-by supersedes it
-	[_] Cancel background processes (e.g. base check) on exit
+	[X] Cancel background processes (e.g. base check) on exit
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+		: worker_cancelled() helper lets looping workers bail on exit/Esc;
+		  LoreNodeShutdownMixin cancels the lore node on app unmount to
+		  unblock single-shot network fetches
 	[X] Keep trailers in-place when added via reply editor
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 		: Resolved by the WYSIWYG reply redesign — the trailer menu now edits
