@@ -502,9 +502,13 @@ def test_mixin_cover_relocates_basement_with_change_id() -> None:
     assert body.index('change-id:') > body.index('diff --git')
 
 
-def test_mixin_cover_relocates_split_basement_sections() -> None:
-    """Basement trailers spread across multiple '---' sections (base-commit in
-    one, prerequisites in another) must all be relocated below the diff.
+def test_mixin_cover_uses_last_basement_section() -> None:
+    """When more than one section looks like a basement, the LAST one wins.
+
+    A cover may carry an earlier trailer-shaped section (stale or quoted
+    metadata) above the genuine basement. Only the final trailer section is
+    the real basement and gets relocated below the diff; earlier look-alikes
+    stay where the cover put them.
     """
     patch = _make_patch_msg(_SINGLE_PATCH_BODY)
     cbody = (
@@ -512,18 +516,93 @@ def test_mixin_cover_relocates_split_basement_sections() -> None:
         '\n'
         'Cover body text.\n'
         '---\n'
+        'base-commit: 0000stale0000\n'  # earlier look-alike -> stays put
+        '---\n'
+        ' feature.txt | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'  # genuine basement -> bottom
+        'change-id: 20260101-test-change-id\n'
+    )
+
+    b4.ez.mixin_cover(cbody, [('', patch)])
+    body, _charset = b4.LoreMessage.get_payload(patch)
+
+    assert body.index('base-commit: 0000stale0000') < body.index('diff --git')
+    assert body.index('base-commit: 1234abcd5678') > body.index('diff --git')
+    assert body.index('change-id: 20260101-test-change-id') > body.index('diff --git')
+
+
+def test_mixin_cover_keeps_notes_that_mention_trailers() -> None:
+    """Prose that merely *mentions* a basement trailer must stay put.
+
+    A cover-letter section can contain free-form text that happens to talk
+    about base-commit/change-id/prerequisite-* trailers (e.g. a changelog
+    noting that obsolete dependencies were dropped). The genuine basement
+    comes later, so this earlier prose section is left in place rather than
+    yanked below the diff.
+    """
+    patch = _make_patch_msg(_SINGLE_PATCH_BODY)
+    # The cover body uses a '---' rule, so everything after it lands in the
+    # cover "basement" and goes through section classification.
+    cbody = (
+        'Cover title\n'
+        '\n'
+        'Cover body text.\n'
+        '---\n'
+        'Deleted some obsolete series dependencies, so the new series no\n'
+        'longer has\n'
+        'prerequisite-change-id: or similar sections.\n'
+        '---\n'
         'feat: add a feature\n'
         '\n'
         ' feature.txt | 1 +\n'
         ' 1 file changed, 1 insertion(+)\n'
         '---\n'
         'base-commit: 1234abcd5678\n'
-        '---\n'
-        'prerequisite-change-id: 20260101-prereq:v3\n'
+        'change-id: 20260101-test-change-id\n'
     )
 
     b4.ez.mixin_cover(cbody, [('', patch)])
     body, _charset = b4.LoreMessage.get_payload(patch)
 
+    # The prose -- including its "prerequisite-change-id:" mention -- stays
+    # above the diff, exactly where the cover put it...
+    assert body.index('Deleted some obsolete') < body.index('diff --git')
+    assert body.index('prerequisite-change-id: or similar sections.') < body.index(
+        'diff --git'
+    )
+    # ...while the genuine basement is relocated to the bottom.
+    assert body.index('base-commit: 1234abcd5678') > body.index('diff --git')
+    assert body.index('change-id: 20260101-test-change-id') > body.index('diff --git')
+
+
+def test_mixin_cover_keeps_notes_with_midsection_trailer_line() -> None:
+    """A prose section whose interior line *begins* with a trailer token
+    (colon and all) still stays put, because the genuine basement is the
+    later trailer section, not this one.
+    """
+    patch = _make_patch_msg(_SINGLE_PATCH_BODY)
+    cbody = (
+        'Cover title\n'
+        '\n'
+        'Cover body text.\n'
+        '---\n'
+        'Notes about this revision:\n'
+        'change-id: handling was simplified in this round.\n'
+        '---\n'
+        ' feature.txt | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'
+        'change-id: 20260101-test-change-id\n'
+    )
+
+    b4.ez.mixin_cover(cbody, [('', patch)])
+    body, _charset = b4.LoreMessage.get_payload(patch)
+
+    # The prose section (including its trailer-shaped line) stays above the diff.
+    assert body.index('Notes about this revision') < body.index('diff --git')
+    assert body.index('change-id: handling was simplified') < body.index('diff --git')
+    # The genuine basement is relocated below the diff.
     assert body.index('base-commit:') > body.index('diff --git')
-    assert body.index('prerequisite-change-id:') > body.index('diff --git')

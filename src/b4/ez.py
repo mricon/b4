@@ -1704,25 +1704,36 @@ def mixin_cover(cbody: str, patches: List[Tuple[str, EmailMessage]]) -> None:
         nbparts.append(nmessage)
 
     # Sort the cover's basement sections into "notes" (changelogs and the
-    # like, which stay above the diff) and "utility" trailers (base-commit,
-    # change-id, prerequisites), which always belong at the very bottom. We
-    # can't key off a single trailer here: a custom prep-cover-template may
-    # drop or reorder any of them (e.g. omit change-id but keep base-commit),
-    # so match the whole family. Otherwise an unrecognized basement section
-    # gets misfiled as notes above the diffstat and the real basement is lost.
-    utility = list()
-    for section in re.split(r'^---\n', cbasement, flags=re.M):
+    # like, which stay above the diff) and the "utility" basement (base-commit,
+    # change-id, prerequisites), which belongs at the very bottom. We can't key
+    # off a single trailer: a custom prep-cover-template may drop or reorder any
+    # of them (e.g. omit change-id but keep base-commit), so match the whole
+    # family. But prose may also *mention* a trailer (e.g. a changelog noting
+    # that prerequisite-change-id: entries were dropped), which matches too. The
+    # genuine basement is always the LAST such section, so when several match we
+    # keep only the last and leave the earlier ones in place as notes.
+    sections = re.split(r'^---\n', cbasement, flags=re.M)
+    basement_idx = None
+    for idx, section in enumerate(sections):
+        if re.search(b4.DIFFSTAT_RE, section):
+            continue
+        if BASEMENT_TRAILER_RE.search(section):
+            basement_idx = idx
+
+    utility = None
+    for idx, section in enumerate(sections):
         if re.search(b4.DIFFSTAT_RE, section):
             # Skip this section (the cover's own shortlog/diffstat)
             continue
-        if BASEMENT_TRAILER_RE.search(section):
-            # We move this to the bottom
-            utility.append(section)
+        if idx == basement_idx:
+            # The genuine basement -- move it to the bottom
+            utility = section
             continue
         nbparts.append(section.strip('\r\n') + '\n')
 
     nbparts.append(pbasement.rstrip('\r\n') + '\n\n')
-    nbparts.extend(utility)
+    if utility is not None:
+        nbparts.append(utility)
 
     newbasement = '---\n'.join(nbparts)
 
