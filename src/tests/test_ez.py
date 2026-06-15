@@ -1,4 +1,5 @@
 import os
+from email.message import EmailMessage
 from typing import Any, Dict, Generator, List, Optional, Tuple
 from unittest.mock import patch
 
@@ -408,3 +409,121 @@ def test_store_cover_preserves_series_notes(prepdir_commit: str) -> None:
     ecode, backup_oid = b4.git_run_command(None, ['rev-parse', f'refs/original/{cb}'])
     assert ecode == 0
     assert backup_oid.strip() == pre_head
+
+
+# A minimal but realistic single-patch body: commit message, the '---'
+# separator, a diffstat, and a diff. mixin_cover() folds a cover into this
+# when a series has exactly one patch.
+_SINGLE_PATCH_BODY = (
+    'feat: add a feature\n'
+    '\n'
+    'This adds a feature.\n'
+    '\n'
+    'Signed-off-by: Test User <test@example.com>\n'
+    '---\n'
+    ' feature.txt | 1 +\n'
+    ' 1 file changed, 1 insertion(+)\n'
+    '\n'
+    'diff --git a/feature.txt b/feature.txt\n'
+    'new file mode 100644\n'
+    'index 0000000..cc628cc\n'
+    '--- /dev/null\n'
+    '+++ b/feature.txt\n'
+    '@@ -0,0 +1 @@\n'
+    '+world\n'
+)
+
+
+def _make_patch_msg(body: str) -> EmailMessage:
+    msg = EmailMessage()
+    msg.set_payload(body, charset='utf-8')
+    return msg
+
+
+def test_mixin_cover_relocates_basement_without_change_id() -> None:
+    """A cover whose basement omits `change-id:` must still relocate the
+    basement (base-commit, prerequisites) to the very bottom of a lone patch.
+
+    Regression: mixin_cover() used to detect the relocatable basement section
+    purely by its `change-id:` line. A custom prep-cover-template that dropped
+    that line (but kept base-commit) left mixin_cover unable to recognize the
+    section, so base-commit was emitted as cover notes *above* the diffstat and
+    the real bottom basement was truncated entirely.
+    """
+    patch = _make_patch_msg(_SINGLE_PATCH_BODY)
+    # Rendering of a custom prep-cover-template that drops `change-id:`.
+    cbody = (
+        'Cover title\n'
+        '\n'
+        'Cover body text.\n'
+        '---\n'
+        'feat: add a feature\n'
+        '\n'
+        ' feature.txt | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'
+    )
+
+    b4.ez.mixin_cover(cbody, [('', patch)])
+    body, _charset = b4.LoreMessage.get_payload(patch)
+
+    # base-commit belongs in the bottom basement, after the diff -- not
+    # injected as cover notes above the diffstat.
+    assert body.count('base-commit:') == 1
+    assert body.index('base-commit:') > body.index('diff --git')
+
+
+def test_mixin_cover_relocates_basement_with_change_id() -> None:
+    """The default-template path (basement keyed by change-id) keeps working:
+    both base-commit and change-id land in the bottom basement after the diff.
+    """
+    patch = _make_patch_msg(_SINGLE_PATCH_BODY)
+    cbody = (
+        'Cover title\n'
+        '\n'
+        'Cover body text.\n'
+        '---\n'
+        'feat: add a feature\n'
+        '\n'
+        ' feature.txt | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'
+        'change-id: 20260101-test-change-id\n'
+    )
+
+    b4.ez.mixin_cover(cbody, [('', patch)])
+    body, _charset = b4.LoreMessage.get_payload(patch)
+
+    assert body.count('base-commit:') == 1
+    assert body.count('change-id:') == 1
+    assert body.index('base-commit:') > body.index('diff --git')
+    assert body.index('change-id:') > body.index('diff --git')
+
+
+def test_mixin_cover_relocates_split_basement_sections() -> None:
+    """Basement trailers spread across multiple '---' sections (base-commit in
+    one, prerequisites in another) must all be relocated below the diff.
+    """
+    patch = _make_patch_msg(_SINGLE_PATCH_BODY)
+    cbody = (
+        'Cover title\n'
+        '\n'
+        'Cover body text.\n'
+        '---\n'
+        'feat: add a feature\n'
+        '\n'
+        ' feature.txt | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'
+        '---\n'
+        'prerequisite-change-id: 20260101-prereq:v3\n'
+    )
+
+    b4.ez.mixin_cover(cbody, [('', patch)])
+    body, _charset = b4.LoreMessage.get_payload(patch)
+
+    assert body.index('base-commit:') > body.index('diff --git')
+    assert body.index('prerequisite-change-id:') > body.index('diff --git')

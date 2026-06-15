@@ -39,6 +39,14 @@ can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
 logger = b4.logger
 
+# Trailers that live in the basement (the section below the patch '---') and
+# must always be relocated to the very bottom of a patch, regardless of where
+# a custom prep-cover-template happens to place them.
+BASEMENT_TRAILER_RE = re.compile(
+    r'^(?:base-commit|change-id|prerequisite-[a-z-]+):',
+    flags=re.I | re.M,
+)
+
 MAGIC_MARKER = '--- b4-submit-tracking ---'
 # Make this configurable?
 SENT_TAG_PREFIX = 'sent/'
@@ -1695,21 +1703,26 @@ def mixin_cover(cbody: str, patches: List[Tuple[str, EmailMessage]]) -> None:
     if len(nmessage.strip()):
         nbparts.append(nmessage)
 
-    # Find the section with changelogs
-    utility = None
+    # Sort the cover's basement sections into "notes" (changelogs and the
+    # like, which stay above the diff) and "utility" trailers (base-commit,
+    # change-id, prerequisites), which always belong at the very bottom. We
+    # can't key off a single trailer here: a custom prep-cover-template may
+    # drop or reorder any of them (e.g. omit change-id but keep base-commit),
+    # so match the whole family. Otherwise an unrecognized basement section
+    # gets misfiled as notes above the diffstat and the real basement is lost.
+    utility = list()
     for section in re.split(r'^---\n', cbasement, flags=re.M):
         if re.search(b4.DIFFSTAT_RE, section):
-            # Skip this section
+            # Skip this section (the cover's own shortlog/diffstat)
             continue
-        if re.search(r'^change-id: ', section, flags=re.I | re.M):
+        if BASEMENT_TRAILER_RE.search(section):
             # We move this to the bottom
-            utility = section
+            utility.append(section)
             continue
         nbparts.append(section.strip('\r\n') + '\n')
 
     nbparts.append(pbasement.rstrip('\r\n') + '\n\n')
-    if utility:
-        nbparts.append(utility)
+    nbparts.extend(utility)
 
     newbasement = '---\n'.join(nbparts)
 
