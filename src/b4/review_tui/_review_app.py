@@ -47,6 +47,7 @@ from b4.review_tui._common import (
     logger,
     resolve_styles,
     reviewer_colours,
+    worker_cancelled,
 )
 from b4.review_tui._modals import (
     CheckLoadingScreen,
@@ -1953,6 +1954,9 @@ class ReviewApp(CheckRunnerMixin, App[None]):
         seen_msgids: Set[str] = set()
         fetched_patches: Set[str] = set()
         for patch_meta in self._patches:
+            # One lore fetch per patch; bail promptly on cancel/exit.
+            if worker_cancelled():
+                break
             pmsgid = patch_meta.get('header-info', {}).get('msgid', '')
             if not pmsgid or pmsgid in fetched_patches:
                 continue

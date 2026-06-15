@@ -31,7 +31,7 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 from textual.widgets import RichLog
-from textual.worker import Worker, get_current_worker
+from textual.worker import Worker
 
 import b4
 import b4.review
@@ -88,6 +88,9 @@ from b4.tui._common import (
 )
 from b4.tui._common import (
     reviewer_colours as reviewer_colours,
+)
+from b4.tui._common import (
+    worker_cancelled as worker_cancelled,
 )
 
 logger = b4.logger
@@ -282,16 +285,14 @@ class CheckRunnerMixin:
         """Fetch thread, run checks, and push results modal (worker thread).
 
         Checks run sequentially and can be slow on large series, so the
-        per-patch loop polls :attr:`Worker.is_cancelled` and bails out
-        early.  Cancellation is raised both by the user pressing Esc/q on
-        the loading overlay and by Textual cancelling all workers when the
-        app exits, so quitting mid-check no longer blocks on the remaining
+        per-patch loop polls :func:`worker_cancelled` and bails out early.
+        Cancellation is raised both by the user pressing Esc/q on the
+        loading overlay and by Textual cancelling all workers when the app
+        exits, so quitting mid-check no longer blocks on the remaining
         patches.  Results computed before the bail are still cached.
         """
         import b4.review.checks as checks
         from b4.review_tui._modals import TrackingCheckResultsScreen
-
-        worker = get_current_worker()
 
         checks.clear_sashiko_cache()
         perpatch_cmds, series_cmds = checks.load_check_cmds()
@@ -412,7 +413,7 @@ class CheckRunnerMixin:
                     unchecked.append((pidx, mid, _msg))
 
             for pidx, mid, _msg in unchecked:
-                if worker.is_cancelled:
+                if worker_cancelled():
                     break
                 label = patch_labels[pidx]
                 self._update_loading(f'Running checks\u2026 {label}')
@@ -431,7 +432,7 @@ class CheckRunnerMixin:
                     new_results.setdefault(mid, []).append(result)
 
         # Run per-series checks (only if not cached and not cancelled)
-        if series_cmds and not worker.is_cancelled:
+        if series_cmds and not worker_cancelled():
             target = (
                 cover_msg if cover_msg else (ordered_msgs[0] if ordered_msgs else None)
             )
@@ -464,7 +465,7 @@ class CheckRunnerMixin:
         # a later re-run picks up where this one left off.  Don't touch the
         # UI here: the overlay is already dismissed on user cancel, and the
         # app is tearing down on exit.
-        if worker.is_cancelled:
+        if worker_cancelled():
             return
 
         # Build title and swap loading screen for results

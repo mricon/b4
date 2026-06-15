@@ -49,6 +49,7 @@ from b4.review_tui._common import (
     ci_check_styles,
     logger,
     resolve_styles,
+    worker_cancelled,
 )
 
 # Re-exported from b4.tui (canonical home for shared modals)
@@ -2649,6 +2650,9 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
             patches_url = '/'.join((api_url, 'patches'))
 
             for i, patch_id in enumerate(self._patch_ids):
+                # One network round-trip per patch; bail promptly on exit.
+                if worker_cancelled():
+                    break
                 patchid_url = '/'.join((patches_url, str(patch_id), ''))
                 data = {
                     'state': self._new_state,
@@ -2776,7 +2780,9 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
                     logger.warning('Pre-update rescan failed: %s', ex)
 
             for i, series in enumerate(self._series_list):
-                if self._cancelled:
+                # self._cancelled covers an explicit Esc; worker_cancelled()
+                # additionally covers the app quitting mid-update.
+                if self._cancelled or worker_cancelled():
                     break
 
                 subject = series.get('subject', '(no subject)')

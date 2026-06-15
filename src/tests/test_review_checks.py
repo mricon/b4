@@ -1359,7 +1359,10 @@ class TestCheckWorkerCancellation:
         store = mock.Mock()
 
         with (
-            mock.patch('b4.review_tui._common.get_current_worker', return_value=worker),
+            mock.patch(
+                'b4.review_tui._common.worker_cancelled',
+                side_effect=lambda: worker.is_cancelled,
+            ),
             mock.patch('b4.review_tui._common.get_thread_msgs', return_value=msgs),
             mock.patch('b4.git_get_toplevel', return_value='/fake'),
             mock.patch('b4.get_main_config', return_value={}),
@@ -1419,3 +1422,23 @@ class TestCheckLoadingScreenCancel:
         with mock.patch.object(screen, 'dismiss') as dismiss:
             screen.action_cancel()
         dismiss.assert_called_once_with(None)
+
+
+class TestWorkerCancelledHelper:
+    """The shared worker_cancelled() cooperative-cancellation predicate."""
+
+    def test_returns_false_outside_worker(self) -> None:
+        # No active worker (the normal case when called from the test
+        # thread or the synchronous CLI) -> False, never raises.
+        from b4.tui._common import worker_cancelled
+
+        assert worker_cancelled() is False
+
+    def test_reflects_active_worker_flag(self) -> None:
+        from b4.tui import _common
+
+        worker = _FakeWorker()
+        with mock.patch.object(_common, 'get_current_worker', return_value=worker):
+            assert _common.worker_cancelled() is False
+            worker.cancel()
+            assert _common.worker_cancelled() is True

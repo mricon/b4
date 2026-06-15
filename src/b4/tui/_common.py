@@ -19,10 +19,36 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, ListView
 from textual.widgets._footer import FooterKey
+from textual.worker import NoActiveWorker, get_current_worker
 
 import b4
 
 logger = b4.logger
+
+
+def worker_cancelled() -> bool:
+    """Return ``True`` if the active Textual thread worker was cancelled.
+
+    Thread workers cannot be force-stopped: Textual sets a flag and the
+    thread keeps running until it returns on its own.  For a worker that
+    walks a long list (patches, series, follow-up threads) -- each step a
+    slow git or network call -- poll this at the top of every iteration and
+    break out when it returns ``True``.  That turns "run all remaining
+    items to completion" into "finish the one in flight, then stop".
+
+    The flag is raised both when the user cancels (``Worker.cancel()``, e.g.
+    an Esc/q binding) and when the app quits, since Textual calls
+    ``workers.cancel_all()`` during shutdown.  So polling this keeps the app
+    from blocking on a half-finished background job on exit.
+
+    Safe to call from anywhere: outside a worker thread there is no active
+    worker, and this returns ``False`` rather than raising, so helpers that
+    are shared with the synchronous CLI keep working unchanged.
+    """
+    try:
+        return get_current_worker().is_cancelled
+    except NoActiveWorker:
+        return False
 
 
 def display_width(s: str) -> int:
