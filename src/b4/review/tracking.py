@@ -26,7 +26,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SERIES_PATCHES_DDL = """
 CREATE TABLE IF NOT EXISTS series_patches (
@@ -78,8 +78,12 @@ CREATE TABLE IF NOT EXISTS revisions (
     link        TEXT,
     found_at    TEXT,
     thread_blob TEXT,
+    fingerprint TEXT,
+    source      TEXT DEFAULT 'heuristic',
     PRIMARY KEY (change_id, revision)
 );
+
+CREATE INDEX IF NOT EXISTS idx_revisions_fingerprint ON revisions(fingerprint);
 
 """
     + SERIES_PATCHES_DDL
@@ -160,6 +164,20 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
         existing = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
         if 'thread_blob' not in existing:
             conn.execute('ALTER TABLE revisions ADD COLUMN thread_blob TEXT')
+    if version < 9:
+        # Per-revision fingerprint + provenance for manual revision linking.
+        existing = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
+        if 'fingerprint' not in existing:
+            conn.execute('ALTER TABLE revisions ADD COLUMN fingerprint TEXT')
+        if 'source' not in existing:
+            # Existing rows were auto-discovered, so they default to 'heuristic'.
+            conn.execute(
+                "ALTER TABLE revisions ADD COLUMN source TEXT DEFAULT 'heuristic'"
+            )
+        conn.execute(
+            'CREATE INDEX IF NOT EXISTS idx_revisions_fingerprint'
+            ' ON revisions(fingerprint)'
+        )
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -691,6 +709,16 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
         return []
 
 
+# Provenance ranking for a revision's `source`.  A higher rank wins: a manual
+# link must override, and never be downgraded by, automated discovery.
+_SOURCE_RANK = {'heuristic': 0, 'auto-consume': 0, 'manual': 1}
+
+
+def _source_rank(source: Optional[str]) -> int:
+    """Return the precedence rank of a revision source (unknown -> 0)."""
+    return _SOURCE_RANK.get(source or '', 0)
+
+
 def add_revision(
     conn: sqlite3.Connection,
     change_id: str,
@@ -698,15 +726,47 @@ def add_revision(
     message_id: str,
     subject: Optional[str] = None,
     link: Optional[str] = None,
+    fingerprint: Optional[str] = None,
+    source: str = 'heuristic',
 ) -> None:
-    """Insert a revision record, ignoring if already present."""
+    """Insert a revision record, ignoring core fields if already present.
+
+    The core fields (message_id, subject, link, found_at) follow first-wins
+    semantics — re-adding an existing revision leaves them untouched.  Two
+    fields are reconciled on re-add, however:
+
+    - ``fingerprint`` is backfilled if the existing row lacks one.
+    - ``source`` is upgraded when the incoming provenance outranks the
+      stored one, so a manual link wins over (and is never downgraded by)
+      automated discovery.
+    """
     found_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     conn.execute(
         """INSERT OR IGNORE INTO revisions
-        (change_id, revision, message_id, subject, link, found_at)
-        VALUES (?, ?, ?, ?, ?, ?)""",
-        (change_id, revision, message_id, subject, link, found_at),
+        (change_id, revision, message_id, subject, link, found_at,
+         fingerprint, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (change_id, revision, message_id, subject, link, found_at,
+         fingerprint, source),
     )
+    # Backfill a missing fingerprint without disturbing an existing one.
+    if fingerprint:
+        conn.execute(
+            'UPDATE revisions SET fingerprint = ?'
+            ' WHERE change_id = ? AND revision = ?'
+            " AND (fingerprint IS NULL OR fingerprint = '')",
+            (fingerprint, change_id, revision),
+        )
+    # Upgrade provenance only when the incoming source outranks the stored one.
+    row = conn.execute(
+        'SELECT source FROM revisions WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    ).fetchone()
+    if row is not None and _source_rank(source) > _source_rank(row[0]):
+        conn.execute(
+            'UPDATE revisions SET source = ? WHERE change_id = ? AND revision = ?',
+            (source, change_id, revision),
+        )
     conn.commit()
 
 
@@ -764,23 +824,51 @@ def get_series_patches(
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
+_REVISION_COLS = (
+    'change_id',
+    'revision',
+    'message_id',
+    'subject',
+    'link',
+    'found_at',
+    'thread_blob',
+    'fingerprint',
+    'source',
+)
+
+_REVISION_SELECT = (
+    'SELECT change_id, revision, message_id, subject, link, found_at,'
+    ' thread_blob, fingerprint, source FROM revisions'
+)
+
+
 def get_revisions(conn: sqlite3.Connection, change_id: str) -> list[dict[str, Any]]:
     """Return all known revisions for a change_id, ordered ascending."""
-    cols = (
-        'change_id',
-        'revision',
-        'message_id',
-        'subject',
-        'link',
-        'found_at',
-        'thread_blob',
-    )
     cursor = conn.execute(
-        'SELECT change_id, revision, message_id, subject, link, found_at, thread_blob '
-        'FROM revisions WHERE change_id = ? ORDER BY revision ASC',
+        _REVISION_SELECT + ' WHERE change_id = ? ORDER BY revision ASC',
         (change_id,),
     )
-    return [dict(zip(cols, row)) for row in cursor.fetchall()]
+    return [dict(zip(_REVISION_COLS, row)) for row in cursor.fetchall()]
+
+
+def find_revision_by_fingerprint(
+    conn: sqlite3.Connection, fingerprint: Optional[str]
+) -> Optional[dict[str, Any]]:
+    """Return the revision row owning a fingerprint, or None.
+
+    Used to detect when a posting being linked is already tracked (possibly
+    under a different change_id) so it can be absorbed rather than duplicated.
+    An empty or None fingerprint never matches.
+    """
+    if not fingerprint:
+        return None
+    row = conn.execute(
+        _REVISION_SELECT + ' WHERE fingerprint = ? LIMIT 1',
+        (fingerprint,),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(zip(_REVISION_COLS, row))
 
 
 def get_newest_revision(conn: sqlite3.Connection, change_id: str) -> Optional[int]:
