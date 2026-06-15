@@ -79,29 +79,31 @@ v0.16
 		: Follow-up take completing coverage auto-promotes partial → accepted
 		: partial exposes all reviewing actions including thank, take, rebase, range-diff, upgrade
 		: Bonus: thanked series can be reopened back to reviewing via action menu
-	[_] Manual revision linking when auto-discovery fails (no change-id or in-reply-to chain)
+	[X] Manual revision linking when auto-discovery fails (no change-id or in-reply-to chain)
 		: Mark Brown, https://msgid.link/88549a4a-cc82-4200-b73b-e335cbb2b024@sirena.org.uk
 		: git-bug 47d5a4c; related: 2235355 (older versions), 08646dc (upgrade UX)
+		: Landed on master — schema v9 groundwork through the TUI action, built
+		  test-first; ci.sh and ci-matrix (py3.11-3.14) green
 		: get_extra_series links revisions via change-id or subject heuristics; with
 		  no change-id and a reworded subject the two postings get different
 		  synthesized change-ids and never connect — give the human an explicit way
 		  to link a revision from the TUI
 		: Linking only injects the missing revision row; the existing upgrade
 		  action/modal takes over from there — the two stay separate
-		[_] "Link a revision" action on a tracked series (newer OR older, so it also
+		[X] "Link a revision" action on a tracked series (newer OR older, so it also
 		    covers 2235355)
 			: Input modal accepts msgid / lore URL / change-id (reuse b4.get_msgid)
 			: Fetch via the cancellable lore node, then a confirm screen showing the
 			  found series (subject, vN, patch count, sender) before committing
 			: Record with add_revision() + add_series_patches() under the existing
 			  change-id; series then lights the has-upgrade badge as usual
-		[_] Per-revision fingerprint column on the revisions table, indexed
+		[X] Per-revision fingerprint column on the revisions table, indexed
 			: ALTER TABLE ADD COLUMN + CREATE INDEX (same migration trick as thread_blob)
 			: Foundation for duplicate detection here and idempotent ingest in 0.17
-		[_] source column ('heuristic' | 'manual' | future 'auto-consume')
+		[X] source column ('heuristic' | 'manual' | future 'auto-consume')
 			: TEXT enum, not a bool, so the 0.17 consumer needs no second migration
 			: Display "vN — manually linked"; a manual link wins over later heuristics
-		[_] Duplicate absorption via fingerprint
+		[X] Duplicate absorption via fingerprint
 			: If the fetched posting is already tracked as its own stray series
 			  (WHERE change_id = ? OR fingerprint = ?), absorb its data and delete it
 			  instead of inserting a duplicate
@@ -110,11 +112,14 @@ v0.16
 			: Fingerprint folds in sender+revision+patch-ids, so it nails "same exact
 			  posting"; fall back to patch-id overlap (LoreSeries.__eq__) as a soft
 			  "probably the same" hint on the confirm screen
-		[_] Revision-number handling: trust the posting's declared vN; on collision
+		[X] Revision-number handling: trust the posting's declared vN; on collision
 		    with an existing row, surface it on the confirm screen and allow override
-		[_] Auto-promote a waiting series to reviewing on manual link (stronger
+		[X] Auto-promote a waiting series to reviewing on manual link (stronger
 		    signal than heuristic discovery)
-		[_] "Unlink revision" action for manually-linked rows (undo a wrong msgid)
+		[X] Unlink primitive — unlink_revision() removes a manual row, refuses a
+		    heuristic one
+			: TUI unlink action deferred to a follow-up — needs a revision picker
+			  in the detail panel; pairs naturally with the 08646dc upgrade-UX work
 	[X] Auto-detect existing trailers to mark patches as "done"
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 		: A Reviewed-by/Acked-by I sent to the list before tracking the series
