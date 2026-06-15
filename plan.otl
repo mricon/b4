@@ -1,3 +1,27 @@
+v0.17
+-----
+[_] Maintainer feed — public outbox via ezpi
+	: ~/work/git/ezpi — writes RFC2822 messages to public-inbox v2 git repos
+	: Maintainers get a browsable/searchable archive of all emails sent through b4
+	[_] Add ezpi as an optional dependency in pyproject.toml
+	[_] Add b4.maintainer-feed-path config option (path to v2 inbox)
+	[_] Hook into send_mail() to archive a copy of every outgoing message
+		: Review replies, thank-you messages, patch submissions, quick-replies
+		: Use ezpi.add_rfc822_v2() with the configured path
+	[_] b4 feed --init to set up the v2 inbox and print instructions
+	[_] b4 feed --export to export/push the feed to a remote
+	[_] Privacy guardrails — ensure private emails never end up in the feed
+		: Needs brainstorming: allowlist by list-id? opt-in per send? exclude drafts/dry-run?
+[_] `b4 review` improvements
+	[_] Batch trailer selection across multiple patches
+		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+	[_] Arbitrary labels on tracked review series
+		: Tag tracked review series with free-form labels to organize the tracking list
+		: New series_labels table keyed by change_id (survives revision upgrades)
+		: Colored dot display in tracking list (git-bug deterministic color algorithm)
+		: Extend the review limit command to filter by label: prefix
+		: Reuse LabelScreen/AddLabelScreen label UI from the bugs TUI (extract to _common.py)
+
 v0.16
 -----
 [X] `--rethread` flag for stitching unthreaded patch series
@@ -35,8 +59,6 @@ v0.16
 		  never written to review trailers so it can't be re-sent; any manual
 		  skip/comment/reply or my own Nacked-by supersedes it
 	[_] Cancel background processes (e.g. base check) on exit
-		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
-	[_] Batch trailer selection across multiple patches
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 	[X] Keep trailers in-place when added via reply editor
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
@@ -110,9 +132,6 @@ v0.16
 	[X] User-Agent identification via lore.useragentplus git config
 		: Appends +IDENTIFIER to b4/version header for server operator prioritization
 	[X] Documentation in docs/config.rst — "Server failover settings" section
-	[_] Staleness detection — how to know when local mirror is behind?
-		: Compare message counts? Check dt: query freshness? HEAD request timestamp?
-		: Not yet addressed — requires liblore-side design work
 [X] Migrate lore access to liblore library
 	: ~/work/git/liblore — standalone library for public-inbox/lore access
 	[X] Add liblore as a dependency in pyproject.toml
@@ -133,19 +152,7 @@ v0.16
 	[X] Update all callers: mbox.py, ez.py, dig.py, pr.py, diff.py, review_tui/*.py
 		: Callers use unchanged b4 wrapper functions; internal delegation to liblore
 	[X] Keep Patchwork integration as-is (separate from lore access)
-[_] Maintainer feed — public outbox via ezpi
-	: ~/work/git/ezpi — writes RFC2822 messages to public-inbox v2 git repos
-	: Maintainers get a browsable/searchable archive of all emails sent through b4
-	[_] Add ezpi as an optional dependency in pyproject.toml
-	[_] Add b4.maintainer-feed-path config option (path to v2 inbox)
-	[_] Hook into send_mail() to archive a copy of every outgoing message
-		: Review replies, thank-you messages, patch submissions, quick-replies
-		: Use ezpi.add_rfc822_v2() with the configured path
-	[_] b4 feed --init to set up the v2 inbox and print instructions
-	[_] b4 feed --export to export/push the feed to a remote
-	[_] Privacy guardrails — ensure private emails never end up in the feed
-		: Needs brainstorming: allowlist by list-id? opt-in per send? exclude drafts/dry-run?
-[_] `b4 bugs` integration
+[X] `b4 bugs` integration
 	[X] `b4 bugs` subcommand for git-bug integration
 		: Import mailing list discussions as git-bug entries
 		: TUI with bug list, detail panel, import and label modals
@@ -156,12 +163,6 @@ v0.16
 		: Auto-initializes git-bug identity from git config
 		: Auto-reload on external cache changes
 		: 53 unit tests for helpers, 866 total tests passing
-	[_] Arbitrary labels on tracked review series
-		: Reuse LabelScreen/AddLabelScreen from bugs TUI (extract to _common.py)
-		: New series_labels table keyed by change_id (survives revision upgrades)
-		: Colored dot display in tracking list (git-bug deterministic color algorithm)
-		: Extend limit command to filter by label: prefix
-		: Depends on bugs subcommand for shared label UI components
 [X] Development tooling and stricter local checks
 	[X] ci.sh runs the full local check suite; ci-matrix.sh runs tests across
 	    the supported Python range (3.11–3.13)
