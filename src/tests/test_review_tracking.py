@@ -3193,3 +3193,234 @@ class TestFingerprintSemantics:
         b = _build_series('[PATCH v2] foo: fix bar', 'Bob <bob@example.com>', 2)
         assert a.fingerprint != b.fingerprint
         assert a == b
+
+
+# ---------------------------------------------------------------------------
+# Tier 5: link-a-revision orchestration.  record_linked_revision() folds a
+# fetched series into an existing change_id as a manual link (absorbing a
+# stray duplicate when one exists, surfacing a revision collision, and
+# promoting a waiting series); unlink_revision() undoes a manual link;
+# link_revision() is the thin fetch+delegate wrapper.
+# ---------------------------------------------------------------------------
+
+
+def _patch_email(subject: str, from_addr: str, msgid: str) -> EmailMessage:
+    """Build a raw one-patch EmailMessage for fetch-wrapper tests."""
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = from_addr
+    msg['Date'] = 'Fri, 20 Mar 2026 14:49:18 +0000'
+    msg['Message-Id'] = msgid
+    msg.set_payload(_MINIMAL_DIFF)
+    return msg
+
+
+def _seed_target(
+    conn: sqlite3.Connection,
+    change_id: str,
+    revision: int,
+    status: str = 'reviewing',
+) -> None:
+    """Seed a tracked target series (series row + one heuristic revision)."""
+    review_tracking.add_series_to_db(
+        conn,
+        change_id=change_id,
+        revision=revision,
+        subject=f'{change_id} v{revision}',
+        sender_name='Author',
+        sender_email='author@example.com',
+        sent_at='2026-03-09T00:00:00+00:00',
+        message_id=f'{change_id}-v{revision}@example.com',
+        num_patches=1,
+    )
+    conn.execute(
+        'UPDATE series SET status = ? WHERE change_id = ? AND revision = ?',
+        (status, change_id, revision),
+    )
+    review_tracking.add_revision(
+        conn, change_id, revision, f'{change_id}-v{revision}@example.com',
+    )
+    conn.commit()
+
+
+class TestRecordLinkedRevision:
+    """Tier 5: record_linked_revision() core logic."""
+
+    def test_link_newer_revision_records_manual(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-link-new-test')
+        _seed_target(conn, 'series-A', 1)
+        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+
+        result = review_tracking.record_linked_revision(conn, 'series-A', lser)
+
+        assert result['status'] == 'linked'
+        assert result['revision'] == 2
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        assert [r['revision'] for r in revs] == [1, 2]
+        rev2 = next(r for r in revs if r['revision'] == 2)
+        assert rev2['source'] == 'manual'
+        # Patches were recorded for the linked revision.
+        assert len(review_tracking.get_series_patches(conn, 'series-A', 2)) == 1
+        # No new series row was created.
+        cids = {row[0] for row in conn.execute('SELECT DISTINCT change_id FROM series')}
+        conn.close()
+        assert cids == {'series-A'}
+
+    def test_link_older_revision(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('mrl-link-old-test')
+        _seed_target(conn, 'series-A', 3)
+        lser = _build_series('[PATCH] foo: fix bar', _AUTHOR, 1)
+
+        result = review_tracking.record_linked_revision(conn, 'series-A', lser)
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert result['status'] == 'linked'
+        assert [r['revision'] for r in revs] == [1, 3]
+
+    def test_link_collision_blocks_without_force(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-link-collide-test')
+        _seed_target(conn, 'series-A', 1)
+        review_tracking.add_revision(conn, 'series-A', 2, 'pre-v2@example.com')
+        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+
+        result = review_tracking.record_linked_revision(conn, 'series-A', lser)
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert result['status'] == 'collision'
+        # Existing v2 untouched.
+        rev2 = next(r for r in revs if r['revision'] == 2)
+        assert rev2['message_id'] == 'pre-v2@example.com'
+        assert rev2['source'] == 'heuristic'
+
+    def test_link_collision_force_overrides(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-link-force-test')
+        _seed_target(conn, 'series-A', 1)
+        review_tracking.add_revision(conn, 'series-A', 2, 'pre-v2@example.com')
+        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+
+        result = review_tracking.record_linked_revision(
+            conn, 'series-A', lser, force=True
+        )
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert result['status'] == 'linked'
+        rev2 = next(r for r in revs if r['revision'] == 2)
+        assert rev2['source'] == 'manual'
+
+    def test_link_promotes_waiting_series(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-link-promote-test')
+        _seed_target(conn, 'series-A', 1, status='waiting')
+        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+
+        result = review_tracking.record_linked_revision(conn, 'series-A', lser)
+        status = conn.execute(
+            "SELECT status FROM series WHERE change_id = 'series-A'"
+        ).fetchone()[0]
+        conn.close()
+        assert result['promoted'] is True
+        assert status == 'reviewing'
+
+    def test_link_absorbs_stray_duplicate(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-link-absorb-test')
+        _seed_target(conn, 'series-A', 1)
+        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        # The stray was tracked from the same posting, so it shares a fingerprint.
+        _seed_stray_series(conn, 'series-B', 2, lser.fingerprint)
+
+        result = review_tracking.record_linked_revision(conn, 'series-A', lser)
+
+        assert result['status'] == 'linked'
+        assert result['absorbed'] is True
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        assert [r['revision'] for r in revs] == [1, 2]
+        # Stray is gone.
+        assert review_tracking.get_revisions(conn, 'series-B') == []
+        conn.close()
+
+
+class TestUnlinkRevision:
+    """Tier 5: unlink_revision() undoes a manual link only."""
+
+    def test_unlink_manual_revision(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('mrl-unlink-test')
+        review_tracking.add_revision(
+            conn, 'series-A', 2, 'v2@example.com', source='manual'
+        )
+        _insert_patches(conn, 'series-A', 2, ['v2-p1@example.com'])
+
+        removed = review_tracking.unlink_revision(conn, 'series-A', 2)
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        patches = review_tracking.get_series_patches(conn, 'series-A', 2)
+        conn.close()
+        assert removed is True
+        assert revs == []
+        assert patches == []
+
+    def test_unlink_refuses_heuristic(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('mrl-unlink-refuse-test')
+        review_tracking.add_revision(conn, 'series-A', 2, 'v2@example.com')
+
+        removed = review_tracking.unlink_revision(conn, 'series-A', 2)
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert removed is False
+        assert [r['revision'] for r in revs] == [2]
+
+
+class TestLinkRevisionWrapper:
+    """Tier 5: link_revision() fetch+delegate wrapper."""
+
+    @mock.patch('b4.retrieve_messages')
+    def test_link_revision_not_found_graceful(
+        self, mock_retrieve: mock.Mock, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        review_tracking.init_db('mrl-wrap-miss-test').close()
+        conn = review_tracking.get_db('mrl-wrap-miss-test')
+        _seed_target(conn, 'series-A', 1)
+        conn.close()
+
+        mock_retrieve.return_value = ('x', [])
+        result = review_tracking.link_revision(
+            'mrl-wrap-miss-test', 'series-A', 'bogus@msgid'
+        )
+
+        conn = review_tracking.get_db('mrl-wrap-miss-test')
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert result['status'] == 'not-found'
+        assert [r['revision'] for r in revs] == [1]
+
+    @mock.patch('b4.retrieve_messages')
+    def test_link_revision_success_path(
+        self, mock_retrieve: mock.Mock, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        review_tracking.init_db('mrl-wrap-ok-test').close()
+        conn = review_tracking.get_db('mrl-wrap-ok-test')
+        _seed_target(conn, 'series-A', 1)
+        conn.close()
+
+        msg = _patch_email('[PATCH v2] foo: fix bar', _AUTHOR, '<v2@example.com>')
+        mock_retrieve.return_value = ('v2@example.com', [msg])
+        result = review_tracking.link_revision(
+            'mrl-wrap-ok-test', 'series-A', 'v2@example.com'
+        )
+
+        conn = review_tracking.get_db('mrl-wrap-ok-test')
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        assert result['status'] == 'linked'
+        assert [r['revision'] for r in revs] == [1, 2]
+        rev2 = next(r for r in revs if r['revision'] == 2)
+        assert rev2['source'] == 'manual'
