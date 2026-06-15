@@ -845,6 +845,31 @@ def _set_patch_state(
         _cleanup_review(target, usercfg)
 
 
+def _apply_findings_locations(
+    comments: List[Dict[str, Any]],
+    locations_by_file: Dict[str, List[int]],
+) -> None:
+    """Anchor unpositioned inline comments using sashiko finding locations.
+
+    After :func:`_resolve_comment_positions` runs, any comment whose
+    ``line`` is still 0 (no hunk-level position was found) is a candidate
+    for fallback positioning.  When *locations_by_file* contains exactly
+    one candidate line number for that file, the comment's ``line`` is set
+    to that value.
+
+    This function is a no-op when *locations_by_file* is empty (i.e. when
+    the sashiko response carries no structured ``locations`` data), so it
+    degrades silently for older sashiko versions.
+    """
+    for c in comments:
+        if c.get('line') != 0:
+            continue
+        path = c.get('path', '')
+        candidates = locations_by_file.get(path)
+        if candidates and len(candidates) == 1:
+            c['line'] = candidates[0]
+
+
 def _resolve_comment_positions(
     diff_text: str,
     comments: List[Dict[str, Any]],
@@ -1473,16 +1498,48 @@ def _integrate_sashiko_reviews(
         if existing_entry.get('sashiko-review-id') == review_id:
             continue
 
+        # Build a file -> [line_numbers] map from structured finding locations
+        # for use as a positional fallback when quoted-context matching fails.
+        # Accepts both {file_name, line_number} and {file, line} key shapes.
+        # locations can be a single dict or a list of dicts; both are handled.
+        # Silently skips when findings carry no location data.
+        locations_by_file: Dict[str, List[int]] = {}
+        output_str = sr.get('output', '') or ''
+        if output_str:
+            try:
+                output_json = json.loads(output_str)
+                for fi in output_json.get('findings', []):
+                    if not isinstance(fi, dict):
+                        continue
+                    locs = fi.get('locations')
+                    # Normalise: single dict → 1-element list
+                    if isinstance(locs, dict):
+                        locs = [locs]
+                    elif not isinstance(locs, list):
+                        continue
+                    for loc in locs:
+                        if not isinstance(loc, dict):
+                            continue
+                        fname = loc.get('file_name') or loc.get('file', '')
+                        lineno = loc.get('line_number') or loc.get('line')
+                        if fname and isinstance(lineno, int) and lineno > 0:
+                            locations_by_file.setdefault(fname, []).append(lineno)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         # Extract inline comments directly from the quoted format
         comments = _extract_comments_from_quoted_reply(inline_review)
         if not comments:
             continue
 
-        # Resolve comment positions against the real diff
+        # Resolve comment positions against the real diff, then fall back
+        # to structured finding locations for any still-unpositioned comments.
         sha = commit_shas[idx]
         ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
         if ecode == 0:
             _resolve_comment_positions(real_diff, comments)
+            if locations_by_file:
+                _apply_findings_locations(comments, locations_by_file)
 
         # Store in tracking
         patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})

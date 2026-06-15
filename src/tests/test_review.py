@@ -3099,6 +3099,194 @@ class TestIntegrateSashikoReviews:
         )
 
 
+class TestApplyFindingsLocations:
+    """Tests for _apply_findings_locations()."""
+
+    def test_noop_when_no_locations(self) -> None:
+        """When locations_by_file is empty nothing changes."""
+        comments = [{'path': 'f.c', 'line': 0, 'text': 'hello'}]
+        review._apply_findings_locations(comments, {})
+        assert comments[0]['line'] == 0
+
+    def test_anchors_unpositioned_comment(self) -> None:
+        """A comment at line 0 for a file with exactly one location gets updated."""
+        comments = [{'path': 'f.c', 'line': 0, 'text': 'needs anchoring'}]
+        review._apply_findings_locations(comments, {'f.c': [42]})
+        assert comments[0]['line'] == 42
+
+    def test_skips_already_positioned_comment(self) -> None:
+        """Comments with a real line number are left untouched."""
+        comments = [{'path': 'f.c', 'line': 10, 'text': 'already placed'}]
+        review._apply_findings_locations(comments, {'f.c': [99]})
+        assert comments[0]['line'] == 10
+
+    def test_skips_ambiguous_file(self) -> None:
+        """When multiple lines exist for a file, no fallback is applied."""
+        comments = [{'path': 'f.c', 'line': 0, 'text': 'ambiguous'}]
+        review._apply_findings_locations(comments, {'f.c': [10, 20]})
+        assert comments[0]['line'] == 0
+
+    def test_skips_unmatched_file(self) -> None:
+        """Locations for a different file do not affect the comment."""
+        comments = [{'path': 'f.c', 'line': 0, 'text': 'wrong file'}]
+        review._apply_findings_locations(comments, {'g.c': [5]})
+        assert comments[0]['line'] == 0
+
+
+class TestSashikoLocationsIntegration:
+    """Integration: sashiko findings locations used as comment fallback."""
+
+    def test_locations_data_parsed_from_output(self) -> None:
+        """Findings with locations in the output JSON flow through without
+        error and do not disturb normally-positioned inline comments.
+
+        In current sashiko output every comment is attached to a quoted diff
+        line so it always has line > 0 after extraction.  The locations
+        fallback (line == 0) is exercised by the unit tests for
+        _apply_findings_locations; here we verify end-to-end that locations
+        data is silently ignored when the comment is already positioned.
+        """
+        import json as _json
+
+        patchset = {
+            'id': 42,
+            'message_id': 'cover@example.com',
+            'status': 'Reviewed',
+            'patches': [
+                {'id': 100, 'message_id': 'patch1@example.com', 'part_index': 1},
+            ],
+            'reviews': [
+                {
+                    'id': 200,
+                    'patch_id': 100,
+                    'status': 'Reviewed',
+                    'inline_review': (
+                        '> diff --git a/f.c b/f.c\n'
+                        '> @@ -1,3 +1,4 @@\n'
+                        '>  ctx\n'
+                        '> +added\n'
+                        '\nLocations-present comment.\n'
+                    ),
+                    # Finding carries locations in the real sashiko list-of-dicts
+                    # format — must be parsed without error but must NOT
+                    # override the already-positioned comment.
+                    'output': _json.dumps(
+                        {
+                            'findings': [
+                                {
+                                    'severity': 'High',
+                                    'problem': 'Missing check',
+                                    'preexisting': False,
+                                    'locations': [
+                                        {
+                                            'file': 'f.c',
+                                            'line': 99,
+                                            'function_or_symbol': 'do_thing',
+                                            'why_this_location_matters': 'test',
+                                            'code_snippet': 'ptr = NULL;',
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ),
+                },
+            ],
+        }
+
+        patches: List[Dict[str, Any]] = [
+            {'header-info': {'msgid': 'patch1@example.com'}}
+        ]
+        series = {'message_id': 'cover@example.com'}
+        tracking = {'series': series, 'patches': patches}
+        real_diff = (
+            'diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n'
+            '@@ -1,3 +1,4 @@\n ctx\n+added\n ctx\n'
+        )
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset', return_value=patchset
+            ):
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
+                        with mock.patch('b4.review._review.save_tracking'):
+                            review._integrate_sashiko_reviews(
+                                '/tmp', '', tracking, ['aaa'], patches
+                            )
+
+        sashiko_entry = patches[0].get('reviews', {}).get('sashiko@sashiko.dev')
+        assert sashiko_entry is not None
+        comments = sashiko_entry['comments']
+        assert len(comments) == 1
+        # _extract_comments_from_quoted_reply stores the b/ path from +++ b/f.c
+        assert 'f.c' in comments[0]['path']
+        # locations fallback must NOT override an already-positioned comment
+        assert comments[0]['line'] != 99
+        assert comments[0]['line'] > 0
+        assert 'Locations-present' in comments[0]['text']
+
+    def test_no_locations_no_effect(self) -> None:
+        """When findings carry no locations, behaviour is unchanged."""
+        import json as _json
+
+        patchset = {
+            'id': 42,
+            'message_id': 'cover@example.com',
+            'status': 'Reviewed',
+            'patches': [
+                {'id': 100, 'message_id': 'patch1@example.com', 'part_index': 1},
+            ],
+            'reviews': [
+                {
+                    'id': 200,
+                    'patch_id': 100,
+                    'status': 'Reviewed',
+                    'inline_review': (
+                        '> diff --git a/f.c b/f.c\n'
+                        '> @@ -1,3 +1,4 @@\n'
+                        '>  ctx\n'
+                        '> +added\n'
+                        '\nNormal comment.\n'
+                    ),
+                    # No locations in findings
+                    'output': _json.dumps({'findings': [{'severity': 'Low', 'problem': 'style'}]}),
+                },
+            ],
+        }
+
+        patches: List[Dict[str, Any]] = [
+            {'header-info': {'msgid': 'patch1@example.com'}}
+        ]
+        series = {'message_id': 'cover@example.com'}
+        tracking = {'series': series, 'patches': patches}
+        real_diff = (
+            'diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n'
+            '@@ -1,3 +1,4 @@\n ctx\n+added\n ctx\n'
+        )
+        with mock.patch(
+            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
+        ):
+            with mock.patch(
+                'b4.review.checks._fetch_sashiko_patchset', return_value=patchset
+            ):
+                with mock.patch('b4.review.checks.clear_sashiko_cache'):
+                    with mock.patch('b4.git_run_command', return_value=(0, real_diff)):
+                        with mock.patch('b4.review._review.save_tracking'):
+                            review._integrate_sashiko_reviews(
+                                '/tmp', '', tracking, ['aaa'], patches
+                            )
+
+        sashiko_entry = patches[0].get('reviews', {}).get('sashiko@sashiko.dev')
+        assert sashiko_entry is not None
+        comments = sashiko_entry['comments']
+        assert len(comments) == 1
+        assert 'Normal comment' in comments[0]['text']
+        # Position was resolved from diff context, not from (absent) locations
+        assert comments[0]['line'] > 0
+
+
 class TestIntegrateFollowupInlineComments:
     """Tests for _integrate_followup_inline_comments()."""
 

@@ -1,6 +1,7 @@
 # Re-export everything from the original review module
 from b4.review._review import *  # noqa: F403
 from b4.review._review import (
+    _apply_findings_locations,
     _build_reply_from_comments,
     _build_review_email,
     _cleanup_review,
@@ -59,6 +60,7 @@ __all__ = [
     '_extract_comments_from_quoted_reply',
     '_integrate_sashiko_reviews',
     '_integrate_followup_inline_comments',
+    '_apply_findings_locations',
     '_prepare_review_session',
     '_should_promote_waiting',
 ]

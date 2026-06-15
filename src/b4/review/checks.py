@@ -388,8 +388,19 @@ def _fetch_sashiko_patchset(msgid: str, sashiko_url: str) -> Optional[Dict[str, 
     return data
 
 
-def _parse_sashiko_findings(review: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Parse findings from a sashiko review's output JSON."""
+def _parse_sashiko_findings(review: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Parse findings from a sashiko review's output JSON.
+
+    Understands the current sashiko finding schema:
+    ``problem``, ``severity``, ``severity_explanation``, ``preexisting``,
+    and ``locations``.  The legacy ``message`` field is accepted as a
+    fallback for ``problem`` for compatibility with older sashiko data.
+
+    Pre-existing findings (``preexisting=True``) are returned with
+    ``status='pass'`` and their description prefixed with
+    ``(pre-existing)`` so callers can surface them without escalating
+    the overall check status.
+    """
     output_str = review.get('output', '') or ''
     if not output_str:
         return []
@@ -399,41 +410,63 @@ def _parse_sashiko_findings(review: Dict[str, Any]) -> List[Dict[str, str]]:
         return []
 
     raw_findings = output.get('findings', [])
-    findings: List[Dict[str, str]] = []
+    findings: List[Dict[str, Any]] = []
     for f in raw_findings:
         if not isinstance(f, dict):
             continue
         severity = (f.get('severity', '') or '').lower()
-        problem = f.get('problem', f.get('title', ''))
-        suggestion = f.get('suggestion', '')
+        problem = f.get('problem') or f.get('message', '')
+        sev_explanation = f.get('severity_explanation', '')
+        preexisting = bool(f.get('preexisting'))
+        locations = f.get('locations')
         if severity in ('critical', 'high'):
             status = 'fail'
         elif severity == 'medium':
             status = 'warn'
         else:
             status = 'pass'
+        # Pre-existing issues were not introduced by this series; treat
+        # them as informational so they don't trigger a warn/fail result.
+        if preexisting:
+            status = 'pass'
         desc = str(problem)
-        if suggestion:
-            desc += f' \u2014 {suggestion}'
+        if preexisting:
+            desc = f'(pre-existing) {desc}'
+        if sev_explanation:
+            desc += f' \u2014 {sev_explanation}'
         findings.append(
             {
                 'status': status,
                 'context': f'sashiko/{severity}',
                 'state': severity,
                 'description': desc,
+                'preexisting': preexisting,
+                'locations': locations,
             }
         )
     return findings
 
 
-def _sashiko_findings_summary(findings: List[Dict[str, str]]) -> Tuple[str, str]:
-    """Return ``(worst_status, summary_text)`` for a list of findings."""
+def _sashiko_findings_summary(findings: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """Return ``(worst_status, summary_text)`` for a list of findings.
+
+    Pre-existing findings are excluded from severity escalation and the
+    count summary, matching sashiko's own statistics which only count
+    issues newly introduced by the series under review.
+    """
     if not findings:
         return 'pass', 'No findings'
 
+    # Only count findings introduced by this series; pre-existing issues
+    # have already been downgraded to status='pass' by _parse_sashiko_findings
+    # but we also exclude them from the human-readable count string.
+    effective = [f for f in findings if not f.get('preexisting')]
+    if not effective:
+        return 'pass', 'No new findings'
+
     worst = 'pass'
     counts: Dict[str, int] = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
-    for f in findings:
+    for f in effective:
         state = f.get('state', '')
         if state in counts:
             counts[state] += 1

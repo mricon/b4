@@ -579,7 +579,7 @@ _SASHIKO_PATCHSET: Dict[str, Any] = {
                         {
                             'severity': 'Critical',
                             'problem': 'Use-after-free',
-                            'suggestion': 'Add proper locking',
+                            'severity_explanation': 'Add proper locking',
                         },
                         {'severity': 'High', 'problem': 'Missing error check'},
                     ],
@@ -739,7 +739,27 @@ class TestParseSashikoFindings:
         assert findings[0]['status'] == 'pass'
         assert findings[0]['state'] == 'low'
 
-    def test_suggestion_appended(self) -> None:
+    def test_severity_explanation_appended(self) -> None:
+        review = {
+            'output': json.dumps(
+                {
+                    'findings': [
+                        {
+                            'severity': 'High',
+                            'problem': 'Bug',
+                            'severity_explanation': 'This is dangerous',
+                        }
+                    ],
+                }
+            )
+        }
+        findings = checks._parse_sashiko_findings(review)
+        assert 'Bug' in findings[0]['description']
+        assert 'This is dangerous' in findings[0]['description']
+
+    def test_legacy_suggestion_ignored(self) -> None:
+        """Old 'suggestion' field no longer appears; should not be treated as
+        severity_explanation."""
         review = {
             'output': json.dumps(
                 {
@@ -751,7 +771,40 @@ class TestParseSashikoFindings:
         }
         findings = checks._parse_sashiko_findings(review)
         assert 'Bug' in findings[0]['description']
-        assert 'Fix it' in findings[0]['description']
+        assert 'Fix it' not in findings[0]['description']
+
+    def test_legacy_message_field(self) -> None:
+        """Old sashiko data used 'message' instead of 'problem'."""
+        review = {
+            'output': json.dumps(
+                {
+                    'findings': [{'severity': 'High', 'message': 'Old style bug'}],
+                }
+            )
+        }
+        findings = checks._parse_sashiko_findings(review)
+        assert len(findings) == 1
+        assert 'Old style bug' in findings[0]['description']
+
+    def test_preexisting_finding_is_pass(self) -> None:
+        review = {
+            'output': json.dumps(
+                {
+                    'findings': [
+                        {
+                            'severity': 'Critical',
+                            'problem': 'Pre-existing UAF',
+                            'preexisting': True,
+                        }
+                    ],
+                }
+            )
+        }
+        findings = checks._parse_sashiko_findings(review)
+        assert len(findings) == 1
+        assert findings[0]['status'] == 'pass'
+        assert findings[0]['preexisting'] is True
+        assert '(pre-existing)' in findings[0]['description']
 
     def test_context_includes_severity(self) -> None:
         review = {
@@ -792,17 +845,19 @@ class TestSashikoFindingsSummary:
         assert summary == 'No findings'
 
     def test_single_critical(self) -> None:
-        findings = [{'status': 'fail', 'state': 'critical', 'description': 'bad'}]
+        findings = [
+            {'status': 'fail', 'state': 'critical', 'description': 'bad', 'preexisting': False}
+        ]
         worst, summary = checks._sashiko_findings_summary(findings)
         assert worst == 'fail'
         assert '1 critical' in summary
 
     def test_mixed_severities(self) -> None:
         findings = [
-            {'status': 'fail', 'state': 'critical', 'description': ''},
-            {'status': 'fail', 'state': 'high', 'description': ''},
-            {'status': 'warn', 'state': 'medium', 'description': ''},
-            {'status': 'pass', 'state': 'low', 'description': ''},
+            {'status': 'fail', 'state': 'critical', 'description': '', 'preexisting': False},
+            {'status': 'fail', 'state': 'high', 'description': '', 'preexisting': False},
+            {'status': 'warn', 'state': 'medium', 'description': '', 'preexisting': False},
+            {'status': 'pass', 'state': 'low', 'description': '', 'preexisting': False},
         ]
         worst, summary = checks._sashiko_findings_summary(findings)
         assert worst == 'fail'
@@ -813,12 +868,33 @@ class TestSashikoFindingsSummary:
 
     def test_only_low_is_pass(self) -> None:
         findings = [
-            {'status': 'pass', 'state': 'low', 'description': ''},
-            {'status': 'pass', 'state': 'low', 'description': ''},
+            {'status': 'pass', 'state': 'low', 'description': '', 'preexisting': False},
+            {'status': 'pass', 'state': 'low', 'description': '', 'preexisting': False},
         ]
         worst, summary = checks._sashiko_findings_summary(findings)
         assert worst == 'pass'
         assert '2 low' in summary
+
+    def test_all_preexisting_is_no_new_findings(self) -> None:
+        """A series where every finding is pre-existing should report pass."""
+        findings = [
+            {'status': 'pass', 'state': 'critical', 'description': '(pre-existing) bad', 'preexisting': True},
+            {'status': 'pass', 'state': 'high', 'description': '(pre-existing) also bad', 'preexisting': True},
+        ]
+        worst, summary = checks._sashiko_findings_summary(findings)
+        assert worst == 'pass'
+        assert summary == 'No new findings'
+
+    def test_preexisting_not_counted_in_summary(self) -> None:
+        """Pre-existing findings should not appear in the count string."""
+        findings = [
+            {'status': 'fail', 'state': 'critical', 'description': 'fresh', 'preexisting': False},
+            {'status': 'pass', 'state': 'critical', 'description': '(pre-existing) old', 'preexisting': True},
+        ]
+        worst, summary = checks._sashiko_findings_summary(findings)
+        assert worst == 'fail'
+        assert '1 critical' in summary  # only the fresh one
+        assert '2 critical' not in summary
 
 
 class TestRunBuiltinSashiko:
@@ -993,6 +1069,111 @@ class TestRunBuiltinSashiko:
         results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev/')
         # Trailing slash should not cause double slash
         assert results[0]['url'] == 'https://sashiko.dev/#/patchset/93?part=1'
+
+    def test_all_preexisting_findings_is_pass(self) -> None:
+        """A series whose only findings are pre-existing should report pass."""
+        reviews = [
+            {
+                'id': 100,
+                'patch_id': 1,
+                'status': 'Reviewed',
+                'result': 'Reviewed',
+                'summary': '',
+                'inline_review': '',
+                'output': json.dumps(
+                    {
+                        'findings': [
+                            {
+                                'severity': 'Critical',
+                                'problem': 'Pre-existing UAF',
+                                'preexisting': True,
+                            },
+                            {
+                                'severity': 'High',
+                                'problem': 'Pre-existing race',
+                                'preexisting': True,
+                            },
+                        ],
+                    }
+                ),
+            },
+        ]
+        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'pass'
+        assert results[0]['summary'] == 'No new findings'
+
+    def test_mixed_preexisting_only_fresh_escalates(self) -> None:
+        """Only non-preexisting findings should escalate the check status."""
+        reviews = [
+            {
+                'id': 100,
+                'patch_id': 1,
+                'status': 'Reviewed',
+                'result': 'Reviewed',
+                'summary': '',
+                'inline_review': '',
+                'output': json.dumps(
+                    {
+                        'findings': [
+                            {
+                                'severity': 'Critical',
+                                'problem': 'Pre-existing UAF',
+                                'preexisting': True,
+                            },
+                            {
+                                'severity': 'Medium',
+                                'problem': 'New style issue',
+                                'preexisting': False,
+                            },
+                        ],
+                    }
+                ),
+            },
+        ]
+        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        assert results[0]['status'] == 'warn'  # only medium fresh finding
+        assert '1 medium' in results[0]['summary']
+        assert 'critical' not in results[0]['summary']
+        # Both findings are still in details
+        details = json.loads(results[0]['details'])
+        assert len(details) == 2
+
+    def test_severity_explanation_in_description(self) -> None:
+        """severity_explanation should appear in finding descriptions."""
+        reviews = [
+            {
+                'id': 100,
+                'patch_id': 1,
+                'status': 'Reviewed',
+                'result': 'Reviewed',
+                'summary': '',
+                'inline_review': '',
+                'output': json.dumps(
+                    {
+                        'findings': [
+                            {
+                                'severity': 'High',
+                                'problem': 'Missing null check',
+                                'severity_explanation': 'Dereferencing NULL causes a kernel oops.',
+                            },
+                        ],
+                    }
+                ),
+            },
+        ]
+        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
+        self._prefill_cache(ps)
+        msg = _make_msg(msgid='patch1@example.com')
+        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
+        details = json.loads(results[0]['details'])
+        assert 'Missing null check' in details[0]['description']
+        assert 'kernel oops' in details[0]['description']
 
 
 class TestSashikoAutoWire:
