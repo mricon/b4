@@ -871,6 +871,70 @@ def find_revision_by_fingerprint(
     return dict(zip(_REVISION_COLS, row))
 
 
+def absorb_series_as_revision(
+    conn: sqlite3.Connection,
+    into_change_id: str,
+    stray_change_id: str,
+    revision: int,
+) -> bool:
+    """Re-home a stray stand-alone series as a revision of another change_id.
+
+    When a posting is independently tracked under its own ``stray_change_id``
+    but is really revision *revision* of ``into_change_id`` (e.g. a v-bump
+    auto-discovery failed to connect), fold it in: record it as a manually
+    linked revision, copy its patches, and delete the stray series wholesale
+    (its ``series``, ``revisions``, and ``series_patches`` rows).
+
+    The target's other revisions are left untouched.  Returns True if a stray
+    series was absorbed, or False if none existed (making the call a safe
+    no-op, including when invoked a second time).
+    """
+    srow = conn.execute(
+        'SELECT revision, subject, message_id, fingerprint FROM series'
+        ' WHERE change_id = ?',
+        (stray_change_id,),
+    ).fetchone()
+    if srow is None:
+        return False
+    stray_rev = srow[0]
+
+    # Prefer the per-revision record for link/fingerprint, falling back to the
+    # series row when the stray was never recorded in the revisions table.
+    rrow = conn.execute(
+        'SELECT message_id, subject, link, fingerprint FROM revisions'
+        ' WHERE change_id = ? AND revision = ?',
+        (stray_change_id, stray_rev),
+    ).fetchone()
+    if rrow is not None:
+        message_id, subject, link, fingerprint = rrow[0], rrow[1], rrow[2], rrow[3]
+    else:
+        message_id, subject, link, fingerprint = srow[2], srow[1], None, srow[3]
+
+    add_revision(
+        conn, into_change_id, revision, message_id,
+        subject=subject, link=link, fingerprint=fingerprint, source='manual',
+    )
+
+    # Copy the stray's patches onto the target revision, replacing any present.
+    conn.execute(
+        'DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+        (into_change_id, revision),
+    )
+    conn.execute(
+        'INSERT INTO series_patches (change_id, revision, position, message_id, subject)'
+        ' SELECT ?, ?, position, message_id, subject FROM series_patches'
+        ' WHERE change_id = ? AND revision = ?',
+        (into_change_id, revision, stray_change_id, stray_rev),
+    )
+
+    # Remove the stray series entirely.
+    conn.execute('DELETE FROM series WHERE change_id = ?', (stray_change_id,))
+    conn.execute('DELETE FROM revisions WHERE change_id = ?', (stray_change_id,))
+    conn.execute('DELETE FROM series_patches WHERE change_id = ?', (stray_change_id,))
+    conn.commit()
+    return True
+
+
 def get_newest_revision(conn: sqlite3.Connection, change_id: str) -> Optional[int]:
     """Return the highest known revision number, or None."""
     cursor = conn.execute(
