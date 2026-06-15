@@ -3424,3 +3424,20 @@ class TestLinkRevisionWrapper:
         assert [r['revision'] for r in revs] == [1, 2]
         rev2 = next(r for r in revs if r['revision'] == 2)
         assert rev2['source'] == 'manual'
+
+
+class TestFetchSeriesForLink:
+    """Tier 6 support: fetch_series_for_link() builds a series or returns None."""
+
+    @mock.patch('b4.retrieve_messages')
+    def test_returns_series_on_success(self, mock_retrieve: mock.Mock) -> None:
+        msg = _patch_email('[PATCH v2] foo: fix bar', _AUTHOR, '<v2@example.com>')
+        mock_retrieve.return_value = ('v2@example.com', [msg])
+        lser = review_tracking.fetch_series_for_link('v2@example.com')
+        assert lser is not None
+        assert lser.revision == 2
+
+    @mock.patch('b4.retrieve_messages')
+    def test_returns_none_on_empty_fetch(self, mock_retrieve: mock.Mock) -> None:
+        mock_retrieve.return_value = ('x', [])
+        assert review_tracking.fetch_series_for_link('bogus@msgid') is None

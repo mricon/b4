@@ -3517,3 +3517,148 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
             return
         self._cursor_row = 0
         self._render_matrix()
+
+
+class LinkRevisionScreen(ModalScreen[Optional[str]]):
+    """Prompt for a message-id / lore URL to link as a revision.
+
+    Used when auto-discovery failed to connect a new revision to a tracked
+    series (no change-id, reworded subject).  Returns the entered identifier,
+    or None on cancel.
+    """
+
+    BINDINGS = [
+        Binding('escape', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    LinkRevisionScreen {
+        align: center middle;
+    }
+    #link-rev-dialog {
+        width: 70;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #link-rev-subject {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .link-rev-label {
+        color: $text-muted;
+    }
+    #link-rev-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, subject: str = '') -> None:
+        super().__init__()
+        self._subject = subject
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='link-rev-dialog') as dialog:
+            dialog.border_title = 'Link a revision'
+            if self._subject:
+                yield Static(self._subject, id='link-rev-subject', markup=False)
+            yield Static(
+                'Message-id or lore URL of the other revision:',
+                classes='link-rev-label',
+            )
+            yield Input(
+                placeholder='e.g. 20260320144918.1685838-1-srinivas@example.com',
+                id='link-rev-input',
+            )
+            yield Static('Enter link  |  Escape cancel', id='link-rev-hint')
+
+    def on_mount(self) -> None:
+        self.query_one('#link-rev-input', Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != 'link-rev-input':
+            return
+        value = event.value.strip()
+        if not value:
+            return
+        self.dismiss(value)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class LinkRevisionConfirmScreen(ModalScreen[bool]):
+    """Confirm linking a fetched series as a revision of a tracked one.
+
+    Shows a summary of the fetched series (and any warning about a revision
+    collision or a stray duplicate that will be absorbed) before committing.
+    Returns True to proceed, False to cancel.
+    """
+
+    BINDINGS = [
+        Binding('enter', 'confirm', 'Link'),
+        Binding('y', 'confirm', 'Link', show=False),
+        Binding('escape', 'cancel', 'Cancel', show=False),
+        Binding('n', 'cancel', 'Cancel', show=False),
+        Binding('q', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    LinkRevisionConfirmScreen {
+        align: center middle;
+    }
+    #link-confirm-dialog {
+        width: 70;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #link-confirm-subject {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #link-confirm-warning {
+        margin-top: 1;
+        color: $warning;
+    }
+    #link-confirm-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        subject: str,
+        revision: int,
+        num_patches: int,
+        sender: str = '',
+        warning: str = '',
+    ) -> None:
+        super().__init__()
+        self._subject = subject
+        self._revision = revision
+        self._num_patches = num_patches
+        self._sender = sender
+        self._warning = warning
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='link-confirm-dialog') as dialog:
+            dialog.border_title = 'Link this revision?'
+            yield Static(self._subject, id='link-confirm-subject', markup=False)
+            summary = f'v{self._revision}  ·  {self._num_patches} patch(es)'
+            if self._sender:
+                summary += f'  ·  {self._sender}'
+            yield Static(summary, id='link-confirm-summary', markup=False)
+            if self._warning:
+                yield Static(self._warning, id='link-confirm-warning', markup=False)
+            yield Static('Enter/y link  |  Escape cancel', id='link-confirm-hint')
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)

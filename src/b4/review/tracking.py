@@ -1061,6 +1061,33 @@ def unlink_revision(
     return True
 
 
+def fetch_series_for_link(series_id: str) -> Optional['b4.LoreSeries']:
+    """Retrieve *series_id* from lore and return its series, or None.
+
+    Returns None when the fetch yields no messages or no parseable series.
+    Used by the link flow to obtain a series for a confirmation preview
+    before any database mutation happens.
+    """
+    cmdargs = argparse.Namespace(
+        msgid=series_id,
+        localmbox=None,
+        nocache=True,
+        noparent=False,
+        wantname=None,
+        wantver=None,
+    )
+    try:
+        _msgid, msgs = b4.retrieve_messages(cmdargs)
+    except Exception:
+        msgs = None
+    if not msgs:
+        return None
+    lmbx = b4.LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+    return lmbx.get_series()
+
+
 def link_revision(
     identifier: str, change_id: str, series_id: str, force: bool = False
 ) -> Dict[str, Any]:
@@ -1072,32 +1099,10 @@ def link_revision(
     """
     conn = get_db(identifier)
     try:
-        cmdargs = argparse.Namespace(
-            msgid=series_id,
-            localmbox=None,
-            nocache=True,
-            noparent=False,
-            wantname=None,
-            wantver=None,
-        )
-        try:
-            _msgid, msgs = b4.retrieve_messages(cmdargs)
-        except Exception:
-            msgs = None
-        if not msgs:
-            return {
-                'status': 'not-found',
-                'revision': None,
-                'absorbed': False,
-                'promoted': False,
-            }
-        lmbx = b4.LoreMailbox()
-        for msg in msgs:
-            lmbx.add_message(msg)
-        lser = lmbx.get_series()
+        lser = fetch_series_for_link(series_id)
         if lser is None:
             return {
-                'status': 'no-series',
+                'status': 'not-found',
                 'revision': None,
                 'absorbed': False,
                 'promoted': False,

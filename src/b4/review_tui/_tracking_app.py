@@ -56,6 +56,8 @@ from b4.review_tui._modals import (
     CherryPickScreen,
     HelpScreen,
     LimitScreen,
+    LinkRevisionConfirmScreen,
+    LinkRevisionScreen,
     NewerRevisionWarningScreen,
     QueueDeliveryScreen,
     QueueScreen,
@@ -81,6 +83,7 @@ _ACTION_SHORTCUTS: Dict[str, str] = {
     'snooze': 's',
     'unsnooze': 'u',
     'upgrade': 'U',
+    'link': 'l',
     'thank': 't',
     'abandon': 'A',
     'archive': 'x',
@@ -650,6 +653,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._last_snooze_input: str = ''
         # CI check modal state
         self._check_loading: Optional[CheckLoadingScreen] = None
+        # Transient state for the manual revision-linking flow
+        self._link_ctx: Optional[Dict[str, Any]] = None
         # Thanks queue count
         self._queue_count: int = 0
         # Show target branch binding only when configured
@@ -753,6 +758,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return b4.review.tracking.rescan_branches(self._identifier, topdir)
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name == '_link_fetch':
+            if event.state == WorkerState.SUCCESS:
+                self._on_link_fetched(event.worker.result)
+            elif event.state == WorkerState.ERROR:
+                self.notify('Could not fetch series', severity='error')
+            return
         if event.worker.name != '_startup_rescan':
             return
         if event.state == WorkerState.SUCCESS:
@@ -1194,6 +1205,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             actions.append(('review', 'Review'))
             if status == 'new' and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
+            if status == 'new':
+                actions.append(('link', 'Link a revision by message-id'))
             actions.append(('abandon', 'Abandon series'))
             if status == 'new':
                 actions.append(('waiting', 'Mark as waiting on new revision'))
@@ -1215,6 +1228,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 'has_newer'
             ):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
+            if status in ('reviewing', 'replied', 'partial', 'waiting'):
+                actions.append(('link', 'Link a revision by message-id'))
             if status == 'waiting':
                 actions.append(('review', 'Review'))
             if status in ('accepted', 'partial'):
@@ -1241,6 +1256,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             'abandon': self.action_abandon,
             'thank': self.action_thank,
             'upgrade': self.action_update_revision,
+            'link': self.action_link_revision,
             'archive': self.action_archive,
             'waiting': self.action_waiting,
             'snooze': self.action_snooze,
@@ -3665,6 +3681,112 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 else None
             ),
         )
+
+    def action_link_revision(self) -> None:
+        """Manually link another revision to the selected series by msgid.
+
+        For series whose new versions auto-discovery missed (no change-id,
+        reworded subject).  Prompts for a message-id/URL, fetches it, shows a
+        confirmation, then records it as a manual revision (absorbing a stray
+        duplicate if one is found).
+        """
+        if not self._selected_series:
+            return
+        change_id = self._selected_series.get('change_id', '')
+        if not change_id:
+            return
+        subject = self._selected_series.get('subject', '')
+        self.push_screen(
+            LinkRevisionScreen(subject=subject),
+            callback=lambda sid: self._start_link_fetch(change_id, sid),
+        )
+
+    def _start_link_fetch(self, change_id: str, series_id: Optional[str]) -> None:
+        """Kick off the background fetch for a revision being linked."""
+        if not series_id:
+            return
+        self._link_ctx = {'change_id': change_id, 'series_id': series_id}
+        self.notify(f'Fetching {series_id}…')
+        self.run_worker(
+            lambda: b4.review.tracking.fetch_series_for_link(series_id),
+            name='_link_fetch',
+            thread=True,
+        )
+
+    def _on_link_fetched(self, lser: Optional[Any]) -> None:
+        """Preview the fetched series and ask for confirmation before linking."""
+        ctx = self._link_ctx
+        if not ctx:
+            return
+        if lser is None:
+            self.notify(
+                'Could not find a series at that message-id', severity='warning'
+            )
+            self._link_ctx = None
+            return
+        change_id = ctx['change_id']
+        revision = int(lser.revision)
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            known = {
+                r['revision']
+                for r in b4.review.tracking.get_revisions(conn, change_id)
+            }
+            stray = b4.review.tracking.find_revision_by_fingerprint(
+                conn, lser.fingerprint
+            )
+            conn.close()
+        except Exception as ex:
+            self.notify(f'DB error: {ex}', severity='error')
+            self._link_ctx = None
+            return
+
+        collision = revision in known
+        warning = ''
+        if collision:
+            warning = f'v{revision} is already tracked — linking replaces it.'
+        elif stray is not None and stray['change_id'] != change_id:
+            warning = 'Already tracked as a separate series — it will be absorbed.'
+
+        num_patches = sum(1 for p in lser.patches[1:] if p is not None)
+        sender = getattr(lser, 'fromname', '') or getattr(lser, 'fromemail', '')
+        ctx['lser'] = lser
+        ctx['force'] = collision
+        self.push_screen(
+            LinkRevisionConfirmScreen(
+                subject=getattr(lser, 'subject', ''),
+                revision=revision,
+                num_patches=num_patches,
+                sender=sender,
+                warning=warning,
+            ),
+            callback=self._on_link_confirmed,
+        )
+
+    def _on_link_confirmed(self, proceed: Optional[bool]) -> None:
+        """Record the linked revision once the user confirms."""
+        ctx = self._link_ctx
+        self._link_ctx = None
+        if not proceed or not ctx or 'lser' not in ctx:
+            return
+        change_id = ctx['change_id']
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            result = b4.review.tracking.record_linked_revision(
+                conn, change_id, ctx['lser'], force=ctx.get('force', False)
+            )
+            conn.close()
+        except Exception as ex:
+            self.notify(f'Could not link revision: {ex}', severity='error')
+            return
+        rev = result.get('revision')
+        if result.get('absorbed'):
+            self.notify(f'Linked v{rev} (absorbed a duplicate)')
+        else:
+            self.notify(f'Linked v{rev}')
+        self._focus_change_id = change_id
+        self._invalidate_caches(change_id)
+        self._load_series()
 
     def _do_switch_revision(
         self, change_id: str, current_rev: int, rev_info: Dict[str, Any]

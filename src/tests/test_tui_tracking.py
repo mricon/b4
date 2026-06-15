@@ -30,6 +30,7 @@ from b4.review_tui._modals import (
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
+    LinkRevisionScreen,
     SnoozeScreen,
     TargetBranchScreen,
 )
@@ -1599,6 +1600,38 @@ def _get_action_keys(app: TrackingApp) -> List[str]:
     assert isinstance(app.screen, ActionScreen)
     lv = app.screen.query_one('#action-list', ListView)
     return [c.key for c in lv.children if isinstance(c, ActionItem)]
+
+
+class TestLinkRevisionAction:
+    """The 'link a revision' action is offered and opens the input modal."""
+
+    @pytest.mark.asyncio
+    async def test_link_action_offered_and_dispatches(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        identifier = 'test-link-action'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'link-1',
+                    'subject': '[PATCH] linkable series',
+                    'status': 'new',
+                    'message_id': 'link@ex.com',
+                }
+            ],
+        )
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            assert 'link' in _get_action_keys(app)
+            # Selecting it opens the message-id input modal.
+            await pilot.press('l')
+            await pilot.pause()
+            assert isinstance(app.screen, LinkRevisionScreen)
+            await pilot.press('escape')
 
 
 class TestSeriesLifecycle:

@@ -15,7 +15,7 @@ from unittest import mock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Label, ListView
+from textual.widgets import Input, Label, ListView, Static
 
 import b4
 import liblore
@@ -25,6 +25,8 @@ from b4.review_tui._modals import (
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
+    LinkRevisionConfirmScreen,
+    LinkRevisionScreen,
     NoteScreen,
     PriorReviewScreen,
     RevisionChoiceScreen,
@@ -1153,3 +1155,88 @@ class TestUpdateAllScreenCancellation:
         assert result is not None
         assert result['series_checked'] == 1, 'only first series should be counted'
         assert call_count == 2, 'cancelled on second call; third never attempted'
+
+
+class TestLinkRevisionScreen:
+    """Tests for the LinkRevisionScreen input modal."""
+
+    @pytest.mark.asyncio
+    async def test_escape_cancels(self) -> None:
+        app = ModalTestApp()
+        results: List[Optional[str]] = []
+        async with app.run_test() as pilot:
+            app.push_screen(LinkRevisionScreen(subject='A series'), results.append)
+            await pilot.pause()
+            assert isinstance(app.screen, LinkRevisionScreen)
+            await pilot.press('escape')
+            await pilot.pause()
+            assert results == [None]
+
+    @pytest.mark.asyncio
+    async def test_enter_returns_value(self) -> None:
+        app = ModalTestApp()
+        results: List[Optional[str]] = []
+        async with app.run_test() as pilot:
+            app.push_screen(LinkRevisionScreen(), results.append)
+            await pilot.pause()
+            app.screen.query_one('#link-rev-input', Input).value = (
+                '  20260320@example.com  '
+            )
+            await pilot.press('enter')
+            await pilot.pause()
+            assert results == ['20260320@example.com']
+
+    @pytest.mark.asyncio
+    async def test_empty_input_does_not_dismiss(self) -> None:
+        app = ModalTestApp()
+        results: List[Optional[str]] = []
+        async with app.run_test() as pilot:
+            app.push_screen(LinkRevisionScreen(), results.append)
+            await pilot.pause()
+            await pilot.press('enter')
+            await pilot.pause()
+            assert results == []
+            assert isinstance(app.screen, LinkRevisionScreen)
+
+
+class TestLinkRevisionConfirmScreen:
+    """Tests for the LinkRevisionConfirmScreen confirmation modal."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_returns_true(self) -> None:
+        app = ModalTestApp()
+        results: List[Optional[bool]] = []
+        async with app.run_test() as pilot:
+            app.push_screen(
+                LinkRevisionConfirmScreen('Sub', 4, 8, 'Srinivas'), results.append
+            )
+            await pilot.pause()
+            await pilot.press('enter')
+            await pilot.pause()
+            assert results == [True]
+
+    @pytest.mark.asyncio
+    async def test_escape_returns_false(self) -> None:
+        app = ModalTestApp()
+        results: List[Optional[bool]] = []
+        async with app.run_test() as pilot:
+            app.push_screen(
+                LinkRevisionConfirmScreen('Sub', 4, 8, 'Srinivas'), results.append
+            )
+            await pilot.pause()
+            await pilot.press('escape')
+            await pilot.pause()
+            assert results == [False]
+
+    @pytest.mark.asyncio
+    async def test_warning_is_shown(self) -> None:
+        app = ModalTestApp()
+        async with app.run_test() as pilot:
+            app.push_screen(
+                LinkRevisionConfirmScreen(
+                    'Sub', 4, 8, 'Srinivas', warning='will be absorbed'
+                )
+            )
+            await pilot.pause()
+            warning = app.screen.query_one('#link-confirm-warning', Static)
+            assert 'absorbed' in _static_text(warning)
