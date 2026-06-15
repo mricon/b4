@@ -935,6 +935,178 @@ def absorb_series_as_revision(
     return True
 
 
+def _linkmask_url(message_id: str) -> str:
+    """Render the configured lore link for a message-id, or '' if unset."""
+    try:
+        config = b4.get_main_config()
+        linkmask = str(config.get('linkmask') or '')
+    except Exception:
+        linkmask = ''
+    if message_id and '%s' in linkmask:
+        return linkmask % message_id
+    return ''
+
+
+def _promote_if_waiting(conn: sqlite3.Connection, change_id: str) -> bool:
+    """Promote a waiting series back to reviewing; return whether it changed."""
+    row = conn.execute(
+        "SELECT 1 FROM series WHERE change_id = ? AND status = 'waiting' LIMIT 1",
+        (change_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    conn.execute(
+        "UPDATE series SET status = 'reviewing'"
+        " WHERE change_id = ? AND status = 'waiting'",
+        (change_id,),
+    )
+    conn.commit()
+    return True
+
+
+def _series_ref_message(lser: 'b4.LoreSeries') -> Optional['b4.LoreMessage']:
+    """Pick the cover letter, or the first real patch, to source the msgid."""
+    if getattr(lser, 'has_cover', False) and lser.patches[0] is not None:
+        return lser.patches[0]
+    for patch in lser.patches[1:]:
+        if patch is not None:
+            return patch
+    return None
+
+
+def record_linked_revision(
+    conn: sqlite3.Connection,
+    change_id: str,
+    lser: 'b4.LoreSeries',
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Fold a fetched series into *change_id* as a manually linked revision.
+
+    The revision number is taken from the series itself, so this links a
+    newer or an older version equally.  Behaviour:
+
+    - If that revision is already known for *change_id* and *force* is False,
+      returns ``status='collision'`` without mutating anything, so the caller
+      can confirm before overwriting.
+    - If the posting is already tracked as its own stray series (matched by
+      fingerprint under a different change_id), that series is absorbed
+      (``absorbed=True``) rather than duplicated.
+    - Otherwise the revision and its patches are recorded with
+      ``source='manual'``.
+
+    A waiting target series is promoted back to reviewing (``promoted=True``).
+    Returns a result dict with keys ``status``, ``revision``, ``absorbed``,
+    and ``promoted``.
+    """
+    revision = int(lser.revision)
+    result: Dict[str, Any] = {
+        'status': 'linked',
+        'revision': revision,
+        'absorbed': False,
+        'promoted': False,
+    }
+
+    ref_msg = _series_ref_message(lser)
+    if ref_msg is None:
+        result['status'] = 'no-series'
+        return result
+
+    known = {r['revision'] for r in get_revisions(conn, change_id)}
+    if revision in known and not force:
+        result['status'] = 'collision'
+        return result
+
+    fingerprint = lser.fingerprint
+    stray = find_revision_by_fingerprint(conn, fingerprint)
+    if stray is not None and stray['change_id'] != change_id:
+        absorb_series_as_revision(conn, change_id, stray['change_id'], revision)
+        result['absorbed'] = True
+    else:
+        message_id = ref_msg.msgid
+        add_revision(
+            conn, change_id, revision, message_id,
+            subject=lser.subject, link=_linkmask_url(message_id),
+            fingerprint=fingerprint, source='manual',
+        )
+        add_series_patches(conn, change_id, revision, lser)
+
+    result['promoted'] = _promote_if_waiting(conn, change_id)
+    return result
+
+
+def unlink_revision(
+    conn: sqlite3.Connection, change_id: str, revision: int
+) -> bool:
+    """Remove a manually linked revision (and its patches).
+
+    Refuses to remove a heuristically discovered revision so a manual undo
+    can never delete something auto-discovery would just re-add.  Returns
+    True if a manual revision was removed, False otherwise.
+    """
+    row = conn.execute(
+        'SELECT source FROM revisions WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    ).fetchone()
+    if row is None or row[0] != 'manual':
+        return False
+    conn.execute(
+        'DELETE FROM revisions WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    )
+    conn.execute(
+        'DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    )
+    conn.commit()
+    return True
+
+
+def link_revision(
+    identifier: str, change_id: str, series_id: str, force: bool = False
+) -> Dict[str, Any]:
+    """Fetch *series_id* from lore and link it into *change_id*.
+
+    Thin wrapper over record_linked_revision(): retrieves the posting, builds
+    its series, and delegates.  A fetch that returns nothing is a graceful
+    no-op (``status='not-found'``) that leaves the database untouched.
+    """
+    conn = get_db(identifier)
+    try:
+        cmdargs = argparse.Namespace(
+            msgid=series_id,
+            localmbox=None,
+            nocache=True,
+            noparent=False,
+            wantname=None,
+            wantver=None,
+        )
+        try:
+            _msgid, msgs = b4.retrieve_messages(cmdargs)
+        except Exception:
+            msgs = None
+        if not msgs:
+            return {
+                'status': 'not-found',
+                'revision': None,
+                'absorbed': False,
+                'promoted': False,
+            }
+        lmbx = b4.LoreMailbox()
+        for msg in msgs:
+            lmbx.add_message(msg)
+        lser = lmbx.get_series()
+        if lser is None:
+            return {
+                'status': 'no-series',
+                'revision': None,
+                'absorbed': False,
+                'promoted': False,
+            }
+        return record_linked_revision(conn, change_id, lser, force=force)
+    finally:
+        conn.close()
+
+
 def get_newest_revision(conn: sqlite3.Connection, change_id: str) -> Optional[int]:
     """Return the highest known revision number, or None."""
     cursor = conn.execute(
