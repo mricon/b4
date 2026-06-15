@@ -2,7 +2,7 @@ import datetime
 import json
 import os
 from email.message import EmailMessage
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 from unittest import mock
 
 import pytest
@@ -1376,7 +1376,10 @@ class TestCheckWorkerCancellation:
             mock.patch('b4.review.checks.run_perpatch_checks', perpatch),
             mock.patch('b4.review.checks.store_results', store),
         ):
-            CheckRunnerMixin._fetch_and_check(  # type: ignore[arg-type]
+            # host is a structural stand-in implementing only the slice of
+            # the protocol the worker touches; cast the unbound call past the
+            # type checkers, which reject the partial self.
+            cast(Any, CheckRunnerMixin)._fetch_and_check(
                 host, 'patch1@example.com', 'a series', change_id='', force=False
             )
         return host, perpatch, store
@@ -1409,7 +1412,7 @@ class TestCheckLoadingScreenCancel:
 
         screen = CheckLoadingScreen()
         worker = _FakeWorker()
-        screen.worker = worker  # type: ignore[assignment]
+        screen.worker = worker  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         with mock.patch.object(screen, 'dismiss') as dismiss:
             screen.action_cancel()
         assert worker.is_cancelled is True
