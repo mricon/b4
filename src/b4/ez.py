@@ -1746,6 +1746,40 @@ def mixin_cover(cbody: str, patches: List[Tuple[str, EmailMessage]]) -> None:
         msg.replace_header('Content-Transfer-Encoding', '8bit')
 
 
+def patch_body_is_misplaced(msg: EmailMessage) -> bool:
+    """Detect a patch whose commit message body is empty but which carries prose
+    below the '---' cutline.
+
+    This is almost always a mistake: the author wrote the description into the
+    cover letter (or as notes), and on a single-patch series mixin_cover() folds
+    that text below the cut, where `git am` throws it away -- leaving a commit
+    with nothing but a subject line. We treat the empty body *plus* leftover
+    prose as the high-confidence signal; an empty body on its own (a trivial
+    one-line patch) is a legitimate workflow we don't flag.
+    """
+    pbody, _pcharset = b4.LoreMessage.get_payload(msg)
+    _gh, message, _tr, basement, _sig = b4.LoreMessage.get_body_parts(pbody)
+    if message.strip():
+        # The commit has a real message body, nothing to warn about.
+        return False
+    # No commit body. Sift the basement sections the same way mixin_cover() does:
+    # skip the auto-generated diffstat/diff and the base-commit/change-id utility,
+    # and see whether any genuine prose is left stranded below the cut.
+    for section in re.split(r'^---\s*\n', basement, flags=re.M):
+        if not section.strip():
+            continue
+        if re.search(b4.DIFFSTAT_RE, section) or re.search(b4.DIFF_RE, section):
+            continue
+        if BASEMENT_TRAILER_RE.search(section):
+            continue
+        # A bare trailer (e.g. a lone Signed-off-by) is not a misplaced
+        # description, so only flag the section if it carries non-trailer prose.
+        _trailers, others = b4.LoreMessage.find_trailers(section)
+        if any(line.strip() for line in others):
+            return True
+    return False
+
+
 def get_cover_subject_body(cover: str) -> Tuple[b4.LoreSubject, str]:
     clines = cover.splitlines()
     if len(clines) < 2 or len(clines[1].strip()) or not len(clines[0].strip()):
@@ -2131,6 +2165,15 @@ def check(cmdargs: argparse.Namespace) -> None:
             if ckrep:
                 report.extend(ckrep)
 
+        if patch_body_is_misplaced(msg):
+            report.append(
+                (
+                    'warning',
+                    'Commit message body is empty, but there is text below the '
+                    '"---" cutline; the description may belong in the commit message',
+                )
+            )
+
         lsubject = b4.LoreSubject(msg.get('Subject', ''))
         csubject = f'{commit[:12]}: {lsubject.subject}'
         worst = 'success'
@@ -2368,6 +2411,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 'needs-checking': True,
                 'needs-checking-deps': True,
                 'needs-auto-to-cc': True,
+                'misplaced-body': True,
             }
             _cppfc = config.get('prep-pre-flight-checks', 'enable-all')
             if not isinstance(_cppfc, str):
@@ -2412,6 +2456,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         logger.critical('  - Run deps checks  : b4 prep --check-deps')
                     elif pfcheck == 'needs-auto-to-cc':
                         logger.critical('  - Run auto-to-cc   : b4 prep --auto-to-cc')
+                    elif pfcheck == 'misplaced-body':
+                        logger.critical(
+                            '  - Empty commit body: text below "---" looks misplaced'
+                        )
                 try:
                     logger.critical('---')
                     input(
@@ -3111,6 +3159,9 @@ def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
         'needs-auto-to-cc': None,
         'needs-checking': bool(ppcmds or scmds) and 'check' not in pf_checks,
         'needs-checking-deps': len(prereqs) > 0 and 'check-deps' not in pf_checks,
+        'misplaced-body': any(
+            patch_body_is_misplaced(msg) for _commit, msg in patches if msg
+        ),
         'preflight-checks-failing': None,
     }
     info['needs-auto-to-cc'] = info['needs-recipients'] or (
@@ -3121,6 +3172,7 @@ def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
         or info['needs-auto-to-cc']
         or info['needs-checking']
         or info['needs-checking-deps']
+        or info['misplaced-body']
     )
 
     # Add informations about the commits in this series

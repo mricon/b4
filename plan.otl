@@ -184,10 +184,14 @@ v0.16
 	[X] update_series_tracking re-raises OperationCancelledError before its broad except
 	[X] lore.requesttimeout git config (connect,read pair; default 5.0,30.0)
 	[X] Tests for all three cancellation paths; docs in config.rst + maintainer/review.rst
-[_] Warn on empty commit message body during prep --check / send
+[X] Warn on empty commit message body during prep --check / send
 	: Dave Marquardt, https://msgid.link/20260320-ambrosial-strange-sidewinder-60216e@lemur
 	: Detect commits where the body is empty but below-the-cut content exists
 	: This likely means the developer accidentally put the description in the wrong place
+	: patch_body_is_misplaced() in ez.py; new 'misplaced-body' pre-flight check
+	  (warn-only, disable via disable-misplaced-body) + per-commit warning in
+	  prep --check; only fires when body empty AND non-trailer prose sits below
+	  the cut, so trivial one-liners stay quiet; 4 tests, ci.sh + ci-matrix green
 [X] Multiple lore endpoints with failover
 	: "Maintainer container" project — local 3-month lore mirror for decentralized workflows
 	: Query local endpoint first, fail over to upstream lore if unavailable or stale

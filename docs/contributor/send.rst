@@ -188,6 +188,11 @@ generates a warning:
   (see :doc:`prep`)
 - ``needs-auto-to-cc``: you need to run ``b4 prep --auto-to-cc`` to
   populate the list of addresses that should receive your patch series
+- ``misplaced-body``: one of your commits has an empty commit message
+  body, but there is prose below the ``---`` cutline. This usually means
+  the description was written into the cover letter (which, for a
+  single-patch series, b4 folds below the cut) instead of the commit
+  message itself, where ``git am`` would discard it
 
 If you find that some of these pre-flight checks aren't relevant to you,
 you can either turn them all off, or only the ones that you don't like.

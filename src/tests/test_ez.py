@@ -606,3 +606,90 @@ def test_mixin_cover_keeps_notes_with_midsection_trailer_line() -> None:
     assert body.index('change-id: handling was simplified') < body.index('diff --git')
     # The genuine basement is relocated below the diff.
     assert body.index('base-commit:') > body.index('diff --git')
+
+
+# A single patch whose commit message body is empty: the payload jumps straight
+# from the (header-borne) subject to the '---' cutline. This is what b4 emits
+# when the author leaves the commit message blank.
+_EMPTY_BODY_PATCH = (
+    '---\n'
+    ' feature.txt | 1 +\n'
+    ' 1 file changed, 1 insertion(+)\n'
+    '\n'
+    'diff --git a/feature.txt b/feature.txt\n'
+    'new file mode 100644\n'
+    'index 0000000..cc628cc\n'
+    '--- /dev/null\n'
+    '+++ b/feature.txt\n'
+    '@@ -0,0 +1 @@\n'
+    '+world\n'
+)
+
+
+def test_misplaced_body_flags_empty_commit_with_cover_prose() -> None:
+    """The real-world case: the author left the commit message empty and wrote
+    the description into the cover letter. On a single-patch series mixin_cover()
+    folds that prose below the '---' cutline, where `git am` discards it. The
+    empty body plus leftover prose is the high-confidence signal we warn on.
+    """
+    patch = _make_patch_msg(_EMPTY_BODY_PATCH)
+    cbody = (
+        'Cover title\n'
+        '\n'
+        'This is the real description that should have been the commit message.\n'
+        '\n'
+        'Signed-off-by: Test User <test@example.com>\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'
+        'change-id: 20260101-test-change-id\n'
+    )
+    b4.ez.mixin_cover(cbody, [('', patch)])
+
+    assert b4.ez.patch_body_is_misplaced(patch) is True
+
+
+def test_misplaced_body_allows_populated_commit() -> None:
+    """A commit that carries a real message body is never flagged, even after a
+    cover with its own notes is mixed in.
+    """
+    patch = _make_patch_msg(_SINGLE_PATCH_BODY)
+    cbody = (
+        'Cover title\n'
+        '\n'
+        'Cover body text.\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'
+        'change-id: 20260101-test-change-id\n'
+    )
+    b4.ez.mixin_cover(cbody, [('', patch)])
+
+    assert b4.ez.patch_body_is_misplaced(patch) is False
+
+
+def test_misplaced_body_allows_trivial_empty_commit() -> None:
+    """An empty commit body with nothing below the cut but the auto-generated
+    diffstat, diff, and base-commit/change-id utility must NOT be flagged -- a
+    trivial one-liner patch is a legitimate workflow we don't nag about.
+    """
+    body = _EMPTY_BODY_PATCH + (
+        '\nbase-commit: 1234abcd5678\nchange-id: 20260101-test-change-id\n'
+    )
+    patch = _make_patch_msg(body)
+
+    assert b4.ez.patch_body_is_misplaced(patch) is False
+
+
+def test_misplaced_body_ignores_lone_signoff_below_cut() -> None:
+    """An empty commit body with only a Signed-off-by (no prose) folded below
+    the cut is not a misplaced *description*, so it stays quiet.
+    """
+    patch = _make_patch_msg(_EMPTY_BODY_PATCH)
+    cbody = (
+        'Signed-off-by: Test User <test@example.com>\n'
+        '---\n'
+        'base-commit: 1234abcd5678\n'
+        'change-id: 20260101-test-change-id\n'
+    )
+    b4.ez.mixin_cover(cbody, [('', patch)])
+
+    assert b4.ez.patch_body_is_misplaced(patch) is False
