@@ -1559,7 +1559,14 @@ class WorkerScreen(ModalScreen[Any]):
             yield LoadingIndicator()
 
     def on_mount(self) -> None:
-        self.run_worker(self._fn, name='_ws_work', thread=True)
+        # Shed any cancel flag left set by a previously-aborted fetch.  The
+        # lore node keeps raising OperationCancelledError on every request
+        # until reset_cancel() is called, so without this a fresh fetch
+        # started right after a cancel would crash the worker immediately.
+        b4.get_lore_node().reset_cancel()
+        # exit_on_error=False lets a fetch failure surface through the ERROR
+        # branch below (notify + dismiss) instead of crashing the whole TUI.
+        self.run_worker(self._fn, name='_ws_work', thread=True, exit_on_error=False)
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name != '_ws_work':
@@ -1567,6 +1574,10 @@ class WorkerScreen(ModalScreen[Any]):
         if event.state == WorkerState.SUCCESS:
             self.dismiss(event.worker.result)
         elif event.state == WorkerState.ERROR:
+            if isinstance(event.worker.error, liblore.OperationCancelledError):
+                # A genuine cancellation is not an error worth shouting about.
+                self.dismiss(None)
+                return
             self.app.notify(str(event.worker.error), severity='error')
             self.dismiss(None)
 

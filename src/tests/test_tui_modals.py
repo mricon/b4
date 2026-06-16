@@ -35,6 +35,7 @@ from b4.review_tui._modals import (
     TrailerScreen,
     UpdateAllScreen,
     UpdateRevisionScreen,
+    WorkerScreen,
 )
 
 # ---------------------------------------------------------------------------
@@ -1240,3 +1241,80 @@ class TestLinkRevisionConfirmScreen:
             await pilot.pause()
             warning = app.screen.query_one('#link-confirm-warning', Static)
             assert 'absorbed' in _static_text(warning)
+
+
+# ---------------------------------------------------------------------------
+# WorkerScreen
+# ---------------------------------------------------------------------------
+
+
+class TestWorkerScreen:
+    """Tests for the generic worker modal.
+
+    Regression coverage for the crash reported when opening a series right
+    after another network request was cancelled: the lore node's cancel flag
+    stayed set, so the fresh fetch raised OperationCancelledError immediately
+    (msgid 21fe13c1-5c9a-4a47-b97b-251da4748aea@sirena.org.uk).
+    """
+
+    @pytest.mark.asyncio
+    async def test_on_mount_resets_cancel_flag(self) -> None:
+        """A fetch must clear any stale cancel flag before it runs."""
+        app = ModalTestApp()
+        node = mock.Mock()
+        dismissed: List[Any] = []
+
+        def _work() -> str:
+            return 'done'
+
+        with mock.patch.object(b4, 'get_lore_node', return_value=node):
+            async with app.run_test() as pilot:
+                app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+        node.reset_cancel.assert_called_once()
+        assert dismissed == ['done']
+
+    @pytest.mark.asyncio
+    async def test_worker_error_notifies_without_crashing(self) -> None:
+        """A fetch failure surfaces as a notification, not a TUI crash."""
+        app = ModalTestApp()
+        node = mock.Mock()
+        dismissed: List[Any] = []
+
+        def _work() -> str:
+            raise ValueError('boom')
+
+        with mock.patch.object(b4, 'get_lore_node', return_value=node):
+            async with app.run_test() as pilot:
+                with mock.patch.object(app, 'notify') as notify:
+                    app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+                    # The app is still alive and the modal was dismissed.
+                    assert dismissed == [None]
+                    notify.assert_called_once()
+                    assert notify.call_args.kwargs.get('severity') == 'error'
+
+    @pytest.mark.asyncio
+    async def test_cancellation_dismisses_silently(self) -> None:
+        """A genuine cancellation dismisses without an error popup."""
+        app = ModalTestApp()
+        node = mock.Mock()
+        dismissed: List[Any] = []
+
+        def _work() -> str:
+            raise liblore.OperationCancelledError('Request cancelled')
+
+        with mock.patch.object(b4, 'get_lore_node', return_value=node):
+            async with app.run_test() as pilot:
+                with mock.patch.object(app, 'notify') as notify:
+                    app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+                    assert dismissed == [None]
+                    notify.assert_not_called()
