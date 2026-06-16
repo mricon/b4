@@ -255,8 +255,16 @@ v0.16
 	[X] pr: scope the "already fetched" check to the target branch
 [ ] `b4 ty` interactive mode
 	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
-[ ] `b4 trailers` interactive mode
-	[_] Similar to above, a mode to review incoming trailers
+[X] `b4 trailers` interactive mode
+	[X] `b4 trailers -u -i` opens the editor to review incoming trailers
+	: Reject a trailer by changing its leading "+" to "x"; rejections persist in
+	  .git/b4-trailers-ignore.json keyed by (trailer, provenance-msgid) -- NOT
+	  patch-id, so they survive rebase/reword and a reviewer's fresh re-send of
+	  the same trailer is offered as new instead of being silently dropped
+	: Honoured on every later -u run (with or without -i)
+	: Load-bearing "- <patch>" headers scope trailers per patch; parse verifies
+	  the full header+trailer structure and aborts safely on any edit/reorder
+	: 13 new tests, ci.sh + ci-matrix (3.11-3.14) green
 
 v0.15
 -----

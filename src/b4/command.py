@@ -1003,6 +1003,13 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Update branch commits with latest received trailers',
     )
     sp_trl.add_argument(
+        '-i',
+        '--interactive',
+        action='store_true',
+        default=False,
+        help='Review trailers in an editor before applying them (implies -u)',
+    )
+    sp_trl.add_argument(
         '-S',
         '--sloppy-trailers',
         dest='sloppytrailers',

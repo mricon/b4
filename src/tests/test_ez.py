@@ -1,6 +1,6 @@
 import os
 from email.message import EmailMessage
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple, cast
 from unittest.mock import patch
 
 import pytest
@@ -693,3 +693,310 @@ def test_misplaced_body_ignores_lone_signoff_below_cut() -> None:
     b4.ez.mixin_cover(cbody, [('', patch)])
 
     assert b4.ez.patch_body_is_misplaced(patch) is False
+
+
+# ---------------------------------------------------------------------------
+# Tests for interactive trailer review (b4 trailers -u -i)
+# ---------------------------------------------------------------------------
+
+
+def _review_sections() -> List[Tuple[str, List[Tuple[str, str]]]]:
+    return [
+        (
+            '[PATCH 1/2] add a feature',
+            [
+                (
+                    'Reviewed-by: Foo Bar <foo@example.com>',
+                    'https://lore.kernel.org/r/msgid-1%40example.com',
+                ),
+                (
+                    'Acked-by: Bar Foo <bar@example.com>',
+                    'https://lore.kernel.org/r/msgid-2%40example.com',
+                ),
+            ],
+        ),
+        (
+            '[PATCH 2/2] wire it up',
+            [
+                (
+                    'Tested-by: Quux Dev <quux@example.com>',
+                    'https://lore.kernel.org/r/msgid-3%40example.com',
+                ),
+            ],
+        ),
+    ]
+
+
+def test_render_trailer_review_layout() -> None:
+    """The buffer names each patch with a load-bearing "- <subject>" header and
+    offers each trailer with a leading '+' plus its 'via:' source; a pristine
+    buffer round-trips clean.
+    """
+    sections = _review_sections()
+    buf = b4.ez.render_trailer_review(sections)
+    text = buf.decode('utf-8')
+    # Patch headers use '-' (not '#'): they scope trailers to a patch and are
+    # verified on parse, not ignored as comments.
+    assert '- [PATCH 1/2] add a feature' in text
+    assert '- [PATCH 2/2] wire it up' in text
+    # Each trailer is offered with a '+' marker and its via: source line.
+    assert '  + Reviewed-by: Foo Bar <foo@example.com>' in text
+    assert '    # via: https://lore.kernel.org/r/msgid-1%40example.com' in text
+    # A freshly rendered buffer rejects nothing.
+    assert b4.ez.parse_trailer_review(buf, sections) == set()
+
+
+def test_parse_trailer_review_marks_rejections() -> None:
+    """Flipping '+' to 'x' on a line marks that trailer (by position) rejected."""
+    sections = _review_sections()
+    text = b4.ez.render_trailer_review(sections).decode('utf-8')
+    text = text.replace('  + Reviewed-by:', '  x Reviewed-by:')
+    text = text.replace('  + Tested-by:', '  x Tested-by:')
+    rejected = b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
+    assert rejected == {0, 2}
+
+
+def test_parse_trailer_review_rejects_edited_text() -> None:
+    """Editing the trailer text breaks the positional contract and aborts."""
+    sections = _review_sections()
+    text = b4.ez.render_trailer_review(sections).decode('utf-8')
+    text = text.replace('Foo Bar', 'Foo Baz')
+    with pytest.raises(ValueError):
+        b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
+
+
+def test_parse_trailer_review_rejects_count_mismatch() -> None:
+    """Adding or removing trailer lines entirely also aborts (ambiguous edit)."""
+    sections = _review_sections()
+    text = b4.ez.render_trailer_review(sections).decode('utf-8')
+    text = text.replace('  + Acked-by: Bar Foo <bar@example.com>\n', '')
+    with pytest.raises(ValueError):
+        b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
+
+
+def test_parse_trailer_review_rejects_edited_patch_header() -> None:
+    """The patch header is load-bearing: tampering with it aborts the run."""
+    sections = _review_sections()
+    text = b4.ez.render_trailer_review(sections).decode('utf-8')
+    text = text.replace('- [PATCH 2/2] wire it up', '- [PATCH 2/2] WIRED up')
+    with pytest.raises(ValueError):
+        b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
+
+
+def test_parse_trailer_review_scopes_identical_trailer_per_patch() -> None:
+    """An identical trailer under two patches is tracked per patch: rejecting
+    the one under the first patch leaves the second patch's copy untouched.
+    """
+    same = 'Reviewed-by: Foo Bar <foo@example.com>'
+    sections: List[Tuple[str, List[Tuple[str, str]]]] = [
+        ('[PATCH 1/2] first', [(same, 'https://lore.kernel.org/r/a%40x.com')]),
+        ('[PATCH 2/2] second', [(same, 'https://lore.kernel.org/r/b%40x.com')]),
+    ]
+    text = b4.ez.render_trailer_review(sections).decode('utf-8')
+    # Reject only the first occurrence (the one under PATCH 1/2).
+    text = text.replace('  + ', '  x ', 1)
+    rejected = b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
+    assert rejected == {0}
+
+
+def test_trailer_ignore_key_keys_off_provenance() -> None:
+    """The ignore key is (trailer, provenance-msgid) -- no patch-id. An
+    identical trailer from a different message is a different key, so a fresh
+    re-send by the reviewer is offered again rather than silently suppressed.
+    """
+    trailer = 'Reviewed-by: Foo Bar <foo@example.com>'
+    assert b4.ez._trailer_ignore_key(trailer, 'm@example.com') == (
+        trailer,
+        'm@example.com',
+    )
+    assert b4.ez._trailer_ignore_key(
+        trailer, 'dead-series@example.com'
+    ) != b4.ez._trailer_ignore_key(trailer, 'fresh-review@example.com')
+
+
+def test_trailer_ignores_roundtrip(gitdir: str) -> None:
+    """The ignore file survives a save/load cycle with identical key set."""
+    keys = {
+        ('Reviewed-by: Foo <foo@example.com>', 'm1@example.com'),
+        ('Acked-by: Bar <bar@example.com>', 'm2@example.com'),
+    }
+    b4.ez.save_trailer_ignores(keys)
+    assert b4.ez.load_trailer_ignores() == keys
+
+
+def test_trailer_ignores_missing_file_is_empty(gitdir: str) -> None:
+    """A repo with no ignore file yet yields an empty set (not an error)."""
+    assert b4.ez.load_trailer_ignores() == set()
+
+
+def test_trailer_ignores_corrupt_file_is_empty(gitdir: str) -> None:
+    """A corrupt ignore file degrades to an empty set instead of crashing."""
+    path = b4.ez._trailer_ignore_path()
+    assert path is not None
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write('this is not json{{')
+    assert b4.ez.load_trailer_ignores() == set()
+
+
+def test_interactive_trailer_review_drops_and_remembers(
+    gitdir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rejecting a trailer in the editor drops it from the updates and records
+    it (keyed by patch-id + trailer + via msgid) for future runs.
+    """
+    config = b4.get_main_config()
+
+    class _Src:
+        def __init__(self, msgid: str) -> None:
+            self.msgid = msgid
+
+    class _Commit:
+        def __init__(self, subject: str, patchid: str) -> None:
+            self.subject = subject
+            self.git_patch_id = patchid
+
+    rev = b4.LoreTrailer(name='Reviewed-by', value='Foo Bar <foo@example.com>')
+    rev.lmsg = cast(b4.LoreMessage, _Src('rev-msgid@example.com'))
+    ack = b4.LoreTrailer(name='Acked-by', value='Bar Foo <bar@example.com>')
+    ack.lmsg = cast(b4.LoreMessage, _Src('ack-msgid@example.com'))
+
+    updates = {'commitA': [rev, ack]}
+    commit_map = {
+        'commitA': cast(b4.LoreMessage, _Commit('[PATCH 1/1] do a thing', 'patchid-A'))
+    }
+
+    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+        # Maintainer rejects the Reviewed-by, keeps the Acked-by.
+        text = bdata.decode('utf-8')
+        text = text.replace('  + Reviewed-by:', '  x Reviewed-by:')
+        return text.encode('utf-8')
+
+    monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
+
+    ignored: Set[Tuple[str, str]] = set()
+    new_updates = b4.ez.interactive_trailer_review(updates, commit_map, config, ignored)
+
+    # The kept Acked-by survives; the rejected Reviewed-by is gone.
+    assert new_updates == {'commitA': [ack]}
+    # The rejection is persisted, keyed by trailer + provenance msgid.
+    key = ('Reviewed-by: Foo Bar <foo@example.com>', 'rev-msgid@example.com')
+    assert key in b4.ez.load_trailer_ignores()
+
+
+def test_interactive_trailer_review_same_trailer_two_patches(
+    gitdir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same trailer offered on two different patches is scoped per patch:
+    rejecting it under the first patch keeps it on the second, and only the
+    first patch's key is remembered.
+    """
+    config = b4.get_main_config()
+
+    class _Src:
+        def __init__(self, msgid: str) -> None:
+            self.msgid = msgid
+
+    class _Commit:
+        def __init__(self, subject: str, patchid: str) -> None:
+            self.subject = subject
+            self.git_patch_id = patchid
+
+    tr_a = b4.LoreTrailer(name='Reviewed-by', value='Foo Bar <foo@example.com>')
+    tr_a.lmsg = cast(b4.LoreMessage, _Src('via-a@example.com'))
+    tr_b = b4.LoreTrailer(name='Reviewed-by', value='Foo Bar <foo@example.com>')
+    tr_b.lmsg = cast(b4.LoreMessage, _Src('via-b@example.com'))
+
+    updates = {'commitA': [tr_a], 'commitB': [tr_b]}
+    commit_map = {
+        'commitA': cast(b4.LoreMessage, _Commit('[PATCH 1/2] first', 'patchid-A')),
+        'commitB': cast(b4.LoreMessage, _Commit('[PATCH 2/2] second', 'patchid-B')),
+    }
+
+    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+        # Reject only the first occurrence -- the copy under PATCH 1/2.
+        return bdata.decode('utf-8').replace('  + ', '  x ', 1).encode('utf-8')
+
+    monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
+
+    ignored: Set[Tuple[str, str]] = set()
+    new_updates = b4.ez.interactive_trailer_review(updates, commit_map, config, ignored)
+
+    # Patch 2 keeps its copy; patch 1's is gone. The two copies are
+    # distinguished by their provenance message, not the patch-id.
+    assert new_updates == {'commitB': [tr_b]}
+    stored = b4.ez.load_trailer_ignores()
+    trailer = 'Reviewed-by: Foo Bar <foo@example.com>'
+    assert (trailer, 'via-a@example.com') in stored
+    assert (trailer, 'via-b@example.com') not in stored
+
+
+def test_trailers_interactive_reject_persists_across_runs(
+    sampledir: str, prepdir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: rejecting the lone follow-up trailer via -i keeps it off the
+    commit, records it, and a later plain `-u` run honours the rejection.
+    """
+    b4.MAIN_CONFIG.update({'shazam-am-flags': '--signoff'})
+    mfile = os.path.join(sampledir, 'trailers-thread-with-followups.mbox')
+    assert os.path.exists(mfile)
+
+    # Apply the series first (mirrors test_trailers' setup).
+    parser = b4.command.setup_parser()
+    b4args = [
+        '--no-stdin',
+        '--no-interactive',
+        '--offline-mode',
+        'shazam',
+        '--no-add-trailers',
+        '-m',
+        mfile,
+    ]
+    cmdargs = parser.parse_args(b4args)
+    with pytest.raises(SystemExit) as e:
+        b4.mbox.main(cmdargs)
+        assert e.value.code == 0
+
+    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+        # Reject the only follow-up trailer (Reviewed-by: Follow Upper).
+        text = bdata.decode('utf-8')
+        text = text.replace('  + Reviewed-by:', '  x Reviewed-by:')
+        return text.encode('utf-8')
+
+    monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
+
+    # `-i` implies `-u`; run the interactive update.
+    parser = b4.command.setup_parser()
+    b4args = [
+        '--no-stdin',
+        '--no-interactive',
+        '--offline-mode',
+        'trailers',
+        '-i',
+        '-m',
+        mfile,
+    ]
+    cmdargs = parser.parse_args(b4args)
+    b4.ez.cmd_trailers(cmdargs)
+
+    # The rejected trailer never landed on the commit.
+    _ec, logstr = b4.git_run_command(None, ['log', '--format=%b', 'HEAD~4..'])
+    assert 'Follow Upper' not in logstr
+    # ...and it was remembered.
+    assert b4.ez.load_trailer_ignores()
+
+    # A subsequent *plain* update must keep honouring the rejection.
+    parser = b4.command.setup_parser()
+    b4args = [
+        '--no-stdin',
+        '--no-interactive',
+        '--offline-mode',
+        'trailers',
+        '--update',
+        '-m',
+        mfile,
+    ]
+    cmdargs = parser.parse_args(b4args)
+    b4.ez.cmd_trailers(cmdargs)
+
+    _ec, logstr = b4.git_run_command(None, ['log', '--format=%b', 'HEAD~4..'])
+    assert 'Follow Upper' not in logstr

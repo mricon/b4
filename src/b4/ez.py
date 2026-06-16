@@ -1207,6 +1207,217 @@ def get_series_start(usebranch: Optional[str] = None) -> Optional[str]:
     return forkpoint
 
 
+def _trailer_ignore_path() -> Optional[str]:
+    """Return the path to the per-repo trailer-ignore file, or None."""
+    gitdir = b4.git_get_common_dir()
+    if not gitdir:
+        return None
+    return os.path.join(gitdir, 'b4-trailers-ignore.json')
+
+
+def _trailer_ignore_key(trailer_str: str, via_msgid: Optional[str]) -> Tuple[str, str]:
+    """Build the stable identity for a trailer we may ignore.
+
+    Keyed by the rendered trailer and the msgid it came from -- its
+    provenance. We deliberately do NOT key on the patch-id: a rejection means
+    "I don't want the trailer from this particular message", so it survives
+    patch-id churn (rebase/reword), and an identical trailer that later
+    arrives from a *different* message (e.g. the reviewer re-sends it directly
+    for the current series) has a different provenance and is offered afresh.
+    """
+    return (trailer_str, via_msgid or '')
+
+
+def load_trailer_ignores() -> Set[Tuple[str, str]]:
+    """Load the set of trailer keys the user has chosen to ignore."""
+    path = _trailer_ignore_path()
+    if not path or not os.path.exists(path):
+        return set()
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        ignores: Set[Tuple[str, str]] = set()
+        for item in data['ignored']:
+            ignores.add((item['trailer'], item.get('via', '')))
+        return ignores
+    except (json.JSONDecodeError, OSError, KeyError, TypeError) as ex:
+        logger.warning('Could not parse %s, ignoring it: %s', path, ex)
+        return set()
+
+
+def save_trailer_ignores(keys: Set[Tuple[str, str]]) -> None:
+    """Persist the set of ignored trailer keys to the per-repo file."""
+    path = _trailer_ignore_path()
+    if not path:
+        logger.debug('Not in a git repository, cannot save trailer ignores')
+        return
+    ignored = [{'trailer': key[0], 'via': key[1]} for key in sorted(keys)]
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump({'ignored': ignored}, fh, indent=2)
+        fh.write('\n')
+
+
+# A patch header line ("- <subject>") names the patch a trailer belongs to.
+_REVIEW_HEADER_RE = re.compile(r'^-\s+(\S.*?)\s*$')
+# A trailer line, marked '+' (keep) or 'x' (reject).
+_REVIEW_TRAILER_RE = re.compile(r'^\s*([+xX])\s+(\S.*?)\s*$')
+
+
+def render_trailer_review(
+    sections: List[Tuple[str, List[Tuple[str, str]]]],
+) -> bytes:
+    """Render the interactive review buffer.
+
+    `sections` is an ordered list of (subject, [(trailer_str, via_url), ...]).
+    Each patch is introduced by a "- <subject>" header that scopes the trailers
+    beneath it (the same trailer can be kept on one patch and rejected on
+    another), followed by its trailers, each marked '+'.
+    """
+    lines = [
+        '# b4 trailers -u: review the trailers about to be applied.',
+        '#',
+        "# To REJECT a trailer, change its leading '+' to 'x'. Rejected",
+        '# trailers are remembered and will not be offered again on future',
+        '# updates. The "- <patch>" lines say which patch each trailer belongs',
+        '# to. Lines beginning with "#" are comments. Do not edit, add, remove,',
+        '# or reorder the "- <patch>" or trailer lines themselves.',
+        '#',
+    ]
+    for subject, trailers in sections:
+        lines.append(f'- {subject}')
+        for trailer_str, via_url in trailers:
+            lines.append(f'  + {trailer_str}')
+            if via_url:
+                lines.append(f'    # via: {via_url}')
+        lines.append('')
+    return ('\n'.join(lines) + '\n').encode('utf-8')
+
+
+def parse_trailer_review(
+    data: bytes, sections: List[Tuple[str, List[Tuple[str, str]]]]
+) -> Set[int]:
+    """Parse the edited review buffer and return the trailer indices rejected.
+
+    The index is into the flat, in-order sequence of trailers across all
+    sections. Parsing verifies the full interleaved structure -- the patch
+    headers AND the trailer text, in order -- against what was rendered. The
+    headers are load-bearing: they scope which patch each trailer belongs to,
+    so a reorder that moved a trailer across a patch boundary is caught even
+    when the trailer text is identical. Any structural divergence raises
+    ValueError so we never act on the wrong patch's trailer; only the leading
+    '+'/'x' marker is allowed to change.
+    """
+    # The expected interleaved token stream: ('H', subject) | ('T', trailer).
+    expected: List[Tuple[str, str]] = []
+    for subject, trailers in sections:
+        expected.append(('H', subject))
+        for trailer_str, _via in trailers:
+            expected.append(('T', trailer_str))
+
+    # The parsed token stream; trailer tokens carry their marker too.
+    parsed: List[Tuple[str, ...]] = []
+    for line in data.decode('utf-8', errors='replace').splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        hmatch = _REVIEW_HEADER_RE.match(line)
+        if hmatch:
+            parsed.append(('H', hmatch.group(1)))
+            continue
+        tmatch = _REVIEW_TRAILER_RE.match(line)
+        if tmatch:
+            parsed.append(('T', tmatch.group(1).lower(), tmatch.group(2)))
+            continue
+        raise ValueError('unexpected line in review: %r' % line)
+
+    if len(parsed) != len(expected):
+        raise ValueError(
+            'expected %d patch/trailer line(s), found %d -- did you add or '
+            'remove lines?' % (len(expected), len(parsed))
+        )
+
+    rejected: Set[int] = set()
+    tidx = 0
+    for ptoken, etoken in zip(parsed, expected):
+        kind = etoken[0]
+        if ptoken[0] != kind:
+            raise ValueError(
+                'patch/trailer order changed: expected %s, got %s' % (kind, ptoken[0])
+            )
+        if kind == 'H':
+            if ptoken[1] != etoken[1]:
+                raise ValueError(
+                    'patch header changed: expected %r, got %r' % (etoken[1], ptoken[1])
+                )
+        else:
+            marker, trailer_str = ptoken[1], ptoken[2]
+            if trailer_str != etoken[1]:
+                raise ValueError(
+                    'trailer text changed: expected %r, got %r'
+                    % (etoken[1], trailer_str)
+                )
+            if marker == 'x':
+                rejected.add(tidx)
+            tidx += 1
+    return rejected
+
+
+def interactive_trailer_review(
+    updates: Dict[str, List['b4.LoreTrailer']],
+    commit_map: Dict[str, 'b4.LoreMessage'],
+    config: Dict[str, Any],
+    ignored_keys: Set[Tuple[str, str]],
+) -> Dict[str, List['b4.LoreTrailer']]:
+    """Open an editor letting the user reject trailers before they are applied.
+
+    Returns a (possibly shrunk) updates map with the kept trailers. Rejected
+    trailers are added to `ignored_keys` and persisted.
+    """
+    midmask = str(config['midmask'])
+    sections: List[Tuple[str, List[Tuple[str, str]]]] = []
+    flat: List[Tuple[str, 'b4.LoreTrailer', Tuple[str, str]]] = []
+    for commit, fltrs in updates.items():
+        clmsg = commit_map[commit]
+        disp: List[Tuple[str, str]] = []
+        for fltr in fltrs:
+            tstr = fltr.as_string(omit_extinfo=True)
+            via_msgid = fltr.lmsg.msgid if fltr.lmsg else ''
+            via_url = ''
+            if via_msgid:
+                via_url = midmask % urllib.parse.quote_plus(via_msgid, safe='@')
+            disp.append((tstr, via_url))
+            flat.append((commit, fltr, _trailer_ignore_key(tstr, via_msgid)))
+        sections.append((clmsg.subject, disp))
+
+    buf = render_trailer_review(sections)
+    edited = b4.edit_in_editor(buf, filehint='b4-trailers.COMMIT_EDITMSG')
+    try:
+        rejected_idx = parse_trailer_review(edited, sections)
+    except ValueError as ex:
+        logger.critical('CRITICAL: could not parse the trailer review: %s', ex)
+        logger.critical('No changes were made.')
+        sys.exit(1)
+
+    if not rejected_idx:
+        return updates
+
+    new_ignores: Set[Tuple[str, str]] = set()
+    new_updates: Dict[str, List['b4.LoreTrailer']] = dict()
+    for idx, (commit, fltr, key) in enumerate(flat):
+        if idx in rejected_idx:
+            new_ignores.add(key)
+            continue
+        new_updates.setdefault(commit, list()).append(fltr)
+
+    ignored_keys |= new_ignores
+    save_trailer_ignores(ignored_keys)
+    logger.info(
+        'Ignoring %d trailer(s); recorded so they will not return.',
+        len(new_ignores),
+    )
+    return new_updates
+
+
 def update_trailers(cmdargs: argparse.Namespace) -> None:
     if not b4.can_network and not cmdargs.localmbox:
         logger.critical(
@@ -1421,6 +1632,10 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     seen_froms = set()
     logger.info('---')
 
+    # Trailers the user has previously chosen to reject; honoured on every
+    # run, with or without -i, so a rejection sticks across rerolls.
+    ignored_keys = load_trailer_ignores()
+
     updates: Dict[str, List[b4.LoreTrailer]] = dict()
     for lmsg in lser.patches[1:]:
         if not lmsg:
@@ -1435,10 +1650,14 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         midmask = str(config['midmask'])
         for fltr in lmsg.followup_trailers:
             if fltr not in parts[2]:
+                rendered = fltr.as_string(omit_extinfo=True)
+                via_msgid = fltr.lmsg.msgid if fltr.lmsg else ''
+                if _trailer_ignore_key(rendered, via_msgid) in ignored_keys:
+                    logger.debug('  - %s (previously ignored)', rendered)
+                    continue
                 if commit not in updates:
                     updates[commit] = list()
                 updates[commit].append(fltr)
-                rendered = fltr.as_string(omit_extinfo=True)
                 if rendered in seen_froms:
                     continue
                 seen_froms.add(rendered)
@@ -1470,6 +1689,12 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         logger.info('No trailer updates found.')
         return
 
+    if getattr(cmdargs, 'interactive', False):
+        updates = interactive_trailer_review(updates, commit_map, config, ignored_keys)
+        if not updates:
+            logger.info('No trailer updates to apply.')
+            return
+
     # Shrink the update range to start with the first commit we're actually modifying
     commits = [x[0] for x in patches]
     for commit in list(commits):
@@ -1480,7 +1705,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         commits.pop(0)
 
     logger.critical('---')
-    if not cmdargs.no_interactive:
+    if not cmdargs.no_interactive and not getattr(cmdargs, 'interactive', False):
         resp = input(
             'Rewrite %d commit(s) to add these trailers? [y/N] ' % len(commits)
         )
@@ -3595,5 +3820,5 @@ def cmd_trailers(cmdargs: argparse.Namespace) -> None:
         logger.critical('          Stash or commit them first.')
         sys.exit(1)
 
-    if cmdargs.update:
+    if cmdargs.update or getattr(cmdargs, 'interactive', False):
         update_trailers(cmdargs)
