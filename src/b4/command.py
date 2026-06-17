@@ -727,6 +727,13 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Use the Auto-Thankanator to figure out what got applied/merged',
     )
     sp_ty.add_argument(
+        '-i',
+        '--interactive',
+        action='store_true',
+        default=False,
+        help='Review the auto-detected thank-yous in an editor before sending (implies -a)',
+    )
+    sp_ty.add_argument(
         '-b',
         '--branch',
         default=None,

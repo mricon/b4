@@ -30,6 +30,52 @@ subject tracking to figure out which series from those you have
 retrieved were applied to your tree. The process is usually pretty
 fast and fairly accurate.
 
+Reviewing before sending
+------------------------
+
+.. versionadded:: v0.16
+
+Because the auto-thankanator matches by patch-id and commit subject, it
+can occasionally pick up something you didn't actually apply -- for
+example, a series whose patch-ids happen to coincide with an older one.
+If you would like to review the detected thank-yous and selectively skip
+some before anything goes out, run::
+
+    $ b4 ty -i
+
+The ``-i/--interactive`` flag implies ``-a``: it runs the
+auto-thankanator (honoring ``--since`` and ``--branch``) and then opens
+your editor with the list of detected series and pull requests, each
+pre-marked to send::
+
+    + [PATCH v4 0/5] Enhance RPMsg buffer management
+        # From: Tanmay Shah <tanmay.shah@amd.com>
+        # Sent: Mon, 15 Jun 2026 13:20:02 -0700
+        # Link: https://patch.msgid.link/20260615202007.3484668-1-tanmay.shah@amd.com
+        # ---
+        # [1/5] commit-id: 1a2b3c4d5e6f
+        # [2/5] commit-id: 2b3c4d5e6f70
+        # ...
+        # ---
+        # Applied: Wed, 17 Jun 2026 12:00:00 -0400
+
+The ``Sent`` line is when the contributor sent the series. Between the
+``---`` separators, b4 lists the commit-id it resolved for each patch
+(``merge-commit`` for a pull request); a patch that did not match leaves
+a gap in the numbering, so you can spot a partial application at a
+glance. ``Applied`` is when those commits actually landed on your branch
+-- the latest matched commit for a series, or the merge commit for a
+pull request -- which helps you confirm the match is the recent work you
+expect rather than an older patch-id collision.
+
+To **skip** sending a thank-you, change its leading ``+`` to ``x`` and
+save. Skipped items are simply left pending -- their tracking files are
+untouched, so they will be offered again the next time you run ``b4 ty``.
+There is no separate state to clean up: thanking an item renames its
+tracking file to ``.sent``, and skipping it leaves it as-is. Editing,
+adding, removing, or reordering the item lines aborts the run without
+sending anything.
+
 Manually listing and thanking
 -----------------------------
 If you don't want to use the auto-thankanator, or if it's not finding a

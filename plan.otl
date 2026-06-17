@@ -253,8 +253,20 @@ v0.16
 		: Jeremy Kerr, https://patch.msgid.link/20260610-master-v2-1-9913cfb7bb3e@codeconstruct.com.au
 	[X] Prevent interpreting usebranch as a path in find_cover_commit
 	[X] pr: scope the "already fetched" check to the target branch
-[ ] `b4 ty` interactive mode
-	[_] Similar to above, a mode to review auto-ty messages and drop false-positives
+[X] `b4 ty` interactive mode
+	[X] `b4 ty -i` runs the auto-thankanator and opens the editor to review the
+	    detected thank-yous before sending; skip one by changing "+" to "x"
+	: -i implies -a; thin auto-confirm layer (binary keep/skip), not a full picker
+	: No persistence -- skipped items are just left pending (tracking file
+	  untouched) and reappear next run; thanked items become .sent as before
+	: Flat sibling helpers render_ty_review/parse_ty_review modeled on the
+	  trailers ones; parse verifies item subjects by position and aborts safely
+	  on any add/remove/reorder/edit
+	: Each item shows Sent date, the resolved commit-id per matched patch
+	  (gaps flag a partial application), and the Applied date (RFC2822, latest
+	  committer date) -- all from the commit-ids the thankanator recorded
+	: First iteration; awaiting community feedback before extending further
+	: 10 new tests in test_ty.py (new file); ci.sh + ci-matrix (3.11-3.14) green
 [X] `b4 trailers` interactive mode
 	[X] `b4 trailers -u -i` opens the editor to review incoming trailers
 	: Reject a trailer by changing its leading "+" to "x"; rejections persist in

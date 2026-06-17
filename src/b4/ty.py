@@ -429,6 +429,173 @@ def generate_am_thanks(
     return msg
 
 
+# A thank-you item line, marked '+' (send) or 'x' (skip).
+_TY_REVIEW_ITEM_RE = re.compile(r'^\s*([+xX])\s+(\S.*?)\s*$')
+
+
+def render_ty_review(sections: List[Tuple[str, List[str]]]) -> bytes:
+    """Render the interactive thank-you review buffer.
+
+    `sections` is an ordered list of (subject, [detail_line, ...]); each detail
+    line is shown verbatim as a '#' comment beneath its item. Each item is
+    marked '+' (send) and may be flipped to 'x' to skip it.
+    """
+    lines = [
+        '# b4 ty: review the thank-you notes about to be sent.',
+        '#',
+        '# These series and pull requests were detected as applied or merged.',
+        "# To SKIP one, change its leading '+' to 'x'; skipped items are left",
+        '# pending and will be offered again next time. Lines beginning with',
+        '# "#" are comments. Do not edit, add, remove, or reorder the item',
+        '# lines themselves.',
+        '#',
+    ]
+    for subject, details in sections:
+        lines.append(f'+ {subject}')
+        for detail in details:
+            lines.append(f'    # {detail}')
+        lines.append('')
+    return ('\n'.join(lines) + '\n').encode('utf-8')
+
+
+def parse_ty_review(data: bytes, sections: List[Tuple[str, List[str]]]) -> Set[int]:
+    """Parse the edited review buffer and return the item indices to skip.
+
+    The index is into the in-order sequence of items. Parsing verifies the item
+    subjects, in order, against what was rendered; any structural divergence
+    (added, removed, reordered, or edited item lines) raises ValueError so we
+    never thank the wrong contributor. Only the leading '+'/'x' marker is
+    allowed to change.
+    """
+    expected = [subject for subject, _details in sections]
+
+    parsed: List[Tuple[str, str]] = []
+    for line in data.decode('utf-8', errors='replace').splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        imatch = _TY_REVIEW_ITEM_RE.match(line)
+        if imatch:
+            parsed.append((imatch.group(1).lower(), imatch.group(2)))
+            continue
+        raise ValueError('unexpected line in review: %r' % line)
+
+    if len(parsed) != len(expected):
+        raise ValueError(
+            'expected %d item line(s), found %d -- did you add or remove lines?'
+            % (len(expected), len(parsed))
+        )
+
+    skipped: Set[int] = set()
+    for idx, ((marker, subject), esubject) in enumerate(zip(parsed, expected)):
+        if subject != esubject:
+            raise ValueError(
+                'item text changed: expected %r, got %r' % (esubject, subject)
+            )
+        if marker == 'x':
+            skipped.add(idx)
+    return skipped
+
+
+def get_applied_info(
+    gitdir: Optional[str], jsondata: JsonDictT
+) -> Tuple[Optional[str], List[str]]:
+    """Resolve the applied commits recorded by the auto-thankanator.
+
+    Returns (applied_date, commit_lines):
+
+    * applied_date -- the committer date (RFC2822) of the most recently applied
+      commit, i.e. when the work finished landing, or None if nothing resolved.
+    * commit_lines -- one '# '-ready line per resolved commit, e.g.
+      "[1/5] commit-id: 1a2b3c4d5e6f" for a series, or "merge-commit: <id>" for
+      a pull request. Patches with no match are skipped, so a gap in the
+      numbering shows which ones did not land.
+    """
+    # (label, commit_id) in display order.
+    entries: List[Tuple[str, str]] = []
+    if 'merge_commit_id' in jsondata:
+        merge_commit_id = jsondata['merge_commit_id']
+        if isinstance(merge_commit_id, str) and merge_commit_id:
+            entries.append(('merge-commit', merge_commit_id))
+    elif 'commits' in jsondata:
+        commits = cast(List[Tuple[int, Optional[str]]], jsondata['commits'])
+        total = len(commits)
+        for at, commit_id in commits:
+            if commit_id:
+                entries.append(('[%d/%d]' % (at, total), commit_id))
+    if not entries:
+        return None, []
+
+    commit_lines: List[str] = []
+    best_ts = -1
+    best_date: Optional[str] = None
+    for label, commit_id in entries:
+        # %ct picks the latest; %cD is the RFC2822 date; %h the short hash.
+        gitargs = ['show', '-s', '--format=%ct%x00%cD%x00%h', commit_id]
+        out = b4.git_get_command_lines(gitdir, gitargs)
+        if not out:
+            continue
+        parts = out[0].split('\x00')
+        if len(parts) != 3:
+            continue
+        ts_str, rfcdate, shorthash = parts
+        if label == 'merge-commit':
+            commit_lines.append('%s: %s' % (label, shorthash))
+        else:
+            commit_lines.append('%s commit-id: %s' % (label, shorthash))
+        try:
+            ts = int(ts_str)
+        except ValueError:
+            continue
+        if ts > best_ts:
+            best_ts = ts
+            best_date = rfcdate
+    return best_date, commit_lines
+
+
+def interactive_ty_review(
+    applied: List[JsonDictT], gitdir: Optional[str] = None
+) -> List[JsonDictT]:
+    """Open an editor letting the user skip thank-yous before they are sent.
+
+    Returns the (possibly shorter) list of items to thank for, in order.
+    Skipped items are simply dropped from the returned list; their tracking
+    files are left untouched, so they reappear on the next run.
+    """
+    config = b4.get_main_config()
+    linkmask = config.get('linkmask')
+    sections: List[Tuple[str, List[str]]] = []
+    for jsondata in applied:
+        details: List[str] = [
+            'From: %s <%s>' % (jsondata['fromname'], jsondata['fromemail']),
+            'Sent: %s' % jsondata['sentdate'],
+        ]
+        if isinstance(linkmask, str) and linkmask:
+            details.append('Link: %s' % (linkmask % jsondata['msgid']))
+        applied_date, commit_lines = get_applied_info(gitdir, jsondata)
+        if commit_lines:
+            details.append('---')
+            details.extend(commit_lines)
+            details.append('---')
+        if applied_date:
+            details.append('Applied: %s' % applied_date)
+        sections.append((str(jsondata['subject']), details))
+
+    buf = render_ty_review(sections)
+    edited = b4.edit_in_editor(buf, filehint='b4-ty-review.COMMIT_EDITMSG')
+    try:
+        skipped = parse_ty_review(edited, sections)
+    except ValueError as ex:
+        logger.critical('CRITICAL: could not parse the thank-you review: %s', ex)
+        logger.critical('No messages were sent.')
+        sys.exit(1)
+
+    kept = [jd for idx, jd in enumerate(applied) if idx not in skipped]
+    if skipped:
+        logger.info('Skipping %d thank-you(s); left pending for later.', len(skipped))
+    return kept
+
+
 def auto_thankanator(cmdargs: argparse.Namespace) -> None:
     gitdir = cmdargs.gitdir
     wantbranch = get_wanted_branch(cmdargs)
@@ -466,6 +633,12 @@ def auto_thankanator(cmdargs: argparse.Namespace) -> None:
     if not len(applied):
         logger.info('Nothing to do')
         sys.exit(0)
+
+    if getattr(cmdargs, 'interactive', False):
+        applied = interactive_ty_review(applied, gitdir)
+        if not applied:
+            logger.info('Nothing to do')
+            sys.exit(0)
 
     logger.info('---')
     send_messages(applied, wantbranch, cmdargs)
@@ -998,7 +1171,7 @@ def main(cmdargs: argparse.Namespace) -> None:
         logger.critical('Please set user.email in gitconfig to use this feature.')
         sys.exit(1)
 
-    if cmdargs.auto:
+    if cmdargs.auto or getattr(cmdargs, 'interactive', False):
         check_stale_thanks(cmdargs.outdir)
         auto_thankanator(cmdargs)
     elif cmdargs.thankfor:
