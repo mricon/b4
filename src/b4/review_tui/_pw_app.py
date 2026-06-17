@@ -7,7 +7,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import json
 import pathlib
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -18,15 +18,16 @@ from textual.worker import Worker, WorkerState
 import b4
 import b4.review
 import b4.review.tracking
+import liblore
 from b4.review_tui._common import (
     LoreNodeShutdownMixin,
     SeparatedFooter,
     _fix_ansi_theme,
     ci_styles,
     logger,
-    lore_request,
     pad_display,
     resolve_styles,
+    run_lore_worker,
 )
 from b4.review_tui._modals import (
     PW_HELP_LINES,
@@ -36,6 +37,19 @@ from b4.review_tui._modals import (
     LimitScreen,
     SetStateScreen,
 )
+
+
+class _TrackData(NamedTuple):
+    """Series metadata gathered off the UI thread, ready to record in the db."""
+
+    change_id: str
+    revision: int
+    subject: Optional[str]
+    sender_name: Optional[str]
+    sender_email: Optional[str]
+    sent_at: Optional[str]
+    message_id: str
+    num_patches: int
 
 
 def _format_series_label(
@@ -230,6 +244,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         self._all_series: List[Dict[str, Any]] = []
         self._tracking_identifier: Optional[str] = None
         self._tracking_enabled: bool = False
+        self._track_ctx: Optional[Dict[str, Any]] = None
         self._load_local_data()
         self._load_tracking_data()
 
@@ -310,6 +325,19 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                     ' Patchwork — error fetching series'
                 )
                 self.notify(str(event.worker.error), severity='error')
+        elif event.worker.name == '_track_series':
+            if event.state == WorkerState.SUCCESS:
+                data = event.worker.result
+                if data is None:
+                    return
+                self._finish_tracking(data)
+            elif event.state == WorkerState.ERROR:
+                self._track_ctx = None
+                err = event.worker.error
+                # A sticky-cancel left by a sibling app dismisses quietly.
+                if isinstance(err, liblore.OperationCancelledError):
+                    return
+                self.notify(f'Error retrieving series: {err}', severity='error')
 
     async def _populate(self, series_list: List[Dict[str, Any]]) -> None:
         loading = self.query('#pw-loading')
@@ -562,71 +590,88 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
 
         pw_series_id: int = sid
 
-        # Suspend UI while retrieving from lore (produces logging output)
-        with self.suspend():
+        # Retrieve from lore in a worker thread rather than suspending the UI.
+        # The fetch produces logging output, which is why this used to drop out
+        # of the TUI (and flicker); _track_fetch silences it with _quiet_worker
+        # instead, so the whole thing stays on-screen.
+        self._track_ctx = {
+            'item': item,
+            'series_name': series_name,
+            'pw_series_id': pw_series_id,
+        }
+        self.notify(f'Retrieving series: {series_name}…', timeout=3)
+        run_lore_worker(self, lambda: self._track_fetch(msgid), name='_track_series')
+
+    def _track_fetch(self, msgid: str) -> _TrackData:
+        """Fetch and parse a series for tracking, off the UI thread.
+
+        Runs under _quiet_worker() so the lore-retrieve logging doesn't trample
+        the screen -- that's what lets us avoid suspending the TUI.  Anything
+        raised here surfaces through on_worker_state_changed's ERROR branch.
+        """
+        from b4.review_tui._common import _quiet_worker
+
+        with _quiet_worker():
             logger.info('Retrieving series: %s', msgid)
-            try:
-                # lore_request() clears the shared node's sticky cancel flag so
-                # a stale cancel left by another app (e.g. TrackingApp on exit)
-                # can't abort this retrieve immediately.
-                with lore_request():
-                    msgs = b4.review._retrieve_messages(msgid)
-            except Exception as ex:
-                logger.critical('Error retrieving series: %s', ex)
-                return
-
-        try:
+            msgs = b4.review._retrieve_messages(msgid)
             lser = b4.review._get_lore_series(msgs)
-        except LookupError as ex:
-            self.notify(str(ex), severity='error')
+
+            try:
+                ref_msg = b4.review.get_reference_message(lser)
+            except LookupError:
+                raise LookupError(
+                    'Could not find cover letter or first patch'
+                ) from None
+
+            if lser.change_id:
+                change_id = lser.change_id
+            else:
+                date_prefix = ref_msg.date.strftime('%Y%m%d')
+                slug = ref_msg.lsubject.get_slug(sep='-', with_counter=False)[:60]
+                change_id = f'{date_prefix}-{slug}-{lser.fingerprint[:12]}'
+                logger.info('No change-id found, generated: %s', change_id)
+
+            sent_at: Optional[str] = None
+            if ref_msg.date:
+                sent_at = ref_msg.date.isoformat()
+
+            return _TrackData(
+                change_id=change_id,
+                revision=lser.revision,
+                subject=lser.subject,
+                sender_name=lser.fromname,
+                sender_email=lser.fromemail,
+                sent_at=sent_at,
+                message_id=ref_msg.msgid,
+                num_patches=lser.expected,
+            )
+
+    def _finish_tracking(self, data: _TrackData) -> None:
+        """Record a fetched series in the db and update the row (UI thread)."""
+        ctx = self._track_ctx
+        self._track_ctx = None
+        if not ctx:
             return
+        item = ctx['item']
+        series_name = ctx['series_name']
+        pw_series_id = ctx['pw_series_id']
 
-        # Extract series metadata
-        revision = lser.revision
-        sender_name = lser.fromname
-        sender_email = lser.fromemail
-        num_patches = lser.expected
-        subject = lser.subject
-
-        # Get message-id from cover letter or first patch
-        try:
-            ref_msg = b4.review.get_reference_message(lser)
-        except LookupError:
-            self.notify('Could not find cover letter or first patch', severity='error')
-            return
-
-        if lser.change_id:
-            change_id = lser.change_id
-        else:
-            date_prefix = ref_msg.date.strftime('%Y%m%d')
-            slug = ref_msg.lsubject.get_slug(sep='-', with_counter=False)[:60]
-            change_id = f'{date_prefix}-{slug}-{lser.fingerprint[:12]}'
-            logger.info('No change-id found, generated: %s', change_id)
-
-        message_id = ref_msg.msgid
-        sent_at: Optional[str] = None
-        if ref_msg.date:
-            sent_at = ref_msg.date.isoformat()
-
-        # Add to database
         assert self._tracking_identifier is not None
         conn = b4.review.tracking.get_db(self._tracking_identifier)
         b4.review.tracking.add_series_to_db(
             conn,
-            change_id,
-            revision,
-            subject,
-            sender_name,
-            sender_email,
-            sent_at,
-            message_id,
-            num_patches,
+            data.change_id,
+            data.revision,
+            data.subject,
+            data.sender_name,
+            data.sender_email,
+            data.sent_at,
+            data.message_id,
+            data.num_patches,
             pw_series_id,
         )
-
         conn.close()
 
-        # Update UI
         self._tracked_ids.add(pw_series_id)
         item.tracked = True
         item.add_class('--tracked')

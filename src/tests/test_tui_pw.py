@@ -9,7 +9,6 @@ Uses real SQLite databases (via b4.review.tracking) but no network access:
 the Patchwork REST calls and lore retrieval are mocked.
 """
 
-import contextlib
 import datetime
 from typing import Any, Dict, List
 from unittest import mock
@@ -111,12 +110,6 @@ class TestPwTrackSeries:
         monkeypatch.setattr(b4.review, '_get_lore_series', lambda msgs: lser)
         monkeypatch.setattr(b4.review, 'get_reference_message', lambda lser: ref_msg)
 
-        # suspend() drops to the console for logging output; there is no real
-        # terminal under the headless test driver, so make it a no-op.
-        monkeypatch.setattr(
-            PwApp, 'suspend', lambda self: contextlib.nullcontext(), raising=False
-        )
-
         app = PwApp('fakekey', 'https://pw.example.org', identifier)
         assert app._tracking_enabled is True
 
@@ -128,6 +121,7 @@ class TestPwTrackSeries:
             assert item.series['id'] == 42
 
             app.action_track_series()
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
             # The stale flag was cleared before the fetch, so the retrieve
@@ -137,3 +131,99 @@ class TestPwTrackSeries:
             assert node.cancelled is False
             assert 42 in app._tracked_ids
             assert 42 in tracking.get_tracked_pw_series_ids(identifier)
+
+    @pytest.mark.asyncio
+    async def test_track_series_does_not_suspend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fetch runs in a worker, not by suspending the TUI.
+
+        Suspending dropped out of the alternate screen and back, which the user
+        saw as a flicker.  We now fetch in a worker thread (quietly), so suspend
+        must not be touched -- this guards against regressing to the old path.
+        """
+        identifier = 'pwflicker'
+        tracking.init_db(identifier)
+
+        series = {
+            'id': 7,
+            'name': 'flicker series',
+            'msgid': 'flick@example.com',
+            'state': 'new',
+            'submitter': 'Someone',
+            'date': '2026-01-15T10:00:00',
+        }
+        monkeypatch.setattr(b4.review, 'pw_fetch_series', lambda *a, **k: [series])
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        node = _FakeLoreNode()
+        monkeypatch.setattr(b4, 'get_lore_node', lambda: node)
+        lser, ref_msg = _make_lore_series()
+        monkeypatch.setattr(b4.review, '_retrieve_messages', lambda msgid: [object()])
+        monkeypatch.setattr(b4.review, '_get_lore_series', lambda msgs: lser)
+        monkeypatch.setattr(b4.review, 'get_reference_message', lambda lser: ref_msg)
+
+        # Any call to suspend() means we regressed to the flickering path.
+        def _boom(self: PwApp) -> Any:
+            raise AssertionError('action_track_series must not suspend the TUI')
+
+        monkeypatch.setattr(PwApp, 'suspend', _boom, raising=False)
+
+        app = PwApp('fakekey', 'https://pw.example.org', identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app.action_track_series()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Tracked successfully, and suspend() was never invoked.
+            assert 7 in app._tracked_ids
+            assert 7 in tracking.get_tracked_pw_series_ids(identifier)
+
+    @pytest.mark.asyncio
+    async def test_track_series_surfaces_fetch_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A fetch failure notifies and leaves the series untracked.
+
+        With the worker running exit_on_error=False, a raised error flows to
+        on_worker_state_changed instead of crashing the app.
+        """
+        identifier = 'pwerr'
+        tracking.init_db(identifier)
+
+        series = {
+            'id': 9,
+            'name': 'doomed series',
+            'msgid': 'doom@example.com',
+            'state': 'new',
+            'submitter': 'Someone',
+            'date': '2026-01-15T10:00:00',
+        }
+        monkeypatch.setattr(b4.review, 'pw_fetch_series', lambda *a, **k: [series])
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        node = _FakeLoreNode()
+        monkeypatch.setattr(b4, 'get_lore_node', lambda: node)
+
+        def _boom_fetch(msgid: str) -> List[Any]:
+            raise RuntimeError('network is down')
+
+        monkeypatch.setattr(b4.review, '_retrieve_messages', _boom_fetch)
+
+        app = PwApp('fakekey', 'https://pw.example.org', identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app.action_track_series()
+            # The worker drains during this pause and is removed from the
+            # manager (errored workers re-raise via wait_for_complete()).
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # App stayed alive; nothing got tracked and the context was cleared.
+            assert 9 not in app._tracked_ids
+            assert 9 not in tracking.get_tracked_pw_series_ids(identifier)
+            assert app._track_ctx is None
