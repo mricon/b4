@@ -20,6 +20,7 @@ import b4
 from b4.review._review import (
     PW_BACKLOG_GATE,
     PW_WINDOW_DAYS,
+    PwFetchResult,
     _pw_count_outstanding,
     pw_fetch_series,
 )
@@ -101,15 +102,15 @@ class _FakeSession:
 
 def _fetch_with_backlog(
     monkeypatch: pytest.MonkeyPatch, count: int
-) -> Tuple[_FakeSession, List[Dict[str, Any]], Optional[int]]:
+) -> Tuple[_FakeSession, PwFetchResult]:
     sess = _FakeSession(count)
     monkeypatch.setattr(
         b4,
         'get_patchwork_session',
         lambda key, url: (sess, 'https://pw.example.org/api/1.2'),
     )
-    series, window_days = pw_fetch_series('fakekey', 'https://pw.example.org', 'proj')
-    return sess, series, window_days
+    result = pw_fetch_series('fakekey', 'https://pw.example.org', 'proj')
+    return sess, result
 
 
 # ---------------------------------------------------------------------------
@@ -152,26 +153,28 @@ class TestFetchSeriesGate:
     def test_small_backlog_fetches_everything(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        sess, series, window_days = _fetch_with_backlog(monkeypatch, count=42)
+        sess, result = _fetch_with_backlog(monkeypatch, count=42)
         # No window applied, and the fetch carried no 'since' filter.
-        assert window_days is None
+        assert result.window_days is None
+        assert result.outstanding == 42
         assert sess.fetch_params
         assert 'since' not in sess.fetch_params[0]
         # The two patches grouped into a single series.
-        assert len(series) == 1
+        assert len(result.series) == 1
 
     def test_large_backlog_windows_to_recent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        sess, _series, window_days = _fetch_with_backlog(monkeypatch, count=28180)
+        sess, result = _fetch_with_backlog(monkeypatch, count=28180)
         # The gate fired: only the recent window was fetched.
-        assert window_days == PW_WINDOW_DAYS
+        assert result.window_days == PW_WINDOW_DAYS
+        assert result.outstanding == 28180
         assert sess.fetch_params
         assert 'since' in sess.fetch_params[0]
 
     def test_gate_boundary_is_strict(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Exactly at the gate does not window; one over does.
-        _, _, at_gate = _fetch_with_backlog(monkeypatch, count=PW_BACKLOG_GATE)
-        assert at_gate is None
-        _, _, over_gate = _fetch_with_backlog(monkeypatch, count=PW_BACKLOG_GATE + 1)
-        assert over_gate == PW_WINDOW_DAYS
+        _, at_gate = _fetch_with_backlog(monkeypatch, count=PW_BACKLOG_GATE)
+        assert at_gate.window_days is None
+        _, over_gate = _fetch_with_backlog(monkeypatch, count=PW_BACKLOG_GATE + 1)
+        assert over_gate.window_days == PW_WINDOW_DAYS

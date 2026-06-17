@@ -15,7 +15,7 @@ import re
 import shutil
 import sys
 import urllib.parse
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import liblore.utils
 import requests
@@ -2758,6 +2758,20 @@ PW_BACKLOG_GATE = 100
 PW_WINDOW_DAYS = 30
 
 
+class PwFetchResult(NamedTuple):
+    """Outcome of a Patchwork series fetch.
+
+    *series* is the (possibly windowed) listing; *outstanding* is the total
+    number of outstanding patches probed before fetching; *window_days* is the
+    day window the fetch was limited to, or ``None`` when the full backlog was
+    retrieved.
+    """
+
+    series: List[Dict[str, Any]]
+    outstanding: int
+    window_days: Optional[int]
+
+
 def _pw_count_outstanding(
     pses: requests.Session, patches_url: str, params: Dict[str, Any]
 ) -> int:
@@ -2784,14 +2798,11 @@ def _pw_count_outstanding(
     return len(resp.json())
 
 
-def pw_fetch_series(
-    pwkey: str, pwurl: str, pwproj: str
-) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> PwFetchResult:
     """Fetch action-required series from a Patchwork instance.
 
-    Returns ``(series, window_days)``: *series* is a list of series dicts
-    sorted by date (newest first), and *window_days* is the day window the
-    fetch was limited to, or ``None`` when the full backlog was retrieved.
+    Returns a :class:`PwFetchResult`; its *series* is a list of series dicts
+    sorted by date (newest first).
 
     A two-step gate keeps a neglected project from hanging the UI: first probe
     how many patches are outstanding; if that exceeds ``PW_BACKLOG_GATE``, only
@@ -2886,7 +2897,9 @@ def pw_fetch_series(
                 series_map[sid]['patch_names'][patch_id] = patch.get('name', '')
 
     series = sorted(series_map.values(), key=lambda s: s.get('date', ''), reverse=True)
-    return series, window_days
+    return PwFetchResult(
+        series=series, outstanding=outstanding, window_days=window_days
+    )
 
 
 def pw_fetch_states(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]:

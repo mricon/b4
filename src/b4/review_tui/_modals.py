@@ -248,6 +248,63 @@ class HelpScreen(ModalScreen[None]):
         self._get_dialog().scroll_page_up()
 
 
+class BacklogNoticeScreen(ModalScreen[None]):
+    """One-shot notice that the Patchwork listing was trimmed to a window.
+
+    Shown when a project's outstanding backlog is large enough that b4 only
+    loaded a recent slice of it, so the missing older series don't look like a
+    bug.  States the total outstanding count and the day window applied.
+    """
+
+    BINDINGS = [
+        Binding('escape', 'close', 'Close'),
+        Binding('enter', 'close', 'Close', show=False),
+        Binding('space', 'close', 'Close', show=False),
+        Binding('q', 'close', 'Close', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    BacklogNoticeScreen {
+        align: center middle;
+    }
+    #backlog-dialog {
+        width: 68;
+        height: auto;
+        max-height: 80%;
+        border: round $warning;
+        background: $surface;
+        padding: 1 2;
+    }
+    #backlog-dismiss {
+        margin-top: 1;
+        color: $text-muted;
+        text-align: center;
+    }
+    """
+
+    def __init__(self, project: str, outstanding: int, window_days: int) -> None:
+        super().__init__()
+        self._project = project
+        self._outstanding = outstanding
+        self._window_days = window_days
+
+    def compose(self) -> ComposeResult:
+        proj = self._project or 'This project'
+        body = (
+            f'[bold $warning]⚠  Large Patchwork backlog[/]\n'
+            f'\n'
+            f'[bold]{proj}[/bold] has [bold]{self._outstanding:,}[/bold] '
+            f'outstanding patches.\n'
+            f'Showing only the last [bold]{self._window_days} days[/bold].'
+        )
+        with Vertical(id='backlog-dialog'):
+            yield Static(body)
+            yield Static('Press Esc to continue', id='backlog-dismiss')
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 def _review_help_lines(has_agent: bool = False) -> List[str]:
     """Build help text for the review TUI."""
     lines = [

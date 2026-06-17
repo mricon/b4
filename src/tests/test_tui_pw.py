@@ -19,6 +19,8 @@ import b4
 import b4.review
 import b4.review.tracking as tracking
 import liblore
+from b4.review._review import PwFetchResult
+from b4.review_tui._modals import BacklogNoticeScreen
 from b4.review_tui._pw_app import PwApp
 
 # ---------------------------------------------------------------------------
@@ -91,7 +93,9 @@ class TestPwTrackSeries:
 
         # The series list loads via the Patchwork REST API (not the lore node).
         monkeypatch.setattr(
-            b4.review, 'pw_fetch_series', lambda *a, **k: ([series], None)
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([series], 1, None),
         )
         monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
         # Resolve the tracking identifier from the patchwork project name.
@@ -156,7 +160,9 @@ class TestPwTrackSeries:
             'date': '2026-01-15T10:00:00',
         }
         monkeypatch.setattr(
-            b4.review, 'pw_fetch_series', lambda *a, **k: ([series], None)
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([series], 1, None),
         )
         monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
         monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
@@ -206,7 +212,9 @@ class TestPwTrackSeries:
             'date': '2026-01-15T10:00:00',
         }
         monkeypatch.setattr(
-            b4.review, 'pw_fetch_series', lambda *a, **k: ([series], None)
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([series], 1, None),
         )
         monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
         monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
@@ -233,3 +241,88 @@ class TestPwTrackSeries:
             assert 9 not in app._tracked_ids
             assert 9 not in tracking.get_tracked_pw_series_ids(identifier)
             assert app._track_ctx is None
+
+
+# ---------------------------------------------------------------------------
+# Large-backlog notice
+# ---------------------------------------------------------------------------
+
+
+def _backlog_series() -> Dict[str, Any]:
+    return {
+        'id': 1,
+        'name': 'a series',
+        'msgid': 'a@example.com',
+        'state': 'new',
+        'submitter': 'Someone',
+        'date': '2026-06-01T00:00:00',
+    }
+
+
+class TestPwBacklogNotice:
+    """When the fetch is windowed, the user gets a one-shot heads-up popup."""
+
+    @pytest.mark.asyncio
+    async def test_windowed_fetch_shows_notice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([_backlog_series()], 28180, 30),
+        )
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        app = PwApp('fakekey', 'https://pw.example.org', 'linux-kselftest')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # The notice is on top, carrying the probed count and window.
+            assert isinstance(app.screen, BacklogNoticeScreen)
+            assert app._backlog_count == 28180
+            assert app._window_days == 30
+
+    @pytest.mark.asyncio
+    async def test_full_fetch_shows_no_notice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([_backlog_series()], 42, None),
+        )
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        app = PwApp('fakekey', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not isinstance(app.screen, BacklogNoticeScreen)
+
+    @pytest.mark.asyncio
+    async def test_notice_shown_once_across_refresh(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A manual refresh must not re-pop the notice once dismissed."""
+        monkeypatch.setattr(
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([_backlog_series()], 28180, 30),
+        )
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        app = PwApp('fakekey', 'https://pw.example.org', 'linux-kselftest')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert isinstance(app.screen, BacklogNoticeScreen)
+            # Dismiss it, then refresh: the flag keeps it from popping again.
+            await pilot.press('escape')
+            await pilot.pause()
+            await app.action_refresh()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not isinstance(app.screen, BacklogNoticeScreen)

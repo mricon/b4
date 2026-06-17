@@ -32,6 +32,7 @@ from b4.review_tui._common import (
 from b4.review_tui._modals import (
     PW_HELP_LINES,
     ApplyStateModal,
+    BacklogNoticeScreen,
     CIChecksScreen,
     HelpScreen,
     LimitScreen,
@@ -248,6 +249,10 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         # Day window the listing was limited to (set when the backlog is large),
         # or None when the full backlog was fetched.
         self._window_days: Optional[int] = None
+        # Total outstanding patches probed, and whether we've already shown the
+        # large-backlog notice this session (it pops up once, not every reload).
+        self._backlog_count: int = 0
+        self._backlog_notice_shown: bool = False
         self._load_local_data()
         self._load_tracking_data()
 
@@ -306,26 +311,26 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
 
     def _fetch_initial(
         self,
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[int]]:
+    ) -> Tuple['b4.review.PwFetchResult', List[Dict[str, Any]]]:
         import b4.review
         from b4.review_tui._common import _quiet_worker
 
         with _quiet_worker():
-            series, window_days = b4.review.pw_fetch_series(
-                self._pwkey, self._pwurl, self._pwproj
-            )
+            result = b4.review.pw_fetch_series(self._pwkey, self._pwurl, self._pwproj)
             states = b4.review.pw_fetch_states(self._pwkey, self._pwurl, self._pwproj)
-            return series, states, window_days
+            return result, states
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name == '_fetch_initial':
             if event.state == WorkerState.SUCCESS:
                 if event.worker.result is None:
                     return
-                series_list, states, window_days = event.worker.result
+                result, states = event.worker.result
                 self._states = states
-                self._window_days = window_days
-                await self._populate(series_list)
+                self._window_days = result.window_days
+                self._backlog_count = result.outstanding
+                await self._populate(result.series)
+                self._maybe_notify_backlog()
             elif event.state == WorkerState.ERROR:
                 for widget in self.query('#pw-loading'):
                     await widget.remove()
@@ -353,6 +358,15 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             await widget.remove()
         self._all_series = series_list
         await self._refresh_list()
+
+    def _maybe_notify_backlog(self) -> None:
+        """Pop the large-backlog notice once, if the listing was windowed."""
+        if self._backlog_notice_shown or not self._window_days:
+            return
+        self._backlog_notice_shown = True
+        self.push_screen(
+            BacklogNoticeScreen(self._pwproj, self._backlog_count, self._window_days)
+        )
 
     async def _refresh_list(self) -> None:
         title = self.query_one('#pw-title', Static)
