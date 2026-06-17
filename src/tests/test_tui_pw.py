@@ -14,13 +14,14 @@ from typing import Any, Dict, List
 from unittest import mock
 
 import pytest
+from textual.widgets import Label, ProgressBar
 
 import b4
 import b4.review
 import b4.review.tracking as tracking
 import liblore
 from b4.review._review import PwFetchResult
-from b4.review_tui._pw_app import PwApp
+from b4.review_tui._pw_app import PwApp, PwFetchProgress
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -263,6 +264,17 @@ def _backlog_toasts(app: PwApp) -> List[Any]:
     return [n for n in app._notifications if n.title == 'Large Patchwork backlog']
 
 
+def _static_text(widget: Any) -> str:
+    """Return a Static/Label's text across Textual versions.
+
+    Textual >= 1.0 (pip) exposes ``content``; older builds (Fedora package)
+    still use ``renderable``.
+    """
+    if hasattr(widget, 'content'):
+        return str(widget.content)
+    return str(widget.renderable)
+
+
 class TestPwBacklogNotice:
     """When the fetch is windowed, the user gets a one-shot, self-dismissing
     notification (not a blocking modal)."""
@@ -334,3 +346,99 @@ class TestPwBacklogNotice:
             await app.workers.wait_for_complete()
             await pilot.pause()
             assert _backlog_toasts(app) == []
+
+
+# ---------------------------------------------------------------------------
+# Loading progress bar
+# ---------------------------------------------------------------------------
+
+
+class TestPwLoadingProgress:
+    """While fetching, the loading widget is a determinate progress bar driven
+    by the fetch worker (rather than an indeterminate spinner)."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_passes_progress_callback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The worker hands pw_fetch_series a callable that posts progress."""
+        captured: Dict[str, Any] = {}
+
+        def _fake_fetch(
+            pwkey: str, pwurl: str, pwproj: str, progress_cb: Any = None
+        ) -> PwFetchResult:
+            captured['cb'] = progress_cb
+            # Exercise the callback the way the real fetch does.
+            if progress_cb is not None:
+                progress_cb(0, 5)
+                progress_cb(5, 5)
+            return PwFetchResult([_backlog_series()], 5, None)
+
+        monkeypatch.setattr(b4.review, 'pw_fetch_series', _fake_fetch)
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        app = PwApp('fakekey', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert callable(captured['cb'])
+
+    @pytest.mark.asyncio
+    async def test_multi_page_progress_drives_determinate_bar(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the result spans several pages, the bar tracks total/progress."""
+        monkeypatch.setattr(
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([_backlog_series()], 1, None),
+        )
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        app = PwApp('fakekey', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # The initial dialog is gone once the list is populated; mount a
+            # fresh loading panel to exercise the handler deterministically.
+            await app.mount(app._make_loading())
+            total = b4.review.PW_PER_PAGE * 3
+            app.on_pw_fetch_progress(
+                PwFetchProgress(fetched=b4.review.PW_PER_PAGE, total=total)
+            )
+            await pilot.pause()
+            bar = app.query_one('#pw-loading-bar', ProgressBar)
+            assert bar.total == total
+            assert bar.progress == b4.review.PW_PER_PAGE
+            status = app.query_one('#pw-loading-status', Label)
+            assert 'of' in _static_text(status)
+
+    @pytest.mark.asyncio
+    async def test_single_page_progress_stays_indeterminate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A single page of patches can't advance a determinate bar, so it
+        keeps pulsing while the status line shows the count."""
+        monkeypatch.setattr(
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([_backlog_series()], 1, None),
+        )
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        app = PwApp('fakekey', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await app.mount(app._make_loading())
+            app.on_pw_fetch_progress(PwFetchProgress(fetched=0, total=204))
+            await pilot.pause()
+            # No total set -> the bar is still in its indeterminate (pulsing)
+            # state, not stuck at 0% of a known total.
+            bar = app.query_one('#pw-loading-bar', ProgressBar)
+            assert bar.total is None
+            status = app.query_one('#pw-loading-status', Label)
+            assert 'Loading 204 patches' in _static_text(status)

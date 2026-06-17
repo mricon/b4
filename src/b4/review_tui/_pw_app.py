@@ -12,7 +12,9 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Label, ListItem, ListView, LoadingIndicator, Static
+from textual.containers import Vertical
+from textual.message import Message
+from textual.widgets import Footer, Label, ListItem, ListView, ProgressBar, Static
 from textual.worker import Worker, WorkerState
 
 import b4
@@ -37,6 +39,19 @@ from b4.review_tui._modals import (
     LimitScreen,
     SetStateScreen,
 )
+
+
+class PwFetchProgress(Message):
+    """Posted from the fetch worker as pages of patches arrive.
+
+    Carries the number of patches fetched so far and the total expected, so the
+    main thread can drive the loading progress bar.
+    """
+
+    def __init__(self, fetched: int, total: int) -> None:
+        self.fetched = fetched
+        self.total = total
+        super().__init__()
 
 
 class _TrackData(NamedTuple):
@@ -162,7 +177,25 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
     }
     #pw-loading {
         height: 1fr;
-        content-align: center middle;
+        align: center middle;
+    }
+    #pw-loading-dialog {
+        width: 70;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #pw-loading-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #pw-loading-status {
+        margin-bottom: 1;
+    }
+    #pw-loading-bar {
+        width: 100%;
+        height: 1;
     }
     PwApp:ansi #pw-title {
         background: ansi_bright_black;
@@ -299,9 +332,27 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         except OSError:
             pass
 
+    def _make_loading(self) -> Vertical:
+        """Build the centered loading dialog (title + status + progress bar).
+
+        Mirrors the "update all" modal in the tracking app so the loading
+        state looks like a proper panel rather than a bar floating in space.
+        The bar starts with no total, so it pulses (indeterminate) until the
+        fetch worker probes the backlog and posts the first PwFetchProgress.
+        """
+        return Vertical(
+            Vertical(
+                Label('Loading series from Patchwork', id='pw-loading-title'),
+                Label('Connecting…', id='pw-loading-status'),
+                ProgressBar(id='pw-loading-bar', show_eta=False),
+                id='pw-loading-dialog',
+            ),
+            id='pw-loading',
+        )
+
     def compose(self) -> ComposeResult:
         yield Static(' Patchwork — loading\u2026', id='pw-title', markup=False)
-        yield LoadingIndicator(id='pw-loading')
+        yield self._make_loading()
         yield SeparatedFooter()
 
     def on_mount(self) -> None:
@@ -314,10 +365,34 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         import b4.review
         from b4.review_tui._common import _quiet_worker
 
+        def _progress(fetched: int, total: int) -> None:
+            self.post_message(PwFetchProgress(fetched, total))
+
         with _quiet_worker():
-            result = b4.review.pw_fetch_series(self._pwkey, self._pwurl, self._pwproj)
+            result = b4.review.pw_fetch_series(
+                self._pwkey, self._pwurl, self._pwproj, progress_cb=_progress
+            )
             states = b4.review.pw_fetch_states(self._pwkey, self._pwurl, self._pwproj)
             return result, states
+
+    def on_pw_fetch_progress(self, event: PwFetchProgress) -> None:
+        """Drive the loading progress bar and status from the fetch worker.
+
+        Patches arrive a page at a time, so a determinate bar can only advance
+        once per page.  When the whole result fits in a single page there are
+        no intermediate steps -- the bar would just sit at 0 and jump to full
+        -- so keep it pulsing (indeterminate) and let the status line carry the
+        count.  Multi-page fetches get a determinate, per-page-advancing bar.
+        """
+        single_page = event.total <= b4.review.PW_PER_PAGE
+        for bar in self.query('#pw-loading-bar').results(ProgressBar):
+            if not single_page:
+                bar.update(total=event.total, progress=event.fetched)
+        for status in self.query('#pw-loading-status').results(Label):
+            if single_page:
+                status.update(f'Loading {event.total:,} patches…')
+            else:
+                status.update(f'{event.fetched:,} of {event.total:,} patches')
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name == '_fetch_initial':
@@ -442,9 +517,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         for widget in self.query('#pw-header, #pw-list'):
             await widget.remove()
         self.query_one('#pw-title', Static).update(' Patchwork — refreshing\u2026')
-        await self.mount(
-            LoadingIndicator(id='pw-loading'), before=self.query_one(Footer)
-        )
+        await self.mount(self._make_loading(), before=self.query_one(Footer))
         self.run_worker(self._fetch_initial, name='_fetch_initial', thread=True)
 
     @staticmethod

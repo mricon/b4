@@ -15,7 +15,7 @@ import re
 import shutil
 import sys
 import urllib.parse
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import liblore.utils
 import requests
@@ -2758,6 +2758,9 @@ def collect_review_emails(
 # hundreds of series a day) don't trip it; only a genuine pile-up does.
 PW_BACKLOG_GATE = 1000
 PW_WINDOW_DAYS = 30
+# Patchwork's hard cap on results per page; also our fetch page size.  Patches
+# arrive a page at a time, so this is the granularity of fetch progress.
+PW_PER_PAGE = 250
 
 
 class PwFetchResult(NamedTuple):
@@ -2800,7 +2803,12 @@ def _pw_count_outstanding(
     return len(resp.json())
 
 
-def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> PwFetchResult:
+def pw_fetch_series(
+    pwkey: str,
+    pwurl: str,
+    pwproj: str,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> PwFetchResult:
     """Fetch action-required series from a Patchwork instance.
 
     Returns a :class:`PwFetchResult`; its *series* is a list of series dicts
@@ -2809,6 +2817,10 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> PwFetchResult:
     A two-step gate keeps a neglected project from hanging the UI: first probe
     how many patches are outstanding; if that exceeds ``PW_BACKLOG_GATE``, only
     fetch the most recent ``PW_WINDOW_DAYS`` days instead of the whole history.
+
+    *progress_cb*, if given, is called as ``progress_cb(fetched, total)`` once
+    the total to fetch is known and after each page of patches arrives, so a
+    caller (e.g. the TUI) can drive a progress bar.
     """
     pses, api_url = b4.get_patchwork_session(pwkey, pwurl)
     patches_url = '/'.join((api_url, 'patches'))
@@ -2816,7 +2828,7 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> PwFetchResult:
         'project': pwproj,
         'state': ['new', 'under-review'],
         'order': '-date',
-        'per_page': '250',
+        'per_page': str(PW_PER_PAGE),
         'archived': 'false',
     }
 
@@ -2825,6 +2837,7 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> PwFetchResult:
 
     # Step 2: if it's large, restrict the fetch to a recent window.
     window_days: Optional[int] = None
+    total = outstanding
     if outstanding > PW_BACKLOG_GATE:
         window_days = PW_WINDOW_DAYS
         since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
@@ -2837,6 +2850,12 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> PwFetchResult:
             PW_BACKLOG_GATE,
             window_days,
         )
+        # The windowed set is much smaller than the all-time backlog; re-probe
+        # so the progress total reflects what we'll actually fetch.
+        total = _pw_count_outstanding(pses, patches_url, params)
+
+    if progress_cb is not None:
+        progress_cb(0, total)
 
     all_patches: List[Dict[str, Any]] = []
     url: Optional[str] = patches_url
@@ -2848,6 +2867,8 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> PwFetchResult:
         url = resp.links.get('next', {}).get('url')
         # Only pass params on the first request; pagination URLs include them
         params = {}
+        if progress_cb is not None:
+            progress_cb(len(all_patches), total)
 
     # CI check priority: higher value = worse status (worst wins per series)
     _check_priority = {'pending': 0, 'success': 1, 'warning': 2, 'fail': 3}

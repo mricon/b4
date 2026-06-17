@@ -69,21 +69,25 @@ class _FakeSession:
     of patches with no ``next`` link.  Every request's params are recorded.
     """
 
-    def __init__(self, count: int) -> None:
+    def __init__(self, count: int, window_count: Optional[int] = None) -> None:
         self._count = count
+        # The count returned by the per_page=1 probe when a 'since' filter is
+        # present (i.e. the windowed re-probe); defaults to the full count.
+        self._window_count = window_count if window_count is not None else count
         self.requests: List[Dict[str, Any]] = []
 
     def get(self, url: str, params: Optional[Dict[str, Any]] = None) -> _FakeResp:
         params = dict(params or {})
         self.requests.append(params)
         if str(params.get('per_page')) == '1':
+            n = self._window_count if 'since' in params else self._count
             links: Dict[str, Dict[str, str]] = {}
-            if self._count > 1:
+            if n > 1:
                 links['last'] = {
                     'url': f'https://pw.example.org/api/1.2/patches/'
-                    f'?page={self._count}&per_page=1'
+                    f'?page={n}&per_page=1'
                 }
-            payload = [_patch(1, 1, '2026-06-01T00:00:00')] if self._count else []
+            payload = [_patch(1, 1, '2026-06-01T00:00:00')] if n else []
             return _FakeResp(payload=payload, links=links)
         # Actual fetch: one page, two patches in one series, no next link.
         return _FakeResp(
@@ -178,3 +182,47 @@ class TestFetchSeriesGate:
         assert at_gate.window_days is None
         _, over_gate = _fetch_with_backlog(monkeypatch, count=PW_BACKLOG_GATE + 1)
         assert over_gate.window_days == PW_WINDOW_DAYS
+
+
+# ---------------------------------------------------------------------------
+# progress_cb
+# ---------------------------------------------------------------------------
+
+
+class TestProgressCallback:
+    def _run(
+        self, monkeypatch: pytest.MonkeyPatch, sess: _FakeSession
+    ) -> List[Tuple[int, int]]:
+        monkeypatch.setattr(
+            b4,
+            'get_patchwork_session',
+            lambda key, url: (sess, 'https://pw.example.org/api/1.2'),
+        )
+        calls: List[Tuple[int, int]] = []
+        pw_fetch_series(
+            'fakekey',
+            'https://pw.example.org',
+            'proj',
+            progress_cb=lambda fetched, total: calls.append((fetched, total)),
+        )
+        return calls
+
+    def test_reports_against_full_count_when_not_windowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._run(monkeypatch, _FakeSession(count=42))
+        # Primed at zero, then once per fetched page (one page, two patches).
+        assert calls[0] == (0, 42)
+        assert calls[-1] == (2, 42)
+        # Totals are stable across the whole fetch.
+        assert all(total == 42 for _fetched, total in calls)
+
+    def test_reports_against_windowed_count_when_gated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Huge all-time backlog, but only 17 patches inside the recent window:
+        # progress must track the windowed total, not the all-time backlog.
+        sess = _FakeSession(count=28180, window_count=17)
+        calls = self._run(monkeypatch, sess)
+        assert calls[0] == (0, 17)
+        assert all(total == 17 for _fetched, total in calls)
