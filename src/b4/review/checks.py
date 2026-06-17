@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import shlex
 import sqlite3
 from email.message import EmailMessage
@@ -22,6 +23,28 @@ import b4
 logger = logging.getLogger(__name__)
 
 _STATUS_ORDER = {'pass': 0, 'warn': 1, 'fail': 2}
+
+# checkpatch --terse --mailback prefixes each finding with the offending line
+# number into the input, e.g. "-:7: WARNING: ...". We use that number to fish
+# the offending commit-message line back out and show it as context.
+_CHECKPATCH_LINENO_RE = re.compile(r'^-:(\d+):')
+
+
+def _find_commit_log_end(src_lines: List[str]) -> int:
+    """Return the 1-based line number where the commit message ends.
+
+    Everything before this line (email headers + commit log prose) is where
+    checkpatch's commit-message complaints live; the diff begins at or after
+    it. Used to decide which findings get an offending-line snippet attached,
+    so we don't repeat context for code findings the reviewer can already see
+    in the patch view.
+    """
+    for idx, line in enumerate(src_lines):
+        stripped = line.rstrip()
+        if stripped == '---' or stripped.startswith('diff --git '):
+            return idx + 1
+    return len(src_lines) + 1
+
 
 # In-process cache for sashiko API responses, keyed by message-id.
 # This prevents redundant API calls when checking multiple patches
@@ -227,6 +250,10 @@ def _run_builtin_checkpatch(msg: EmailMessage, topdir: str) -> List[Dict[str, st
     out_str = out.strip().decode(errors='replace') if out and out.strip() else ''
     err_str = err.strip().decode(errors='replace') if err and err.strip() else ''
 
+    # The same bytes we fed checkpatch, so its "-:N:" line numbers index here.
+    src_lines = bdata.decode(errors='replace').splitlines()
+    commit_log_end = _find_commit_log_end(src_lines)
+
     findings: List[Dict[str, str]] = []
     worst = 'pass'
     for raw in out_str.splitlines() + err_str.splitlines():
@@ -234,10 +261,10 @@ def _run_builtin_checkpatch(msg: EmailMessage, topdir: str) -> List[Dict[str, st
         if not line:
             continue
         if 'ERROR:' in line:
-            findings.append({'status': 'fail', 'description': line})
+            finding: Dict[str, str] = {'status': 'fail', 'description': line}
             worst = 'fail'
         elif 'WARNING:' in line or 'CHECK:' in line:
-            findings.append({'status': 'warn', 'description': line})
+            finding = {'status': 'warn', 'description': line}
             if worst != 'fail':
                 worst = 'warn'
         else:
@@ -246,6 +273,17 @@ def _run_builtin_checkpatch(msg: EmailMessage, topdir: str) -> List[Dict[str, st
                 findings[-1]['description'] += ' ' + line
             else:
                 findings.append({'status': 'pass', 'description': line})
+            continue
+        # For complaints about the commit message, echo the offending line as
+        # context, the way checkpatch does on the command line.
+        locm = _CHECKPATCH_LINENO_RE.match(raw)
+        if locm:
+            lineno = int(locm.group(1))
+            if 0 < lineno <= len(src_lines) and lineno < commit_log_end:
+                srcline = src_lines[lineno - 1].strip()
+                if srcline:
+                    finding['srcline'] = srcline
+        findings.append(finding)
 
     if not findings:
         if ecode:

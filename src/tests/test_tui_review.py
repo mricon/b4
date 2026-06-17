@@ -9,6 +9,7 @@ Tests the shell-return reconciliation logic that detects and handles
 cosmetic commit edits (e.g. reworded subjects via git rebase -i).
 """
 
+import json
 from typing import Any, Dict, List, Tuple
 from unittest import mock
 
@@ -456,3 +457,40 @@ class TestLoreNodeShutdown:
 
         # on_unmount fired during shutdown and cancelled the node.
         assert node.cancel.called
+
+
+class TestRenderDetailLines:
+    """The check-details renderer surfaces checkpatch source-line context."""
+
+    def _render(self, details: List[Dict[str, str]]) -> str:
+        from rich.text import Text
+
+        from b4.review_tui._modals import TrackingCheckResultsScreen
+
+        # _render_detail_lines only touches the class-level _STATUS_DOTS, so we
+        # can exercise it without standing up a full Textual screen.
+        screen = object.__new__(TrackingCheckResultsScreen)
+        body = Text()
+        screen._render_detail_lines(body, json.dumps(details))
+        return body.plain
+
+    def test_srcline_rendered_as_indented_context(self) -> None:
+        out = self._render(
+            [
+                {
+                    'status': 'warn',
+                    'description': 'Possible unwrapped commit description',
+                    'srcline': 'A very long commit message line over the limit',
+                }
+            ]
+        )
+        assert 'Possible unwrapped commit description' in out
+        assert '    A very long commit message line over the limit' in out
+
+    def test_no_srcline_no_extra_line(self) -> None:
+        out = self._render(
+            [{'status': 'fail', 'description': 'ERROR: trailing whitespace'}]
+        )
+        assert 'ERROR: trailing whitespace' in out
+        # Only the finding line itself, no indented context underneath.
+        assert '\n    ' not in out

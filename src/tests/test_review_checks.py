@@ -231,6 +231,86 @@ class TestBuiltinCheckpatch:
         # The leading "-:" should be stripped
         assert not findings[0]['description'].startswith('-:')
 
+    # A small patch email whose line numbers checkpatch would reference:
+    #   1 From, 2 Subject, 3 blank, 4 long commit-log line, 5 blank,
+    #   6 Signed-off-by, 7 "---", ... diff begins below.
+    _SAMPLE_PATCH = (
+        'From: Dev <dev@example.com>\n'
+        'Subject: [PATCH] foo: do a thing\n'
+        '\n'
+        'This commit log line is intentionally quite long and well over limits.\n'
+        '\n'
+        'Signed-off-by: Dev <dev@example.com>\n'
+        '---\n'
+        ' foo/bar.c | 2 +-\n'
+        ' 1 file changed, 1 insertion(+), 1 deletion(-)\n'
+        '\n'
+        'diff --git a/foo/bar.c b/foo/bar.c\n'
+        'index 1111111..2222222 100644\n'
+        '--- a/foo/bar.c\n'
+        '+++ b/foo/bar.c\n'
+        '@@ -1,3 +1,3 @@\n'
+        '-old line\n'
+        '+new line with trailing whitespace   \n'
+    )
+
+    def _run_with_bytes(
+        self, stdout: str, bdata: bytes, stderr: str = '', ecode: int = 0
+    ) -> List[Dict[str, str]]:
+        msg = _make_msg()
+        with (
+            mock.patch('os.access', return_value=True),
+            mock.patch(
+                'b4._run_command',
+                return_value=(
+                    ecode,
+                    stdout.encode() if stdout else b'',
+                    stderr.encode() if stderr else b'',
+                ),
+            ),
+            mock.patch('b4.LoreMessage.get_msg_as_bytes', return_value=bdata),
+        ):
+            return checks._run_builtin_checkpatch(msg, '/fake')
+
+    def test_commit_log_finding_gets_srcline(self) -> None:
+        out = '-:4: WARNING: Possible unwrapped commit description\n'
+        results = self._run_with_bytes(out, self._SAMPLE_PATCH.encode())
+        findings = json.loads(results[0]['details'])
+        assert findings[0]['srcline'] == (
+            'This commit log line is intentionally quite long and well over limits.'
+        )
+
+    def test_diff_finding_has_no_srcline(self) -> None:
+        # A complaint pointing into the diff is left alone -- the reviewer can
+        # already see that line in the patch view.
+        out = '-:17: ERROR: trailing whitespace\n'
+        results = self._run_with_bytes(out, self._SAMPLE_PATCH.encode())
+        findings = json.loads(results[0]['details'])
+        assert 'srcline' not in findings[0]
+
+    def test_srcline_absent_without_line_number(self) -> None:
+        # A finding with no "-:N:" prefix can't be located, so no srcline.
+        out = 'WARNING: missing Signed-off-by\n'
+        results = self._run_with_bytes(out, self._SAMPLE_PATCH.encode())
+        findings = json.loads(results[0]['details'])
+        assert 'srcline' not in findings[0]
+
+
+class TestFindCommitLogEnd:
+    """Tests for the commit-log boundary helper."""
+
+    def test_scissors_wins(self) -> None:
+        lines = ['From: x', '', 'body', '---', 'diff --git a b']
+        assert checks._find_commit_log_end(lines) == 4
+
+    def test_diff_without_scissors(self) -> None:
+        lines = ['From: x', '', 'body', 'diff --git a b']
+        assert checks._find_commit_log_end(lines) == 4
+
+    def test_no_diff_at_all(self) -> None:
+        lines = ['just', 'commit', 'message']
+        assert checks._find_commit_log_end(lines) == 4
+
 
 # ---------------------------------------------------------------------------
 # _run_external_cmd JSON protocol

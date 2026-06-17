@@ -1117,6 +1117,9 @@ scripts:
   Runs ``scripts/checkpatch.pl`` from your source tree against each
   patch. Auto-detected when no :term:`b4.review-perpatch-check-cmd` is
   configured and ``scripts/checkpatch.pl`` exists and is executable.
+  When a complaint is about a line in the commit message, the detail
+  view echoes the offending line underneath it, the way checkpatch does
+  on the command line, so you don't have to go hunting for it.
 
 ``_builtin_patchwork``
   Queries the Patchwork REST API for CI check results on each patch.

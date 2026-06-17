@@ -71,7 +71,7 @@ v0.16
 	[X] refs/original/<branch> backup + branch reflog entry preserved
 	[X] Pre/post rewrite hooks moved into the new routine
 	[X] src/tests/test_rewrite.py — 13 unit tests (core + notes + hook integration)
-[_] `b4 review` improvements
+[X] `b4 review` improvements
 	[X] Partial series acceptance without terminal state transition
 		: Mark Brown, https://msgid.link/afk5QvNAQDxFCbvT@sirena.co.uk
 		: New 'partial' state (◐) auto-detected when a cherry-pick take covers only a subset of patches
@@ -136,8 +136,13 @@ v0.16
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 		: Resolved by the WYSIWYG reply redesign — the trailer menu now edits
 		  the buffer in place via _insert_trailer_in_reply/_remove_trailer_from_reply
-	[_] Show context in checkpatch output for commit message complaints
+	[X] Show context in checkpatch output for commit message complaints
 		: Chris Samuel, https://msgid.link/2c1ab8a2-8a86-48a7-9a53-ef3a00ab4bd2@csamuel.org
+		: _builtin_checkpatch attaches the offending commit-message line as a
+		  'srcline' field (using the --terse "-:N:" line number to look it back
+		  up in the bytes we fed checkpatch); gated to lines before the diff so
+		  code findings stay uncluttered. The check-details modal renders it as
+		  a dim indented sub-line. Review-TUI only; prep --check left as-is.
 	[X] Visual cue for patches unchanged from prior revision
 		: 'unchanged' patch-state (≡, U+2261), rendered dim in the patch list
 		: Low-priority fallback — superseded the moment a trailer/reply/comment lands

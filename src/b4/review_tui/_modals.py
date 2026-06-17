@@ -3472,6 +3472,10 @@ class TrackingCheckResultsScreen(ModalScreen[str]):
                 # Checkpatch-style: just the finding text
                 body.append(desc)
             body.append('\n')
+            srcline = entry.get('srcline', '')
+            if srcline:
+                # The offending commit-message line, echoed as context.
+                body.append(f'    {srcline}\n', style='dim')
             if url:
                 body.append(f'  \u2192 {url}\n', style='dim')
 
