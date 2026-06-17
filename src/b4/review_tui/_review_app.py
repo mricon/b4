@@ -25,6 +25,7 @@ import b4
 import b4.mbox
 import b4.review
 import b4.review.tracking
+import liblore
 from b4.review._review import COMMIT_MESSAGE_PATH
 from b4.review_tui._common import (
     PATCH_STATE_MARKERS,
@@ -48,6 +49,7 @@ from b4.review_tui._common import (
     logger,
     resolve_styles,
     reviewer_colours,
+    run_lore_worker,
     worker_cancelled,
 )
 from b4.review_tui._modals import (
@@ -1940,11 +1942,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         # ── Try local blob first, fall back to lore in background ────────────
         blob_sha = self._series.get('thread-blob', '')
         self.notify('Loading follow-ups\u2026')
-        b4.get_lore_node().reset_cancel()
-        self.run_worker(
+        run_lore_worker(
+            self,
             lambda: self._fetch_followups_bg(cover_msgid, blob_sha),
             name='_followup_worker',
-            thread=True,
         )
 
     def _fetch_rethreaded_threads(
@@ -1975,14 +1976,26 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
     def _fetch_followups_bg(self, cover_msgid: str, blob_sha: str) -> None:
         """Load follow-ups from local blob or lore (background thread)."""
-        with _quiet_worker():
-            if self._series.get('is-rethreaded'):
-                # Rethreaded series: fetch each real patch's thread
-                msgs = self._fetch_rethreaded_threads(blob_sha)
-            else:
-                msgs = get_thread_msgs(
-                    self._topdir, cover_msgid, blob_sha=blob_sha, quiet=True
-                )
+        try:
+            with _quiet_worker():
+                if self._series.get('is-rethreaded'):
+                    # Rethreaded series: fetch each real patch's thread
+                    msgs = self._fetch_rethreaded_threads(blob_sha)
+                else:
+                    msgs = get_thread_msgs(
+                        self._topdir, cover_msgid, blob_sha=blob_sha, quiet=True
+                    )
+        except liblore.OperationCancelledError:
+            # The fetch was cancelled (app shutdown or navigating away).
+            # Leave the UI as-is rather than surfacing a spurious error.
+            return
+        except Exception as ex:
+            # The worker runs with exit_on_error=False, so an unhandled
+            # exception would otherwise vanish silently and leave the
+            # "Loading follow-ups…" notice dangling.  Fall through to the
+            # not-loaded path, which notifies and still shows the patch list.
+            logger.debug('follow-up fetch failed: %s', ex, exc_info=True)
+            msgs = None
 
         if not msgs:
 

@@ -9,12 +9,14 @@ import email.message
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from typing import (
     TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
     Dict,
+    Generator,
     List,
     Optional,
     ParamSpec,
@@ -202,6 +204,71 @@ class _CheckRunnerHost(Protocol):
     ) -> Worker[_WorkerResult]: ...
 
 
+class _WorkerHost(Protocol):
+    """Anything (App or Screen) able to launch a Textual worker."""
+
+    def run_worker(
+        self,
+        work: Callable[[], _WorkerResult],
+        name: Optional[str] = ...,
+        group: str = ...,
+        description: str = ...,
+        exit_on_error: bool = ...,
+        start: bool = ...,
+        exclusive: bool = ...,
+        thread: bool = ...,
+    ) -> Worker[_WorkerResult]: ...
+
+
+@contextmanager
+def lore_request() -> Generator[None, None, None]:
+    """Clear the shared lore node's sticky cancel flag before a fetch.
+
+    ``b4.get_lore_node()`` returns a process-wide singleton whose cancel
+    flag is *sticky*: once ``.cancel()`` runs -- ``UpdateAllSeriesScreen``
+    Esc, app shutdown via :class:`LoreNodeShutdownMixin`, a sibling app
+    switching away, or SIGINT -- every subsequent request raises
+    ``OperationCancelledError`` until ``.reset_cancel()`` is called.
+
+    Wrap any lore fetch in this context manager.  It is the one sanctioned
+    way to begin a fetch, so a new fetch site cannot inherit a stale cancel
+    left behind by a prior aborted operation.  Use it directly around a
+    synchronous fetch, or via :func:`run_lore_worker` for a threaded one.
+    """
+    b4.get_lore_node().reset_cancel()
+    yield
+
+
+def run_lore_worker(
+    host: _WorkerHost,
+    work: Callable[[], _WorkerResult],
+    *,
+    name: str,
+    exit_on_error: bool = False,
+    **kwargs: Any,
+) -> Worker[_WorkerResult]:
+    """Reset the sticky cancel flag, then launch a threaded lore fetch.
+
+    The single sanctioned way to start a lore fetch in a worker thread.  It
+    bundles the three things every such fetch needs, so a new site cannot
+    forget any of them:
+
+    * clears the sticky cancel flag (via :func:`lore_request`) on the
+      *calling* thread, before the worker starts -- preserving the existing
+      ordering, since resetting inside the worker could race with
+      :meth:`LoreNodeShutdownMixin.on_unmount` cancelling the node on
+      shutdown and re-enable a fetch the app is trying to abort;
+    * runs the work in a thread (``thread=True``);
+    * keeps a fetch failure from tearing down the whole TUI via
+      ``WorkerFailed`` (``exit_on_error=False``), so it surfaces through the
+      host's ``on_worker_state_changed`` handler instead.
+    """
+    with lore_request():
+        return host.run_worker(
+            work, name=name, thread=True, exit_on_error=exit_on_error, **kwargs
+        )
+
+
 class LoreNodeShutdownMixin:
     """App mixin that cancels in-flight lore fetches on shutdown.
 
@@ -271,22 +338,17 @@ class CheckRunnerMixin:
             return
         from b4.review_tui._modals import CheckLoadingScreen
 
-        # The shared lore node keeps a sticky cancel flag and raises
-        # OperationCancelledError on every request until reset_cancel() is
-        # called.  A cancelled update (or a sibling app's shutdown) leaves the
-        # flag set, so clear it before the fetch or get_thread_msgs() aborts
-        # immediately.  exit_on_error=False keeps a fetch failure from tearing
-        # down the whole app via WorkerFailed.
-        b4.get_lore_node().reset_cancel()
         self._check_loading = CheckLoadingScreen()
         self.push_screen(self._check_loading)
-        self._check_worker = self.run_worker(
+        # run_lore_worker() clears the sticky cancel flag before the fetch
+        # (else get_thread_msgs() aborts immediately) and runs with
+        # exit_on_error=False so a fetch failure doesn't tear down the app.
+        self._check_worker = run_lore_worker(
+            self,
             lambda: self._fetch_and_check(
                 message_id, series_subject, change_id=change_id, force=force
             ),
             name='_check_worker',
-            thread=True,
-            exit_on_error=False,
         )
         # Let the loading overlay cancel this worker on Esc/q.
         self._check_loading.worker = self._check_worker

@@ -45,6 +45,7 @@ from b4.review_tui._common import (
     logger,
     pad_display,
     resolve_styles,
+    run_lore_worker,
 )
 from b4.review_tui._modals import (
     TRACKING_HELP_LINES,
@@ -3707,10 +3708,10 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return
         self._link_ctx = {'change_id': change_id, 'series_id': series_id}
         self.notify(f'Fetching {series_id}…')
-        self.run_worker(
+        run_lore_worker(
+            self,
             lambda: b4.review.tracking.fetch_series_for_link(series_id),
             name='_link_fetch',
-            thread=True,
         )
 
     def _on_link_fetched(self, lser: Optional[Any]) -> None:

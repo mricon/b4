@@ -24,6 +24,7 @@ from b4.review_tui._common import (
     _fix_ansi_theme,
     ci_styles,
     logger,
+    lore_request,
     pad_display,
     resolve_styles,
 )
@@ -564,14 +565,12 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         # Suspend UI while retrieving from lore (produces logging output)
         with self.suspend():
             logger.info('Retrieving series: %s', msgid)
-            # The shared lore node keeps a sticky cancel flag and raises
-            # OperationCancelledError on every request until reset_cancel() is
-            # called.  Another app (e.g. TrackingApp) cancels the node on exit,
-            # so clear the flag here -- matching the on_mount() pattern used by
-            # the fetch screens -- or this retrieve aborts immediately.
-            b4.get_lore_node().reset_cancel()
             try:
-                msgs = b4.review._retrieve_messages(msgid)
+                # lore_request() clears the shared node's sticky cancel flag so
+                # a stale cancel left by another app (e.g. TrackingApp on exit)
+                # can't abort this retrieve immediately.
+                with lore_request():
+                    msgs = b4.review._retrieve_messages(msgid)
             except Exception as ex:
                 logger.critical('Error retrieving series: %s', ex)
                 return

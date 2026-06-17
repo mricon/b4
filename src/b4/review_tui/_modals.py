@@ -49,6 +49,7 @@ from b4.review_tui._common import (
     ci_check_styles,
     logger,
     resolve_styles,
+    run_lore_worker,
     worker_cancelled,
 )
 
@@ -1559,14 +1560,11 @@ class WorkerScreen(ModalScreen[Any]):
             yield LoadingIndicator()
 
     def on_mount(self) -> None:
-        # Shed any cancel flag left set by a previously-aborted fetch.  The
-        # lore node keeps raising OperationCancelledError on every request
-        # until reset_cancel() is called, so without this a fresh fetch
-        # started right after a cancel would crash the worker immediately.
-        b4.get_lore_node().reset_cancel()
-        # exit_on_error=False lets a fetch failure surface through the ERROR
-        # branch below (notify + dismiss) instead of crashing the whole TUI.
-        self.run_worker(self._fn, name='_ws_work', thread=True, exit_on_error=False)
+        # run_lore_worker() sheds any stale cancel flag before the fetch and
+        # runs with exit_on_error=False, so a fetch failure surfaces through
+        # the ERROR branch below (notify + dismiss) instead of crashing the
+        # whole TUI.
+        run_lore_worker(self, self._fn, name='_ws_work')
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name != '_ws_work':
@@ -1641,10 +1639,9 @@ class _FetchViewerScreen(ModalScreen[None]):
             yield Static('Escape close', id='fv-hint')
 
     def on_mount(self) -> None:
-        b4.get_lore_node().reset_cancel()
         self.query_one('#fv-viewer', RichLog).display = False
         self.query_one('#fv-hint', Static).display = False
-        self.run_worker(self._fetch, name='_fv_fetch', thread=True)
+        run_lore_worker(self, self._fetch, name='_fv_fetch')
 
     def _fetch(self) -> Any:
         raise NotImplementedError
@@ -1665,6 +1662,11 @@ class _FetchViewerScreen(ModalScreen[None]):
                 self._show_result(event.worker.result)
         elif event.state == WorkerState.ERROR:
             await self.query_one('#fv-loading', LoadingIndicator).remove()
+            if isinstance(event.worker.error, liblore.OperationCancelledError):
+                # A genuine cancellation (Esc, app shutdown) is not an error;
+                # dismiss quietly rather than printing "Request cancelled".
+                self.dismiss(None)
+                return
             self.query_one('#fv-title', Static).update('Error')
             viewer = self.query_one('#fv-viewer', RichLog)
             viewer.display = True
@@ -2219,8 +2221,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
             self.run_worker(self._prepare_local, name='_prepare', thread=True)
         elif self._message_id:
             self._update_status('Fetching series\u2026', 'warn')
-            b4.get_lore_node().reset_cancel()
-            self.run_worker(self._prepare_remote, name='_prepare', thread=True)
+            run_lore_worker(self, self._prepare_remote, name='_prepare')
         else:
             self._update_status(f'Branch exists: {value}', 'pass')
 
@@ -2770,8 +2771,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
             )
 
     def on_mount(self) -> None:
-        b4.get_lore_node().reset_cancel()
-        self.run_worker(self._do_updates, name='_do_updates', thread=True)
+        run_lore_worker(self, self._do_updates, name='_do_updates')
 
     def action_cancel(self) -> None:
         self._cancelled = True

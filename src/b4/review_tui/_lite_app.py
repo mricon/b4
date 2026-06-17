@@ -20,6 +20,7 @@ from textual.worker import Worker, WorkerState
 import b4
 import b4.review
 import b4.review.tracking
+import liblore
 from b4.review_tui._common import (
     _fix_ansi_theme,
     _quiet_worker,
@@ -27,6 +28,7 @@ from b4.review_tui._common import (
     display_width,
     pad_display,
     resolve_styles,
+    run_lore_worker,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
 
@@ -510,8 +512,7 @@ class LiteThreadScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         _fix_ansi_theme(self.app)
-        b4.get_lore_node().reset_cancel()
-        self.run_worker(self._fetch_thread, name='_fetch_thread', thread=True)
+        run_lore_worker(self, self._fetch_thread, name='_fetch_thread')
 
     def _refresh_msg_count(self, total_messages: int) -> None:
         """Opportunistically refresh message count from fetched messages."""
@@ -570,6 +571,10 @@ class LiteThreadScreen(ModalScreen[None]):
             await self._populate()
         elif event.state == WorkerState.ERROR:
             await self.query_one('#lite-loading', LoadingIndicator).remove()
+            if isinstance(event.worker.error, liblore.OperationCancelledError):
+                # A genuine cancellation (app shutdown or navigating away) is
+                # not an error worth shouting about.
+                return
             self.app.notify(str(event.worker.error), severity='error')
 
     async def _populate(self) -> None:
