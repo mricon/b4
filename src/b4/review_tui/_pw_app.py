@@ -564,6 +564,12 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         # Suspend UI while retrieving from lore (produces logging output)
         with self.suspend():
             logger.info('Retrieving series: %s', msgid)
+            # The shared lore node keeps a sticky cancel flag and raises
+            # OperationCancelledError on every request until reset_cancel() is
+            # called.  Another app (e.g. TrackingApp) cancels the node on exit,
+            # so clear the flag here -- matching the on_mount() pattern used by
+            # the fetch screens -- or this retrieve aborts immediately.
+            b4.get_lore_node().reset_cancel()
             try:
                 msgs = b4.review._retrieve_messages(msgid)
             except Exception as ex:
