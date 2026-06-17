@@ -1531,3 +1531,58 @@ class TestCheckRunnerStaleCancel:
         # Dismissed quietly (no error toast) and no results modal shown.
         assert host.dismissed == [('', '')]
         assert host.pushed_modal is False
+
+
+class TestFetchAndCheckTrackingBranch:
+    """The optional tracking-data dump must not log-and-exit (which leaks a
+    line onto the TUI as a flicker) when the review branch isn't checked out.
+
+    Regression coverage for the screen flicker on 'c' in the tracking app:
+    running checks on a tracked series with no local b4/review/<change_id>
+    branch (one that isn't under review) called load_tracking(), whose
+    `git log` failed and fired a critical log + sys.exit onto the terminal.
+    """
+
+    def _run(self, branch_exists: bool) -> Tuple[_FakeCheckHost, mock.Mock]:
+        from b4.review_tui._common import CheckRunnerMixin
+
+        host = _FakeCheckHost()
+        load_tracking = mock.Mock(
+            return_value=('cover', {'series': {'thread-blob': 'deadbeef'}})
+        )
+
+        with (
+            # Short-circuit right after the tracking block so the test stays
+            # focused on the guard: an empty fetch dismisses and returns.
+            mock.patch('b4.review_tui._common.get_thread_msgs', return_value=[]),
+            mock.patch('b4.git_get_toplevel', return_value='/fake'),
+            mock.patch('b4.git_branch_exists', return_value=branch_exists),
+            mock.patch('b4.get_main_config', return_value={}),
+            mock.patch('b4.review.load_tracking', load_tracking),
+            mock.patch('b4.review.checks.clear_sashiko_cache'),
+            mock.patch(
+                'b4.review.checks.load_check_cmds', return_value=(['mycheck'], [])
+            ),
+        ):
+            cast(Any, CheckRunnerMixin)._fetch_and_check(
+                host,
+                'cover@example.com',
+                'a series',
+                change_id='20260609-some-series-deadbeef',
+                force=False,
+            )
+        return host, load_tracking
+
+    def test_missing_review_branch_skips_load_tracking(self) -> None:
+        host, load_tracking = self._run(branch_exists=False)
+        # The branch isn't present, so load_tracking() (which would log+exit)
+        # is never called -- nothing leaks onto the screen.
+        load_tracking.assert_not_called()
+        # The run still proceeds to the fetch (and dismisses on the empty mock).
+        assert host.dismissed == [('Could not fetch thread from lore', 'error')]
+
+    def test_existing_review_branch_loads_tracking(self) -> None:
+        host, load_tracking = self._run(branch_exists=True)
+        # When the branch exists, the tracking data is read as before.
+        load_tracking.assert_called_once()
+        assert host.dismissed == [('Could not fetch thread from lore', 'error')]

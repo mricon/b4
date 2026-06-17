@@ -410,14 +410,20 @@ class CheckRunnerMixin:
         pwkey = str(config.get('pw-key', ''))
         pwurl = str(config.get('pw-url', ''))
 
-        # Dump tracking data to a temp file for external scripts
+        # Dump tracking data to a temp file for external scripts.  This is
+        # optional: a tracked series need not have a local b4/review/<change_id>
+        # branch (it may simply not be under review).  Skip when it's absent --
+        # otherwise load_tracking() logs a critical error (which leaks onto the
+        # TUI as a flicker) and exits.  _quiet_worker() guards the remaining
+        # corrupt-branch case so a stray log line can never reach the screen.
         extra_env: Dict[str, str] = {}
         tracking_file: Optional[str] = None
         blob_sha = ''
-        if change_id:
-            review_branch = f'b4/review/{change_id}'
+        review_branch = f'b4/review/{change_id}' if change_id else ''
+        if review_branch and b4.git_branch_exists(topdir, review_branch):
             try:
-                _cover, tracking = b4.review.load_tracking(topdir, review_branch)
+                with _quiet_worker():
+                    _cover, tracking = b4.review.load_tracking(topdir, review_branch)
                 blob_sha = tracking.get('series', {}).get('thread-blob', '')
                 fd, tracking_file = tempfile.mkstemp(
                     prefix='b4-tracking-', suffix='.json'
