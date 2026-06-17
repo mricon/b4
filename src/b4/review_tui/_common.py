@@ -271,6 +271,13 @@ class CheckRunnerMixin:
             return
         from b4.review_tui._modals import CheckLoadingScreen
 
+        # The shared lore node keeps a sticky cancel flag and raises
+        # OperationCancelledError on every request until reset_cancel() is
+        # called.  A cancelled update (or a sibling app's shutdown) leaves the
+        # flag set, so clear it before the fetch or get_thread_msgs() aborts
+        # immediately.  exit_on_error=False keeps a fetch failure from tearing
+        # down the whole app via WorkerFailed.
+        b4.get_lore_node().reset_cancel()
         self._check_loading = CheckLoadingScreen()
         self.push_screen(self._check_loading)
         self._check_worker = self.run_worker(
@@ -279,6 +286,7 @@ class CheckRunnerMixin:
             ),
             name='_check_worker',
             thread=True,
+            exit_on_error=False,
         )
         # Let the loading overlay cancel this worker on Esc/q.
         self._check_loading.worker = self._check_worker
@@ -360,8 +368,16 @@ class CheckRunnerMixin:
 
         # Fetch the thread (local blob first, then lore)
         self._update_loading('Loading thread\u2026')
-        with _quiet_worker():
-            msgs = get_thread_msgs(topdir, message_id, blob_sha=blob_sha, quiet=True)
+        try:
+            with _quiet_worker():
+                msgs = get_thread_msgs(
+                    topdir, message_id, blob_sha=blob_sha, quiet=True
+                )
+        except liblore.OperationCancelledError:
+            # The fetch was cancelled (Esc on the overlay, or app shutdown).
+            # Dismiss the overlay quietly rather than surfacing an error.
+            self._dismiss_loading()
+            return
         if not msgs:
             self._dismiss_loading('Could not fetch thread from lore', 'error')
             return

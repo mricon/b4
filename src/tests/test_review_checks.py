@@ -7,6 +7,7 @@ from unittest import mock
 
 import pytest
 
+import liblore
 from b4.review import checks
 
 # ---------------------------------------------------------------------------
@@ -1471,3 +1472,62 @@ class TestLoreNodeShutdownMixin:
 
         with mock.patch('b4.get_lore_node', side_effect=RuntimeError('boom')):
             _App().on_unmount()  # must not raise
+
+
+class TestCheckRunnerStaleCancel:
+    """Running checks must not inherit a stale lore-node cancel flag.
+
+    Regression coverage for the TUI crash when running checks right after a
+    cancelled lore request: the shared node keeps a sticky cancel flag, so the
+    thread fetch raised OperationCancelledError immediately.  Without a reset
+    in _run_checks (and exit_on_error=False on the worker) that uncaught error
+    tore down the whole app via WorkerFailed.
+    """
+
+    def test_run_checks_resets_flag_before_launching_worker(self) -> None:
+        from b4.review_tui._common import CheckRunnerMixin
+
+        node = mock.Mock()
+        host = mock.Mock()
+        host._get_check_context.return_value = ('cover@example.com', 'a series', '')
+
+        # Track call order: the flag must be cleared before the worker starts.
+        manager = mock.Mock()
+        manager.attach_mock(node.reset_cancel, 'reset_cancel')
+        manager.attach_mock(host.run_worker, 'run_worker')
+
+        with mock.patch('b4.get_lore_node', return_value=node):
+            cast(Any, CheckRunnerMixin)._run_checks(host, force=False)
+
+        node.reset_cancel.assert_called_once_with()
+        ordered = [name for name, _a, _k in manager.mock_calls]
+        assert ordered.index('reset_cancel') < ordered.index('run_worker')
+
+        # The worker must not crash the app on a fetch failure.
+        assert host.run_worker.call_args.kwargs.get('exit_on_error') is False
+
+    def test_fetch_cancellation_dismisses_overlay_quietly(self) -> None:
+        from b4.review_tui._common import CheckRunnerMixin
+
+        host = _FakeCheckHost()
+
+        with (
+            mock.patch(
+                'b4.review_tui._common.get_thread_msgs',
+                side_effect=liblore.OperationCancelledError('Request cancelled'),
+            ),
+            mock.patch('b4.git_get_toplevel', return_value='/fake'),
+            mock.patch('b4.get_main_config', return_value={}),
+            mock.patch('b4.review.checks.clear_sashiko_cache'),
+            mock.patch(
+                'b4.review.checks.load_check_cmds', return_value=(['mycheck'], [])
+            ),
+        ):
+            # Must unwind cleanly instead of letting the error escape the worker.
+            cast(Any, CheckRunnerMixin)._fetch_and_check(
+                host, 'cover@example.com', 'a series', change_id='', force=False
+            )
+
+        # Dismissed quietly (no error toast) and no results modal shown.
+        assert host.dismissed == [('', '')]
+        assert host.pushed_modal is False
