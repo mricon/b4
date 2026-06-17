@@ -2754,7 +2754,9 @@ def collect_review_emails(
 # state filter only exists on the patches endpoint); since a series has one or
 # more patches, the patch count is an upper bound on the series count, so
 # gating on it is conservative -- it never under-counts a large backlog.
-PW_BACKLOG_GATE = 100
+# The threshold is high enough that busy-but-healthy subsystems (which can see
+# hundreds of series a day) don't trip it; only a genuine pile-up does.
+PW_BACKLOG_GATE = 1000
 PW_WINDOW_DAYS = 30
 
 
