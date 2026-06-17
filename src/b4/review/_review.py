@@ -18,6 +18,7 @@ import urllib.parse
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import liblore.utils
+import requests
 
 import b4
 import b4.mbox
@@ -2745,10 +2746,56 @@ def collect_review_emails(
     return msgs
 
 
-def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]:
+# Patchwork backlog gating: a neglected project can accumulate tens of
+# thousands of outstanding patches (linux-kselftest had 28k+), and fetching
+# them all means dozens of serial API round-trips plus a giant client-side
+# grouping pass that hangs the TUI.  When the backlog is large we only pull a
+# recent window.  The count we can probe cheaply is *patches*, not series (the
+# state filter only exists on the patches endpoint); since a series has one or
+# more patches, the patch count is an upper bound on the series count, so
+# gating on it is conservative -- it never under-counts a large backlog.
+PW_BACKLOG_GATE = 100
+PW_WINDOW_DAYS = 30
+
+
+def _pw_count_outstanding(
+    pses: requests.Session, patches_url: str, params: Dict[str, Any]
+) -> int:
+    """Cheaply count the patches matching *params*.
+
+    Requests a single item and reads the page number from the ``last``
+    pagination link: with ``per_page=1`` that page number is the total count,
+    so we learn the backlog size in one tiny request instead of walking every
+    page.  Falls back to counting the returned rows when there is no ``last``
+    link (i.e. zero or one match).
+    """
+    probe = dict(params)
+    probe['per_page'] = '1'
+    resp = pses.get(patches_url, params=probe)
+    if resp.status_code != 200:
+        raise RuntimeError(f'Patchwork API error: {resp.status_code} {resp.reason}')
+    last_url = resp.links.get('last', {}).get('url')
+    if last_url:
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(last_url).query)
+        try:
+            return int(qs['page'][0])
+        except (KeyError, IndexError, ValueError):
+            pass
+    return len(resp.json())
+
+
+def pw_fetch_series(
+    pwkey: str, pwurl: str, pwproj: str
+) -> Tuple[List[Dict[str, Any]], Optional[int]]:
     """Fetch action-required series from a Patchwork instance.
 
-    Returns a list of series dicts sorted by date (newest first).
+    Returns ``(series, window_days)``: *series* is a list of series dicts
+    sorted by date (newest first), and *window_days* is the day window the
+    fetch was limited to, or ``None`` when the full backlog was retrieved.
+
+    A two-step gate keeps a neglected project from hanging the UI: first probe
+    how many patches are outstanding; if that exceeds ``PW_BACKLOG_GATE``, only
+    fetch the most recent ``PW_WINDOW_DAYS`` days instead of the whole history.
     """
     pses, api_url = b4.get_patchwork_session(pwkey, pwurl)
     patches_url = '/'.join((api_url, 'patches'))
@@ -2759,6 +2806,24 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
         'per_page': '250',
         'archived': 'false',
     }
+
+    # Step 1: how big is the outstanding backlog?
+    outstanding = _pw_count_outstanding(pses, patches_url, params)
+
+    # Step 2: if it's large, restrict the fetch to a recent window.
+    window_days: Optional[int] = None
+    if outstanding > PW_BACKLOG_GATE:
+        window_days = PW_WINDOW_DAYS
+        since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=window_days
+        )
+        params['since'] = since.strftime('%Y-%m-%dT%H:%M:%S')
+        logger.debug(
+            'Patchwork backlog is %d patches (> %d); limiting to last %d days',
+            outstanding,
+            PW_BACKLOG_GATE,
+            window_days,
+        )
 
     all_patches: List[Dict[str, Any]] = []
     url: Optional[str] = patches_url
@@ -2820,7 +2885,8 @@ def pw_fetch_series(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
                 series_map[sid]['patch_ids'].append(patch_id)
                 series_map[sid]['patch_names'][patch_id] = patch.get('name', '')
 
-    return sorted(series_map.values(), key=lambda s: s.get('date', ''), reverse=True)
+    series = sorted(series_map.values(), key=lambda s: s.get('date', ''), reverse=True)
+    return series, window_days
 
 
 def pw_fetch_states(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]:

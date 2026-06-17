@@ -245,6 +245,9 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         self._tracking_identifier: Optional[str] = None
         self._tracking_enabled: bool = False
         self._track_ctx: Optional[Dict[str, Any]] = None
+        # Day window the listing was limited to (set when the backlog is large),
+        # or None when the full backlog was fetched.
+        self._window_days: Optional[int] = None
         self._load_local_data()
         self._load_tracking_data()
 
@@ -301,22 +304,27 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         _fix_ansi_theme(self)
         self.run_worker(self._fetch_initial, name='_fetch_initial', thread=True)
 
-    def _fetch_initial(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def _fetch_initial(
+        self,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[int]]:
         import b4.review
         from b4.review_tui._common import _quiet_worker
 
         with _quiet_worker():
-            series = b4.review.pw_fetch_series(self._pwkey, self._pwurl, self._pwproj)
+            series, window_days = b4.review.pw_fetch_series(
+                self._pwkey, self._pwurl, self._pwproj
+            )
             states = b4.review.pw_fetch_states(self._pwkey, self._pwurl, self._pwproj)
-            return series, states
+            return series, states, window_days
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name == '_fetch_initial':
             if event.state == WorkerState.SUCCESS:
                 if event.worker.result is None:
                     return
-                series_list, states = event.worker.result
+                series_list, states, window_days = event.worker.result
                 self._states = states
+                self._window_days = window_days
                 await self._populate(series_list)
             elif event.state == WorkerState.ERROR:
                 for widget in self.query('#pw-loading'):
@@ -370,19 +378,21 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             ]
         limit_suffix = f', limit: {self._limit_pattern}' if self._limit_pattern else ''
         if hidden_count and not self._show_hidden:
-            title.update(
-                f' Patchwork — {len(visible)} series ({hidden_count} hidden{limit_suffix})'
-            )
+            base = f' Patchwork — {len(visible)} series ({hidden_count} hidden{limit_suffix})'
         elif hidden_count and self._show_hidden:
-            title.update(
-                f' Patchwork — {len(visible)} series (showing {hidden_count} hidden{limit_suffix})'
+            base = (
+                f' Patchwork — {len(visible)} series '
+                f'(showing {hidden_count} hidden{limit_suffix})'
             )
         elif self._limit_pattern:
-            title.update(
-                f' Patchwork — {len(visible)} action-required series{limit_suffix}'
-            )
+            base = f' Patchwork — {len(visible)} action-required series{limit_suffix}'
         else:
-            title.update(f' Patchwork — {len(visible)} action-required series')
+            base = f' Patchwork — {len(visible)} action-required series'
+        # When the backlog forced a recent-only fetch, say so: older series are
+        # deliberately not loaded, which would otherwise look like data loss.
+        if self._window_days:
+            base += f' · last {self._window_days} days'
+        title.update(base)
         if not visible:
             return
         # Hide the delegate column when all values are empty or identical

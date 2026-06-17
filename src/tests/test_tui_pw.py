@@ -90,7 +90,9 @@ class TestPwTrackSeries:
         }
 
         # The series list loads via the Patchwork REST API (not the lore node).
-        monkeypatch.setattr(b4.review, 'pw_fetch_series', lambda *a, **k: [series])
+        monkeypatch.setattr(
+            b4.review, 'pw_fetch_series', lambda *a, **k: ([series], None)
+        )
         monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
         # Resolve the tracking identifier from the patchwork project name.
         monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
@@ -153,7 +155,9 @@ class TestPwTrackSeries:
             'submitter': 'Someone',
             'date': '2026-01-15T10:00:00',
         }
-        monkeypatch.setattr(b4.review, 'pw_fetch_series', lambda *a, **k: [series])
+        monkeypatch.setattr(
+            b4.review, 'pw_fetch_series', lambda *a, **k: ([series], None)
+        )
         monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
         monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
 
@@ -201,7 +205,9 @@ class TestPwTrackSeries:
             'submitter': 'Someone',
             'date': '2026-01-15T10:00:00',
         }
-        monkeypatch.setattr(b4.review, 'pw_fetch_series', lambda *a, **k: [series])
+        monkeypatch.setattr(
+            b4.review, 'pw_fetch_series', lambda *a, **k: ([series], None)
+        )
         monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
         monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
 
