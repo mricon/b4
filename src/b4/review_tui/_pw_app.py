@@ -32,7 +32,6 @@ from b4.review_tui._common import (
 from b4.review_tui._modals import (
     PW_HELP_LINES,
     ApplyStateModal,
-    BacklogNoticeScreen,
     CIChecksScreen,
     HelpScreen,
     LimitScreen,
@@ -360,12 +359,18 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         await self._refresh_list()
 
     def _maybe_notify_backlog(self) -> None:
-        """Pop the large-backlog notice once, if the listing was windowed."""
+        """Toast the large-backlog notice once, if the listing was windowed."""
         if self._backlog_notice_shown or not self._window_days:
             return
         self._backlog_notice_shown = True
-        self.push_screen(
-            BacklogNoticeScreen(self._pwproj, self._backlog_count, self._window_days)
+        proj = self._pwproj or 'This project'
+        self.notify(
+            f'{proj} has {self._backlog_count:,} outstanding patches — '
+            f'showing only the last {self._window_days} days.',
+            title='Large Patchwork backlog',
+            severity='warning',
+            timeout=10,
+            markup=False,
         )
 
     async def _refresh_list(self) -> None:

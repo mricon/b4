@@ -20,7 +20,6 @@ import b4.review
 import b4.review.tracking as tracking
 import liblore
 from b4.review._review import PwFetchResult
-from b4.review_tui._modals import BacklogNoticeScreen
 from b4.review_tui._pw_app import PwApp
 
 # ---------------------------------------------------------------------------
@@ -259,11 +258,17 @@ def _backlog_series() -> Dict[str, Any]:
     }
 
 
+def _backlog_toasts(app: PwApp) -> List[Any]:
+    """The active large-backlog notifications, if any."""
+    return [n for n in app._notifications if n.title == 'Large Patchwork backlog']
+
+
 class TestPwBacklogNotice:
-    """When the fetch is windowed, the user gets a one-shot heads-up popup."""
+    """When the fetch is windowed, the user gets a one-shot, self-dismissing
+    notification (not a blocking modal)."""
 
     @pytest.mark.asyncio
-    async def test_windowed_fetch_shows_notice(
+    async def test_windowed_fetch_notifies(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -278,13 +283,17 @@ class TestPwBacklogNotice:
         async with app.run_test(size=(120, 30)) as pilot:
             await app.workers.wait_for_complete()
             await pilot.pause()
-            # The notice is on top, carrying the probed count and window.
-            assert isinstance(app.screen, BacklogNoticeScreen)
+            # A toast was posted (not a modal screen), carrying the count/window.
+            toasts = _backlog_toasts(app)
+            assert len(toasts) == 1
+            assert toasts[0].severity == 'warning'
+            assert '28,180' in toasts[0].message
+            assert '30 days' in toasts[0].message
             assert app._backlog_count == 28180
             assert app._window_days == 30
 
     @pytest.mark.asyncio
-    async def test_full_fetch_shows_no_notice(
+    async def test_full_fetch_does_not_notify(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -299,13 +308,13 @@ class TestPwBacklogNotice:
         async with app.run_test(size=(120, 30)) as pilot:
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert not isinstance(app.screen, BacklogNoticeScreen)
+            assert _backlog_toasts(app) == []
 
     @pytest.mark.asyncio
-    async def test_notice_shown_once_across_refresh(
+    async def test_notifies_once_across_refresh(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A manual refresh must not re-pop the notice once dismissed."""
+        """A manual refresh must not re-post the notice once shown."""
         monkeypatch.setattr(
             b4.review,
             'pw_fetch_series',
@@ -318,11 +327,10 @@ class TestPwBacklogNotice:
         async with app.run_test(size=(120, 30)) as pilot:
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert isinstance(app.screen, BacklogNoticeScreen)
-            # Dismiss it, then refresh: the flag keeps it from popping again.
-            await pilot.press('escape')
-            await pilot.pause()
+            assert len(_backlog_toasts(app)) == 1
+            # Clear toasts and refresh: the flag keeps it from posting again.
+            app._notifications.clear()
             await app.action_refresh()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert not isinstance(app.screen, BacklogNoticeScreen)
+            assert _backlog_toasts(app) == []
