@@ -1594,25 +1594,108 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         if tmsgs is not None:
             list_msgs += tmsgs
 
+    if (
+        cmdargs.fuzzy
+        and not list_msgs
+        and not msgid
+        and not tracking
+        and b4.can_network
+    ):
+        # We have no explicit thread to consult (e.g. running on a maintainer
+        # tree branch without --trailers-from). Harvest any Link: trailers from
+        # the commits and fetch those threads, so the matching below can find
+        # the postings deterministically by message-id.
+        harvest_msgids: Set[str] = set()
+        for clmsg in commit_map.values():
+            harvest_msgids.update(b4.get_link_msgids_from_lmsg(clmsg))
+        if harvest_msgids:
+            logger.info(
+                'Fuzzy: harvesting %s Link: trailer(s) from the commits',
+                len(harvest_msgids),
+            )
+            for hmsgid in harvest_msgids:
+                hmsgs = b4.get_pi_thread_by_msgid(hmsgid)
+                if hmsgs:
+                    list_msgs += hmsgs
+
     mismatches: Set[Tuple[str, str, str, str]] = set()
-    patchid_map = b4.map_codereview_trailers(list_msgs)
+
+    def _apply_followups(
+        _llmsgs: List[b4.LoreMessage], _commit_lmsg: b4.LoreMessage
+    ) -> None:
+        for _llmsg in _llmsgs:
+            _ltrailers, _lmismatches = _llmsg.get_trailers(
+                sloppy=cmdargs.sloppytrailers
+            )
+            for _ltr in _lmismatches:
+                mismatches.add(
+                    (_ltr.name, _ltr.value, _llmsg.fromname, _llmsg.fromemail)
+                )
+            logger.debug(
+                'Adding %s to %s',
+                [x.as_string() for x in _ltrailers],
+                _commit_lmsg.msgid,
+            )
+            _commit_lmsg.followup_trailers += _ltrailers
+
+    parent_patches: Dict[str, b4.LoreMessage] = dict()
+    patchid_map = b4.map_codereview_trailers(list_msgs, parent_patches=parent_patches)
+    matched_patchids: Set[str] = set()
+    # First pass: match by exact patch-id (the common, unambiguous case)
     for patchid, llmsgs in patchid_map.items():
         if patchid not in by_patchid:
-            logger.debug(
-                'Skipping patch-id %s: not found in the current series', patchid
-            )
-            logger.debug('Ignoring follow-ups: %s', [x.subject for x in llmsgs])
+            if not cmdargs.fuzzy:
+                logger.debug(
+                    'Skipping patch-id %s: not found in the current series', patchid
+                )
+                logger.debug('Ignoring follow-ups: %s', [x.subject for x in llmsgs])
             continue
-        for llmsg in llmsgs:
-            ltrailers, lmismatches = llmsg.get_trailers(sloppy=cmdargs.sloppytrailers)
-            for ltr in lmismatches:
-                mismatches.add((ltr.name, ltr.value, llmsg.fromname, llmsg.fromemail))
-            commit = by_patchid[patchid]
-            lmsg = commit_map[commit]
-            logger.debug(
-                'Adding %s to %s', [x.as_string() for x in ltrailers], lmsg.msgid
-            )
-            lmsg.followup_trailers += ltrailers
+        matched_patchids.add(patchid)
+        _apply_followups(llmsgs, commit_map[by_patchid[patchid]])
+
+    # Second pass (opt-in): for postings whose patch-id no longer matches a
+    # local commit (e.g. the commit was edited since posting), fall back to
+    # matching the parent patch by Link: message-id, then by subject.
+    if cmdargs.fuzzy:
+        by_link: Dict[str, str] = dict()
+        by_subject: Dict[str, Optional[str]] = dict()
+        for cmsgid, clmsg in commit_map.items():
+            for link_msgid in b4.get_link_msgids_from_lmsg(clmsg):
+                by_link[link_msgid] = cmsgid
+            if clmsg.subject in by_subject:
+                # Two local commits share a subject; refuse to guess.
+                by_subject[clmsg.subject] = None
+            else:
+                by_subject[clmsg.subject] = cmsgid
+
+        for patchid, llmsgs in patchid_map.items():
+            if patchid in matched_patchids:
+                continue
+            parent = parent_patches.get(patchid)
+            if parent is None:
+                continue
+            fcommit: Optional[str] = None
+            method: Optional[str] = None
+            if parent.msgid in by_link:
+                fcommit = by_link[parent.msgid]
+                method = 'Link: %s' % parent.msgid
+            elif parent.subject in by_subject:
+                sub_commit = by_subject[parent.subject]
+                if sub_commit is None:
+                    logger.debug(
+                        'Not fuzzy-matching ambiguous subject: %s', parent.subject
+                    )
+                else:
+                    fcommit = sub_commit
+                    method = 'subject match'
+            if not fcommit:
+                logger.debug('No fuzzy match for: %s', parent.full_subject)
+                continue
+            matched_patchids.add(patchid)
+            lmsg = commit_map[fcommit]
+            logger.info('NOTE: fuzzy-matched trailers via %s', method)
+            logger.info('      %s', lmsg.subject)
+            _apply_followups(llmsgs, lmsg)
 
     if msgid or tracking:
         logger.debug('Will query by change-id')

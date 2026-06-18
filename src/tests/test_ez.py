@@ -69,7 +69,9 @@ def prepdir_commit(gitdir: str) -> Generator[str, None, None]:
             'trailers-thread-with-cover-followup',
             {'shazam-am-flags': '--signoff'},
         ),
-        # Test matching trailer updates by subject when patch-id changes
+        # When the patch-id changes (here the diff is altered but the commit
+        # subject is not), the trailer is dropped unless we ask for fuzzy
+        # matching.
         (
             'trailers-thread-with-followups',
             None,
@@ -77,6 +79,17 @@ def prepdir_commit(gitdir: str) -> Generator[str, None, None]:
             [],
             ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'],
             'trailers-thread-with-followups-no-match',
+            {'shazam-am-flags': '--signoff'},
+        ),
+        # ...and with --fuzzy the same altered series recovers the trailer by
+        # matching on the (unchanged) subject.
+        (
+            'trailers-thread-with-followups',
+            None,
+            (b'vivendum', b'addendum'),
+            ['--fuzzy'],
+            ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'],
+            'trailers-thread-with-followups',
             {'shazam-am-flags': '--signoff'},
         ),
         # Test that we properly perserve commits with --- in them
@@ -1000,3 +1013,70 @@ def test_trailers_interactive_reject_persists_across_runs(
 
     _ec, logstr = b4.git_run_command(None, ['log', '--format=%b', 'HEAD~4..'])
     assert 'Follow Upper' not in logstr
+
+
+def test_trailers_fuzzy_composes_with_interactive(
+    sampledir: str, prepdir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--fuzzy` and `-i` must compose: a fuzzy (subject) match is offered in
+    the interactive editor just like an exact match, and accepting it lands the
+    trailer on the locally-modified commit.
+    """
+    b4.MAIN_CONFIG.update({'shazam-am-flags': '--signoff'})
+    mfile = os.path.join(sampledir, 'trailers-thread-with-followups.mbox')
+    assert os.path.exists(mfile)
+
+    # Apply the series with the diff altered so the patch-id no longer matches
+    # the posting (the subject stays the same, so only fuzzy matching recovers
+    # the follow-up trailer).
+    with open(mfile, 'rb') as rfh:
+        contents = rfh.read()
+    tfile = os.path.join(prepdir, '.git', 'modified.mbox')
+    with open(tfile, 'wb') as wfh:
+        wfh.write(contents.replace(b'vivendum', b'addendum'))
+
+    parser = b4.command.setup_parser()
+    b4args = [
+        '--no-stdin',
+        '--no-interactive',
+        '--offline-mode',
+        'shazam',
+        '--no-add-trailers',
+        '-m',
+        tfile,
+    ]
+    cmdargs = parser.parse_args(b4args)
+    with pytest.raises(SystemExit) as e:
+        b4.mbox.main(cmdargs)
+        assert e.value.code == 0
+
+    seen = {'offered': False}
+
+    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+        # The fuzzy-matched Reviewed-by must be presented for review; accept it
+        # by leaving the text unchanged.
+        if b'Reviewed-by: Follow Upper' in bdata:
+            seen['offered'] = True
+        return bdata
+
+    monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
+
+    parser = b4.command.setup_parser()
+    b4args = [
+        '--no-stdin',
+        '--no-interactive',
+        '--offline-mode',
+        'trailers',
+        '-i',
+        '--fuzzy',
+        '-m',
+        mfile,
+    ]
+    cmdargs = parser.parse_args(b4args)
+    b4.ez.cmd_trailers(cmdargs)
+
+    # The fuzzy match was routed through the interactive review...
+    assert seen['offered']
+    # ...and, having been accepted there, it landed on the commit.
+    _ec, logstr = b4.git_run_command(None, ['log', '--format=%b', 'HEAD~4..'])
+    assert 'Follow Upper' in logstr

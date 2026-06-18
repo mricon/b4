@@ -8,9 +8,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import argparse
 import datetime
 import email.utils
-import re
 import sys
-import urllib.parse
 from email.message import EmailMessage
 from typing import List, Optional, Set
 
@@ -38,16 +36,6 @@ def print_one_match(subject: str, link: str) -> None:
     logger.info('---')
     logger.info(subject)
     sys.stdout.write(f'{link}\n')
-
-
-def get_all_msgids_from_urls(urls: Set[str]) -> Set[str]:
-    msgids: Set[str] = set()
-    for url in urls:
-        matches = re.search(r'^https?://[^@]+/([^/]+@[^/]+)', url, re.IGNORECASE)
-        if matches:
-            chunks = matches.groups()
-            msgids.add(urllib.parse.unquote(chunks[0]))
-    return msgids
 
 
 def dig_commitish(cmdargs: argparse.Namespace) -> None:
@@ -97,7 +85,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     if ltrs:
         links = set(ltr.value for ltr in ltrs)
 
-    msgids = get_all_msgids_from_urls(links)
+    msgids = b4.get_all_msgids_from_urls(links)
     # Make a copy for finding best match later
     linked_msgids = set(msgids)
 

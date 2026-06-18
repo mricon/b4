@@ -5717,13 +5717,40 @@ def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
         spop.wait()
 
 
+def get_all_msgids_from_urls(urls: Set[str]) -> Set[str]:
+    msgids: Set[str] = set()
+    for url in urls:
+        # Unquote first, so percent-encoded message-ids (e.g. %40 for @) match.
+        url = urllib.parse.unquote(url)
+        matches = re.search(r'^https?://[^@]+/([^/]+@[^/]+)', url, re.IGNORECASE)
+        if matches:
+            msgids.add(matches.groups()[0])
+    return msgids
+
+
+def get_link_msgids_from_lmsg(lmsg: 'LoreMessage') -> Set[str]:
+    """Extract message-ids from any Link:-type trailers in a message body."""
+    if not lmsg.body:
+        return set()
+    trailers, _ = LoreMessage.find_trailers(lmsg.body)
+    urls = {
+        t.value for t in trailers if t.name.lower() in {'link', 'buglink', 'closes'}
+    }
+    return get_all_msgids_from_urls(urls)
+
+
 def map_codereview_trailers(
-    qmsgs: List[EmailMessage], ignore_msgids: Optional[Set[str]] = None
+    qmsgs: List[EmailMessage],
+    ignore_msgids: Optional[Set[str]] = None,
+    parent_patches: Optional[Dict[str, 'LoreMessage']] = None,
 ) -> Dict[str, List['LoreMessage']]:
     """
     Map messages containing code-review trailers to patch-ids they were sent for.
     :param qmsgs: list of messages to process
     :param ignore_msgids: list of message-id's to ignore
+    :param parent_patches: if provided, populated with patch-id -> parent patch
+        LoreMessage, so callers can fall back to subject/Link matching when the
+        patch-id of a posted patch no longer matches a local commit
     :return: mapping of patch-ids to LoreMessage objects containing follow-up trailers
     """
     qmid_map: Dict[str, LoreMessage] = dict()
@@ -5790,6 +5817,8 @@ def map_codereview_trailers(
                 if pqpid:
                     logger.debug('  pqpid: %s', pqpid)
                     # Found our parent patch
+                    if parent_patches is not None and pqpid not in parent_patches:
+                        parent_patches[pqpid] = _qmsg
                     if pqpid not in patchid_map:
                         patchid_map[pqpid] = list()
                     if qlmsg not in patchid_map[pqpid]:
@@ -5816,6 +5845,8 @@ def map_codereview_trailers(
         for qlmsg in qmid_map.values():
             if qlmsg.in_reply_to == cmsgid and qlmsg.git_patch_id:
                 pqpid = qlmsg.git_patch_id
+                if parent_patches is not None and pqpid not in parent_patches:
+                    parent_patches[pqpid] = qlmsg
                 for fwmsgid in fwmsgids:
                     logger.debug(
                         'Adding cover follow-up %s to patch-id %s', fwmsgid, pqpid

@@ -1042,6 +1042,13 @@ def setup_parser() -> argparse.ArgumentParser:
         metavar='COMMITISH',
         help='Look for any new trailers for commits starting with this one',
     )
+    sp_trl.add_argument(
+        '--fuzzy',
+        action='store_true',
+        default=False,
+        help='Also match patches by Link: msgid and subject when the patch-id '
+        'has changed (e.g. a commit was edited locally since it was posted)',
+    )
     cmd_retrieval_common_opts(sp_trl)
     sp_trl.set_defaults(func=cmd_trailers)
 

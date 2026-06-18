@@ -7,7 +7,7 @@ import io
 import os
 import pathlib
 import socket
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 import pytest
 
@@ -1019,3 +1019,67 @@ class TestGetLoreNode:
         n2 = b4.get_lore_node()
         assert n1 is n2
         assert mock_from_gc.call_count == 1
+
+
+@pytest.mark.parametrize(
+    'urls,expected',
+    [
+        # lore /r/ style and patch.msgid.link both yield the bare msgid
+        (
+            {'https://lore.kernel.org/r/20240101-foo-1-aaa@example.com'},
+            {'20240101-foo-1-aaa@example.com'},
+        ),
+        (
+            {'https://patch.msgid.link/20240101-foo-1-aaa@example.com'},
+            {'20240101-foo-1-aaa@example.com'},
+        ),
+        # URL-encoded @ is decoded
+        (
+            {'https://lore.kernel.org/r/20240101-foo-1-aaa%40example.com'},
+            {'20240101-foo-1-aaa@example.com'},
+        ),
+        # A URL with no message-id (no @) yields nothing
+        ({'https://bugs.example.com/show_bug.cgi?id=123'}, set()),
+    ],
+)
+def test_get_all_msgids_from_urls(urls: Set[str], expected: Set[str]) -> None:
+    assert b4.get_all_msgids_from_urls(urls) == expected
+
+
+def test_get_link_msgids_from_lmsg() -> None:
+    """Only Link:-type trailers that resolve to a message-id are returned."""
+    raw = (
+        'From: Test Author <test@example.com>\n'
+        'Subject: [PATCH] does a thing\n'
+        'Date: Mon, 1 Jan 2024 00:00:00 +0000\n'
+        'Message-Id: <local-commit@example.com>\n'
+        '\n'
+        'Commit body here.\n'
+        '\n'
+        'Signed-off-by: Test Author <test@example.com>\n'
+        'Link: https://lore.kernel.org/r/20240101-orig-1-abc@example.com\n'
+        'Closes: https://bugs.example.com/show_bug.cgi?id=123\n'
+    )
+    msg = email.message_from_string(raw, policy=email.policy.EmailPolicy(utf8=True))
+    lmsg = b4.LoreMessage(msg)
+    # The Link: resolves to a msgid; the Closes: bug URL has no msgid, and the
+    # Signed-off-by is not a link trailer at all.
+    assert b4.get_link_msgids_from_lmsg(lmsg) == {'20240101-orig-1-abc@example.com'}
+
+
+def test_map_codereview_trailers_exposes_parent_patches(sampledir: str) -> None:
+    """The optional parent_patches out-param is populated with the parent
+    patch's identity (subject + msgid) so callers can fuzzy-match when the
+    patch-id no longer lines up with a local commit."""
+    mfile = os.path.join(sampledir, 'trailers-thread-with-followups.mbox')
+    msgs = b4.get_msgs_from_mailbox_or_maildir(mfile)
+    parent_patches: Dict[str, b4.LoreMessage] = dict()
+    patchid_map = b4.map_codereview_trailers(msgs, parent_patches=parent_patches)
+    # The only follow-up (fwup1) replied to patch 4/4, so exactly that patch's
+    # patch-id should carry a follow-up and a recorded parent identity.
+    assert patchid_map
+    assert set(parent_patches.keys()) == set(patchid_map.keys())
+    (patchid,) = patchid_map.keys()
+    parent = parent_patches[patchid]
+    assert parent.subject == 'Minor typo changes imitation'
+    assert parent.msgid == '20221025-test1-v1-4-e4f28f57990c@linuxfoundation.org'
