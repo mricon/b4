@@ -1358,6 +1358,115 @@ class TestTrackingWaiting:
             conn.close()
             assert row[0] == 'waiting'
 
+    @pytest.mark.asyncio
+    async def test_selected_series_synced_after_external_db_change(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """_selected_series must reflect a DB change after _load_series() + refresh.
+
+        Regression: before the fix, _selected_series held a reference to the
+        old series dict and was only updated via the async Highlighted event.
+        A caller that opened the action menu between _load_series() and the
+        Highlighted event would see stale status-dependent items.
+        """
+        identifier = 'test-selected-sync'
+        change_id = 'sync-test-1'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] sync test',
+                    'status': 'reviewing',
+                    'message_id': 'sync@ex.com',
+                }
+            ],
+        )
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+
+            # Simulate an external DB change (another process updated the status)
+            conn = tracking.get_db(identifier)
+            conn.execute(
+                'UPDATE series SET status = ? WHERE change_id = ?',
+                ('waiting', change_id),
+            )
+            conn.commit()
+            conn.close()
+
+            # Trigger reload the same way _check_db_changed does
+            app._invalidate_caches()
+            app._load_series()
+
+            # Drain call_later(_refresh_list) and any Highlighted events
+            await pilot.pause()
+
+            # After the refresh, _selected_series must agree with _all_series
+            fresh = next(s for s in app._all_series if s.get('change_id') == change_id)
+            assert fresh.get('status') == 'waiting'
+            assert app._selected_series is not None
+            assert app._selected_series.get('status') == 'waiting', (
+                '_selected_series still shows stale status after _refresh_list; '
+                'action_action() would have built the wrong menu'
+            )
+
+    @pytest.mark.asyncio
+    async def test_action_menu_reflects_status_after_waiting_transition(
+        self, gitdir: str
+    ) -> None:
+        """Action menu must show waiting-state items immediately after transition.
+
+        Regression: broonie reported needing to close and reopen the action menu
+        to get the correct items after a status change.  After marking a series
+        as 'waiting', pressing 'a' again should offer 'Review' (a waiting-state
+        action) and NOT offer 'Take' (a reviewing-only action).
+        """
+        identifier = 'test-action-refresh'
+        change_id = 'action-refresh-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] action refresh test',
+                    'status': 'reviewing',
+                    'message_id': 'acref@ex.com',
+                }
+            ],
+        )
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+
+            # Open action menu and mark as waiting
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            await pilot.press('w')  # waiting shortcut
+            await pilot.pause()
+
+            # Open action menu again — must reflect the new 'waiting' state
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+
+            action_screen = app.screen
+            assert isinstance(action_screen, ActionScreen)
+            lv = action_screen.query_one('#action-list', ListView)
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+
+            # 'waiting' state offers review, not take/rebase
+            assert 'review' in actions, (
+                f'Expected review in waiting-state menu, got: {actions}'
+            )
+            assert 'take' not in actions, (
+                f'take should not appear in waiting-state menu, got: {actions}'
+            )
+
 
 class TestTrackingDetailPanel:
     """Tests for the detail panel shown on series highlight."""

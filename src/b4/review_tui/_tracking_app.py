@@ -1065,8 +1065,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         # Populate the details panel for the highlighted item now that
         # the widget tree is stable.  The Highlighted event may have
         # fired during batch_update before #details-panel was queryable.
+        # Also sync _selected_series here so action_action() reads fresh
+        # status without waiting for the async Highlighted message to
+        # be processed from the queue.
         highlighted = lv.highlighted_child
         if isinstance(highlighted, TrackedSeriesItem):
+            self._selected_series = highlighted.series
             self._show_details(highlighted.series)
 
     def action_limit(self) -> None:
