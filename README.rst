@@ -38,6 +38,10 @@ Shell completion is provided by the command ``b4 --print-completion
 To make it permanent on new shells, add that command to your ``$HOME/.bashrc``
 or ``$HOME/.zshrc``.
 
+b4 is also packaged for Debian-derived systems::
+
+    sudo apt install b4
+
 Upgrading
 ---------
 If you previously installed from pypi::
