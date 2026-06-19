@@ -6,6 +6,165 @@ Release notes
 Unreleased
 ----------
 
+``b4 bugs`` — bug tracking with git-bug (technology preview)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The new ``b4 bugs`` command integrates with `git-bug`_ to let you track
+bug reports alongside your git repository. Bugs are stored as git objects
+inside the repo, so they travel with the code and can be shared via
+``git push``/``git pull`` without any external service.
+
+.. _`git-bug`: https://github.com/git-bug/git-bug
+
+A full-featured TUI (``b4 bugs tui``) lets you browse, triage, and
+update bugs; a lightweight CLI covers scripting and non-interactive use.
+Key capabilities:
+
+- **Import from lore** — enter a Message-ID and b4 fetches the full thread,
+  uses the oldest message as the bug report, and adds follow-ups as
+  comments. Importing the same thread twice is detected and prevented.
+- **Lifecycle states** — triage bugs through ``new`` → ``confirmed`` →
+  ``fixed`` (and ``needinfo``, ``wontfix``, ``duplicate``, ``worksforme``).
+  State is tracked via internal ``lifecycle:`` labels.
+- **Comment tombstoning** — remove personal data from a comment while
+  preserving the Message-ID, so thread refresh does not re-import it.
+- **Label editing** — add and remove arbitrary labels from the TUI or CLI.
+
+``b4 bugs`` is a **technology preview** (alpha): commands, keybindings,
+and formats may change between releases. See :doc:`maintainer/bugs` for
+the full reference.
+
+``b4 review`` — tracking and review improvements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Several notable improvements to the ``b4 review`` workflow shipped this
+cycle, building on the v0.15 foundation.
+
+**Manual revision linking**
+
+When automatic revision discovery fails — for example, a submitter sent
+v2 to a different mailing list or without proper in-reply-to threading —
+you can now link a revision by hand. Open the action menu (``a``) on a
+new or actively reviewed series and select **Link a revision** (``l``).
+B4 prompts for a message-id or lore URL, fetches the posting in the
+background, and shows a confirmation preview before recording the link.
+See :ref:`review_link_revision` for details.
+
+**Partial-series state**
+
+When you cherry-pick only a subset of a series' patches, b4 now sets the
+series status to ``partial`` (◐) rather than ``accepted``. The review
+branch stays alive, new revisions are ingested as normal, and a **Thank**
+action is available so you can acknowledge the patches already applied
+without closing the review. When subsequent takes complete coverage, b4
+automatically promotes the status to ``accepted``.
+
+**Unchanged-patch marker on revision upgrade**
+
+After upgrading to a new revision, patches whose content did not change
+from the previous revision are automatically marked with the ``≡``
+(unchanged) indicator in the patch list. This lets you focus your review
+on what actually changed between revisions.
+
+**Auto-detection of prior reviewer trailers**
+
+If you already replied to one or more patches in a series with a
+``Reviewed-by`` or ``Acked-by`` trailer before tracking it in
+``b4 review``, those patches are now detected from the thread and marked
+``✓`` Done automatically. Any subsequent action (a new comment, a
+``Nacked-by``, or a manual ``x`` skip) takes precedence.
+
+**Network operation cancellation**
+
+Long-running network operations — fetching threads from lore, running
+attestation checks, tracking a new series — can now be interrupted at
+any time by pressing ``Escape`` or ``q``. B4 exits cleanly from any
+cancellation point without leaving dangling state.
+
+**Patchwork backlog gate**
+
+Opening the Patchwork browser against a project with a large number of
+outstanding patches no longer hangs. B4 now probes the outstanding patch
+count first; if it exceeds 1000, the fetch is automatically restricted
+to the last 30 days. A self-dismissing notice informs you when the window
+is active, and the title bar shows "· last 30 days" so the absence of
+older series does not look like data loss.
+
+``b4 trailers`` — interactive review and fuzzy matching
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Two new flags make trailer recovery more controlled.
+
+``b4 trailers -u -i``
+  Opens your editor with the list of trailers about to be applied,
+  grouped per commit and annotated with their source message. Change a
+  leading ``+`` to ``x`` to reject a trailer; the rejection is persisted
+  in ``.git/b4-trailers-ignore.json`` and honoured on future runs, even
+  after a reroll.
+
+``b4 trailers -u --fuzzy``
+  When a commit's patch-id no longer matches what was posted (after a
+  rebase or amend), additionally try to match by ``Link:`` message-id
+  and then by subject instead of skipping it. Best combined with ``-i``
+  so you can review each recovered trailer before it is applied.
+
+See :doc:`contributor/trailers` for details.
+
+``b4 ty`` — interactive review before sending
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``b4 ty -i`` opens your editor with the list of thank-you messages the
+auto-thankanator detected, each pre-marked to send. Change a ``+`` to
+``x`` to skip an individual entry — it stays pending for the next run.
+Editing, adding, removing, or reordering the entry lines aborts the run
+without sending anything.
+
+``b4 review track --rethread``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Submitters who send patches without threading (each patch as a separate,
+unrelated message) can now be accommodated with ``--rethread``. Pass any
+single patch from the series; b4 auto-discovers the rest by searching
+lore for other patches from the same author sent within a 1-hour window,
+matching by ``[PATCH n/m]`` counters and version. You can also supply
+all message-ids explicitly or read them from stdin.
+
+Vim and Emacs editor plugins
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``misc/`` directory now includes syntax highlighting and editing
+helpers for both Vim and Emacs. Both plugins provide:
+
+- **Diff-aware syntax highlighting** — quoted additions in green,
+  removals in red, hunk headers in cyan, external ``|`` comments
+  visually bracketed, your own comments in the default foreground, with
+  spell checking limited to your comment lines.
+- **Hunk trimming** — delete a hunk or all uncommented hunks above the
+  cursor, leaving a ``[ ... NN lines skipped ... ]`` breadcrumb so
+  recipients can see that context was intentionally omitted. An opt-in
+  ``auto_marker`` mode extends this to ordinary delete commands.
+- **Adopt-comment** — strip the ``|`` prefix from an external reviewer
+  comment (from a follow-up or AI agent) to claim it as your own,
+  ready to edit and send.
+
+See :ref:`Editor syntax highlighting <review_editor_plugins>` in the
+reference for setup instructions.
+
+New configuration options
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``b4.custom-msgid-cmd``
+  An optional command whose stdout is used as the ``Message-Id`` for
+  review replies, follow-up replies, and ``b4 ty`` thank-you notes.
+  Useful for maintainers who rely on a custom message-id scheme and
+  whose SMTP path does not run a ``sendemail-validate`` hook. Falls
+  back to b4's built-in id on unset, failure, or empty output.
+
+``b4.send-me-too``
+  Set to ``no`` to suppress including your own address in the ``Cc``
+  when sending patches with ``b4 send``. Defaults to ``yes`` (include
+  yourself).
+
 Native history rewriting (replaces ``git-filter-repo``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

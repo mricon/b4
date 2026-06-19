@@ -212,6 +212,7 @@ actions depend on the series status:
 * ``[w]`` **Mark as waiting** — waiting on new revision
 * ``[s]`` **Snooze** — defer until a date, duration, or git tag
 * ``[U]`` **Upgrade** — switch to a newer revision (when available)
+* ``[l]`` **Link a revision** — manually associate a revision by message-id
 * ``[A]`` **Abandon** / ``[x]`` **Archive**
 
 **Partial** (some patches applied, remainder still in review):
@@ -228,6 +229,7 @@ actions depend on the series status:
 
 * ``[r]`` **Review** — create or re-enter the review branch
 * ``[s]`` **Snooze** — defer until later (new only)
+* ``[l]`` **Link a revision** — manually associate a revision by message-id (new only)
 * ``[A]`` **Abandon**
 
 **Waiting:**
@@ -491,6 +493,8 @@ The comment is now treated as yours and will be included when you send
 review emails. You can also edit the text before saving. The original
 reviewer's copy remains in the tracking data.
 
+.. _review_editor_plugins:
+
 **Editor syntax highlighting**
 
 B4 ships syntax highlighting files for Vim and Emacs in the ``misc/``
@@ -722,6 +726,34 @@ discover new revisions, then use the action menu (``a``) and select
 Comments on patches that were modified between revisions are not carried
 over, since those patches need fresh review. Cover letter reviews are
 also not carried over, as they are specific to the previous revision.
+
+.. _review_link_revision:
+
+Linking a revision manually
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: v0.16
+
+B4 discovers revisions automatically using the series change-id and
+in-reply-to threading. When that fails — for example, a submitter sent
+v2 to a different mailing list, used a new cover letter without proper
+threading, or forgot to reply-to the v1 cover — you can link a revision
+by hand.
+
+Open the action menu (``a``) and select **Link a revision** (``l``).
+B4 prompts for a message-id or lore URL, then fetches the corresponding
+series in the background. A confirmation screen shows the revision number,
+subject, patch count, and sender so you can verify it is the right posting
+before committing.
+
+If the fetched series has the same revision number as one already
+recorded, the confirmation screen warns of the collision. If it matches
+a series already tracked under a different change-id (a stray duplicate),
+b4 warns that the duplicate will be absorbed and the standalone tracking
+entry removed.
+
+Press ``Ctrl-y`` to record the link, or ``Escape`` to cancel without
+making any changes.
 
 Applying patches (take)
 ~~~~~~~~~~~~~~~~~~~~~~~
