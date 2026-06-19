@@ -1325,7 +1325,7 @@ class LoreSeries:
                     pass
 
         topdir = git_get_toplevel(gitdir)
-        with git_temp_worktree(topdir, at_base):
+        with git_temp_worktree(topdir, at_base) as dfn:
             # Logic largely borrowed from gj_tools
             msgs = list()
             seenfiles = set()
@@ -1360,7 +1360,7 @@ class LoreSeries:
                         seenfiles.add(nfn)
                     # Try to grab full ref_id of this hash
                     try:
-                        bound_hash = git_revparse_obj(ofi)
+                        bound_hash = git_revparse_obj(ofi, dfn)
                         logger.debug('  Found matching blob for: %s', ofn)
                         gitargs = [
                             'update-index',
@@ -1386,7 +1386,7 @@ class LoreSeries:
                             )
                             return None, None
 
-                    ecode, out = git_run_command(None, gitargs)
+                    ecode, out = git_run_command(dfn, gitargs)
                     if ecode > 0:
                         logger.critical(
                             '  ERROR: Could not run update-index for %s (%s)',
@@ -1397,7 +1397,7 @@ class LoreSeries:
 
                 msgs.append(lmsg.get_am_message(add_trailers=False))
 
-            ecode, out = git_run_command(None, ['write-tree'])
+            ecode, out = git_run_command(dfn, ['write-tree'])
             if ecode > 0:
                 logger.critical('ERROR: Could not write fake-am tree')
                 return None, None
@@ -1405,24 +1405,24 @@ class LoreSeries:
             # At this point we have a worktree with files that should (hopefully) cleanly receive a git am
             gitargs = ['commit-tree', treeid + '^{tree}', '-F', '-']
             ecode, out = git_run_command(
-                None, gitargs, stdin='Initial fake commit'.encode('utf-8')
+                dfn, gitargs, stdin='Initial fake commit'.encode('utf-8')
             )
             if ecode > 0:
                 logger.critical('ERROR: Could not commit-tree')
                 return None, None
             start_commit = out.strip()
             logger.debug('start_commit=%s', start_commit)
-            git_run_command(None, ['reset', '--hard', start_commit])
+            git_run_command(dfn, ['reset', '--hard', start_commit])
 
             ifh = io.BytesIO()
             save_git_am_mbox(msgs, ifh)
             ambytes = ifh.getvalue()
 
-            ecode, out = git_run_command(None, ['am'], stdin=ambytes, logstderr=True)
+            ecode, out = git_run_command(dfn, ['am'], stdin=ambytes, logstderr=True)
             if ecode > 0:
                 logger.critical('ERROR: Could not fake-am version v%s', self.revision)
                 return None, None
-            ecode, out = git_run_command(None, ['rev-parse', 'HEAD'])
+            ecode, out = git_run_command(dfn, ['rev-parse', 'HEAD'])
             end_commit = out.strip()
             logger.info('  range: %.12s..%.12s', start_commit, end_commit)
 
@@ -3555,20 +3555,21 @@ def _run_command(
     cmdargs: List[str], stdin: Optional[bytes] = None, rundir: Optional[str] = None
 ) -> Tuple[int, bytes, bytes]:
     if rundir:
-        logger.debug('Changing dir to %s', rundir)
-        curdir = os.getcwd()
-        os.chdir(rundir)
-    else:
-        curdir = None
+        logger.debug('Running in %s', rundir)
 
     logger.debug('Running %s', ' '.join(cmdargs))
+    # Pass cwd to the child process rather than os.chdir()-ing the whole
+    # process. Process cwd is global state; mutating it is not thread-safe and
+    # has crashed the (threaded) review TUI when a worker's chdir raced another
+    # operation. Popen(cwd=...) sets only the child's directory.
     sp = subprocess.Popen(
-        cmdargs, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE
+        cmdargs,
+        stdout=subprocess.PIPE,
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=rundir,
     )
     (output, error) = sp.communicate(input=stdin)
-    if curdir:
-        logger.debug('Changing back into %s', curdir)
-        os.chdir(curdir)
 
     return sp.returncode, output, error
 
@@ -3624,9 +3625,17 @@ def git_run_command(
 ) -> Tuple[int, Union[str, bytes]]:
     cmdargs = ['git', '--no-pager']
     if gitdir:
-        if os.path.exists(os.path.join(gitdir, '.git')):
-            gitdir = os.path.join(gitdir, '.git')
-        cmdargs += ['--git-dir', str(gitdir)]
+        dotgit = os.path.join(gitdir, '.git')
+        if os.path.isfile(dotgit):
+            # A linked worktree's .git is a gitfile, not a directory. Use -C so
+            # git discovers the per-worktree gitdir, index, and HEAD from the
+            # worktree path itself. This is correct regardless of the process
+            # cwd, so callers never need to chdir into the worktree.
+            cmdargs += ['-C', str(gitdir)]
+        else:
+            if os.path.isdir(dotgit):
+                gitdir = dotgit
+            cmdargs += ['--git-dir', str(gitdir)]
 
     # counteract some potential local settings
     if args[0] == 'log':
@@ -3697,8 +3706,14 @@ def git_get_repo_status(
 def git_temp_worktree(
     gitdir: Optional[str] = None, commitish: Optional[str] = None
 ) -> Generator[str, None, None]:
-    """Context manager that creates a temporary work tree and chdirs into it. The
-    worktree is deleted when the contex manager is closed. Taken from gj_tools."""
+    """Context manager that creates a temporary work tree and yields its path.
+    The worktree is deleted when the context manager is closed. Adapted from
+    gj_tools.
+
+    The process working directory is intentionally NOT changed: callers must
+    address the worktree explicitly by passing the yielded path as ``gitdir``
+    (git_run_command routes linked worktrees through ``git -C``). This keeps
+    worktree operations safe to run from concurrent threads."""
     dfn = None
     try:
         with tempfile.TemporaryDirectory() as dfn:
@@ -3706,8 +3721,7 @@ def git_temp_worktree(
             if commitish:
                 gitargs.append(commitish)
             git_run_command(gitdir, gitargs)
-            with in_directory(dfn):
-                yield dfn
+            yield dfn
     finally:
         if dfn is not None:
             git_run_command(gitdir, ['worktree', 'remove', '--force', dfn])
@@ -3729,18 +3743,6 @@ def git_temp_clone(gitdir: Optional[str] = None) -> Generator[str, None, None]:
         gitargs = ['clone', '--mirror', '--shared', gitdir, dfn]
         git_run_command(None, gitargs)
         yield dfn
-
-
-@contextmanager
-def in_directory(dirname: str) -> Generator[bool, None, None]:
-    """Context manager that chdirs into a directory and restores the original
-    directory when closed. Taken from gj_tools."""
-    cdir = os.getcwd()
-    try:
-        os.chdir(dirname)
-        yield True
-    finally:
-        os.chdir(cdir)
 
 
 def setup_config(cmdargs: argparse.Namespace) -> None:
