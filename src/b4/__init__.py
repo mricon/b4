@@ -2817,6 +2817,14 @@ class LoreMessage:
                         )
                         continue
 
+                if lname == 'fixes' and not re.search(r'^[0-9a-f]{6,}', ovalue):
+                    logger.debug(
+                        'Ignoring %d: %s (Fixes: value does not match expected hash format)',
+                        at,
+                        line,
+                    )
+                    continue
+
                 extinfo = None
                 mextinfo = re.search(r'(.*\S+)(\s+#[^#]+)$', ovalue)
                 if mextinfo:

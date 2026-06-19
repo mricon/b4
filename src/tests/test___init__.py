@@ -207,6 +207,49 @@ def test_parse_trailers(
 
 
 @pytest.mark.parametrize(
+    'body,followup,expected_fixes_values',
+    [
+        # Valid Fixes: trailer (SHA-1 style)
+        (
+            'Reviewed-by: Foo Bar <foo@example.com>\nFixes: abcdef012345 ("This is the commit subject")\n',
+            True,
+            ['abcdef012345 ("This is the commit subject")'],
+        ),
+        # Valid Fixes: trailer (SHA-256 style, 64 hex chars)
+        (
+            'Fixes: ' + 'a' * 64 + ' ("SHA-256 commit subject")\n',
+            True,
+            ['a' * 64 + ' ("SHA-256 commit subject")'],
+        ),
+        # Malformed: reviewer wrote "Fixes: ?" as a question — must be rejected
+        (
+            'Reviewed-by: Foo Bar <foo@example.com>\nFixes: ?\n',
+            True,
+            [],
+        ),
+        # Malformed: plain text value — must be rejected
+        (
+            'Fixes: some description with no hash\n',
+            True,
+            [],
+        ),
+        # Bare hash without parenthesised subject — also valid
+        (
+            'Fixes: abcdef012345\n',
+            True,
+            ['abcdef012345'],
+        ),
+    ],
+)
+def test_fixes_trailer_format_validation(
+    body: str, followup: bool, expected_fixes_values: List[str]
+) -> None:
+    trailers, _ = b4.LoreMessage.find_trailers(body, followup=followup)
+    fixes = [t.value for t in trailers if t.name.lower() == 'fixes']
+    assert fixes == expected_fixes_values
+
+
+@pytest.mark.parametrize(
     'name,value,exp_type,exp_addr,exp_value',
     [
         # Simple name
