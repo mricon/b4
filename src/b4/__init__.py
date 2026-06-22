@@ -5620,8 +5620,16 @@ def git_fetch_am_into_repo(
         logger.info(out.strip())
         logger.info('---')
         logger.info('Fetching into FETCH_HEAD')
+        # FETCH_HEAD is per-worktree, and which worktree git writes it into is
+        # decided by the process cwd for a primary worktree (git_run_command
+        # uses --git-dir there, not -C, so the cwd leaks in). The caller may be
+        # driving this from a different worktree than `gitdir` -- e.g. the
+        # review TUI merging into a branch checked out elsewhere -- so anchor
+        # the fetch to `gitdir` via rundir. Otherwise the commits land in the
+        # caller's FETCH_HEAD and its later `git -C gitdir merge FETCH_HEAD`
+        # reads a stale or missing one, silently merging the wrong commits.
         gitargs = ['fetch', gwt]
-        ecode, out = git_run_command(topdir, gitargs, logstderr=True)
+        ecode, out = git_run_command(gitdir, gitargs, logstderr=True, rundir=gitdir)
         if ecode > 0:
             logger.critical('Unable to fetch from the worktree')
             logger.critical(out.strip())
@@ -5630,8 +5638,10 @@ def git_fetch_am_into_repo(
         if cleanup:
             git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
 
-    if origin and topdir:
-        _rewrite_fetch_head_origin(topdir, gwt, origin)
+    if origin and gitdir:
+        # Rewrite the same FETCH_HEAD the fetch above wrote (gitdir's), not the
+        # cwd worktree's.
+        _rewrite_fetch_head_origin(gitdir, gwt, origin)
 
 
 def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:

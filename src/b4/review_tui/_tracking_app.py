@@ -15,7 +15,11 @@ import json
 import os
 import pathlib
 import re
+import shlex
+import shutil
 import sqlite3
+import subprocess
+import sys
 from string import Template
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -132,6 +136,46 @@ _ACTIONABLE_STATUSES: frozenset[str] = frozenset(
         'accepted',
     }
 )
+
+
+def _shazam_merge_flags(config: Dict[str, Any], add_signoff: bool) -> List[str]:
+    """``git merge`` flags for the take->merge path.
+
+    ``b4.shazam-merge-flags`` is passed through verbatim, exactly like the
+    ``b4 shazam`` CLI, so ``--log``/``--stat``/``--gpg-sign`` and any strategy
+    (e.g. ``-s ours``) take effect unchanged -- the config is authoritative.
+
+    Signed-off-by is then reconciled with the take dialog's checkbox, which is
+    the per-take override: any ``--signoff``/``--no-signoff`` already in the
+    config is dropped and a single, deduped flag is appended from
+    *add_signoff*. The checkbox itself defaults from the config's signoff
+    intent (see ``_show_take_screen``), so an unset config (whose default is
+    ``--signoff``) still signs off, while ``--no-signoff`` in the config
+    defaults the box off. Signoff rides on the git flag rather than being baked
+    into the merge message body, so it can never double up (``git merge
+    --signoff`` does not dedup against a trailer already in the message).
+    """
+    raw = str(config.get('shazam-merge-flags', '--signoff'))
+    sp = shlex.shlex(raw, posix=True)
+    sp.whitespace_split = True
+    flags = [f for f in sp if f not in ('--signoff', '--no-signoff')]
+    flags.append('--signoff' if add_signoff else '--no-signoff')
+    return flags
+
+
+def _worktree_for_branch(topdir: str, branch: str) -> Optional[str]:
+    """Return the path of the worktree that has *branch* checked out, if any.
+
+    The review TUI may be driven from a different worktree than the one the
+    series is being applied to, so the merge has to run wherever the target
+    branch lives rather than in the current checkout.
+    """
+    ecode, out = b4.git_run_command(
+        topdir, ['for-each-ref', '--format=%(worktreepath)', f'refs/heads/{branch}']
+    )
+    if ecode != 0:
+        return None
+    return out.strip() or None
 
 
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
@@ -2287,6 +2331,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         if target_branch and target_branch not in all_suggestions:
             all_suggestions.append(target_branch)
         recent_branches = all_suggestions or None
+        # Default the Signed-off-by checkbox from the configured signoff intent
+        # (shazam-merge-flags defaults to --signoff), so config drives the
+        # default while the user can still override it per-take.
+        default_signoff = '--signoff' in shlex.split(
+            str(b4cfg.get('shazam-merge-flags', '--signoff'))
+        )
         take_screen = TakeScreen(
             target_branch,
             review_branch,
@@ -2294,6 +2344,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             default_method=default_method,
             recent_branches=recent_branches,
             subject=series.get('subject', ''),
+            default_signoff=default_signoff,
         )
         self.push_screen(
             take_screen,
@@ -2492,9 +2543,11 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         series['taken'] = take_info
         series.setdefault('takes', []).append(take_info)
 
-        # Record the branch tip commit for CI lookups (e.g. KernelCI).
-        # HEAD is still on target_branch at this point.
-        ecode, tip_out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
+        # Record the resulting target-branch tip for CI lookups (e.g. KernelCI).
+        # Resolve the branch ref, not HEAD: the merge-take path advances
+        # target_branch in a separate worktree and never moves the current
+        # checkout, so HEAD here is the launch branch, not the merge commit.
+        ecode, tip_out = b4.git_run_command(topdir, ['rev-parse', target_branch])
         if ecode == 0 and tip_out.strip():
             tip_entry = {
                 'date': take_info['date'],
@@ -2617,37 +2670,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         if not take_screen.add_link:
             body = re.sub(r'^Link:.*\n?', '', body, flags=re.MULTILINE)
 
-        # Append Signed-off-by if requested
-        if take_screen.add_signoff:
-            usercfg = b4.get_config_from_git('user\\..*')
-            uname = usercfg.get('name', '')
-            uemail = usercfg.get('email', '')
-            if uname and uemail:
-                sob = f'Signed-off-by: {uname} <{uemail}>'
-                stripped = body.rstrip('\n')
-                # If the body already ends with a trailer (e.g. Link:),
-                # keep them in the same block without a blank line.
-                last_line = stripped.rsplit('\n', 1)[-1]
-                if re.match(r'^[A-Za-z-]+:\s', last_line):
-                    body = stripped + '\n' + sob + '\n'
-                else:
-                    body = stripped + '\n\n' + sob + '\n'
-
-        # Open editor
-        try:
-            edited = b4.edit_in_editor(body.encode(), filehint='MERGE_MSG')
-        except Exception as ex:
-            logger.critical('Editor error: %s', ex)
-            _wait_for_enter()
-            return
-        merge_msg = edited.decode(errors='replace').strip()
-        if not merge_msg:
-            logger.info('Empty merge message, aborting')
-            _wait_for_enter()
-            return
+        # Signed-off-by is not baked into the body: it rides on git-merge's
+        # --signoff flag (see _shazam_merge_flags), reconciled with the take
+        # dialog's checkbox, so it can never double up with shazam-merge-flags.
 
         # Apply trailer-amended patches in a sparse worktree and fetch
         # into FETCH_HEAD, so individual commits carry their trailers.
+        # The merge message is opened for editing below by git-merge --edit
+        # (mirroring "b4 shazam"), so the --log shortlog git appends is
+        # visible and editable there.
         base_commit = t_series.get('base-commit', '')
         if not base_commit:
             # Fall back to target branch HEAD
@@ -2658,84 +2689,145 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 return
             base_commit = out.strip()
 
-        try:
-            b4.git_fetch_am_into_repo(
-                topdir, ambytes, at_base=base_commit, am_flags=['-3']
-            )
-        except b4.AmConflictError as cex:
-            if not _resolve_worktree_am_conflict(topdir, cex):
+        # A throwaway worktree from a previously interrupted take may still be
+        # registered -- possibly even holding target_branch, in which case the
+        # resolution below would latch onto it and then never clean it up
+        # (temp_wt stays None, so the finally skips removal). Remove any such
+        # leftover up front. This also clears a bare leftover directory that a
+        # plain `worktree remove` would choke on.
+        common_dir = b4.git_get_common_dir(topdir)
+        temp_wt: Optional[str] = None
+        if common_dir:
+            leftover = os.path.join(common_dir, 'b4-take-worktree')
+            if os.path.exists(leftover):
+                b4.git_run_command(topdir, ['worktree', 'remove', '--force', leftover])
+                b4.git_run_command(topdir, ['worktree', 'prune'])
+                if os.path.isdir(leftover):
+                    shutil.rmtree(leftover, ignore_errors=True)
+
+        # Run the merge in whichever worktree holds the target branch -- the
+        # review TUI may be driven from a different worktree than the one the
+        # series is being applied to, and the target may even be checked out
+        # elsewhere. If it is not checked out anywhere, use a throwaway
+        # worktree, so the current checkout is never disturbed.
+        merge_dir = _worktree_for_branch(topdir, target_branch)
+        if merge_dir is None:
+            if not common_dir:
+                logger.critical('Unable to determine git common dir')
                 _wait_for_enter()
                 return
-        except RuntimeError:
-            _wait_for_enter()
-            return
-
-        # Save current branch so we can restore on failure
-        prev_branch = b4.git_get_current_branch(topdir)
-        if prev_branch is None:
-            prev_branch = b4.git_revparse_obj('HEAD', gitdir=topdir)
-
-        # Checkout target branch
-        ecode, out = b4.git_run_command(
-            topdir, ['checkout', target_branch], logstderr=True
-        )
-        if ecode != 0:
-            logger.critical('Could not checkout %s: %s', target_branch, out.strip())
-            _wait_for_enter()
-            return
-
-        # Write merge message to git dir
-        ecode, gitdir = b4.git_run_command(topdir, ['rev-parse', '--git-dir'])
-        if ecode != 0:
-            logger.critical('Unable to find git directory')
-            b4.git_run_command(topdir, ['checkout', prev_branch], logstderr=True)
-            _wait_for_enter()
-            return
-        mmf = os.path.join(gitdir.strip(), 'b4-merge-msg')
-        with open(mmf, 'w') as fh:
-            fh.write(merge_msg)
-
-        # Merge FETCH_HEAD (trailer-amended patches) instead of the
-        # review branch directly, so each commit carries its trailers.
-        gitargs = ['merge', '--no-ff', '--no-edit', '-F', mmf, 'FETCH_HEAD']
-        ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
-
-        # Clean up message file
-        try:
-            os.unlink(mmf)
-        except OSError:
-            pass
-
-        if ecode != 0:
-            logger.critical('Merge failed: %s', out.strip())
-            logger.critical('Aborting merge...')
-            b4.git_run_command(topdir, ['merge', '--abort'], logstderr=True)
-            b4.git_run_command(topdir, ['checkout', prev_branch], logstderr=True)
-            _wait_for_enter()
-            return
-
-        logger.info('Merged %s into %s', review_branch, target_branch)
-
-        # Record per-patch commit IDs from the merged branch.
-        # After --no-ff merge, HEAD^2 is the tip of the merged side;
-        # the individual patch commits are base_commit..HEAD^2.
-        ecode, out = b4.git_run_command(
-            topdir, ['rev-list', '--reverse', f'{base_commit}..HEAD^2']
-        )
-        new_status: Optional[str] = None
-        if ecode == 0 and out.strip():
-            commit_ids = out.strip().splitlines()
-            new_status = self._record_take_metadata(
-                topdir,
-                review_branch,
-                target_branch,
-                commit_ids,
-                cherrypick=cherrypick,
-                accepted=take_screen.accept_series,
+            temp_wt = os.path.join(common_dir, 'b4-take-worktree')
+            ecode, out = b4.git_run_command(
+                topdir, ['worktree', 'add', temp_wt, target_branch], logstderr=True
             )
+            if ecode != 0:
+                logger.critical(
+                    'Could not create a worktree for %s: %s',
+                    target_branch,
+                    out.strip(),
+                )
+                _wait_for_enter()
+                return
+            merge_dir = temp_wt
 
-        self._finalize_take(topdir, target_branch, change_id, t_series, new_status)
-        _wait_for_enter()
+        try:
+            # Apply trailer-amended patches in a sparse worktree and fetch into
+            # the target worktree's FETCH_HEAD (which is per-worktree), so the
+            # merge below sees them and each commit carries its trailers.
+            try:
+                b4.git_fetch_am_into_repo(
+                    merge_dir,
+                    ambytes,
+                    at_base=base_commit,
+                    origin=t_series.get('link', ''),
+                    am_flags=['-3'],
+                )
+            except b4.AmConflictError as cex:
+                if not _resolve_worktree_am_conflict(merge_dir, cex):
+                    _wait_for_enter()
+                    return
+            except RuntimeError:
+                _wait_for_enter()
+                return
+
+            # Write merge message to the target worktree's git dir
+            ecode, gitdir = b4.git_run_command(merge_dir, ['rev-parse', '--git-dir'])
+            if ecode != 0:
+                logger.critical('Unable to find git directory')
+                _wait_for_enter()
+                return
+            mmf = os.path.join(gitdir.strip(), 'b4-merge-msg')
+            with open(mmf, 'w') as fh:
+                fh.write(body)
+
+            # Merge FETCH_HEAD (trailer-amended patches) instead of the review
+            # branch directly, so each commit carries its trailers. Mirror
+            # "b4 shazam": git-merge builds the final message from -F + the
+            # flags and opens the editor (--edit), so b4.shazam-merge-flags
+            # such as --log/--stat/--gpg-sign take effect and the appended
+            # shortlog is visible. Signed-off-by rides on --signoff in the
+            # flags, reconciled with the take dialog's checkbox (see
+            # _shazam_merge_flags).
+            mergeflags = _shazam_merge_flags(config, take_screen.add_signoff)
+            out = ''
+            if hasattr(sys, '_running_in_pytest'):
+                # Tests have no tty for an interactive editor; run the merge
+                # non-interactively through the captured runner, like the CLI.
+                mergeargs = (
+                    ['merge', '--no-ff', '-F', mmf, '--no-edit', 'FETCH_HEAD']
+                    + mergeflags
+                )
+                ecode, out = b4.git_run_command(merge_dir, mergeargs, logstderr=True)
+            else:
+                # Run git directly with an inherited tty (under the caller's
+                # suspend()) so git can open the editor, like _suspend_to_shell.
+                mergeargs = (
+                    ['git', '-C', merge_dir, 'merge', '--no-ff', '-F', mmf,
+                     '--edit', 'FETCH_HEAD']
+                    + mergeflags
+                )
+                ecode = subprocess.run(mergeargs).returncode
+
+            # Clean up message file
+            try:
+                os.unlink(mmf)
+            except OSError:
+                pass
+
+            if ecode != 0:
+                logger.critical(
+                    'Merge failed%s', f': {out.strip()}' if out.strip() else ''
+                )
+                logger.critical('Aborting merge...')
+                b4.git_run_command(merge_dir, ['merge', '--abort'], logstderr=True)
+                _wait_for_enter()
+                return
+
+            logger.info('Merged %s into %s', review_branch, target_branch)
+
+            # Record per-patch commit IDs from the merged branch.
+            # After --no-ff merge, HEAD^2 is the tip of the merged side;
+            # the individual patch commits are base_commit..HEAD^2.
+            ecode, out = b4.git_run_command(
+                merge_dir, ['rev-list', '--reverse', f'{base_commit}..HEAD^2']
+            )
+            new_status: Optional[str] = None
+            if ecode == 0 and out.strip():
+                commit_ids = out.strip().splitlines()
+                new_status = self._record_take_metadata(
+                    topdir,
+                    review_branch,
+                    target_branch,
+                    commit_ids,
+                    cherrypick=cherrypick,
+                    accepted=take_screen.accept_series,
+                )
+
+            self._finalize_take(topdir, target_branch, change_id, t_series, new_status)
+            _wait_for_enter()
+        finally:
+            if temp_wt:
+                b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
 
     def _finalize_take(
         self,
