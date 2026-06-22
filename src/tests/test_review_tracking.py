@@ -743,6 +743,101 @@ class TestCmdTrack:
         assert row['message_id'] == 'first-patch@example.com'
         conn.close()
 
+    @mock.patch('b4.retrieve_messages')
+    @mock.patch('b4.LoreMailbox')
+    def test_track_new_version_recognizes_existing_series(
+        self, mock_mailbox_class: mock.Mock, mock_retrieve: mock.Mock, gitdir: str
+    ) -> None:
+        """Tracking v3 of an already-tracked v2 must not create a new series.
+
+        Regression test for bug 70fe607.  Mark Brown reported that tracking v2
+        of a series and then tracking v3 of the same series recorded v3 as a
+        brand-new, unrelated series instead of recognizing it as a new version
+        of the one already tracked.
+
+        The series carries no embedded Change-Id (the typical kernel
+        submission), so b4 synthesizes one from date+slug+fingerprint.  Both
+        the fingerprint (a per-revision content hash, see
+        ``LoreSeries.fingerprint``) and the synthesized change-id therefore
+        differ between v2 and v3, so an exact change-id/fingerprint match on
+        the requested version alone never matches the existing v2 -- the
+        overlap is recognized through the discovered older sibling.
+        """
+        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='upgrade-test')
+        review_tracking.cmd_enroll(cmdargs_enroll)
+
+        mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
+
+        # v2: no embedded Change-Id, so b4 synthesizes one. Its fingerprint is
+        # a per-revision content hash.
+        v2 = self._make_mock_lore_series(
+            revision=2, change_id=None, cover_msgid='v2-cover@example.com'
+        )
+        v2.fingerprint = 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1'
+
+        # --- Track v2 ---
+        mbx_v2 = mock.Mock()
+        mbx_v2.series = {2: v2}
+        mbx_v2.get_series.return_value = v2
+        mock_mailbox_class.return_value = mbx_v2
+
+        review_tracking.cmd_track(
+            argparse.Namespace(
+                series_id='v2-cover@example.com',
+                identifier='upgrade-test',
+                msgid=None,
+                noparent=False,
+                wantname=None,
+                wantver=None,
+            )
+        )
+
+        # v3 of the SAME logical series: still no embedded Change-Id, and the
+        # changed content yields a different fingerprint -> a different
+        # synthesized change-id.
+        v3 = self._make_mock_lore_series(
+            revision=3, change_id=None, cover_msgid='v3-cover@example.com'
+        )
+        v3.fingerprint = 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2'
+
+        # When tracking v3, b4's revision discovery also pulls in the older
+        # v2, so both are present in the rebuilt mailbox -- the data needed to
+        # recognize the already-tracked series is in hand.
+        mbx_v3 = mock.Mock()
+        mbx_v3.series = {2: v2, 3: v3}
+        mbx_v3.get_series.return_value = v3
+        mock_mailbox_class.return_value = mbx_v3
+
+        # "The already tracked series logic kicks in": v3 is recognized as a
+        # new version of the existing series rather than tracked afresh.
+        review_tracking.cmd_track(
+            argparse.Namespace(
+                series_id='v3-cover@example.com',
+                identifier='upgrade-test',
+                msgid=None,
+                noparent=False,
+                wantname=None,
+                wantver=None,
+            )
+        )
+
+        conn = review_tracking.get_db('upgrade-test')
+        series_rows = conn.execute('SELECT change_id, revision FROM series').fetchall()
+
+        # Exactly one tracked series, never two.
+        assert len(series_rows) == 1, (
+            'v3 of an already-tracked series was recorded as a separate '
+            'series instead of being recognized as an upgrade of the '
+            f'existing one: {[dict(r) for r in series_rows]}'
+        )
+        change_id = series_rows[0]['change_id']
+
+        # v3 is folded into the existing series as a known revision, so the
+        # upgrade can be offered from the tracked series.
+        revs = {r['revision'] for r in review_tracking.get_revisions(conn, change_id)}
+        conn.close()
+        assert revs == {2, 3}, f'expected v2+v3 under one change-id, got {revs}'
+
     @mock.patch('b4.review.tracking.resolve_identifier', return_value=None)
     def test_track_fails_without_identifier(
         self, mock_resolve: mock.Mock, tmp_path: pytest.TempPathFactory
@@ -3017,6 +3112,95 @@ class TestRevisionSourceProvenance:
         assert review_tracking.find_revision_by_fingerprint(conn, '') is None
         assert review_tracking.find_revision_by_fingerprint(conn, None) is None
         conn.close()
+
+
+class TestFindExistingChangeId:
+    """find_existing_change_id() recognizes an already-tracked thread.
+
+    Underpins bug 70fe607: a new version of a tracked series is recognized
+    through its discovered older siblings, not the requested version itself.
+    """
+
+    def test_matches_series_fingerprint(self, tmp_path: pytest.TempPathFactory) -> None:
+        """A discovered revision matches the tracked version's fingerprint.
+
+        The originally-tracked revision's fingerprint lives in the ``series``
+        table (auto-discovered revisions store none), so that is the signal
+        for a thread tracked by the b4 review track / update flow.
+        """
+        conn = review_tracking.init_db('fec-series-fp')
+        review_tracking.add_series_to_db(
+            conn,
+            change_id='tracked-cid',
+            revision=2,
+            subject='Tracked v2',
+            sender_name='A',
+            sender_email='a@example.com',
+            sent_at=None,
+            message_id='v2-cover@example.com',
+            num_patches=1,
+            fingerprint='fp-v2',
+        )
+        # Probe with the *new* version first (no match), then the discovered
+        # older sibling whose fingerprint is on record.
+        found = review_tracking.find_existing_change_id(
+            conn,
+            [('fp-v3', 'v3-cover@example.com'), ('fp-v2', 'v2-cover@example.com')],
+        )
+        conn.close()
+        assert found == 'tracked-cid'
+
+    def test_matches_revision_message_id(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """A discovered revision matches a recorded revision message-id.
+
+        Message-ids are the reliable signal: every auto-discovered revision
+        records one even though it stores no fingerprint.
+        """
+        conn = review_tracking.init_db('fec-rev-msgid')
+        review_tracking.add_series_to_db(
+            conn,
+            change_id='tracked-cid',
+            revision=2,
+            subject='Tracked v2',
+            sender_name='A',
+            sender_email='a@example.com',
+            sent_at=None,
+            message_id='v2-cover@example.com',
+            num_patches=1,
+            fingerprint='fp-v2',
+        )
+        # Auto-discovered revision: message-id on record, no fingerprint.
+        review_tracking.add_revision(conn, 'tracked-cid', 1, 'v1-cover@example.com')
+        found = review_tracking.find_existing_change_id(
+            conn,
+            [(None, 'v1-cover@example.com'), (None, 'v3-cover@example.com')],
+        )
+        conn.close()
+        assert found == 'tracked-cid'
+
+    def test_no_match_returns_none(self, tmp_path: pytest.TempPathFactory) -> None:
+        """An unrelated thread (no shared fingerprint or message-id) misses."""
+        conn = review_tracking.init_db('fec-miss')
+        review_tracking.add_series_to_db(
+            conn,
+            change_id='tracked-cid',
+            revision=2,
+            subject='Tracked v2',
+            sender_name='A',
+            sender_email='a@example.com',
+            sent_at=None,
+            message_id='v2-cover@example.com',
+            num_patches=1,
+            fingerprint='fp-v2',
+        )
+        found = review_tracking.find_existing_change_id(
+            conn,
+            [('fp-other', 'other-cover@example.com'), (None, None)],
+        )
+        conn.close()
+        assert found is None
 
 
 # ---------------------------------------------------------------------------

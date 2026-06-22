@@ -553,31 +553,74 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         change_id = f'{date_prefix}-{slug}-{fingerprint[:12]}'
         logger.info('No change-id found, generated: %s', change_id)
 
-    # Check if this series is already tracked by change-id or by
-    # content fingerprint.
+    # Determine whether this thread already belongs to a tracked series.
+    # An exact change-id/fingerprint match on the requested version catches
+    # re-tracking the same series (or a newer version of a series that carries
+    # an embedded change-id).  Failing that, the sibling revisions discovered
+    # alongside it reveal a new version of an already-tracked series whose
+    # synthesized change-id and per-revision fingerprint both differ from the
+    # tracked version (bug 70fe607).
+    config = b4.get_main_config()
+    linkmask = str(config.get('linkmask', ''))
     conn = get_db(identifier)
     existing = conn.execute(
-        'SELECT status, revision, change_id FROM series'
-        ' WHERE change_id = ? OR fingerprint = ?',
+        'SELECT change_id FROM series WHERE change_id = ? OR fingerprint = ?',
         (change_id, fingerprint),
     ).fetchone()
-    if existing is not None:
-        conn.close()
-        logger.critical(
-            'This series is already tracked (status: %s, v%d)', existing[0], existing[1]
-        )
-        logger.critical('Change-ID: %s', existing[2])
-        sys.exit(1)
-    conn.close()
+    existing_change_id: Optional[str] = str(existing[0]) if existing else None
+    if existing_change_id is None:
+        discovered: List[Tuple[Optional[str], Optional[str]]] = []
+        for v in sorted(lmbx.series.keys()):
+            v_ser = lmbx.series[v]
+            v_msgid = ''
+            try:
+                for p in getattr(v_ser, 'patches', None) or []:
+                    if p is not None:
+                        v_msgid = str(getattr(p, 'msgid', '') or '')
+                        break
+            except Exception:
+                pass
+            discovered.append((getattr(v_ser, 'fingerprint', None), v_msgid))
+        existing_change_id = find_existing_change_id(conn, discovered)
 
-    # Get sent date
+    if existing_change_id is not None:
+        # Already tracked: fold any newly discovered revisions into the
+        # existing series instead of creating a duplicate (bug 70fe607).
+        new_revs = _record_discovered_revisions(
+            conn, existing_change_id, lmbx, linkmask
+        )
+        srow = conn.execute(
+            'SELECT status, revision FROM series WHERE change_id = ?',
+            (existing_change_id,),
+        ).fetchone()
+        conn.close()
+        status_str = str(srow[0]) if srow else 'unknown'
+        cur_rev = int(srow[1]) if srow else 0
+        if new_revs:
+            logger.info(
+                'Series already tracked as %s (status: %s, v%d)',
+                existing_change_id,
+                status_str,
+                cur_rev,
+            )
+            logger.info(
+                '  Recorded new revision(s): %s',
+                ', '.join(f'v{v}' for v in new_revs),
+            )
+            logger.info('  Upgrade the series in the review TUI to the new version.')
+            return
+        logger.critical(
+            'This series is already tracked (status: %s, v%d)', status_str, cur_rev
+        )
+        logger.critical('Change-ID: %s', existing_change_id)
+        sys.exit(1)
+
+    # Not tracked yet — create a new series and record its revisions.
     sent_at: Optional[str] = None
     if ref_msg.date:
         sent_at = ref_msg.date.isoformat()
 
-    # Add to database
     subject = lser.subject
-    conn = get_db(identifier)
     add_series_to_db(
         conn,
         change_id,
@@ -592,30 +635,7 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         is_rethreaded=bool(rethread),
     )
     add_series_patches(conn, change_id, revision, lser)
-
-    # Record all discovered revisions
-    config = b4.get_main_config()
-    linkmask = str(config.get('linkmask', ''))
-    for v in sorted(lmbx.series.keys()):
-        v_ser = lmbx.series[v]
-        v_msgid = ''
-        v_subject = ''
-        try:
-            if hasattr(v_ser, 'patches') and v_ser.patches:
-                for p in v_ser.patches:
-                    if p is not None:
-                        v_msgid = str(getattr(p, 'msgid', ''))
-                        v_subject = str(
-                            getattr(p, 'full_subject', '') or getattr(p, 'subject', '')
-                        )
-                        break
-        except Exception:
-            pass
-        if not v_msgid:
-            continue
-        v_link = (linkmask % v_msgid) if v_msgid and '%s' in str(linkmask) else ''
-        add_revision(conn, change_id, v, v_msgid, v_subject, v_link)
-
+    _record_discovered_revisions(conn, change_id, lmbx, linkmask)
     conn.close()
 
     logger.info('Tracked series: %s v%d (%d patches)', subject, revision, num_patches)
@@ -868,6 +888,102 @@ def find_revision_by_fingerprint(
     if row is None:
         return None
     return dict(zip(_REVISION_COLS, row))
+
+
+def find_existing_change_id(
+    conn: sqlite3.Connection,
+    revisions: List[Tuple[Optional[str], Optional[str]]],
+) -> Optional[str]:
+    """Return the change_id of a tracked series this thread already belongs to.
+
+    *revisions* is a list of ``(fingerprint, message_id)`` pairs, one per
+    revision discovered for the thread being tracked.
+
+    A *new version* of an already-tracked series has a different content
+    fingerprint and, when its change-id is synthesized from date+slug+
+    fingerprint, a different change-id than the tracked version -- so an exact
+    change-id/fingerprint match on the requested version alone fails to
+    recognize it (bug 70fe607).  The older sibling revisions discovered
+    alongside it, however, still carry the message-ids (and fingerprints) they
+    had when first tracked, so the overlap can be recognized through them.
+
+    Message-ids are the reliable signal: every tracked and auto-discovered
+    revision records one.  Fingerprints are only stored for the originally
+    tracked revision (in ``series``) and for manually linked revisions (in
+    ``revisions``), so they are consulted too but cannot be relied on alone.
+    """
+    for fingerprint, message_id in revisions:
+        if fingerprint:
+            row = conn.execute(
+                'SELECT change_id FROM series WHERE fingerprint = ? LIMIT 1',
+                (fingerprint,),
+            ).fetchone()
+            if row is not None:
+                return str(row[0])
+            match = find_revision_by_fingerprint(conn, fingerprint)
+            if match is not None:
+                return str(match['change_id'])
+        if message_id:
+            row = conn.execute(
+                'SELECT change_id FROM series WHERE message_id = ? LIMIT 1',
+                (message_id,),
+            ).fetchone()
+            if row is not None:
+                return str(row[0])
+            row = conn.execute(
+                'SELECT change_id FROM revisions WHERE message_id = ? LIMIT 1',
+                (message_id,),
+            ).fetchone()
+            if row is not None:
+                return str(row[0])
+    return None
+
+
+def _record_discovered_revisions(
+    conn: sqlite3.Connection,
+    change_id: str,
+    lmbx: 'b4.LoreMailbox',
+    linkmask: str,
+) -> List[int]:
+    """Record every revision discovered in *lmbx* under *change_id*.
+
+    Returns the revision numbers that were not already known for *change_id*
+    (the genuinely new revisions).  Each revision's content fingerprint is
+    stored alongside it so later tracking can recognize the series by content.
+    """
+    known = {r['revision'] for r in get_revisions(conn, change_id)}
+    new_revs: List[int] = []
+    for v in sorted(lmbx.series.keys()):
+        v_ser = lmbx.series[v]
+        v_msgid = ''
+        v_subject = ''
+        try:
+            for p in getattr(v_ser, 'patches', None) or []:
+                if p is not None:
+                    v_msgid = str(getattr(p, 'msgid', '') or '')
+                    v_subject = str(
+                        getattr(p, 'full_subject', '')
+                        or getattr(p, 'subject', '')
+                        or ''
+                    )
+                    break
+        except Exception:
+            pass
+        if not v_msgid:
+            continue
+        v_link = (linkmask % v_msgid) if '%s' in linkmask else ''
+        add_revision(
+            conn,
+            change_id,
+            v,
+            v_msgid,
+            v_subject,
+            v_link,
+            fingerprint=getattr(v_ser, 'fingerprint', None),
+        )
+        if v not in known:
+            new_revs.append(v)
+    return new_revs
 
 
 def absorb_series_as_revision(
