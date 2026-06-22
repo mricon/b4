@@ -1280,12 +1280,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if status == 'waiting':
                 actions.append(('review', 'Review'))
             if status in ('accepted', 'partial'):
-                actions.append(('review', 'Return to reviewing'))
                 actions.append(('thank', 'Send thank-you'))
-            if status == 'thanked':
-                actions.append(('review', 'Return to reviewing'))
             if status in ('reviewing', 'replied', 'partial', 'waiting'):
                 actions.append(('link', 'Manually link a revision'))
+            # 'Return to reviewing' sits just above the abandon/archive block
+            # rather than at the top of the menu.
+            if status in ('accepted', 'partial', 'thanked'):
+                actions.append(('review', 'Return to reviewing'))
             if status != 'thanked':
                 actions.append(('abandon', 'Abandon series'))
             actions.append(('archive', 'Archive series'))

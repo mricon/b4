@@ -2031,6 +2031,9 @@ class TestSeriesLifecycle:
             await pilot.pause()
             actions = _get_action_keys(app)
             assert set(actions) == {'review', 'thank', 'abandon', 'archive'}
+            # 'Return to reviewing' (review) sits just above the
+            # abandon/archive block, not at the top of the menu.
+            assert actions == ['thank', 'review', 'abandon', 'archive']
             await pilot.press('escape')
 
     @pytest.mark.asyncio
@@ -2194,6 +2197,10 @@ class TestSeriesLifecycle:
             assert 'snooze' in actions
             assert 'abandon' in actions
             assert 'archive' in actions
+            # 'Return to reviewing' (review) sits just above the
+            # abandon/archive block rather than near the top.
+            assert actions.index('review') > actions.index('thank')
+            assert actions[-3:] == ['review', 'abandon', 'archive']
             await pilot.press('escape')
 
     @pytest.mark.asyncio
