@@ -2581,9 +2581,10 @@ class TestShazamMergeFlags:
 
     def test_config_signoff_is_not_duplicated(self) -> None:
         # An explicit --signoff in config is deduped against the checkbox flag.
-        assert _shazam_merge_flags(
-            {'shazam-merge-flags': '--signoff --log'}, True
-        ) == ['--log', '--signoff']
+        assert _shazam_merge_flags({'shazam-merge-flags': '--signoff --log'}, True) == [
+            '--log',
+            '--signoff',
+        ]
         assert _shazam_merge_flags(
             {'shazam-merge-flags': '--signoff --log'}, False
         ) == ['--log', '--no-signoff']
@@ -2600,15 +2601,17 @@ class TestShazamMergeFlags:
         # In `git merge`, -s is --strategy (it takes an argument), NOT a short
         # form of --signoff. It must survive untouched, else `-s ours` would
         # lose the -s and leave `ours` as a bogus merge operand.
-        assert _shazam_merge_flags(
-            {'shazam-merge-flags': '-s ours'}, True
-        ) == ['-s', 'ours', '--signoff']
+        assert _shazam_merge_flags({'shazam-merge-flags': '-s ours'}, True) == [
+            '-s',
+            'ours',
+            '--signoff',
+        ]
 
     def test_empty_config_still_honors_checkbox(self) -> None:
         assert _shazam_merge_flags({'shazam-merge-flags': ''}, True) == ['--signoff']
-        assert _shazam_merge_flags(
-            {'shazam-merge-flags': ''}, False
-        ) == ['--no-signoff']
+        assert _shazam_merge_flags({'shazam-merge-flags': ''}, False) == [
+            '--no-signoff'
+        ]
 
 
 class TestWorktreeForBranch:

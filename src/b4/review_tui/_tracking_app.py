@@ -2773,19 +2773,29 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if hasattr(sys, '_running_in_pytest'):
                 # Tests have no tty for an interactive editor; run the merge
                 # non-interactively through the captured runner, like the CLI.
-                mergeargs = (
-                    ['merge', '--no-ff', '-F', mmf, '--no-edit', 'FETCH_HEAD']
-                    + mergeflags
-                )
+                mergeargs = [
+                    'merge',
+                    '--no-ff',
+                    '-F',
+                    mmf,
+                    '--no-edit',
+                    'FETCH_HEAD',
+                ] + mergeflags
                 ecode, out = b4.git_run_command(merge_dir, mergeargs, logstderr=True)
             else:
                 # Run git directly with an inherited tty (under the caller's
                 # suspend()) so git can open the editor, like _suspend_to_shell.
-                mergeargs = (
-                    ['git', '-C', merge_dir, 'merge', '--no-ff', '-F', mmf,
-                     '--edit', 'FETCH_HEAD']
-                    + mergeflags
-                )
+                mergeargs = [
+                    'git',
+                    '-C',
+                    merge_dir,
+                    'merge',
+                    '--no-ff',
+                    '-F',
+                    mmf,
+                    '--edit',
+                    'FETCH_HEAD',
+                ] + mergeflags
                 ecode = subprocess.run(mergeargs).returncode
 
             # Clean up message file
