@@ -15,7 +15,10 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import sqlite3
+import subprocess
+import sys
 from string import Template
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -132,6 +135,27 @@ _ACTIONABLE_STATUSES: frozenset[str] = frozenset(
         'accepted',
     }
 )
+
+
+def _shazam_merge_flags(config: Dict[str, Any]) -> List[str]:
+    """Extra ``git merge`` flags for the take->merge path from config.
+
+    Mirrors the ``b4 shazam`` CLI's handling of ``b4.shazam-merge-flags``
+    (e.g. ``--log``, ``--stat``, ``--gpg-sign``) so a merge taken from the
+    review TUI carries the same options.
+
+    Signed-off-by is deliberately dropped here: in the review TUI the merge
+    commit's SoB is controlled by the take dialog's "add Signed-off-by"
+    checkbox, which edits the merge message body directly. ``git merge
+    --signoff`` does not dedup against an existing trailer, so leaving it in
+    would append a second Signed-off-by line.
+    """
+    raw = str(config.get('shazam-merge-flags', '--signoff'))
+    if not raw:
+        return []
+    sp = shlex.shlex(raw, posix=True)
+    sp.whitespace_split = True
+    return [f for f in sp if f not in ('-s', '--signoff', '--no-signoff')]
 
 
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
@@ -2633,21 +2657,11 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 else:
                     body = stripped + '\n\n' + sob + '\n'
 
-        # Open editor
-        try:
-            edited = b4.edit_in_editor(body.encode(), filehint='MERGE_MSG')
-        except Exception as ex:
-            logger.critical('Editor error: %s', ex)
-            _wait_for_enter()
-            return
-        merge_msg = edited.decode(errors='replace').strip()
-        if not merge_msg:
-            logger.info('Empty merge message, aborting')
-            _wait_for_enter()
-            return
-
         # Apply trailer-amended patches in a sparse worktree and fetch
         # into FETCH_HEAD, so individual commits carry their trailers.
+        # The merge message is opened for editing below by git-merge --edit
+        # (mirroring "b4 shazam"), so the --log shortlog git appends is
+        # visible and editable there.
         base_commit = t_series.get('base-commit', '')
         if not base_commit:
             # Fall back to target branch HEAD
@@ -2660,7 +2674,11 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         try:
             b4.git_fetch_am_into_repo(
-                topdir, ambytes, at_base=base_commit, am_flags=['-3']
+                topdir,
+                ambytes,
+                at_base=base_commit,
+                origin=t_series.get('link', ''),
+                am_flags=['-3'],
             )
         except b4.AmConflictError as cex:
             if not _resolve_worktree_am_conflict(topdir, cex):
@@ -2693,12 +2711,34 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return
         mmf = os.path.join(gitdir.strip(), 'b4-merge-msg')
         with open(mmf, 'w') as fh:
-            fh.write(merge_msg)
+            fh.write(body)
 
-        # Merge FETCH_HEAD (trailer-amended patches) instead of the
-        # review branch directly, so each commit carries its trailers.
-        gitargs = ['merge', '--no-ff', '--no-edit', '-F', mmf, 'FETCH_HEAD']
-        ecode, out = b4.git_run_command(topdir, gitargs, logstderr=True)
+        # Merge FETCH_HEAD (trailer-amended patches) instead of the review
+        # branch directly, so each commit carries its trailers. Mirror
+        # "b4 shazam": git-merge builds the final message from -F + the flags
+        # and opens the editor (--edit), so b4.shazam-merge-flags such as
+        # --log/--stat/--gpg-sign take effect and the appended shortlog is
+        # visible. Signed-off-by is left out of the flags -- it is already in
+        # the body via the take dialog's checkbox (see _shazam_merge_flags).
+        mergeflags = _shazam_merge_flags(config)
+        out = ''
+        if hasattr(sys, '_running_in_pytest'):
+            # Tests have no tty for an interactive editor; run the merge
+            # non-interactively through the captured runner, like the CLI does.
+            mergeargs = (
+                ['merge', '--no-ff', '-F', mmf, '--no-edit', 'FETCH_HEAD']
+                + mergeflags
+            )
+            ecode, out = b4.git_run_command(topdir, mergeargs, logstderr=True)
+        else:
+            # Run git directly with an inherited tty (under the caller's
+            # suspend()) so git can open the editor, like _suspend_to_shell.
+            mergeargs = (
+                ['git', '-C', topdir, 'merge', '--no-ff', '-F', mmf, '--edit',
+                 'FETCH_HEAD']
+                + mergeflags
+            )
+            ecode = subprocess.run(mergeargs).returncode
 
         # Clean up message file
         try:
@@ -2707,7 +2747,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             pass
 
         if ecode != 0:
-            logger.critical('Merge failed: %s', out.strip())
+            logger.critical('Merge failed%s', f': {out.strip()}' if out.strip() else '')
             logger.critical('Aborting merge...')
             b4.git_run_command(topdir, ['merge', '--abort'], logstderr=True)
             b4.git_run_command(topdir, ['checkout', prev_branch], logstderr=True)
