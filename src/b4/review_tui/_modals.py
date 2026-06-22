@@ -726,6 +726,7 @@ class TakeScreen(ModalScreen[bool]):
         default_method: Optional[str] = None,
         recent_branches: Optional[List[str]] = None,
         subject: str = '',
+        default_signoff: bool = True,
     ) -> None:
         """Initialize take screen.
 
@@ -736,6 +737,7 @@ class TakeScreen(ModalScreen[bool]):
             default_method: Override the default take method selection
             recent_branches: Recently used branch names for auto-suggest
             subject: Series subject to display for context
+            default_signoff: Initial state of the "add Signed-off-by" checkbox
         """
         super().__init__()
         self._target_branch = target_branch
@@ -749,7 +751,7 @@ class TakeScreen(ModalScreen[bool]):
         self.target_result: str = ''
         self.method_result: str = self._default_method
         self.add_link: bool = True
-        self.add_signoff: bool = True
+        self.add_signoff: bool = default_signoff
         self.accept_series: bool = True
 
     def compose(self) -> ComposeResult:
@@ -784,7 +786,7 @@ class TakeScreen(ModalScreen[bool]):
             )
             yield Checkbox(
                 'add Signed-off-by:',
-                value=True,
+                value=self.add_signoff,
                 id='take-add-signoff',
                 classes='take-checkbox',
             )
