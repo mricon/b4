@@ -13,6 +13,7 @@ status transitions, and modal interactions.
 
 import datetime
 import email.message
+import os
 import pathlib
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
@@ -38,6 +39,7 @@ from b4.review_tui._tracking_app import (
     TrackedSeriesItem,
     TrackingApp,
     _shazam_merge_flags,
+    _take_worktree,
     _worktree_for_branch,
 )
 
@@ -3583,3 +3585,191 @@ class TestLoadSeriesCaching:
             await pilot.pause()
             assert len(app._all_series) == 1
             assert app._all_series[0].get('snoozed_until') == snoozed_until
+
+
+# ---------------------------------------------------------------------------
+# Cross-worktree takes (merge + am share _take_worktree)
+# ---------------------------------------------------------------------------
+
+
+def _canned_am_patch(gitdir: str, tmp_path: pathlib.Path, fname: str) -> bytes:
+    """Build a real, cleanly-applying mbox (adds *fname*) via git format-patch.
+
+    Uses a detached worktree so it works even though master is checked out in
+    the main worktree; the patch adds a brand-new file so it applies on any
+    base without conflicts.
+    """
+    wt = str(tmp_path / f'patchgen-{fname}')
+    ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', '--detach', wt, 'master'])
+    assert ecode == 0
+    try:
+        (pathlib.Path(wt) / fname).write_text('hello from take\n')
+        b4.git_run_command(wt, ['add', fname])
+        ecode, _ = b4.git_run_command(wt, ['commit', '-m', f'add {fname}'])
+        assert ecode == 0
+        ecode, patch = b4.git_run_command(wt, ['format-patch', '-1', '--stdout'])
+        assert ecode == 0
+    finally:
+        b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
+    return patch.encode()
+
+
+class TestTakeWorktreeHelper:
+    """The shared _take_worktree picks the right worktree and cleans up.
+
+    Both take paths (merge and am) route through this, so a target that is
+    checked out elsewhere is applied there, an unchecked-out target gets a
+    throwaway worktree, and the current checkout is never touched.
+    """
+
+    def test_uses_existing_worktree_and_leaves_it(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        b4.git_run_command(gitdir, ['branch', 'target', 'master'])
+        linked = str(tmp_path / 'target-wt')
+        ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', linked, 'target'])
+        assert ecode == 0
+        with _take_worktree(gitdir, 'target') as wt:
+            assert wt is not None
+            assert not wt.is_temp
+            assert os.path.realpath(wt.path) == os.path.realpath(linked)
+        # An existing worktree must survive the context.
+        assert os.path.isdir(linked)
+
+    def test_creates_and_removes_throwaway(self, gitdir: str) -> None:
+        b4.git_run_command(gitdir, ['branch', 'target', 'master'])
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir
+        throwaway = os.path.join(common_dir, 'b4-take-worktree')
+        with _take_worktree(gitdir, 'target') as wt:
+            assert wt is not None
+            assert wt.is_temp
+            assert os.path.realpath(wt.path) == os.path.realpath(throwaway)
+            assert os.path.isdir(throwaway)
+        # The throwaway is torn down on exit.
+        assert not os.path.isdir(throwaway)
+
+    def test_keep_preserves_throwaway(self, gitdir: str) -> None:
+        b4.git_run_command(gitdir, ['branch', 'target', 'master'])
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir
+        throwaway = os.path.join(common_dir, 'b4-take-worktree')
+        with _take_worktree(gitdir, 'target') as wt:
+            assert wt is not None and wt.is_temp
+            wt.keep()
+        # keep() leaves an unfinished worktree in place for the user.
+        assert os.path.isdir(throwaway)
+
+
+class TestAmTakeWorktree:
+    """Regression: take->am must apply in the target branch's worktree.
+
+    Reported failure: applying a series to a branch already checked out in
+    another worktree died with "fatal: '<branch>' is already used by worktree
+    ...".  The am path now mirrors the merge path and never checks out the
+    target in the current worktree.
+    """
+
+    def _run_am(self, gitdir: str, target_branch: str, ambytes: bytes) -> None:
+        from types import SimpleNamespace
+
+        change_id = 'am-wt-1'
+        review_branch = _create_review_branch(gitdir, change_id, status='reviewing')
+        app = TrackingApp.__new__(TrackingApp)
+        app._identifier = None  # type: ignore[assignment]
+        app._selected_series = {}
+        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]
+        take_screen: Any = SimpleNamespace(
+            target_result=target_branch,
+            add_signoff=False,
+            add_link=False,
+            accept_series=False,
+        )
+        with patch('b4.review_tui._tracking_app._wait_for_enter'):
+            app._do_take_am(
+                change_id, review_branch, take_screen, {'subject': 'x'}, None
+            )
+
+    def test_applies_to_target_in_other_worktree(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        # Target checked out in a *separate* worktree -- the reported failure.
+        b4.git_run_command(gitdir, ['branch', 'vfs.fixes', 'master'])
+        linked = str(tmp_path / 'vfs.fixes-wt')
+        ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', linked, 'vfs.fixes'])
+        assert ecode == 0
+
+        ecode, head_before = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        ecode, branch_before = b4.git_run_command(
+            gitdir, ['rev-parse', '--abbrev-ref', 'HEAD']
+        )
+
+        ambytes = _canned_am_patch(gitdir, tmp_path, 'takefile.txt')
+        self._run_am(gitdir, 'vfs.fixes', ambytes)
+
+        # The patch landed on vfs.fixes...
+        ecode, subj = b4.git_run_command(
+            gitdir, ['log', '-1', '--format=%s', 'vfs.fixes']
+        )
+        assert ecode == 0 and subj.strip() == 'add takefile.txt'
+        # ...without disturbing the current checkout.
+        ecode, head_after = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert head_after.strip() == head_before.strip()
+        ecode, branch_after = b4.git_run_command(
+            gitdir, ['rev-parse', '--abbrev-ref', 'HEAD']
+        )
+        assert branch_after.strip() == branch_before.strip()
+
+    def test_applies_via_throwaway_when_not_checked_out(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        # Target exists but is checked out nowhere -> throwaway worktree.
+        b4.git_run_command(gitdir, ['branch', 'vfs.fixes', 'master'])
+        ecode, head_before = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+
+        ambytes = _canned_am_patch(gitdir, tmp_path, 'takefile.txt')
+        self._run_am(gitdir, 'vfs.fixes', ambytes)
+
+        ecode, subj = b4.git_run_command(
+            gitdir, ['log', '-1', '--format=%s', 'vfs.fixes']
+        )
+        assert ecode == 0 and subj.strip() == 'add takefile.txt'
+        # Current checkout untouched and the throwaway worktree is gone.
+        ecode, head_after = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert head_after.strip() == head_before.strip()
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir
+        assert not os.path.isdir(os.path.join(common_dir, 'b4-take-worktree'))
+
+    def test_applies_into_main_worktree_from_other_cwd(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        # Regression: target checked out in the MAIN worktree while b4 is driven
+        # from a different cwd. git_run_command targets a primary worktree via
+        # --git-dir (not -C), so the apply must anchor its cwd (rundir) to the
+        # target worktree, else git-am writes the patched files into the wrong
+        # one -- committing to the branch but leaving the target worktree dirty.
+        side = str(tmp_path / 'side-wt')
+        b4.git_run_command(gitdir, ['branch', 'sidebr', 'master'])
+        ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', side, 'sidebr'])
+        assert ecode == 0
+
+        ambytes = _canned_am_patch(gitdir, tmp_path, 'takefile.txt')
+
+        olddir = os.getcwd()
+        os.chdir(side)
+        try:
+            self._run_am(gitdir, 'master', ambytes)
+        finally:
+            os.chdir(olddir)
+
+        # The patch landed on master, written into the MAIN worktree...
+        ecode, subj = b4.git_run_command(gitdir, ['log', '-1', '--format=%s', 'master'])
+        assert ecode == 0 and subj.strip() == 'add takefile.txt'
+        assert os.path.isfile(os.path.join(gitdir, 'takefile.txt'))
+        # ...not leaked into the driving worktree, and the target stays clean.
+        assert not os.path.isfile(os.path.join(side, 'takefile.txt'))
+        ecode, status = b4.git_run_command(
+            gitdir, ['status', '--porcelain', '--untracked-files=no']
+        )
+        assert ecode == 0 and status.strip() == ''
