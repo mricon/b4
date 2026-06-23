@@ -5,6 +5,7 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import contextlib
 import copy
 import datetime
 import email.message
@@ -21,7 +22,7 @@ import sqlite3
 import subprocess
 import sys
 from string import Template
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -178,6 +179,107 @@ def _worktree_for_branch(topdir: str, branch: str) -> Optional[str]:
     return out.strip() or None
 
 
+class _TakeWorktree:
+    """Handle for the worktree a take runs in (see :func:`_take_worktree`)."""
+
+    def __init__(self, path: str, is_temp: bool) -> None:
+        self.path = path
+        self.is_temp = is_temp
+        self._keep = False
+
+    def keep(self) -> None:
+        """Leave a throwaway worktree in place on exit (e.g. unfinished am)."""
+        self._keep = True
+
+
+@contextlib.contextmanager
+def _take_worktree(
+    topdir: str, target_branch: str
+) -> Generator[Optional[_TakeWorktree], None, None]:
+    """Yield the worktree in which to apply a take onto *target_branch*.
+
+    The review TUI may be driven from a different worktree than the one the
+    series is applied to, and the target may even be checked out elsewhere, so
+    the take must run wherever the branch lives rather than in the current
+    checkout. Runs in whichever worktree already holds *target_branch*; when it
+    is checked out nowhere, a throwaway ``b4-take-worktree`` is created and
+    removed on exit unless the caller marks it :meth:`~_TakeWorktree.keep`.
+    Yields ``None`` (after logging and waiting) when no worktree can be
+    established, so the caller can simply return.
+    """
+    # A throwaway worktree from a previously interrupted take may still be
+    # registered -- possibly even holding target_branch, in which case the
+    # resolution below would latch onto it and never clean it up. Remove any
+    # such leftover up front; this also clears a bare leftover directory that a
+    # plain `worktree remove` would choke on.
+    common_dir = b4.git_get_common_dir(topdir)
+    if common_dir:
+        leftover = os.path.join(common_dir, 'b4-take-worktree')
+        if os.path.exists(leftover):
+            b4.git_run_command(topdir, ['worktree', 'remove', '--force', leftover])
+            if os.path.isdir(leftover):
+                shutil.rmtree(leftover, ignore_errors=True)
+        # Prune unconditionally: a directory deleted out-of-band leaves only a
+        # registration that _worktree_for_branch would still resolve to a dead
+        # path.
+        b4.git_run_command(topdir, ['worktree', 'prune'])
+
+    work_dir = _worktree_for_branch(topdir, target_branch)
+    temp_wt: Optional[str] = None
+    if work_dir is None:
+        if not common_dir:
+            logger.critical('Unable to determine git common dir')
+            _wait_for_enter()
+            yield None
+            return
+        temp_wt = os.path.join(common_dir, 'b4-take-worktree')
+        ecode, out = b4.git_run_command(
+            topdir, ['worktree', 'add', temp_wt, target_branch], logstderr=True
+        )
+        if ecode != 0:
+            logger.critical(
+                'Could not create a worktree for %s: %s', target_branch, out.strip()
+            )
+            _wait_for_enter()
+            yield None
+            return
+        work_dir = temp_wt
+
+    handle = _TakeWorktree(work_dir, is_temp=temp_wt is not None)
+    try:
+        yield handle
+    finally:
+        if temp_wt and not handle._keep:
+            b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
+
+
+def _worktree_rebase_apply_dir(worktree: str) -> Optional[str]:
+    """Return *worktree*'s in-progress ``git am`` state dir, or ``None``.
+
+    ``rebase-apply`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return None
+    rebase_apply = os.path.join(gitdir.strip(), 'rebase-apply')
+    return rebase_apply if os.path.isdir(rebase_apply) else None
+
+
+def _worktree_merge_in_progress(worktree: str) -> bool:
+    """Return whether *worktree* has a conflicted ``git merge`` in progress.
+
+    ``MERGE_HEAD`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return False
+    return os.path.exists(os.path.join(gitdir.strip(), 'MERGE_HEAD'))
+
+
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
     """Handle an AmConflictError by dropping the user into a shell.
 
@@ -214,17 +316,7 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
     )
     _suspend_to_shell(hint='b4 conflict', cwd=cex.worktree_path)
     # Check if am is still in progress (user exited without finishing)
-    ecode, wt_gitdir = b4.git_run_command(
-        cex.worktree_path,
-        ['rev-parse', '--git-dir'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
-    if ecode == 0:
-        rebase_apply = os.path.join(wt_gitdir.strip(), 'rebase-apply')
-    else:
-        rebase_apply = ''
-    if rebase_apply and os.path.isdir(rebase_apply):
+    if _worktree_rebase_apply_dir(cex.worktree_path):
         logger.warning('Conflict resolution incomplete, aborting')
         b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
         return False
@@ -247,6 +339,46 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
     b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
     if ecode > 0:
         logger.critical('Unable to fetch from resolved worktree')
+        return False
+    return True
+
+
+def _resolve_worktree_take_conflict(
+    wt: '_TakeWorktree',
+    op: str,
+    pre_head: str,
+    in_progress: Callable[[str], object],
+) -> bool:
+    """Drop to a shell so the user can finish a conflicted take in *wt*.
+
+    *op* is the git subcommand (``am`` or ``merge``) shown in the hints.
+    *pre_head* is *wt*'s HEAD captured before *op* ran, used to tell a completed
+    operation (HEAD moved) from an abort (HEAD unchanged). *in_progress* reports
+    whether *op* is still mid-flight in the worktree.
+
+    Returns True when the user finished *op*, False when they aborted it or left
+    the shell without finishing. An unfinished throwaway worktree is kept so the
+    user can complete it by hand.
+    """
+    logger.info('You can resolve the conflict now.')
+    logger.info(
+        'Use "git %s --continue" after resolving, or "git %s --abort" to give up.',
+        op,
+        op,
+    )
+    _suspend_to_shell(hint='b4 conflict', cwd=wt.path)
+    if in_progress(wt.path):
+        logger.warning('Conflict resolution incomplete')
+        if wt.is_temp:
+            wt.keep()
+            logger.warning('Finish or abort it in: %s', wt.path)
+        logger.warning('Run "git %s --abort" to clean up', op)
+        return False
+    ecode, current_head = b4.git_run_command(
+        wt.path, ['rev-parse', 'HEAD'], logstderr=True
+    )
+    if ecode != 0 or current_head.strip() == pre_head:
+        logger.warning('Conflict resolution aborted')
         return False
     return True
 
@@ -2690,48 +2822,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 return
             base_commit = out.strip()
 
-        # A throwaway worktree from a previously interrupted take may still be
-        # registered -- possibly even holding target_branch, in which case the
-        # resolution below would latch onto it and then never clean it up
-        # (temp_wt stays None, so the finally skips removal). Remove any such
-        # leftover up front. This also clears a bare leftover directory that a
-        # plain `worktree remove` would choke on.
-        common_dir = b4.git_get_common_dir(topdir)
-        temp_wt: Optional[str] = None
-        if common_dir:
-            leftover = os.path.join(common_dir, 'b4-take-worktree')
-            if os.path.exists(leftover):
-                b4.git_run_command(topdir, ['worktree', 'remove', '--force', leftover])
-                b4.git_run_command(topdir, ['worktree', 'prune'])
-                if os.path.isdir(leftover):
-                    shutil.rmtree(leftover, ignore_errors=True)
-
-        # Run the merge in whichever worktree holds the target branch -- the
-        # review TUI may be driven from a different worktree than the one the
-        # series is being applied to, and the target may even be checked out
-        # elsewhere. If it is not checked out anywhere, use a throwaway
-        # worktree, so the current checkout is never disturbed.
-        merge_dir = _worktree_for_branch(topdir, target_branch)
-        if merge_dir is None:
-            if not common_dir:
-                logger.critical('Unable to determine git common dir')
-                _wait_for_enter()
+        # Merge in whichever worktree holds the target branch (or a throwaway
+        # one), so the current checkout is never disturbed.
+        with _take_worktree(topdir, target_branch) as wt:
+            if wt is None:
                 return
-            temp_wt = os.path.join(common_dir, 'b4-take-worktree')
-            ecode, out = b4.git_run_command(
-                topdir, ['worktree', 'add', temp_wt, target_branch], logstderr=True
-            )
-            if ecode != 0:
-                logger.critical(
-                    'Could not create a worktree for %s: %s',
-                    target_branch,
-                    out.strip(),
-                )
-                _wait_for_enter()
-                return
-            merge_dir = temp_wt
-
-        try:
+            merge_dir = wt.path
             # Apply trailer-amended patches in a sparse worktree and fetch into
             # the target worktree's FETCH_HEAD (which is per-worktree), so the
             # merge below sees them and each commit carries its trailers.
@@ -2782,7 +2878,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     '--no-edit',
                     'FETCH_HEAD',
                 ] + mergeflags
-                ecode, out = b4.git_run_command(merge_dir, mergeargs, logstderr=True)
+                ecode, out = b4.git_run_command(
+                    merge_dir, mergeargs, logstderr=True, rundir=merge_dir
+                )
             else:
                 # Run git directly with an inherited tty (under the caller's
                 # suspend()) so git can open the editor, like _suspend_to_shell.
@@ -2806,13 +2904,40 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 pass
 
             if ecode != 0:
-                logger.critical(
-                    'Merge failed%s', f': {out.strip()}' if out.strip() else ''
+                # A conflicted merge can be finished by hand; let the user
+                # resolve it in the worktree instead of discarding the take
+                # (mirrors the git-am path above and "b4 shazam"). Anything
+                # else (e.g. a dirty worktree) leaves no merge to resolve, so
+                # abort and bail as before.
+                if not _worktree_merge_in_progress(merge_dir):
+                    logger.critical(
+                        'Merge failed%s', f': {out.strip()}' if out.strip() else ''
+                    )
+                    logger.critical('Aborting merge...')
+                    b4.git_run_command(
+                        merge_dir,
+                        ['merge', '--abort'],
+                        logstderr=True,
+                        rundir=merge_dir,
+                    )
+                    _wait_for_enter()
+                    return
+                logger.critical('Merge conflict:')
+                if out.strip():
+                    logger.critical(out.strip())
+                # HEAD still points at the pre-merge tip while the conflicted
+                # merge sits uncommitted; capture it to tell a finished merge
+                # from an abort.
+                ecode, pre_merge_head = b4.git_run_command(
+                    merge_dir, ['rev-parse', 'HEAD']
                 )
-                logger.critical('Aborting merge...')
-                b4.git_run_command(merge_dir, ['merge', '--abort'], logstderr=True)
-                _wait_for_enter()
-                return
+                pre_merge_head = pre_merge_head.strip() if ecode == 0 else ''
+                if not _resolve_worktree_take_conflict(
+                    wt, 'merge', pre_merge_head, _worktree_merge_in_progress
+                ):
+                    _wait_for_enter()
+                    return
+                logger.info('Conflict resolved, series merged.')
 
             logger.info('Merged %s into %s', review_branch, target_branch)
 
@@ -2836,9 +2961,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             self._finalize_take(topdir, target_branch, change_id, t_series, new_status)
             _wait_for_enter()
-        finally:
-            if temp_wt:
-                b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
 
     def _finalize_take(
         self,
@@ -3058,75 +3180,56 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         if ambytes is None:
             return
 
-        # Save current branch so we can report it on failure
-        prev_branch = b4.git_get_current_branch(topdir)
-        if prev_branch is None:
-            prev_branch = b4.git_revparse_obj('HEAD', gitdir=topdir)
-
-        # Checkout target branch
-        ecode, out = b4.git_run_command(
-            topdir, ['checkout', target_branch], logstderr=True
-        )
-        if ecode != 0:
-            logger.critical('Could not checkout %s: %s', target_branch, out.strip())
-            _wait_for_enter()
-            return
-
-        # Save HEAD before git-am so we can find the new commits afterwards
-        ecode, out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
-        pre_am_head = out.strip() if ecode == 0 else ''
-
-        # Run git-am with three-way merge
-        ecode, out = b4.git_run_command(
-            topdir, ['am', '-3'], stdin=ambytes, logstderr=True
-        )
-        if ecode != 0:
-            logger.critical('git-am failed:')
-            logger.critical(out.strip())
-            logger.info('You can resolve the conflict now.')
-            logger.info(
-                'Use "git am --continue" after resolving, or "git am --abort" to give up.'
-            )
-            _suspend_to_shell(hint='b4 conflict')
-            # Check if am is still in progress (user exited without finishing)
-            rebase_apply_path = os.path.join(topdir, '.git', 'rebase-apply')
-            if os.path.isdir(rebase_apply_path):
-                logger.warning('Conflict resolution incomplete')
-                logger.warning('Run "git am --abort" to clean up')
-                _wait_for_enter()
+        # Apply in whichever worktree holds the target branch (or a throwaway
+        # one), so the current checkout is never disturbed.
+        with _take_worktree(topdir, target_branch) as wt:
+            if wt is None:
                 return
-            # Check if am was aborted (HEAD unchanged)
-            ecode, current_head = b4.git_run_command(
-                topdir, ['rev-parse', 'HEAD'], logstderr=True
-            )
-            if ecode != 0 or current_head.strip() == pre_am_head:
-                logger.warning('Conflict resolution aborted')
-                _wait_for_enter()
-                return
-            logger.info('Conflict resolved, patches applied.')
+            am_dir = wt.path
 
-        logger.info(out.strip())
-        logger.info('Applied patches to %s', target_branch)
+            # Save HEAD before git-am so we can find the new commits afterwards
+            ecode, out = b4.git_run_command(am_dir, ['rev-parse', 'HEAD'])
+            pre_am_head = out.strip() if ecode == 0 else ''
 
-        # Record per-patch commit IDs in the tracking data
-        new_status: Optional[str] = None
-        if pre_am_head:
+            # Run git-am with three-way merge in the target worktree. Anchor to
+            # am_dir via rundir: git_run_command targets a primary worktree with
+            # --git-dir (not -C), so without it git-am writes files into b4's
+            # cwd rather than the target worktree (cf. git_fetch_am_into_repo).
             ecode, out = b4.git_run_command(
-                topdir, ['rev-list', '--reverse', f'{pre_am_head}..HEAD']
+                am_dir, ['am', '-3'], stdin=ambytes, logstderr=True, rundir=am_dir
             )
-            if ecode == 0:
-                commit_ids = out.strip().splitlines()
-                new_status = self._record_take_metadata(
-                    topdir,
-                    review_branch,
-                    target_branch,
-                    commit_ids,
-                    cherrypick=cherrypick,
-                    accepted=take_screen.accept_series,
-                )
+            if ecode != 0:
+                logger.critical('git-am failed:')
+                logger.critical(out.strip())
+                if not _resolve_worktree_take_conflict(
+                    wt, 'am', pre_am_head, _worktree_rebase_apply_dir
+                ):
+                    _wait_for_enter()
+                    return
+                logger.info('Conflict resolved, patches applied.')
 
-        self._finalize_take(topdir, target_branch, change_id, series, new_status)
-        _wait_for_enter()
+            logger.info(out.strip())
+            logger.info('Applied patches to %s', target_branch)
+
+            # Record per-patch commit IDs in the tracking data
+            new_status: Optional[str] = None
+            if pre_am_head:
+                ecode, out = b4.git_run_command(
+                    am_dir, ['rev-list', '--reverse', f'{pre_am_head}..HEAD']
+                )
+                if ecode == 0:
+                    commit_ids = out.strip().splitlines()
+                    new_status = self._record_take_metadata(
+                        topdir,
+                        review_branch,
+                        target_branch,
+                        commit_ids,
+                        cherrypick=cherrypick,
+                        accepted=take_screen.accept_series,
+                    )
+
+            self._finalize_take(topdir, target_branch, change_id, series, new_status)
+            _wait_for_enter()
 
     def action_rebase(self) -> None:
         """Rebase the review branch on top of current HEAD."""
