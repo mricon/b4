@@ -2825,7 +2825,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     '--no-edit',
                     'FETCH_HEAD',
                 ] + mergeflags
-                ecode, out = b4.git_run_command(merge_dir, mergeargs, logstderr=True)
+                ecode, out = b4.git_run_command(
+                    merge_dir, mergeargs, logstderr=True, rundir=merge_dir
+                )
             else:
                 # Run git directly with an inherited tty (under the caller's
                 # suspend()) so git can open the editor, like _suspend_to_shell.
@@ -2853,7 +2855,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     'Merge failed%s', f': {out.strip()}' if out.strip() else ''
                 )
                 logger.critical('Aborting merge...')
-                b4.git_run_command(merge_dir, ['merge', '--abort'], logstderr=True)
+                b4.git_run_command(
+                    merge_dir, ['merge', '--abort'], logstderr=True, rundir=merge_dir
+                )
                 _wait_for_enter()
                 return
 
