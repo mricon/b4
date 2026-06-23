@@ -14,13 +14,14 @@ from typing import Any, Dict, List
 from unittest import mock
 
 import pytest
-from textual.widgets import Label, ProgressBar
+from textual.widgets import Label, ListView, ProgressBar
 
 import b4
 import b4.review
 import b4.review.tracking as tracking
 import liblore
 from b4.review._review import PwFetchResult
+from b4.review_tui._modals import SetStateScreen
 from b4.review_tui._pw_app import PwApp, PwFetchProgress
 
 # ---------------------------------------------------------------------------
@@ -442,3 +443,245 @@ class TestPwLoadingProgress:
             assert bar.total is None
             status = app.query_one('#pw-loading-status', Label)
             assert 'Loading 204 patches' in _static_text(status)
+
+
+# ---------------------------------------------------------------------------
+# Multi-select marking and bulk state changes
+# ---------------------------------------------------------------------------
+
+
+def _mk_series(sid: int, state: str = 'new') -> Dict[str, Any]:
+    """A Patchwork series row carrying two patches."""
+    return {
+        'id': sid,
+        'name': f'series {sid}',
+        'msgid': f's{sid}@example.com',
+        'state': state,
+        'submitter': 'Someone',
+        'date': '2026-06-01T00:00:00',
+        'check': 'pending',
+        'patch_ids': [sid * 10, sid * 10 + 1],
+    }
+
+
+def _pw_states() -> List[Dict[str, Any]]:
+    return [
+        {'slug': 'new', 'name': 'New'},
+        {'slug': 'reviewing', 'name': 'Reviewing'},
+        {'slug': 'accepted', 'name': 'Accepted'},
+    ]
+
+
+class _FakeResp:
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _FakePwSession:
+    """Records PATCH calls so a test can assert which patches were updated."""
+
+    def __init__(self) -> None:
+        self.patched: List[str] = []
+
+    def patch(self, url: str, data: Any = None, stream: bool = False) -> _FakeResp:
+        self.patched.append(url)
+        return _FakeResp()
+
+
+def _install_series(
+    monkeypatch: pytest.MonkeyPatch, series: List[Dict[str, Any]]
+) -> None:
+    monkeypatch.setattr(
+        b4.review,
+        'pw_fetch_series',
+        lambda *a, **k: PwFetchResult(series, len(series), None),
+    )
+    monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: _pw_states())
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+
+class TestPwMarkSelection:
+    """Marking series with space/a/Esc tracks ids and renders a leading '*'."""
+
+    @pytest.mark.asyncio
+    async def test_space_marks_and_advances(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2), _mk_series(3)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            lv = app.query_one('#pw-list', ListView)
+            assert lv.index == 0
+
+            await pilot.press('space')
+            await pilot.pause()
+            # First series marked and the cursor stepped to the second row.
+            assert app._selected_ids == {1}
+            assert lv.index == 1
+            assert '1 selected' in _static_text(app.query_one('#pw-title'))
+
+            await pilot.press('space')
+            await pilot.pause()
+            assert app._selected_ids == {1, 2}
+
+            # Toggling a marked row clears just that mark.
+            lv.index = 0
+            app.action_toggle_mark()
+            await pilot.pause()
+            assert app._selected_ids == {2}
+
+    @pytest.mark.asyncio
+    async def test_marker_glyph_rendered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            item = app._get_highlighted_item()
+            assert item is not None
+            assert not _static_text(item.query_one(Label)).startswith('*')
+            app.action_toggle_mark()
+            await pilot.pause()
+            assert _static_text(item.query_one(Label)).startswith('*')
+
+    @pytest.mark.asyncio
+    async def test_mark_all_then_unmark_all(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2), _mk_series(3)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_mark_all()
+            await pilot.pause()
+            assert app._selected_ids == {1, 2, 3}
+            # A second mark-all, with everything already marked, clears them.
+            app.action_mark_all()
+            await pilot.pause()
+            assert app._selected_ids == set()
+
+    @pytest.mark.asyncio
+    async def test_escape_clears_marks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_mark_all()
+            await pilot.pause()
+            assert app._selected_ids == {1, 2}
+            await pilot.press('escape')
+            await pilot.pause()
+            assert app._selected_ids == set()
+            assert all(not it.selected for it in app._visible_items())
+
+    @pytest.mark.asyncio
+    async def test_marks_pruned_on_refetch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A re-fetch keeps marks for surviving series and drops vanished ones."""
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2), _mk_series(3)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_mark_all()
+            await pilot.pause()
+            assert app._selected_ids == {1, 2, 3}
+            # Series 3 is gone on the next fetch.
+            monkeypatch.setattr(
+                b4.review,
+                'pw_fetch_series',
+                lambda *a, **k: PwFetchResult([_mk_series(1), _mk_series(2)], 2, None),
+            )
+            await app.action_refresh()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._selected_ids == {1, 2}
+
+
+class TestPwBulkSetState:
+    """`s` applies the chosen state to every marked series, else the current."""
+
+    @pytest.mark.asyncio
+    async def test_set_state_applies_to_all_marked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakePwSession()
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (fake, 'https://pw/api')
+        )
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2), _mk_series(3)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # Mark the first two series (each toggle advances the cursor).
+            app.action_toggle_mark()
+            await pilot.pause()
+            app.action_toggle_mark()
+            await pilot.pause()
+            assert app._selected_ids == {1, 2}
+
+            app.action_set_state()
+            await pilot.pause()
+            assert isinstance(app.screen, SetStateScreen)
+            await app.screen.dismiss(('reviewing', False))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            by_id = {s['id']: s for s in app._all_series}
+            assert by_id[1]['state'] == 'reviewing'
+            assert by_id[2]['state'] == 'reviewing'
+            # The unmarked third series is untouched.
+            assert by_id[3]['state'] == 'new'
+            # One PATCH per patch across the two marked series.
+            assert len(fake.patched) == 4
+            # Marks are consumed once applied.
+            assert app._selected_ids == set()
+
+    @pytest.mark.asyncio
+    async def test_set_state_falls_back_to_highlighted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakePwSession()
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (fake, 'https://pw/api')
+        )
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # No marks: act on the highlighted (second) row only.
+            app.query_one('#pw-list', ListView).index = 1
+            app.action_set_state()
+            await pilot.pause()
+            await app.screen.dismiss(('accepted', False))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            by_id = {s['id']: s for s in app._all_series}
+            assert by_id[1]['state'] == 'new'
+            assert by_id[2]['state'] == 'accepted'
+            assert len(fake.patched) == 2
+
+    @pytest.mark.asyncio
+    async def test_set_state_needs_states_loaded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_series(monkeypatch, [_mk_series(1)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # States never arrived: the action warns and opens nothing.
+            app._states = []
+            app.action_set_state()
+            await pilot.pause()
+            assert not isinstance(app.screen, SetStateScreen)
