@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
+import argparse
 import email.message
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
 import b4
@@ -567,3 +568,194 @@ class TestDiscoverRethreadSeries:
         ):
             result = b4.discover_rethread_series(seed_msgid)
         assert result == ['p1@x']
+
+
+# ===========================================================================
+# Prefer a properly-threaded resend over stitched patches
+# (feature/rethread-upgrade-compose)
+#
+# Red spec — written test-first.  When an author posts an improperly-threaded
+# series *and* a correctly-threaded resend of the same version, rethreading
+# should detect the resend and use it as-is instead of synthesising a stitch.
+# This exercises b4.find_threaded_copy() and the third "was_rethreaded" return
+# value of b4.retrieve_rethreaded_messages(), neither of which exists yet.
+# ===========================================================================
+
+
+def _diff_body(n: int) -> str:
+    """A self-contained one-file diff, distinct per patch position."""
+    return (
+        f'Change part {n}.\n\n'
+        'Signed-off-by: Ajay <ajay@oss.qualcomm.com>\n'
+        '---\n'
+        f' f{n}.c | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n\n'
+        f'diff --git a/f{n}.c b/f{n}.c\n'
+        'index aaa..bbb 100644\n'
+        f'--- a/f{n}.c\n'
+        f'+++ b/f{n}.c\n'
+        '@@ -1,3 +1,4 @@\n'
+        f' void f{n}(void) {{\n'
+        f'+    bar{n}();\n'
+        ' }\n'
+    )
+
+
+def _make_patch(
+    msgid: str,
+    n: int,
+    m: int,
+    rev: int,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
+) -> email.message.EmailMessage:
+    """Build a cover (n==0) or numbered patch carrying a real diff body.
+
+    The same position ``n`` always carries the same diff, so the broken send
+    and its resend hash to identical patch-ids (and series fingerprints).
+    """
+    if n == 0:
+        subj = f'[PATCH v{rev} 0/{m}] thing: cover'
+        body = 'Cover letter blurb.\n'
+    else:
+        subj = f'[PATCH v{rev} {n}/{m}] thing: part {n}'
+        body = _diff_body(n)
+    return _make_msg(
+        msgid,
+        subj,
+        from_addr='Ajay <ajay@oss.qualcomm.com>',
+        in_reply_to=in_reply_to,
+        references=references,
+        body=body,
+    )
+
+
+def _broken_send() -> List[email.message.EmailMessage]:
+    """A v6 cover + 3 patches with NO threading linking them (4 lone threads)."""
+    return [
+        _make_patch('c1@q', 0, 3, 6),
+        _make_patch('c2@q', 1, 3, 6),
+        _make_patch('c3@q', 2, 3, 6),
+        _make_patch('c4@q', 3, 3, 6),
+    ]
+
+
+def _threaded_resend() -> List[email.message.EmailMessage]:
+    """A properly-threaded v6 resend: every patch references the cover."""
+    return [
+        _make_patch('r1@q', 0, 3, 6),
+        _make_patch('r2@q', 1, 3, 6, in_reply_to='r1@q', references='<r1@q>'),
+        _make_patch('r3@q', 2, 3, 6, in_reply_to='r1@q', references='<r1@q>'),
+        _make_patch('r4@q', 3, 3, 6, in_reply_to='r1@q', references='<r1@q>'),
+    ]
+
+
+def _fake_lore(
+    threads: Dict[str, List[email.message.EmailMessage]],
+    search_results: List[email.message.EmailMessage],
+) -> Tuple[mock._patch, mock._patch]:
+    """Patch the two lore entry points with a connected-component thread map.
+
+    ``threads`` maps a msgid to the thread public-inbox would return for it
+    (the broken send returns lone messages; the resend returns the whole set).
+    """
+
+    def _thread(msgid: str, *_a: object, **_k: object) -> List[
+        email.message.EmailMessage
+    ]:
+        return list(threads.get(msgid, []))
+
+    def _search(*_a: object, **_k: object) -> List[email.message.EmailMessage]:
+        return list(search_results)
+
+    return (
+        mock.patch('b4.get_pi_thread_by_msgid', side_effect=_thread),
+        mock.patch('b4.get_pi_search_results', side_effect=_search),
+    )
+
+
+class TestFindThreadedCopy:
+    """b4.find_threaded_copy() detects a self-contained properly-threaded copy."""
+
+    def test_prefers_external_resend(self) -> None:
+        """A correctly-threaded resend in lore is returned over the broken set."""
+        broken = _broken_send()
+        resend = _threaded_resend()
+        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        for m in resend:
+            threads[b4.LoreMessage.get_clean_msgid(m)] = resend
+        t_patch, s_patch = _fake_lore(threads, resend)
+        with t_patch, s_patch:
+            result = b4.find_threaded_copy(broken)
+        assert result is not None
+        root, msgs = result
+        got = {b4.LoreMessage.get_clean_msgid(m) for m in msgs}
+        assert root in {'r1@q', 'r2@q', 'r3@q', 'r4@q'}
+        # The full resend came back, not the broken stitch.
+        assert {'r1@q', 'r2@q', 'r3@q', 'r4@q'} <= got
+
+    def test_no_copy_returns_none(self) -> None:
+        """With no properly-threaded resend, nothing is preferred."""
+        broken = _broken_send()
+        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        t_patch, s_patch = _fake_lore(threads, broken)
+        with t_patch, s_patch:
+            assert b4.find_threaded_copy(broken) is None
+
+    def test_already_threaded_input_needs_no_network(self) -> None:
+        """If the input is itself a complete thread, return it without searching."""
+        resend = _threaded_resend()
+        threads = {b4.LoreMessage.get_clean_msgid(m): resend for m in resend}
+        # Search returns nothing — proves we don't rely on it for this case.
+        t_patch, s_patch = _fake_lore(threads, [])
+        with t_patch, s_patch:
+            result = b4.find_threaded_copy(resend)
+        assert result is not None
+        _root, msgs = result
+        got = {b4.LoreMessage.get_clean_msgid(m) for m in msgs}
+        assert {'r1@q', 'r2@q', 'r3@q', 'r4@q'} <= got
+
+    def test_single_patch_series_returns_none(self) -> None:
+        """A one-patch series has nothing a resend would fix."""
+        one = [_make_patch('s1@q', 1, 1, 2)]
+        threads = {'s1@q': one}
+        t_patch, s_patch = _fake_lore(threads, one)
+        with t_patch, s_patch:
+            assert b4.find_threaded_copy(one) is None
+
+
+class TestRetrieveRethreadedResendPreference:
+    """retrieve_rethreaded_messages signals whether it stitched or found a copy."""
+
+    @staticmethod
+    def _cmdargs(msgids: List[str]) -> argparse.Namespace:
+        return argparse.Namespace(rethread=msgids, nocache=True)
+
+    def test_returns_resend_with_was_rethreaded_false(self) -> None:
+        """A properly-threaded resend is used as-is (was_rethreaded == False)."""
+        broken = _broken_send()
+        resend = _threaded_resend()
+        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        for m in resend:
+            threads[b4.LoreMessage.get_clean_msgid(m)] = resend
+        t_patch, s_patch = _fake_lore(threads, resend)
+        with t_patch, s_patch:
+            cover, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(
+                self._cmdargs(['c1@q', 'c2@q', 'c3@q', 'c4@q'])
+            )
+        assert was_rethreaded is False
+        got = {b4.LoreMessage.get_clean_msgid(m) for m in msgs}
+        assert {'r2@q', 'r3@q', 'r4@q'} <= got
+
+    def test_stitches_when_no_resend(self) -> None:
+        """With no resend, the broken patches are stitched (was_rethreaded True)."""
+        broken = _broken_send()
+        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        t_patch, s_patch = _fake_lore(threads, broken)
+        with t_patch, s_patch:
+            _cover, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(
+                self._cmdargs(['c1@q', 'c2@q', 'c3@q', 'c4@q'])
+            )
+        assert was_rethreaded is True
+        got = {b4.LoreMessage.get_clean_msgid(m) for m in msgs}
+        assert {'c2@q', 'c3@q', 'c4@q'} <= got

@@ -3647,3 +3647,309 @@ class TestFetchSeriesForLink:
     def test_returns_none_on_empty_fetch(self, mock_retrieve: mock.Mock) -> None:
         mock_retrieve.return_value = ('x', [])
         assert review_tracking.fetch_series_for_link('bogus@msgid') is None
+
+
+# ---------------------------------------------------------------------------
+# Rethread <-> version-upgrade composition (feature/rethread-upgrade-compose)
+#
+# Red spec — written test-first.  A series tracked at vN and rethreaded at
+# vN+1 must reassemble correctly on upgrade.  That needs per-revision rethread
+# state (schema v10), patch storage on the upgrade-link recording path, and a
+# retrieval seam that honours the per-revision flag.  None of this exists yet.
+# ---------------------------------------------------------------------------
+
+
+def _pos_diff(n: int) -> str:
+    """A self-contained one-file diff, distinct per patch position."""
+    return (
+        f'Change part {n}.\n\n'
+        'Signed-off-by: Author <author@example.com>\n'
+        '---\n'
+        f' f{n}.c | 1 +\n'
+        ' 1 file changed, 1 insertion(+)\n\n'
+        f'diff --git a/f{n}.c b/f{n}.c\n'
+        'index aaa..bbb 100644\n'
+        f'--- a/f{n}.c\n'
+        f'+++ b/f{n}.c\n'
+        '@@ -1,3 +1,4 @@\n'
+        f' void f{n}(void) {{\n'
+        f'+    bar{n}();\n'
+        ' }\n'
+    )
+
+
+def _build_lmbx(base: str, author: str, rev: int, n: int) -> 'b4.LoreMailbox':
+    """Build a LoreMailbox holding one n-patch series at the given revision."""
+    lmbx = b4.LoreMailbox()
+    for i in range(1, n + 1):
+        msg = EmailMessage()
+        msg['Subject'] = f'[PATCH v{rev} {i}/{n}] {base}: part {i}'
+        msg['From'] = author
+        msg['Date'] = 'Thu, 19 Mar 2026 08:51:12 +0530'
+        msg['Message-Id'] = f'<{base}-v{rev}-p{i}@example.com>'
+        msg.set_payload(_pos_diff(i))
+        lmbx.add_message(msg)
+    return lmbx
+
+
+def _make_legacy_v9_db(identifier: str) -> str:
+    """Create a schema-v9 database (revisions without is_rethreaded)."""
+    path = review_tracking.get_db_path(identifier)
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+        CREATE TABLE revisions (
+            change_id   TEXT NOT NULL,
+            revision    INTEGER NOT NULL,
+            message_id  TEXT NOT NULL,
+            subject     TEXT,
+            link        TEXT,
+            found_at    TEXT,
+            thread_blob TEXT,
+            fingerprint TEXT,
+            source      TEXT DEFAULT 'heuristic',
+            PRIMARY KEY (change_id, revision)
+        );
+        """
+    )
+    conn.execute('INSERT INTO schema_version (version) VALUES (9)')
+    conn.execute(
+        'INSERT INTO revisions (change_id, revision, message_id, source)'
+        ' VALUES (?, ?, ?, ?)',
+        ('legacy-change', 5, 'legacy-v5@example.com', 'heuristic'),
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+class TestSchemaV10Rethread:
+    """Layer 1: per-revision rethread tracking lands in schema v10."""
+
+    def test_schema_version_at_least_10(self) -> None:
+        assert review_tracking.SCHEMA_VERSION >= 10
+
+    def test_revisions_has_is_rethreaded_column(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rt-up-cols')
+        cols = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
+        conn.close()
+        assert 'is_rethreaded' in cols
+
+    def test_migration_v9_to_v10_adds_column_and_keeps_rows(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        _make_legacy_v9_db('rt-up-migrate')
+        conn = review_tracking.get_db('rt-up-migrate')  # runs migration on open
+        cols = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
+        assert 'is_rethreaded' in cols
+        version = conn.execute('SELECT version FROM schema_version').fetchone()[0]
+        assert version == review_tracking.SCHEMA_VERSION
+        revs = review_tracking.get_revisions(conn, 'legacy-change')
+        conn.close()
+        assert len(revs) == 1
+        # Pre-existing rows default to "not rethreaded".
+        assert not revs[0]['is_rethreaded']
+
+
+class TestAddRevisionRethreadFlag:
+    """Layer 1: add_revision stores the flag and never downgrades it."""
+
+    def test_flag_round_trips(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('rt-up-flag')
+        review_tracking.add_revision(
+            conn, 'cid', 2, 'v2@example.com', is_rethreaded=True
+        )
+        revs = review_tracking.get_revisions(conn, 'cid')
+        conn.close()
+        assert revs[0]['is_rethreaded']
+
+    def test_flag_not_downgraded_on_readd(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rt-up-flag-keep')
+        review_tracking.add_revision(
+            conn, 'cid', 2, 'v2@example.com', is_rethreaded=True
+        )
+        # A later heuristic re-add (no flag) must not clear it.
+        review_tracking.add_revision(conn, 'cid', 2, 'v2@example.com')
+        revs = review_tracking.get_revisions(conn, 'cid')
+        conn.close()
+        assert revs[0]['is_rethreaded']
+
+
+class TestRecordDiscoveredRethreaded:
+    """Layer 2: the upgrade-link recording path stores patches + flag."""
+
+    def test_rethreaded_rev_gets_patches_and_flag(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rt-up-rdr')
+        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3)
+        new = review_tracking._record_discovered_revisions(
+            conn, 'cid-X', lmbx, '', rethreaded_revs={6}
+        )
+        assert 6 in new
+        revs = review_tracking.get_revisions(conn, 'cid-X')
+        r6 = next(r for r in revs if r['revision'] == 6)
+        patches = review_tracking.get_series_patches(conn, 'cid-X', 6)
+        conn.close()
+        assert r6['is_rethreaded']
+        assert len(patches) == 3
+
+    def test_normal_rev_left_unflagged(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rt-up-rdr-normal')
+        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3)
+        review_tracking._record_discovered_revisions(conn, 'cid-Y', lmbx, '')
+        revs = review_tracking.get_revisions(conn, 'cid-Y')
+        r6 = next(r for r in revs if r['revision'] == 6)
+        patches = review_tracking.get_series_patches(conn, 'cid-Y', 6)
+        conn.close()
+        assert not r6['is_rethreaded']
+        assert patches == []
+
+
+class TestCmdTrackRethreadUpgrade:
+    """Layer 2 (integration): rethreaded vN+1 links onto a tracked vN."""
+
+    def test_rethreaded_upgrade_records_patches_and_flag(self, gitdir: str) -> None:
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='rt-up-track')
+        )
+        # An already-tracked v5 under change-id cid-A.
+        conn = review_tracking.get_db('rt-up-track')
+        review_tracking.add_series_to_db(
+            conn,
+            change_id='cid-A',
+            revision=5,
+            subject='thing',
+            sender_name='Author',
+            sender_email='author@example.com',
+            sent_at='2026-03-09T00:00:00+00:00',
+            message_id='cid-A-v5@example.com',
+            num_patches=3,
+            fingerprint='fp-v5',
+        )
+        review_tracking.add_revision(conn, 'cid-A', 5, 'cid-A-v5@example.com')
+        conn.close()
+
+        # A rethreaded v6 that carries the same embedded change-id (so it lands
+        # in the already-tracked branch) — modelling the upgrade.
+        cover = mock.Mock(msgid='v6-cover@example.com', subject='thing cover')
+        p1 = mock.Mock(msgid='v6-p1@example.com', subject='[PATCH v6 1/3] a')
+        mock_lser = mock.Mock()
+        mock_lser.revision = 6
+        mock_lser.expected = 3
+        mock_lser.change_id = 'cid-A'
+        mock_lser.fromname = 'Author'
+        mock_lser.fromemail = 'author@example.com'
+        mock_lser.subject = 'thing'
+        mock_lser.fingerprint = 'fp-v6'
+        mock_lser.has_cover = True
+        mock_lser.patches = [cover, p1, None, None]
+
+        mock_mbx = mock.Mock()
+        mock_mbx.series = {6: mock_lser}
+        mock_mbx.get_series.return_value = mock_lser
+
+        cmdargs = argparse.Namespace(
+            series_id=None,
+            rethread=['c1@q', 'c2@q', 'c3@q', 'c4@q'],
+            identifier='rt-up-track',
+            wantver=None,
+        )
+        with (
+            mock.patch(
+                'b4.retrieve_rethreaded_messages',
+                return_value=('v6-p1@example.com', [mock.Mock()], True),
+            ),
+            mock.patch('b4.LoreMailbox', return_value=mock_mbx),
+            mock.patch('b4.can_network', False),
+        ):
+            review_tracking.cmd_track(cmdargs)
+
+        conn = review_tracking.get_db('rt-up-track')
+        revs = review_tracking.get_revisions(conn, 'cid-A')
+        r6 = next((r for r in revs if r['revision'] == 6), None)
+        patches = review_tracking.get_series_patches(conn, 'cid-A', 6)
+        # No duplicate stray series got created.
+        cids = {row[0] for row in conn.execute('SELECT DISTINCT change_id FROM series')}
+        conn.close()
+        assert r6 is not None
+        assert r6['is_rethreaded']
+        assert len(patches) >= 1
+        assert cids == {'cid-A'}
+
+
+class TestRetrieveSeriesMessagesRethreadSeam:
+    """Layer 3: the upgrade retrieval seam honours the per-revision flag."""
+
+    def test_reassembles_from_patches_when_flag_set(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        review_tracking.init_db('rt-up-seam').close()
+        conn = review_tracking.get_db('rt-up-seam')
+        review_tracking.add_revision(
+            conn, 'cid', 6, 'v6-root@example.com', is_rethreaded=True
+        )
+        _insert_patches(conn, 'cid', 6, ['p1@q', 'p2@q', 'p3@q'])
+        # Derive the flag the way the upgrade path will — from get_revisions.
+        r6 = next(r for r in review_tracking.get_revisions(conn, 'cid') if r['revision'] == 6)
+        conn.close()
+        series = {
+            'change_id': 'cid',
+            'revision': 6,
+            'message_id': 'v6-root@example.com',
+            'is_rethreaded': bool(r6['is_rethreaded']),
+        }
+
+        reassembled = [mock.Mock(), mock.Mock(), mock.Mock()]
+        with (
+            mock.patch(
+                'b4.fetch_rethread_messages',
+                return_value=(['p1@q', 'p2@q', 'p3@q'], reassembled),
+            ),
+            mock.patch(
+                'b4.LoreSeries.rethread_series',
+                return_value=('p1@q', reassembled),
+            ),
+        ):
+            out = b4.review.retrieve_series_messages(series, 'rt-up-seam')
+        assert out == reassembled
+
+
+class TestRethreadFlagCarriedOnLink:
+    """Layer 5: absorb + manual link carry the rethread flag onto the target."""
+
+    def test_absorb_carries_flag(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('rt-up-absorb')
+        review_tracking.add_revision(conn, 'series-A', 1, 'a-v1@example.com')
+        _seed_stray_series(conn, 'series-B', 2, 'fp-stray-b')
+        conn.execute(
+            "UPDATE series SET is_rethreaded = 1 WHERE change_id = 'series-B'"
+        )
+        conn.commit()
+
+        review_tracking.absorb_series_as_revision(conn, 'series-A', 'series-B', 2)
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        rev2 = next(r for r in revs if r['revision'] == 2)
+        assert rev2['is_rethreaded']
+
+    def test_record_linked_carries_flag(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rt-up-link')
+        _seed_target(conn, 'series-A', 1)
+        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        review_tracking.record_linked_revision(
+            conn, 'series-A', lser, is_rethreaded=True
+        )
+        revs = review_tracking.get_revisions(conn, 'series-A')
+        conn.close()
+        rev2 = next(r for r in revs if r['revision'] == 2)
+        assert rev2['is_rethreaded']
