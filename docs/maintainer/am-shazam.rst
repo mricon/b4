@@ -90,6 +90,11 @@ The following flags are common to both commands:
   series. Existing follow-up messages (reviews, acks) are preserved
   with their original threading.
 
+  If a properly threaded copy of the same version is also present on
+  the list — for example, the submitter re-sent the series correctly
+  threaded — b4 prefers that copy and uses it as-is instead of
+  stitching the unthreaded messages together.
+
   With a single message ID, b4 auto-discovers the rest of the series
   by searching lore for patches from the same author sent within a
   1-hour window. It uses the ``[PATCH n/m]`` counters and version to

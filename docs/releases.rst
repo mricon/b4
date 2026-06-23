@@ -129,6 +129,11 @@ lore for other patches from the same author sent within a 1-hour window,
 matching by ``[PATCH n/m]`` counters and version. You can also supply
 all message-ids explicitly or read them from stdin.
 
+If the submitter also posted a correctly threaded re-send of the same
+version, b4 prefers that copy instead of stitching. ``--rethread`` also
+records an unthreaded new version of an already-tracked series as a new
+revision rather than a duplicate.
+
 Vim and Emacs editor plugins
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

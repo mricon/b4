@@ -84,6 +84,11 @@ Or read them from stdin::
 The ``--rethread`` flag cannot be combined with a positional series
 identifier.
 
+If the submitter also posted a correctly threaded re-send of the same
+version, b4 prefers that copy instead of stitching. And if the
+unthreaded series is a new version of one you already track, it is
+recorded as a new revision of that series rather than a duplicate.
+
 .. versionadded:: v0.16
 
 Using the TUI
