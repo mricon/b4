@@ -15,7 +15,7 @@ import datetime
 import email.message
 import os
 import pathlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
 import pytest
@@ -38,9 +38,12 @@ from b4.review_tui._modals import (
 from b4.review_tui._tracking_app import (
     TrackedSeriesItem,
     TrackingApp,
+    _resolve_worktree_take_conflict,
     _shazam_merge_flags,
     _take_worktree,
+    _TakeWorktree,
     _worktree_for_branch,
+    _worktree_merge_in_progress,
 )
 
 # ---------------------------------------------------------------------------
@@ -3773,3 +3776,234 @@ class TestAmTakeWorktree:
             gitdir, ['status', '--porcelain', '--untracked-files=no']
         )
         assert ecode == 0 and status.strip() == ''
+
+
+# ---------------------------------------------------------------------------
+# take->merge conflict resolution (must never drop a non-empty commit)
+# ---------------------------------------------------------------------------
+
+
+def _conflict_base(gitdir: str) -> str:
+    """Commit a shared file onto the current branch; return the new HEAD sha."""
+    (pathlib.Path(gitdir) / 'shared.txt').write_text('a\nb\nc\n')
+    b4.git_run_command(gitdir, ['add', 'shared.txt'])
+    ecode, _ = b4.git_run_command(gitdir, ['commit', '-m', 'add shared.txt'])
+    assert ecode == 0
+    ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    assert ecode == 0
+    return base.strip()
+
+
+def _conflicted_merge_worktree(gitdir: str, tmp_path: pathlib.Path) -> Tuple[str, str]:
+    """Park a worktree on a conflicted ``git merge``.
+
+    The merged-in ("theirs") side edits the shared file (forcing the conflict)
+    *and* adds a brand-new file -- the kind of non-empty change that
+    ``b4 shazam --resolve`` silently drops via ``git add -u``. Returns
+    (worktree_path, pre_merge_head).
+    """
+    base = _conflict_base(gitdir)
+    b4.git_run_command(gitdir, ['branch', 'ours', base])
+    b4.git_run_command(gitdir, ['branch', 'theirs', base])
+
+    ours_wt = str(tmp_path / 'ours-wt')
+    ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', ours_wt, 'ours'])
+    assert ecode == 0
+    (pathlib.Path(ours_wt) / 'shared.txt').write_text('a\nOURS\nc\n')
+    b4.git_run_command(ours_wt, ['add', 'shared.txt'])
+    ecode, _ = b4.git_run_command(ours_wt, ['commit', '-m', 'ours edits shared'])
+    assert ecode == 0
+
+    theirs_wt = str(tmp_path / 'theirs-wt')
+    ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', theirs_wt, 'theirs'])
+    assert ecode == 0
+    (pathlib.Path(theirs_wt) / 'shared.txt').write_text('a\nTHEIRS\nc\n')
+    (pathlib.Path(theirs_wt) / 'newfile.txt').write_text('brand new\n')
+    b4.git_run_command(theirs_wt, ['add', '-A'])
+    ecode, _ = b4.git_run_command(
+        theirs_wt, ['commit', '-m', 'theirs edits shared and adds newfile']
+    )
+    assert ecode == 0
+    b4.git_run_command(gitdir, ['worktree', 'remove', '--force', theirs_wt])
+
+    ecode, pre = b4.git_run_command(ours_wt, ['rev-parse', 'HEAD'])
+    assert ecode == 0
+    pre = pre.strip()
+    ecode, _ = b4.git_run_command(
+        ours_wt, ['merge', '--no-ff', 'theirs'], logstderr=True
+    )
+    assert ecode != 0  # conflict on shared.txt
+    return ours_wt, pre
+
+
+def _resolve_shared(*_args: Any, **kwargs: Any) -> None:
+    """_suspend_to_shell stand-in: resolve the conflict and finish the merge."""
+    cwd = kwargs['cwd']
+    (pathlib.Path(cwd) / 'shared.txt').write_text('a\nRESOLVED\nc\n')
+    b4.git_run_command(cwd, ['add', 'shared.txt'])
+    ecode, _ = b4.git_run_command(cwd, ['commit', '--no-edit'])
+    assert ecode == 0
+
+
+class TestMergeConflictResolution:
+    """take->merge finishes the *same* real merge, dropping nothing.
+
+    Unlike ``b4 shazam --resolve`` (which replays not-yet-applied patches with
+    ``git apply --3way`` + ``git add -u`` and so silently omits a patch that
+    adds a new file), the conflicted ``git merge`` is completed in place, so the
+    merged-in side stays fully reachable and every added file survives.
+    """
+
+    def test_in_progress_detects_and_clears(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        assert _worktree_merge_in_progress(wt) is True
+        b4.git_run_command(wt, ['merge', '--abort'])
+        assert _worktree_merge_in_progress(wt) is False
+
+    def test_resolution_keeps_added_file(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        handle = _TakeWorktree(wt, is_temp=False)
+        with patch(
+            'b4.review_tui._tracking_app._suspend_to_shell',
+            side_effect=_resolve_shared,
+        ):
+            ok = _resolve_worktree_take_conflict(
+                handle, 'merge', pre, _worktree_merge_in_progress
+            )
+        assert ok is True
+        # A real two-parent merge commit...
+        ecode, parents = b4.git_run_command(wt, ['rev-list', '--parents', '-1', 'HEAD'])
+        assert ecode == 0 and len(parents.split()) == 3
+        # ...with the merged-in side fully reachable (no commit dropped)...
+        ecode, theirs = b4.git_run_command(wt, ['rev-parse', 'theirs'])
+        assert ecode == 0
+        ecode, _ = b4.git_run_command(
+            wt, ['merge-base', '--is-ancestor', theirs.strip(), 'HEAD']
+        )
+        assert ecode == 0
+        # ...and the brand-new file (shazam --resolve drops it) is present.
+        ecode, content = b4.git_run_command(wt, ['show', 'HEAD:newfile.txt'])
+        assert ecode == 0 and content.strip() == 'brand new'
+        ecode, shared = b4.git_run_command(wt, ['show', 'HEAD:shared.txt'])
+        assert ecode == 0 and 'RESOLVED' in shared
+
+    def test_abort_returns_false_and_restores_head(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        handle = _TakeWorktree(wt, is_temp=False)
+
+        def _abort(*_a: Any, **kw: Any) -> None:
+            b4.git_run_command(kw['cwd'], ['merge', '--abort'])
+
+        with patch('b4.review_tui._tracking_app._suspend_to_shell', side_effect=_abort):
+            ok = _resolve_worktree_take_conflict(
+                handle, 'merge', pre, _worktree_merge_in_progress
+            )
+        assert ok is False
+        ecode, head = b4.git_run_command(wt, ['rev-parse', 'HEAD'])
+        assert ecode == 0 and head.strip() == pre
+        assert _worktree_merge_in_progress(wt) is False
+
+    def test_incomplete_keeps_throwaway(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        handle = _TakeWorktree(wt, is_temp=True)
+        # User exits the shell without finishing the merge.
+        with patch('b4.review_tui._tracking_app._suspend_to_shell'):
+            ok = _resolve_worktree_take_conflict(
+                handle, 'merge', pre, _worktree_merge_in_progress
+            )
+        assert ok is False
+        assert handle._keep is True
+        assert _worktree_merge_in_progress(wt) is True
+
+
+def _series_mbox_add_and_edit(gitdir: str, tmp_path: pathlib.Path, base: str) -> bytes:
+    """Two patches at *base*: add newfile.txt, then edit shared.txt line 2."""
+    wt = str(tmp_path / 'seriesgen')
+    ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', '--detach', wt, base])
+    assert ecode == 0
+    try:
+        (pathlib.Path(wt) / 'newfile.txt').write_text('brand new\n')
+        b4.git_run_command(wt, ['add', 'newfile.txt'])
+        ecode, _ = b4.git_run_command(wt, ['commit', '-m', 'add newfile.txt'])
+        assert ecode == 0
+        (pathlib.Path(wt) / 'shared.txt').write_text('a\nPATCH\nc\n')
+        b4.git_run_command(wt, ['add', 'shared.txt'])
+        ecode, _ = b4.git_run_command(wt, ['commit', '-m', 'edit shared.txt'])
+        assert ecode == 0
+        ecode, patches = b4.git_run_command(
+            wt, ['format-patch', '--stdout', f'{base}..HEAD']
+        )
+        assert ecode == 0
+    finally:
+        b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
+    return patches.encode()
+
+
+class TestDoTakeMergeConflict:
+    """End-to-end: _do_take_merge resolves a real merge conflict in place."""
+
+    def _run(self, gitdir: str, target_branch: str, ambytes: bytes) -> None:
+        from types import SimpleNamespace
+
+        change_id = 'merge-conflict-e2e'
+        review_branch = _create_review_branch(gitdir, change_id, status='reviewing')
+        app = TrackingApp.__new__(TrackingApp)
+        app._identifier = None  # type: ignore[assignment]
+        app._selected_series = {}
+        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]
+        take_screen: Any = SimpleNamespace(
+            target_result=target_branch,
+            add_signoff=False,
+            add_link=False,
+            accept_series=False,
+        )
+        with (
+            patch('b4.review_tui._tracking_app._wait_for_enter'),
+            patch(
+                'b4.review_tui._tracking_app._suspend_to_shell',
+                side_effect=_resolve_shared,
+            ),
+        ):
+            app._do_take_merge(
+                change_id, review_branch, take_screen, {'subject': 'x'}, None
+            )
+
+    def test_resolves_without_dropping_added_file(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        base = _conflict_base(gitdir)
+        # Target diverges on shared.txt and is checked out nowhere (throwaway).
+        b4.git_run_command(gitdir, ['branch', 'target', base])
+        twt = str(tmp_path / 'target-edit')
+        ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', twt, 'target'])
+        assert ecode == 0
+        (pathlib.Path(twt) / 'shared.txt').write_text('a\nTARGET\nc\n')
+        b4.git_run_command(twt, ['add', 'shared.txt'])
+        b4.git_run_command(twt, ['commit', '-m', 'target diverges'])
+        b4.git_run_command(gitdir, ['worktree', 'remove', '--force', twt])
+
+        ambytes = _series_mbox_add_and_edit(gitdir, tmp_path, base)
+        self._run(gitdir, 'target', ambytes)
+
+        # target advanced to a real two-parent merge commit...
+        ecode, parents = b4.git_run_command(
+            gitdir, ['rev-list', '--parents', '-1', 'target']
+        )
+        assert ecode == 0 and len(parents.split()) == 3
+        # ...the added-file patch survived (the shazam --resolve drop bug)...
+        ecode, content = b4.git_run_command(gitdir, ['show', 'target:newfile.txt'])
+        assert ecode == 0 and content.strip() == 'brand new'
+        ecode, shared = b4.git_run_command(gitdir, ['show', 'target:shared.txt'])
+        assert ecode == 0 and 'RESOLVED' in shared
+        # ...and the throwaway worktree was cleaned up.
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir is not None
+        assert not os.path.isdir(os.path.join(common_dir, 'b4-take-worktree'))
