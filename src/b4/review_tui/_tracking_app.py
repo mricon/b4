@@ -3959,10 +3959,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         target_msgid = ''
         target_subject = ''
+        target_is_rethreaded = False
         for r in revisions:
             if r['revision'] == target_rev:
                 target_msgid = r.get('message_id', '')
                 target_subject = r.get('subject', '')
+                # Per-revision rethread state — the target revision may need
+                # reassembly from stored patches even if the currently tracked
+                # revision does not (and vice versa).
+                target_is_rethreaded = bool(r.get('is_rethreaded'))
                 break
 
         if not target_msgid:
@@ -3975,6 +3980,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 target_series = dict(self._selected_series or {})
                 target_series['message_id'] = target_msgid
                 target_series['revision'] = target_rev
+                target_series['is_rethreaded'] = target_is_rethreaded
                 msgs = b4.review.retrieve_series_messages(
                     target_series, self._identifier
                 )
@@ -4048,6 +4054,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 target_msgid,
                 target_subject,
                 review_branch,
+                target_is_rethreaded,
             ),
         )
 
@@ -4060,6 +4067,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         target_msgid: str,
         target_subject: str,
         review_branch: str,
+        target_is_rethreaded: bool = False,
     ) -> None:
         """Phase 2: show BaseSelectionScreen after fetching the new series."""
         if result is None:
@@ -4102,6 +4110,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 target_msgid,
                 target_subject,
                 review_branch,
+                target_is_rethreaded,
             ),
         )
 
@@ -4117,6 +4126,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         target_msgid: str,
         target_subject: str,
         review_branch: str,
+        target_is_rethreaded: bool = False,
     ) -> None:
         """Phase 3: apply new revision to upgrade branch, then swap.
 
@@ -4219,7 +4229,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                         )
 
             # --- 3. Apply to temporary upgrade branch ---
-            _is_rt = bool((self._selected_series or {}).get('is_rethreaded'))
+            # Use the target revision's own rethread state, not the currently
+            # tracked revision's — they can differ across an upgrade.
+            _is_rt = bool(target_is_rethreaded)
             try:
                 logger.info('Base: %s', base_sha)
                 b4.git_fetch_am_into_repo(

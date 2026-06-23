@@ -3799,9 +3799,7 @@ class TestRecordDiscoveredRethreaded:
         assert r6['is_rethreaded']
         assert len(patches) == 3
 
-    def test_normal_rev_left_unflagged(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_normal_rev_left_unflagged(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = review_tracking.init_db('rt-up-rdr-normal')
         lmbx = _build_lmbx('thing', _AUTHOR, 6, 3)
         review_tracking._record_discovered_revisions(conn, 'cid-Y', lmbx, '')
@@ -3898,7 +3896,9 @@ class TestRetrieveSeriesMessagesRethreadSeam:
         )
         _insert_patches(conn, 'cid', 6, ['p1@q', 'p2@q', 'p3@q'])
         # Derive the flag the way the upgrade path will — from get_revisions.
-        r6 = next(r for r in review_tracking.get_revisions(conn, 'cid') if r['revision'] == 6)
+        r6 = next(
+            r for r in review_tracking.get_revisions(conn, 'cid') if r['revision'] == 6
+        )
         conn.close()
         series = {
             'change_id': 'cid',
@@ -3929,9 +3929,7 @@ class TestRethreadFlagCarriedOnLink:
         conn = review_tracking.init_db('rt-up-absorb')
         review_tracking.add_revision(conn, 'series-A', 1, 'a-v1@example.com')
         _seed_stray_series(conn, 'series-B', 2, 'fp-stray-b')
-        conn.execute(
-            "UPDATE series SET is_rethreaded = 1 WHERE change_id = 'series-B'"
-        )
+        conn.execute("UPDATE series SET is_rethreaded = 1 WHERE change_id = 'series-B'")
         conn.commit()
 
         review_tracking.absorb_series_as_revision(conn, 'series-A', 'series-B', 2)
@@ -3940,9 +3938,7 @@ class TestRethreadFlagCarriedOnLink:
         rev2 = next(r for r in revs if r['revision'] == 2)
         assert rev2['is_rethreaded']
 
-    def test_record_linked_carries_flag(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_record_linked_carries_flag(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = review_tracking.init_db('rt-up-link')
         _seed_target(conn, 'series-A', 1)
         lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)

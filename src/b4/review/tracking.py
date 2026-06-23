@@ -26,7 +26,7 @@ logger = b4.logger
 REVIEW_METADATA_DIR = 'b4-review'
 REVIEW_METADATA_FILE = 'metadata.json'
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SERIES_PATCHES_DDL = """
 CREATE TABLE IF NOT EXISTS series_patches (
@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS revisions (
     thread_blob TEXT,
     fingerprint TEXT,
     source      TEXT DEFAULT 'heuristic',
+    is_rethreaded INTEGER DEFAULT 0,
     PRIMARY KEY (change_id, revision)
 );
 
@@ -178,6 +179,14 @@ def _migrate_db_if_needed(conn: sqlite3.Connection) -> None:
             'CREATE INDEX IF NOT EXISTS idx_revisions_fingerprint'
             ' ON revisions(fingerprint)'
         )
+    if version < 10:
+        # Per-revision rethread state, so a series tracked normally at vN and
+        # rethreaded at vN+1 (or vice versa) reassembles the right revision.
+        existing = {row[1] for row in conn.execute('PRAGMA table_info(revisions)')}
+        if 'is_rethreaded' not in existing:
+            conn.execute(
+                'ALTER TABLE revisions ADD COLUMN is_rethreaded INTEGER DEFAULT 0'
+            )
     conn.execute('UPDATE schema_version SET version = ?', (SCHEMA_VERSION,))
     conn.commit()
 
@@ -466,11 +475,18 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
 
     _old_sigint = signal.signal(signal.SIGINT, _sigint_cancel)
     try:
+        _msgid: Optional[str]
+        msgs: Optional[List[Any]]
         if rethread:
             logger.info('Rethreading series from %d message IDs', len(rethread))
+            # retrieve_rethreaded_messages reports whether it actually had to
+            # stitch the patches together (was_rethreaded), or found and used
+            # a properly-threaded copy of the same version posted to the list.
+            _msgid, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(cmdargs)
         else:
             logger.info('Retrieving series: %s', series_id)
-        _msgid, msgs = b4.retrieve_messages(cmdargs)
+            _msgid, msgs = b4.retrieve_messages(cmdargs)
+            was_rethreaded = False
         if not msgs:
             logger.critical('Could not retrieve series: %s', series_id)
             sys.exit(1)
@@ -527,7 +543,7 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     # For rethreaded series, skip the synthetic cover and use the first
     # real patch so the stored msgid is fetchable from lore.
     ref_msg: Optional[b4.LoreMessage] = None
-    if rethread:
+    if was_rethreaded:
         for p in lser.patches[1:]:
             if p is not None:
                 ref_msg = p
@@ -583,11 +599,15 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
             discovered.append((getattr(v_ser, 'fingerprint', None), v_msgid))
         existing_change_id = find_existing_change_id(conn, discovered)
 
+    # The rethreaded revision can't be re-fetched from a single message-id, so
+    # its member patches must be recorded under whichever change-id wins.
+    rethreaded_revs: Optional[Set[int]] = {revision} if was_rethreaded else None
+
     if existing_change_id is not None:
         # Already tracked: fold any newly discovered revisions into the
         # existing series instead of creating a duplicate (bug 70fe607).
         new_revs = _record_discovered_revisions(
-            conn, existing_change_id, lmbx, linkmask
+            conn, existing_change_id, lmbx, linkmask, rethreaded_revs=rethreaded_revs
         )
         srow = conn.execute(
             'SELECT status, revision FROM series WHERE change_id = ?',
@@ -632,10 +652,12 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         message_id,
         num_patches,
         fingerprint=fingerprint,
-        is_rethreaded=bool(rethread),
+        is_rethreaded=was_rethreaded,
     )
     add_series_patches(conn, change_id, revision, lser)
-    _record_discovered_revisions(conn, change_id, lmbx, linkmask)
+    _record_discovered_revisions(
+        conn, change_id, lmbx, linkmask, rethreaded_revs=rethreaded_revs
+    )
     conn.close()
 
     logger.info('Tracked series: %s v%d (%d patches)', subject, revision, num_patches)
@@ -748,26 +770,46 @@ def add_revision(
     link: Optional[str] = None,
     fingerprint: Optional[str] = None,
     source: str = 'heuristic',
+    is_rethreaded: bool = False,
 ) -> None:
     """Insert a revision record, ignoring core fields if already present.
 
     The core fields (message_id, subject, link, found_at) follow first-wins
-    semantics — re-adding an existing revision leaves them untouched.  Two
+    semantics — re-adding an existing revision leaves them untouched.  Three
     fields are reconciled on re-add, however:
 
     - ``fingerprint`` is backfilled if the existing row lacks one.
     - ``source`` is upgraded when the incoming provenance outranks the
       stored one, so a manual link wins over (and is never downgraded by)
       automated discovery.
+    - ``is_rethreaded`` is sticky: once a revision is known to need
+      rethreading, a later plain re-add must not clear the flag.
     """
     found_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     conn.execute(
         """INSERT OR IGNORE INTO revisions
         (change_id, revision, message_id, subject, link, found_at,
-         fingerprint, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (change_id, revision, message_id, subject, link, found_at, fingerprint, source),
+         fingerprint, source, is_rethreaded)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            change_id,
+            revision,
+            message_id,
+            subject,
+            link,
+            found_at,
+            fingerprint,
+            source,
+            int(is_rethreaded),
+        ),
     )
+    # Promote the rethread flag on re-add, but never clear it.
+    if is_rethreaded:
+        conn.execute(
+            'UPDATE revisions SET is_rethreaded = 1'
+            ' WHERE change_id = ? AND revision = ?',
+            (change_id, revision),
+        )
     # Backfill a missing fingerprint without disturbing an existing one.
     if fingerprint:
         conn.execute(
@@ -853,11 +895,12 @@ _REVISION_COLS = (
     'thread_blob',
     'fingerprint',
     'source',
+    'is_rethreaded',
 )
 
 _REVISION_SELECT = (
     'SELECT change_id, revision, message_id, subject, link, found_at,'
-    ' thread_blob, fingerprint, source FROM revisions'
+    ' thread_blob, fingerprint, source, is_rethreaded FROM revisions'
 )
 
 
@@ -944,13 +987,22 @@ def _record_discovered_revisions(
     change_id: str,
     lmbx: 'b4.LoreMailbox',
     linkmask: str,
+    rethreaded_revs: Optional[Set[int]] = None,
 ) -> List[int]:
     """Record every revision discovered in *lmbx* under *change_id*.
 
     Returns the revision numbers that were not already known for *change_id*
     (the genuinely new revisions).  Each revision's content fingerprint is
     stored alongside it so later tracking can recognize the series by content.
+
+    Revisions in *rethreaded_revs* were stitched together from individually
+    fetched patches (improper threading), so they are flagged rethreaded and
+    their member patch message-ids are recorded — fetching the recorded
+    message-id alone would not reconstitute the series, so retrieval must read
+    the stored patches instead.
     """
+    if rethreaded_revs is None:
+        rethreaded_revs = set()
     known = {r['revision'] for r in get_revisions(conn, change_id)}
     new_revs: List[int] = []
     for v in sorted(lmbx.series.keys()):
@@ -972,6 +1024,7 @@ def _record_discovered_revisions(
         if not v_msgid:
             continue
         v_link = (linkmask % v_msgid) if '%s' in linkmask else ''
+        is_rt = v in rethreaded_revs
         add_revision(
             conn,
             change_id,
@@ -980,7 +1033,10 @@ def _record_discovered_revisions(
             v_subject,
             v_link,
             fingerprint=getattr(v_ser, 'fingerprint', None),
+            is_rethreaded=is_rt,
         )
+        if is_rt:
+            add_series_patches(conn, change_id, v, v_ser)
         if v not in known:
             new_revs.append(v)
     return new_revs
@@ -1005,7 +1061,7 @@ def absorb_series_as_revision(
     no-op, including when invoked a second time).
     """
     srow = conn.execute(
-        'SELECT revision, subject, message_id, fingerprint FROM series'
+        'SELECT revision, subject, message_id, fingerprint, is_rethreaded FROM series'
         ' WHERE change_id = ?',
         (stray_change_id,),
     ).fetchone()
@@ -1016,14 +1072,20 @@ def absorb_series_as_revision(
     # Prefer the per-revision record for link/fingerprint, falling back to the
     # series row when the stray was never recorded in the revisions table.
     rrow = conn.execute(
-        'SELECT message_id, subject, link, fingerprint FROM revisions'
+        'SELECT message_id, subject, link, fingerprint, is_rethreaded FROM revisions'
         ' WHERE change_id = ? AND revision = ?',
         (stray_change_id, stray_rev),
     ).fetchone()
+    # Treat the stray as rethreaded if either its series row or its
+    # per-revision record says so — both are set when tracked via --rethread,
+    # but be defensive about a partially-populated stray.
+    series_rt = bool(srow[4])
     if rrow is not None:
         message_id, subject, link, fingerprint = rrow[0], rrow[1], rrow[2], rrow[3]
+        is_rethreaded = bool(rrow[4]) or series_rt
     else:
         message_id, subject, link, fingerprint = srow[2], srow[1], None, srow[3]
+        is_rethreaded = series_rt
 
     add_revision(
         conn,
@@ -1034,6 +1096,7 @@ def absorb_series_as_revision(
         link=link,
         fingerprint=fingerprint,
         source='manual',
+        is_rethreaded=is_rethreaded,
     )
 
     # Copy the stray's patches onto the target revision, replacing any present.
@@ -1100,6 +1163,7 @@ def record_linked_revision(
     change_id: str,
     lser: 'b4.LoreSeries',
     force: bool = False,
+    is_rethreaded: bool = False,
 ) -> Dict[str, Any]:
     """Fold a fetched series into *change_id* as a manually linked revision.
 
@@ -1114,6 +1178,10 @@ def record_linked_revision(
       (``absorbed=True``) rather than duplicated.
     - Otherwise the revision and its patches are recorded with
       ``source='manual'``.
+
+    When *is_rethreaded* is set, the fetched series was stitched from
+    individually-fetched patches, so the revision is flagged accordingly and
+    retrieval will reassemble it from the stored patches.
 
     A waiting target series is promoted back to reviewing (``promoted=True``).
     Returns a result dict with keys ``status``, ``revision``, ``absorbed``,
@@ -1153,6 +1221,7 @@ def record_linked_revision(
             link=_linkmask_url(message_id),
             fingerprint=fingerprint,
             source='manual',
+            is_rethreaded=is_rethreaded,
         )
         add_series_patches(conn, change_id, revision, lser)
 

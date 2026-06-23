@@ -2,7 +2,7 @@
 # Copyright (C) 2020 by the Linux Foundation
 import argparse
 import email.message
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from unittest import mock
 
 import b4
@@ -653,16 +653,16 @@ def _threaded_resend() -> List[email.message.EmailMessage]:
 def _fake_lore(
     threads: Dict[str, List[email.message.EmailMessage]],
     search_results: List[email.message.EmailMessage],
-) -> Tuple[mock._patch, mock._patch]:
+) -> Tuple[Any, Any]:
     """Patch the two lore entry points with a connected-component thread map.
 
     ``threads`` maps a msgid to the thread public-inbox would return for it
     (the broken send returns lone messages; the resend returns the whole set).
     """
 
-    def _thread(msgid: str, *_a: object, **_k: object) -> List[
-        email.message.EmailMessage
-    ]:
+    def _thread(
+        msgid: str, *_a: object, **_k: object
+    ) -> List[email.message.EmailMessage]:
         return list(threads.get(msgid, []))
 
     def _search(*_a: object, **_k: object) -> List[email.message.EmailMessage]:
@@ -681,9 +681,9 @@ class TestFindThreadedCopy:
         """A correctly-threaded resend in lore is returned over the broken set."""
         broken = _broken_send()
         resend = _threaded_resend()
-        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        threads = {str(b4.LoreMessage.get_clean_msgid(m)): [m] for m in broken}
         for m in resend:
-            threads[b4.LoreMessage.get_clean_msgid(m)] = resend
+            threads[str(b4.LoreMessage.get_clean_msgid(m))] = resend
         t_patch, s_patch = _fake_lore(threads, resend)
         with t_patch, s_patch:
             result = b4.find_threaded_copy(broken)
@@ -697,7 +697,7 @@ class TestFindThreadedCopy:
     def test_no_copy_returns_none(self) -> None:
         """With no properly-threaded resend, nothing is preferred."""
         broken = _broken_send()
-        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        threads = {str(b4.LoreMessage.get_clean_msgid(m)): [m] for m in broken}
         t_patch, s_patch = _fake_lore(threads, broken)
         with t_patch, s_patch:
             assert b4.find_threaded_copy(broken) is None
@@ -705,7 +705,7 @@ class TestFindThreadedCopy:
     def test_already_threaded_input_needs_no_network(self) -> None:
         """If the input is itself a complete thread, return it without searching."""
         resend = _threaded_resend()
-        threads = {b4.LoreMessage.get_clean_msgid(m): resend for m in resend}
+        threads = {str(b4.LoreMessage.get_clean_msgid(m)): resend for m in resend}
         # Search returns nothing — proves we don't rely on it for this case.
         t_patch, s_patch = _fake_lore(threads, [])
         with t_patch, s_patch:
@@ -735,12 +735,12 @@ class TestRetrieveRethreadedResendPreference:
         """A properly-threaded resend is used as-is (was_rethreaded == False)."""
         broken = _broken_send()
         resend = _threaded_resend()
-        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        threads = {str(b4.LoreMessage.get_clean_msgid(m)): [m] for m in broken}
         for m in resend:
-            threads[b4.LoreMessage.get_clean_msgid(m)] = resend
+            threads[str(b4.LoreMessage.get_clean_msgid(m))] = resend
         t_patch, s_patch = _fake_lore(threads, resend)
         with t_patch, s_patch:
-            cover, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(
+            _cover, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(
                 self._cmdargs(['c1@q', 'c2@q', 'c3@q', 'c4@q'])
             )
         assert was_rethreaded is False
@@ -750,7 +750,7 @@ class TestRetrieveRethreadedResendPreference:
     def test_stitches_when_no_resend(self) -> None:
         """With no resend, the broken patches are stitched (was_rethreaded True)."""
         broken = _broken_send()
-        threads = {b4.LoreMessage.get_clean_msgid(m): [m] for m in broken}
+        threads = {str(b4.LoreMessage.get_clean_msgid(m)): [m] for m in broken}
         t_patch, s_patch = _fake_lore(threads, broken)
         with t_patch, s_patch:
             _cover, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(

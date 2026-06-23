@@ -5410,10 +5410,129 @@ def fetch_rethread_messages(
     return msgids, all_msgs
 
 
+def _thread_is_complete(msgs: List[EmailMessage], revision: int, expected: int) -> bool:
+    """True if *msgs* alone form a complete series at *revision*.
+
+    "Complete" means every numbered patch 1..expected is present and the
+    expected count matches — i.e. fetching this thread by a single msgid
+    would reconstitute the whole series without any cross-thread stitching.
+    """
+    lmbx = LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+    if revision not in lmbx.series:
+        return False
+    lser = lmbx.series[revision]
+    return bool(lser.complete and lser.expected == expected)
+
+
+def find_threaded_copy(
+    all_msgs: List[EmailMessage], nocache: bool = False
+) -> Optional[Tuple[str, List[EmailMessage]]]:
+    """Find a properly-threaded copy of the same series version in lore.
+
+    The rethread machinery stitches together patches that were posted without
+    proper threading.  Authors frequently *also* post a correctly-threaded
+    resend of the very same version; when such a copy exists, fetching any of
+    its message-ids returns the whole series as one thread, which is far more
+    robust to track than a synthetic stitch.
+
+    Returns ``(root_msgid, messages)`` for a self-contained, properly-threaded
+    copy of the target revision (preferring one already present in *all_msgs*,
+    then searching the list archive for a resend), or ``None`` when no such
+    copy can be found.
+    """
+    lmbx = LoreMailbox()
+    for msg in all_msgs:
+        lmbx.add_message(msg)
+    if not lmbx.series:
+        return None
+    revision = max(lmbx.series.keys())
+    lser = lmbx.series[revision]
+    expected = lser.expected
+    if expected < 2:
+        # A single-patch series can't be improperly threaded in a way a
+        # resend would fix; there is nothing to prefer.
+        return None
+
+    base_lmsg = None
+    for patch in lser.patches:
+        if patch is not None:
+            base_lmsg = patch
+            break
+    if base_lmsg is None:
+        return None
+
+    def _root_of(msgs: List[EmailMessage]) -> Optional[str]:
+        sub = LoreMailbox()
+        for msg in msgs:
+            sub.add_message(msg)
+        if revision not in sub.series:
+            return None
+        for patch in sub.series[revision].patches:
+            if patch is not None:
+                return str(patch.msgid)
+        return None
+
+    # 1. The fetched messages may already contain a properly-threaded complete
+    #    copy (e.g. the seed itself was the resend).  Test each candidate root.
+    for patch in lser.patches:
+        if patch is None:
+            continue
+        thread = get_strict_thread(all_msgs, patch.msgid) or []
+        if _thread_is_complete(thread, revision, expected):
+            root = _root_of(thread)
+            if root:
+                return root, thread
+
+    # 2. Search the archive for a same-version resend, then verify each
+    #    candidate's own thread reconstitutes the series on its own.
+    queries: Set[str] = set()
+    payload, _ = LoreMessage.get_payload(base_lmsg.msg)
+    cid = None
+    if payload:
+        matches = re.search(r'^change-id:\s+(\S+)', payload, flags=re.I | re.M)
+        if matches:
+            cid = matches.groups()[0]
+    if cid:
+        queries.add('nq:"change-id: %s"' % cid)
+    else:
+        fromeml = base_lmsg.fromemail or ''
+        subj = base_lmsg.lsubject.subject.replace('"', '')
+        if subj and fromeml:
+            queries.add('(s:"%s" AND f:"%s")' % (subj, fromeml))
+    if not queries:
+        return None
+
+    have = {LoreMessage.get_clean_msgid(m) for m in all_msgs}
+    seen: Set[str] = set()
+    for q in queries:
+        for result in get_pi_search_results(q, nocache=nocache) or []:
+            rmid = LoreMessage.get_clean_msgid(result)
+            if rmid is None or rmid in have or rmid in seen:
+                continue
+            seen.add(rmid)
+            rlsub = LoreSubject(result.get('Subject', ''))
+            if rlsub.reply or rlsub.revision != revision:
+                continue
+            thread = get_pi_thread_by_msgid(rmid, nocache=nocache) or []
+            if _thread_is_complete(thread, revision, expected):
+                root = _root_of(thread)
+                if root:
+                    return root, thread
+    return None
+
+
 def retrieve_rethreaded_messages(
     cmdargs: argparse.Namespace,
-) -> Tuple[str, List[EmailMessage]]:
-    """Retrieve messages from multiple unthreaded msgids and rethread them into a series."""
+) -> Tuple[str, List[EmailMessage], bool]:
+    """Retrieve messages from multiple unthreaded msgids and rethread them.
+
+    Returns ``(root_msgid, messages, was_rethreaded)``.  When a properly
+    threaded copy of the same version already exists in lore it is preferred
+    and returned as-is with ``was_rethreaded=False``; otherwise the patches
+    are stitched into a synthetic thread and ``was_rethreaded`` is True.
+    """
     raw_ids: List[str] = cmdargs.rethread
 
     # Support reading from stdin with --rethread -
@@ -5447,7 +5566,16 @@ def retrieve_rethreaded_messages(
             raise LookupError('Could not discover additional patches for the series')
 
     _msgids, all_msgs = fetch_rethread_messages(msgids, nocache=nocache)
-    return LoreSeries.rethread_series(msgids, all_msgs)
+
+    # Prefer a properly-threaded copy (e.g. a resend) over stitching.
+    threaded = find_threaded_copy(all_msgs, nocache=nocache)
+    if threaded is not None:
+        root_msgid, msgs = threaded
+        logger.info('Found a properly threaded copy of the series; using it as-is')
+        return root_msgid, msgs, False
+
+    cover_msgid, msgs = LoreSeries.rethread_series(msgids, all_msgs)
+    return cover_msgid, msgs, True
 
 
 def retrieve_messages(
@@ -5459,7 +5587,7 @@ def retrieve_messages(
             raise LookupError('Cannot retrieve threads from remote in offline mode')
         if cmdargs.localmbox:
             raise LookupError('--rethread cannot be used with --use-local-mbox')
-        cover_msgid, msgs = retrieve_rethreaded_messages(cmdargs)
+        cover_msgid, msgs, _was_rethreaded = retrieve_rethreaded_messages(cmdargs)
         return cover_msgid, msgs
 
     msgid = None
