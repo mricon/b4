@@ -253,6 +253,20 @@ def _take_worktree(
             b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
 
 
+def _worktree_rebase_apply_dir(worktree: str) -> Optional[str]:
+    """Return *worktree*'s in-progress ``git am`` state dir, or ``None``.
+
+    ``rebase-apply`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return None
+    rebase_apply = os.path.join(gitdir.strip(), 'rebase-apply')
+    return rebase_apply if os.path.isdir(rebase_apply) else None
+
+
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
     """Handle an AmConflictError by dropping the user into a shell.
 
@@ -289,17 +303,7 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
     )
     _suspend_to_shell(hint='b4 conflict', cwd=cex.worktree_path)
     # Check if am is still in progress (user exited without finishing)
-    ecode, wt_gitdir = b4.git_run_command(
-        cex.worktree_path,
-        ['rev-parse', '--git-dir'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
-    if ecode == 0:
-        rebase_apply = os.path.join(wt_gitdir.strip(), 'rebase-apply')
-    else:
-        rebase_apply = ''
-    if rebase_apply and os.path.isdir(rebase_apply):
+    if _worktree_rebase_apply_dir(cex.worktree_path):
         logger.warning('Conflict resolution incomplete, aborting')
         b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
         return False
@@ -3094,75 +3098,72 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         if ambytes is None:
             return
 
-        # Save current branch so we can report it on failure
-        prev_branch = b4.git_get_current_branch(topdir)
-        if prev_branch is None:
-            prev_branch = b4.git_revparse_obj('HEAD', gitdir=topdir)
-
-        # Checkout target branch
-        ecode, out = b4.git_run_command(
-            topdir, ['checkout', target_branch], logstderr=True
-        )
-        if ecode != 0:
-            logger.critical('Could not checkout %s: %s', target_branch, out.strip())
-            _wait_for_enter()
-            return
-
-        # Save HEAD before git-am so we can find the new commits afterwards
-        ecode, out = b4.git_run_command(topdir, ['rev-parse', 'HEAD'])
-        pre_am_head = out.strip() if ecode == 0 else ''
-
-        # Run git-am with three-way merge
-        ecode, out = b4.git_run_command(
-            topdir, ['am', '-3'], stdin=ambytes, logstderr=True
-        )
-        if ecode != 0:
-            logger.critical('git-am failed:')
-            logger.critical(out.strip())
-            logger.info('You can resolve the conflict now.')
-            logger.info(
-                'Use "git am --continue" after resolving, or "git am --abort" to give up.'
-            )
-            _suspend_to_shell(hint='b4 conflict')
-            # Check if am is still in progress (user exited without finishing)
-            rebase_apply_path = os.path.join(topdir, '.git', 'rebase-apply')
-            if os.path.isdir(rebase_apply_path):
-                logger.warning('Conflict resolution incomplete')
-                logger.warning('Run "git am --abort" to clean up')
-                _wait_for_enter()
+        # Apply in whichever worktree holds the target branch (or a throwaway
+        # one), so the current checkout is never disturbed.
+        with _take_worktree(topdir, target_branch) as wt:
+            if wt is None:
                 return
-            # Check if am was aborted (HEAD unchanged)
-            ecode, current_head = b4.git_run_command(
-                topdir, ['rev-parse', 'HEAD'], logstderr=True
-            )
-            if ecode != 0 or current_head.strip() == pre_am_head:
-                logger.warning('Conflict resolution aborted')
-                _wait_for_enter()
-                return
-            logger.info('Conflict resolved, patches applied.')
+            am_dir = wt.path
 
-        logger.info(out.strip())
-        logger.info('Applied patches to %s', target_branch)
+            # Save HEAD before git-am so we can find the new commits afterwards
+            ecode, out = b4.git_run_command(am_dir, ['rev-parse', 'HEAD'])
+            pre_am_head = out.strip() if ecode == 0 else ''
 
-        # Record per-patch commit IDs in the tracking data
-        new_status: Optional[str] = None
-        if pre_am_head:
+            # Run git-am with three-way merge in the target worktree. Anchor to
+            # am_dir via rundir: git_run_command targets a primary worktree with
+            # --git-dir (not -C), so without it git-am writes files into b4's
+            # cwd rather than the target worktree (cf. git_fetch_am_into_repo).
             ecode, out = b4.git_run_command(
-                topdir, ['rev-list', '--reverse', f'{pre_am_head}..HEAD']
+                am_dir, ['am', '-3'], stdin=ambytes, logstderr=True, rundir=am_dir
             )
-            if ecode == 0:
-                commit_ids = out.strip().splitlines()
-                new_status = self._record_take_metadata(
-                    topdir,
-                    review_branch,
-                    target_branch,
-                    commit_ids,
-                    cherrypick=cherrypick,
-                    accepted=take_screen.accept_series,
+            if ecode != 0:
+                logger.critical('git-am failed:')
+                logger.critical(out.strip())
+                logger.info('You can resolve the conflict now.')
+                logger.info(
+                    'Use "git am --continue" after resolving, or "git am --abort" to give up.'
                 )
+                _suspend_to_shell(hint='b4 conflict', cwd=am_dir)
+                if _worktree_rebase_apply_dir(am_dir):
+                    logger.warning('Conflict resolution incomplete')
+                    if wt.is_temp:
+                        wt.keep()
+                        logger.warning('Finish or abort it in: %s', am_dir)
+                    logger.warning('Run "git am --abort" to clean up')
+                    _wait_for_enter()
+                    return
+                # Check if am was aborted (HEAD unchanged)
+                ecode, current_head = b4.git_run_command(
+                    am_dir, ['rev-parse', 'HEAD'], logstderr=True
+                )
+                if ecode != 0 or current_head.strip() == pre_am_head:
+                    logger.warning('Conflict resolution aborted')
+                    _wait_for_enter()
+                    return
+                logger.info('Conflict resolved, patches applied.')
 
-        self._finalize_take(topdir, target_branch, change_id, series, new_status)
-        _wait_for_enter()
+            logger.info(out.strip())
+            logger.info('Applied patches to %s', target_branch)
+
+            # Record per-patch commit IDs in the tracking data
+            new_status: Optional[str] = None
+            if pre_am_head:
+                ecode, out = b4.git_run_command(
+                    am_dir, ['rev-list', '--reverse', f'{pre_am_head}..HEAD']
+                )
+                if ecode == 0:
+                    commit_ids = out.strip().splitlines()
+                    new_status = self._record_take_metadata(
+                        topdir,
+                        review_branch,
+                        target_branch,
+                        commit_ids,
+                        cherrypick=cherrypick,
+                        accepted=take_screen.accept_series,
+                    )
+
+            self._finalize_take(topdir, target_branch, change_id, series, new_status)
+            _wait_for_enter()
 
     def action_rebase(self) -> None:
         """Rebase the review branch on top of current HEAD."""
