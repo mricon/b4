@@ -18,7 +18,6 @@ __pycache__
 *.thanks
 .venv
 .venv-*
-uv.lock
 qodana.yaml
 *.ipynb
 pytest.log
