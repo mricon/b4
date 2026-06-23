@@ -5,6 +5,7 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import contextlib
 import copy
 import datetime
 import email.message
@@ -21,7 +22,7 @@ import sqlite3
 import subprocess
 import sys
 from string import Template
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, Generator, List, Literal, Optional, Tuple
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -176,6 +177,80 @@ def _worktree_for_branch(topdir: str, branch: str) -> Optional[str]:
     if ecode != 0:
         return None
     return out.strip() or None
+
+
+class _TakeWorktree:
+    """Handle for the worktree a take runs in (see :func:`_take_worktree`)."""
+
+    def __init__(self, path: str, is_temp: bool) -> None:
+        self.path = path
+        self.is_temp = is_temp
+        self._keep = False
+
+    def keep(self) -> None:
+        """Leave a throwaway worktree in place on exit (e.g. unfinished am)."""
+        self._keep = True
+
+
+@contextlib.contextmanager
+def _take_worktree(
+    topdir: str, target_branch: str
+) -> Generator[Optional[_TakeWorktree], None, None]:
+    """Yield the worktree in which to apply a take onto *target_branch*.
+
+    The review TUI may be driven from a different worktree than the one the
+    series is applied to, and the target may even be checked out elsewhere, so
+    the take must run wherever the branch lives rather than in the current
+    checkout. Runs in whichever worktree already holds *target_branch*; when it
+    is checked out nowhere, a throwaway ``b4-take-worktree`` is created and
+    removed on exit unless the caller marks it :meth:`~_TakeWorktree.keep`.
+    Yields ``None`` (after logging and waiting) when no worktree can be
+    established, so the caller can simply return.
+    """
+    # A throwaway worktree from a previously interrupted take may still be
+    # registered -- possibly even holding target_branch, in which case the
+    # resolution below would latch onto it and never clean it up. Remove any
+    # such leftover up front; this also clears a bare leftover directory that a
+    # plain `worktree remove` would choke on.
+    common_dir = b4.git_get_common_dir(topdir)
+    if common_dir:
+        leftover = os.path.join(common_dir, 'b4-take-worktree')
+        if os.path.exists(leftover):
+            b4.git_run_command(topdir, ['worktree', 'remove', '--force', leftover])
+            if os.path.isdir(leftover):
+                shutil.rmtree(leftover, ignore_errors=True)
+        # Prune unconditionally: a directory deleted out-of-band leaves only a
+        # registration that _worktree_for_branch would still resolve to a dead
+        # path.
+        b4.git_run_command(topdir, ['worktree', 'prune'])
+
+    work_dir = _worktree_for_branch(topdir, target_branch)
+    temp_wt: Optional[str] = None
+    if work_dir is None:
+        if not common_dir:
+            logger.critical('Unable to determine git common dir')
+            _wait_for_enter()
+            yield None
+            return
+        temp_wt = os.path.join(common_dir, 'b4-take-worktree')
+        ecode, out = b4.git_run_command(
+            topdir, ['worktree', 'add', temp_wt, target_branch], logstderr=True
+        )
+        if ecode != 0:
+            logger.critical(
+                'Could not create a worktree for %s: %s', target_branch, out.strip()
+            )
+            _wait_for_enter()
+            yield None
+            return
+        work_dir = temp_wt
+
+    handle = _TakeWorktree(work_dir, is_temp=temp_wt is not None)
+    try:
+        yield handle
+    finally:
+        if temp_wt and not handle._keep:
+            b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
 
 
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
@@ -2690,48 +2765,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 return
             base_commit = out.strip()
 
-        # A throwaway worktree from a previously interrupted take may still be
-        # registered -- possibly even holding target_branch, in which case the
-        # resolution below would latch onto it and then never clean it up
-        # (temp_wt stays None, so the finally skips removal). Remove any such
-        # leftover up front. This also clears a bare leftover directory that a
-        # plain `worktree remove` would choke on.
-        common_dir = b4.git_get_common_dir(topdir)
-        temp_wt: Optional[str] = None
-        if common_dir:
-            leftover = os.path.join(common_dir, 'b4-take-worktree')
-            if os.path.exists(leftover):
-                b4.git_run_command(topdir, ['worktree', 'remove', '--force', leftover])
-                b4.git_run_command(topdir, ['worktree', 'prune'])
-                if os.path.isdir(leftover):
-                    shutil.rmtree(leftover, ignore_errors=True)
-
-        # Run the merge in whichever worktree holds the target branch -- the
-        # review TUI may be driven from a different worktree than the one the
-        # series is being applied to, and the target may even be checked out
-        # elsewhere. If it is not checked out anywhere, use a throwaway
-        # worktree, so the current checkout is never disturbed.
-        merge_dir = _worktree_for_branch(topdir, target_branch)
-        if merge_dir is None:
-            if not common_dir:
-                logger.critical('Unable to determine git common dir')
-                _wait_for_enter()
+        # Merge in whichever worktree holds the target branch (or a throwaway
+        # one), so the current checkout is never disturbed.
+        with _take_worktree(topdir, target_branch) as wt:
+            if wt is None:
                 return
-            temp_wt = os.path.join(common_dir, 'b4-take-worktree')
-            ecode, out = b4.git_run_command(
-                topdir, ['worktree', 'add', temp_wt, target_branch], logstderr=True
-            )
-            if ecode != 0:
-                logger.critical(
-                    'Could not create a worktree for %s: %s',
-                    target_branch,
-                    out.strip(),
-                )
-                _wait_for_enter()
-                return
-            merge_dir = temp_wt
-
-        try:
+            merge_dir = wt.path
             # Apply trailer-amended patches in a sparse worktree and fetch into
             # the target worktree's FETCH_HEAD (which is per-worktree), so the
             # merge below sees them and each commit carries its trailers.
@@ -2836,9 +2875,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             self._finalize_take(topdir, target_branch, change_id, t_series, new_status)
             _wait_for_enter()
-        finally:
-            if temp_wt:
-                b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
 
     def _finalize_take(
         self,
