@@ -22,7 +22,7 @@ import sqlite3
 import subprocess
 import sys
 from string import Template
-from typing import Any, Dict, Generator, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -267,6 +267,19 @@ def _worktree_rebase_apply_dir(worktree: str) -> Optional[str]:
     return rebase_apply if os.path.isdir(rebase_apply) else None
 
 
+def _worktree_merge_in_progress(worktree: str) -> bool:
+    """Return whether *worktree* has a conflicted ``git merge`` in progress.
+
+    ``MERGE_HEAD`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return False
+    return os.path.exists(os.path.join(gitdir.strip(), 'MERGE_HEAD'))
+
+
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
     """Handle an AmConflictError by dropping the user into a shell.
 
@@ -326,6 +339,46 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
     b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
     if ecode > 0:
         logger.critical('Unable to fetch from resolved worktree')
+        return False
+    return True
+
+
+def _resolve_worktree_take_conflict(
+    wt: '_TakeWorktree',
+    op: str,
+    pre_head: str,
+    in_progress: Callable[[str], object],
+) -> bool:
+    """Drop to a shell so the user can finish a conflicted take in *wt*.
+
+    *op* is the git subcommand (``am`` or ``merge``) shown in the hints.
+    *pre_head* is *wt*'s HEAD captured before *op* ran, used to tell a completed
+    operation (HEAD moved) from an abort (HEAD unchanged). *in_progress* reports
+    whether *op* is still mid-flight in the worktree.
+
+    Returns True when the user finished *op*, False when they aborted it or left
+    the shell without finishing. An unfinished throwaway worktree is kept so the
+    user can complete it by hand.
+    """
+    logger.info('You can resolve the conflict now.')
+    logger.info(
+        'Use "git %s --continue" after resolving, or "git %s --abort" to give up.',
+        op,
+        op,
+    )
+    _suspend_to_shell(hint='b4 conflict', cwd=wt.path)
+    if in_progress(wt.path):
+        logger.warning('Conflict resolution incomplete')
+        if wt.is_temp:
+            wt.keep()
+            logger.warning('Finish or abort it in: %s', wt.path)
+        logger.warning('Run "git %s --abort" to clean up', op)
+        return False
+    ecode, current_head = b4.git_run_command(
+        wt.path, ['rev-parse', 'HEAD'], logstderr=True
+    )
+    if ecode != 0 or current_head.strip() == pre_head:
+        logger.warning('Conflict resolution aborted')
         return False
     return True
 
@@ -2851,15 +2904,40 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 pass
 
             if ecode != 0:
-                logger.critical(
-                    'Merge failed%s', f': {out.strip()}' if out.strip() else ''
+                # A conflicted merge can be finished by hand; let the user
+                # resolve it in the worktree instead of discarding the take
+                # (mirrors the git-am path above and "b4 shazam"). Anything
+                # else (e.g. a dirty worktree) leaves no merge to resolve, so
+                # abort and bail as before.
+                if not _worktree_merge_in_progress(merge_dir):
+                    logger.critical(
+                        'Merge failed%s', f': {out.strip()}' if out.strip() else ''
+                    )
+                    logger.critical('Aborting merge...')
+                    b4.git_run_command(
+                        merge_dir,
+                        ['merge', '--abort'],
+                        logstderr=True,
+                        rundir=merge_dir,
+                    )
+                    _wait_for_enter()
+                    return
+                logger.critical('Merge conflict:')
+                if out.strip():
+                    logger.critical(out.strip())
+                # HEAD still points at the pre-merge tip while the conflicted
+                # merge sits uncommitted; capture it to tell a finished merge
+                # from an abort.
+                ecode, pre_merge_head = b4.git_run_command(
+                    merge_dir, ['rev-parse', 'HEAD']
                 )
-                logger.critical('Aborting merge...')
-                b4.git_run_command(
-                    merge_dir, ['merge', '--abort'], logstderr=True, rundir=merge_dir
-                )
-                _wait_for_enter()
-                return
+                pre_merge_head = pre_merge_head.strip() if ecode == 0 else ''
+                if not _resolve_worktree_take_conflict(
+                    wt, 'merge', pre_merge_head, _worktree_merge_in_progress
+                ):
+                    _wait_for_enter()
+                    return
+                logger.info('Conflict resolved, series merged.')
 
             logger.info('Merged %s into %s', review_branch, target_branch)
 
@@ -3123,25 +3201,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if ecode != 0:
                 logger.critical('git-am failed:')
                 logger.critical(out.strip())
-                logger.info('You can resolve the conflict now.')
-                logger.info(
-                    'Use "git am --continue" after resolving, or "git am --abort" to give up.'
-                )
-                _suspend_to_shell(hint='b4 conflict', cwd=am_dir)
-                if _worktree_rebase_apply_dir(am_dir):
-                    logger.warning('Conflict resolution incomplete')
-                    if wt.is_temp:
-                        wt.keep()
-                        logger.warning('Finish or abort it in: %s', am_dir)
-                    logger.warning('Run "git am --abort" to clean up')
-                    _wait_for_enter()
-                    return
-                # Check if am was aborted (HEAD unchanged)
-                ecode, current_head = b4.git_run_command(
-                    am_dir, ['rev-parse', 'HEAD'], logstderr=True
-                )
-                if ecode != 0 or current_head.strip() == pre_am_head:
-                    logger.warning('Conflict resolution aborted')
+                if not _resolve_worktree_take_conflict(
+                    wt, 'am', pre_am_head, _worktree_rebase_apply_dir
+                ):
                     _wait_for_enter()
                     return
                 logger.info('Conflict resolved, patches applied.')
