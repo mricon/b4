@@ -151,3 +151,8 @@ exclude = ["ezgb/", "liblore/", "patatt/"]
 
 [tool.ty.rules]
 all = "error"
+# New in ty 0.0.52: flags every method that overrides a base-class method
+# without @override. Adopting it would require a typing_extensions dependency
+# for the 3.11 fallback (typing.override is 3.12+), which is too much weight
+# for a style rule. Revisit if/when the supported Python floor moves to 3.12.
+missing-override-decorator = "ignore"

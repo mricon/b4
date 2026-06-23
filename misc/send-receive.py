@@ -810,20 +810,23 @@ class SendReceiveListener(object):
             return
 
         logger.info('Action: %s; from: %s', action, req.remote_addr)
+        # ty 0.0.52 narrows the Mapping check above into an intersection type
+        # it then cannot match against the handlers' Mapping parameters; the
+        # runtime value is a plain JSON Mapping, so the dispatch is correct.
         if action == 'auth-new':
-            self.auth_new(jdata, resp)
+            self.auth_new(jdata, resp)  # ty:ignore[invalid-argument-type]
             return
         if action == 'auth-verify':
-            self.auth_verify(jdata, resp)
+            self.auth_verify(jdata, resp)  # ty:ignore[invalid-argument-type]
             return
         if action == 'auth-delete':
-            self.auth_delete(jdata, resp)
+            self.auth_delete(jdata, resp)  # ty:ignore[invalid-argument-type]
             return
         if action == 'receive':
-            self.receive(jdata, resp)
+            self.receive(jdata, resp)  # ty:ignore[invalid-argument-type]
             return
         if action == 'reflect':
-            self.receive(jdata, resp, reflect=True)
+            self.receive(jdata, resp, reflect=True)  # ty:ignore[invalid-argument-type]
             return
 
         resp.status = falcon.HTTP_500

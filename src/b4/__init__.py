@@ -5117,7 +5117,9 @@ def send_mail(
                 cmdargs = list(smtp) + [envpair[1]]
             else:
                 cmdargs = list(smtp) + list(destaddrs)
-            ecode, _out, err = _run_command(cmdargs, stdin=bdata)
+            # ty infers list[object] for the list+list concatenation above;
+            # both operands are lists of str at runtime (see ty issue #1578).
+            ecode, _out, err = _run_command(cmdargs, stdin=bdata)  # ty:ignore[invalid-argument-type]
             if ecode > 0:
                 raise RuntimeError('Error running %s: %s' % (smtps, err.decode()))
             sent += 1
