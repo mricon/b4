@@ -5427,7 +5427,9 @@ def _thread_is_complete(msgs: List[EmailMessage], revision: int, expected: int) 
 
 
 def find_threaded_copy(
-    all_msgs: List[EmailMessage], nocache: bool = False
+    all_msgs: List[EmailMessage],
+    nocache: bool = False,
+    revision: Optional[int] = None,
 ) -> Optional[Tuple[str, List[EmailMessage]]]:
     """Find a properly-threaded copy of the same series version in lore.
 
@@ -5436,6 +5438,10 @@ def find_threaded_copy(
     resend of the very same version; when such a copy exists, fetching any of
     its message-ids returns the whole series as one thread, which is far more
     robust to track than a synthetic stitch.
+
+    By default the highest revision present in *all_msgs* is targeted; pass
+    *revision* to target a specific version (e.g. an incomplete newly-discovered
+    one during a routine update).
 
     Returns ``(root_msgid, messages)`` for a self-contained, properly-threaded
     copy of the target revision (preferring one already present in *all_msgs*,
@@ -5447,7 +5453,10 @@ def find_threaded_copy(
         lmbx.add_message(msg)
     if not lmbx.series:
         return None
-    revision = max(lmbx.series.keys())
+    if revision is None:
+        revision = max(lmbx.series.keys())
+    elif revision not in lmbx.series:
+        return None
     lser = lmbx.series[revision]
     expected = lser.expected
     if expected < 2:

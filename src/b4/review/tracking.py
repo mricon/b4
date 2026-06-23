@@ -617,6 +617,10 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         status_str = str(srow[0]) if srow else 'unknown'
         cur_rev = int(srow[1]) if srow else 0
         if new_revs:
+            # Mirror the freshly-recorded catalog onto the existing review
+            # branch so the pending upgrade travels on push (it can't be
+            # re-derived from lore when rethreaded).
+            sync_revisions_catalog_to_branch(topdir, identifier, existing_change_id)
             logger.info(
                 'Series already tracked as %s (status: %s, v%d)',
                 existing_change_id,
@@ -659,6 +663,9 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         conn, change_id, lmbx, linkmask, rethreaded_revs=rethreaded_revs
     )
     conn.close()
+    # Mirror the catalog onto the review branch when one already exists (a
+    # fresh track usually has none yet — this is then a harmless no-op).
+    sync_revisions_catalog_to_branch(topdir, identifier, change_id)
 
     logger.info('Tracked series: %s v%d (%d patches)', subject, revision, num_patches)
     logger.info('  From: %s <%s>', sender_name, sender_email)
@@ -883,6 +890,138 @@ def get_series_patches(
         (change_id, revision),
     )
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+def build_known_revisions(
+    conn: sqlite3.Connection, change_id: str
+) -> List[Dict[str, Any]]:
+    """Serialize the per-change_id revisions catalog for the tracking commit.
+
+    Returns a list of plain dicts (one per known revision) mirroring the
+    ``revisions`` table, with the stitched member patches inlined for
+    rethreaded revisions.  This is the portable form stored under
+    ``known-revisions`` in the review branch tracking commit so another machine
+    can rebuild the catalog — including a *pending* rethreaded upgrade that
+    cannot be re-derived from the mailing list — from git alone.
+    """
+    known: List[Dict[str, Any]] = []
+    for r in get_revisions(conn, change_id):
+        entry: Dict[str, Any] = {
+            'revision': int(r['revision']),
+            'message-id': r.get('message_id') or '',
+        }
+        if r.get('subject'):
+            entry['subject'] = r['subject']
+        if r.get('link'):
+            entry['link'] = r['link']
+        if r.get('fingerprint'):
+            entry['fingerprint'] = r['fingerprint']
+        if r.get('source'):
+            entry['source'] = r['source']
+        if r.get('is_rethreaded'):
+            entry['is-rethreaded'] = True
+            entry['patches'] = [
+                {
+                    'position': p['position'],
+                    'message-id': p['message_id'],
+                    'subject': p.get('subject') or '',
+                }
+                for p in get_series_patches(conn, change_id, int(r['revision']))
+            ]
+        known.append(entry)
+    return known
+
+
+def record_known_revisions(
+    conn: sqlite3.Connection, change_id: str, known: Optional[List[Dict[str, Any]]]
+) -> None:
+    """Replay a serialized revisions catalog into the local DB.
+
+    The inverse of :func:`build_known_revisions`.  Relies on ``add_revision``'s
+    convergent semantics — first-wins core fields, no-downgrade ``source``, and
+    sticky ``is_rethreaded`` — so replaying a catalog is purely additive and
+    safe to run on every sync.
+    """
+    for entry in known or []:
+        raw_rev = entry.get('revision')
+        message_id = entry.get('message-id') or ''
+        if raw_rev is None or not message_id:
+            continue
+        try:
+            revision = int(raw_rev)
+        except (TypeError, ValueError):
+            continue
+        is_rethreaded = bool(entry.get('is-rethreaded'))
+        add_revision(
+            conn,
+            change_id,
+            revision,
+            message_id,
+            subject=entry.get('subject'),
+            link=entry.get('link'),
+            fingerprint=entry.get('fingerprint'),
+            source=entry.get('source') or 'heuristic',
+            is_rethreaded=is_rethreaded,
+        )
+        patches = entry.get('patches') or []
+        if is_rethreaded and patches:
+            rows = [
+                (
+                    change_id,
+                    revision,
+                    int(p['position']),
+                    p['message-id'],
+                    p.get('subject') or '',
+                )
+                for p in patches
+                if p.get('message-id') and p.get('position') is not None
+            ]
+            if rows:
+                conn.execute(
+                    'DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+                    (change_id, revision),
+                )
+                conn.executemany(
+                    'INSERT INTO series_patches'
+                    ' (change_id, revision, position, message_id, subject)'
+                    ' VALUES (?, ?, ?, ?, ?)',
+                    rows,
+                )
+    conn.commit()
+
+
+def sync_revisions_catalog_to_branch(
+    topdir: Optional[str], identifier: str, change_id: str
+) -> bool:
+    """Mirror the DB revisions catalog into the review branch tracking commit.
+
+    Writes (or refreshes) the ``known-revisions`` block on
+    ``b4/review/<change_id>`` so a pending upgrade — notably a rethreaded one
+    that cannot be re-derived from lore — travels with the branch on push.
+    No-op (returns False) when there is no topdir, no such branch, or the
+    catalog is already current.
+    """
+    if not topdir:
+        return False
+    import b4.review
+
+    branch = f'b4/review/{change_id}'
+    ecode, _ = b4.git_run_command(topdir, ['rev-parse', '--verify', branch])
+    if ecode != 0:
+        return False
+    try:
+        cover_text, tracking = b4.review.load_tracking(topdir, branch)
+    except (SystemExit, Exception):
+        return False
+    conn = get_db(identifier)
+    try:
+        known = build_known_revisions(conn, change_id)
+    finally:
+        conn.close()
+    if tracking.get('known-revisions') == known:
+        return False
+    tracking['known-revisions'] = known
+    return bool(b4.review.save_tracking_ref(topdir, branch, cover_text, tracking))
 
 
 _REVISION_COLS = (
@@ -2542,6 +2681,13 @@ def rescan_branches(
                     rows,
                 )
                 conn.commit()
+
+        # Rebuild the full revisions catalog (all known versions, including a
+        # pending rethreaded upgrade and its stitched patch list) from the
+        # portable known-revisions block.  Re-derivable for normally-threaded
+        # series via lore, but the rethreaded ones are not, so this is what
+        # makes the relationship survive a push/sync to another machine.
+        record_known_revisions(conn, change_id, tracking.get('known-revisions'))
 
         # Persist the new HEAD SHA so future rescans can skip this branch.
         conn.execute(

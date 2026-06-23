@@ -759,3 +759,35 @@ class TestRetrieveRethreadedResendPreference:
         assert was_rethreaded is True
         got = {b4.LoreMessage.get_clean_msgid(m) for m in msgs}
         assert {'c2@q', 'c3@q', 'c4@q'} <= got
+
+
+class TestFindThreadedCopyTargetedRevision:
+    """Option 2: find_threaded_copy can target a specific (older) revision."""
+
+    def test_targets_named_revision(self) -> None:
+        # all_msgs holds a broken v6 plus an unrelated v7; target v6's resend.
+        broken_v6 = _broken_send()
+        v7 = [
+            _make_patch('s1@q', 0, 2, 7),
+            _make_patch('s2@q', 1, 2, 7),
+            _make_patch('s3@q', 2, 2, 7),
+        ]
+        resend_v6 = _threaded_resend()
+        all_in = broken_v6 + v7
+        threads = {str(b4.LoreMessage.get_clean_msgid(m)): [m] for m in all_in}
+        for m in resend_v6:
+            threads[str(b4.LoreMessage.get_clean_msgid(m))] = resend_v6
+        t_patch, s_patch = _fake_lore(threads, resend_v6)
+        with t_patch, s_patch:
+            result = b4.find_threaded_copy(all_in, revision=6)
+        assert result is not None
+        _root, msgs = result
+        got = {b4.LoreMessage.get_clean_msgid(m) for m in msgs}
+        assert {'r2@q', 'r3@q', 'r4@q'} <= got
+
+    def test_missing_revision_returns_none(self) -> None:
+        broken_v6 = _broken_send()
+        threads = {str(b4.LoreMessage.get_clean_msgid(m)): [m] for m in broken_v6}
+        t_patch, s_patch = _fake_lore(threads, broken_v6)
+        with t_patch, s_patch:
+            assert b4.find_threaded_copy(broken_v6, revision=99) is None

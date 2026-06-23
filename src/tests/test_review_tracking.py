@@ -3949,3 +3949,196 @@ class TestRethreadFlagCarriedOnLink:
         conn.close()
         rev2 = next(r for r in revs if r['revision'] == 2)
         assert rev2['is_rethreaded']
+
+
+# ---------------------------------------------------------------------------
+# Cross-machine portability of the rethread/upgrade catalog
+# (feature/rethread-upgrade-portable)
+#
+# Red spec — the revisions catalog (incl. rethreaded patch lists) must travel
+# in the review branch tracking commit so another machine can rebuild it.
+# build_known_revisions/record_known_revisions and the rescan replay don't
+# exist yet.
+# ---------------------------------------------------------------------------
+
+
+def _make_review_branch_with_catalog(
+    gitdir: str,
+    identifier: str,
+    change_id: str,
+    revision: int,
+    known_revisions: list[dict[str, Any]],
+) -> str:
+    """Create a review branch whose tracking commit carries known-revisions."""
+    branch = f'b4/review/{change_id}'
+    ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    assert ecode == 0
+    base = base.strip()
+    b4.git_run_command(gitdir, ['branch', branch, base])
+    b4.git_run_command(gitdir, ['checkout', branch])
+    trk = {
+        'series': {
+            'identifier': identifier,
+            'change-id': change_id,
+            'revision': revision,
+            'status': 'reviewing',
+            'subject': change_id,
+            'fromname': 'Author',
+            'fromemail': 'author@example.com',
+            'expected': 1,
+            'complete': True,
+            'base-commit': base,
+            'prerequisite-commits': [],
+            'first-patch-commit': base,
+            'link': '',
+            'header-info': {'msgid': f'{change_id}-v{revision}@example.com'},
+            'is-rethreaded': False,
+        },
+        'followups': [],
+        'patches': [],
+        'known-revisions': known_revisions,
+    }
+    commit_msg = f'{change_id}\n\n{b4.review.make_review_magic_json(trk)}'
+    b4.git_run_command(gitdir, ['commit', '--allow-empty', '-m', commit_msg])
+    b4.git_run_command(gitdir, ['checkout', 'master'])
+    return branch
+
+
+class TestKnownRevisionsCatalog:
+    """Step 1: serialize/replay the revisions catalog for the tracking commit."""
+
+    def test_build_record_round_trip(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('rt-port-rt')
+        review_tracking.add_revision(conn, 'cid', 5, 'v5@example.com')
+        review_tracking.add_revision(
+            conn,
+            'cid',
+            6,
+            'v6@example.com',
+            fingerprint='fp6',
+            source='manual',
+            is_rethreaded=True,
+        )
+        _insert_patches(conn, 'cid', 6, ['p1@example.com', 'p2@example.com'])
+        known = review_tracking.build_known_revisions(conn, 'cid')
+        conn.close()
+
+        conn2 = review_tracking.init_db('rt-port-rt2')
+        review_tracking.record_known_revisions(conn2, 'cid', known)
+        revs = review_tracking.get_revisions(conn2, 'cid')
+        r6 = next(r for r in revs if r['revision'] == 6)
+        patches = review_tracking.get_series_patches(conn2, 'cid', 6)
+        conn2.close()
+
+        assert {r['revision'] for r in revs} == {5, 6}
+        assert r6['is_rethreaded']
+        assert r6['source'] == 'manual'
+        assert r6['fingerprint'] == 'fp6'
+        assert [p['message_id'] for p in patches] == [
+            'p1@example.com',
+            'p2@example.com',
+        ]
+
+    def test_record_is_sticky_and_no_downgrade(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rt-port-sticky')
+        review_tracking.add_revision(
+            conn, 'cid', 6, 'v6@example.com', source='manual', is_rethreaded=True
+        )
+        # Replaying a weaker/older catalog entry must not clobber state.
+        review_tracking.record_known_revisions(
+            conn,
+            'cid',
+            [{'revision': 6, 'message-id': 'v6@example.com', 'source': 'heuristic'}],
+        )
+        revs = review_tracking.get_revisions(conn, 'cid')
+        conn.close()
+        r6 = next(r for r in revs if r['revision'] == 6)
+        assert r6['is_rethreaded']
+        assert r6['source'] == 'manual'
+
+
+class TestRescanReplaysCatalog:
+    """Step 2: rescan_branches rebuilds the catalog from a synced branch."""
+
+    def test_pending_rethreaded_revision_survives_sync(self, gitdir: str) -> None:
+        identifier = 'rt-port-rescan'
+        known = [
+            {'revision': 5, 'message-id': 'v5@example.com', 'source': 'heuristic'},
+            {
+                'revision': 6,
+                'message-id': 'v6cover@example.com',
+                'is-rethreaded': True,
+                'patches': [
+                    {'position': 1, 'message-id': 'p1@example.com', 'subject': 'a'},
+                    {'position': 2, 'message-id': 'p2@example.com', 'subject': 'b'},
+                    {'position': 3, 'message-id': 'p3@example.com', 'subject': 'c'},
+                ],
+            },
+        ]
+        _make_review_branch_with_catalog(gitdir, identifier, 'cid-A', 5, known)
+        # Fresh DB (as on a second machine) with no knowledge of v6.
+        review_tracking.init_db(identifier).close()
+        review_tracking.rescan_branches(identifier, gitdir, 'b4/review/cid-A')
+
+        conn = review_tracking.get_db(identifier)
+        revs = review_tracking.get_revisions(conn, 'cid-A')
+        r6 = next((r for r in revs if r['revision'] == 6), None)
+        patches = review_tracking.get_series_patches(conn, 'cid-A', 6)
+        conn.close()
+        assert {r['revision'] for r in revs} == {5, 6}
+        assert r6 is not None
+        assert r6['is_rethreaded']
+        assert [p['message_id'] for p in patches] == [
+            'p1@example.com',
+            'p2@example.com',
+            'p3@example.com',
+        ]
+
+
+class TestSyncRevisionsCatalogToBranch:
+    """Step 3: the writer mirrors the DB catalog onto the review branch."""
+
+    def test_sync_writes_catalog_to_branch(self, gitdir: str) -> None:
+        identifier = 'rt-port-sync'
+        # A review branch exists for v5 with no catalog yet.
+        _make_review_branch_with_catalog(gitdir, identifier, 'cid-A', 5, [])
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_revision(conn, 'cid-A', 5, 'v5@example.com')
+        review_tracking.add_revision(
+            conn, 'cid-A', 6, 'v6@example.com', is_rethreaded=True
+        )
+        _insert_patches(conn, 'cid-A', 6, ['p1@example.com', 'p2@example.com'])
+        conn.close()
+
+        wrote = review_tracking.sync_revisions_catalog_to_branch(
+            gitdir, identifier, 'cid-A'
+        )
+        assert wrote is True
+
+        _cover, tracking = b4.review.load_tracking(gitdir, 'b4/review/cid-A')
+        known = {e['revision']: e for e in tracking.get('known-revisions', [])}
+        assert set(known) == {5, 6}
+        assert known[6].get('is-rethreaded') is True
+        assert [p['message-id'] for p in known[6]['patches']] == [
+            'p1@example.com',
+            'p2@example.com',
+        ]
+
+        # Idempotent: a second sync with no DB change rewrites nothing.
+        assert (
+            review_tracking.sync_revisions_catalog_to_branch(
+                gitdir, identifier, 'cid-A'
+            )
+            is False
+        )
+
+    def test_sync_no_branch_is_noop(self, tmp_path: pytest.TempPathFactory) -> None:
+        review_tracking.init_db('rt-port-sync-nobranch').close()
+        assert (
+            review_tracking.sync_revisions_catalog_to_branch(
+                None, 'rt-port-sync-nobranch', 'cid-A'
+            )
+            is False
+        )

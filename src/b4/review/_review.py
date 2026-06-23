@@ -376,13 +376,26 @@ def create_review_branch(
 
     # Build tracking metadata
     tracked_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    change_id = lser.change_id or branch_name.removeprefix(REVIEW_BRANCH_PREFIX)
+
+    # Seed the portable revisions catalog from the DB so every known version
+    # (including a pending rethreaded upgrade and its stitched patch list)
+    # travels with the branch and can be rebuilt on another machine.
+    known_revisions: List[Dict[str, Any]] = []
+    if identifier:
+        try:
+            _conn = b4.review.tracking.get_db(identifier)
+            known_revisions = b4.review.tracking.build_known_revisions(_conn, change_id)
+            _conn.close()
+        except Exception as ex:
+            logger.debug('Could not seed known-revisions for %s: %s', change_id, ex)
+
     tracking: Dict[str, Any] = {
         'series': {
             'identifier': identifier,
             'status': status,
             'revision': lser.revision,
-            'change-id': lser.change_id
-            or branch_name.removeprefix(REVIEW_BRANCH_PREFIX),
+            'change-id': change_id,
             'link': linkurl,
             'subject': clmsg.full_subject if clmsg else '',
             'fromname': lser.fromname or '',
@@ -398,6 +411,7 @@ def create_review_branch(
         },
         'followups': cover_followups,
         'patches': patches_meta,
+        'known-revisions': known_revisions,
     }
 
     # Create the tracking commit at the tip of the branch
@@ -2116,6 +2130,33 @@ def update_series_tracking(
     for msg in msgs:
         lmbx.add_message(msg)
 
+    # A newly-discovered version may have been posted improperly threaded, so
+    # it shows up incomplete here.  If the author also posted a properly
+    # threaded resend, prefer it — this self-heals the common case on any
+    # machine without needing the rethread relationship synced from elsewhere.
+    if b4.can_network:
+        extra_threaded: List[Any] = []
+        for v in sorted(x for x in lmbx.series if x > current_rev):
+            if getattr(lmbx.series[v], 'complete', True):
+                continue
+            try:
+                found = b4.find_threaded_copy(msgs, revision=v)
+            except Exception as ex:
+                logger.debug('find_threaded_copy failed for v%d: %s', v, ex)
+                found = None
+            if found:
+                extra_threaded.extend(found[1])
+        if extra_threaded:
+            seen = {b4.LoreMessage.get_clean_msgid(m) for m in msgs}
+            for m in extra_threaded:
+                mid = b4.LoreMessage.get_clean_msgid(m)
+                if mid and mid not in seen:
+                    msgs.append(m)
+                    seen.add(mid)
+            lmbx = b4.LoreMailbox()
+            for msg in msgs:
+                lmbx.add_message(msg)
+
     # Re-check attestation on every update (key imports, policy changes, etc.)
     # Try the tracked revision first; fall back to the latest available.
     lser_att = lmbx.get_series(current_rev, sloppytrailers=False)
@@ -2238,6 +2279,17 @@ def update_series_tracking(
         for i, new_fu in enumerate(new_patch_followups):
             if i < len(patches):
                 patches[i]['followups'] = new_fu
+
+        # Refresh the portable revisions catalog so any newly discovered
+        # version (and rethread patch lists) travels with the branch on push.
+        try:
+            _conn = b4.review.tracking.get_db(identifier)
+            tracking['known-revisions'] = b4.review.tracking.build_known_revisions(
+                _conn, change_id
+            )
+            _conn.close()
+        except Exception as ex:
+            logger.debug('Could not refresh known-revisions: %s', ex)
 
         # Save using ref update (no checkout needed)
         if not save_tracking_ref(topdir, branch, cover_text, tracking):
