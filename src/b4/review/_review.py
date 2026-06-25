@@ -1007,6 +1007,102 @@ def _resolve_comment_positions(
             c['path'], c['line'] = best
 
 
+def _resolve_message_positions(
+    message_text: str,
+    comments: List[Dict[str, Any]],
+) -> None:
+    """Re-anchor ``:message`` comments by content against the real body.
+
+    Cover-letter and commit-message replies are quoted into the editor
+    one body line per ``> `` line, so the counted line number matches the
+    body exactly — *until* the editor re-wraps the quote.  Editors that
+    treat the ``.eml`` reply buffer as mail (vim's mail filetype sets
+    ``textwidth=72``) re-flow the ``> ``-quoted lines, and the line count
+    then no longer lines up with the original body.  A comment's counted
+    ``line`` drifts, cumulatively, the further down the message it sits.
+
+    Each ``:message`` comment carries the text of its anchor — the last
+    quoted line before it — as ``content``.  This walks the real body and
+    relocates the comment to the line where that anchor text actually
+    lives, mirroring :func:`_resolve_comment_positions` for diffs.
+
+    Matching is done on a whitespace-normalized character stream of the
+    body, with line breaks flattened to single spaces, so it does not
+    matter how the editor re-wrapped the quote: a re-wrapped fragment is
+    still a substring of the original flowing text.  The comment is
+    anchored to the body line containing the *end* of the match, so it
+    renders right after the quoted block — exactly where the maintainer
+    placed it.
+
+    Comments without a usable ``content`` anchor, or whose anchor is not
+    found in the body, keep their counted position (graceful fallback,
+    same contract as :func:`_resolve_comment_positions`).
+    """
+    to_resolve = [
+        c
+        for c in comments
+        if c.get('path') == COMMIT_MESSAGE_PATH
+        and c.get('line', 0) > 0
+        and c.get('content')
+    ]
+    if not to_resolve:
+        return
+
+    body_lines = _strip_subject(message_text)
+    if not body_lines:
+        return
+
+    # Build a whitespace-normalized character stream of the body and a
+    # parallel list mapping each stream position back to the 1-based body
+    # line it came from.  Collapsing whitespace (including the line breaks
+    # between body lines) makes matching immune to editor re-wrapping.
+    norm_chars: List[str] = []
+    char_line: List[int] = []
+    prev_space = False
+    for lineno, bline in enumerate(body_lines, start=1):
+        for ch in bline:
+            if ch.isspace():
+                if prev_space or not norm_chars:
+                    continue
+                norm_chars.append(' ')
+                char_line.append(lineno)
+                prev_space = True
+            else:
+                norm_chars.append(ch)
+                char_line.append(lineno)
+                prev_space = False
+        # The line break becomes a single separating space
+        if norm_chars and not prev_space:
+            norm_chars.append(' ')
+            char_line.append(lineno)
+            prev_space = True
+    norm_body = ''.join(norm_chars)
+
+    for c in to_resolve:
+        needle = ' '.join(str(c['content']).split())
+        if not needle:
+            continue
+        # Collect every occurrence; map the end of each match to its line.
+        positions: List[int] = []
+        start = 0
+        while True:
+            idx = norm_body.find(needle, start)
+            if idx < 0:
+                break
+            positions.append(char_line[idx + len(needle) - 1])
+            start = idx + 1
+        if not positions:
+            continue
+        if len(positions) == 1:
+            c['line'] = positions[0]
+        else:
+            # Ambiguous anchor (e.g. a short repeated phrase): pick the
+            # occurrence closest to the comment's counted position, the
+            # same tie-break :func:`_resolve_comment_positions` uses.
+            cur = c['line']
+            c['line'] = min(positions, key=lambda ln: abs(ln - cur))
+
+
 def reanchor_patch_comments(
     topdir: str,
     commit_shas: List[str],
@@ -1826,7 +1922,7 @@ def _render_quoted_diff_with_comments(
 
 
 def _extract_editor_comments(
-    edited_text: str, diff_text: str = ''
+    edited_text: str, diff_text: str = '', message_text: str = ''
 ) -> List[Dict[str, Any]]:
     """Extract comments from the quoted-diff editor format.
 
@@ -1836,7 +1932,10 @@ def _extract_editor_comments(
     ``> ``-quoted diff with unquoted comment format.
 
     When *diff_text* is provided, runs :func:`_resolve_comment_positions`
-    to correct positions when the user has trimmed quoted content.
+    to correct diff comment positions when the user has trimmed quoted
+    content.  When *message_text* is provided (the cover letter or commit
+    message), runs :func:`_resolve_message_positions` to re-anchor
+    ``:message`` comments after editor re-wrapping of the quoted body.
     """
     filtered: List[str] = []
     for line in edited_text.splitlines():
@@ -1850,8 +1949,11 @@ def _extract_editor_comments(
     comments = _extract_comments_from_quoted_reply(
         '\n'.join(filtered), capture_preamble=True
     )
-    if diff_text and comments:
-        _resolve_comment_positions(diff_text, comments)
+    if comments:
+        if diff_text:
+            _resolve_comment_positions(diff_text, comments)
+        if message_text:
+            _resolve_message_positions(message_text, comments)
     return comments
 
 

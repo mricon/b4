@@ -2833,6 +2833,146 @@ class TestResolveCommentPositions:
         assert comments[0]['path'] == 'b/f.c'
 
 
+class TestResolveMessagePositions:
+    """Tests for _resolve_message_positions()."""
+
+    # Original cover body, author-wrapped narrow.  When the maintainer
+    # replies, the editor (vim mail filetype, textwidth=72) re-flows the
+    # quoted lines to a different fill, so the raw line count drifts.
+    COVER = (
+        'Take: cherry-pick + merge\n'
+        '\n'
+        "The review TUI's Take dialog can apply a series three ways: merge (a\n"
+        'cover-letter merge commit of the whole series), linear (git am onto the\n'
+        'target branch), or cherry-pick (pick a subset and git am it).\n'
+        '\n'
+        'That path was already half-wired. When some patches were marked\n'
+        'skipped, the merge method fell through to the patch picker and merged\n'
+        'just the non-skipped patches. But with nothing pre-skipped there was\n'
+        'no way to ask for it: merge always took the whole series.\n'
+        '\n'
+        'This series turns it into a first-class choice.\n'
+    )
+
+    def test_reanchors_after_editor_rewrap(self) -> None:
+        """Re-flowed quote lines get mapped back to the real body line."""
+        # Counted positions (3, 7, 8) drift below the true body lines
+        # (3, 8, 10) because the editor re-wrapped the quoted paragraphs.
+        comments = [
+            # last quoted line of para 1 — already correct, must stay put
+            {
+                'path': review.COMMIT_MESSAGE_PATH,
+                'line': 3,
+                'text': 'No objections.',
+                'content': 'cherry-pick (pick a subset and git am it).',
+            },
+            # last quoted line of para 2 — re-wrapped tail fragment
+            {
+                'path': review.COMMIT_MESSAGE_PATH,
+                'line': 7,
+                'text': 'Skipping happens in the review app.',
+                'content': 'whole series.',
+            },
+            # last quoted line of para 3
+            {
+                'path': review.COMMIT_MESSAGE_PATH,
+                'line': 8,
+                'text': 'Familiar phrasing.',
+                'content': 'This series turns it into a first-class choice.',
+            },
+        ]
+        review._resolve_message_positions(self.COVER, comments)
+        assert [c['line'] for c in comments] == [3, 8, 10]
+
+    def test_keeps_position_without_content(self) -> None:
+        """A comment with no content anchor keeps its counted line."""
+        comments = [
+            {'path': review.COMMIT_MESSAGE_PATH, 'line': 5, 'text': 'x'},
+        ]
+        review._resolve_message_positions(self.COVER, comments)
+        assert comments[0]['line'] == 5
+
+    def test_keeps_position_when_anchor_not_found(self) -> None:
+        """An anchor absent from the body leaves the comment untouched."""
+        comments = [
+            {
+                'path': review.COMMIT_MESSAGE_PATH,
+                'line': 4,
+                'text': 'x',
+                'content': 'text that is nowhere in the cover letter',
+            },
+        ]
+        review._resolve_message_positions(self.COVER, comments)
+        assert comments[0]['line'] == 4
+
+    def test_ignores_diff_path_comments(self) -> None:
+        """Comments anchored to a file path are not message comments."""
+        comments = [
+            {
+                'path': 'b/f.c',
+                'line': 2,
+                'text': 'x',
+                'content': 'merge always took the whole series.',
+            },
+        ]
+        review._resolve_message_positions(self.COVER, comments)
+        # Untouched: still pointing at the diff position.
+        assert comments[0]['line'] == 2
+        assert comments[0]['path'] == 'b/f.c'
+
+    def test_ambiguous_anchor_picks_closest(self) -> None:
+        """A repeated anchor resolves to the line nearest the counted one."""
+        cover = (
+            'Subject\n'
+            '\n'
+            'apply the patch\n'
+            'some other text\n'
+            'more filler here\n'
+            'apply the patch\n'
+        )
+        comments = [
+            {
+                'path': review.COMMIT_MESSAGE_PATH,
+                'line': 4,
+                'text': 'x',
+                'content': 'apply the patch',
+            },
+        ]
+        review._resolve_message_positions(cover, comments)
+        # Occurrences at body lines 1 and 4; counted line 4 is closest.
+        assert comments[0]['line'] == 4
+
+    def test_extract_editor_comments_message_resolution(self) -> None:
+        """_extract_editor_comments re-anchors :message comments when given
+        the message body."""
+        edited = (
+            '# instructions\n'
+            "> The review TUI's Take dialog can apply a series three ways: merge"
+            ' (a cover-letter\n'
+            '> merge commit of the whole series), linear (git am onto the target'
+            ' branch), or\n'
+            '> cherry-pick (pick a subset and git am it).\n'
+            '\n'
+            "I don't have any specific objections.\n"
+            '\n'
+            '> That path was already half-wired. When some patches were marked'
+            ' skipped, the merge\n'
+            '> method fell through to the patch picker and merged just the'
+            ' non-skipped patches.\n'
+            '> But with nothing pre-skipped there was no way to ask for it: merge'
+            ' always took the\n'
+            '> whole series.\n'
+            '\n'
+            'Skipping happens in the review app.\n'
+        )
+        comments = review._extract_editor_comments(edited, message_text=self.COVER)
+        assert len(comments) == 2
+        assert all(c['path'] == review.COMMIT_MESSAGE_PATH for c in comments)
+        # Both anchored to the real last line of their quoted paragraph.
+        assert comments[0]['line'] == 3
+        assert comments[1]['line'] == 8
+
+
 class TestIntegrateSashikoReviews:
     """Tests for _integrate_sashiko_reviews()."""
 

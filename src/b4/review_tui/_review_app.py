@@ -1287,7 +1287,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         review = self._ensure_review(target)
         existing_reply = review.get('reply', '')
 
-        # Get the real diff for position resolution when parsing back
+        # Get the real diff and message body for position resolution when
+        # parsing the edited buffer back.  message_text re-anchors :message
+        # comments after the editor re-wraps the quoted body (see
+        # _resolve_message_positions); real_diff re-anchors diff comments.
         if self._selected_idx > 0:
             patch_idx = self._selected_idx - 1
             if patch_idx >= len(self._commit_shas):
@@ -1299,22 +1302,24 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             if ecode > 0:
                 self.notify('Could not get diff', severity='error')
                 return
+            ecode, commit_msg = b4.git_run_command(
+                self._topdir, ['show', '--format=%B', '--no-patch', sha]
+            )
+            if ecode > 0:
+                self.notify('Could not get commit message', severity='error')
+                return
+            message_text = commit_msg.strip()
             if existing_reply:
                 editor_text = existing_reply
             else:
                 all_reviews = target.get('reviews', {})
                 my_email = str(self._usercfg.get('email', ''))
-                ecode, commit_msg = b4.git_run_command(
-                    self._topdir, ['show', '--format=%B', '--no-patch', sha]
-                )
-                if ecode > 0:
-                    self.notify('Could not get commit message', severity='error')
-                    return
                 editor_text = b4.review._render_quoted_diff_with_comments(
-                    real_diff, all_reviews, my_email, commit_msg=commit_msg.strip()
+                    real_diff, all_reviews, my_email, commit_msg=message_text
                 )
         else:
             real_diff = ''
+            message_text = self._cover_text
             if existing_reply:
                 editor_text = existing_reply
             else:
@@ -1349,7 +1354,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         # _extract_editor_comments strips | lines (unadopted external
         # comments) before parsing, so only adopted ones are kept.
         new_comments = b4.review._extract_editor_comments(
-            reply_text, diff_text=real_diff
+            reply_text, diff_text=real_diff, message_text=message_text
         )
         if new_comments:
             review['comments'] = new_comments
