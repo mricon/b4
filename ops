@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1782414766,"nonce":"BZV7HXjQL7S6gvDYDxGTGXe3dn4=","message":"Fixed in master by commit 38f8a21 (\"Fix review TUI crash when fetching a series after a cancel\"), shipping in 0.16. Closing.","files":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":4,"timestamp":1782414766,"nonce":"gdeFhy6aO9lTQhR3BTvTObVgo/g=","status":2}]}
