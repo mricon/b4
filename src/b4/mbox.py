@@ -488,18 +488,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             sp.whitespace_split = True
             am_flags.extend(list(sp))
 
-        # A parked --resolve owns the shared resolution worktree; a fresh shazam
-        # would force-remove it (git_fetch_am_into_repo) and discard the user's
-        # in-progress conflict edits. Refuse until they --continue or --abort.
-        common_dir = b4.git_get_common_dir(topdir)
-        if common_dir and os.path.exists(
-            os.path.join(common_dir, 'b4-shazam-state.json')
-        ):
-            logger.critical('A shazam conflict resolution is already in progress.')
-            logger.critical('Finish it with:  b4 shazam --continue')
-            logger.critical('Or discard it:   b4 shazam --abort')
-            sys.exit(1)
-
         try:
             if cmdargs.mergebase:
                 logger.info(' Base: %s', base_commit)
@@ -525,23 +513,24 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 logger.critical('Use --resolve to enable conflict resolution')
                 sys.exit(1)
 
-            common_dir = b4.git_get_common_dir(topdir)
-            if not common_dir:
-                logger.critical('Unable to determine git common dir')
+            # --resolve into a dirty tree can't finish: the user would resolve the
+            # whole series in the subshell only for the final git-merge to refuse.
+            # Fail fast before any of that resolution work is done.
+            status_lines = b4.git_get_repo_status(topdir)
+            if status_lines:
+                logger.critical('You have uncommitted changes in your working tree.')
+                logger.critical('Please commit or stash them before resolving.')
                 b4.git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
                 sys.exit(1)
 
-            state = {
-                'worktree': gwt,
-                'base': base_commit,
-                'origin': linkurl,
-                'merge_template_values': tptvals,
-                'merge_template': merge_template,
-                'merge_flags': mergeflags,
-                'no_interactive': cmdargs.no_interactive,
-                'do_merge': cmdargs.merge,
-            }
-            _begin_shazam_resolve(cex, common_dir, state)
+            # --resolve: drop into a subshell in the worktree and finish the
+            # git-am inline. On success FETCH_HEAD holds the fully-applied series
+            # and the worktree is gone, so we fall through to the same merge the
+            # clean path runs. b4 stays the parent until then -- no exec/exit
+            # here -- so _run_shazam_merge can only execvp git-merge at the very
+            # end, once the worktree has already been dropped.
+            if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
+                sys.exit(1)
         except RuntimeError:
             sys.exit(1)
 
@@ -1002,8 +991,8 @@ def _run_shazam_merge(
 ) -> None:
     """Merge the series sitting in FETCH_HEAD into the current branch.
 
-    Shared by the clean ``b4 shazam`` path and ``b4 shazam --continue``: render
-    the cover letter as the merge message and either run ``git merge`` (handing
+    Shared by the clean ``b4 shazam`` path and the ``--resolve`` conflict path:
+    render the cover letter as the merge message and either run ``git merge`` (handing
     the terminal to git so it can open the editor and resolve any conflicts
     natively) or just point the user at FETCH_HEAD.
     """
@@ -1056,185 +1045,9 @@ def _run_shazam_merge(
     sys.exit(0)
 
 
-def _begin_shazam_resolve(
-    cex: b4.AmConflictError, common_dir: str, state: Dict[str, Any]
-) -> None:
-    """Hand a conflicted ``git am`` back to the user to finish in the worktree.
-
-    Rather than replaying the not-yet-applied patches with ``git apply``, keep
-    the in-progress ``git am`` (already preserved by git_fetch_am_into_repo) so
-    the user drives it to completion natively and nothing is silently dropped.
-    The fully-applied series is merged once, by ``b4 shazam --continue``.
-    """
-    # TODO: switch --resolve to a subshell model like the review TUI's
-    # _resolve_worktree_am_conflict -- suspend into a shell in the worktree
-    # (blocking subprocess.run; b4 stays the parent) and finish inline when it
-    # exits: fetch+merge on success, tear the worktree down on "git am --abort"
-    # or an unfinished am. That drops the persisted b4-shazam-state.json and the
-    # separate --continue/--abort commands, at the cost of the git-rebase-style
-    # two-phase UX. Two constraints make it robust:
-    #  - b4 must stay alive while the shell runs (no sys.exit/os.execvp until
-    #    cleanup has run); _run_shazam_merge may only execvp git-merge at the
-    #    very end, once the worktree is already dropped.
-    #  - guard the worktree with try/finally (or atexit + a SIGINT/SIGTERM
-    #    handler) so it is reclaimed even if b4 is killed while the shell is up --
-    #    a shell "trap ... EXIT" analogue. Keep it outcome-aware (finished vs
-    #    aborted), never an unconditional remove, or a half-done resolution dies.
-    gwt = cex.worktree_path
-    logger.critical('---')
-    logger.critical(cex.output)
-    logger.critical('---')
-    logger.critical('Patch series did not apply cleanly.')
-
-    # git_fetch_am_into_repo already rebuilt a full (non-sparse) worktree on the
-    # conflict, so every conflicted file is present for the user to edit.
-    state_file = os.path.join(common_dir, 'b4-shazam-state.json')
-    with open(state_file, 'w') as sfh:
-        json.dump(state, sfh, indent=2)
-
-    logger.critical('Resolve the conflict in the worktree and finish the git-am:')
-    logger.critical('  cd %s', gwt)
-    logger.critical('  git am --continue   (or "git am --skip" to drop a patch)')
-    logger.critical('Once git-am is done, come back and run:')
-    logger.critical('  b4 shazam --continue')
-    logger.critical('To give up and clean everything up:')
-    logger.critical('  b4 shazam --abort')
-    sys.exit(1)
-
-
-def _load_shazam_state(
-    require_state: bool = True,
-) -> Tuple[str, str, str, Optional[Dict[str, Any]]]:
-    topdir = b4.git_get_toplevel()
-    if not topdir:
-        logger.critical('Could not figure out where your git dir is.')
-        sys.exit(1)
-    common_dir = b4.git_get_common_dir(topdir)
-    if not common_dir:
-        logger.critical('Unable to determine git common dir.')
-        sys.exit(1)
-
-    state_file = os.path.join(common_dir, 'b4-shazam-state.json')
-    state = None
-    if os.path.exists(state_file):
-        try:
-            with open(state_file, 'r') as fh:
-                state = json.load(fh)
-        except (json.JSONDecodeError, OSError) as ex:
-            # A truncated/corrupt state file (e.g. an interrupted write) must not
-            # crash the recovery command: --abort still cleans it up (state=None
-            # falls back to the default worktree path), --continue can't proceed.
-            if require_state:
-                logger.critical('Shazam state file is corrupt: %s', ex)
-                logger.critical('Run: b4 shazam --abort')
-                sys.exit(1)
-    elif require_state:
-        logger.critical('No shazam state found. Nothing to continue.')
-        sys.exit(1)
-
-    return topdir, common_dir, state_file, state
-
-
-def shazam_continue(cmdargs: argparse.Namespace) -> None:
-    topdir, _common_dir, state_file, state = _load_shazam_state(require_state=True)
-    assert state is not None
-
-    gwt = state.get('worktree')
-    if not gwt or not os.path.isdir(gwt):
-        logger.critical('Resolution worktree is gone. Run: b4 shazam --abort')
-        sys.exit(1)
-
-    # The git-am has to be finished before we can fetch and merge the series.
-    if b4._worktree_rebase_apply_dir(gwt):
-        logger.critical('git-am is still in progress in the worktree:')
-        logger.critical('  %s', gwt)
-        logger.critical(
-            'Finish it there with "git am --continue" (or "git am --skip"),'
-        )
-        logger.critical('then run: b4 shazam --continue')
-        sys.exit(1)
-
-    # git-am is finished -- but did it apply anything? If the user ran
-    # "git am --abort" (or "--skip"ped every patch) the worktree is back at its
-    # base; fetching+merging that is a no-op ("Already up to date") that would
-    # silently drop the whole series. Refuse instead of reporting false success.
-    base = state.get('base')
-    if base:
-        _e1, head = b4.git_run_command(gwt, ['rev-parse', 'HEAD'], rundir=gwt)
-        _e2, base_sha = b4.git_run_command(
-            gwt, ['rev-parse', '%s^{commit}' % base], rundir=gwt
-        )
-        if head.strip() and head.strip() == base_sha.strip():
-            logger.critical('No patches are applied in the resolution worktree.')
-            logger.critical('(git-am was aborted, or every patch was skipped.)')
-            logger.critical('Nothing to merge -- run: b4 shazam --abort')
-            sys.exit(1)
-
-    # A dirty working tree can make the final merge refuse or fail. Only the
-    # merge cares (do_merge), so check up front and keep the saved state intact
-    # so --continue stays re-runnable once the tree is clean.
-    if state.get('do_merge', True) and b4.git_get_repo_status(topdir):
-        logger.critical('You have uncommitted changes in your working tree.')
-        logger.critical('Commit or stash them, then run: b4 shazam --continue')
-        sys.exit(1)
-
-    # git-am completed: fetch the fully-applied series into FETCH_HEAD, drop the
-    # worktree, and merge it exactly like a clean shazam would.
-    logger.info('Fetching resolved series into FETCH_HEAD')
-    if not b4._fetch_and_drop_am_worktree(topdir, gwt, origin=state.get('origin')):
-        sys.exit(1)
-
-    # Clean up state before merging -- an interactive merge hands off via execvp
-    # and never returns here.
-    if os.path.exists(state_file):
-        os.unlink(state_file)
-
-    _run_shazam_merge(
-        topdir,
-        merge_template=state.get('merge_template', DEFAULT_MERGE_TEMPLATE),
-        tptvals=state.get('merge_template_values', {}),
-        merge_flags=str(state.get('merge_flags', '')),
-        no_interactive=state.get('no_interactive', False),
-        do_merge=state.get('do_merge', True),
-    )
-
-
-def shazam_abort(cmdargs: argparse.Namespace) -> None:
-    topdir, common_dir, state_file, state = _load_shazam_state(require_state=False)
-    found = False
-
-    # Back out the FETCH_HEAD merge if --continue started one and it conflicted.
-    ecode, _out = b4.git_run_command(
-        topdir, ['merge', '--abort'], logstderr=True, rundir=topdir
-    )
-    if ecode == 0:
-        found = True
-
-    # Remove the resolution worktree, discarding its in-progress git-am.
-    gwt = state.get('worktree') if state else None
-    if not gwt:
-        gwt = os.path.join(common_dir, 'b4-shazam-worktree')
-    if os.path.exists(gwt):
-        b4.git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
-        found = True
-
-    if os.path.exists(state_file):
-        os.unlink(state_file)
-        found = True
-
-    if found:
-        logger.info('Shazam aborted and cleaned up.')
-    else:
-        logger.info('No shazam in progress.')
-
-
 def main(cmdargs: argparse.Namespace) -> None:
     # We force some settings
     if cmdargs.subcmd == 'shazam':
-        if getattr(cmdargs, 'shazam_continue', False):
-            return shazam_continue(cmdargs)
-        if getattr(cmdargs, 'shazam_abort', False):
-            return shazam_abort(cmdargs)
         cmdargs.checknewer = True
         cmdargs.threeway = False
         cmdargs.nopartialreroll = False

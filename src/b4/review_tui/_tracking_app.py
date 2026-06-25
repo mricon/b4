@@ -253,56 +253,6 @@ def _take_worktree(
             b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
 
 
-def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
-    """Handle an AmConflictError by dropping the user into a shell.
-
-    Suspends to an interactive shell for conflict resolution (the worktree is
-    already a full checkout -- git_fetch_am_into_repo rebuilds it on conflict),
-    then checks the outcome:
-
-    - If the user completed ``git am --continue``, fetches the result
-      into FETCH_HEAD and removes the worktree.  Returns True.
-    - If the user aborted (``git am --abort``) or exited without
-      finishing, cleans up the worktree and returns False.
-    """
-    logger.critical('---')
-    logger.critical(cex.output)
-    logger.critical('---')
-    logger.critical('Patch did not apply cleanly.')
-    # Save worktree HEAD before shell so we can detect abort
-    _ecode, wt_head_before = b4.git_run_command(
-        cex.worktree_path,
-        ['rev-parse', 'HEAD'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
-    wt_head_before = wt_head_before.strip()
-    logger.info('You can resolve the conflict in the worktree.')
-    logger.info(
-        'Use "git am --continue" after resolving, or "git am --abort" to give up.'
-    )
-    _suspend_to_shell(hint='b4 conflict', cwd=cex.worktree_path)
-    # Check if am is still in progress (user exited without finishing)
-    if b4._worktree_rebase_apply_dir(cex.worktree_path):
-        logger.warning('Conflict resolution incomplete, aborting')
-        b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
-        return False
-    # Check if am was aborted (HEAD unchanged from before shell)
-    _ecode, wt_head_after = b4.git_run_command(
-        cex.worktree_path,
-        ['rev-parse', 'HEAD'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
-    if wt_head_after.strip() == wt_head_before:
-        logger.warning('Conflict resolution aborted')
-        b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
-        return False
-    # am completed -- fetch result into FETCH_HEAD and drop the worktree
-    logger.info('Conflict resolved, fetching result...')
-    return b4._fetch_and_drop_am_worktree(topdir, cex.worktree_path)
-
-
 def _resolve_worktree_take_conflict(
     wt: '_TakeWorktree',
     op: str,
@@ -1884,10 +1834,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
             except b4.AmConflictError as cex:
-                if not _resolve_worktree_am_conflict(topdir, cex):
+                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
                     _wait_for_enter()
                     return
-                b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
                 # Create the review branch from resolved result
                 b4.review.create_review_branch(
                     topdir,
@@ -2802,7 +2751,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     resolve=True,
                 )
             except b4.AmConflictError as cex:
-                if not _resolve_worktree_am_conflict(merge_dir, cex):
+                if not b4.resolve_am_conflict_in_shell(
+                    merge_dir, cex, origin=t_series.get('link', '')
+                ):
                     _wait_for_enter()
                     return
             except RuntimeError:
@@ -4321,14 +4272,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 )
                 logger.info('Upgrade branch created: %s', upgrade_branch)
             except b4.AmConflictError as cex:
-                if not _resolve_worktree_am_conflict(topdir, cex):
+                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
                     # User aborted — clean up upgrade branch if it was
                     # partially created before the conflict
                     if b4.git_branch_exists(topdir, upgrade_branch):
                         b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
                     _wait_for_enter()
                     return
-                b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
                 b4.review.create_review_branch(
                     topdir,
                     upgrade_branch,
