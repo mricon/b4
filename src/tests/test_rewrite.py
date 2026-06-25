@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Tests for b4._rewrite.rewrite_commit_messages() and notes migration."""
+"""Tests for b4._rewrite.rewrite_commits() and notes migration."""
 
 from __future__ import annotations
 
@@ -24,8 +24,26 @@ def _commit(repo: pygit2.Repository, oid: Union[pygit2.Oid, str]) -> pygit2.Comm
 SIG = pygit2.Signature('Test Author', 'test@example.com', 1700000000, 0)
 BRANCH = 'refs/heads/master'
 
+# The identity the rewrite engine stamps as committer on every rewritten
+# commit. Same email as SIG (so seeded commits count as "ours" and clear the
+# third-party-committer guard) but a different name, which still proves the
+# committer line was re-stamped rather than copied.
+CURRENT_USER = {'name': 'Current User', 'email': 'test@example.com'}
+
 
 # -- Fixtures ----------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _current_user() -> Any:
+    """Pin the rewrite committer identity so tests are deterministic.
+
+    ``rewrite_commits`` re-stamps the committer from ``b4.get_user_config``;
+    without this the result would depend on the developer's / CI's git
+    config (or fail outright when none is set).
+    """
+    with patch('b4.get_user_config', return_value=dict(CURRENT_USER)):
+        yield
 
 
 @pytest.fixture()
@@ -82,7 +100,7 @@ def _patch_gitdir(repo: pygit2.Repository) -> AbstractContextManager[Any]:
     return patch('b4.git_get_gitdir', return_value=repo.path.rstrip('/'))
 
 
-# -- rewrite_commit_messages core tests --------------------------------------
+# -- rewrite_commits core tests --------------------------------------
 
 
 class TestRewriteCore:
@@ -90,7 +108,7 @@ class TestRewriteCore:
         oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
         tip_before = bare_repo.references[BRANCH].target
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook') as mock_hook:
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={},
                 start=str(oids[0]),
                 end='HEAD',
@@ -99,13 +117,13 @@ class TestRewriteCore:
         assert bare_repo.references[BRANCH].target == tip_before
         mock_hook.assert_not_called()
 
-    def test_rewrite_single_commit_preserves_tree_and_sigs(
+    def test_rewrite_preserves_author_restamps_committer(
         self, bare_repo: pygit2.Repository
     ) -> None:
         oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
         middle_hex = str(oids[1])
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={middle_hex: 'b (edited)\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -113,19 +131,70 @@ class TestRewriteCore:
         new_middle = _commit(bare_repo, result[middle_hex])
         old_middle = _commit(bare_repo, oids[1])
         assert new_middle.tree_id == old_middle.tree_id
+        # Authorship is credit -> preserved verbatim.
         assert new_middle.author.name == old_middle.author.name
         assert new_middle.author.email == old_middle.author.email
         assert new_middle.author.time == old_middle.author.time
-        assert new_middle.committer.name == old_middle.committer.name
-        assert new_middle.committer.email == old_middle.committer.email
-        assert new_middle.committer.time == old_middle.committer.time
+        # Committer is provenance -> re-stamped to the current user, never
+        # the original (preserving it would be a lie about who committed it).
+        assert new_middle.committer.name == CURRENT_USER['name']
+        assert new_middle.committer.email == CURRENT_USER['email']
+        # The committer line was re-stamped, not copied: the name changed...
+        assert new_middle.committer.name != old_middle.committer.name
+        # ...and the timestamp is fresh, not the original committer date.
+        assert new_middle.committer.time > old_middle.committer.time
         assert new_middle.message == 'b (edited)\n'
+
+    def test_rewrite_refuses_thirdparty_committer(
+        self, bare_repo: pygit2.Repository
+    ) -> None:
+        """A rewrite must refuse to re-create commits committed by someone
+        else -- doing so would falsely record us as their committer."""
+        oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
+        # Become a different identity than the one that committed the seeds.
+        notme = {'name': 'Someone Else', 'email': 'someone-else@example.com'}
+        with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
+            with patch('b4.get_user_config', return_value=notme):
+                with pytest.raises(b4._rewrite.ThirdpartyCommitterError) as ei:
+                    b4._rewrite.rewrite_commits(
+                        edit_map={str(oids[1]): 'b (edited)\n'},
+                        start=str(oids[0]),
+                        end='HEAD',
+                    )
+        # The error names every offending commit and its committer.
+        offenders = {sha for sha, _email in ei.value.commits}
+        assert str(oids[1]) in offenders
+        assert all(email == 'test@example.com' for _sha, email in ei.value.commits)
+        # Nothing was rewritten: the branch tip is unchanged.
+        assert bare_repo.references[BRANCH].target == oids[-1]
+
+    def test_rewrite_allows_thirdparty_committer_when_claimed(
+        self, bare_repo: pygit2.Repository
+    ) -> None:
+        """With allow_thirdparty_committer=True (the prep --claim path), the
+        same rewrite proceeds and re-stamps the committer to the claimer."""
+        oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
+        claimer = {'name': 'Claimer', 'email': 'claimer@example.com'}
+        with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
+            with patch('b4.get_user_config', return_value=claimer):
+                result = b4._rewrite.rewrite_commits(
+                    edit_map={},
+                    start=str(oids[0]),
+                    end='HEAD',
+                    force=True,
+                    allow_thirdparty_committer=True,
+                )
+        assert str(oids[1]) in result and str(oids[2]) in result
+        new_mid = _commit(bare_repo, result[str(oids[1])])
+        # Committer re-stamped to the claimer; authorship still the original.
+        assert new_mid.committer.email == 'claimer@example.com'
+        assert new_mid.author.email == 'test@example.com'
 
     def test_rewrite_descendants_reparented(self, bare_repo: pygit2.Repository) -> None:
         oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n', 'd\n'])
         second_hex = str(oids[1])
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={second_hex: 'b!\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -142,7 +211,7 @@ class TestRewriteCore:
         oids = _seed(bare_repo, ['a\n', 'b\n'])
         pre_tip = bare_repo.references[BRANCH].target
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            b4._rewrite.rewrite_commit_messages(
+            b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'b!\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -154,7 +223,7 @@ class TestRewriteCore:
         oids = _seed(bare_repo, ['a\n', 'b\n'])
         reflog_msg = 'b4: custom reflog message'
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            b4._rewrite.rewrite_commit_messages(
+            b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'b!\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -168,7 +237,7 @@ class TestRewriteCore:
     ) -> None:
         oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'b!\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -181,7 +250,7 @@ class TestRewriteCore:
     def test_trailing_newline_normalized(self, bare_repo: pygit2.Repository) -> None:
         oids = _seed(bare_repo, ['a\n', 'b\n'])
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'no trailing newline'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -199,7 +268,7 @@ class TestNotesMigration:
         oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
         bare_repo.create_note('the note body', SIG, SIG, str(oids[1]))
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'b (edited)\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -221,7 +290,7 @@ class TestNotesMigration:
             'refs/notes/review',
         )
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'b!\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -241,7 +310,7 @@ class TestNotesMigration:
             'refs/notes/review',
         )
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'b!\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -254,7 +323,7 @@ class TestNotesMigration:
         oids = _seed(bare_repo, ['a\n', 'b\n'])
         # No notes created.
         with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
-            result = b4._rewrite.rewrite_commit_messages(
+            result = b4._rewrite.rewrite_commits(
                 edit_map={str(oids[1]): 'b!\n'},
                 start=str(oids[0]),
                 end='HEAD',
@@ -282,7 +351,7 @@ class TestHookIntegration:
                 _patch_gitdir(bare_repo),
             ):
                 with pytest.raises(RuntimeError, match='Pre-rewrite hook'):
-                    b4._rewrite.rewrite_commit_messages(
+                    b4._rewrite.rewrite_commits(
                         edit_map={str(oids[1]): 'b!\n'},
                         start=str(oids[0]),
                         end='HEAD',
@@ -313,7 +382,7 @@ class TestHookIntegration:
                 patch('b4.ez.b4.git_get_toplevel', return_value='/tmp'),
                 _patch_gitdir(bare_repo),
             ):
-                b4._rewrite.rewrite_commit_messages(
+                b4._rewrite.rewrite_commits(
                     edit_map={str(oids[1]): 'b!\n'},
                     start=str(oids[0]),
                     end='HEAD',

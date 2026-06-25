@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import b4
 import patatt
-from b4._rewrite import rewrite_commit_messages
+from b4._rewrite import ThirdpartyCommitterError, rewrite_commits
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -787,7 +787,7 @@ def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> No
                 logger.critical('CRITICAL: Could not find the cover letter commit.')
                 raise RuntimeError('Error saving cover letter (commit not found)')
             logger.info('Updating cover letter commit.')
-            rewrite_commit_messages(
+            _rewrite_series_commits(
                 edit_map={commit: cover_message},
                 start=f'{commit}~1',
                 end='HEAD',
@@ -858,7 +858,7 @@ def is_prep_branch(mustbe: bool = False, usebranch: Optional[str] = None) -> boo
     if strategy in {'commit', 'tip-commit'}:
         if find_cover_commit(usebranch=mybranch) is None:
             if mustbe:
-                logger.critical(mustmsg)
+                _explain_not_prep_branch(mybranch, mustmsg)
                 sys.exit(1)
             return False
         return True
@@ -918,6 +918,245 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
     found = lines[0].split()[0]
     logger.debug('Cover commit found in %s', found)
     return found
+
+
+def find_cover_commits(usebranch: Optional[str] = None) -> List[Tuple[str, str]]:
+    """Return ``[(sha, committer_email), ...]`` for every cover commit found.
+
+    Unlike :func:`find_cover_commit`, this does *not* restrict the search to
+    the current user's committer email, so it can surface a cover-letter
+    commit that was committed under a different identity -- e.g. after the
+    user changed their ``user.email``. Newest first; empty when none exist.
+    """
+    if not usebranch:
+        usebranch = b4.git_get_current_branch()
+    if usebranch is None:
+        return []
+    gitargs = [
+        'log',
+        '--grep',
+        MAGIC_MARKER,
+        '-F',
+        '--pretty=format:%H %cE',
+        '--since=1.year',
+        '--no-mailmap',
+        usebranch,
+        '--',
+    ]
+    found: List[Tuple[str, str]] = []
+    for line in b4.git_get_command_lines(None, gitargs):
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2:
+            found.append((parts[0], parts[1]))
+    return found
+
+
+def _explain_not_prep_branch(mybranch: str, fallbackmsg: str) -> None:
+    """Log a helpful reason why *mybranch* failed the prep-branch check.
+
+    The restricted :func:`find_cover_commit` lookup just came up empty. If a
+    cover-letter commit nonetheless exists under a *different* committer, this
+    is almost always the "I changed my git email" gotcha rather than a
+    genuinely unmanaged branch -- so say so and point at the recovery paths.
+    Falls back to *fallbackmsg* when no cover commit exists at all.
+    """
+    covers = find_cover_commits(usebranch=mybranch)
+    if not covers:
+        logger.critical(fallbackmsg)
+        return
+    if len(covers) > 1:
+        logger.critical(
+            'CRITICAL: Found %d b4 cover-letter commits on this', len(covers)
+        )
+        logger.critical('          branch, committed under different identities:')
+        for sha, email in covers:
+            logger.critical('            %s  by %s', sha[:12], email)
+        logger.critical('          Something is wrong here that b4 should not try to')
+        logger.critical('          untangle automatically. Please sort it out by hand.')
+        return
+    sha, email = covers[0]
+    usercfg = b4.get_user_config()
+    myemail = usercfg.get('email')
+    logger.critical("CRITICAL: This branch's b4 cover-letter commit (%s)", sha[:12])
+    logger.critical('          was committed by %s, but your current git', email)
+    logger.critical('          identity is %s.', myemail)
+    logger.critical('          This usually happens after changing your user.email.')
+    logger.critical('          To continue, either:')
+    logger.critical('            - set user.email back to %s, or', email)
+    logger.critical('            - claim this branch under your current identity:')
+    logger.critical('                b4 prep --claim')
+
+
+def _rewrite_series_commits(
+    edit_map: Dict[str, str], start: str, end: str = 'HEAD', *, reflog_msg: str
+) -> Dict[str, str]:
+    """Wrap rewrite_commits(), turning a third-party-committer refusal into advice.
+
+    The engine refuses to rewrite commits committed by someone else (doing so
+    would falsely record us as their committer). For b4's own prep workflows
+    that almost always means the branch carries a stale identity, so steer the
+    user to ``prep --claim`` instead of dumping a traceback.
+    """
+    try:
+        return rewrite_commits(edit_map, start, end, reflog_msg=reflog_msg)
+    except ThirdpartyCommitterError as ex:
+        logger.critical(
+            'CRITICAL: refusing to rewrite commit(s) committed by someone else:'
+        )
+        for sha, email in ex.commits:
+            logger.critical('            %s  by %s', sha[:12], email)
+        logger.critical(
+            '          Rewriting them would falsely record you as their committer.'
+        )
+        logger.critical(
+            '          If this is your own branch under a stale git identity, run:'
+        )
+        logger.critical('                b4 prep --claim')
+        sys.exit(1)
+
+
+def _claim_range_start(mybranch: str, cover_sha: str) -> str:
+    """Return the rewrite-range start (exclusive) for claiming *mybranch*.
+
+    For the ``commit`` strategy the cover letter is the first commit of the
+    series, so its parent is the fork-point. For ``tip-commit`` the cover is
+    at the tip, so we resolve the series base from the cover commit's own
+    tracking metadata (we can't use find_cover_commit() here -- its committer
+    restriction is exactly what is broken).
+    """
+    strategy = get_cover_strategy(usebranch=mybranch)
+    if strategy == 'commit':
+        return f'{cover_sha}~1'
+    # tip-commit: read base-branch out of the known cover commit and fork off it
+    ecode, out = b4.git_run_command(None, ['show', '-s', '--format=%B', cover_sha])
+    if ecode > 0:
+        logger.critical('CRITICAL: unable to read cover letter at %s', cover_sha)
+        sys.exit(1)
+    _cover, magic_json = out.split(MAGIC_MARKER)
+    _junk, mdata = magic_json.split('{', maxsplit=1)
+    tracking = json.loads('{' + mdata)
+    basebranch = tracking['series']['base-branch']
+    try:
+        return get_base_forkpoint(basebranch, mybranch)
+    except RuntimeError:
+        sys.exit(1)
+
+
+def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> None:
+    """Re-stamp a prep branch's commits under the current identity.
+
+    Rewrites every commit in the series with the current user as committer
+    (authorship preserved), which is honest -- you are re-creating these
+    objects now. Two motivations, depending on cover strategy:
+
+    - commit / tip-commit: recovers the "not a prep-managed branch" gotcha,
+      where the cover commit was committed under a now-stale identity (e.g.
+      after a user.email change) so b4 no longer recognizes the branch.
+    - branch-description: detection is config-based and unaffected, but the
+      series patches may still be committed by someone else (an enrolled or
+      pulled series); claiming makes them yours so the trailer/cover-update
+      rewrite is permitted instead of refused.
+    """
+    mybranch = b4.git_get_current_branch()
+    if branch and branch != mybranch:
+        if not b4.git_branch_exists(None, branch):
+            logger.critical('CRITICAL: branch %s does not exist', branch)
+            sys.exit(1)
+        # The dirty-tree guard in cmd_prep already ran, so this is safe.
+        logger.info('Switching to %s', branch)
+        ecode, out = b4.git_run_command(None, ['checkout', branch])
+        if ecode > 0:
+            logger.critical('CRITICAL: could not check out %s:\n%s', branch, out)
+            sys.exit(1)
+        mybranch = branch
+    if not mybranch:
+        logger.critical('CRITICAL: not currently on a branch')
+        sys.exit(1)
+
+    usercfg = b4.get_user_config()
+    myemail = usercfg.get('email')
+    if not isinstance(myemail, str):
+        logger.critical(
+            'CRITICAL: could not determine your git user.email to claim as.'
+        )
+        sys.exit(1)
+
+    covers = find_cover_commits(usebranch=mybranch)
+    if len(covers) > 1:
+        logger.critical(
+            'CRITICAL: Found %d b4 cover-letter commits on %s,', len(covers), mybranch
+        )
+        logger.critical('          committed under different identities:')
+        for sha, email in covers:
+            logger.critical('            %s  by %s', sha[:12], email)
+        logger.critical('          b4 will not try to untangle this automatically.')
+        sys.exit(1)
+
+    if covers:
+        # commit / tip-commit strategy: derive the range from the cover commit.
+        cover_sha, _cover_email = covers[0]
+        start = _claim_range_start(mybranch, cover_sha)
+    else:
+        # branch-description keeps no cover commit; the branch is still
+        # prep-managed (via config), so claim the whole series fork-point..HEAD.
+        if not is_prep_branch(usebranch=mybranch):
+            logger.critical(
+                'CRITICAL: %s is not a prep-managed branch; nothing to claim.',
+                mybranch,
+            )
+            sys.exit(1)
+        series_start = get_series_start(usebranch=mybranch)
+        if not series_start:
+            logger.critical(
+                'CRITICAL: could not determine the series start for %s; '
+                'is its tracking intact?',
+                mybranch,
+            )
+            sys.exit(1)
+        start = series_start
+
+    lines = b4.git_get_command_lines(
+        None, ['log', '--format=%h %cE %s', f'{start}..HEAD']
+    )
+    if not lines:
+        logger.critical('CRITICAL: no commits found between %s and %s', start, mybranch)
+        sys.exit(1)
+    committers: Set[str] = set()
+    for ln in lines:
+        parts = ln.split(maxsplit=2)
+        if len(parts) > 1:
+            committers.add(parts[1])
+    if committers == {myemail}:
+        logger.info(
+            'All commits on %s are already committed by you (%s); nothing to claim.',
+            mybranch,
+            myemail,
+        )
+        return
+
+    logger.info('Will re-commit the following %d commit(s) as %s:', len(lines), myemail)
+    for line in lines:
+        logger.info('  %s', line)
+    logger.info('Authorship is preserved; only the committer identity changes.')
+    if not no_interactive:
+        prompt = f'Claim these commits on {mybranch} under {myemail}? [y/N] '
+        try:
+            resp = input(prompt)
+        except EOFError:
+            resp = ''
+        if resp.strip().lower() not in {'y', 'yes'}:
+            logger.info('Not claiming; exiting.')
+            sys.exit(130)
+
+    rewrite_commits(
+        edit_map={},
+        start=start,
+        end='HEAD',
+        reflog_msg='b4: claim prep branch',
+        force=True,
+        allow_thirdparty_committer=True,
+    )
+    logger.info('Claimed %s. The series is now committed by %s.', mybranch, myemail)
 
 
 def edit_cover() -> None:
@@ -1809,7 +2048,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         edit_map[commit] = clmsg.message
     logger.info('---')
     logger.info('Updating trailers on %d commit(s).', len(edit_map))
-    rewrite_commit_messages(
+    _rewrite_series_commits(
         edit_map=edit_map,
         start=start,
         end='HEAD',
@@ -3787,6 +4026,11 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         logger.critical('CRITICAL: Repository contains uncommitted changes.')
         logger.critical('          Stash or commit them first.')
         sys.exit(1)
+
+    if cmdargs.claim is not None:
+        return claim_prep_branch(
+            cmdargs.claim or None, no_interactive=cmdargs.no_interactive
+        )
 
     if cmdargs.reroll:
         msgid = cmdargs.reroll

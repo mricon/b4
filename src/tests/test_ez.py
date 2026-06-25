@@ -1,3 +1,4 @@
+import logging
 import os
 from email.message import EmailMessage
 from typing import Any, Dict, Generator, List, Optional, Set, Tuple, cast
@@ -6,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 import b4
+import b4._rewrite
 import b4.command
 import b4.ez
 import b4.mbox
@@ -126,6 +128,18 @@ def test_trailers(
         gitargs = ['pull', '--rebase', bfile]
         out, logstr = b4.git_run_command(None, gitargs)
         assert out == 0
+        # The bundled series was committed by its original author. b4 now
+        # refuses to rewrite commits committed by someone else (that would
+        # misrepresent who committed them). Re-stamp the pulled commits under
+        # the current identity -- exactly what happens when you build the
+        # series yourself -- so the trailer updater may touch them. Authorship
+        # is preserved, so the comparison below (which keys on %ae) is
+        # unaffected.
+        _ec, _mb = b4.git_run_command(None, ['merge-base', 'HEAD', 'master'])
+        _ec2, _out2 = b4.git_run_command(
+            None, ['rebase', '--no-ff', _mb.strip()], logstderr=True
+        )
+        assert _ec2 == 0, _out2
     else:
         assert config.get('shazam-am-flags') == '--signoff'
         if rep:
@@ -185,7 +199,7 @@ class TestRunRewriteHook:
     """Tests for run_rewrite_hook().
 
     Tests that exercise hook integration with the full history-rewrite path
-    (rewrite_commit_messages) live in test_rewrite.py since they need a
+    (rewrite_commits) live in test_rewrite.py since they need a
     real pygit2 repository fixture.
     """
 
@@ -243,7 +257,7 @@ class TestRunRewriteHook:
 # End-to-end tests: git-notes survive history rewrites
 # ---------------------------------------------------------------------------
 #
-# The unit tests in test_rewrite.py exercise rewrite_commit_messages() against
+# The unit tests in test_rewrite.py exercise rewrite_commits() against
 # synthetic bare repos. These tests drive notes through the *real* b4 entry
 # points (shazam → trailers --update, and store_cover) and assert that notes
 # attached pre-rewrite are reachable at the new OIDs post-rewrite.
@@ -392,7 +406,7 @@ def test_store_cover_preserves_series_notes(prepdir_commit: str) -> None:
 
     # Drive the actual cover-letter edit path: load the current cover +
     # tracking, mutate the cover text, store it back. store_cover() routes
-    # through rewrite_commit_messages() under the `commit` strategy.
+    # through rewrite_commits() under the `commit` strategy.
     cover, tracking = b4.ez.load_cover(strip_comments=False)
     new_cover = cover + '\n\nEdited by test_store_cover_preserves_series_notes.\n'
     b4.ez.store_cover(new_cover, tracking)
@@ -1080,3 +1094,162 @@ def test_trailers_fuzzy_composes_with_interactive(
     # ...and, having been accepted there, it landed on the commit.
     _ec, logstr = b4.git_run_command(None, ['log', '--format=%b', 'HEAD~4..'])
     assert 'Follow Upper' in logstr
+
+
+# -- prep --claim / committer-email gotcha (bug f97673d) ---------------------
+
+
+def _stack_empty_patches(subjects: List[str]) -> None:
+    """Add empty commits on top of HEAD under the ambient git identity."""
+    for subj in subjects:
+        ecode, out = b4.git_run_command(
+            None, ['commit', '--allow-empty', '-m', subj], logstderr=True
+        )
+        assert ecode == 0, f'git commit failed: {out}'
+
+
+def _idents(revrange: str) -> List[Tuple[str, str]]:
+    """Return [(author_email, committer_email), ...] over revrange."""
+    lines = b4.git_get_command_lines(None, ['log', '--format=%ae %ce', revrange])
+    out: List[Tuple[str, str]] = []
+    for line in lines:
+        a, c = line.split()
+        out.append((a, c))
+    return out
+
+
+def test_is_prep_branch_diagnoses_email_change(
+    prepdir_commit: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """After a user.email change, the missing-cover error should explain the
+    real cause (committer mismatch) and point at `b4 prep --claim`."""
+    _stack_empty_patches(['series patch one'])
+    orig_email = b4.USER_CONFIG['email']
+    assert isinstance(orig_email, str)
+    # Sanity: recognized as a prep branch under the original identity.
+    assert b4.ez.is_prep_branch() is True
+
+    newcfg = {'name': 'Changed User', 'email': 'changed@example.com'}
+    with patch('b4.get_user_config', return_value=newcfg):
+        # No longer recognized once the committer no longer matches.
+        assert b4.ez.is_prep_branch() is False
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit):
+                b4.ez.is_prep_branch(mustbe=True)
+    assert orig_email in caplog.text
+    assert 'changed@example.com' in caplog.text
+    assert 'b4 prep --claim' in caplog.text
+
+
+def test_claim_restamps_committer_preserves_author(prepdir_commit: str) -> None:
+    """`prep --claim` re-stamps the series committer to the current identity
+    while preserving authorship, and the branch is recognized again."""
+    _stack_empty_patches(['series patch one', 'series patch two'])
+    orig_email = b4.USER_CONFIG['email']
+    assert isinstance(orig_email, str)
+
+    cover = b4.ez.find_cover_commit()
+    assert cover is not None
+    revrange = f'{cover}~1..HEAD'
+    pre = _idents(revrange)
+    pre_shas = b4.git_get_command_lines(None, ['rev-list', revrange])
+    # Every commit currently authored AND committed by the original identity.
+    assert pre and all(a == orig_email and c == orig_email for a, c in pre)
+
+    newcfg = {'name': 'Changed User', 'email': 'changed@example.com'}
+    with patch('b4.get_user_config', return_value=newcfg):
+        # Branch is unrecognized under the new identity...
+        assert b4.ez.is_prep_branch() is False
+        parser = b4.command.setup_parser()
+        cmdargs = parser.parse_args(
+            ['--no-stdin', '--no-interactive', '--offline-mode', 'prep', '--claim']
+        )
+        b4.ez.cmd_prep(cmdargs)
+        # ...and recognized again after claiming it.
+        assert b4.ez.is_prep_branch() is True
+
+    post = _idents(revrange)
+    post_shas = b4.git_get_command_lines(None, ['rev-list', revrange])
+    assert len(post) == len(pre)
+    # Authorship is credit -> preserved. Committer is provenance -> re-stamped.
+    assert all(a == orig_email for a, _c in post)
+    assert all(c == 'changed@example.com' for _a, c in post)
+    # The rewrite changed every commit's OID.
+    assert post_shas != pre_shas
+    # A backup of the pre-rewrite tip was recorded.
+    cb = b4.git_get_current_branch()
+    assert cb is not None
+    ecode, _out = b4.git_run_command(None, ['rev-parse', f'refs/original/{cb}'])
+    assert ecode == 0
+
+
+def test_claim_refuses_multiple_cover_commits(
+    prepdir_commit: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two cover-letter commits on one branch is a wreck b4 won't untangle:
+    both the diagnostic and `prep --claim` must hard-refuse."""
+    # Plant a second magic-marker commit alongside the real cover.
+    second = f'bogus second cover\n\n{b4.ez.MAGIC_MARKER}\n{{}}\n'
+    ecode, out = b4.git_run_command(
+        None, ['commit', '--allow-empty', '-m', second], logstderr=True
+    )
+    assert ecode == 0, f'git commit failed: {out}'
+    assert len(b4.ez.find_cover_commits()) == 2
+
+    newcfg = {'name': 'Changed User', 'email': 'changed@example.com'}
+    with patch('b4.get_user_config', return_value=newcfg):
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            parser = b4.command.setup_parser()
+            cmdargs = parser.parse_args(
+                ['--no-stdin', '--no-interactive', '--offline-mode', 'prep', '--claim']
+            )
+            with pytest.raises(SystemExit):
+                b4.ez.cmd_prep(cmdargs)
+    assert 'different identities' in caplog.text
+
+
+def test_rewrite_series_commits_explains_thirdparty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The cover/trailers rewrite wrapper turns the engine's third-party
+    refusal into a clear message pointing at `b4 prep --claim`."""
+    err = b4._rewrite.ThirdpartyCommitterError([('deadbeefcafe', 'other@example.com')])
+    with patch('b4.ez.rewrite_commits', side_effect=err):
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit):
+                b4.ez._rewrite_series_commits(
+                    {'deadbeefcafe': 'msg'}, 'start', reflog_msg='b4: test'
+                )
+    assert 'other@example.com' in caplog.text
+    assert 'b4 prep --claim' in caplog.text
+
+
+def test_claim_branch_description_restamps_series(prepdir: str) -> None:
+    """branch-description keeps no cover commit, but --claim still re-stamps
+    the series patches (fork-point..HEAD) under the current identity."""
+    _stack_empty_patches(['bd patch one', 'bd patch two'])
+    orig_email = b4.USER_CONFIG['email']
+    assert isinstance(orig_email, str)
+    start = b4.ez.get_series_start()
+    assert start is not None
+    revrange = f'{start}..HEAD'
+    pre = _idents(revrange)
+    assert pre and all(c == orig_email for _a, c in pre)
+
+    newcfg = {'name': 'Changed User', 'email': 'changed@example.com'}
+    with patch('b4.get_user_config', return_value=newcfg):
+        # Config-based detection still recognizes the branch under any identity...
+        assert b4.ez.is_prep_branch() is True
+        # ...and there is no cover *commit* to find.
+        assert b4.ez.find_cover_commits() == []
+        parser = b4.command.setup_parser()
+        cmdargs = parser.parse_args(
+            ['--no-stdin', '--no-interactive', '--offline-mode', 'prep', '--claim']
+        )
+        b4.ez.cmd_prep(cmdargs)
+
+    post = _idents(revrange)
+    assert len(post) == len(pre)
+    # Authorship preserved; committer re-stamped to the current identity.
+    assert all(a == orig_email for a, _c in post)
+    assert all(c == 'changed@example.com' for _a, c in post)
