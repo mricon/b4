@@ -5699,6 +5699,58 @@ def _rewrite_fetch_head_origin(topdir: str, old_origin: str, new_origin: str) ->
             fhh.write(new_contents)
 
 
+def _worktree_rebase_apply_dir(worktree: str) -> Optional[str]:
+    """Return *worktree*'s in-progress ``git am`` state dir, or ``None``.
+
+    ``rebase-apply`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return None
+    rebase_apply = os.path.join(gitdir.strip(), 'rebase-apply')
+    return rebase_apply if os.path.isdir(rebase_apply) else None
+
+
+def _worktree_merge_in_progress(worktree: str) -> bool:
+    """Return whether *worktree* has a conflicted ``git merge`` in progress.
+
+    ``MERGE_HEAD`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return False
+    return os.path.exists(os.path.join(gitdir.strip(), 'MERGE_HEAD'))
+
+
+def _fetch_and_drop_am_worktree(
+    dest: str, gwt: str, origin: Optional[str] = None
+) -> bool:
+    """Fetch *gwt*'s HEAD into *dest*'s FETCH_HEAD, then remove the worktree.
+
+    Shared by the conflict-resolution paths in ``b4 shazam`` and the review
+    TUI: once the user has finished the ``git am`` in the throwaway worktree
+    *gwt*, pull the result into *dest*'s FETCH_HEAD so it can be merged, then
+    tear the worktree down. The fetch is anchored to *dest* via ``rundir`` so
+    FETCH_HEAD lands in the worktree the caller merges in (see
+    git_fetch_am_into_repo). When *origin* is given, rewrite FETCH_HEAD so the
+    merge message names the series origin instead of the worktree path. Returns
+    False (after still removing the worktree) if the fetch failed.
+    """
+    ecode, out = git_run_command(dest, ['fetch', gwt], logstderr=True, rundir=dest)
+    if ecode == 0 and origin:
+        _rewrite_fetch_head_origin(dest, gwt, origin)
+    git_run_command(dest, ['worktree', 'remove', '--force', gwt])
+    if ecode > 0:
+        logger.critical('Unable to fetch from the worktree')
+        logger.critical(out.strip())
+        return False
+    return True
+
+
 def git_fetch_am_into_repo(
     gitdir: Optional[str],
     ambytes: bytes,

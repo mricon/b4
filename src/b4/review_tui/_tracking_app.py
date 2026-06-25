@@ -253,33 +253,6 @@ def _take_worktree(
             b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
 
 
-def _worktree_rebase_apply_dir(worktree: str) -> Optional[str]:
-    """Return *worktree*'s in-progress ``git am`` state dir, or ``None``.
-
-    ``rebase-apply`` lives under the per-worktree git dir, not the shared
-    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
-    throwaway worktrees too.
-    """
-    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
-    if ecode != 0:
-        return None
-    rebase_apply = os.path.join(gitdir.strip(), 'rebase-apply')
-    return rebase_apply if os.path.isdir(rebase_apply) else None
-
-
-def _worktree_merge_in_progress(worktree: str) -> bool:
-    """Return whether *worktree* has a conflicted ``git merge`` in progress.
-
-    ``MERGE_HEAD`` lives under the per-worktree git dir, not the shared
-    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
-    throwaway worktrees too.
-    """
-    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
-    if ecode != 0:
-        return False
-    return os.path.exists(os.path.join(gitdir.strip(), 'MERGE_HEAD'))
-
-
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
     """Handle an AmConflictError by dropping the user into a shell.
 
@@ -316,7 +289,7 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
     )
     _suspend_to_shell(hint='b4 conflict', cwd=cex.worktree_path)
     # Check if am is still in progress (user exited without finishing)
-    if _worktree_rebase_apply_dir(cex.worktree_path):
+    if b4._worktree_rebase_apply_dir(cex.worktree_path):
         logger.warning('Conflict resolution incomplete, aborting')
         b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
         return False
@@ -331,16 +304,9 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
         logger.warning('Conflict resolution aborted')
         b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
         return False
-    # am completed -- fetch result into FETCH_HEAD
+    # am completed -- fetch result into FETCH_HEAD and drop the worktree
     logger.info('Conflict resolved, fetching result...')
-    ecode, _out = b4.git_run_command(
-        topdir, ['fetch', cex.worktree_path], logstderr=True
-    )
-    b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
-    if ecode > 0:
-        logger.critical('Unable to fetch from resolved worktree')
-        return False
-    return True
+    return b4._fetch_and_drop_am_worktree(topdir, cex.worktree_path)
 
 
 def _resolve_worktree_take_conflict(
@@ -2909,7 +2875,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 # (mirrors the git-am path above and "b4 shazam"). Anything
                 # else (e.g. a dirty worktree) leaves no merge to resolve, so
                 # abort and bail as before.
-                if not _worktree_merge_in_progress(merge_dir):
+                if not b4._worktree_merge_in_progress(merge_dir):
                     logger.critical(
                         'Merge failed%s', f': {out.strip()}' if out.strip() else ''
                     )
@@ -2933,7 +2899,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 )
                 pre_merge_head = pre_merge_head.strip() if ecode == 0 else ''
                 if not _resolve_worktree_take_conflict(
-                    wt, 'merge', pre_merge_head, _worktree_merge_in_progress
+                    wt, 'merge', pre_merge_head, b4._worktree_merge_in_progress
                 ):
                     _wait_for_enter()
                     return
@@ -3202,7 +3168,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 logger.critical('git-am failed:')
                 logger.critical(out.strip())
                 if not _resolve_worktree_take_conflict(
-                    wt, 'am', pre_am_head, _worktree_rebase_apply_dir
+                    wt, 'am', pre_am_head, b4._worktree_rebase_apply_dir
                 ):
                     _wait_for_enter()
                     return

@@ -24,6 +24,7 @@ from textual.widgets import Input, ListView, Static
 import b4
 import b4.review
 import b4.review.tracking as tracking
+from b4 import _worktree_merge_in_progress
 from b4.review_tui._modals import (
     ActionItem,
     ActionScreen,
@@ -43,7 +44,6 @@ from b4.review_tui._tracking_app import (
     _take_worktree,
     _TakeWorktree,
     _worktree_for_branch,
-    _worktree_merge_in_progress,
 )
 
 # ---------------------------------------------------------------------------
