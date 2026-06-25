@@ -244,6 +244,36 @@ def _take_worktree(
             yield None
             return
         work_dir = temp_wt
+    else:
+        # The target is checked out in a real worktree. If it is mid-op or its
+        # index is conflicted -- an earlier take the user walked away from, a
+        # crash, or their own unfinished am/merge -- a take's git-am/git-merge
+        # would fail cryptically on top of it (and "git merge --abort" cannot
+        # clear a bare unmerged index). Refuse up front with the fix rather than
+        # poison the take; the state may be the user's own, so we never discard
+        # it for them.
+        stuck = b4._worktree_inprogress_op(work_dir)
+        if stuck is None and b4._worktree_has_unmerged(work_dir):
+            logger.critical(
+                'Target worktree %s has a conflicted index (unmerged files).',
+                work_dir,
+            )
+            logger.critical(
+                'Resolve them, or run "git reset --merge" there, then retry.'
+            )
+            _wait_for_enter()
+            yield None
+            return
+        if stuck is not None:
+            logger.critical(
+                'Target worktree %s has an unfinished git-%s.', work_dir, stuck
+            )
+            logger.critical(
+                'Finish it, or run "git %s --abort" there, then retry.', stuck
+            )
+            _wait_for_enter()
+            yield None
+            return
 
     handle = _TakeWorktree(work_dir, is_temp=temp_wt is not None)
     try:
@@ -280,9 +310,19 @@ def _resolve_worktree_take_conflict(
     if in_progress(wt.path):
         logger.warning('Conflict resolution incomplete')
         if wt.is_temp:
+            # A throwaway worktree is isolated, so an unfinished op poisons
+            # nothing -- keep it for the user to finish or abort by hand (the
+            # next take force-removes it regardless).
             wt.keep()
             logger.warning('Finish or abort it in: %s', wt.path)
-        logger.warning('Run "git %s --abort" to clean up', op)
+            logger.warning('Run "git %s --abort" to clean up', op)
+        else:
+            # A real checkout must never be left mid-op: the unmerged index
+            # breaks the user's own git work and makes the next take fail
+            # cryptically on top of it (and "git merge --abort" cannot clear a
+            # bare unmerged index). Abort what we started.
+            if b4._abort_worktree_op(wt.path):
+                logger.warning('Aborted incomplete %s in %s', op, wt.path)
         return False
     ecode, current_head = b4.git_run_command(
         wt.path, ['rev-parse', 'HEAD'], logstderr=True

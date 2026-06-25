@@ -5727,6 +5727,72 @@ def _worktree_merge_in_progress(worktree: str) -> bool:
     return os.path.exists(os.path.join(gitdir.strip(), 'MERGE_HEAD'))
 
 
+def _worktree_inprogress_op(worktree: str) -> Optional[str]:
+    """Return the git operation mid-flight in *worktree*, or ``None``.
+
+    One of ``'am'``, ``'rebase'``, ``'merge'``, ``'cherry-pick'`` or
+    ``'revert'`` -- mirroring how git-status decides which "in the middle of"
+    banner to show. State lives under the per-worktree git dir (resolved via
+    ``--absolute-git-dir`` so linked and throwaway worktrees work too):
+    ``rebase-apply/`` is shared by ``git am`` and ``git rebase --apply``, told
+    apart by the ``applying`` marker; ``rebase-merge/`` is the rebase merge
+    backend; the rest are recorded as pseudo-ref files.
+    """
+    ecode, gitdir = git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return None
+    gd = gitdir.strip()
+    if os.path.isdir(os.path.join(gd, 'rebase-apply')):
+        applying = os.path.exists(os.path.join(gd, 'rebase-apply', 'applying'))
+        return 'am' if applying else 'rebase'
+    if os.path.isdir(os.path.join(gd, 'rebase-merge')):
+        return 'rebase'
+    for marker, op in (
+        ('MERGE_HEAD', 'merge'),
+        ('CHERRY_PICK_HEAD', 'cherry-pick'),
+        ('REVERT_HEAD', 'revert'),
+    ):
+        if os.path.exists(os.path.join(gd, marker)):
+            return op
+    return None
+
+
+def _worktree_has_unmerged(worktree: str) -> bool:
+    """Return whether *worktree*'s index carries unmerged (conflict) entries.
+
+    This is the state git leaves when it refuses to *start* an operation on top
+    of a conflicted index (e.g. ``git merge`` reporting "you have unmerged
+    files"): there is no in-progress op to ``--abort``, only stage>0 entries.
+    """
+    ecode, out = git_run_command(worktree, ['ls-files', '--unmerged'])
+    return ecode == 0 and bool(out.strip())
+
+
+def _abort_worktree_op(worktree: str) -> Optional[str]:
+    """Abort whatever git operation is mid-flight in *worktree*, restoring it.
+
+    Detects the in-progress op (see :func:`_worktree_inprogress_op`) and runs
+    the matching ``--abort``. When nothing is in progress but the index still
+    carries unmerged entries -- which no ``--abort`` can clear -- falls back to
+    ``git reset --merge`` to drop them. Returns what it did: the op aborted
+    ('am'/'rebase'/'merge'/'cherry-pick'/'revert'), ``'reset'`` for the
+    unmerged-index fallback, or ``None`` if there was nothing to clean up.
+
+    WARNING: this discards the in-progress operation and any half-done conflict
+    resolution in it. Only call it on a worktree whose state is b4's to throw
+    away -- its own incomplete take, or a throwaway worktree -- never on
+    pre-existing state a user may own.
+    """
+    op = _worktree_inprogress_op(worktree)
+    if op is not None:
+        git_run_command(worktree, [op, '--abort'], logstderr=True, rundir=worktree)
+        return op
+    if _worktree_has_unmerged(worktree):
+        git_run_command(worktree, ['reset', '--merge'], logstderr=True, rundir=worktree)
+        return 'reset'
+    return None
+
+
 def _fetch_and_drop_am_worktree(
     dest: str, gwt: str, origin: Optional[str] = None
 ) -> bool:
