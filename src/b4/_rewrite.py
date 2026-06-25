@@ -88,6 +88,7 @@ def rewrite_commits(
     *,
     reflog_msg: str = 'b4: rewrite commits',
     gitdir: Optional[str] = None,
+    force: bool = False,
 ) -> Dict[str, str]:
     """Rewrite commits in ``(start, end]`` using pygit2.
 
@@ -101,6 +102,11 @@ def rewrite_commits(
     ancestor inside the range was rewritten, because their parent OIDs
     change.
 
+    With *force* the whole range is re-emitted even when *edit_map* is empty,
+    so the committer re-stamp alone takes effect (used by ``prep --claim`` to
+    take ownership of commits left under a stale identity). Without it, an
+    empty *edit_map* is a no-op.
+
     Any git-notes attached (under any ``refs/notes/*`` ref) to commits in
     the rewrite range are migrated to the new commit OIDs with note bytes
     preserved verbatim.
@@ -108,13 +114,13 @@ def rewrite_commits(
     Creates ``refs/original/<branch>`` as a backup before updating the live
     branch ref. Appends a reflog entry on the branch ref using *reflog_msg*.
     Calls ``b4.ez.run_rewrite_hook('pre')`` before any mutation and
-    ``run_rewrite_hook('post')`` after. Both hooks are SKIPPED when
-    *edit_map* is empty (no-op fast path).
+    ``run_rewrite_hook('post')`` after. Both hooks are SKIPPED on the
+    no-op fast path.
 
     Returns ``{old_hex: new_hex}`` for every rewritten commit, or an empty
     dict when there is nothing to do.
     """
-    if not edit_map:
+    if not edit_map and not force:
         logger.debug('rewrite_commits: empty edit_map, skipping')
         return {}
 

@@ -947,6 +947,16 @@ def setup_parser() -> argparse.ArgumentParser:
         nargs='*',
         help='Archive and remove prep-tracked branches and all associated sent/ tags',
     )
+    spp_g.add_argument(
+        '--claim',
+        metavar='BRANCH',
+        nargs='?',
+        const='',
+        default=None,
+        help='Re-stamp a prep branch under your current git identity '
+        '(recovers a branch whose cover commit was made under a different '
+        'user.email); defaults to the current branch',
+    )
 
     ag_prepn = sp_prep.add_argument_group(
         'Create new branch', 'Create a new branch for working on patch series'
