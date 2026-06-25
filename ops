@@ -1,1 +1,1 @@
-{"author":{"id":"288ef971db3596ca9c33cede1d7002e9d75d97333143ee753c86dbc42f7a8709"},"ops":[{"type":5,"timestamp":1780003382,"nonce":"qnTkGxk7Q9Smnmtpdk1R63bcH4c=","added":["textual"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1782414767,"nonce":"EnBDzhD0L14oq6f3vS9p7IKDdsM=","message":"Fixed in master by commit daacaa5 (\"Make TUI packages importable without the textual extra\"), shipping in 0.16. Closing.","files":null}]}
