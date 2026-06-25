@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import b4
 import patatt
-from b4._rewrite import rewrite_commit_messages
+from b4._rewrite import rewrite_commits
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -787,7 +787,7 @@ def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> No
                 logger.critical('CRITICAL: Could not find the cover letter commit.')
                 raise RuntimeError('Error saving cover letter (commit not found)')
             logger.info('Updating cover letter commit.')
-            rewrite_commit_messages(
+            rewrite_commits(
                 edit_map={commit: cover_message},
                 start=f'{commit}~1',
                 end='HEAD',
@@ -1809,7 +1809,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         edit_map[commit] = clmsg.message
     logger.info('---')
     logger.info('Updating trailers on %d commit(s).', len(edit_map))
-    rewrite_commit_messages(
+    rewrite_commits(
         edit_map=edit_map,
         start=start,
         end='HEAD',

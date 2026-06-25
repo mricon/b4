@@ -185,7 +185,7 @@ class TestRunRewriteHook:
     """Tests for run_rewrite_hook().
 
     Tests that exercise hook integration with the full history-rewrite path
-    (rewrite_commit_messages) live in test_rewrite.py since they need a
+    (rewrite_commits) live in test_rewrite.py since they need a
     real pygit2 repository fixture.
     """
 
@@ -243,7 +243,7 @@ class TestRunRewriteHook:
 # End-to-end tests: git-notes survive history rewrites
 # ---------------------------------------------------------------------------
 #
-# The unit tests in test_rewrite.py exercise rewrite_commit_messages() against
+# The unit tests in test_rewrite.py exercise rewrite_commits() against
 # synthetic bare repos. These tests drive notes through the *real* b4 entry
 # points (shazam → trailers --update, and store_cover) and assert that notes
 # attached pre-rewrite are reachable at the new OIDs post-rewrite.
@@ -392,7 +392,7 @@ def test_store_cover_preserves_series_notes(prepdir_commit: str) -> None:
 
     # Drive the actual cover-letter edit path: load the current cover +
     # tracking, mutate the cover text, store it back. store_cover() routes
-    # through rewrite_commit_messages() under the `commit` strategy.
+    # through rewrite_commits() under the `commit` strategy.
     cover, tracking = b4.ez.load_cover(strip_comments=False)
     new_cover = cover + '\n\nEdited by test_store_cover_preserves_series_notes.\n'
     b4.ez.store_cover(new_cover, tracking)
