@@ -1551,15 +1551,15 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         target = self._get_current_review_target()
         if not target:
             return
-        current = b4.review._get_patch_state(target, self._usercfg)
-        new_state = '' if current == 'done' else 'done'
-        b4.review._set_patch_state(target, self._usercfg, new_state)
+        new_state = b4.review._toggle_patch_done(target, self._usercfg)
         self._save_tracking()
         self._refresh_patch_item(self._selected_idx)
         total = len(self._commit_shas)
         label = 'cover' if self._selected_idx == 0 else f'{self._selected_idx}/{total}'
         self.notify(
-            f'{label} marked as done' if new_state else f'{label} unmarked done'
+            f'{label} marked as done'
+            if new_state == 'done'
+            else f'{label} unmarked done'
         )
 
     def action_patch_skip(self) -> None:

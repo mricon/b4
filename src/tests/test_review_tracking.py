@@ -2238,6 +2238,54 @@ class TestPatchState:
         # Entry must still be present so the skip is persisted
         assert self._USERCFG['email'] in target.get('reviews', {})
 
+    def test_toggle_plain_done_round_trip(self) -> None:
+        """Toggle on a bare patch: '' → done → '' (no lingering state)."""
+        target: dict[str, Any] = {}
+        assert b4.review._toggle_patch_done(target, self._USERCFG) == 'done'
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+        assert b4.review._toggle_patch_done(target, self._USERCFG) == ''
+        assert b4.review._get_patch_state(target, self._USERCFG) == ''
+        assert not target.get('reviews', {})
+
+    def test_toggle_unmarks_trailer_backed_done(self) -> None:
+        """Unmarking a Reviewed-by patch stores explicit 'draft', not '' (which
+        would re-derive 'done' from the trailer)."""
+        target = self._make_target(
+            {'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>']}
+        )
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+        # Pressing 'd' must actually take it out of the done state.
+        assert b4.review._toggle_patch_done(target, self._USERCFG) == 'draft'
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+        # Toggling again returns it to done so it can be sent.
+        assert b4.review._toggle_patch_done(target, self._USERCFG) == 'done'
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+
+    def test_toggle_unmarks_thread_approval_done(self) -> None:
+        """Unmarking a patch that derives 'done' from a prior list approval also
+        falls back to explicit 'draft'."""
+        target = {
+            'followups': [
+                {
+                    'fromemail': self._EMAIL,
+                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
+                }
+            ]
+        }
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+        assert b4.review._toggle_patch_done(target, self._USERCFG) == 'draft'
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
+    def test_explicit_draft_beats_trailer(self) -> None:
+        """A stored patch-state=draft overrides a Reviewed-by trailer."""
+        target = self._make_target(
+            {
+                'patch-state': 'draft',
+                'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
+            }
+        )
+        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+
 
 class TestBuildReplyFromComments:
     """Tests for _build_reply_from_comments() context-limiting logic."""

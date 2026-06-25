@@ -29,6 +29,7 @@ from b4.review._review import (
     _set_patch_state,
     _should_promote_waiting,
     _strip_subject,
+    _toggle_patch_done,
     _trim_quoted_reply,
     retrieve_series_messages,
 )
@@ -45,6 +46,7 @@ __all__ = [
     '_cleanup_review',
     '_get_patch_state',
     '_set_patch_state',
+    '_toggle_patch_done',
     '_resolve_comment_positions',
     '_resolve_message_positions',
     '_render_quoted_diff_with_comments',

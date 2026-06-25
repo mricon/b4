@@ -848,7 +848,10 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
     """
     review = _get_my_review(target, usercfg)
     explicit = str(review.get('patch-state', ''))
-    if explicit in ('skip', 'done'):
+    if explicit in ('skip', 'done', 'draft'):
+        # An explicit 'draft' lets the maintainer keep editing a patch that
+        # would otherwise derive 'done' from an approval trailer they have
+        # already staged (see _toggle_patch_done).
         return explicit
     trailer_keys = {
         t.split(':', 1)[0].strip().lower() for t in review.get('trailers', [])
@@ -880,7 +883,7 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
 def _set_patch_state(
     target: Dict[str, Any], usercfg: b4.ConfigDictT, state: str
 ) -> None:
-    """Store an explicit patch state ('done', 'skip', 'unchanged', or '' to clear)."""
+    """Store an explicit patch state ('done', 'skip', 'draft', 'unchanged', or '' to clear)."""
     if state:
         review = _ensure_my_review(target, usercfg)
         review['patch-state'] = state
@@ -888,6 +891,28 @@ def _set_patch_state(
         review = _get_my_review(target, usercfg)
         review.pop('patch-state', None)
         _cleanup_review(target, usercfg)
+
+
+def _toggle_patch_done(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
+    """Toggle the 'done' state for the current user, returning the new effective state.
+
+    Pressing 'done' on a patch that is already done clears the explicit state.
+    When clearing would still leave the patch deriving 'done' -- because an
+    approval trailer (Reviewed-by/Acked-by) is staged in the maintainer's own
+    review, or one is carried in a follow-up they already sent to the list --
+    an explicit 'draft' state is stored instead.  This lets the maintainer
+    unmark a patch they are still writing notes on without the staged trailer
+    forcing it back to 'done' (and the 'draft' state guards against an
+    accidental send).
+    """
+    current = _get_patch_state(target, usercfg)
+    if current == 'done':
+        _set_patch_state(target, usercfg, '')
+        if _get_patch_state(target, usercfg) == 'done':
+            _set_patch_state(target, usercfg, 'draft')
+    else:
+        _set_patch_state(target, usercfg, 'done')
+    return _get_patch_state(target, usercfg)
 
 
 def _apply_findings_locations(
