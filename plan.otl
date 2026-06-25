@@ -71,6 +71,14 @@ v0.16
 	[X] refs/original/<branch> backup + branch reflog entry preserved
 	[X] Pre/post rewrite hooks moved into the new routine
 	[X] src/tests/test_rewrite.py — 13 unit tests (core + notes + hook integration)
+[X] Honest committer in history rewriting + `b4 prep --claim`
+	: git-bug f97673d (Miguel Ojeda); follows the linux-next incident where
+	  "b4 trailers" re-created another maintainer's commits keeping their committer
+	: Rewrites now always re-stamp the current user as committer (authorship kept)
+	  and refuse to rewrite a third party's commits
+	: `b4 prep --claim [branch]` takes ownership by re-stamping the series; also
+	  recovers the "not a prep-managed branch" gotcha after a user.email change
+	  (all cover strategies)
 [X] `b4 review` improvements
 	[X] Partial series acceptance without terminal state transition
 		: Mark Brown, https://msgid.link/afk5QvNAQDxFCbvT@sirena.co.uk
