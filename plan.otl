@@ -23,34 +23,30 @@ v0.17
 		: Reuse LabelScreen/AddLabelScreen label UI from the bugs TUI (extract to _common.py)
 [_] Auto-consume a public-inbox archive ("parse and consume")
 	: Speculative — likely slips past 0.17; recorded now so the 0.16
-	  manual-revision-link groundwork stays compatible with it
+	: manual-revision-link groundwork stays compatible with it
 	: Feed a public-inbox archive directly into b4 instead of the maintainer
-	  manually tracking each series and running "u"; a consumer process
-	  recognizes new incoming series and new revisions of tracked ones
+	: manually tracking each series and running "u"; a consumer process
+	: recognizes new incoming series and new revisions of tracked ones
 	: Consuming counterpart to the Maintainer feed item above (produce vs consume)
 	: Builds on the per-revision fingerprint + source column from the 0.16
-	  "Manual revision linking" item under `b4 review` improvements
+	: "Manual revision linking" item under `b4 review` improvements
 	: Will likely ride on korgalore (~/work/git/korg/korgalore) as the feed:
-	  korgalore already walks public-inbox v2 epochs, tracks a delivery
-	  cursor, and recovers from rebases, then hands off messages via its
-	  pipe target (PipeTarget pipes raw RFC822 to a command's stdin)
+	: korgalore already walks public-inbox v2 epochs, tracks a delivery
+	: cursor, and recovers from rebases, then hands off messages via its
+	: pipe target (PipeTarget pipes raw RFC822 to a command's stdin)
 	: So b4 provides a stdin-consuming command (e.g. `b4 review consume`)
-	  configured as korgalore's pipe target — b4 never walks v2 git repos
-	  or manages an archive cursor itself; korgalore owns all of that
+	: configured as korgalore's pipe target — b4 never walks v2 git repos
+	: or manages an archive cursor itself; korgalore owns all of that
 	: b4 already reads piped messages on stdin (get_msgid_from_stdin in the
-	  track path), so the consume command is a natural extension
+	: track path), so the consume command is a natural extension
 	[_] Idempotent ingestion keyed on the per-revision fingerprint index
 		: Replaying or overlapping archive windows must not double-track
 	[_] Auto-grouping: decide new-series vs new-revision-of-tracked per posting
 		: Same change-id/subject/patch-id heuristics as discovery, minus the human fallback
 		: The manual "link a revision" action becomes the human-in-the-loop
-		  correction when the consumer mis-groups — reuse absorb_series_as_revision()
-	[_] Versioned fingerprint scheme (e.g. "v1:sha256...") so patch-id
-	    normalization changes across b4 releases don't make old postings
-	    look new to a long-lived consumer
-	[_] `b4 review consume` — read one RFC822 message from stdin and ingest
-	    it (the korgalore pipe-target command); cursor/incremental fetch is
-	    korgalore's job, not b4's
+		: correction when the consumer mis-groups — reuse absorb_series_as_revision()
+	[_] Versioned fingerprint scheme (e.g. "v1:sha256...") so patch-id normalization changes across b4 releases don't make old postings look new to a long-lived consumer
+	[_] `b4 review consume` — read one RFC822 message from stdin and ingest it (the korgalore pipe-target command); cursor/incremental fetch is korgalore's job, not b4's
 
 v0.16
 -----
@@ -73,12 +69,12 @@ v0.16
 	[X] src/tests/test_rewrite.py — 13 unit tests (core + notes + hook integration)
 [X] Honest committer in history rewriting + `b4 prep --claim`
 	: git-bug f97673d (Miguel Ojeda); follows the linux-next incident where
-	  "b4 trailers" re-created another maintainer's commits keeping their committer
+	: "b4 trailers" re-created another maintainer's commits keeping their committer
 	: Rewrites now always re-stamp the current user as committer (authorship kept)
-	  and refuse to rewrite a third party's commits
+	: and refuse to rewrite a third party's commits
 	: `b4 prep --claim [branch]` takes ownership by re-stamping the series; also
-	  recovers the "not a prep-managed branch" gotcha after a user.email change
-	  (all cover strategies)
+	: recovers the "not a prep-managed branch" gotcha after a user.email change
+	: (all cover strategies)
 [X] `b4 review` improvements
 	[X] Partial series acceptance without terminal state transition
 		: Mark Brown, https://msgid.link/afk5QvNAQDxFCbvT@sirena.co.uk
@@ -91,20 +87,19 @@ v0.16
 		: Mark Brown, https://msgid.link/88549a4a-cc82-4200-b73b-e335cbb2b024@sirena.org.uk
 		: git-bug 47d5a4c; related: 2235355 (older versions), 08646dc (upgrade UX)
 		: Landed on master — schema v9 groundwork through the TUI action, built
-		  test-first; ci.sh and ci-matrix (py3.11-3.14) green
+		: test-first; ci.sh and ci-matrix (py3.11-3.14) green
 		: get_extra_series links revisions via change-id or subject heuristics; with
-		  no change-id and a reworded subject the two postings get different
-		  synthesized change-ids and never connect — give the human an explicit way
-		  to link a revision from the TUI
+		: no change-id and a reworded subject the two postings get different
+		: synthesized change-ids and never connect — give the human an explicit way
+		: to link a revision from the TUI
 		: Linking only injects the missing revision row; the existing upgrade
-		  action/modal takes over from there — the two stay separate
-		[X] "Link a revision" action on a tracked series (newer OR older, so it also
-		    covers 2235355)
+		: action/modal takes over from there — the two stay separate
+		[X] "Link a revision" action on a tracked series (newer OR older, so it also covers 2235355)
 			: Input modal accepts msgid / lore URL / change-id (reuse b4.get_msgid)
 			: Fetch via the cancellable lore node, then a confirm screen showing the
-			  found series (subject, vN, patch count, sender) before committing
+			: found series (subject, vN, patch count, sender) before committing
 			: Record with add_revision() + add_series_patches() under the existing
-			  change-id; series then lights the has-upgrade badge as usual
+			: change-id; series then lights the has-upgrade badge as usual
 		[X] Per-revision fingerprint column on the revisions table, indexed
 			: ALTER TABLE ADD COLUMN + CREATE INDEX (same migration trick as thread_blob)
 			: Foundation for duplicate detection here and idempotent ingest in 0.17
@@ -113,44 +108,41 @@ v0.16
 			: Display "vN — manually linked"; a manual link wins over later heuristics
 		[X] Duplicate absorption via fingerprint
 			: If the fetched posting is already tracked as its own stray series
-			  (WHERE change_id = ? OR fingerprint = ?), absorb its data and delete it
-			  instead of inserting a duplicate
+			: (WHERE change_id = ? OR fingerprint = ?), absorb its data and delete it
+			: instead of inserting a duplicate
 			: Factor as a library fn absorb_series_as_revision() in tracking.py so the
-			  0.17 consumer can reuse it when it mis-groups
+			: 0.17 consumer can reuse it when it mis-groups
 			: Fingerprint folds in sender+revision+patch-ids, so it nails "same exact
-			  posting"; fall back to patch-id overlap (LoreSeries.__eq__) as a soft
-			  "probably the same" hint on the confirm screen
-		[X] Revision-number handling: trust the posting's declared vN; on collision
-		    with an existing row, surface it on the confirm screen and allow override
-		[X] Auto-promote a waiting series to reviewing on manual link (stronger
-		    signal than heuristic discovery)
-		[X] Unlink primitive — unlink_revision() removes a manual row, refuses a
-		    heuristic one
+			: posting"; fall back to patch-id overlap (LoreSeries.__eq__) as a soft
+			: "probably the same" hint on the confirm screen
+		[X] Revision-number handling: trust the posting's declared vN; on collision with an existing row, surface it on the confirm screen and allow override
+		[X] Auto-promote a waiting series to reviewing on manual link (stronger signal than heuristic discovery)
+		[X] Unlink primitive — unlink_revision() removes a manual row, refuses a heuristic one
 			: TUI unlink action deferred to a follow-up — needs a revision picker
-			  in the detail panel; pairs naturally with the 08646dc upgrade-UX work
+			: in the detail panel; pairs naturally with the 08646dc upgrade-UX work
 	[X] Auto-detect existing trailers to mark patches as "done"
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 		: A Reviewed-by/Acked-by I sent to the list before tracking the series
-		  auto-marks the patch ✓ done, detected from my own thread followups
+		: auto-marks the patch ✓ done, detected from my own thread followups
 		: Low-priority derived state (like 'unchanged') — re-derived each load,
-		  never written to review trailers so it can't be re-sent; any manual
-		  skip/comment/reply or my own Nacked-by supersedes it
+		: never written to review trailers so it can't be re-sent; any manual
+		: skip/comment/reply or my own Nacked-by supersedes it
 	[X] Cancel background processes (e.g. base check) on exit
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 		: worker_cancelled() helper lets looping workers bail on exit/Esc;
-		  LoreNodeShutdownMixin cancels the lore node on app unmount to
-		  unblock single-shot network fetches
+		: LoreNodeShutdownMixin cancels the lore node on app unmount to
+		: unblock single-shot network fetches
 	[X] Keep trailers in-place when added via reply editor
 		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 		: Resolved by the WYSIWYG reply redesign — the trailer menu now edits
-		  the buffer in place via _insert_trailer_in_reply/_remove_trailer_from_reply
+		: the buffer in place via _insert_trailer_in_reply/_remove_trailer_from_reply
 	[X] Show context in checkpatch output for commit message complaints
 		: Chris Samuel, https://msgid.link/2c1ab8a2-8a86-48a7-9a53-ef3a00ab4bd2@csamuel.org
 		: _builtin_checkpatch attaches the offending commit-message line as a
-		  'srcline' field (using the --terse "-:N:" line number to look it back
-		  up in the bytes we fed checkpatch); gated to lines before the diff so
-		  code findings stay uncluttered. The check-details modal renders it as
-		  a dim indented sub-line. Review-TUI only; prep --check left as-is.
+		: 'srcline' field (using the --terse "-:N:" line number to look it back
+		: up in the bytes we fed checkpatch); gated to lines before the diff so
+		: code findings stay uncluttered. The check-details modal renders it as
+		: a dim indented sub-line. Review-TUI only; prep --check left as-is.
 	[X] Visual cue for patches unchanged from prior revision
 		: 'unchanged' patch-state (≡, U+2261), rendered dim in the patch list
 		: Low-priority fallback — superseded the moment a trailer/reply/comment lands
@@ -158,31 +150,31 @@ v0.16
 	[X] Keep coverless review trailers on patches
 		: Tamir Duberstein, https://patch.msgid.link/20260605-review-double-review-email-v1-1-d52c2ca14024@kernel.org
 		: Only promote per-patch trailers to the series record when a real cover exists,
-		  so a single-patch review stays in one reply instead of splitting in two
+		: so a single-patch review stays in one reply instead of splitting in two
 	[X] Avoid downloading logs and fix CI-integration URLs (sashiko/patchwork)
 		: sashiko switched to the patchset endpoint; patchwork/sashiko use the target URL
 [X] WYSIWYG reply model + review editor plugins
 	: Supersedes the abandoned #!notrim / #!verbatim editor-directive approach —
-	  the buffer is now sent verbatim, so there is nothing left to opt out of
+	: the buffer is now sent verbatim, so there is nothing left to opt out of
 	[X] Edited reply buffer is the single source of truth
 		: review['reply'] is sent as-is; structured comments/trailers are a derived
-		  display index, never fed back to rebuild the outgoing email
+		: display index, never fed back to rebuild the outgoing email
 		: _trim_quoted_reply() strips b4 scaffolding + trailing quoted diff only
 		: _parse_reply_trailers() uses followup=True so prose with a colon isn't
-		  misread as a trailer; fixes relocated/double-added/hidden trailers
+		: misread as a trailer; fixes relocated/double-added/hidden trailers
 	[X] vim b4review ftplugin
 		: Syntax highlighting for quoted diff, comments and external "| " blocks
 		: Interactive hunk trimming — <LocalLeader>h / <LocalLeader>H (:B4DelHunk /
-		  :B4DelHunksBefore), leaving a "[ ... NN lines skipped ... ]" breadcrumb
+		: :B4DelHunksBefore), leaving a "[ ... NN lines skipped ... ]" breadcrumb
 		: "Adopt comment" — <LocalLeader>a (:B4Adopt) strips the | prefix and
-		  attribution so an external reviewer's comment becomes your own
+		: attribution so an external reviewer's comment becomes your own
 		: Fix filetype detection (override built-in *.eml=mail); <nowait> mappings;
-		  formatoptions-=a -=w so edits never reflow quoted diff; undo_ftplugin teardown
+		: formatoptions-=a -=w so edits never reflow quoted diff; undo_ftplugin teardown
 	[X] emacs b4review mode
 		: Ports hunk trimming (C-c C-k / C-c C-b) and adopt-comment from the vim plugin
 	[X] Optional auto skip-marker on plain line-wise deletes
 		: TextChanged (vim) / before+after-change (emacs) hooks mark deleted quoted
-		  lines; opt-in via g:b4review_auto_marker / b4-review-auto-marker (default off)
+		: lines; opt-in via g:b4review_auto_marker / b4-review-auto-marker (default off)
 		: Master switch g:b4review_skipped_marker / b4-review-skipped-marker (default on)
 		: "Delete hunks above" stops at the file header; adjacent markers coalesce
 	[X] src/tests coverage for the vim and emacs editor plugins
@@ -192,7 +184,7 @@ v0.16
 	[X] Wire liblore 0.8 cancel()/reset_cancel() into every lore-fetch site
 		: UpdateAllScreen Esc/q cancels the worker, preserving series already processed
 		: reset_cancel() guard on _FetchViewerScreen, TargetBranchScreen, followup
-		  worker and lite thread view so a stale cancel can't block a later fetch
+		: worker and lite thread view so a stale cancel can't block a later fetch
 	[X] cmd_track SIGINT handler calls cancel() then exits 130; removed in finally
 	[X] update_series_tracking re-raises OperationCancelledError before its broad except
 	[X] lore.requesttimeout git config (connect,read pair; default 5.0,30.0)
@@ -202,9 +194,9 @@ v0.16
 	: Detect commits where the body is empty but below-the-cut content exists
 	: This likely means the developer accidentally put the description in the wrong place
 	: patch_body_is_misplaced() in ez.py; new 'misplaced-body' pre-flight check
-	  (warn-only, disable via disable-misplaced-body) + per-commit warning in
-	  prep --check; only fires when body empty AND non-trailer prose sits below
-	  the cut, so trivial one-liners stay quiet; 4 tests, ci.sh + ci-matrix green
+	: (warn-only, disable via disable-misplaced-body) + per-commit warning in
+	: prep --check; only fires when body empty AND non-trailer prose sits below
+	: the cut, so trivial one-liners stay quiet; 4 tests, ci.sh + ci-matrix green
 [X] Multiple lore endpoints with failover
 	: "Maintainer container" project — local 3-month lore mirror for decentralized workflows
 	: Query local endpoint first, fail over to upstream lore if unavailable or stale
@@ -253,42 +245,39 @@ v0.16
 		: Auto-reload on external cache changes
 		: 53 unit tests for helpers, 866 total tests passing
 [X] Development tooling and stricter local checks
-	[X] ci.sh runs the full local check suite; ci-matrix.sh runs tests across
-	    the supported Python range (3.11–3.13)
+	[X] ci.sh runs the full local check suite; ci-matrix.sh runs tests across the supported Python range (3.11–3.13)
 	[X] ruff lint + format checks in CI
 	[X] pyright strict mode; mypy unreachable warnings; ty added with config
 	[X] Fix b4 import crash on Python 3.11/3.12/3.13
 	[X] Make TUI packages importable without the textual extra
-	[X] liblore/ezgb/patatt carried as git submodules; [tool.uv.sources] points the
-	    dev venv at the liblore submodule so mypy and tests track the in-dev API
+	[X] liblore/ezgb/patatt carried as git submodules; [tool.uv.sources] points the dev venv at the liblore submodule so mypy and tests track the in-dev API
 [X] Miscellaneous enhancements
 	[X] send-me-too config option for b4 send (affirmative, defaults to yes)
 		: Jeremy Kerr, https://patch.msgid.link/20260610-master-v2-1-9913cfb7bb3e@codeconstruct.com.au
 	[X] Prevent interpreting usebranch as a path in find_cover_commit
 	[X] pr: scope the "already fetched" check to the target branch
 [X] `b4 ty` interactive mode
-	[X] `b4 ty -i` runs the auto-thankanator and opens the editor to review the
-	    detected thank-yous before sending; skip one by changing "+" to "x"
+	[X] `b4 ty -i` runs the auto-thankanator and opens the editor to review the detected thank-yous before sending; skip one by changing "+" to "x"
 	: -i implies -a; thin auto-confirm layer (binary keep/skip), not a full picker
 	: No persistence -- skipped items are just left pending (tracking file
-	  untouched) and reappear next run; thanked items become .sent as before
+	: untouched) and reappear next run; thanked items become .sent as before
 	: Flat sibling helpers render_ty_review/parse_ty_review modeled on the
-	  trailers ones; parse verifies item subjects by position and aborts safely
-	  on any add/remove/reorder/edit
+	: trailers ones; parse verifies item subjects by position and aborts safely
+	: on any add/remove/reorder/edit
 	: Each item shows Sent date, the resolved commit-id per matched patch
-	  (gaps flag a partial application), and the Applied date (RFC2822, latest
-	  committer date) -- all from the commit-ids the thankanator recorded
+	: (gaps flag a partial application), and the Applied date (RFC2822, latest
+	: committer date) -- all from the commit-ids the thankanator recorded
 	: First iteration; awaiting community feedback before extending further
 	: 10 new tests in test_ty.py (new file); ci.sh + ci-matrix (3.11-3.14) green
 [X] `b4 trailers` interactive mode
 	[X] `b4 trailers -u -i` opens the editor to review incoming trailers
 	: Reject a trailer by changing its leading "+" to "x"; rejections persist in
-	  .git/b4-trailers-ignore.json keyed by (trailer, provenance-msgid) -- NOT
-	  patch-id, so they survive rebase/reword and a reviewer's fresh re-send of
-	  the same trailer is offered as new instead of being silently dropped
+	: .git/b4-trailers-ignore.json keyed by (trailer, provenance-msgid) -- NOT
+	: patch-id, so they survive rebase/reword and a reviewer's fresh re-send of
+	: the same trailer is offered as new instead of being silently dropped
 	: Honoured on every later -u run (with or without -i)
 	: Load-bearing "- <patch>" headers scope trailers per patch; parse verifies
-	  the full header+trailer structure and aborts safely on any edit/reorder
+	: the full header+trailer structure and aborts safely on any edit/reorder
 	: 13 new tests, ci.sh + ci-matrix (3.11-3.14) green
 
 v0.15
@@ -363,12 +352,10 @@ v0.15
 		[X] update_followup_counts() stores blob on first-fetch and incremental paths
 		[X] 'f' key toggled: second press clears comments; first press tries local blob
 		[X] Falls back to live lore fetch only when blob absent; caches result immediately
-		[X] _parse_msgs_to_followup_comments() / _render_thread_context() distil thread
-		  into plain-text context blob (thread-context-blob) for the AI agent
+		[X] _parse_msgs_to_followup_comments() / _render_thread_context() distil thread into plain-text context blob (thread-context-blob) for the AI agent
 		[X] _store_thread_blob() writes both blobs in one save_tracking_ref() call
 		[X] ensure_thread_context_blob() migrates existing tracking commits on first open
-		[X] _prepare_review_session() calls ensure_thread_context_blob() so agent always
-		  has context before the review app starts
+		[X] _prepare_review_session() calls ensure_thread_context_blob() so agent always has context before the review app starts
 		[X] agent-reviewer.md documents thread-context-blob and how to use it
 	[X] Differentiate drafted vs sent review completion indicators
 		[X] Per-patch state machine: draft/done/skip with reactive derivation
