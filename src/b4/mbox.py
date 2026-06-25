@@ -488,6 +488,18 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             sp.whitespace_split = True
             am_flags.extend(list(sp))
 
+        # A parked --resolve owns the shared resolution worktree; a fresh shazam
+        # would force-remove it (git_fetch_am_into_repo) and discard the user's
+        # in-progress conflict edits. Refuse until they --continue or --abort.
+        common_dir = b4.git_get_common_dir(topdir)
+        if common_dir and os.path.exists(
+            os.path.join(common_dir, 'b4-shazam-state.json')
+        ):
+            logger.critical('A shazam conflict resolution is already in progress.')
+            logger.critical('Finish it with:  b4 shazam --continue')
+            logger.critical('Or discard it:   b4 shazam --abort')
+            sys.exit(1)
+
         try:
             if cmdargs.mergebase:
                 logger.info(' Base: %s', base_commit)
@@ -499,6 +511,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 at_base=base_commit,
                 origin=linkurl,
                 am_flags=am_flags,
+                resolve=cmdargs.shazam_resolve,
             )
         except b4.AmConflictError as cex:
             gwt = cex.worktree_path
@@ -520,6 +533,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
 
             state = {
                 'worktree': gwt,
+                'base': base_commit,
                 'origin': linkurl,
                 'merge_template_values': tptvals,
                 'merge_template': merge_template,
@@ -1058,9 +1072,8 @@ def _begin_shazam_resolve(
     logger.critical('---')
     logger.critical('Patch series did not apply cleanly.')
 
-    # Drop sparse-checkout so the user can see and edit every conflicted file.
-    b4.git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
-
+    # git_fetch_am_into_repo already rebuilt a full (non-sparse) worktree on the
+    # conflict, so every conflicted file is present for the user to edit.
     state_file = os.path.join(common_dir, 'b4-shazam-state.json')
     with open(state_file, 'w') as sfh:
         json.dump(state, sfh, indent=2)
@@ -1090,8 +1103,17 @@ def _load_shazam_state(
     state_file = os.path.join(common_dir, 'b4-shazam-state.json')
     state = None
     if os.path.exists(state_file):
-        with open(state_file, 'r') as fh:
-            state = json.load(fh)
+        try:
+            with open(state_file, 'r') as fh:
+                state = json.load(fh)
+        except (json.JSONDecodeError, OSError) as ex:
+            # A truncated/corrupt state file (e.g. an interrupted write) must not
+            # crash the recovery command: --abort still cleans it up (state=None
+            # falls back to the default worktree path), --continue can't proceed.
+            if require_state:
+                logger.critical('Shazam state file is corrupt: %s', ex)
+                logger.critical('Run: b4 shazam --abort')
+                sys.exit(1)
     elif require_state:
         logger.critical('No shazam state found. Nothing to continue.')
         sys.exit(1)
@@ -1116,6 +1138,30 @@ def shazam_continue(cmdargs: argparse.Namespace) -> None:
             'Finish it there with "git am --continue" (or "git am --skip"),'
         )
         logger.critical('then run: b4 shazam --continue')
+        sys.exit(1)
+
+    # git-am is finished -- but did it apply anything? If the user ran
+    # "git am --abort" (or "--skip"ped every patch) the worktree is back at its
+    # base; fetching+merging that is a no-op ("Already up to date") that would
+    # silently drop the whole series. Refuse instead of reporting false success.
+    base = state.get('base')
+    if base:
+        _e1, head = b4.git_run_command(gwt, ['rev-parse', 'HEAD'], rundir=gwt)
+        _e2, base_sha = b4.git_run_command(
+            gwt, ['rev-parse', '%s^{commit}' % base], rundir=gwt
+        )
+        if head.strip() and head.strip() == base_sha.strip():
+            logger.critical('No patches are applied in the resolution worktree.')
+            logger.critical('(git-am was aborted, or every patch was skipped.)')
+            logger.critical('Nothing to merge -- run: b4 shazam --abort')
+            sys.exit(1)
+
+    # A dirty working tree can make the final merge refuse or fail. Only the
+    # merge cares (do_merge), so check up front and keep the saved state intact
+    # so --continue stays re-runnable once the tree is clean.
+    if state.get('do_merge', True) and b4.git_get_repo_status(topdir):
+        logger.critical('You have uncommitted changes in your working tree.')
+        logger.critical('Commit or stash them, then run: b4 shazam --continue')
         sys.exit(1)
 
     # git-am completed: fetch the fully-applied series into FETCH_HEAD, drop the

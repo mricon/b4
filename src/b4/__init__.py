@@ -5737,18 +5737,39 @@ def _fetch_and_drop_am_worktree(
     tear the worktree down. The fetch is anchored to *dest* via ``rundir`` so
     FETCH_HEAD lands in the worktree the caller merges in (see
     git_fetch_am_into_repo). When *origin* is given, rewrite FETCH_HEAD so the
-    merge message names the series origin instead of the worktree path. Returns
-    False (after still removing the worktree) if the fetch failed.
+    merge message names the series origin instead of the worktree path. On fetch
+    failure the worktree is left in place (so the resolved git-am can be retried)
+    and False is returned.
     """
     ecode, out = git_run_command(dest, ['fetch', gwt], logstderr=True, rundir=dest)
-    if ecode == 0 and origin:
-        _rewrite_fetch_head_origin(dest, gwt, origin)
-    git_run_command(dest, ['worktree', 'remove', '--force', gwt])
     if ecode > 0:
+        # Leave the worktree in place so the resolved git-am can be retried.
         logger.critical('Unable to fetch from the worktree')
         logger.critical(out.strip())
         return False
+    if origin:
+        _rewrite_fetch_head_origin(dest, gwt, origin)
+    git_run_command(dest, ['worktree', 'remove', '--force', gwt])
     return True
+
+
+def _replay_am_on_full_worktree(
+    gwt: str, ambytes: bytes, amargs: List[str]
+) -> Tuple[int, str]:
+    """Replay a sparse-blocked ``git am`` on a full (non-sparse) checkout.
+
+    git_fetch_am_into_repo applies into a sparse worktree (only root-level files
+    materialized). git's 3-way merge will not write ``skip-worktree`` paths, so a
+    subdirectory file makes the sparse ``git am`` stop even when the 3-way is
+    clean -- and a real conflict there is recorded with an empty index (no markers
+    to resolve). Abort the partial am, drop the sparse restriction so every path
+    is present, and replay. Returns the replay's (exit code, output): non-zero is
+    a genuine conflict the user resolves; zero means only sparseness had blocked
+    it and the series actually applies cleanly.
+    """
+    git_run_command(gwt, ['am', '--abort'], logstderr=True, rundir=gwt)
+    git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
+    return git_run_command(gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt)
 
 
 def git_fetch_am_into_repo(
@@ -5758,6 +5779,7 @@ def git_fetch_am_into_repo(
     origin: Optional[str] = None,
     check_only: bool = False,
     am_flags: Optional[List[str]] = None,
+    resolve: bool = False,
 ) -> None:
     if gitdir is None:
         gitdir = os.getcwd()
@@ -5803,8 +5825,18 @@ def git_fetch_am_into_repo(
             gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt
         )
         if ecode > 0:
-            cleanup = False
-            raise AmConflictError(gwt, out.strip())
+            if resolve:
+                # The sparse worktree can't write skip-worktree paths, so git-am
+                # stops on any subdirectory file -- a real conflict (recorded
+                # with an empty index, no markers) or even a clean 3-way. Replay
+                # on a full worktree to tell them apart.
+                ecode, out = _replay_am_on_full_worktree(gwt, ambytes, amargs)
+            if ecode > 0:
+                # Genuine conflict: park the am for the user to resolve.
+                cleanup = False
+                raise AmConflictError(gwt, out.strip())
+            # else: only sparseness blocked it; the series applied cleanly --
+            # fall through to the normal fetch-into-FETCH_HEAD path.
         if check_only:
             return
         logger.info('---')

@@ -526,6 +526,83 @@ def _build_multi_patch_conflict(gitdir: str) -> Tuple[bytes, str]:
     return mbox.encode(), base
 
 
+def _build_subdir_conflict(gitdir: str) -> bytes:
+    """2-patch mbox whose conflicting patch touches a file in a SUBDIRECTORY.
+
+    The shazam worktree is a cone-mode sparse checkout (only root-level files
+    materialized), and git's 3-way merge refuses to touch skip-worktree paths,
+    so a conflict in a subdirectory file used to abort ``git am`` with a clean
+    index (no markers) -- and ``git am --skip`` would silently drop the patch.
+    With ``resolve=True``, git_fetch_am_into_repo rebuilds a full worktree and
+    replays so the conflict is recorded. Patch 1 changes a root file cleanly;
+    patch 2 changes ``drivers/foo.txt`` and conflicts with master.
+    """
+    # Seed a subdirectory file on master so it is part of the base tree.
+    os.makedirs(os.path.join(gitdir, 'drivers'), exist_ok=True)
+    with open(os.path.join(gitdir, 'drivers', 'foo.txt'), 'w') as fh:
+        fh.write('1\n2\n3\n')
+    b4.git_run_command(gitdir, ['add', 'drivers/foo.txt'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Seed drivers/foo.txt'])
+
+    b4.git_run_command(gitdir, ['checkout', '-b', 'subdir-patch'])
+    with open(os.path.join(gitdir, 'file2.txt'), 'a') as fh:
+        fh.write('Added by patch 1.\n')
+    b4.git_run_command(gitdir, ['add', 'file2.txt'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Patch 1: modify file2'])
+    with open(os.path.join(gitdir, 'drivers', 'foo.txt'), 'w') as fh:
+        fh.write('1\nPATCH\n3\n')
+    b4.git_run_command(gitdir, ['add', 'drivers/foo.txt'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Patch 2: change drivers/foo'])
+
+    ecode, mbox = b4.git_run_command(gitdir, ['format-patch', '-2', '--stdout'])
+    assert ecode == 0
+
+    b4.git_run_command(gitdir, ['checkout', 'master'])
+    b4.git_run_command(gitdir, ['branch', '-D', 'subdir-patch'])
+    with open(os.path.join(gitdir, 'drivers', 'foo.txt'), 'w') as fh:
+        fh.write('1\nMASTER\n3\n')
+    b4.git_run_command(gitdir, ['add', 'drivers/foo.txt'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Master: change drivers/foo'])
+    return mbox.encode()
+
+
+def _build_subdir_clean_3way(gitdir: str) -> bytes:
+    """1-patch mbox: a subdir change that 3-way merges CLEANLY against master.
+
+    The patch edits ``drivers/foo.txt`` near (but clear of) a line master also
+    changed, so the direct ``git apply`` misses on context and falls back to a
+    3-way merge that is clean. In the sparse shazam worktree git-am still stops
+    (it can't write the skip-worktree subdir file), but the full replay applies
+    cleanly -- so ``git_fetch_am_into_repo(resolve=True)`` must NOT report a
+    conflict.
+    """
+    lines = ''.join('%d\n' % n for n in range(1, 21))
+    os.makedirs(os.path.join(gitdir, 'drivers'), exist_ok=True)
+    with open(os.path.join(gitdir, 'drivers', 'foo.txt'), 'w') as fh:
+        fh.write(lines)
+    b4.git_run_command(gitdir, ['add', 'drivers/foo.txt'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Seed drivers/foo.txt'])
+
+    b4.git_run_command(gitdir, ['checkout', '-b', 'clean3'])
+    with open(os.path.join(gitdir, 'drivers', 'foo.txt'), 'w') as fh:
+        fh.write(lines.replace('10\n', 'TEN-from-patch\n'))
+    b4.git_run_command(gitdir, ['add', 'drivers/foo.txt'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Patch: drivers/foo line 10'])
+
+    ecode, mbox = b4.git_run_command(gitdir, ['format-patch', '-1', '--stdout'])
+    assert ecode == 0
+
+    b4.git_run_command(gitdir, ['checkout', 'master'])
+    b4.git_run_command(gitdir, ['branch', '-D', 'clean3'])
+    # Line 13 is inside the patch's context window for line 10 (forces 3-way)
+    # but two lines clear of it, so the merge is clean rather than a conflict.
+    with open(os.path.join(gitdir, 'drivers', 'foo.txt'), 'w') as fh:
+        fh.write(lines.replace('13\n', 'THIRTEEN-master\n'))
+    b4.git_run_command(gitdir, ['add', 'drivers/foo.txt'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Master: drivers/foo line 13'])
+    return mbox.encode()
+
+
 def _make_shazam_state(common_dir: str, state: Optional[Dict[str, Any]] = None) -> str:
     """Write a shazam state file; return its path."""
     state_file = os.path.join(common_dir, 'b4-shazam-state.json')
@@ -575,10 +652,14 @@ def _trigger_am_conflict(
     _begin_shazam_resolve).
     """
     ambytes, _base = _build_multi_patch_conflict(gitdir)
+    _ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
     with pytest.raises(b4.AmConflictError) as exc_info:
-        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
+        b4.git_fetch_am_into_repo(
+            gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
+        )
     state = {
         'worktree': exc_info.value.worktree_path,
+        'base': head.strip(),
         'origin': 'https://example.com',
         'merge_template_values': {},
         'merge_template': 'Merge test series\n\nResolved conflict.\n',
@@ -682,6 +763,38 @@ class TestShazamResolveContinue:
         b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
         os.unlink(os.path.join(common_dir, 'b4-shazam-state.json'))
 
+    def test_continue_refuses_after_am_abort(self, gitdir: str) -> None:
+        # Regression: if the user runs "git am --abort" instead of finishing,
+        # the worktree is back at base with no rebase-apply. --continue must
+        # refuse rather than merge the bare base -- a no-op ("Already up to
+        # date") that would silently drop the whole series and report success.
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir is not None
+        cex, state = _trigger_am_conflict(gitdir)
+        wt = cex.worktree_path
+
+        with pytest.raises(SystemExit):
+            b4.mbox._begin_shazam_resolve(cex, common_dir, state)
+
+        # User gives up with "git am --abort" in the worktree.
+        ecode, _out = b4.git_run_command(wt, ['am', '--abort'], rundir=wt)
+        assert ecode == 0
+        assert b4._worktree_rebase_apply_dir(wt) is None
+
+        # --continue refuses (nothing applied), keeping state + worktree, and
+        # makes NO commit on the branch.
+        _e, head_before = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        with pytest.raises(SystemExit) as exit_info:
+            b4.mbox.shazam_continue(argparse.Namespace())
+        assert exit_info.value.code == 1
+        assert os.path.exists(os.path.join(common_dir, 'b4-shazam-state.json'))
+        assert os.path.isdir(wt)
+        _e, head_after = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert head_after.strip() == head_before.strip()
+
+        b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
+        os.unlink(os.path.join(common_dir, 'b4-shazam-state.json'))
+
 
 class TestShazamAbort:
     """Tests for shazam_abort cleanup."""
@@ -704,3 +817,152 @@ class TestShazamAbort:
     def test_noop_when_nothing_to_clean(self, gitdir: str) -> None:
         # Should not raise.
         b4.mbox.shazam_abort(argparse.Namespace())
+
+
+class TestSubdirConflictResolve:
+    """Regression: a conflict in a subdirectory file must be resolvable.
+
+    The sparse shazam worktree can't record conflicts in subdirectory files,
+    so ``git am`` aborted with a clean index and the patch was silently
+    dropped. ``resolve=True`` must rebuild a full worktree so the conflict is
+    materialized and every patch survives.
+    """
+
+    def test_subdir_conflict_records_markers_and_keeps_patch(self, gitdir: str) -> None:
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir is not None
+        ambytes = _build_subdir_conflict(gitdir)
+
+        with pytest.raises(b4.AmConflictError) as exc_info:
+            b4.git_fetch_am_into_repo(
+                gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
+            )
+        wt = exc_info.value.worktree_path
+
+        # The subdir file is materialized and recorded as an unmerged conflict
+        # (without the fix it would be absent / clean and the patch lost).
+        assert os.path.exists(os.path.join(wt, 'drivers', 'foo.txt'))
+        _ecode, unmerged = b4.git_run_command(
+            wt, ['diff', '--name-only', '--diff-filter=U'], rundir=wt
+        )
+        assert 'drivers/foo.txt' in unmerged
+
+        state = {
+            'worktree': wt,
+            'origin': 'https://example.com',
+            'merge_template_values': {},
+            'merge_template': 'Merge series\n\nResolved.\n',
+            'merge_flags': '--signoff',
+            'no_interactive': True,
+            'do_merge': True,
+        }
+        with pytest.raises(SystemExit):
+            b4.mbox._begin_shazam_resolve(exc_info.value, common_dir, state)
+
+        # User resolves the subdir conflict natively and finishes the git-am.
+        with open(os.path.join(wt, 'drivers', 'foo.txt'), 'w') as fh:
+            fh.write('1\nRESOLVED\n3\n')
+        b4.git_run_command(wt, ['add', 'drivers/foo.txt'], rundir=wt)
+        ecode, _out = b4.git_run_command(wt, ['am', '--continue'], rundir=wt)
+        assert ecode == 0
+
+        with pytest.raises(SystemExit) as exit_info:
+            b4.mbox.shazam_continue(argparse.Namespace())
+        assert exit_info.value.code == 0
+
+        # Both patches survived: patch 1 (file2) and patch 2 (drivers/foo).
+        ecode, file2 = b4.git_run_command(gitdir, ['show', 'HEAD:file2.txt'])
+        assert ecode == 0 and 'Added by patch 1.' in file2
+        ecode, foo = b4.git_run_command(gitdir, ['show', 'HEAD:drivers/foo.txt'])
+        assert ecode == 0 and 'RESOLVED' in foo
+
+        assert not os.path.exists(os.path.join(common_dir, 'b4-shazam-state.json'))
+        assert not os.path.exists(wt)
+
+
+class TestSubdirCleanThreeWay:
+    """Regression: a clean 3-way in a subdir file must not be a phantom conflict.
+
+    The sparse worktree can't write skip-worktree paths, so git-am stops on the
+    subdir file even though the 3-way is clean. The full replay applies cleanly,
+    so ``resolve=True`` must complete normally -- not raise AmConflictError and
+    send the user off to resolve a conflict that does not exist.
+    """
+
+    def test_clean_subdir_3way_does_not_raise(self, gitdir: str) -> None:
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir is not None
+        ambytes = _build_subdir_clean_3way(gitdir)
+
+        # Must NOT raise: only sparseness blocked the sparse am; the replay is clean.
+        b4.git_fetch_am_into_repo(
+            gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
+        )
+
+        # The series landed in FETCH_HEAD with BOTH edits 3-way merged.
+        ecode, foo = b4.git_run_command(gitdir, ['show', 'FETCH_HEAD:drivers/foo.txt'])
+        assert ecode == 0
+        assert 'TEN-from-patch' in foo and 'THIRTEEN-master' in foo
+
+        # Worktree torn down, nothing parked for resolution.
+        assert not os.path.exists(os.path.join(common_dir, 'b4-shazam-worktree'))
+        assert not os.path.exists(os.path.join(common_dir, 'b4-shazam-state.json'))
+
+
+class TestCorruptShazamState:
+    """A corrupt state file must not crash the recovery command."""
+
+    def test_abort_survives_corrupt_state(self, gitdir: str) -> None:
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir is not None
+        state_file = os.path.join(common_dir, 'b4-shazam-state.json')
+        with open(state_file, 'w') as fh:
+            fh.write('{ this is not valid json')
+        # Cleans up the corrupt file instead of raising JSONDecodeError.
+        b4.mbox.shazam_abort(argparse.Namespace())
+        assert not os.path.exists(state_file)
+
+    def test_continue_refuses_corrupt_state(self, gitdir: str) -> None:
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir is not None
+        state_file = os.path.join(common_dir, 'b4-shazam-state.json')
+        with open(state_file, 'w') as fh:
+            fh.write('{ this is not valid json')
+        with pytest.raises(SystemExit) as exit_info:
+            b4.mbox.shazam_continue(argparse.Namespace())
+        assert exit_info.value.code == 1
+        os.unlink(state_file)
+
+
+class TestContinueDirtyTree:
+    """shazam --continue refuses (keeping state) when the main tree is dirty."""
+
+    def test_continue_refuses_dirty_tree(self, gitdir: str) -> None:
+        common_dir = b4.git_get_common_dir(gitdir)
+        assert common_dir is not None
+        cex, state = _trigger_am_conflict(gitdir)
+        wt = cex.worktree_path
+        with pytest.raises(SystemExit):
+            b4.mbox._begin_shazam_resolve(cex, common_dir, state)
+
+        # Finish the git-am in the worktree.
+        with open(os.path.join(wt, 'file1.txt'), 'w') as fh:
+            fh.write('Resolved file1.\n')
+        b4.git_run_command(wt, ['add', 'file1.txt'], rundir=wt)
+        ecode, _out = b4.git_run_command(wt, ['am', '--continue'], rundir=wt)
+        assert ecode == 0
+
+        # Dirty the main tree, then --continue must refuse and keep state/worktree
+        # so it stays re-runnable.
+        with open(os.path.join(gitdir, 'file2.txt'), 'a') as fh:
+            fh.write('uncommitted local edit\n')
+        state_file = os.path.join(common_dir, 'b4-shazam-state.json')
+        with pytest.raises(SystemExit) as exit_info:
+            b4.mbox.shazam_continue(argparse.Namespace())
+        assert exit_info.value.code == 1
+        assert os.path.exists(state_file)
+        assert os.path.isdir(wt)
+
+        b4.git_run_command(gitdir, ['checkout', '--', 'file2.txt'])
+        b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
+        os.unlink(state_file)

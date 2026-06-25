@@ -317,7 +317,8 @@ the merge commit.
 ``--continue``
   Continue after a conflicted ``--resolve``. Run this once you have
   finished the ``git am`` in the resolution worktree; b4 then fetches the
-  applied series and merges it.
+  applied series and finishes exactly as a clean run would — with ``-M`` it
+  merges the series, with ``-H`` it leaves it in ``FETCH_HEAD`` for you.
 
 ``--abort``
   Abort a conflicted shazam: remove the resolution worktree and clean up
@@ -374,10 +375,11 @@ branch and run::
     b4 shazam --continue
 
 B4 fetches the fully-applied series out of the worktree, removes the
-worktree, and merges the series into your branch — exactly the merge a
-clean ``b4 shazam`` would have made. If that final merge itself
-conflicts, resolve it the normal way (git leaves the conflicted merge in
-your tree) and commit.
+worktree, and finishes exactly as a clean ``b4 shazam`` would: with
+``-M`` it merges the series into your branch, while with ``-H`` (as in the
+example above) it leaves the series in ``FETCH_HEAD`` for you to merge or
+check out. If a ``-M`` merge itself conflicts, resolve it the normal way
+(git leaves the conflicted merge in your tree) and commit.
 
 If you decide you don't want to proceed, run::
 

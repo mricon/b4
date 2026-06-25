@@ -256,8 +256,9 @@ def _take_worktree(
 def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
     """Handle an AmConflictError by dropping the user into a shell.
 
-    Disables sparse checkout in the worktree, suspends to an interactive
-    shell for conflict resolution, then checks the outcome:
+    Suspends to an interactive shell for conflict resolution (the worktree is
+    already a full checkout -- git_fetch_am_into_repo rebuilds it on conflict),
+    then checks the outcome:
 
     - If the user completed ``git am --continue``, fetches the result
       into FETCH_HEAD and removes the worktree.  Returns True.
@@ -268,13 +269,6 @@ def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> boo
     logger.critical(cex.output)
     logger.critical('---')
     logger.critical('Patch did not apply cleanly.')
-    # Disable sparse checkout so user can see and edit files
-    b4.git_run_command(
-        cex.worktree_path,
-        ['sparse-checkout', 'disable'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
     # Save worktree HEAD before shell so we can detect abort
     _ecode, wt_head_before = b4.git_run_command(
         cex.worktree_path,
@@ -1871,6 +1865,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     at_base=base_commit,
                     origin=linkurl,
                     am_flags=['-3'],
+                    resolve=True,
                 )
 
                 # Create the review branch
@@ -2804,6 +2799,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     at_base=base_commit,
                     origin=t_series.get('link', ''),
                     am_flags=['-3'],
+                    resolve=True,
                 )
             except b4.AmConflictError as cex:
                 if not _resolve_worktree_am_conflict(merge_dir, cex):
@@ -4309,6 +4305,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     at_base=base_sha,
                     origin=linkurl,
                     am_flags=['-3'],
+                    resolve=True,
                 )
                 b4.review.create_review_branch(
                     topdir,
