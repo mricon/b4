@@ -244,6 +244,36 @@ def _take_worktree(
             yield None
             return
         work_dir = temp_wt
+    else:
+        # The target is checked out in a real worktree. If it is mid-op or its
+        # index is conflicted -- an earlier take the user walked away from, a
+        # crash, or their own unfinished am/merge -- a take's git-am/git-merge
+        # would fail cryptically on top of it (and "git merge --abort" cannot
+        # clear a bare unmerged index). Refuse up front with the fix rather than
+        # poison the take; the state may be the user's own, so we never discard
+        # it for them.
+        stuck = b4._worktree_inprogress_op(work_dir)
+        if stuck is None and b4._worktree_has_unmerged(work_dir):
+            logger.critical(
+                'Target worktree %s has a conflicted index (unmerged files).',
+                work_dir,
+            )
+            logger.critical(
+                'Resolve them, or run "git reset --merge" there, then retry.'
+            )
+            _wait_for_enter()
+            yield None
+            return
+        if stuck is not None:
+            logger.critical(
+                'Target worktree %s has an unfinished git-%s.', work_dir, stuck
+            )
+            logger.critical(
+                'Finish it, or run "git %s --abort" there, then retry.', stuck
+            )
+            _wait_for_enter()
+            yield None
+            return
 
     handle = _TakeWorktree(work_dir, is_temp=temp_wt is not None)
     try:
@@ -251,96 +281,6 @@ def _take_worktree(
     finally:
         if temp_wt and not handle._keep:
             b4.git_run_command(topdir, ['worktree', 'remove', '--force', temp_wt])
-
-
-def _worktree_rebase_apply_dir(worktree: str) -> Optional[str]:
-    """Return *worktree*'s in-progress ``git am`` state dir, or ``None``.
-
-    ``rebase-apply`` lives under the per-worktree git dir, not the shared
-    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
-    throwaway worktrees too.
-    """
-    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
-    if ecode != 0:
-        return None
-    rebase_apply = os.path.join(gitdir.strip(), 'rebase-apply')
-    return rebase_apply if os.path.isdir(rebase_apply) else None
-
-
-def _worktree_merge_in_progress(worktree: str) -> bool:
-    """Return whether *worktree* has a conflicted ``git merge`` in progress.
-
-    ``MERGE_HEAD`` lives under the per-worktree git dir, not the shared
-    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
-    throwaway worktrees too.
-    """
-    ecode, gitdir = b4.git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
-    if ecode != 0:
-        return False
-    return os.path.exists(os.path.join(gitdir.strip(), 'MERGE_HEAD'))
-
-
-def _resolve_worktree_am_conflict(topdir: str, cex: 'b4.AmConflictError') -> bool:
-    """Handle an AmConflictError by dropping the user into a shell.
-
-    Disables sparse checkout in the worktree, suspends to an interactive
-    shell for conflict resolution, then checks the outcome:
-
-    - If the user completed ``git am --continue``, fetches the result
-      into FETCH_HEAD and removes the worktree.  Returns True.
-    - If the user aborted (``git am --abort``) or exited without
-      finishing, cleans up the worktree and returns False.
-    """
-    logger.critical('---')
-    logger.critical(cex.output)
-    logger.critical('---')
-    logger.critical('Patch did not apply cleanly.')
-    # Disable sparse checkout so user can see and edit files
-    b4.git_run_command(
-        cex.worktree_path,
-        ['sparse-checkout', 'disable'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
-    # Save worktree HEAD before shell so we can detect abort
-    _ecode, wt_head_before = b4.git_run_command(
-        cex.worktree_path,
-        ['rev-parse', 'HEAD'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
-    wt_head_before = wt_head_before.strip()
-    logger.info('You can resolve the conflict in the worktree.')
-    logger.info(
-        'Use "git am --continue" after resolving, or "git am --abort" to give up.'
-    )
-    _suspend_to_shell(hint='b4 conflict', cwd=cex.worktree_path)
-    # Check if am is still in progress (user exited without finishing)
-    if _worktree_rebase_apply_dir(cex.worktree_path):
-        logger.warning('Conflict resolution incomplete, aborting')
-        b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
-        return False
-    # Check if am was aborted (HEAD unchanged from before shell)
-    _ecode, wt_head_after = b4.git_run_command(
-        cex.worktree_path,
-        ['rev-parse', 'HEAD'],
-        logstderr=True,
-        rundir=cex.worktree_path,
-    )
-    if wt_head_after.strip() == wt_head_before:
-        logger.warning('Conflict resolution aborted')
-        b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
-        return False
-    # am completed -- fetch result into FETCH_HEAD
-    logger.info('Conflict resolved, fetching result...')
-    ecode, _out = b4.git_run_command(
-        topdir, ['fetch', cex.worktree_path], logstderr=True
-    )
-    b4.git_run_command(topdir, ['worktree', 'remove', '--force', cex.worktree_path])
-    if ecode > 0:
-        logger.critical('Unable to fetch from resolved worktree')
-        return False
-    return True
 
 
 def _resolve_worktree_take_conflict(
@@ -370,9 +310,19 @@ def _resolve_worktree_take_conflict(
     if in_progress(wt.path):
         logger.warning('Conflict resolution incomplete')
         if wt.is_temp:
+            # A throwaway worktree is isolated, so an unfinished op poisons
+            # nothing -- keep it for the user to finish or abort by hand (the
+            # next take force-removes it regardless).
             wt.keep()
             logger.warning('Finish or abort it in: %s', wt.path)
-        logger.warning('Run "git %s --abort" to clean up', op)
+            logger.warning('Run "git %s --abort" to clean up', op)
+        else:
+            # A real checkout must never be left mid-op: the unmerged index
+            # breaks the user's own git work and makes the next take fail
+            # cryptically on top of it (and "git merge --abort" cannot clear a
+            # bare unmerged index). Abort what we started.
+            if b4._abort_worktree_op(wt.path):
+                logger.warning('Aborted incomplete %s in %s', op, wt.path)
         return False
     ecode, current_head = b4.git_run_command(
         wt.path, ['rev-parse', 'HEAD'], logstderr=True
@@ -1905,6 +1855,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     at_base=base_commit,
                     origin=linkurl,
                     am_flags=['-3'],
+                    resolve=True,
                 )
 
                 # Create the review branch
@@ -1923,10 +1874,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
             except b4.AmConflictError as cex:
-                if not _resolve_worktree_am_conflict(topdir, cex):
+                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
                     _wait_for_enter()
                     return
-                b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
                 # Create the review branch from resolved result
                 b4.review.create_review_branch(
                     topdir,
@@ -2838,9 +2788,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     at_base=base_commit,
                     origin=t_series.get('link', ''),
                     am_flags=['-3'],
+                    resolve=True,
                 )
             except b4.AmConflictError as cex:
-                if not _resolve_worktree_am_conflict(merge_dir, cex):
+                if not b4.resolve_am_conflict_in_shell(
+                    merge_dir, cex, origin=t_series.get('link', '')
+                ):
                     _wait_for_enter()
                     return
             except RuntimeError:
@@ -2909,7 +2862,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 # (mirrors the git-am path above and "b4 shazam"). Anything
                 # else (e.g. a dirty worktree) leaves no merge to resolve, so
                 # abort and bail as before.
-                if not _worktree_merge_in_progress(merge_dir):
+                if not b4._worktree_merge_in_progress(merge_dir):
                     logger.critical(
                         'Merge failed%s', f': {out.strip()}' if out.strip() else ''
                     )
@@ -2933,7 +2886,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 )
                 pre_merge_head = pre_merge_head.strip() if ecode == 0 else ''
                 if not _resolve_worktree_take_conflict(
-                    wt, 'merge', pre_merge_head, _worktree_merge_in_progress
+                    wt, 'merge', pre_merge_head, b4._worktree_merge_in_progress
                 ):
                     _wait_for_enter()
                     return
@@ -3202,7 +3155,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 logger.critical('git-am failed:')
                 logger.critical(out.strip())
                 if not _resolve_worktree_take_conflict(
-                    wt, 'am', pre_am_head, _worktree_rebase_apply_dir
+                    wt, 'am', pre_am_head, b4._worktree_rebase_apply_dir
                 ):
                     _wait_for_enter()
                     return
@@ -4343,6 +4296,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     at_base=base_sha,
                     origin=linkurl,
                     am_flags=['-3'],
+                    resolve=True,
                 )
                 b4.review.create_review_branch(
                     topdir,
@@ -4358,14 +4312,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 )
                 logger.info('Upgrade branch created: %s', upgrade_branch)
             except b4.AmConflictError as cex:
-                if not _resolve_worktree_am_conflict(topdir, cex):
+                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
                     # User aborted — clean up upgrade branch if it was
                     # partially created before the conflict
                     if b4.git_branch_exists(topdir, upgrade_branch):
                         b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
                     _wait_for_enter()
                     return
-                b4._rewrite_fetch_head_origin(topdir, cex.worktree_path, linkurl)
                 b4.review.create_review_branch(
                     topdir,
                     upgrade_branch,

@@ -80,9 +80,10 @@ PW_REST_API_VERSION = '1.2'
 
 
 class AmConflictError(RuntimeError):
-    def __init__(self, worktree_path: str, output: str):
+    def __init__(self, worktree_path: str, output: str, base_sha: str = ''):
         self.worktree_path = worktree_path
         self.output = output
+        self.base_sha = base_sha
         super().__init__(output)
 
 
@@ -5699,6 +5700,214 @@ def _rewrite_fetch_head_origin(topdir: str, old_origin: str, new_origin: str) ->
             fhh.write(new_contents)
 
 
+def _worktree_rebase_apply_dir(worktree: str) -> Optional[str]:
+    """Return *worktree*'s in-progress ``git am`` state dir, or ``None``.
+
+    ``rebase-apply`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return None
+    rebase_apply = os.path.join(gitdir.strip(), 'rebase-apply')
+    return rebase_apply if os.path.isdir(rebase_apply) else None
+
+
+def _worktree_merge_in_progress(worktree: str) -> bool:
+    """Return whether *worktree* has a conflicted ``git merge`` in progress.
+
+    ``MERGE_HEAD`` lives under the per-worktree git dir, not the shared
+    ``.git``, so resolve it via ``--absolute-git-dir`` to handle linked and
+    throwaway worktrees too.
+    """
+    ecode, gitdir = git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return False
+    return os.path.exists(os.path.join(gitdir.strip(), 'MERGE_HEAD'))
+
+
+def _worktree_inprogress_op(worktree: str) -> Optional[str]:
+    """Return the git operation mid-flight in *worktree*, or ``None``.
+
+    One of ``'am'``, ``'rebase'``, ``'merge'``, ``'cherry-pick'`` or
+    ``'revert'`` -- mirroring how git-status decides which "in the middle of"
+    banner to show. State lives under the per-worktree git dir (resolved via
+    ``--absolute-git-dir`` so linked and throwaway worktrees work too):
+    ``rebase-apply/`` is shared by ``git am`` and ``git rebase --apply``, told
+    apart by the ``applying`` marker; ``rebase-merge/`` is the rebase merge
+    backend; the rest are recorded as pseudo-ref files.
+    """
+    ecode, gitdir = git_run_command(worktree, ['rev-parse', '--absolute-git-dir'])
+    if ecode != 0:
+        return None
+    gd = gitdir.strip()
+    if os.path.isdir(os.path.join(gd, 'rebase-apply')):
+        applying = os.path.exists(os.path.join(gd, 'rebase-apply', 'applying'))
+        return 'am' if applying else 'rebase'
+    if os.path.isdir(os.path.join(gd, 'rebase-merge')):
+        return 'rebase'
+    for marker, op in (
+        ('MERGE_HEAD', 'merge'),
+        ('CHERRY_PICK_HEAD', 'cherry-pick'),
+        ('REVERT_HEAD', 'revert'),
+    ):
+        if os.path.exists(os.path.join(gd, marker)):
+            return op
+    return None
+
+
+def _worktree_has_unmerged(worktree: str) -> bool:
+    """Return whether *worktree*'s index carries unmerged (conflict) entries.
+
+    This is the state git leaves when it refuses to *start* an operation on top
+    of a conflicted index (e.g. ``git merge`` reporting "you have unmerged
+    files"): there is no in-progress op to ``--abort``, only stage>0 entries.
+    """
+    ecode, out = git_run_command(worktree, ['ls-files', '--unmerged'])
+    return ecode == 0 and bool(out.strip())
+
+
+def _abort_worktree_op(worktree: str) -> Optional[str]:
+    """Abort whatever git operation is mid-flight in *worktree*, restoring it.
+
+    Detects the in-progress op (see :func:`_worktree_inprogress_op`) and runs
+    the matching ``--abort``. When nothing is in progress but the index still
+    carries unmerged entries -- which no ``--abort`` can clear -- falls back to
+    ``git reset --merge`` to drop them. Returns what it did: the op aborted
+    ('am'/'rebase'/'merge'/'cherry-pick'/'revert'), ``'reset'`` for the
+    unmerged-index fallback, or ``None`` if there was nothing to clean up.
+
+    WARNING: this discards the in-progress operation and any half-done conflict
+    resolution in it. Only call it on a worktree whose state is b4's to throw
+    away -- its own incomplete take, or a throwaway worktree -- never on
+    pre-existing state a user may own.
+    """
+    op = _worktree_inprogress_op(worktree)
+    if op is not None:
+        git_run_command(worktree, [op, '--abort'], logstderr=True, rundir=worktree)
+        return op
+    if _worktree_has_unmerged(worktree):
+        git_run_command(worktree, ['reset', '--merge'], logstderr=True, rundir=worktree)
+        return 'reset'
+    return None
+
+
+def _fetch_and_drop_am_worktree(
+    dest: str, gwt: str, origin: Optional[str] = None
+) -> bool:
+    """Fetch *gwt*'s HEAD into *dest*'s FETCH_HEAD, then remove the worktree.
+
+    Shared by the conflict-resolution paths in ``b4 shazam`` and the review
+    TUI: once the user has finished the ``git am`` in the throwaway worktree
+    *gwt*, pull the result into *dest*'s FETCH_HEAD so it can be merged, then
+    tear the worktree down. The fetch is anchored to *dest* via ``rundir`` so
+    FETCH_HEAD lands in the worktree the caller merges in (see
+    git_fetch_am_into_repo). When *origin* is given, rewrite FETCH_HEAD so the
+    merge message names the series origin instead of the worktree path. On fetch
+    failure the worktree is left in place (so the resolved git-am can be retried)
+    and False is returned.
+    """
+    ecode, out = git_run_command(dest, ['fetch', gwt], logstderr=True, rundir=dest)
+    if ecode > 0:
+        # Leave the worktree in place so the resolved git-am can be retried.
+        logger.critical('Unable to fetch from the worktree')
+        logger.critical(out.strip())
+        return False
+    if origin:
+        _rewrite_fetch_head_origin(dest, gwt, origin)
+    git_run_command(dest, ['worktree', 'remove', '--force', gwt])
+    return True
+
+
+def resolve_am_conflict_in_shell(
+    topdir: str,
+    cex: 'AmConflictError',
+    *,
+    origin: Optional[str] = None,
+) -> bool:
+    """Drop the user into a subshell to finish a conflicted ``git am`` inline.
+
+    Shared by ``b4 shazam --resolve`` and the review TUI: the throwaway worktree
+    *cex.worktree_path* already holds the parked, full-checkout ``git am`` (rebuilt
+    by git_fetch_am_into_repo on conflict). Suspend into a shell there so the user
+    drives the am to completion natively, then act on the outcome:
+
+    - finished (``git am --continue``): fetch the result into *topdir*'s
+      FETCH_HEAD, drop the worktree, return True.
+    - aborted (``git am --abort``) or left unfinished: drop the worktree, return
+      False.
+
+    b4 stays the parent for the whole call (blocking subshell, no exec); the
+    caller must not exit or execvp until this returns -- and only then, once the
+    worktree is gone, hand off to git-merge.
+
+    The am's starting commit is pinned on *cex* (``cex.base_sha``) when the
+    conflict is raised; an am that ends back there (everything aborted or skipped)
+    counts as "nothing applied" and returns False rather than merging a no-op that
+    would silently drop the series. *origin* annotates FETCH_HEAD with the series
+    origin instead of the worktree path (see _fetch_and_drop_am_worktree).
+    """
+    gwt = cex.worktree_path
+    logger.critical('---')
+    logger.critical(cex.output)
+    logger.critical('---')
+    logger.critical('Patch series did not apply cleanly.')
+
+    _suspend_to_shell(
+        hint='b4 conflict',
+        cwd=gwt,
+        guidance=[
+            'You are now in a shell in the conflict worktree.',
+            'Resolve the conflict, then run "git am --continue"'
+            ' (or "git am --skip" to drop a patch).',
+            'Run "git am --abort" to give up on the whole series.',
+            'When done, Ctrl-d returns to b4.',
+        ],
+    )
+
+    # The am must be finished before we can fetch and merge the series.
+    if _worktree_rebase_apply_dir(gwt):
+        logger.warning('git-am is still in progress; conflict resolution incomplete.')
+        git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
+        return False
+
+    # The am is finished -- but did it apply anything? If the user ran
+    # "git am --abort" (or "--skip"ped every patch) the worktree is back at the
+    # am's starting point (cex.base_sha, pinned when the conflict was raised);
+    # fetching+merging that is a no-op that silently drops the whole series.
+    _e1, wt_head_after = git_run_command(gwt, ['rev-parse', 'HEAD'], rundir=gwt)
+    wt_head_after = wt_head_after.strip()
+    if not wt_head_after or wt_head_after == cex.base_sha:
+        logger.warning('No patches are applied; conflict resolution aborted.')
+        git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
+        return False
+
+    # am completed: fetch the fully-applied series into FETCH_HEAD and drop the
+    # worktree so the caller can merge it exactly like a clean apply would.
+    logger.info('Conflict resolved, fetching result...')
+    return _fetch_and_drop_am_worktree(topdir, gwt, origin=origin)
+
+
+def _replay_am_on_full_worktree(
+    gwt: str, ambytes: bytes, amargs: List[str]
+) -> Tuple[int, str]:
+    """Replay a sparse-blocked ``git am`` on a full (non-sparse) checkout.
+
+    git_fetch_am_into_repo applies into a sparse worktree (only root-level files
+    materialized). git's 3-way merge will not write ``skip-worktree`` paths, so a
+    subdirectory file makes the sparse ``git am`` stop even when the 3-way is
+    clean -- and a real conflict there is recorded with an empty index (no markers
+    to resolve). Abort the partial am, drop the sparse restriction so every path
+    is present, and replay. Returns the replay's (exit code, output): non-zero is
+    a genuine conflict the user resolves; zero means only sparseness had blocked
+    it and the series actually applies cleanly.
+    """
+    git_run_command(gwt, ['am', '--abort'], logstderr=True, rundir=gwt)
+    git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
+    return git_run_command(gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt)
+
+
 def git_fetch_am_into_repo(
     gitdir: Optional[str],
     ambytes: bytes,
@@ -5706,6 +5915,7 @@ def git_fetch_am_into_repo(
     origin: Optional[str] = None,
     check_only: bool = False,
     am_flags: Optional[List[str]] = None,
+    resolve: bool = False,
 ) -> None:
     if gitdir is None:
         gitdir = os.getcwd()
@@ -5726,6 +5936,15 @@ def git_fetch_am_into_repo(
     ecode, out = git_run_command(topdir, gitargs, logstderr=True)
     if ecode > 0:
         raise RuntimeError('Failed to create worktree: %s' % out.strip())
+
+    # Pin the commit the worktree (hence the am) starts on, while HEAD still
+    # points at it. A symbolic base like 'HEAD' re-resolved later would follow
+    # the worktree's own HEAD as git-am advances it past base.
+    ecode, base_sha = git_run_command(gwt, ['rev-parse', 'HEAD'], rundir=gwt)
+    base_sha = base_sha.strip()
+    if ecode > 0 or not base_sha:
+        git_run_command(topdir, ['worktree', 'remove', '--force', gwt])
+        raise RuntimeError('Unable to determine worktree base commit')
 
     cleanup = True
     try:
@@ -5751,8 +5970,18 @@ def git_fetch_am_into_repo(
             gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt
         )
         if ecode > 0:
-            cleanup = False
-            raise AmConflictError(gwt, out.strip())
+            if resolve:
+                # The sparse worktree can't write skip-worktree paths, so git-am
+                # stops on any subdirectory file -- a real conflict (recorded
+                # with an empty index, no markers) or even a clean 3-way. Replay
+                # on a full worktree to tell them apart.
+                ecode, out = _replay_am_on_full_worktree(gwt, ambytes, amargs)
+            if ecode > 0:
+                # Genuine conflict: park the am for the user to resolve.
+                cleanup = False
+                raise AmConflictError(gwt, out.strip(), base_sha)
+            # else: only sparseness blocked it; the series applied cleanly --
+            # fall through to the normal fetch-into-FETCH_HEAD path.
         if check_only:
             return
         logger.info('---')
@@ -5781,6 +6010,68 @@ def git_fetch_am_into_repo(
         # Rewrite the same FETCH_HEAD the fetch above wrote (gitdir's), not the
         # cwd worktree's.
         _rewrite_fetch_head_origin(gitdir, gwt, origin)
+
+
+def _suspend_to_shell(
+    hint: str = 'b4',
+    cwd: Optional[str] = None,
+    guidance: Optional[List[str]] = None,
+) -> None:
+    """Spawn an interactive sub-shell with a PS1 hint.
+
+    For bash and zsh, a temporary rc file is used so the user's normal
+    configuration is loaded first and then the prompt is prefixed with
+    a short marker.  For other shells the B4_REVIEW environment variable
+    is set so the user can incorporate it into their own prompt.
+
+    *guidance* overrides the default banner lines (the review-oriented "do not
+    rewrite commits" advice) with caller-specific instructions -- e.g. the
+    git-am conflict flow, where finishing the am does add a commit.
+    """
+    logger.info('---')
+    if guidance is None:
+        logger.info(
+            'You are now in shell mode. You can execute git commands or run checks.'
+        )
+        logger.info('Cosmetic commit edits (reword subjects, fix trailers) are fine;')
+        logger.info('b4 will reconcile tracking data when you return.')
+        logger.info('Do NOT add, remove, squash, or reorder commits.')
+        logger.info('When done, Ctrl-d to return to review UI.')
+    else:
+        for line in guidance:
+            logger.info(line)
+    logger.info('---')
+
+    shell = os.environ.get('SHELL', '/bin/sh')
+    shellname = os.path.basename(shell)
+    env = os.environ.copy()
+    env['B4_REVIEW'] = hint
+
+    if shellname == 'bash':
+        bashrc = os.path.expanduser('~/.bashrc')
+        source = f'[ -f "{bashrc}" ] && . "{bashrc}"\n'
+        source += f'PS1="({hint}) $PS1"\n'
+        with tempfile.NamedTemporaryFile(
+            mode='w', prefix='b4-shell-', suffix='.sh', delete=False
+        ) as rcf:
+            rcf.write(source)
+            rcfile = rcf.name
+        try:
+            subprocess.run([shell, '--rcfile', rcfile], env=env, cwd=cwd)
+        finally:
+            os.unlink(rcfile)
+    elif shellname == 'zsh':
+        real_zdotdir = os.environ.get('ZDOTDIR', os.path.expanduser('~'))
+        with tempfile.TemporaryDirectory(prefix='b4-shell-') as tmpdir:
+            zshrc = os.path.join(tmpdir, '.zshrc')
+            with open(zshrc, 'w') as f:
+                f.write(f'ZDOTDIR="{real_zdotdir}"\n')
+                f.write('[ -f "$ZDOTDIR/.zshrc" ] && . "$ZDOTDIR/.zshrc"\n')
+                f.write(f'PS1="({hint}) $PS1"\n')
+            env['ZDOTDIR'] = tmpdir
+            subprocess.run([shell], env=env, cwd=cwd)
+    else:
+        subprocess.run([shell], env=env, cwd=cwd)
 
 
 def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:

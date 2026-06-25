@@ -24,6 +24,12 @@ from textual.widgets import Input, ListView, Static
 import b4
 import b4.review
 import b4.review.tracking as tracking
+from b4 import (
+    _abort_worktree_op,
+    _worktree_has_unmerged,
+    _worktree_inprogress_op,
+    _worktree_merge_in_progress,
+)
 from b4.review_tui._modals import (
     ActionItem,
     ActionScreen,
@@ -43,7 +49,6 @@ from b4.review_tui._tracking_app import (
     _take_worktree,
     _TakeWorktree,
     _worktree_for_branch,
-    _worktree_merge_in_progress,
 )
 
 # ---------------------------------------------------------------------------
@@ -3275,7 +3280,7 @@ class TestUpdateRevisionWorkflow:
                 patch('b4.review_tui._tracking_app._wait_for_enter'),
                 patch('b4.git_fetch_am_into_repo', side_effect=conflict),
                 patch(
-                    'b4.review_tui._tracking_app._resolve_worktree_am_conflict',
+                    'b4.resolve_am_conflict_in_shell',
                     return_value=False,
                 ),
             ):
@@ -3922,6 +3927,141 @@ class TestMergeConflictResolution:
         assert ok is False
         assert handle._keep is True
         assert _worktree_merge_in_progress(wt) is True
+
+    def test_real_worktree_incomplete_auto_aborts(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        """A real checkout left mid-op is aborted, never poisoned.
+
+        Counterpart to test_incomplete_keeps_throwaway: a throwaway worktree is
+        kept for the user, but a real checkout must be restored -- otherwise its
+        unmerged index breaks the user's git work and makes the next take fail
+        cryptically on top of it.
+        """
+        wt, pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        handle = _TakeWorktree(wt, is_temp=False)
+        # User exits the shell WITHOUT finishing or aborting the merge.
+        with patch('b4.review_tui._tracking_app._suspend_to_shell'):
+            ok = _resolve_worktree_take_conflict(
+                handle, 'merge', pre, _worktree_merge_in_progress
+            )
+        assert ok is False
+        assert _worktree_merge_in_progress(wt) is False
+        assert _worktree_has_unmerged(wt) is False
+        ecode, head = b4.git_run_command(wt, ['rev-parse', 'HEAD'])
+        assert ecode == 0 and head.strip() == pre
+
+
+def _strip_merge_pseudo_refs(wt: str) -> None:
+    """Leave *wt*'s index unmerged but remove its in-progress-merge markers.
+
+    Reproduces the resting state that breaks the next take: stage>0 entries with
+    no MERGE_HEAD/etc, which git refuses to start a fresh op on top of yet no
+    ``--abort`` can clear.
+    """
+    ecode, gd = b4.git_run_command(wt, ['rev-parse', '--absolute-git-dir'])
+    assert ecode == 0
+    for fname in ('MERGE_HEAD', 'MERGE_MSG', 'AUTO_MERGE'):
+        try:
+            os.unlink(os.path.join(gd.strip(), fname))
+        except OSError:
+            pass
+
+
+class TestWorktreeOpDetection:
+    """_worktree_inprogress_op / _worktree_has_unmerged / _abort_worktree_op."""
+
+    def test_detects_merge_and_clean(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        assert _worktree_inprogress_op(wt) == 'merge'
+        assert _worktree_has_unmerged(wt) is True
+        b4.git_run_command(wt, ['merge', '--abort'])
+        assert _worktree_inprogress_op(wt) is None
+        assert _worktree_has_unmerged(wt) is False
+
+    def test_detects_cherry_pick(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        b4.git_run_command(wt, ['merge', '--abort'])
+        # The same divergent edit to shared.txt now conflicts as a cherry-pick.
+        ecode, _ = b4.git_run_command(wt, ['cherry-pick', 'theirs'], logstderr=True)
+        assert ecode != 0
+        assert _worktree_inprogress_op(wt) == 'cherry-pick'
+        b4.git_run_command(wt, ['cherry-pick', '--abort'])
+        assert _worktree_inprogress_op(wt) is None
+
+    def test_abort_op_aborts_merge(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        assert _abort_worktree_op(wt) == 'merge'
+        ecode, head = b4.git_run_command(wt, ['rev-parse', 'HEAD'])
+        assert ecode == 0 and head.strip() == pre
+        assert _worktree_inprogress_op(wt) is None
+        assert _worktree_has_unmerged(wt) is False
+
+    def test_abort_op_resets_bare_unmerged_index(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        _strip_merge_pseudo_refs(wt)
+        assert _worktree_inprogress_op(wt) is None
+        assert _worktree_has_unmerged(wt) is True
+        assert _abort_worktree_op(wt) == 'reset'
+        assert _worktree_has_unmerged(wt) is False
+
+    def test_abort_op_noop_on_clean(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        b4.git_run_command(gitdir, ['branch', 'target', 'master'])
+        linked = str(tmp_path / 'clean-wt')
+        ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', linked, 'target'])
+        assert ecode == 0
+        assert _abort_worktree_op(linked) is None
+
+
+class TestTakeWorktreeRefusesDirtyTarget:
+    """_take_worktree refuses a target worktree that is mid-op or conflicted.
+
+    A take's git-am/git-merge would otherwise fail cryptically on top of the
+    leftover state; refuse up front instead, without discarding state that may
+    be the user's own.
+    """
+
+    def test_refuses_inprogress_merge(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)  # 'ours' is in wt
+        with patch('b4.review_tui._tracking_app._wait_for_enter'):
+            with _take_worktree(gitdir, 'ours') as handle:
+                assert handle is None
+        # Refusing must leave the conflicted state untouched for the user.
+        assert _worktree_merge_in_progress(wt) is True
+
+    def test_refuses_bare_unmerged_index(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)
+        _strip_merge_pseudo_refs(wt)
+        assert _worktree_inprogress_op(wt) is None
+        assert _worktree_has_unmerged(wt) is True
+        with patch('b4.review_tui._tracking_app._wait_for_enter'):
+            with _take_worktree(gitdir, 'ours') as handle:
+                assert handle is None
+
+    def test_allows_clean_target(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        b4.git_run_command(gitdir, ['branch', 'target', 'master'])
+        linked = str(tmp_path / 'clean-target')
+        ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', linked, 'target'])
+        assert ecode == 0
+        with _take_worktree(gitdir, 'target') as handle:
+            assert handle is not None
+            assert not handle.is_temp
 
 
 def _series_mbox_add_and_edit(gitdir: str, tmp_path: pathlib.Path, base: str) -> bytes:

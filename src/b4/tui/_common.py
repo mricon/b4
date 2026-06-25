@@ -8,9 +8,6 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.utils
-import os
-import subprocess
-import tempfile
 import unicodedata
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Protocol
@@ -22,6 +19,11 @@ from textual.widgets._footer import FooterKey
 from textual.worker import NoActiveWorker, get_current_worker
 
 import b4
+
+# _suspend_to_shell now lives in b4 itself (textual-free, so the non-TUI shazam
+# conflict flow can reuse it). Re-export it so this stays the import home for the
+# TUI callers (and b4.review_tui._common's re-export of it).
+from b4 import _suspend_to_shell as _suspend_to_shell
 
 logger = b4.logger
 
@@ -204,56 +206,6 @@ def _wait_for_enter() -> None:
         input('Press Enter to continue...')
     except (KeyboardInterrupt, EOFError):
         pass
-
-
-def _suspend_to_shell(hint: str = 'b4', cwd: Optional[str] = None) -> None:
-    """Spawn an interactive sub-shell with a PS1 hint.
-
-    For bash and zsh, a temporary rc file is used so the user's normal
-    configuration is loaded first and then the prompt is prefixed with
-    a short marker.  For other shells the B4_REVIEW environment variable
-    is set so the user can incorporate it into their own prompt.
-    """
-    logger.info('---')
-    logger.info(
-        'You are now in shell mode. You can execute git commands or run checks.'
-    )
-    logger.info('Cosmetic commit edits (reword subjects, fix trailers) are fine;')
-    logger.info('b4 will reconcile tracking data when you return.')
-    logger.info('Do NOT add, remove, squash, or reorder commits.')
-    logger.info('When done, Ctrl-d to return to review UI.')
-    logger.info('---')
-
-    shell = os.environ.get('SHELL', '/bin/sh')
-    shellname = os.path.basename(shell)
-    env = os.environ.copy()
-    env['B4_REVIEW'] = hint
-
-    if shellname == 'bash':
-        bashrc = os.path.expanduser('~/.bashrc')
-        source = f'[ -f {bashrc} ] && . {bashrc}\n'
-        source += f'PS1="({hint}) $PS1"\n'
-        with tempfile.NamedTemporaryFile(
-            mode='w', prefix='b4-shell-', suffix='.sh', delete=False
-        ) as rcf:
-            rcf.write(source)
-            rcfile = rcf.name
-        try:
-            subprocess.run([shell, '--rcfile', rcfile], env=env, cwd=cwd)
-        finally:
-            os.unlink(rcfile)
-    elif shellname == 'zsh':
-        real_zdotdir = os.environ.get('ZDOTDIR', os.path.expanduser('~'))
-        with tempfile.TemporaryDirectory(prefix='b4-shell-') as tmpdir:
-            zshrc = os.path.join(tmpdir, '.zshrc')
-            with open(zshrc, 'w') as f:
-                f.write(f'ZDOTDIR="{real_zdotdir}"\n')
-                f.write('[ -f "$ZDOTDIR/.zshrc" ] && . "$ZDOTDIR/.zshrc"\n')
-                f.write(f'PS1="({hint}) $PS1"\n')
-            env['ZDOTDIR'] = tmpdir
-            subprocess.run([shell], env=env, cwd=cwd)
-    else:
-        subprocess.run([shell], env=env, cwd=cwd)
 
 
 def _addrs_to_lines(header_str: str) -> str:
