@@ -1045,11 +1045,17 @@ def _claim_range_start(mybranch: str, cover_sha: str) -> str:
 def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> None:
     """Re-stamp a prep branch's commits under the current identity.
 
-    Recovery path for the "not a prep-managed branch" gotcha: when the cover
-    commit was committed under a now-stale identity (e.g. after a user.email
-    change), b4 no longer recognizes the branch. Claiming rewrites every
-    commit in the series with the current user as committer (authorship
-    preserved), which is honest -- you are re-creating these objects now.
+    Rewrites every commit in the series with the current user as committer
+    (authorship preserved), which is honest -- you are re-creating these
+    objects now. Two motivations, depending on cover strategy:
+
+    - commit / tip-commit: recovers the "not a prep-managed branch" gotcha,
+      where the cover commit was committed under a now-stale identity (e.g.
+      after a user.email change) so b4 no longer recognizes the branch.
+    - branch-description: detection is config-based and unaffected, but the
+      series patches may still be committed by someone else (an enrolled or
+      pulled series); claiming makes them yours so the trailer/cover-update
+      rewrite is permitted instead of refused.
     """
     mybranch = b4.git_get_current_branch()
     if branch and branch != mybranch:
@@ -1067,13 +1073,15 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         logger.critical('CRITICAL: not currently on a branch')
         sys.exit(1)
 
-    covers = find_cover_commits(usebranch=mybranch)
-    if not covers:
+    usercfg = b4.get_user_config()
+    myemail = usercfg.get('email')
+    if not isinstance(myemail, str):
         logger.critical(
-            'CRITICAL: no b4 cover-letter commit found on %s; nothing to claim.',
-            mybranch,
+            'CRITICAL: could not determine your git user.email to claim as.'
         )
         sys.exit(1)
+
+    covers = find_cover_commits(usebranch=mybranch)
     if len(covers) > 1:
         logger.critical(
             'CRITICAL: Found %d b4 cover-letter commits on %s,', len(covers), mybranch
@@ -1084,24 +1092,47 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         logger.critical('          b4 will not try to untangle this automatically.')
         sys.exit(1)
 
-    cover_sha, cover_email = covers[0]
-    usercfg = b4.get_user_config()
-    myemail = usercfg.get('email')
-    if cover_email == myemail:
-        logger.info(
-            'Branch %s is already committed by you (%s); nothing to claim.',
-            mybranch,
-            myemail,
-        )
-        return
+    if covers:
+        # commit / tip-commit strategy: derive the range from the cover commit.
+        cover_sha, _cover_email = covers[0]
+        start = _claim_range_start(mybranch, cover_sha)
+    else:
+        # branch-description keeps no cover commit; the branch is still
+        # prep-managed (via config), so claim the whole series fork-point..HEAD.
+        if not is_prep_branch(usebranch=mybranch):
+            logger.critical(
+                'CRITICAL: %s is not a prep-managed branch; nothing to claim.',
+                mybranch,
+            )
+            sys.exit(1)
+        series_start = get_series_start(usebranch=mybranch)
+        if not series_start:
+            logger.critical(
+                'CRITICAL: could not determine the series start for %s; '
+                'is its tracking intact?',
+                mybranch,
+            )
+            sys.exit(1)
+        start = series_start
 
-    start = _claim_range_start(mybranch, cover_sha)
     lines = b4.git_get_command_lines(
         None, ['log', '--format=%h %cE %s', f'{start}..HEAD']
     )
     if not lines:
         logger.critical('CRITICAL: no commits found between %s and %s', start, mybranch)
         sys.exit(1)
+    committers: Set[str] = set()
+    for ln in lines:
+        parts = ln.split(maxsplit=2)
+        if len(parts) > 1:
+            committers.add(parts[1])
+    if committers == {myemail}:
+        logger.info(
+            'All commits on %s are already committed by you (%s); nothing to claim.',
+            mybranch,
+            myemail,
+        )
+        return
 
     logger.info('Will re-commit the following %d commit(s) as %s:', len(lines), myemail)
     for line in lines:

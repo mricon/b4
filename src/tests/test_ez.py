@@ -1222,3 +1222,34 @@ def test_rewrite_series_commits_explains_thirdparty(
                 )
     assert 'other@example.com' in caplog.text
     assert 'b4 prep --claim' in caplog.text
+
+
+def test_claim_branch_description_restamps_series(prepdir: str) -> None:
+    """branch-description keeps no cover commit, but --claim still re-stamps
+    the series patches (fork-point..HEAD) under the current identity."""
+    _stack_empty_patches(['bd patch one', 'bd patch two'])
+    orig_email = b4.USER_CONFIG['email']
+    assert isinstance(orig_email, str)
+    start = b4.ez.get_series_start()
+    assert start is not None
+    revrange = f'{start}..HEAD'
+    pre = _idents(revrange)
+    assert pre and all(c == orig_email for _a, c in pre)
+
+    newcfg = {'name': 'Changed User', 'email': 'changed@example.com'}
+    with patch('b4.get_user_config', return_value=newcfg):
+        # Config-based detection still recognizes the branch under any identity...
+        assert b4.ez.is_prep_branch() is True
+        # ...and there is no cover *commit* to find.
+        assert b4.ez.find_cover_commits() == []
+        parser = b4.command.setup_parser()
+        cmdargs = parser.parse_args(
+            ['--no-stdin', '--no-interactive', '--offline-mode', 'prep', '--claim']
+        )
+        b4.ez.cmd_prep(cmdargs)
+
+    post = _idents(revrange)
+    assert len(post) == len(pre)
+    # Authorship preserved; committer re-stamped to the current identity.
+    assert all(a == orig_email for a, _c in post)
+    assert all(c == 'changed@example.com' for _a, c in post)
