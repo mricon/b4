@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1782414766,"nonce":"dv7lom4xDmClEODC5UUn1bRrN1I=","message":"Fixed in master by commit 7ba9877 (\"review: make network operations interruptible on bad connectivity\"), shipping in 0.16. Closing.","files":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":4,"timestamp":1782414766,"nonce":"A41xr15NtcjMJAuqHMg0oBBs0gY=","status":2}]}
