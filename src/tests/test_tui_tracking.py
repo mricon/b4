@@ -3971,9 +3971,7 @@ def _strip_merge_pseudo_refs(wt: str) -> None:
 class TestWorktreeOpDetection:
     """_worktree_inprogress_op / _worktree_has_unmerged / _abort_worktree_op."""
 
-    def test_detects_merge_and_clean(
-        self, gitdir: str, tmp_path: pathlib.Path
-    ) -> None:
+    def test_detects_merge_and_clean(self, gitdir: str, tmp_path: pathlib.Path) -> None:
         wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)
         assert _worktree_inprogress_op(wt) == 'merge'
         assert _worktree_has_unmerged(wt) is True
@@ -3981,9 +3979,7 @@ class TestWorktreeOpDetection:
         assert _worktree_inprogress_op(wt) is None
         assert _worktree_has_unmerged(wt) is False
 
-    def test_detects_cherry_pick(
-        self, gitdir: str, tmp_path: pathlib.Path
-    ) -> None:
+    def test_detects_cherry_pick(self, gitdir: str, tmp_path: pathlib.Path) -> None:
         wt, _pre = _conflicted_merge_worktree(gitdir, tmp_path)
         b4.git_run_command(wt, ['merge', '--abort'])
         # The same divergent edit to shared.txt now conflicts as a cherry-pick.
@@ -3993,9 +3989,7 @@ class TestWorktreeOpDetection:
         b4.git_run_command(wt, ['cherry-pick', '--abort'])
         assert _worktree_inprogress_op(wt) is None
 
-    def test_abort_op_aborts_merge(
-        self, gitdir: str, tmp_path: pathlib.Path
-    ) -> None:
+    def test_abort_op_aborts_merge(self, gitdir: str, tmp_path: pathlib.Path) -> None:
         wt, pre = _conflicted_merge_worktree(gitdir, tmp_path)
         assert _abort_worktree_op(wt) == 'merge'
         ecode, head = b4.git_run_command(wt, ['rev-parse', 'HEAD'])
@@ -4013,9 +4007,7 @@ class TestWorktreeOpDetection:
         assert _abort_worktree_op(wt) == 'reset'
         assert _worktree_has_unmerged(wt) is False
 
-    def test_abort_op_noop_on_clean(
-        self, gitdir: str, tmp_path: pathlib.Path
-    ) -> None:
+    def test_abort_op_noop_on_clean(self, gitdir: str, tmp_path: pathlib.Path) -> None:
         b4.git_run_command(gitdir, ['branch', 'target', 'master'])
         linked = str(tmp_path / 'clean-wt')
         ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', linked, 'target'])
@@ -4052,9 +4044,7 @@ class TestTakeWorktreeRefusesDirtyTarget:
             with _take_worktree(gitdir, 'ours') as handle:
                 assert handle is None
 
-    def test_allows_clean_target(
-        self, gitdir: str, tmp_path: pathlib.Path
-    ) -> None:
+    def test_allows_clean_target(self, gitdir: str, tmp_path: pathlib.Path) -> None:
         b4.git_run_command(gitdir, ['branch', 'target', 'master'])
         linked = str(tmp_path / 'clean-target')
         ecode, _ = b4.git_run_command(gitdir, ['worktree', 'add', linked, 'target'])
