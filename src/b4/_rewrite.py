@@ -19,7 +19,7 @@ https://lore.kernel.org/all/CAHk-=wj4a_CvL6-=8gobwScstu-gJpX4XbX__hvcE=e9zaQ_9A@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pygit2
 from pygit2.enums import SortMode
@@ -27,6 +27,24 @@ from pygit2.enums import SortMode
 import b4
 
 logger = b4.logger
+
+
+class ThirdpartyCommitterError(RuntimeError):
+    """Raised when a rewrite would touch commits committed by someone else.
+
+    Re-creating such a commit would record the *current* user as its
+    committer, falsely attesting that they committed work they did not.
+    Callers that genuinely intend to take ownership (``prep --claim``) opt
+    in with ``allow_thirdparty_committer=True``.
+    """
+
+    def __init__(self, commits: List[Tuple[str, str]]) -> None:
+        # commits: [(hex, committer_email), ...]
+        self.commits = commits
+        super().__init__(
+            'refusing to rewrite %d commit(s) committed by another identity'
+            % len(commits)
+        )
 
 
 def _collect_notes(
@@ -67,7 +85,7 @@ def _current_committer() -> pygit2.Signature:
     Identity comes from the same source as the rest of b4's committer checks
     (``user.name`` / ``user.email``, with the usual env fallbacks), so a
     rewrite stamps the person actually running b4 -- never a preserved,
-    possibly-foreign committer.
+    possibly third-party committer.
     """
     usercfg = b4.get_user_config()
     name = usercfg.get('name')
@@ -89,6 +107,7 @@ def rewrite_commits(
     reflog_msg: str = 'b4: rewrite commits',
     gitdir: Optional[str] = None,
     force: bool = False,
+    allow_thirdparty_committer: bool = False,
 ) -> Dict[str, str]:
     """Rewrite commits in ``(start, end]`` using pygit2.
 
@@ -106,6 +125,11 @@ def rewrite_commits(
     so the committer re-stamp alone takes effect (used by ``prep --claim`` to
     take ownership of commits left under a stale identity). Without it, an
     empty *edit_map* is a no-op.
+
+    Unless *allow_thirdparty_committer* is set, the rewrite refuses (raising
+    :class:`ThirdpartyCommitterError`) when any commit in range was committed by
+    someone other than the current user: re-creating it would falsely record
+    the current user as its committer. ``prep --claim`` opts in deliberately.
 
     Any git-notes attached (under any ``refs/notes/*`` ref) to commits in
     the rewrite range are migrated to the new commit OIDs with note bytes
@@ -155,6 +179,24 @@ def rewrite_commits(
     # The current user committed these rewritten objects, not whoever
     # committed the originals. Stamp one signature for the whole batch.
     committer = _current_committer()
+
+    # Never silently rewrite commits committed by someone else into our name.
+    if not allow_thirdparty_committer:
+        thirdparty = [
+            (str(c.id), c.committer.email)
+            for c in old_commits
+            if c.committer.email != committer.email
+        ]
+        if thirdparty:
+            run_rewrite_hook('post')
+            raise ThirdpartyCommitterError(thirdparty)
+
+    logger.debug(
+        'Rewriting %d commit(s) as committer %s', len(old_commits), committer.email
+    )
+    for c in old_commits:
+        subject = c.message.splitlines()[0] if c.message else ''
+        logger.debug('  %s %s', str(c.id)[:12], subject)
 
     oid_map: Dict[str, str] = {}
     new_tip_oid: Optional[pygit2.Oid] = None

@@ -24,9 +24,11 @@ def _commit(repo: pygit2.Repository, oid: Union[pygit2.Oid, str]) -> pygit2.Comm
 SIG = pygit2.Signature('Test Author', 'test@example.com', 1700000000, 0)
 BRANCH = 'refs/heads/master'
 
-# The identity the rewrite engine should stamp as committer on every
-# rewritten commit (distinct from SIG, which seeds the originals).
-CURRENT_USER = {'name': 'Current User', 'email': 'current@example.com'}
+# The identity the rewrite engine stamps as committer on every rewritten
+# commit. Same email as SIG (so seeded commits count as "ours" and clear the
+# third-party-committer guard) but a different name, which still proves the
+# committer line was re-stamped rather than copied.
+CURRENT_USER = {'name': 'Current User', 'email': 'test@example.com'}
 
 
 # -- Fixtures ----------------------------------------------------------------
@@ -137,10 +139,56 @@ class TestRewriteCore:
         # the original (preserving it would be a lie about who committed it).
         assert new_middle.committer.name == CURRENT_USER['name']
         assert new_middle.committer.email == CURRENT_USER['email']
-        assert new_middle.committer.email != old_middle.committer.email
-        # ...and with a fresh timestamp, not the original committer date.
+        # The committer line was re-stamped, not copied: the name changed...
+        assert new_middle.committer.name != old_middle.committer.name
+        # ...and the timestamp is fresh, not the original committer date.
         assert new_middle.committer.time > old_middle.committer.time
         assert new_middle.message == 'b (edited)\n'
+
+    def test_rewrite_refuses_thirdparty_committer(
+        self, bare_repo: pygit2.Repository
+    ) -> None:
+        """A rewrite must refuse to re-create commits committed by someone
+        else -- doing so would falsely record us as their committer."""
+        oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
+        # Become a different identity than the one that committed the seeds.
+        notme = {'name': 'Someone Else', 'email': 'someone-else@example.com'}
+        with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
+            with patch('b4.get_user_config', return_value=notme):
+                with pytest.raises(b4._rewrite.ThirdpartyCommitterError) as ei:
+                    b4._rewrite.rewrite_commits(
+                        edit_map={str(oids[1]): 'b (edited)\n'},
+                        start=str(oids[0]),
+                        end='HEAD',
+                    )
+        # The error names every offending commit and its committer.
+        offenders = {sha for sha, _email in ei.value.commits}
+        assert str(oids[1]) in offenders
+        assert all(email == 'test@example.com' for _sha, email in ei.value.commits)
+        # Nothing was rewritten: the branch tip is unchanged.
+        assert bare_repo.references[BRANCH].target == oids[-1]
+
+    def test_rewrite_allows_thirdparty_committer_when_claimed(
+        self, bare_repo: pygit2.Repository
+    ) -> None:
+        """With allow_thirdparty_committer=True (the prep --claim path), the
+        same rewrite proceeds and re-stamps the committer to the claimer."""
+        oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n'])
+        claimer = {'name': 'Claimer', 'email': 'claimer@example.com'}
+        with _patch_gitdir(bare_repo), patch('b4.ez.run_rewrite_hook'):
+            with patch('b4.get_user_config', return_value=claimer):
+                result = b4._rewrite.rewrite_commits(
+                    edit_map={},
+                    start=str(oids[0]),
+                    end='HEAD',
+                    force=True,
+                    allow_thirdparty_committer=True,
+                )
+        assert str(oids[1]) in result and str(oids[2]) in result
+        new_mid = _commit(bare_repo, result[str(oids[1])])
+        # Committer re-stamped to the claimer; authorship still the original.
+        assert new_mid.committer.email == 'claimer@example.com'
+        assert new_mid.author.email == 'test@example.com'
 
     def test_rewrite_descendants_reparented(self, bare_repo: pygit2.Repository) -> None:
         oids = _seed(bare_repo, ['a\n', 'b\n', 'c\n', 'd\n'])

@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 import b4
+import b4._rewrite
 import b4.command
 import b4.ez
 import b4.mbox
@@ -127,6 +128,18 @@ def test_trailers(
         gitargs = ['pull', '--rebase', bfile]
         out, logstr = b4.git_run_command(None, gitargs)
         assert out == 0
+        # The bundled series was committed by its original author. b4 now
+        # refuses to rewrite commits committed by someone else (that would
+        # misrepresent who committed them). Re-stamp the pulled commits under
+        # the current identity -- exactly what happens when you build the
+        # series yourself -- so the trailer updater may touch them. Authorship
+        # is preserved, so the comparison below (which keys on %ae) is
+        # unaffected.
+        _ec, _mb = b4.git_run_command(None, ['merge-base', 'HEAD', 'master'])
+        _ec2, _out2 = b4.git_run_command(
+            None, ['rebase', '--no-ff', _mb.strip()], logstderr=True
+        )
+        assert _ec2 == 0, _out2
     else:
         assert config.get('shazam-am-flags') == '--signoff'
         if rep:
@@ -1193,3 +1206,19 @@ def test_claim_refuses_multiple_cover_commits(
             with pytest.raises(SystemExit):
                 b4.ez.cmd_prep(cmdargs)
     assert 'different identities' in caplog.text
+
+
+def test_rewrite_series_commits_explains_thirdparty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The cover/trailers rewrite wrapper turns the engine's third-party
+    refusal into a clear message pointing at `b4 prep --claim`."""
+    err = b4._rewrite.ThirdpartyCommitterError([('deadbeefcafe', 'other@example.com')])
+    with patch('b4.ez.rewrite_commits', side_effect=err):
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit):
+                b4.ez._rewrite_series_commits(
+                    {'deadbeefcafe': 'msg'}, 'start', reflog_msg='b4: test'
+                )
+    assert 'other@example.com' in caplog.text
+    assert 'b4 prep --claim' in caplog.text

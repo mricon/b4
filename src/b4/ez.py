@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import b4
 import patatt
-from b4._rewrite import rewrite_commits
+from b4._rewrite import ThirdpartyCommitterError, rewrite_commits
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -787,7 +787,7 @@ def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> No
                 logger.critical('CRITICAL: Could not find the cover letter commit.')
                 raise RuntimeError('Error saving cover letter (commit not found)')
             logger.info('Updating cover letter commit.')
-            rewrite_commits(
+            _rewrite_series_commits(
                 edit_map={commit: cover_message},
                 start=f'{commit}~1',
                 end='HEAD',
@@ -965,7 +965,9 @@ def _explain_not_prep_branch(mybranch: str, fallbackmsg: str) -> None:
         logger.critical(fallbackmsg)
         return
     if len(covers) > 1:
-        logger.critical('CRITICAL: Found %d b4 cover-letter commits on this', len(covers))
+        logger.critical(
+            'CRITICAL: Found %d b4 cover-letter commits on this', len(covers)
+        )
         logger.critical('          branch, committed under different identities:')
         for sha, email in covers:
             logger.critical('            %s  by %s', sha[:12], email)
@@ -983,6 +985,34 @@ def _explain_not_prep_branch(mybranch: str, fallbackmsg: str) -> None:
     logger.critical('            - set user.email back to %s, or', email)
     logger.critical('            - claim this branch under your current identity:')
     logger.critical('                b4 prep --claim')
+
+
+def _rewrite_series_commits(
+    edit_map: Dict[str, str], start: str, end: str = 'HEAD', *, reflog_msg: str
+) -> Dict[str, str]:
+    """Wrap rewrite_commits(), turning a third-party-committer refusal into advice.
+
+    The engine refuses to rewrite commits committed by someone else (doing so
+    would falsely record us as their committer). For b4's own prep workflows
+    that almost always means the branch carries a stale identity, so steer the
+    user to ``prep --claim`` instead of dumping a traceback.
+    """
+    try:
+        return rewrite_commits(edit_map, start, end, reflog_msg=reflog_msg)
+    except ThirdpartyCommitterError as ex:
+        logger.critical(
+            'CRITICAL: refusing to rewrite commit(s) committed by someone else:'
+        )
+        for sha, email in ex.commits:
+            logger.critical('            %s  by %s', sha[:12], email)
+        logger.critical(
+            '          Rewriting them would falsely record you as their committer.'
+        )
+        logger.critical(
+            '          If this is your own branch under a stale git identity, run:'
+        )
+        logger.critical('                b4 prep --claim')
+        sys.exit(1)
 
 
 def _claim_range_start(mybranch: str, cover_sha: str) -> str:
@@ -1045,7 +1075,9 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         )
         sys.exit(1)
     if len(covers) > 1:
-        logger.critical('CRITICAL: Found %d b4 cover-letter commits on %s,', len(covers), mybranch)
+        logger.critical(
+            'CRITICAL: Found %d b4 cover-letter commits on %s,', len(covers), mybranch
+        )
         logger.critical('          committed under different identities:')
         for sha, email in covers:
             logger.critical('            %s  by %s', sha[:12], email)
@@ -1056,11 +1088,17 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
     usercfg = b4.get_user_config()
     myemail = usercfg.get('email')
     if cover_email == myemail:
-        logger.info('Branch %s is already committed by you (%s); nothing to claim.', mybranch, myemail)
+        logger.info(
+            'Branch %s is already committed by you (%s); nothing to claim.',
+            mybranch,
+            myemail,
+        )
         return
 
     start = _claim_range_start(mybranch, cover_sha)
-    lines = b4.git_get_command_lines(None, ['log', '--format=%h %cE %s', f'{start}..HEAD'])
+    lines = b4.git_get_command_lines(
+        None, ['log', '--format=%h %cE %s', f'{start}..HEAD']
+    )
     if not lines:
         logger.critical('CRITICAL: no commits found between %s and %s', start, mybranch)
         sys.exit(1)
@@ -1085,6 +1123,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         end='HEAD',
         reflog_msg='b4: claim prep branch',
         force=True,
+        allow_thirdparty_committer=True,
     )
     logger.info('Claimed %s. The series is now committed by %s.', mybranch, myemail)
 
@@ -1978,7 +2017,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         edit_map[commit] = clmsg.message
     logger.info('---')
     logger.info('Updating trailers on %d commit(s).', len(edit_map))
-    rewrite_commits(
+    _rewrite_series_commits(
         edit_map=edit_map,
         start=start,
         end='HEAD',
@@ -3958,7 +3997,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
     if cmdargs.claim is not None:
-        return claim_prep_branch(cmdargs.claim or None, no_interactive=cmdargs.no_interactive)
+        return claim_prep_branch(
+            cmdargs.claim or None, no_interactive=cmdargs.no_interactive
+        )
 
     if cmdargs.reroll:
         msgid = cmdargs.reroll
