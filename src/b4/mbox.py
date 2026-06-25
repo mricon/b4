@@ -1066,6 +1066,20 @@ def _begin_shazam_resolve(
     the user drives it to completion natively and nothing is silently dropped.
     The fully-applied series is merged once, by ``b4 shazam --continue``.
     """
+    # TODO: switch --resolve to a subshell model like the review TUI's
+    # _resolve_worktree_am_conflict -- suspend into a shell in the worktree
+    # (blocking subprocess.run; b4 stays the parent) and finish inline when it
+    # exits: fetch+merge on success, tear the worktree down on "git am --abort"
+    # or an unfinished am. That drops the persisted b4-shazam-state.json and the
+    # separate --continue/--abort commands, at the cost of the git-rebase-style
+    # two-phase UX. Two constraints make it robust:
+    #  - b4 must stay alive while the shell runs (no sys.exit/os.execvp until
+    #    cleanup has run); _run_shazam_merge may only execvp git-merge at the
+    #    very end, once the worktree is already dropped.
+    #  - guard the worktree with try/finally (or atexit + a SIGINT/SIGTERM
+    #    handler) so it is reclaimed even if b4 is killed while the shell is up --
+    #    a shell "trap ... EXIT" analogue. Keep it outcome-aware (finished vs
+    #    aborted), never an unconditional remove, or a half-done resolution dies.
     gwt = cex.worktree_path
     logger.critical('---')
     logger.critical(cex.output)
