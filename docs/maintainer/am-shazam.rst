@@ -315,11 +315,13 @@ the merge commit.
   the failure. See :ref:`shazam_conflict_resolution` below.
 
 ``--continue``
-  Continue after resolving merge conflicts from ``--resolve``. Run this
-  after fixing the conflicts in your working tree.
+  Continue after a conflicted ``--resolve``. Run this once you have
+  finished the ``git am`` in the resolution worktree; b4 then fetches the
+  applied series and merges it.
 
 ``--abort``
-  Abort a conflicted shazam and clean up any saved state.
+  Abort a conflicted shazam: remove the resolution worktree and clean up
+  any saved state.
 
 Please also see the :ref:`shazam_settings` section for some
 configuration file options that affect some of ``b4 shazam`` behaviour.
@@ -356,26 +358,31 @@ add the ``--resolve`` flag::
 
     b4 shazam -H --resolve <msgid>
 
-With ``--resolve``, b4 does the following when a conflict occurs:
+With ``--resolve``, instead of giving up, b4 leaves the in-progress
+``git am`` parked in a throwaway worktree and prints its path. The whole
+series is applied there by git itself, so no patch is ever silently
+dropped. Resolve the conflict the usual way and let ``git am`` work
+through the rest of the series::
 
-1. Applies as many patches as it can cleanly.
-2. Fetches the successfully applied patches into ``FETCH_HEAD`` and
-   merges them into your current branch.
-3. Applies remaining patches one by one using ``git apply --3way``.
-4. If a patch has conflicts, b4 stops and tells you which files need
-   attention.
+    cd <worktree path printed by b4>
+    # edit the conflicted files
+    git am --continue        # or: git am --skip
 
-At this point, resolve the conflicts in your working tree (the usual
-``git diff``, edit, ``git add`` cycle), then run::
+Repeat until ``git am`` reports that it is done, then come back to your
+branch and run::
 
     b4 shazam --continue
 
-B4 picks up where it left off — it applies any remaining patches and
-finishes the merge. If all goes well, you end up with a merge commit
-just as if the series had applied cleanly.
+B4 fetches the fully-applied series out of the worktree, removes the
+worktree, and merges the series into your branch — exactly the merge a
+clean ``b4 shazam`` would have made. If that final merge itself
+conflicts, resolve it the normal way (git leaves the conflicted merge in
+your tree) and commit.
 
 If you decide you don't want to proceed, run::
 
     b4 shazam --abort
 
-This cleans up the saved state and leaves your branch as it was before.
+This removes the resolution worktree (discarding the in-progress ``git
+am``), backs out a half-finished merge, and clears the saved state,
+leaving your branch as it was before.
