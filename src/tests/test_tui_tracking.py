@@ -3275,7 +3275,7 @@ class TestUpdateRevisionWorkflow:
                 patch('b4.review_tui._tracking_app._wait_for_enter'),
                 patch('b4.git_fetch_am_into_repo', side_effect=conflict),
                 patch(
-                    'b4.review_tui._tracking_app._resolve_worktree_am_conflict',
+                    'b4.resolve_am_conflict_in_shell',
                     return_value=False,
                 ),
             ):
