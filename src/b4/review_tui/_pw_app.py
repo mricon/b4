@@ -766,7 +766,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             return
 
         if len(targets) == 1:
-            label = targets[0].get('name', '(no subject)')
+            label = targets[0].get('name') or '(no subject)'
         else:
             label = f'{len(targets)} series ({len(patch_ids)} patches)'
         self.push_screen(
@@ -822,7 +822,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             self.notify('Series already tracked', severity='information')
             return
 
-        series_name = item.series.get('name', '(no subject)')
+        series_name = item.series.get('name') or '(no subject)'
         msgid = item.series.get('msgid', '')
         if not msgid:
             self.notify('No message-id available for this series', severity='error')
@@ -932,7 +932,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             return
         self._hidden_ids.add(sid)
         self._save_local_data()
-        title = item.series.get('name', '(no subject)')
+        title = item.series.get('name') or '(no subject)'
         self.notify(f'Hidden: {title}', timeout=3)
         await self._refresh_list()
 
@@ -955,7 +955,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             return
         self._hidden_ids.discard(sid)
         self._save_local_data()
-        title = item.series.get('name', '(no subject)')
+        title = item.series.get('name') or '(no subject)'
         self.notify(f'Restored: {title}', timeout=3)
         await self._refresh_list()
 
