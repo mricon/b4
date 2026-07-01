@@ -1,0 +1,44 @@
+From mboxrd@git Thu Jan  1 00:00:00 1970
+Subject: do a thing to the widget subsystem
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+From: Test Author <author@example.org>
+Date: Tue, 25 Oct 2022 13:38:41 -0400
+Message-Id: <20221025-widget-v1-0-author@example.org>
+To: list@example.org
+
+Hi all,
+
+this changes how the widget works.  Note that there is neither a
+[PATCH 0/N] prefix nor a diffstat on this cover letter, yet it is
+still a genuine cover letter for the single patch that follows.
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+Subject: [PATCH] widget: do the thing
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+From: Test Author <author@example.org>
+Date: Tue, 25 Oct 2022 13:38:42 -0400
+Message-Id: <20221025-widget-v1-1-author@example.org>
+In-Reply-To: <20221025-widget-v1-0-author@example.org>
+References: <20221025-widget-v1-0-author@example.org>
+To: list@example.org
+
+Make the widget finally do the thing it was always meant to do.
+
+Signed-off-by: Test Author <author@example.org>
+---
+ file1 | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/file1 b/file1
+index 0000001..0000002 100644
+--- a/file1
++++ b/file1
+@@ -1,3 +1,3 @@
+ line 1
+-line 2
++line two
+ line 3
