@@ -3847,6 +3847,7 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
     topdir = git_get_toplevel()
     wtglobs = [
         'prep-*-check-cmd',
+        'prep-pre-flight-checks',
         'review-*-check-cmd',
         'send-*',
         '*mask',
