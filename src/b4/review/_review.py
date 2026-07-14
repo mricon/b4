@@ -2841,7 +2841,7 @@ def _build_review_email(
     if not subject.lower().startswith('re:'):
         subject = f'Re: {subject}'
     msg['Subject'] = subject
-    msg['From'] = f'{user_name} <{user_email}>'
+    msg['From'] = b4.format_addrs([(user_name, user_email)], clean=False)
 
     # Build reply headers.  When the user has explicitly edited the
     # To/Cc fields via the ToCcScreen, honour their choices as-is.

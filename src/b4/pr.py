@@ -430,7 +430,7 @@ def get_pr_from_github(ghurl: str) -> Optional[b4.LoreMessage]:
         uemail = fake_email
 
     msg = email.message.EmailMessage(policy=b4.emlpolicy)
-    msg['From'] = f'{uname} <{uemail}>'
+    msg['From'] = b4.format_addrs([(uname, uemail)], clean=False)
     title = prdata.get('title', '')
     msg['Subject'] = f'[GIT PULL] {title}'
     msg['Message-Id'] = b4.make_msgid(

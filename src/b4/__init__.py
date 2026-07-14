@@ -2530,7 +2530,7 @@ class LoreMessage:
         msg = EmailMessage()
         msg.set_payload(body, charset='utf-8')
         msg['Subject'] = subject
-        msg['From'] = f'{user_name} <{user_email}>'
+        msg['From'] = format_addrs([(user_name, user_email)], clean=False)
         msg['To'] = format_addrs(deduped_to, clean=False)
         if deduped_cc:
             msg['Cc'] = format_addrs(deduped_cc, clean=False)
