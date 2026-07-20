@@ -71,7 +71,7 @@ For options and their descriptions, see ``b4 mbox --help``.
 
 ``b4 mbox -m ~/Mail [msgid]``
   Download a thread from your ~/Mail folder and save it in the current
-  directlry as a .mbox file.
+  directly as a .mbox file.
 
 ``b4 mbox -fo ~/Mail [public-inbox-url]``
   Download the thread from this public-inbox server, and add it to your
