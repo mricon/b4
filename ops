@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784648226,"nonce":"BXpCVy6QtMELPmnfSadS/tdAjiU=","added":["rcadone"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784648397,"nonce":"IltVutKlwGQJdw7KLRfvJT07NjY=","title":"b4 review tui: upgrade unavailable while waiting for new revision","was":"b4 review series version upgrade flow awkwardness"}]}
