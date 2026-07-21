@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784648226,"nonce":"Sj49Sv2b79E6f5QA+cWadt/GHh8=","added":["rcadone"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784648398,"nonce":"Z1+OeiZ4jXEn4ufsWkYplkoZNPk=","title":"b4 am: cross-revision trailer carryover lacks provenance","was":"b4 picks up old trailers in a confusing way"}]}
