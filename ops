@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784648226,"nonce":"F/iMBK8fXqYWbOiM64gxmqj4eTA=","added":["rcadone"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784648398,"nonce":"3rh1lciXtt5lAQVtijXsPKrW2b0=","title":"b4 review track: discovery misses new version without change-id","was":"Series revision identification issue"}]}
