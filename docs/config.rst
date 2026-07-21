@@ -25,6 +25,39 @@ located at the top-level of the git tree. If you're not sure where a
 configuration option is coming from, see if there is a ``.b4-config``
 file in the repository you're currently using.
 
+Because a ``.b4-config`` file travels with the repository and may come
+from a source you don't fully trust, b4 does **not** honor every setting
+found there. Anything that could make b4 silently run a command on your
+machine or redirect your outgoing email is ignored -- for example the
+mail transport settings (``sendmail`` and any ``smtp*`` option), the
+message-id command (``custom-msgid-cmd``), the pre-rewrite hook
+(``prep-pre-rewrite-hook``), and the check commands b4 runs against
+patches you received from others (``am-*-check-cmd`` and
+``review-*-check-cmd``). The review check commands are excluded because
+``b4 review`` applies the series under review into your working tree, so
+its ``.b4-config`` -- and any command it names -- would otherwise be
+under the control of whoever sent the series.
+
+Only the settings below are accepted from ``.b4-config``; every other
+configuration source (such as ``~/.gitconfig`` and ``.git/config``) is
+unrestricted:
+
+- ``prep-*-check-cmd`` -- the check commands run by ``b4 prep --check``
+  on the series you are preparing yourself
+- ``prep-pre-flight-checks`` -- which pre-flight checks are enabled
+- ``send-*`` -- recipient and addressing options, such as
+  ``send-series-to``, ``send-series-cc``, ``send-auto-to-cmd`` and
+  ``send-auto-cc-cmd``
+- ``*mask`` -- URL templates such as ``midmask`` and ``linkmask``
+- ``*template*`` -- message templates
+- ``trailer*`` -- trailer-handling options
+- ``pw-*`` -- Patchwork integration options
+
+The ``prep`` check and recipient-discovery commands are allowed because
+they only run when you explicitly invoke a check or ``--auto-to-cc`` on a
+series you are preparing yourself -- never on content you received from
+someone else.
+
 Configuration options
 ---------------------
 All settings are under the ``b4`` section. For example, to set the
