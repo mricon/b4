@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784646415,"nonce":"uYz4hDapIf9yu/nMyYXllir7Xn8=","title":"b4 review tui: apply base resolves to moving target HEAD, hidden in UI","was":"b4 review tui: apply base lazily resolves to (moving) target-branch HEAD and is never shown in the UI"}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784648225,"nonce":"d1TawNKYXNTZjLeFWSI3iltEAKc=","added":["rcadone"],"removed":null}]}
