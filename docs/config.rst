@@ -741,6 +741,9 @@ Contributor-oriented settings
          [b4]
          prep-pre-flight-checks = disable-needs-auto-to-cc, needs-checking
 
+     This setting may also be shipped in a project's ``.b4-config`` so the
+     decision is shared with all contributors.
+
      .. versionadded:: v0.14
 
    :term:`b4.prep-pre-rewrite-hook`

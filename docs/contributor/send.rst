@@ -207,6 +207,10 @@ or::
     [b4]
     prep-pre-flight-checks = disable-needs-auto-to-cc, disable-needs-checking
 
+Projects can also ship this setting in their ``.b4-config`` file, so the
+decision to disable certain pre-flight checks is shared with all
+contributors via version control.
+
 B4 automatically recognizes when your commits have changed and triggers
 the pre-flight checks warning when it thinks that you should re-run
 them.
