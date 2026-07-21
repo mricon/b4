@@ -2911,6 +2911,87 @@ class TestUpdateSeriesTrackingCancellation:
 
 
 # ---------------------------------------------------------------------------
+# Message counts: update_series_tracking
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateSeriesTrackingCounts:
+    """The message count is refreshed regardless of series status."""
+
+    def test_accepted_series_still_updates_counts(self) -> None:
+        """An accepted (applied) series still gets its message count refreshed.
+
+        Regression: the count update used to be skipped for
+        accepted/thanked/snoozed series, so once a series was applied the
+        unread badge never appeared again — new follow-up mail was fetched
+        on update but message_count stayed frozen.
+        """
+        identifier = 'count-accepted-test'
+        change_id = 'count-accepted-1'
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            change_id,
+            1,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2024-01-15T10:00:00+00:00',
+            'cover@example.com',
+            3,
+        )
+        review_tracking.update_series_status(conn, change_id, 'accepted')
+        # Baseline from the reviewing days: 5 messages, all seen
+        conn.execute(
+            'UPDATE series SET message_count = 5, seen_message_count = 5'
+            ' WHERE change_id = ?',
+            (change_id,),
+        )
+        conn.commit()
+        conn.close()
+
+        # The refetched thread has grown to 7 messages
+        msgs = [_make_test_msg(f'reply-{i}@example.com') for i in range(7)]
+
+        v1_patch = mock.Mock()
+        v1_patch.msgid = 'cover@example.com'
+        v1_patch.full_subject = '[PATCH 0/3] test'
+        v1_mock = mock.Mock()
+        v1_mock.revision = 1
+        v1_mock.patches = [v1_patch, None, None, None]
+        mock_lmbx = mock.Mock()
+        mock_lmbx.series = {1: v1_mock}
+        mock_lmbx.get_series.return_value = None
+
+        series_dict: Dict[str, Any] = {
+            'change_id': change_id,
+            'revision': 1,
+            'status': 'accepted',
+            'message_id': 'cover@example.com',
+        }
+        with (
+            mock.patch('b4.review._review.retrieve_series_messages', return_value=msgs),
+            mock.patch('b4.LoreMailbox', return_value=mock_lmbx),
+        ):
+            result = b4.review.update_series_tracking(
+                series_dict, identifier, 'https://example.com/%s'
+            )
+
+        assert result.get('error') is None
+        assert result.get('counts_updated') is True
+
+        conn = review_tracking.get_db(identifier)
+        row = conn.execute(
+            'SELECT message_count, seen_message_count FROM series WHERE change_id = ?',
+            (change_id,),
+        ).fetchone()
+        conn.close()
+        # Count refreshed, seen untouched — the badge shows (2)
+        assert row['message_count'] == 7
+        assert row['seen_message_count'] == 5
+
+
+# ---------------------------------------------------------------------------
 # Cancellation: cmd_track
 # ---------------------------------------------------------------------------
 
