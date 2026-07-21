@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784646416,"nonce":"ue20P0eVuUrWecH9jcRbAWLTiIA=","title":"b4 review track: fuzzy fallback discovery false-matches distinct series","was":"b4 review track: subject+from fallback discovery skips validation, folds distinct same-author series into one"}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784646534,"nonce":"Bzj3aBbp452Tx7vDkV+l9GnOWGI=","added":["lifecycle:confirmed"],"removed":null}]}
