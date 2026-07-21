@@ -2424,10 +2424,11 @@ def update_series_tracking(
             return result
 
     # Update message count and thread blob from the already-fetched
-    # thread messages.  This replaces the old separate Stage 2 call to
-    # update_message_counts(), avoiding duplicate lore lookups entirely.
-    skip_counts = frozenset(('archived', 'accepted', 'thanked', 'snoozed'))
-    if status not in skip_counts and thread_msgs and change_id:
+    # thread messages.  No status filtering here: the thread is already
+    # in hand, and the unread badge must keep working after a series
+    # moves past reviewing (accepted/thanked), or the maintainer never
+    # sees follow-up discussion on applied series.
+    if thread_msgs and change_id:
         try:
             conn = b4.review.tracking.get_db(identifier)
             b4.review.tracking.update_message_count_from_msgs(
