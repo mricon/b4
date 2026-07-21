@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784646417,"nonce":"N4aSLdD4xLWhw3XwhpjnNLl1qMY=","title":"b4 review tui: discovered revisions use first-patch subject, not cover","was":"b4 review tui: discovered revisions store first-patch subject because get_series() cover injection is skipped"}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784646534,"nonce":"2hp3w/y4zfS1EBsvkttTVqJu2MI=","added":["lifecycle:confirmed"],"removed":null}]}
