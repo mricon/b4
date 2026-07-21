@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784648226,"nonce":"UcFCLAwK58VlMmsA4n1cR/gsIac=","added":["rcadone"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784648398,"nonce":"69mu7r0PdzsPpvFAZoQdXolpJhY=","title":"b4 patchwork: hardcoded API version breaks state update","was":"patchwork 1.1 API"}]}
