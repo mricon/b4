@@ -911,14 +911,14 @@ wheels = [
 
 [[package]]
 name = "liblore"
-version = "0.8.0"
+version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1f/31/742e4bf6b074ad4cf261fd321265c2728dc455a722b1659f27d60a078c15/liblore-0.8.0.tar.gz", hash = "sha256:e7b465cbaa0de313d9e09d6fc23f019cd0821ac00416a433151241cccbaf3e89", size = 62187, upload-time = "2026-06-11T21:31:42.913Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/1c/977577255b58e57e0c11667e069f943a0cac1b8d74c65bc501e0649032bf/liblore-0.8.1.tar.gz", hash = "sha256:0499dc2f29973d3612d8c49855d891d24f69ef1c8899ad514e730f59cd33c513", size = 63305, upload-time = "2026-07-22T14:14:07.011Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/ff/f386d379ffa4d46b702400fb2ccbd83ceb69a15e70b031b032bb2856707e/liblore-0.8.0-py3-none-any.whl", hash = "sha256:f9f70005069cb81ec0b94417c6c726b88050e0c0c1990e2137085f6449ccc28f", size = 34864, upload-time = "2026-06-11T21:31:41.987Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/22/1b313a5d91c4b1ab072b751b3585dfb367380d9b49c35db18dd43e49d825/liblore-0.8.1-py3-none-any.whl", hash = "sha256:1f45e928f5fb7e660e96907ad792780e99748b418bf5b5b6eb4eb8d13965e540", size = 35072, upload-time = "2026-07-22T14:14:05.92Z" },
 ]
 
 [[package]]
@@ -1334,14 +1334,14 @@ wheels = [
 
 [[package]]
 name = "patatt"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pynacl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/17/f9/d9c3ace058873379cec76fbe2ed887e8d47e55d56704018c29b35e30e440/patatt-0.7.0.tar.gz", hash = "sha256:f7b2be8a15f251fbbc90c6b734ab910654a7a9d184369ce9e77b6d26e43b9eea", size = 23415, upload-time = "2026-01-02T20:26:24.618Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/84/ce3398941bcb26a5ee12a066a5d2b052bf9211f713d98ed78573b5364fea/patatt-0.8.0.tar.gz", hash = "sha256:c226b5e7e449a4981b827c48e2586a928fa45b690af19a3892b9279b334f2551", size = 24636, upload-time = "2026-07-22T14:01:12.556Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/00/848e6a58684f0f8e80684d2158799e110c7f60fcddcfde2809bce3107fcc/patatt-0.7.0-py3-none-any.whl", hash = "sha256:3335f90f94ba7446ade9c166aee62c41d57d4c283ba3b7569d311c686eac4ace", size = 21108, upload-time = "2026-01-02T20:26:23.19Z" },
+    { url = "https://files.pythonhosted.org/packages/07/0f/51505e1a25f9cf2fec7c026134f93f09731b82ab4b33285611e1b2db4b7f/patatt-0.8.0-py3-none-any.whl", hash = "sha256:9b8324376619fa8d2d9808e324f3cea4ee7f332d5fe64b770d98578f2b28ea2c", size = 21736, upload-time = "2026-07-22T14:01:11.513Z" },
 ]
 
 [[package]]
