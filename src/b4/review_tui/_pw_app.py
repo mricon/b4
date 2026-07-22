@@ -9,6 +9,7 @@ import json
 import pathlib
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
+from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -473,14 +474,16 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         if self._backlog_notice_shown or not self._window_days:
             return
         self._backlog_notice_shown = True
-        proj = self._pwproj or 'This project'
+        # notify() gained a markup= kwarg only in newer Textual (absent in the
+        # 2.x that Debian ships), so escape the one user-controlled field
+        # instead of disabling markup -- works on every supported version.
+        proj = escape(self._pwproj or 'This project')
         self.notify(
             f'{proj} has {self._backlog_count:,} outstanding patches — '
             f'showing only the last {self._window_days} days.',
             title='Large Patchwork backlog',
             severity='warning',
             timeout=10,
-            markup=False,
         )
 
     async def _refresh_list(self) -> None:

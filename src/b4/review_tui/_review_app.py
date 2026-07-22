@@ -73,27 +73,31 @@ class PatchListItem(ListItem):
         self.patch_idx = patch_idx
         self._label_text = label
         self._state = state
+        # Keep our own handle on the Label instead of querying it back later.
+        # Textual < 7.0 runs a widget's on_mount() before its composed children
+        # are mounted, so query_one(Label) there raises NoMatches and crashes
+        # the whole app (github #80, hit on Debian/EL Textual). Styling a widget
+        # we hold a reference to works whether or not it has mounted yet.
+        self._label = Label(label, markup=False)
 
     def compose(self) -> ComposeResult:
-        yield Label(self._label_text, markup=False)
+        yield self._label
 
     def on_mount(self) -> None:
         self._apply_state_style()
 
     def _apply_state_style(self) -> None:
-        lbl = self.query_one(Label)
         if self._state in ('skip', 'unchanged'):
-            lbl.styles.text_style = 'dim'
+            self._label.styles.text_style = 'dim'
         elif self._state == 'done':
-            lbl.styles.text_style = 'bold'
+            self._label.styles.text_style = 'bold'
         else:
-            lbl.styles.text_style = 'none'
+            self._label.styles.text_style = 'none'
 
     def update_label(self, label: str, state: str = '') -> None:
         self._label_text = label
         self._state = state
-        lbl = self.query_one(Label)
-        lbl.update(label)
+        self._label.update(label)
         self._apply_state_style()
 
 
