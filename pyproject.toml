@@ -24,7 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "requests>=2.24,<3.0",
-    "pygit2>=1.15,<2.0",
+    # 1.14 is the floor: it introduced pygit2.enums (the only newish API b4
+    # uses) and is what enterprise distros ship (e.g. AlmaLinux/RHEL 10).
+    "pygit2>=1.14,<2.0",
     "dkimpy>=1.0,<2.0",
     "patatt>=0.6,<2.0",
     "ezgb>=0.1",

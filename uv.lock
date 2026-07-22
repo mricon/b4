@@ -256,7 +256,7 @@ requires-dist = [
     { name = "ezgb", specifier = ">=0.1" },
     { name = "liblore", specifier = ">=0.8" },
     { name = "patatt", specifier = ">=0.6,<2.0" },
-    { name = "pygit2", specifier = ">=1.15,<2.0" },
+    { name = "pygit2", specifier = ">=1.14,<2.0" },
     { name = "requests", specifier = ">=2.24,<3.0" },
     { name = "shtab", marker = "extra == 'completion'", specifier = ">=1.8" },
     { name = "textual", extras = ["syntax"], marker = "extra == 'tui'", specifier = ">=1.0" },
