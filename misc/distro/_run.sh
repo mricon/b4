@@ -7,14 +7,12 @@
 # deps out from under the test), reports where every dependency came from,
 # and runs the suite.
 #
-# Contract from the caller (distro/<lane>.sh):
-#   WITH_TUI=1|0   -- whether textual (and thus the review TUI) is installed.
-#                     A no-tui lane deselects every test module that imports
-#                     textual/rich so collection still succeeds.
+# No-tui lanes (e.g. AlmaLinux, which packages no textual) need no special
+# handling here: the suite guards its optional-dependency imports with
+# pytest.importorskip(), so tests that need textual/rich/nacl skip cleanly
+# when those are absent.
 
 set -eu
-
-: "${WITH_TUI:=1}"
 
 # The bind mount is read-only; copy to a writable tree so pytest and the
 # editable install can write.
@@ -55,28 +53,5 @@ for name in ('textual', 'pygit2', 'dkim', 'requests', 'shtab',
     print(f'  {name:10} {str(ver):14} [{origin}]')
 PY
 
-# Assemble the pytest ignore set.
-IG=""
-# test_patatt.py exercises patatt's own signing via PyNaCl, which is not part
-# of b4's dependency surface; skip it rather than pull nacl into every image.
-IG="$IG --ignore=src/tests/test_patatt.py"
-echo '>>> skipping src/tests/test_patatt.py (needs PyNaCl, tangential to b4)'
-
-if [ "$WITH_TUI" = 0 ]; then
-    # No textual/rich installed. Deselect every test module that imports them,
-    # derived by grep so the list cannot rot as tests are added. (The proper
-    # fix is pytest.importorskip guards in the suite itself; deferred.)
-    # `_tui` catches both b4.review_tui and b4.bugs._tui (the latter pulls in
-    # rich transitively), plus direct textual/rich imports.
-    for f in src/tests/test_*.py; do
-        if grep -qE 'import textual|from textual|_tui|import rich|from rich' "$f"; then
-            IG="$IG --ignore=$f"
-            echo ">>> no-tui: skipping $f"
-        fi
-    done
-fi
-
-echo "=== pytest (WITH_TUI=$WITH_TUI) ==="
-# IG must word-split into separate --ignore args, so it stays unquoted.
-# shellcheck disable=SC2086
-python -m pytest src/tests $IG -q -p no:cacheprovider
+echo '=== pytest ==='
+python -m pytest src/tests -q -p no:cacheprovider

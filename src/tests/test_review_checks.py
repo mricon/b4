@@ -1,4 +1,5 @@
 import datetime
+import importlib.util
 import json
 import os
 from email.message import EmailMessage
@@ -9,6 +10,14 @@ import pytest
 
 import liblore
 from b4.review import checks
+
+# TestCheckWorkerCancellation imports CheckRunnerMixin from the textual-backed
+# review_tui._common; skip it when textual is absent (no-tui install) rather
+# than error at call time.
+requires_textual = pytest.mark.skipif(
+    importlib.util.find_spec('textual') is None,
+    reason='requires the [tui] extra (textual)',
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1412,6 +1421,7 @@ def _patch_msg(idx: int, total: int) -> EmailMessage:
     return msg
 
 
+@requires_textual
 class TestCheckWorkerCancellation:
     """The per-patch check loop must bail out when the worker is cancelled."""
 
@@ -1485,6 +1495,7 @@ class TestCheckWorkerCancellation:
         assert host.pushed_modal is True
 
 
+@requires_textual
 class TestCheckLoadingScreenCancel:
     """The loading overlay's Esc/q action cancels the worker, not just hides."""
 
@@ -1508,6 +1519,7 @@ class TestCheckLoadingScreenCancel:
         dismiss.assert_called_once_with(None)
 
 
+@requires_textual
 class TestWorkerCancelledHelper:
     """The shared worker_cancelled() cooperative-cancellation predicate."""
 
@@ -1528,6 +1540,7 @@ class TestWorkerCancelledHelper:
             assert _common.worker_cancelled() is True
 
 
+@requires_textual
 class TestLoreNodeShutdownMixin:
     """The mixin cancels the shared lore node from its on_unmount hook."""
 
@@ -1554,6 +1567,7 @@ class TestLoreNodeShutdownMixin:
             _App().on_unmount()  # must not raise
 
 
+@requires_textual
 class TestCheckRunnerStaleCancel:
     """Running checks must not inherit a stale lore-node cancel flag.
 
@@ -1613,6 +1627,7 @@ class TestCheckRunnerStaleCancel:
         assert host.pushed_modal is False
 
 
+@requires_textual
 class TestFetchAndCheckTrackingBranch:
     """The optional tracking-data dump must not log-and-exit (which leaks a
     line onto the TUI as a flicker) when the review branch isn't checked out.

@@ -14,6 +14,9 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 from unittest import mock
 
 import pytest
+
+pytest.importorskip('textual')
+
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Label, ListView, Static
 

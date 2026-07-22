@@ -19,6 +19,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip('textual')
+
 from textual.widgets import Input, ListView, Static
 
 import b4

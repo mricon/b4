@@ -13,6 +13,10 @@ from datetime import datetime, timezone
 from typing import Set
 from unittest import mock
 
+import pytest
+
+pytest.importorskip('textual')
+
 from b4.bugs._import import (
     format_comment,
     is_comment_removed,

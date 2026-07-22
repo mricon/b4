@@ -17,6 +17,8 @@ from typing import Any, Callable, Dict, List, Optional, cast
 
 import pytest
 
+pytest.importorskip('textual')
+
 import b4
 import liblore
 from b4.review_tui._common import lore_request, run_lore_worker

@@ -15,6 +15,8 @@ from unittest import mock
 
 import pytest
 
+pytest.importorskip('textual')
+
 import b4
 import b4.review
 from b4.review_tui._review_app import ReviewApp

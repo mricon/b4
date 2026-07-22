@@ -11,6 +11,8 @@ from unittest import mock
 
 import pytest
 
+pytest.importorskip('textual')
+
 import b4
 import b4.review
 import liblore

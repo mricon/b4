@@ -12,6 +12,5 @@ dnf -q -y install \
     python3-pytest python3-pytest-asyncio \
     >/dev/null
 
-export WITH_TUI=1
 # shellcheck disable=SC1091
 . /src/misc/distro/_run.sh

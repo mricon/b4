@@ -11,6 +11,9 @@ from collections.abc import Generator
 from typing import Tuple, Union
 
 import pytest
+
+pytest.importorskip('nacl')
+
 from nacl.signing import SigningKey
 
 import b4

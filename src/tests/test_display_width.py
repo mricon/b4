@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip('textual')
+
 from b4.review_tui._common import display_width, pad_display
 
 

@@ -1,4 +1,5 @@
 import email.message
+import importlib.util
 import json
 from typing import Any, Dict, List, Optional, Union
 from unittest import mock
@@ -8,6 +9,15 @@ import pytest
 import b4
 from b4 import review, review_tui
 from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
+
+# The address-helper functions exposed via review_tui live in a module that
+# imports textual at load time, so the tests that exercise them need the [tui]
+# extra even though the functions themselves are pure. Skip them when textual
+# is absent (e.g. a deliberately no-tui install) rather than fail to collect.
+requires_textual = pytest.mark.skipif(
+    importlib.util.find_spec('textual') is None,
+    reason='requires the [tui] extra (textual)',
+)
 
 # -- Helper diffs used across tests ------------------------------------------
 
@@ -911,6 +921,7 @@ class TestBuildReviewEmailReplyPath:
         assert '> +a' not in body and '> +b' not in body
 
 
+@requires_textual
 class TestAddrsToLines:
     """Tests for review_tui._addrs_to_lines()."""
 
@@ -937,6 +948,7 @@ class TestAddrsToLines:
         assert 'alice@example.com' in result
 
 
+@requires_textual
 class TestLinesToHeader:
     """Tests for review_tui._lines_to_header()."""
 
@@ -970,6 +982,7 @@ class TestLinesToHeader:
         assert 'bob@example.com' in result
 
 
+@requires_textual
 class TestValidateAddrs:
     """Tests for review_tui._validate_addrs()."""
 
@@ -1009,6 +1022,7 @@ class TestValidateAddrs:
         assert review_tui._validate_addrs(text) is None
 
 
+@requires_textual
 class TestAddrsRoundTrip:
     """Round-trip: _addrs_to_lines → _lines_to_header preserves addresses."""
 
@@ -1907,6 +1921,7 @@ class TestCollectFollowups:
 # -- Tests for _get_art_counts() ---------------------------------------------
 
 
+@requires_textual
 class TestGetArtCounts:
     """Tests for _get_art_counts() in _tracking_app."""
 
@@ -2009,6 +2024,7 @@ class TestGetArtCounts:
         assert _get_art_counts('/tmp', 'b4/review/test') == (1, 0, 0)
 
 
+@requires_textual
 class TestParseArtFromMessage:
     """Tests for the extracted _parse_art_from_message() helper."""
 
@@ -3689,6 +3705,7 @@ class TestIntegrateFollowupInlineComments:
         )
 
 
+@requires_textual
 class TestFollowupItemPerMessage:
     """Tests for per-message follow-up selection (msgid-based keying)."""
 

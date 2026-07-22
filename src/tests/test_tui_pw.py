@@ -14,6 +14,9 @@ from typing import Any, Dict, List
 from unittest import mock
 
 import pytest
+
+pytest.importorskip('textual')
+
 from textual.widgets import Label, ListView, ProgressBar
 
 import b4

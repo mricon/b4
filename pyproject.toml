@@ -58,6 +58,9 @@ completion = [
 ]
 tui = [
     "textual[syntax]>=1.0",
+    # textual pulls in rich, but b4 uses it directly (the review and bugs
+    # TUIs), so declare it explicitly rather than lean on the transitive dep.
+    "rich>=13.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -120,6 +123,11 @@ extend-select = [
     "SIM201",  # https://docs.astral.sh/ruff/rules/negate-equal-op/
 ]
 flake8-quotes.inline-quotes = "single"
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules gate optional-dependency imports behind pytest.importorskip(),
+# which must run before those imports -- E402 is expected and correct here.
+"src/tests/*" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "single"
