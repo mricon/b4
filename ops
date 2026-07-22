@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1784727486,"nonce":"eDijZaGGOl6JsaQ39Oprb8A4+gA=","added":["lifecycle:confirmed"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1784727487,"nonce":"wwZwaGC8NKrB0M+F1qdV5vcnKy8=","title":"b4 send: gpg signing hangs when a daemon child inherits patatt's captured pipe","was":"b4 review tui: send hangs when signing raises inside suspend()"}]}
