@@ -3310,7 +3310,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     )
 
                 # Try cherry-picking the commits
-                gitargs = ['cherry-pick', f'{base_commit}..{series_tip}']
+                gitargs = [
+                    '-c',
+                    'commit.gpgsign=false',
+                    'cherry-pick',
+                    f'{base_commit}..{series_tip}',
+                ]
                 ecode, out = b4.git_run_command(gwt, gitargs, logstderr=True)
                 if ecode != 0:
                     logger.warning('Series does not apply cleanly to %s', target_branch)
