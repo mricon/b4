@@ -36,12 +36,15 @@ from b4 import (
 from b4.review_tui._modals import (
     ActionItem,
     ActionScreen,
+    BaseSelectionScreen,
     CherryPickScreen,
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
     LinkRevisionScreen,
+    RebaseScreen,
     SnoozeScreen,
+    TakeConfirmScreen,
     TargetBranchScreen,
 )
 from b4.review_tui._tracking_app import (
@@ -121,10 +124,13 @@ def _create_review_branch(
     subject: str = 'Test series',
     sender_name: str = 'Test Author',
     sender_email: str = 'test@example.com',
+    with_patch: bool = False,
 ) -> str:
     """Create a fake b4 review branch with a proper tracking commit.
 
-    Returns the branch name.
+    With ``with_patch``, a real patch commit modifying file1.txt sits
+    between the base and the tracking commit, and the tracking metadata
+    describes it.  Returns the branch name.
     """
     branch_name = f'b4/review/{change_id}'
     # Get current HEAD as base
@@ -134,6 +140,24 @@ def _create_review_branch(
     # Create the branch at HEAD
     ecode, _ = b4.git_run_command(gitdir, ['branch', branch_name, base_sha])
     assert ecode == 0
+    parent_sha = base_sha
+    patches: List[Dict[str, Any]] = []
+    if with_patch:
+        ecode, _ = b4.git_run_command(gitdir, ['checkout', branch_name])
+        assert ecode == 0
+        with open(os.path.join(gitdir, 'file1.txt'), 'a') as fh:
+            fh.write(f'{change_id} tweak\n')
+        b4.git_run_command(gitdir, ['add', 'file1.txt'])
+        ecode, _ = b4.git_run_command(
+            gitdir, ['commit', '-m', f'{change_id}: tweak file1']
+        )
+        assert ecode == 0
+        ecode, parent_sha = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        parent_sha = parent_sha.strip()
+        ecode, _ = b4.git_run_command(gitdir, ['checkout', 'master'])
+        assert ecode == 0
+        patches = [{'title': f'{change_id}: tweak file1', 'link': ''}]
     # Build tracking metadata
     trk = {
         'series': {
@@ -148,11 +172,11 @@ def _create_review_branch(
             'complete': True,
             'base-commit': base_sha,
             'prerequisite-commits': [],
-            'first-patch-commit': base_sha,
+            'first-patch-commit': parent_sha,
             'header-info': {},
         },
         'followups': [],
-        'patches': [],
+        'patches': patches,
     }
     commit_msg = f'{subject}\n\n{b4.review.make_review_magic_json(trk)}'
     # Create an empty tracking commit on the branch
@@ -161,7 +185,7 @@ def _create_review_branch(
     tree = tree.strip()
     ecode, new_sha = b4.git_run_command(
         gitdir,
-        ['commit-tree', tree, '-p', base_sha],
+        ['commit-tree', tree, '-p', parent_sha],
         stdin=commit_msg.encode(),
     )
     assert ecode == 0
@@ -4140,3 +4164,84 @@ class TestDoTakeMergeConflict:
         common_dir = b4.git_get_common_dir(gitdir)
         assert common_dir is not None
         assert not os.path.isdir(os.path.join(common_dir, 'b4-take-worktree'))
+
+
+def _poison_gpg_signing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force commit.gpgsign=true with a signing backend that always fails.
+
+    The appended entries override conftest's gpgsign=false injection, so
+    any git command that tries to sign fails outright; only a command
+    that explicitly disables signing (git -c commit.gpgsign=false, which
+    outranks environment config) can create commits.
+
+    gpg.format is pinned because the suite does not isolate the global
+    git config: under gpg.format=ssh git signs through gpg.ssh.program
+    and never looks at gpg.program, so the probes would sign happily and
+    these tests would pass with the fix reverted.
+
+    Build fixtures before poisoning -- they commit normally.
+    """
+    entries = [
+        ('commit.gpgsign', 'true'),
+        ('gpg.format', 'openpgp'),
+        ('gpg.program', '/bin/false'),
+    ]
+    count = int(os.environ.get('GIT_CONFIG_COUNT', '0'))
+    monkeypatch.setenv('GIT_CONFIG_COUNT', str(count + len(entries)))
+    for idx, (key, value) in enumerate(entries, start=count):
+        monkeypatch.setenv(f'GIT_CONFIG_KEY_{idx}', key)
+        monkeypatch.setenv(f'GIT_CONFIG_VALUE_{idx}', value)
+
+
+def _one_patch_mbox(gitdir: str) -> bytes:
+    """Build mbox bytes for one patch that applies cleanly to master."""
+    ecode, _ = b4.git_run_command(gitdir, ['checkout', '-b', 'sign-tweak'])
+    assert ecode == 0
+    with open(os.path.join(gitdir, 'file1.txt'), 'a') as fh:
+        fh.write('sign-tweak\n')
+    b4.git_run_command(gitdir, ['add', 'file1.txt'])
+    ecode, _ = b4.git_run_command(gitdir, ['commit', '-m', 'sign-tweak file1'])
+    assert ecode == 0
+    ecode, mbox = b4.git_run_command(
+        gitdir, ['format-patch', '-1', '--stdout'], decode=False
+    )
+    assert ecode == 0
+    b4.git_run_command(gitdir, ['checkout', 'master'])
+    b4.git_run_command(gitdir, ['branch', '-D', 'sign-tweak'])
+    return mbox
+
+
+class TestTestApplyNoSigning:
+    """Throwaway test-applies must never gpg-sign their commits.
+
+    With commit.gpgsign=true and a card-backed key, a signing git-am in a
+    modal worker pops pinentry on the tty the live TUI owns -- the TUI
+    repaints over the prompt and swallows the PIN, hanging the apply.
+    With gpg poisoned to always fail, these pass only if the test-apply
+    disables signing.
+    """
+
+    @pytest.mark.parametrize(
+        'screen_cls',
+        [RebaseScreen, TargetBranchScreen, BaseSelectionScreen],
+        ids=lambda c: c.__name__,
+    )
+    def test_static_test_apply_does_not_sign(
+        self,
+        gitdir: str,
+        monkeypatch: pytest.MonkeyPatch,
+        screen_cls: Any,
+    ) -> None:
+        ambytes = _one_patch_mbox(gitdir)
+        _poison_gpg_signing(monkeypatch)
+        ok, detail = screen_cls._test_apply_at(ambytes, 'master')
+        assert ok, f'{screen_cls.__name__} test-apply tried to sign: {detail}'
+
+    def test_take_confirm_test_apply_does_not_sign(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        branch = _create_review_branch(gitdir, 'sign-take', with_patch=True)
+        _poison_gpg_signing(monkeypatch)
+        screen = TakeConfirmScreen('linear', 'master', branch)
+        ok, detail = screen._test_take()
+        assert ok, f'take test-apply tried to sign: {detail}'
