@@ -254,7 +254,7 @@ misc = [
 [package.metadata]
 requires-dist = [
     { name = "dkimpy", specifier = ">=1.0,<2.0" },
-    { name = "ezgb", specifier = ">=0.1" },
+    { name = "ezgb", specifier = ">=0.2.0" },
     { name = "liblore", specifier = ">=0.8" },
     { name = "patatt", specifier = ">=0.6,<2.0" },
     { name = "pygit2", specifier = ">=1.14,<2.0" },
@@ -525,14 +525,14 @@ wheels = [
 
 [[package]]
 name = "ezgb"
-version = "0.1.1"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pygit2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/1c/baa729c8b7ba6c8f0b6ddcfecdfaf552226079b6d38d8eea7da7b2601954/ezgb-0.1.1.tar.gz", hash = "sha256:c7b9619d82b4579c0fa6aca5c6273371c37ea1fd657cc5c8b05ca7447518ac65", size = 33270, upload-time = "2026-04-02T04:00:44.939Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/35/b765be847cd02e6282d8374d7082f97eec8afa6ad40efdf8e22e27ff9004/ezgb-0.2.0.tar.gz", hash = "sha256:f758d883ad63efead5afe5a1b311d6adc9ddc22eb67c901d474cced32d66e2f5", size = 34621, upload-time = "2026-07-23T15:02:31.476Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/dc/9e57312d502e7158e7da330f450de38c6fa0cece1421bfe6cd7b68888192/ezgb-0.1.1-py3-none-any.whl", hash = "sha256:d350fa0a14aa2a5b0fa1f3fd703867c1258b0b82d8cc880f25435ef50b0b1fce", size = 23549, upload-time = "2026-04-02T04:00:38.135Z" },
+    { url = "https://files.pythonhosted.org/packages/71/d5/f0e0abfb01b6936326bf01b30ffeac5a9fa11b1fb4e8b8191541adf1e9ec/ezgb-0.2.0-py3-none-any.whl", hash = "sha256:45b9a54c1d76f2f4538374b5a071c8faaad179f7aee53f18bf588b740dccd4c4", size = 23912, upload-time = "2026-07-23T15:02:30.455Z" },
 ]
 
 [[package]]

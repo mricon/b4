@@ -29,7 +29,7 @@ dependencies = [
     "pygit2>=1.14,<2.0",
     "dkimpy>=1.0,<2.0",
     "patatt>=0.6,<2.0",
-    "ezgb>=0.1",
+    "ezgb>=0.2.0",
     "liblore>=0.8",
 ]
 

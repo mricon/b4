@@ -230,9 +230,9 @@ dnspython==2.8.0 \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
     --hash=sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f
     # via dkimpy
-ezgb==0.1.1 \
-    --hash=sha256:c7b9619d82b4579c0fa6aca5c6273371c37ea1fd657cc5c8b05ca7447518ac65 \
-    --hash=sha256:d350fa0a14aa2a5b0fa1f3fd703867c1258b0b82d8cc880f25435ef50b0b1fce
+ezgb==0.2.0 \
+    --hash=sha256:45b9a54c1d76f2f4538374b5a071c8faaad179f7aee53f18bf588b740dccd4c4 \
+    --hash=sha256:f758d883ad63efead5afe5a1b311d6adc9ddc22eb67c901d474cced32d66e2f5
     # via b4 (pyproject.toml)
 idna==3.11 \
     --hash=sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea \
