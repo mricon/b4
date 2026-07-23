@@ -201,8 +201,8 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
     """Launch the bug management TUI."""
     try:
         from b4.bugs._tui import BugListApp
-    except ImportError:
-        logger.critical('The TUI requires the textual library.')
+    except ImportError as e:
+        logger.critical(f'The TUI requires the {e.name} library.')
         logger.critical('Install it with: pip install b4[tui]')
         sys.exit(1)
 
