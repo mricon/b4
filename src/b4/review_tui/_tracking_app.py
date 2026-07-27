@@ -2036,23 +2036,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 att_row.display = False
 
         # Show known revisions (precomputed in _load_series)
-        revision = series.get('revision', 1)
         revisions_row = self.query_one('#detail-revisions-row', Horizontal)
         revs = series.get('_revisions', [])
         if revs:
             rev_str = ', '.join(f'v{r["revision"]}' for r in revs)
             rev_widget = self.query_one('#detail-revisions', Static)
-            status = series.get('status', 'new')
-            if series.get('has_newer') and status == 'reviewing':
-                rev_str += f' (upgrade from v{revision} with [a]ction)'
-                rev_widget.add_class('has-upgrade')
-            elif series.get('has_newer') and status == 'new':
+            if series.get('has_newer'):
                 newest = max(r['revision'] for r in revs)
-                rev_str += f' (v{newest} available)'
-                rev_widget.add_class('has-upgrade')
-            elif series.get('has_newer') and status == 'waiting':
-                newest = max(r['revision'] for r in revs)
-                rev_str += f' (v{newest} available, will auto-upgrade on update)'
+                rev_str += f' (v{newest} available — upgrade with [a]ction)'
                 rev_widget.add_class('has-upgrade')
             else:
                 rev_widget.remove_class('has-upgrade')
@@ -2276,7 +2267,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return
         checked = result.get('series_checked', 0)
         updated = result.get('series_updated', 0)
-        promoted = result.get('promoted', 0)
         errors = result.get('errors', 0)
         gone = result.get('gone', 0)
         error_details: list[tuple[str, str]] = result.get('error_details', [])
@@ -2287,8 +2277,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         parts = [f'Checked {checked} series']
         if updated:
             parts.append(f'{updated} updated')
-        if promoted:
-            parts.append(f'{promoted} promoted from waiting')
         if errors:
             parts.append(f'{errors} error(s)')
 

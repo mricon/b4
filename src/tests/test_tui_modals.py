@@ -1141,7 +1141,6 @@ class TestUpdateAllScreenCancellation:
                 'new_trailers': 0,
                 'error': None,
                 'counts_updated': False,
-                'promoted': False,
             }
 
         dismissed: List[Optional[Dict[str, Any]]] = []

@@ -27,7 +27,6 @@ from b4.review._review import (
     _resolve_message_positions,
     _retrieve_messages,
     _set_patch_state,
-    _should_promote_waiting,
     _strip_subject,
     _toggle_patch_done,
     _trim_quoted_reply,
@@ -66,5 +65,4 @@ __all__ = [
     '_integrate_followup_inline_comments',
     '_apply_findings_locations',
     '_prepare_review_session',
-    '_should_promote_waiting',
 ]
