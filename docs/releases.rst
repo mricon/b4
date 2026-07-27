@@ -90,6 +90,47 @@ to the last 30 days. A self-dismissing notice informs you when the window
 is active, and the title bar shows "· last 30 days" so the absence of
 older series does not look like data loss.
 
+**Takes run in the target branch's worktree**
+
+Applying a series no longer checks the target branch out in your
+current worktree. Patches are applied in whichever worktree has the
+target branch checked out — or in a throwaway worktree when it is not
+checked out anywhere — so the checkout you are driving the TUI from is
+never touched. Merge conflicts during a take are now resolved in place
+in a conflict shell (previously the take was aborted and discarded),
+an abandoned resolution can no longer leave a real checkout stuck
+mid-merge, and a take refuses to start on a worktree that already has
+an operation in progress. See :ref:`review_conflict_resolution`.
+
+**Cover-letter-aware take defaults**
+
+The Take dialog now defaults to the ``linear`` method when the
+submitter provided no cover letter — a merge commit's message is built
+from the cover letter, so there is nothing to build it from — and
+shows a note so the missing cover is visible before you take. Set
+:term:`b4.review-default-take-method` to override the heuristic.
+
+**More reliable series matching and revision discovery**
+
+Series whose patches carry plain (non-git) diffs no longer collapse
+onto one another when tracked: the series fingerprint hashes the diff
+content when ``git patch-id`` is unavailable, and a message-id match
+now always takes precedence over a fingerprint match. Discovered
+revisions are also identified by their cover letter rather than their
+first patch, so revision listings show the real series subject.
+
+**Other review fixes**
+
+- Unread-message badges keep working after a series is applied:
+  message counts are now refreshed for accepted, thanked, and snoozed
+  series too.
+- Pressing ``d`` on a patch that carries a ``Reviewed-by``/``Acked-by``
+  trailer now really takes it out of the done state, via an explicit
+  draft state that also guards against sending unfinished comments.
+- Inline comments on cover letters and commit messages are re-anchored
+  by content, so an editor that re-wraps the quoted text no longer
+  makes comments drift away from the lines they respond to.
+
 ``b4 trailers`` — interactive review and fuzzy matching
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -134,6 +175,29 @@ version, b4 prefers that copy instead of stitching. ``--rethread`` also
 records an unthreaded new version of an already-tracked series as a new
 revision rather than a duplicate.
 
+``b4 shazam`` — conflict-resolution overhaul
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``b4 shazam --resolve`` now resolves conflicts inline: on a ``git am``
+conflict, b4 parks the in-progress apply in a throwaway worktree and
+drops you into a sub-shell there. Finish with ``git am --continue``
+(or back out with ``git am --abort``), leave the shell, and b4
+completes the operation. The previous two-phase flow — and with it the
+``--continue``/``--abort`` subcommands and the persisted state file —
+is gone.
+
+The conflicted series is applied entirely through native ``git am``,
+which fixes a serious bug where a patch whose three-way fallback could
+not run was silently dropped from the merge. Conflicts in files below
+the repository root are also handled now. See
+:ref:`shazam_conflict_resolution` for the new workflow.
+
+Separately, "naked" cover letters — ones lacking both a ``[PATCH
+0/N]`` subject prefix and a diffstat — are now recognized when they
+are the same-author root of the thread, so ``b4 shazam -M`` uses the
+real cover letter for the merge commit message instead of reporting
+that no cover letter was provided.
+
 Vim and Emacs editor plugins
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -170,6 +234,19 @@ New configuration options
   when sending patches with ``b4 send``. Defaults to ``yes`` (include
   yourself).
 
+**In-tree ``.b4-config`` changes**
+
+Because a ``.b4-config`` file travels with the repository and may come
+from a source you don't fully trust, b4 only honors an allowlist of
+settings from it; the trust model is now documented at the top of
+:doc:`config`. Two changes to the allowlist this cycle:
+``b4.prep-pre-flight-checks`` is now accepted, so a project can share
+which pre-flight checks it disables, while the review check commands
+(``review-*-check-cmd``) are no longer read from ``.b4-config`` —
+``b4 review`` applies the series under review into your working tree,
+so honoring them would let a malicious series plant a command that a
+later review session runs.
+
 Native history rewriting (replaces ``git-filter-repo``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -192,6 +269,35 @@ were previously with ``git-filter-repo``. Re-sign from
 
     git rebase --exec 'git commit --amend -S --no-edit' \
         refs/original/<branch>
+
+Committer integrity and ``b4 prep --claim``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+History rewrites are now honest about the committer: rewritten commits
+are always stamped with your current git identity instead of
+preserving the original committer, and b4 refuses outright to rewrite
+any commit that was committed by someone else. Operations that would
+do so — for example ``b4 trailers -u`` on a series enrolled from
+another maintainer's tree — stop with a message pointing at
+``b4 prep --claim``, the deliberate, opt-in way to take ownership of a
+branch: it re-stamps the cover letter and every patch under your
+current identity, leaving patch authorship untouched.
+
+``b4 prep`` also now recognizes a prep branch whose cover commit was
+created under a different ``user.email`` (a common effect of changing
+git identities) and suggests ``--claim``, instead of insisting the
+branch is not prep-managed.
+
+Compatibility with distro-shipped dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+b4 is now tested against the dependency versions distributions
+actually ship, and several findings from that are fixed: the
+``pygit2`` floor is lowered to 1.14 so b4 installs entirely from
+packages on EL10-family distributions, the test suite runs (and
+self-skips TUI tests) on installs without the ``[tui]`` extra, and two
+review-TUI crashes on older Textual releases (as shipped by Debian
+stable and Fedora) are resolved.
 
 .. _release-0.15:
 
