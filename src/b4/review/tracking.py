@@ -587,16 +587,10 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     if existing_change_id is None:
         discovered: List[Tuple[Optional[str], Optional[str]]] = []
         for v in sorted(lmbx.series.keys()):
-            v_ser = lmbx.series[v]
-            v_msgid = ''
-            try:
-                for p in getattr(v_ser, 'patches', None) or []:
-                    if p is not None:
-                        v_msgid = str(getattr(p, 'msgid', '') or '')
-                        break
-            except Exception:
-                pass
-            discovered.append((getattr(v_ser, 'fingerprint', None), v_msgid))
+            v_msgid, _, _ = _raw_revision_ref(
+                lmbx, v, rethreaded=(was_rethreaded and v == revision)
+            )
+            discovered.append((getattr(lmbx.series[v], 'fingerprint', None), v_msgid))
         existing_change_id = find_existing_change_id(conn, discovered)
 
     # The rethreaded revision can't be re-fetched from a single message-id, so
@@ -778,11 +772,12 @@ def add_revision(
     fingerprint: Optional[str] = None,
     source: str = 'heuristic',
     is_rethreaded: bool = False,
+    subject_from_cover: bool = False,
 ) -> None:
     """Insert a revision record, ignoring core fields if already present.
 
     The core fields (message_id, subject, link, found_at) follow first-wins
-    semantics — re-adding an existing revision leaves them untouched.  Three
+    semantics — re-adding an existing revision leaves them untouched.  Four
     fields are reconciled on re-add, however:
 
     - ``fingerprint`` is backfilled if the existing row lacks one.
@@ -791,6 +786,10 @@ def add_revision(
       automated discovery.
     - ``is_rethreaded`` is sticky: once a revision is known to need
       rethreading, a later plain re-add must not clear the flag.
+    - ``subject`` is reconciled when *subject_from_cover* says the incoming
+      subject comes from the series' cover letter: it supersedes a
+      first-patch fallback recorded before the cover was seen (bug 8bb6e4c),
+      unless the stored row's provenance outranks the incoming one.
     """
     found_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     conn.execute(
@@ -827,13 +826,26 @@ def add_revision(
         )
     # Upgrade provenance only when the incoming source outranks the stored one.
     row = conn.execute(
-        'SELECT source FROM revisions WHERE change_id = ? AND revision = ?',
+        'SELECT source, subject FROM revisions WHERE change_id = ? AND revision = ?',
         (change_id, revision),
     ).fetchone()
     if row is not None and _source_rank(source) > _source_rank(row[0]):
         conn.execute(
             'UPDATE revisions SET source = ? WHERE change_id = ? AND revision = ?',
             (source, change_id, revision),
+        )
+    # A cover-letter subject supersedes a first-patch fallback recorded before
+    # the cover was seen, but never overrides a higher-ranked (manual) link.
+    if (
+        subject
+        and subject_from_cover
+        and row is not None
+        and row[1] != subject
+        and _source_rank(row[0]) <= _source_rank(source)
+    ):
+        conn.execute(
+            'UPDATE revisions SET subject = ? WHERE change_id = ? AND revision = ?',
+            (subject, change_id, revision),
         )
     conn.commit()
 
@@ -1129,6 +1141,43 @@ def find_existing_change_id(
     return None
 
 
+def _raw_revision_ref(
+    lmbx: 'b4.LoreMailbox', revision: int, rethreaded: bool = False
+) -> Tuple[str, str, bool]:
+    """Return (msgid, subject, from_cover) identifying *revision* in *lmbx*.
+
+    Prefer the parse-time cover letter, matching what the primary tracked
+    revision stores: a raw (never ``get_series()``'d) revision has no cover
+    injected into ``patches[0]``, so its first present patch would
+    misidentify the series (bug 8bb6e4c).  Rethreaded revisions skip the
+    cover, mirroring the primary path — their stored msgid must be a real
+    patch.  Falls back to the first present patch when there is no cover.
+    """
+    if not rethreaded:
+        cover = lmbx.covers.get(revision)
+        if cover is not None:
+            c_msgid = str(getattr(cover, 'msgid', '') or '')
+            if c_msgid:
+                c_subject = str(
+                    getattr(cover, 'full_subject', '')
+                    or getattr(cover, 'subject', '')
+                    or ''
+                )
+                return c_msgid, c_subject, True
+    v_ser = lmbx.series.get(revision)
+    try:
+        for p in getattr(v_ser, 'patches', None) or []:
+            if p is not None:
+                p_msgid = str(getattr(p, 'msgid', '') or '')
+                p_subject = str(
+                    getattr(p, 'full_subject', '') or getattr(p, 'subject', '') or ''
+                )
+                return p_msgid, p_subject, False
+    except Exception:
+        pass
+    return '', '', False
+
+
 def _record_discovered_revisions(
     conn: sqlite3.Connection,
     change_id: str,
@@ -1141,6 +1190,8 @@ def _record_discovered_revisions(
     Returns the revision numbers that were not already known for *change_id*
     (the genuinely new revisions).  Each revision's content fingerprint is
     stored alongside it so later tracking can recognize the series by content.
+    A revision's identifying msgid/subject prefer its cover letter when the
+    author sent one (see :func:`_raw_revision_ref`).
 
     Revisions in *rethreaded_revs* were stitched together from individually
     fetched patches (improper threading), so they are flagged rethreaded and
@@ -1154,24 +1205,11 @@ def _record_discovered_revisions(
     new_revs: List[int] = []
     for v in sorted(lmbx.series.keys()):
         v_ser = lmbx.series[v]
-        v_msgid = ''
-        v_subject = ''
-        try:
-            for p in getattr(v_ser, 'patches', None) or []:
-                if p is not None:
-                    v_msgid = str(getattr(p, 'msgid', '') or '')
-                    v_subject = str(
-                        getattr(p, 'full_subject', '')
-                        or getattr(p, 'subject', '')
-                        or ''
-                    )
-                    break
-        except Exception:
-            pass
+        is_rt = v in rethreaded_revs
+        v_msgid, v_subject, from_cover = _raw_revision_ref(lmbx, v, rethreaded=is_rt)
         if not v_msgid:
             continue
         v_link = (linkmask % v_msgid) if '%s' in linkmask else ''
-        is_rt = v in rethreaded_revs
         add_revision(
             conn,
             change_id,
@@ -1181,6 +1219,7 @@ def _record_discovered_revisions(
             v_link,
             fingerprint=getattr(v_ser, 'fingerprint', None),
             is_rethreaded=is_rt,
+            subject_from_cover=from_cover,
         )
         if is_rt:
             add_series_patches(conn, change_id, v, v_ser)

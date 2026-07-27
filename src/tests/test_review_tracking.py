@@ -3514,9 +3514,24 @@ def _pos_diff(n: int) -> str:
     )
 
 
-def _build_lmbx(base: str, author: str, rev: int, n: int) -> 'b4.LoreMailbox':
-    """Build a LoreMailbox holding one n-patch series at the given revision."""
+def _build_lmbx(
+    base: str, author: str, rev: int, n: int, cover: bool = False
+) -> 'b4.LoreMailbox':
+    """Build a LoreMailbox holding one n-patch series at the given revision.
+
+    With *cover*, a 0/n cover letter is included; it lands in the mailbox's
+    parse-time ``covers`` dict (never injected into the series, since these
+    tests do not run ``get_series()``).
+    """
     lmbx = b4.LoreMailbox()
+    if cover:
+        msg = EmailMessage()
+        msg['Subject'] = f'[PATCH v{rev} 0/{n}] {base}: do things better'
+        msg['From'] = author
+        msg['Date'] = 'Thu, 19 Mar 2026 08:51:10 +0530'
+        msg['Message-Id'] = f'<{base}-v{rev}-p0@example.com>'
+        msg.set_payload('This series makes things better.\n')
+        lmbx.add_message(msg)
     for i in range(1, n + 1):
         msg = EmailMessage()
         msg['Subject'] = f'[PATCH v{rev} {i}/{n}] {base}: part {i}'
@@ -3645,6 +3660,94 @@ class TestRecordDiscoveredRethreaded:
         conn.close()
         assert not r6['is_rethreaded']
         assert patches == []
+
+
+# ---------------------------------------------------------------------------
+# Discovered revisions must be identified by their cover letter when the
+# author sent one (bug 8bb6e4c): a raw, never-get_series()'d revision has no
+# cover injected into patches[0], so recording used to fall through to the
+# first patch's subject/msgid.
+# ---------------------------------------------------------------------------
+
+
+class TestRecordDiscoveredCoverSubject:
+    """_record_discovered_revisions prefers the parse-time cover letter."""
+
+    def test_cover_subject_and_msgid_preferred(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rdr-cover')
+        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
+        review_tracking._record_discovered_revisions(conn, 'cid-C', lmbx, '')
+        revs = review_tracking.get_revisions(conn, 'cid-C')
+        conn.close()
+        r6 = next(r for r in revs if r['revision'] == 6)
+        assert r6['subject'] == '[PATCH v6 0/3] thing: do things better'
+        assert r6['message_id'] == 'thing-v6-p0@example.com'
+
+    def test_no_cover_falls_back_to_first_patch(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rdr-nocover')
+        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3)
+        review_tracking._record_discovered_revisions(conn, 'cid-N', lmbx, '')
+        revs = review_tracking.get_revisions(conn, 'cid-N')
+        conn.close()
+        r6 = next(r for r in revs if r['revision'] == 6)
+        assert r6['subject'] == '[PATCH v6 1/3] thing: part 1'
+        assert r6['message_id'] == 'thing-v6-p1@example.com'
+
+    def test_rethreaded_rev_skips_cover(self, tmp_path: pytest.TempPathFactory) -> None:
+        """A rethreaded revision's msgid must stay a real, fetchable patch."""
+        conn = review_tracking.init_db('rdr-rt-cover')
+        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
+        review_tracking._record_discovered_revisions(
+            conn, 'cid-R', lmbx, '', rethreaded_revs={6}
+        )
+        revs = review_tracking.get_revisions(conn, 'cid-R')
+        conn.close()
+        r6 = next(r for r in revs if r['revision'] == 6)
+        assert r6['message_id'] == 'thing-v6-p1@example.com'
+
+    def test_cover_subject_heals_first_patch_row(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Re-recording with a cover fixes a row recorded before the fix."""
+        conn = review_tracking.init_db('rdr-heal')
+        review_tracking.add_revision(
+            conn,
+            'cid-H',
+            6,
+            'thing-v6-p1@example.com',
+            subject='[PATCH v6 1/3] thing: part 1',
+        )
+        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
+        review_tracking._record_discovered_revisions(conn, 'cid-H', lmbx, '')
+        revs = review_tracking.get_revisions(conn, 'cid-H')
+        conn.close()
+        r6 = next(r for r in revs if r['revision'] == 6)
+        assert r6['subject'] == '[PATCH v6 0/3] thing: do things better'
+        # Other core fields keep first-wins semantics.
+        assert r6['message_id'] == 'thing-v6-p1@example.com'
+
+    def test_cover_subject_never_overrides_manual_link(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rdr-manual')
+        review_tracking.add_revision(
+            conn,
+            'cid-M',
+            6,
+            'thing-v6-p1@example.com',
+            subject='Manually linked subject',
+            source='manual',
+        )
+        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
+        review_tracking._record_discovered_revisions(conn, 'cid-M', lmbx, '')
+        revs = review_tracking.get_revisions(conn, 'cid-M')
+        conn.close()
+        r6 = next(r for r in revs if r['revision'] == 6)
+        assert r6['subject'] == 'Manually linked subject'
 
 
 class TestCmdTrackRethreadUpgrade:
