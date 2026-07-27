@@ -522,6 +522,18 @@ modifying defaults for some of these flags.
 
   .. versionadded:: v0.13
 
+``--claim [BRANCH]``
+  Re-stamps the cover letter and every patch on a prep branch under
+  your current git identity (defaults to the current branch). B4
+  refuses to rewrite history containing commits committed by someone
+  other than you — for example when applying trailers to a series
+  enrolled from another maintainer's tree, or after you changed your
+  ``user.email`` — and points you at this command. Running it is the
+  deliberate, opt-in way to take ownership of the branch. Only the
+  committer identity is re-stamped; patch authorship is never changed.
+
+  .. versionadded:: v0.16
+
 ``-n NEW_SERIES_NAME, --new NEW_SERIES_NAME``
   Creates a new branch to start work on a new patch series.
 
