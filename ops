@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1785173902,"nonce":"nzoYe/BgeV1lLLB4kNTmjLBIlQE=","added":["lifecycle:fixed","resolution:CODE_FIX","in-testing"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1785173902,"nonce":"mxnshnr1tNQlX1I2Ik/lcLKtvA4=","added":null,"removed":["lifecycle:confirmed"]}]}
