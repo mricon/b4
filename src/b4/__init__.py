@@ -660,8 +660,17 @@ class LoreSeries:
     def fingerprint(self) -> str:
         parts: list[str] = [self.fromemail or '', str(self.revision)]
         for patch in self.patches[1:]:
-            if patch is not None and patch.git_patch_id:
+            if patch is None:
+                continue
+            if patch.git_patch_id:
                 parts.append(patch.git_patch_id)
+            elif patch.has_diff:
+                # Plain diffs without a "diff --git" header (e.g. `diff -u`
+                # output from some senders) yield no git patch-id. Fall back to
+                # a content hash of the diff so distinct series do not collapse
+                # to sha256(fromemail:revision) and get mistaken for one another
+                # (see bug 78c0fa1).
+                parts.append(LoreMessage.get_patchwork_hash(patch.body))
         return hashlib.sha256(':'.join(parts).encode()).hexdigest()
 
     def get_patch_by_msgid(self, msgid: str) -> Optional['LoreMessage']:
