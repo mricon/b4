@@ -394,6 +394,38 @@ def test_followup_trailers(
 
 
 @pytest.mark.parametrize(
+    'source,expect_cover,expect_subject',
+    [
+        # A cover with neither a [PATCH 0/N] prefix nor a diffstat is still
+        # recognized when it is the same-author thread root of the series.
+        ('single', True, 'do a thing to the widget subsystem'),
+        # A patch sent in-reply-to someone else's bug report must not mistake
+        # that report for a cover letter.
+        ('bugreport', False, None),
+    ],
+)
+def test_naked_cover_letter_detection(
+    sampledir: str,
+    source: str,
+    expect_cover: bool,
+    expect_subject: Optional[str],
+) -> None:
+    lmbx = b4.LoreMailbox()
+    for msg in b4.get_msgs_from_mailbox_or_maildir(
+        f'{sampledir}/naked-cover-{source}.mbox'
+    ):
+        lmbx.add_message(msg)
+    lser = lmbx.get_series(codereview_trailers=False)
+    assert lser is not None
+    assert lser.has_cover is expect_cover
+    if expect_subject is None:
+        assert lser.patches[0] is None
+    else:
+        assert lser.patches[0] is not None
+        assert lser.patches[0].subject == expect_subject
+
+
+@pytest.mark.parametrize(
     'hval,verify,tr',
     [
         ('short-ascii', 'short-ascii', 'encode'),

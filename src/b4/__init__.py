@@ -393,10 +393,15 @@ class LoreMailbox:
             for member in lser.patches:
                 if member is not None and member.in_reply_to is not None:
                     potential = self.msgid_map.get(member.in_reply_to)
-                    if (
-                        potential is not None
-                        and potential.has_diffstat
-                        and not potential.has_diff
+                    if potential is None or potential.has_diff:
+                        continue
+                    # A diffstat marks the classic cover letter; a naked cover
+                    # (no [PATCH 0/N], no diffstat) is only trusted when it's a
+                    # same-author thread root.
+                    if potential.has_diffstat or (
+                        potential.in_reply_to is None
+                        and not potential.reply
+                        and potential.fromemail == member.fromemail
                     ):
                         # This is *probably* the cover letter
                         lser.patches[0] = potential

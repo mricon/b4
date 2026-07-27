@@ -1,0 +1,47 @@
+From mboxrd@git Thu Jan  1 00:00:00 1970
+Subject: widget subsystem corrupts data under load
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+From: Bug Reporter <reporter@example.com>
+Date: Tue, 25 Oct 2022 13:38:41 -0400
+Message-Id: <20221025-bugreport-widget@example.com>
+To: list@example.org
+
+Hi,
+
+I am seeing data corruption in the widget subsystem under load.  This
+report has no diffstat and no [PATCH 0/N] prefix, and it was written by
+somebody other than the patch author, so it must not be mistaken for a
+cover letter.
+
+From mboxrd@git Thu Jan  1 00:00:00 1970
+Subject: [PATCH] widget: fix data corruption under load
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+From: Test Author <author@example.org>
+Date: Tue, 25 Oct 2022 13:38:42 -0400
+Message-Id: <20221025-widget-fix-author@example.org>
+In-Reply-To: <20221025-bugreport-widget@example.com>
+References: <20221025-bugreport-widget@example.com>
+To: list@example.org
+Cc: Bug Reporter <reporter@example.com>
+
+Take the lock before touching the shared widget state.
+
+Reported-by: Bug Reporter <reporter@example.com>
+Signed-off-by: Test Author <author@example.org>
+---
+ file1 | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/file1 b/file1
+index 0000001..0000002 100644
+--- a/file1
++++ b/file1
+@@ -1,3 +1,3 @@
+ line 1
+-line 2
++line two
+ line 3
