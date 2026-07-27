@@ -1090,21 +1090,18 @@ def find_existing_change_id(
     had when first tracked, so the overlap can be recognized through them.
 
     Message-ids are the reliable signal: every tracked and auto-discovered
-    revision records one.  Fingerprints are only stored for the originally
-    tracked revision (in ``series``) and for manually linked revisions (in
-    ``revisions``), so they are consulted too but cannot be relied on alone.
+    revision records one, and a given message belongs to exactly one series.
+    Fingerprints are only stored for the originally tracked revision (in
+    ``series``) and for manually linked revisions (in ``revisions``), and can
+    collide for content-poor series (bug 78c0fa1), so they are consulted only
+    as a fallback and must never override a message-id match.
+
+    Accordingly this runs in two passes: first match message-ids across every
+    discovered revision, and only if none match fall back to fingerprints.
+    Doing fingerprints first would let a colliding fingerprint re-home a thread
+    onto an unrelated series even when a message-id points elsewhere.
     """
-    for fingerprint, message_id in revisions:
-        if fingerprint:
-            row = conn.execute(
-                'SELECT change_id FROM series WHERE fingerprint = ? LIMIT 1',
-                (fingerprint,),
-            ).fetchone()
-            if row is not None:
-                return str(row[0])
-            match = find_revision_by_fingerprint(conn, fingerprint)
-            if match is not None:
-                return str(match['change_id'])
+    for _fingerprint, message_id in revisions:
         if message_id:
             row = conn.execute(
                 'SELECT change_id FROM series WHERE message_id = ? LIMIT 1',
@@ -1118,6 +1115,17 @@ def find_existing_change_id(
             ).fetchone()
             if row is not None:
                 return str(row[0])
+    for fingerprint, _message_id in revisions:
+        if fingerprint:
+            row = conn.execute(
+                'SELECT change_id FROM series WHERE fingerprint = ? LIMIT 1',
+                (fingerprint,),
+            ).fetchone()
+            if row is not None:
+                return str(row[0])
+            match = find_revision_by_fingerprint(conn, fingerprint)
+            if match is not None:
+                return str(match['change_id'])
     return None
 
 

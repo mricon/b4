@@ -3200,6 +3200,47 @@ class TestFindExistingChangeId:
         conn.close()
         assert found == 'tracked-cid'
 
+    def test_message_id_wins_over_colliding_fingerprint(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """A message-id match must win over a colliding fingerprint.
+
+        Hardening for bug 78c0fa1: fingerprints can collide for content-poor
+        series, so they are consulted only as a fallback.  Here a discovered
+        revision carries a fingerprint that matches series A but a message-id
+        that belongs to series B; it must resolve to B, not A.
+        """
+        conn = review_tracking.init_db('fec-precedence')
+        review_tracking.add_series_to_db(
+            conn,
+            change_id='series-a',
+            revision=1,
+            subject='Series A',
+            sender_name='A',
+            sender_email='a@example.com',
+            sent_at=None,
+            message_id='a-cover@example.com',
+            num_patches=1,
+            fingerprint='COLLIDE',
+        )
+        review_tracking.add_series_to_db(
+            conn,
+            change_id='series-b',
+            revision=1,
+            subject='Series B',
+            sender_name='A',
+            sender_email='a@example.com',
+            sent_at=None,
+            message_id='b-cover@example.com',
+            num_patches=1,
+            fingerprint='distinct-b',
+        )
+        found = review_tracking.find_existing_change_id(
+            conn, [('COLLIDE', 'b-cover@example.com')]
+        )
+        conn.close()
+        assert found == 'series-b'
+
     def test_matches_revision_message_id(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
