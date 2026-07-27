@@ -24,7 +24,7 @@ import b4.review
 import b4.review.tracking as tracking
 import liblore
 from b4.review._review import PwFetchResult
-from b4.review_tui._modals import SetStateScreen
+from b4.review_tui._modals import ApplyStateModal, SetStateScreen
 from b4.review_tui._pw_app import PwApp, PwFetchProgress
 
 # ---------------------------------------------------------------------------
@@ -688,3 +688,45 @@ class TestPwBulkSetState:
             app.action_set_state()
             await pilot.pause()
             assert not isinstance(app.screen, SetStateScreen)
+
+
+class TestPwSetStateNullName:
+    """A Patchwork series with a null ``name`` must not crash set-state.
+
+    Patchwork returns ``name: null`` for a series with no cover letter. The
+    bulk set-state path built the apply modal's heading with
+    ``series.get('name', '(no subject)')``, whose default only applies when the
+    key is *absent* -- a present-but-None name sailed through as ``None`` into
+    ``ApplyStateModal``'s Label, which Textual refuses to render ("unable to
+    display 'NoneType'"). It must fall back to '(no subject)'.
+    """
+
+    @pytest.mark.asyncio
+    async def test_null_name_falls_back_to_no_subject(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Skip the apply worker (the only thing on_mount starts) so the modal
+        # stays up and off the network; we just need it to compose and lay out
+        # its Labels -- the render pass that raised VisualError before the fix.
+        monkeypatch.setattr(ApplyStateModal, 'on_mount', lambda self: None)
+
+        series = _mk_series(1)
+        series['name'] = None
+        _install_series(monkeypatch, [series])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_set_state()
+            await pilot.pause()
+            assert isinstance(app.screen, SetStateScreen)
+            await app.screen.dismiss(('reviewing', False))
+            # Mounting + laying out the modal is what crashed before the fix;
+            # reaching the assertions at all proves it now renders.
+            await pilot.pause()
+
+            modal = app.screen
+            assert isinstance(modal, ApplyStateModal)
+            assert modal._series_name == '(no subject)'
+            label = modal.query_one('#apply-series', Label)
+            assert _static_text(label) == '(no subject)'
