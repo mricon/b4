@@ -831,8 +831,8 @@ When a conflict does occur, b4 suspends the TUI and drops you into an
 interactive shell so you can resolve it. The workflow depends on the
 operation:
 
-**For checkout, upgrade, and take (merge)** — the shell opens inside
-the worktree where the conflict happened:
+**For checkout and upgrade** — the shell opens inside the temporary
+worktree where the conflict happened:
 
 * Inspect the conflict with ``git diff`` or ``git status``
 * Edit the affected files to resolve the conflict
@@ -844,9 +844,23 @@ If you can't resolve the conflict, run ``git am --abort`` and then
 ``exit``. B4 cleans up the worktree and returns you to the TUI without
 making any changes to your branch.
 
-**For take (linear)** — patches are applied directly to your target
-branch, so the shell opens in your repository directory. The same
-workflow applies: resolve, ``git am --continue``, and ``exit``.
+**For take (any method)** — patches are applied in whichever worktree
+has the target branch checked out, or in a throwaway worktree when the
+branch is not checked out anywhere; the checkout you are running the
+TUI from is never touched. The conflict shell opens in that worktree.
+With the linear or cherry-pick method, resolve and finish with ``git
+am --continue`` (or back out with ``git am --abort``). With the merge
+method, the conflicted merge is left in progress: resolve, stage with
+``git add``, and run ``git merge --continue`` (or back out with ``git
+merge --abort``).
+
+If you leave the shell without finishing either way, b4 aborts the
+in-progress operation so a real checkout is never left mid-conflict; a
+throwaway worktree is instead kept so you can finish by hand. A take
+also refuses to start when the target worktree already has an
+operation in progress or unmerged files — from an earlier abandoned
+resolution or your own unfinished work — and tells you what to clean
+up first rather than discarding it.
 
 **For rebase** — the shell opens in your repository directory with a
 ``git rebase`` in progress:
