@@ -1186,6 +1186,140 @@ class TestTrackingSnooze:
             assert trk['series']['snoozed']['previous_state'] == 'reviewing'
 
 
+class TestTrackingUpgradeGating:
+    """Upgrade availability is gated on has_newer, orthogonal to status.
+
+    Regression coverage for the cluster reported by Mark Brown: a series
+    parked as 'waiting' (08646dc) or stuck at 'partial' (cc3f07d) could not
+    reach the upgrade action, forcing a manual 'return to reviewing' first.
+    Upgrade is now offered and enabled from any state once a newer revision
+    is known.
+    """
+
+    def _seed_with_newer(self, identifier: str, change_id: str, status: str) -> None:
+        """Seed a v1 series in *status* with a v2 recorded (so has_newer)."""
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] gating test',
+                    'status': status,
+                    'message_id': 'v1@ex.com',
+                }
+            ],
+        )
+        conn = tracking.get_db(identifier)
+        tracking.add_revision(
+            conn, change_id, 2, 'v2@ex.com', subject='[PATCH v2] gating test'
+        )
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_waiting_series_offers_and_enables_upgrade(self, gitdir: str) -> None:
+        """A waiting series with a newer revision offers upgrade in the menu."""
+        identifier = 'test-upgrade-waiting'
+        change_id = 'upgrade-waiting-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        self._seed_with_newer(identifier, change_id, 'waiting')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            # check_action gate is has_newer alone, regardless of status.
+            assert app.check_action('update_revision', ()) is True
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_partial_series_offers_and_enables_upgrade(self, gitdir: str) -> None:
+        """A partial series with a newer revision offers upgrade (cc3f07d)."""
+        identifier = 'test-upgrade-partial'
+        change_id = 'upgrade-partial-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        self._seed_with_newer(identifier, change_id, 'partial')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app.check_action('update_revision', ()) is True
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_waiting_without_newer_has_no_upgrade(self, gitdir: str) -> None:
+        """A waiting series with no newer revision must not offer upgrade."""
+        identifier = 'test-upgrade-waiting-none'
+        change_id = 'upgrade-waiting-none-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] no newer',
+                    'status': 'waiting',
+                    'message_id': 'only@ex.com',
+                }
+            ],
+        )
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app.check_action('update_revision', ()) is False
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' not in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_waiting_without_branch_switches_revision_in_db(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Upgrading a branchless waiting series takes the DB-only path.
+
+        A series parked as 'waiting' straight from 'new' has no review
+        branch, so the upgrade advances the tracked revision in the database
+        rather than running the git upgrade workflow.
+        """
+        identifier = 'test-upgrade-waiting-nobranch'
+        change_id = 'upgrade-waiting-nobranch-1'
+        self._seed_with_newer(identifier, change_id, 'waiting')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app.action_update_revision()
+            await pilot.pause()
+
+            conn = tracking.get_db(identifier)
+            row = conn.execute(
+                'SELECT revision FROM series WHERE change_id = ?', (change_id,)
+            ).fetchone()
+            conn.close()
+            assert row[0] == 2
+
+
 class TestTrackingAbandon:
     """Tests for the abandon workflow."""
 

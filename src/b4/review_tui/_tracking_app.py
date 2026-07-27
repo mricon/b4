@@ -1254,7 +1254,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         'reviewing': frozenset(
             {
                 'review',
-                'update_revision',
                 'range_diff',
                 'take',
                 'rebase',
@@ -1283,7 +1282,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         'partial': frozenset(
             {
                 'review',
-                'update_revision',
                 'range_diff',
                 'take',
                 'rebase',
@@ -1312,14 +1310,20 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return bool(self._pwkey and self._pwurl and self._pwproj)
         if action == 'action':
             return self._selected_series is not None
+        if action == 'update_revision':
+            # Upgrade availability is governed by has_newer alone — it is an
+            # axis orthogonal to status, so a newer revision can be taken from
+            # any state that can hold one (new, reviewing, replied, partial,
+            # waiting), not only a checked-out 'reviewing' branch.
+            return bool(
+                self._selected_series and self._selected_series.get('has_newer')
+            )
         if action in self._GATED_ACTIONS:
             if not self._selected_series:
                 return False
             status = self._selected_series.get('status', 'new')
             if action not in self._STATE_ACTIONS.get(status, frozenset()):
                 return False
-            if action == 'update_revision':
-                return bool(self._selected_series.get('has_newer'))
             if action == 'range_diff':
                 return bool(self._selected_series.get('has_multiple_revisions'))
             if action == 'target_branch':
@@ -1356,9 +1360,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 actions.append(('rebase', 'Rebase review branch'))
                 actions.append(('waiting', 'Mark as waiting on new revision'))
                 actions.append(('snooze', 'Snooze (defer until later)'))
-            if status in ('reviewing', 'partial') and self._selected_series.get(
-                'has_newer'
-            ):
+            if status in (
+                'reviewing',
+                'replied',
+                'partial',
+                'waiting',
+            ) and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
             if status == 'waiting':
                 actions.append(('review', 'Review'))
@@ -3771,14 +3778,24 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._load_series()
 
     def action_update_revision(self) -> None:
-        """Upgrade the review branch to a newer revision of the series."""
+        """Upgrade the tracked series to a newer revision.
+
+        Available from any state once a newer revision is known: the gate is
+        ``has_newer``, not status.  How the upgrade runs depends on whether a
+        review branch actually exists on disk, not on the status label:
+
+        - No branch (a ``new`` series, or one parked as ``waiting`` straight
+          from ``new``): the tracked revision is advanced in the database.
+        - A branch exists (``reviewing``/``replied``/``partial``, or a
+          ``waiting`` series that was parked from one of those): the full git
+          upgrade workflow runs, archiving the old branch and landing the
+          result in ``reviewing`` — the "upgrade and return to reviewing in
+          one step" the waiting flow was missing.
+        """
         if not self._selected_series:
             return
-        status = self._selected_series.get('status', 'new')
-        if status not in ('reviewing', 'new'):
-            self.notify(
-                'Series must be checked out or new to upgrade', severity='warning'
-            )
+        if not self._selected_series.get('has_newer'):
+            self.notify('No newer revision available to upgrade to', severity='warning')
             return
 
         change_id = self._selected_series.get('change_id', '')
@@ -3812,7 +3829,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             )
             return
 
-        if status == 'new':
+        # Route on whether a review branch exists, not on the status label: a
+        # series parked as 'waiting' directly from 'new' carries the waiting
+        # status but has no branch to upgrade, so it takes the DB-only path.
+        topdir = b4.git_get_toplevel()
+        has_branch = bool(topdir) and b4.git_branch_exists(topdir, review_branch)
+
+        if not has_branch:
             # No review branch — just update the DB record
             if len(newer_revs) == 1:
                 self._do_switch_revision(change_id, current_rev, newer_revs[0])
