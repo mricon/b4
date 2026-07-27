@@ -306,6 +306,7 @@ TRACKING_HELP_LINES = [
     '  ✓  thanked      Thank-you sent\n',
     '  ø  gone         Branch no longer present\n',
     '  *  (suffix)     Tracking data needs refresh (press u)\n',
+    '  ↑  (suffix)     Newer revision available (upgrade via a)\n',
     '\n',
     '[bold]Columns[/bold]\n',
     '  Submitter     Patch author name\n',

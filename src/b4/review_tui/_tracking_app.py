@@ -128,6 +128,22 @@ _STATUS_TIER: Dict[str, int] = {
     'gone': 2,
 }
 
+
+def _effective_tier(series: Dict[str, Any]) -> int:
+    """Sort/priority tier for *series*, accounting for pending actions.
+
+    Normally just ``_STATUS_TIER[status]``, but a series parked as ``waiting``
+    is pulled up into the actionable tier the moment a newer revision arrives:
+    the upgrade it was waiting for is now available, so it belongs alongside
+    the other actionable series instead of staying buried among the inactive
+    ones at the bottom of the list.
+    """
+    status = 'queued' if series.get('queued') else series.get('status', 'new')
+    if status == 'waiting' and series.get('has_newer'):
+        return 0
+    return _STATUS_TIER.get(status, 2)
+
+
 # Statuses where the maintainer can take action right now.
 _ACTIONABLE_STATUSES: frozenset[str] = frozenset(
     {
@@ -532,8 +548,7 @@ class TrackedSeriesItem(ListItem):
         super().__init__()
         self.series = series
         status = series.get('status', 'new')
-        effective = 'queued' if series.get('queued') else status
-        if _STATUS_TIER.get(effective, 2) >= 2:
+        if _effective_tier(series) >= 2:
             self.add_class('non-actionable')
         if status == 'gone':
             self.add_class('gone')
@@ -546,7 +561,15 @@ class TrackedSeriesItem(ListItem):
         status = self.series.get('status', 'new')
         effective = 'queued' if self.series.get('queued') else status
         symbol = _STATUS_SYMBOLS.get(effective, '?')
-        flag = '*' if self.series.get('needs_update') else ' '
+        # The suffix flag is a single slot; needs_update (rev_count == 0) and
+        # has_newer (a known newer revision exists) are mutually exclusive, so
+        # at most one applies.  '*' = fetch revision data; '↑' = upgrade available.
+        if self.series.get('needs_update'):
+            flag = '*'
+        elif self.series.get('has_newer'):
+            flag = '↑'
+        else:
+            flag = ' '
         art = self.series.get('art')
         if art:
             a, r, t = art
@@ -1079,11 +1102,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             key=lambda s: s.get('added_at') or s.get('sent_at') or '',
             reverse=True,
         )
-        self._all_series.sort(
-            key=lambda s: _STATUS_TIER.get(
-                'queued' if s.get('queued') else s.get('status', 'new'), 2
-            )
-        )
+        self._all_series.sort(key=_effective_tier)
         self.call_later(self._refresh_list)
 
     def _check_db_changed(self) -> None:
@@ -1109,8 +1128,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         The pattern is split on whitespace.  Tokens starting with
         ``s:`` filter by status substring, ``t:`` by target-branch
-        substring, and bare tokens by subject or sender name.  All
-        tokens must match (AND logic).
+        substring, ``up:`` by whether a newer revision is available, and
+        bare tokens by subject or sender name.  All tokens must match
+        (AND logic).
         """
         for token in pattern.lower().split():
             if token.startswith('s:'):
@@ -1120,6 +1140,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             elif token.startswith('t:'):
                 needle = token[2:]
                 if needle not in (series.get('target_branch', '') or '').lower():
+                    return False
+            elif token.startswith('up:'):
+                # Boolean filter on has_newer: `up:` / `up:1` / `up:yes` keep
+                # only upgradable series; `up:no` / `up:0` / `up:false` invert.
+                want = token[3:] not in ('no', '0', 'false')
+                if bool(series.get('has_newer')) != want:
                     return False
             else:
                 if (
@@ -1203,7 +1229,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     def action_limit(self) -> None:
         self.push_screen(
             LimitScreen(
-                self._limit_pattern, hint='Prefixes: s:<status>  t:<target-branch>'
+                self._limit_pattern,
+                hint='Prefixes: s:<status>  t:<target-branch>  up: (upgradable)',
             ),
             callback=self._on_limit,
         )
