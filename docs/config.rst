@@ -435,7 +435,7 @@ Attestation settings
      a **Queue** option that stores the message for delayed delivery.
      Queued messages are held until their commit URL resolves (via HTTP
      HEAD), so you can push your commits before the thank-you is sent.
-     See :ref:`thanks_queue` for details.
+     See :ref:`queuing thanks <thanks_queue>` for details.
 
      .. note::
 

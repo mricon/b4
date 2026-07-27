@@ -135,8 +135,8 @@ Adding comments and previewing emails
 Adding inline comments
 ~~~~~~~~~~~~~~~~~~~~~~
 Press ``r`` on a patch to compose a reply in ``$EDITOR``. The editor
-opens with the full diff quoted (``> `` prefix), along with any
-external comments from other reviewers (``| `` prefix) and agent
+opens with the full diff quoted (``>`` prefix), along with any
+external comments from other reviewers (``|`` prefix) and agent
 comments. Write your comments on blank lines directly below the diff
 line you want to comment on. You can trim quoted content you are not
 interested in — b4 will match your comments to the right location.

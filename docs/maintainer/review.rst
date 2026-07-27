@@ -191,7 +191,8 @@ Key           Action
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)
 ``Q``         Queue — view and deliver queued thank-you messages (visible
-              only when the queue is non-empty; see :ref:`thanks_queue`)
+              only when the queue is non-empty; see
+              :ref:`queuing thanks <thanks_queue>`)
 ``j``/``k``   Move cursor down/up
 ``?``         Help — show keybinding reference
 ``q``         Quit
@@ -398,7 +399,7 @@ Key     Action
 
 Press ``r`` on a patch to open ``$EDITOR`` with the quoted commit
 message and diff. The content uses the standard mailing-list reply
-format: original content is quoted with ``> `` and your comments go on
+format: original content is quoted with a ``>`` prefix and your comments go on
 unquoted lines between quoted sections.
 
 To leave a comment, write it on a new line below the quoted diff line
