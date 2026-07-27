@@ -1066,7 +1066,10 @@ class TakeConfirmScreen(ModalScreen[bool]):
                     ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
+                    # No signing: gpg would prompt while the TUI owns the tty.
+                    ecode, out = b4.git_run_command(
+                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                    )
                     if ecode > 0:
                         for line in out.splitlines():
                             if line.startswith('Patch failed at '):
@@ -2057,7 +2060,10 @@ class RebaseScreen(ModalScreen[bool]):
                     ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
+                    # No signing: gpg would prompt while the TUI owns the tty.
+                    ecode, out = b4.git_run_command(
+                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                    )
                     if ecode > 0:
                         for line in out.splitlines():
                             if line.startswith('Patch failed at '):
@@ -2327,7 +2333,10 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
                     ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
+                    # No signing: gpg would prompt while the TUI owns the tty.
+                    ecode, out = b4.git_run_command(
+                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                    )
                     if ecode > 0:
                         for line in out.splitlines():
                             if line.startswith('Patch failed at '):
@@ -3044,7 +3053,10 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
                     ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(gwt, ['am'], stdin=ambytes)
+                    # No signing: gpg would prompt while the TUI owns the tty.
+                    ecode, out = b4.git_run_command(
+                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                    )
                     if ecode > 0:
                         # Extract just the "Patch failed" line
                         for line in out.splitlines():
