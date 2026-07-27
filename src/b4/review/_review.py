@@ -2445,7 +2445,7 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
     try:
         from b4.review_tui._entry import run_tracking_tui
     except ImportError as e:
-        logger.critical(f'The TUI requires the {e.name} library.')
+        logger.critical('The TUI requires the %s library.', e.name)
         logger.critical('Install it with: pip install b4[tui]')
         sys.exit(1)
 
