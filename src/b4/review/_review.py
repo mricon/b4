@@ -30,6 +30,9 @@ logger = b4.logger
 REVIEW_MAGIC_MARKER = '--- b4-review-tracking ---'
 REVIEW_BRANCH_PREFIX = 'b4/review/'
 COMMIT_MESSAGE_PATH = ':message'
+# Synthesized into the cover text when the author sent no cover letter;
+# consumers check for it to detect cover-letter absence.
+NO_COVER_NOTE = 'NOTE: No cover letter provided by the author.'
 # Maximum number of diff context lines quoted above a comment in reply emails.
 # The @@ hunk header is always included regardless of this limit.
 _REPLY_CONTEXT_LINES = 5
@@ -344,9 +347,7 @@ def create_review_branch(
         cover_content = clmsg.subject + '\n\n' + clmsg.body
     elif lser.patches[1] is not None:
         clmsg = lser.patches[1]
-        cover_content = (
-            clmsg.subject + '\n\nNOTE: No cover letter provided by the author.'
-        )
+        cover_content = clmsg.subject + '\n\n' + NO_COVER_NOTE
     else:
         cover_content = 'NOTE: No cover letter or first patch available.'
 

@@ -38,6 +38,7 @@ import b4.mbox
 import b4.review
 import b4.review.tracking
 import b4.ty
+from b4.review._review import NO_COVER_NOTE
 from b4.review_tui._common import (
     CheckRunnerMixin,
     LoreNodeShutdownMixin,
@@ -2383,10 +2384,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         default_method: Optional[str] = (
             cfg_method if cfg_method in _valid_take_methods else None
         )
+        has_cover = True
         topdir = b4.git_get_toplevel()
         if topdir:
             try:
-                _cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+                has_cover = NO_COVER_NOTE not in cover_text
                 usercfg = b4.get_user_config()
                 patches = tracking.get('patches', [])
                 if any(
@@ -2428,6 +2431,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             recent_branches=recent_branches,
             subject=series.get('subject', ''),
             default_signoff=default_signoff,
+            has_cover=has_cover,
         )
         self.push_screen(
             take_screen,

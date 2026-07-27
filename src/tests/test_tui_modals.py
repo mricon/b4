@@ -18,7 +18,7 @@ import pytest
 pytest.importorskip('textual')
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Label, ListView, Static
+from textual.widgets import Input, Label, ListView, Select, Static
 
 import b4
 import liblore
@@ -35,6 +35,7 @@ from b4.review_tui._modals import (
     RevisionChoiceScreen,
     SetStateScreen,
     SnoozeScreen,
+    TakeScreen,
     TrailerScreen,
     UpdateAllScreen,
     UpdateRevisionScreen,
@@ -1383,3 +1384,69 @@ class TestFetchViewerScreen:
                 # Dismissed back to the host screen, no error left on display.
                 assert dismissed == [None]
                 assert not isinstance(app.screen, _FetchViewerScreen)
+
+
+# ---------------------------------------------------------------------------
+# TakeScreen
+# ---------------------------------------------------------------------------
+
+
+class TestTakeScreen:
+    """Tests for the TakeScreen default take-method selection."""
+
+    @pytest.mark.asyncio
+    async def test_multipatch_with_cover_defaults_to_merge(self) -> None:
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                TakeScreen('main', 'b4/review/test', num_patches=3, has_cover=True)
+            )
+            await pilot.pause()
+            assert app.screen.query_one('#take-method', Select).value == 'merge'
+            assert not app.screen.query('#take-nocover')
+
+    @pytest.mark.asyncio
+    async def test_multipatch_without_cover_defaults_to_linear(self) -> None:
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                TakeScreen('main', 'b4/review/test', num_patches=3, has_cover=False)
+            )
+            await pilot.pause()
+            assert app.screen.query_one('#take-method', Select).value == 'linear'
+            hint = app.screen.query_one('#take-nocover', Static)
+            assert 'No cover letter' in _static_text(hint)
+
+    @pytest.mark.asyncio
+    async def test_single_patch_defaults_to_linear(self) -> None:
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                TakeScreen('main', 'b4/review/test', num_patches=1, has_cover=True)
+            )
+            await pilot.pause()
+            assert app.screen.query_one('#take-method', Select).value == 'linear'
+
+    @pytest.mark.asyncio
+    async def test_explicit_default_overrides_no_cover(self) -> None:
+        """A configured default method wins over the no-cover heuristic."""
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                TakeScreen(
+                    'main',
+                    'b4/review/test',
+                    num_patches=3,
+                    default_method='merge',
+                    has_cover=False,
+                )
+            )
+            await pilot.pause()
+            assert app.screen.query_one('#take-method', Select).value == 'merge'
+            # The missing cover is still surfaced even when the default is
+            # overridden.
+            assert app.screen.query('#take-nocover')

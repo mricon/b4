@@ -26,7 +26,7 @@ import b4.mbox
 import b4.review
 import b4.review.tracking
 import liblore
-from b4.review._review import COMMIT_MESSAGE_PATH
+from b4.review._review import COMMIT_MESSAGE_PATH, NO_COVER_NOTE
 from b4.review_tui._common import (
     PATCH_STATE_MARKERS,
     CheckRunnerMixin,
@@ -287,9 +287,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         self._branch: str = session['branch']
         self._original_branch: Optional[str] = session.get('original_branch')
         self.branch_checked_out: bool = False
-        self._has_cover: bool = (
-            'NOTE: No cover letter provided by the author.' not in self._cover_text
-        )
+        self._has_cover: bool = NO_COVER_NOTE not in self._cover_text
         self._selected_idx: int = (
             0 if self._has_cover else 1
         )  # 0 = cover, 1..N = patches

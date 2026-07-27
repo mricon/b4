@@ -721,6 +721,9 @@ class TakeScreen(ModalScreen[bool]):
         margin-top: 1;
         color: $text-muted;
     }
+    #take-nocover {
+        color: $warning;
+    }
     """
 
     def __init__(
@@ -732,6 +735,7 @@ class TakeScreen(ModalScreen[bool]):
         recent_branches: Optional[List[str]] = None,
         subject: str = '',
         default_signoff: bool = True,
+        has_cover: bool = True,
     ) -> None:
         """Initialize take screen.
 
@@ -743,13 +747,18 @@ class TakeScreen(ModalScreen[bool]):
             recent_branches: Recently used branch names for auto-suggest
             subject: Series subject to display for context
             default_signoff: Initial state of the "add Signed-off-by" checkbox
+            has_cover: Whether the series has an author-provided cover letter
         """
         super().__init__()
         self._target_branch = target_branch
         self._review_branch = review_branch
+        # A merge commit's message comes from the cover letter, so without
+        # one the merge default would produce a placeholder-bodied merge;
+        # default to linear instead.
         self._default_method = default_method or (
-            'linear' if num_patches == 1 else 'merge'
+            'linear' if num_patches == 1 or not has_cover else 'merge'
         )
+        self._has_cover = has_cover
         self._recent_branches = recent_branches
         self._subject = subject
         # Results set after continue
@@ -786,6 +795,10 @@ class TakeScreen(ModalScreen[bool]):
                 id='take-method',
                 allow_blank=False,
             )
+            if not self._has_cover:
+                yield Static(
+                    'No cover letter provided by the author', id='take-nocover'
+                )
             yield Checkbox(
                 'add Link:', value=True, id='take-add-link', classes='take-checkbox'
             )
