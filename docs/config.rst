@@ -502,11 +502,18 @@ These settings control ``b4 review`` TUI behaviour.
    :term:`b4.review-default-take-method`
      The default take method to pre-select in the Take dialog. Valid
      values are ``merge``, ``linear``, and ``cherry-pick``. If not set,
-     no method is pre-selected.
+     b4 picks the default heuristically: ``merge`` for multi-patch
+     series with a cover letter, and ``linear`` for single-patch series
+     or series where the author provided no cover letter (a merge
+     commit's message comes from the cover letter, so there is nothing
+     to build it from). Setting this option overrides the heuristic.
 
-     Default: ``None``
+     Default: ``None`` (heuristic)
 
      .. versionadded:: v0.15
+
+     .. versionchanged:: v0.16
+        Series without a cover letter now default to ``linear``.
 
    :term:`b4.review-perpatch-check-cmd`
      Command to run once per patch when CI checks are triggered (``c`` in

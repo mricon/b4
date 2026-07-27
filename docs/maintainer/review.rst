@@ -774,6 +774,13 @@ The take flow has three steps:
 * **Cherry-pick** — cherry-picks individual patches (you can select
   which ones in the next step). Skipped patches are pre-deselected.
 
+Unless :term:`b4.review-default-take-method` is set, the method is
+pre-selected heuristically: ``merge`` for multi-patch series with a
+cover letter, ``linear`` otherwise. When the author sent no cover
+letter, the dialog shows a *No cover letter provided by the author*
+note, since the merge method would have no cover letter to build the
+merge commit message from.
+
 The dialog suggests recently used target branches, with the configured
 :term:`b4.review-target-branch` always included. You can also type a
 branch name directly. Toggle the ``Signed-off-by`` and ``Link:``
