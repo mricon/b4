@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1785240723,"nonce":"cFcqOQFDaxy94W84DEmHl5Zg8ug=","message":"Cross-tree umbrella entry (the scenario that exposed this): ec87cbc","files":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1785240758,"nonce":"z43WjgTT4NiYQ6d+kwk8cHYrmd4=","title":"b4 review: archived series cannot be unarchived","was":"Reported by Mark Brown on IRC, 2026-07-27. Mark went looking for a way"}]}
