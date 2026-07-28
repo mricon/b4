@@ -134,7 +134,11 @@ Status         Meaning
 Series are grouped by lifecycle stage — Active (reviewing/replied/
 partial/accepted/thanked), New, Waiting, Snoozed, and Gone — and sorted
 within each group by the most recent activity, whether that is a new
-mailing list reply or a local status change.
+mailing list reply or a local status change. A ``waiting`` series is
+pulled up into the Active group the moment a newer revision is
+discovered: the upgrade it was waiting for is now available, so it
+surfaces alongside the other actionable series instead of staying at
+the bottom of the list.
 
 **Listing columns**
 
@@ -147,8 +151,11 @@ Each row in the tracking list shows:
   collected from the review branch
 * **Msgs** — total message count for the thread, with any unseen
   messages shown as ``+N`` in yellow (populated after pressing ``u``)
-* **S** — single-character status symbol; ``*`` suffix means the
-  tracking data needs a refresh
+* **S** — single-character status symbol, optionally followed by a
+  flag: ``*`` means the tracking data needs a refresh, ``↑`` means a
+  newer revision is available (upgrade via the action menu). The two
+  are mutually exclusive — ``↑`` can only appear once revision data
+  has been fetched
 * **Subject** — compact ``[subsystem,vN,0/M]`` prefix followed by the
   series subject
 
@@ -187,7 +194,11 @@ Key           Action
 ``U``         Update all — same as ``u`` but for all tracked series
               (skipping snoozed); press ``Escape`` or ``q`` to cancel
               mid-run — series already updated are saved
-``l``         Limit — filter the list of displayed series
+``l``         Limit — filter the list of displayed series. Plain text
+              matches subjects and submitters; ``s:<status>`` filters
+              by status, ``t:<target-branch>`` by target branch, and
+              ``up:`` shows only series with an upgrade available
+              (``up:no`` inverts). Multiple tokens combine with AND
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)
 ``Q``         Queue — view and deliver queued thank-you messages (visible
@@ -234,13 +245,16 @@ actions depend on the series status:
 **New / gone:**
 
 * ``[r]`` **Review** — create or re-enter the review branch
+* ``[U]`` **Upgrade** — switch to a newer revision (new only, when available)
 * ``[s]`` **Snooze** — defer until later (new only)
 * ``[l]`` **Link a revision** — manually associate a revision by message-id (new only)
 * ``[A]`` **Abandon**
 
 **Waiting:**
 
+* ``[U]`` **Upgrade** — switch to the newer revision (when available)
 * ``[r]`` **Review** — return to reviewing
+* ``[l]`` **Link a revision** — manually associate a revision by message-id
 * ``[A]`` **Abandon** / ``[x]`` **Archive**
 
 **Snoozed:**
@@ -718,16 +732,31 @@ Taking action
 
 Upgrading to a newer revision
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-When a submitter sends a new revision of a series you are reviewing, the
-Revisions line in the details panel is highlighted to let you know.
 Press ``u`` to update the selected series (or ``U`` for all series) and
-discover new revisions, then use the action menu (``a``) and select
-**Upgrade** to switch the review branch. B4 will:
+discover new revisions. Updating only *records* what it finds — it
+never changes a series' status behind your back. When a newer revision
+is known, b4 lets you know in several ways: the row gets an ``↑``
+suffix flag in the tracking list, the Revisions line in the details
+panel shows *(vN available — upgrade with [a]ction)*, a ``waiting``
+series surfaces back into the Active group, and the ``up:`` limit
+token can filter the list down to just the upgradable series.
+
+Upgrading itself is always an explicit action: open the action menu
+(``a``) and select **Upgrade**. Availability depends only on a newer
+revision being known — the series can be in reviewing, replied,
+partial, waiting, or even new. For a series with a review branch, b4
+will:
 
 1. Save your review comments on each patch, keyed by stable patch-id.
 2. Archive the current revision (creating a ``.tar.gz`` backup).
 3. Fetch and check out the new revision.
 4. Restore your comments onto patches whose content did not change.
+
+The upgraded series lands back in ``reviewing``, so upgrading a
+``waiting`` series returns it to active review in one step. A series
+that never had a review branch created (for example, one marked
+waiting straight from ``new``) simply switches its recorded revision
+without touching git.
 
 Comments on patches that were modified between revisions are not carried
 over, since those patches need fresh review. Cover letter reviews are

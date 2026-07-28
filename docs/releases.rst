@@ -50,6 +50,21 @@ B4 prompts for a message-id or lore URL, fetches the posting in the
 background, and shows a confirmation preview before recording the link.
 See :ref:`review_link_revision` for details.
 
+**Reworked revision-upgrade flow**
+
+"A newer revision exists" is now tracked as its own attribute instead
+of being folded into the series status, fixing a cluster of
+upgrade-flow problems reported by Mark Brown. Updating a series only
+records discovered revisions — the old implicit promotion of
+``waiting`` series back to ``reviewing`` is gone, so status changes
+only happen through explicit actions. When a newer revision is known,
+the series row gets an ``↑`` flag, a ``waiting`` series surfaces back
+into the active group, and a new ``up:`` limit token filters the list
+to upgradable series. The **Upgrade** action is now offered from any
+state that can hold a newer revision (including ``waiting`` and
+``partial`` — previously both required detouring through ``reviewing``
+first), and lands the upgraded series back in ``reviewing``.
+
 **Partial-series state**
 
 When you cherry-pick only a subset of a series' patches, b4 now sets the

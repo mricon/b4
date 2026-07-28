@@ -192,8 +192,10 @@ Once you have reviewed a series:
 - **Waiting** — if your review requested changes, open the action menu
   (``a``) and select **Mark as waiting on new revision**. The series
   moves to a lower-priority group. When you press ``u`` to update, b4
-  checks lore for newer revisions and brings the series back to active
-  status.
+  checks lore for newer revisions; once one is found, the series gets
+  an ``↑`` marker and pops back up into the active group, and the
+  action menu offers **Upgrade** to switch to the new revision and
+  return to reviewing in one step.
 - **Snooze** — to defer a series until a specific date, duration, or
   git tag, select **Snooze** from the action menu. See
   :ref:`snooze_details` in the reference for full details.
