@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1785240723,"nonce":"YsmMDCMiN/D9ROeR0o91DqZtZ5Q=","message":"The unarchive escape hatch is tracked separately: d23222b","files":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1785240758,"nonce":"hslo4J/A+Taqwc8Z4noTVGNTRZA=","title":"b4 review: cross-tree series lack a hand-off state","was":"Reported by Mark Brown on IRC, 2026-07-27. Mark ran into trouble with"}]}
