@@ -50,6 +50,7 @@ from b4.review_tui._modals import (
 from b4.review_tui._tracking_app import (
     TrackedSeriesItem,
     TrackingApp,
+    _effective_tier,
     _resolve_worktree_take_conflict,
     _shazam_merge_flags,
     _take_worktree,
@@ -512,6 +513,63 @@ class TestTrackingLimitPrefixes:
         assert not m(series_new_net, 's:new bpf')
         assert not m(series_snoozed_bpf, 's:new bpf')
 
+    def test_matches_limit_upgradable(self) -> None:
+        """up: should keep only series with a newer revision available."""
+        m = TrackingApp._matches_limit
+        assert m({'has_newer': True}, 'up:')
+        assert not m({'has_newer': False}, 'up:')
+        assert not m({}, 'up:')
+        # Truthy variants behave the same as a bare `up:`.
+        assert m({'has_newer': True}, 'up:yes')
+        assert m({'has_newer': True}, 'up:1')
+
+    def test_matches_limit_upgradable_negated(self) -> None:
+        """up:no should invert, hiding upgradable series."""
+        m = TrackingApp._matches_limit
+        assert not m({'has_newer': True}, 'up:no')
+        assert m({'has_newer': False}, 'up:no')
+        assert m({}, 'up:0')
+
+    def test_matches_limit_upgradable_combined(self) -> None:
+        """up: composes with other tokens under AND logic."""
+        m = TrackingApp._matches_limit
+        waiting_up = {'status': 'waiting', 'has_newer': True}
+        waiting_no = {'status': 'waiting', 'has_newer': False}
+        reviewing_up = {'status': 'reviewing', 'has_newer': True}
+        assert m(waiting_up, 's:waiting up:')
+        assert not m(waiting_no, 's:waiting up:')
+        assert not m(reviewing_up, 's:waiting up:')
+
+
+class TestEffectiveTier:
+    """Tests for _effective_tier — waiting series wake into the actionable tier."""
+
+    def test_plain_statuses_match_status_tier(self) -> None:
+        assert _effective_tier({'status': 'new'}) == 0
+        assert _effective_tier({'status': 'reviewing'}) == 0
+        assert _effective_tier({'status': 'partial'}) == 0
+        assert _effective_tier({'status': 'replied'}) == 1
+        assert _effective_tier({'status': 'accepted'}) == 1
+        assert _effective_tier({'status': 'snoozed'}) == 2
+        assert _effective_tier({'status': 'gone'}) == 2
+
+    def test_waiting_without_newer_stays_inactive(self) -> None:
+        assert _effective_tier({'status': 'waiting'}) == 2
+        assert _effective_tier({'status': 'waiting', 'has_newer': False}) == 2
+
+    def test_waiting_with_newer_becomes_actionable(self) -> None:
+        """The awaited revision arrived — the series rejoins tier 0."""
+        assert _effective_tier({'status': 'waiting', 'has_newer': True}) == 0
+
+    def test_has_newer_does_not_promote_other_statuses(self) -> None:
+        """Only waiting is woken; a newer revision alone doesn't reorder others."""
+        assert _effective_tier({'status': 'snoozed', 'has_newer': True}) == 2
+        assert _effective_tier({'status': 'accepted', 'has_newer': True}) == 1
+
+    def test_queued_takes_precedence(self) -> None:
+        """A queued (accepted) series keeps its queued tier regardless."""
+        assert _effective_tier({'status': 'accepted', 'queued': True}) == 2
+
 
 class TestTrackingStatusGroups:
     """Tests for status grouping and display."""
@@ -559,6 +617,73 @@ class TestTrackingStatusGroups:
             assert statuses == ['new', 'new', 'snoozed']
             assert 'new series A' in items[0].series['subject']
             assert 'new series B' in items[1].series['subject']
+
+    @pytest.mark.asyncio
+    async def test_waiting_with_newer_wakes_into_actionable_tier(
+        self, gitdir: str
+    ) -> None:
+        """A waiting series whose awaited revision arrived rejoins tier 0.
+
+        Waiting normally sits in the inactive tier at the bottom, but once a
+        newer revision is known (has_newer) the upgrade it was waiting for is
+        available — so it sorts above inactive series and is no longer dimmed.
+
+        The waiting series keeps its review branch (parked from reviewing);
+        a branchless waiting series would be marked 'gone' on rescan instead.
+        The comparison series is snoozed, which is exempt from gone-marking so
+        it can safely stay branchless.
+        """
+        identifier = 'test-groups-wake'
+        _create_review_branch(
+            gitdir, 'waiting-w', identifier=identifier, status='waiting'
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'snoozed-w',
+                    'subject': '[PATCH] snoozed series',
+                    'status': 'snoozed',
+                    'sent_at': '2026-03-10T12:00:00+00:00',
+                    'message_id': 'snz-w@ex.com',
+                },
+                {
+                    'change_id': 'waiting-w',
+                    'subject': '[PATCH] waiting series',
+                    'status': 'waiting',
+                    'sent_at': '2026-03-10T09:00:00+00:00',
+                    'message_id': 'wait-w@ex.com',
+                },
+            ],
+        )
+        # Record a v2 for the waiting series so has_newer is computed at load.
+        conn = tracking.get_db(identifier)
+        tracking.add_revision(
+            conn,
+            'waiting-w',
+            2,
+            'wait-w-v2@ex.com',
+            subject='[PATCH v2] waiting series',
+        )
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            lv = app.query_one('#tracking-list', ListView)
+            items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
+            by_cid = {i.series['change_id']: i for i in items}
+            assert set(by_cid) == {'waiting-w', 'snoozed-w'}
+            waiting_item = by_cid['waiting-w']
+            snoozed_item = by_cid['snoozed-w']
+            # The woken waiting series sorts into the actionable tier, above
+            # the snoozed one, despite its older sent_at.
+            assert items.index(waiting_item) < items.index(snoozed_item)
+            assert waiting_item.series['status'] == 'waiting'
+            assert waiting_item.series.get('has_newer') is True
+            # ...and it is no longer rendered as non-actionable (undimmed).
+            assert not waiting_item.has_class('non-actionable')
+            assert snoozed_item.has_class('non-actionable')
 
     @pytest.mark.asyncio
     async def test_archived_not_shown(self, tmp_path: pathlib.Path) -> None:
@@ -1184,6 +1309,140 @@ class TestTrackingSnooze:
             assert trk['series']['status'] == 'snoozed'
             assert 'snoozed' in trk['series']
             assert trk['series']['snoozed']['previous_state'] == 'reviewing'
+
+
+class TestTrackingUpgradeGating:
+    """Upgrade availability is gated on has_newer, orthogonal to status.
+
+    Regression coverage for the cluster reported by Mark Brown: a series
+    parked as 'waiting' (08646dc) or stuck at 'partial' (cc3f07d) could not
+    reach the upgrade action, forcing a manual 'return to reviewing' first.
+    Upgrade is now offered and enabled from any state once a newer revision
+    is known.
+    """
+
+    def _seed_with_newer(self, identifier: str, change_id: str, status: str) -> None:
+        """Seed a v1 series in *status* with a v2 recorded (so has_newer)."""
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] gating test',
+                    'status': status,
+                    'message_id': 'v1@ex.com',
+                }
+            ],
+        )
+        conn = tracking.get_db(identifier)
+        tracking.add_revision(
+            conn, change_id, 2, 'v2@ex.com', subject='[PATCH v2] gating test'
+        )
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_waiting_series_offers_and_enables_upgrade(self, gitdir: str) -> None:
+        """A waiting series with a newer revision offers upgrade in the menu."""
+        identifier = 'test-upgrade-waiting'
+        change_id = 'upgrade-waiting-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        self._seed_with_newer(identifier, change_id, 'waiting')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            # check_action gate is has_newer alone, regardless of status.
+            assert app.check_action('update_revision', ()) is True
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_partial_series_offers_and_enables_upgrade(self, gitdir: str) -> None:
+        """A partial series with a newer revision offers upgrade (cc3f07d)."""
+        identifier = 'test-upgrade-partial'
+        change_id = 'upgrade-partial-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        self._seed_with_newer(identifier, change_id, 'partial')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app.check_action('update_revision', ()) is True
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_waiting_without_newer_has_no_upgrade(self, gitdir: str) -> None:
+        """A waiting series with no newer revision must not offer upgrade."""
+        identifier = 'test-upgrade-waiting-none'
+        change_id = 'upgrade-waiting-none-1'
+        _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] no newer',
+                    'status': 'waiting',
+                    'message_id': 'only@ex.com',
+                }
+            ],
+        )
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app.check_action('update_revision', ()) is False
+            await pilot.press('a')
+            await pilot.pause()
+            assert isinstance(app.screen, ActionScreen)
+            lv = app.screen.query_one('#action-list', ListView)
+            from b4.review_tui._modals import ActionItem
+
+            actions = [c.key for c in lv.children if isinstance(c, ActionItem)]
+            assert 'upgrade' not in actions
+            await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    async def test_waiting_without_branch_switches_revision_in_db(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Upgrading a branchless waiting series takes the DB-only path.
+
+        A series parked as 'waiting' straight from 'new' has no review
+        branch, so the upgrade advances the tracked revision in the database
+        rather than running the git upgrade workflow.
+        """
+        identifier = 'test-upgrade-waiting-nobranch'
+        change_id = 'upgrade-waiting-nobranch-1'
+        self._seed_with_newer(identifier, change_id, 'waiting')
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app.action_update_revision()
+            await pilot.pause()
+
+            conn = tracking.get_db(identifier)
+            row = conn.execute(
+                'SELECT revision FROM series WHERE change_id = ?', (change_id,)
+            ).fetchone()
+            conn.close()
+            assert row[0] == 2
 
 
 class TestTrackingAbandon:

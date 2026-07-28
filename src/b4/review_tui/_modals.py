@@ -306,6 +306,7 @@ TRACKING_HELP_LINES = [
     '  ✓  thanked      Thank-you sent\n',
     '  ø  gone         Branch no longer present\n',
     '  *  (suffix)     Tracking data needs refresh (press u)\n',
+    '  ↑  (suffix)     Newer revision available (upgrade via a)\n',
     '\n',
     '[bold]Columns[/bold]\n',
     '  Submitter     Patch author name\n',
@@ -2779,7 +2780,6 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
         self._result: Dict[str, Any] = {
             'series_checked': 0,
             'series_updated': 0,
-            'promoted': 0,
             'errors': 0,
             'gone': 0,
             'followup_updated': 0,
@@ -2841,8 +2841,6 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
                 self._result['series_checked'] += 1
                 if r.get('new_revisions') or r.get('new_trailers'):
                     self._result['series_updated'] += 1
-                if r.get('promoted'):
-                    self._result['promoted'] += 1
                 if r.get('error'):
                     self._result['errors'] += 1
                     submitter = series.get('submitter', 'unknown')

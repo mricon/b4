@@ -128,6 +128,22 @@ _STATUS_TIER: Dict[str, int] = {
     'gone': 2,
 }
 
+
+def _effective_tier(series: Dict[str, Any]) -> int:
+    """Sort/priority tier for *series*, accounting for pending actions.
+
+    Normally just ``_STATUS_TIER[status]``, but a series parked as ``waiting``
+    is pulled up into the actionable tier the moment a newer revision arrives:
+    the upgrade it was waiting for is now available, so it belongs alongside
+    the other actionable series instead of staying buried among the inactive
+    ones at the bottom of the list.
+    """
+    status = 'queued' if series.get('queued') else series.get('status', 'new')
+    if status == 'waiting' and series.get('has_newer'):
+        return 0
+    return _STATUS_TIER.get(status, 2)
+
+
 # Statuses where the maintainer can take action right now.
 _ACTIONABLE_STATUSES: frozenset[str] = frozenset(
     {
@@ -532,8 +548,7 @@ class TrackedSeriesItem(ListItem):
         super().__init__()
         self.series = series
         status = series.get('status', 'new')
-        effective = 'queued' if series.get('queued') else status
-        if _STATUS_TIER.get(effective, 2) >= 2:
+        if _effective_tier(series) >= 2:
             self.add_class('non-actionable')
         if status == 'gone':
             self.add_class('gone')
@@ -546,7 +561,15 @@ class TrackedSeriesItem(ListItem):
         status = self.series.get('status', 'new')
         effective = 'queued' if self.series.get('queued') else status
         symbol = _STATUS_SYMBOLS.get(effective, '?')
-        flag = '*' if self.series.get('needs_update') else ' '
+        # The suffix flag is a single slot; needs_update (rev_count == 0) and
+        # has_newer (a known newer revision exists) are mutually exclusive, so
+        # at most one applies.  '*' = fetch revision data; '↑' = upgrade available.
+        if self.series.get('needs_update'):
+            flag = '*'
+        elif self.series.get('has_newer'):
+            flag = '↑'
+        else:
+            flag = ' '
         art = self.series.get('art')
         if art:
             a, r, t = art
@@ -1079,11 +1102,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             key=lambda s: s.get('added_at') or s.get('sent_at') or '',
             reverse=True,
         )
-        self._all_series.sort(
-            key=lambda s: _STATUS_TIER.get(
-                'queued' if s.get('queued') else s.get('status', 'new'), 2
-            )
-        )
+        self._all_series.sort(key=_effective_tier)
         self.call_later(self._refresh_list)
 
     def _check_db_changed(self) -> None:
@@ -1109,8 +1128,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         The pattern is split on whitespace.  Tokens starting with
         ``s:`` filter by status substring, ``t:`` by target-branch
-        substring, and bare tokens by subject or sender name.  All
-        tokens must match (AND logic).
+        substring, ``up:`` by whether a newer revision is available, and
+        bare tokens by subject or sender name.  All tokens must match
+        (AND logic).
         """
         for token in pattern.lower().split():
             if token.startswith('s:'):
@@ -1120,6 +1140,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             elif token.startswith('t:'):
                 needle = token[2:]
                 if needle not in (series.get('target_branch', '') or '').lower():
+                    return False
+            elif token.startswith('up:'):
+                # Boolean filter on has_newer: `up:` / `up:1` / `up:yes` keep
+                # only upgradable series; `up:no` / `up:0` / `up:false` invert.
+                want = token[3:] not in ('no', '0', 'false')
+                if bool(series.get('has_newer')) != want:
                     return False
             else:
                 if (
@@ -1203,7 +1229,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     def action_limit(self) -> None:
         self.push_screen(
             LimitScreen(
-                self._limit_pattern, hint='Prefixes: s:<status>  t:<target-branch>'
+                self._limit_pattern,
+                hint='Prefixes: s:<status>  t:<target-branch>  up: (upgradable)',
             ),
             callback=self._on_limit,
         )
@@ -1254,7 +1281,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         'reviewing': frozenset(
             {
                 'review',
-                'update_revision',
                 'range_diff',
                 'take',
                 'rebase',
@@ -1283,7 +1309,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         'partial': frozenset(
             {
                 'review',
-                'update_revision',
                 'range_diff',
                 'take',
                 'rebase',
@@ -1312,14 +1337,20 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return bool(self._pwkey and self._pwurl and self._pwproj)
         if action == 'action':
             return self._selected_series is not None
+        if action == 'update_revision':
+            # Upgrade availability is governed by has_newer alone — it is an
+            # axis orthogonal to status, so a newer revision can be taken from
+            # any state that can hold one (new, reviewing, replied, partial,
+            # waiting), not only a checked-out 'reviewing' branch.
+            return bool(
+                self._selected_series and self._selected_series.get('has_newer')
+            )
         if action in self._GATED_ACTIONS:
             if not self._selected_series:
                 return False
             status = self._selected_series.get('status', 'new')
             if action not in self._STATE_ACTIONS.get(status, frozenset()):
                 return False
-            if action == 'update_revision':
-                return bool(self._selected_series.get('has_newer'))
             if action == 'range_diff':
                 return bool(self._selected_series.get('has_multiple_revisions'))
             if action == 'target_branch':
@@ -1356,9 +1387,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 actions.append(('rebase', 'Rebase review branch'))
                 actions.append(('waiting', 'Mark as waiting on new revision'))
                 actions.append(('snooze', 'Snooze (defer until later)'))
-            if status in ('reviewing', 'partial') and self._selected_series.get(
-                'has_newer'
-            ):
+            if status in (
+                'reviewing',
+                'replied',
+                'partial',
+                'waiting',
+            ) and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
             if status == 'waiting':
                 actions.append(('review', 'Review'))
@@ -2036,23 +2070,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 att_row.display = False
 
         # Show known revisions (precomputed in _load_series)
-        revision = series.get('revision', 1)
         revisions_row = self.query_one('#detail-revisions-row', Horizontal)
         revs = series.get('_revisions', [])
         if revs:
             rev_str = ', '.join(f'v{r["revision"]}' for r in revs)
             rev_widget = self.query_one('#detail-revisions', Static)
-            status = series.get('status', 'new')
-            if series.get('has_newer') and status == 'reviewing':
-                rev_str += f' (upgrade from v{revision} with [a]ction)'
-                rev_widget.add_class('has-upgrade')
-            elif series.get('has_newer') and status == 'new':
+            if series.get('has_newer'):
                 newest = max(r['revision'] for r in revs)
-                rev_str += f' (v{newest} available)'
-                rev_widget.add_class('has-upgrade')
-            elif series.get('has_newer') and status == 'waiting':
-                newest = max(r['revision'] for r in revs)
-                rev_str += f' (v{newest} available, will auto-upgrade on update)'
+                rev_str += f' (v{newest} available — upgrade with [a]ction)'
                 rev_widget.add_class('has-upgrade')
             else:
                 rev_widget.remove_class('has-upgrade')
@@ -2276,7 +2301,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return
         checked = result.get('series_checked', 0)
         updated = result.get('series_updated', 0)
-        promoted = result.get('promoted', 0)
         errors = result.get('errors', 0)
         gone = result.get('gone', 0)
         error_details: list[tuple[str, str]] = result.get('error_details', [])
@@ -2287,8 +2311,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         parts = [f'Checked {checked} series']
         if updated:
             parts.append(f'{updated} updated')
-        if promoted:
-            parts.append(f'{promoted} promoted from waiting')
         if errors:
             parts.append(f'{errors} error(s)')
 
@@ -3783,14 +3805,24 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._load_series()
 
     def action_update_revision(self) -> None:
-        """Upgrade the review branch to a newer revision of the series."""
+        """Upgrade the tracked series to a newer revision.
+
+        Available from any state once a newer revision is known: the gate is
+        ``has_newer``, not status.  How the upgrade runs depends on whether a
+        review branch actually exists on disk, not on the status label:
+
+        - No branch (a ``new`` series, or one parked as ``waiting`` straight
+          from ``new``): the tracked revision is advanced in the database.
+        - A branch exists (``reviewing``/``replied``/``partial``, or a
+          ``waiting`` series that was parked from one of those): the full git
+          upgrade workflow runs, archiving the old branch and landing the
+          result in ``reviewing`` — the "upgrade and return to reviewing in
+          one step" the waiting flow was missing.
+        """
         if not self._selected_series:
             return
-        status = self._selected_series.get('status', 'new')
-        if status not in ('reviewing', 'new'):
-            self.notify(
-                'Series must be checked out or new to upgrade', severity='warning'
-            )
+        if not self._selected_series.get('has_newer'):
+            self.notify('No newer revision available to upgrade to', severity='warning')
             return
 
         change_id = self._selected_series.get('change_id', '')
@@ -3824,7 +3856,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             )
             return
 
-        if status == 'new':
+        # Route on whether a review branch exists, not on the status label: a
+        # series parked as 'waiting' directly from 'new' carries the waiting
+        # status but has no branch to upgrade, so it takes the DB-only path.
+        topdir = b4.git_get_toplevel()
+        has_branch = bool(topdir) and b4.git_branch_exists(topdir, review_branch)
+
+        if not has_branch:
             # No review branch — just update the DB record
             if len(newer_revs) == 1:
                 self._do_switch_revision(change_id, current_rev, newer_revs[0])

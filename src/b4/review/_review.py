@@ -38,17 +38,6 @@ NO_COVER_NOTE = 'NOTE: No cover letter provided by the author.'
 _REPLY_CONTEXT_LINES = 5
 
 
-def _should_promote_waiting(newer_vers: List[int], previously_known: Set[int]) -> bool:
-    """Decide whether a waiting series should be promoted to reviewing.
-
-    Only promotes when at least one of the newer versions was not
-    already known before this update cycle.  This prevents a broken
-    version (e.g. v2 that fails to apply) from repeatedly waking the
-    series after the maintainer puts it back into waiting.
-    """
-    return any(v not in previously_known for v in newer_vers)
-
-
 def _strip_subject(text: str) -> List[str]:
     """Return the body lines of a commit/cover message.
 
@@ -2326,21 +2315,11 @@ def update_series_tracking(
 
     newer_vers = sorted(v for v in lmbx.series if v > current_rev)
 
-    # Auto-promote waiting series only when a genuinely new revision
-    # is discovered — one not already known before this update.  This
-    # prevents a broken version (e.g. v2 that fails to apply) from
-    # repeatedly waking the series after the maintainer puts it back
-    # into waiting.
-    if status == 'waiting' and _should_promote_waiting(newer_vers, previously_known):
-        try:
-            conn = b4.review.tracking.get_db(identifier)
-            b4.review.tracking.update_series_status(
-                conn, change_id, 'reviewing', revision=series.get('revision')
-            )
-            conn.close()
-            result['promoted'] = True
-        except Exception as ex:
-            logger.warning('Could not promote waiting series: %s', ex)
+    # Note: [u]pdate deliberately does NOT mutate a waiting series' status.
+    # Discovering a newer version records it (above) and lights up the
+    # has_newer signal, which the UI surfaces and the upgrade action acts on
+    # explicitly; status is only ever changed by an explicit user action, not
+    # as a side effect of updating.  Do not re-add auto-promotion here.
 
     # Update follow-up trailers if the series has a review branch
     if status in ('reviewing', 'replied', 'partial', 'waiting') and topdir:
