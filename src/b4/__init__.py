@@ -1449,13 +1449,15 @@ class LoreSeries:
                 return None, None
             start_commit = out.strip()
             logger.debug('start_commit=%s', start_commit)
-            git_run_command(dfn, ['reset', '--hard', start_commit])
+            git_run_command(dfn, [*SCRATCH_GIT_OPTS, 'reset', '--hard', start_commit])
 
             ifh = io.BytesIO()
             save_git_am_mbox(msgs, ifh)
             ambytes = ifh.getvalue()
 
-            ecode, out = git_run_command(dfn, ['am'], stdin=ambytes, logstderr=True)
+            ecode, out = git_run_command(
+                dfn, [*SCRATCH_GIT_OPTS, 'am'], stdin=ambytes, logstderr=True
+            )
             if ecode > 0:
                 logger.critical('ERROR: Could not fake-am version v%s', self.revision)
                 return None, None
