@@ -837,6 +837,31 @@ class TestReplyTrailerEditing:
             '> Reviewed-by: Quoted <q@x.com>', ''
         )
 
+    def test_remove_collapses_blank_gap(self) -> None:
+        # A trailer alone between blank lines takes one of the blanks with
+        # it, so no doubled gap is left where it used to be.
+        buf = 'Intro.\n\nReviewed-by: Me <me@x.com>\n\nMore text.\n'
+        out = review._remove_trailer_from_reply(buf, 'reviewed-by')
+        assert out == 'Intro.\n\nMore text.\n'
+
+    def test_remove_at_end_leaves_no_trailing_gap(self) -> None:
+        buf = 'Thanks!\n\nReviewed-by: Me <me@x.com>\n'
+        out = review._remove_trailer_from_reply(buf, 'reviewed-by')
+        assert out == 'Thanks!\n'
+
+    def test_insert_normalizes_crlf_buffer(self) -> None:
+        # A buffer stored by an older b4 may carry editor CRLF endings;
+        # the rebuild canonicalizes them instead of mixing LF into CRLF.
+        buf = 'Thanks!\r\n\r\nAcked-by: Me <me@x.com>\r\n'
+        out = review._insert_trailer_in_reply(buf, 'Tested-by: Me <me@x.com>')
+        assert '\r' not in out
+        assert 'Acked-by: Me <me@x.com>\nTested-by: Me <me@x.com>' in out
+
+    def test_remove_normalizes_crlf_buffer(self) -> None:
+        buf = 'Thanks!\r\n\r\nReviewed-by: Me <me@x.com>\r\n'
+        out = review._remove_trailer_from_reply(buf, 'reviewed-by')
+        assert out == 'Thanks!\n'
+
 
 class TestBuildReviewEmailReplyPath:
     """The verbatim reply path must not relocate or duplicate trailers."""

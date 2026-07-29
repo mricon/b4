@@ -1287,7 +1287,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         if not target:
             return
         review = self._ensure_review(target)
-        existing_reply = review.get('reply', '')
+        # Buffers stored by older versions may carry editor CRLF endings;
+        # canonicalize before seeding the editor so the round-trip heals them.
+        existing_reply = b4.review._normalize_line_endings(review.get('reply', ''))
 
         # Get the real diff and message body for position resolution when
         # parsing the edited buffer back.  message_text re-anchors :message
@@ -1341,6 +1343,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             return
         reply_text = result.decode(errors='replace')
         if reply_text == editor_text:
+            if existing_reply and review.get('reply') != existing_reply:
+                # No edits, but the stored buffer had legacy CRLF endings —
+                # persist the canonicalized form so it stops confusing views.
+                review['reply'] = existing_reply
+                self._save_tracking()
             self.notify('No changes made')
             return
         # The edited buffer is the single source of truth: store it verbatim

@@ -1206,3 +1206,16 @@ def test_map_codereview_trailers_exposes_parent_patches(sampledir: str) -> None:
     parent = parent_patches[patchid]
     assert parent.subject == 'Minor typo changes imitation'
     assert parent.msgid == '20221025-test1-v1-4-e4f28f57990c@linuxfoundation.org'
+
+
+def test_edit_in_editor_normalizes_crlf(
+    gitdir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The edited buffer comes back with unix line endings even when the
+    editor saved it with CRLF (e.g. mail-oriented configs forcing
+    fileformat=dos on .eml files)."""
+    # 'true' leaves the buffer untouched, so the CRLF input stands in for an
+    # editor that saved the file with dos line endings.
+    monkeypatch.setenv('GIT_EDITOR', 'true')
+    out = b4.edit_in_editor(b'line one\r\nline two\r\rlast\r\n', filehint='reply.eml')
+    assert out == b'line one\nline two\n\nlast\n'

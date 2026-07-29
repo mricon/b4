@@ -2614,6 +2614,17 @@ def _ensure_trailers_in_body(body: str, trailers: List[str]) -> str:
     return main_body
 
 
+def _normalize_line_endings(text: str) -> str:
+    """Canonicalize CRLF/CR line endings to LF.
+
+    New editor round-trips are normalized in b4.edit_in_editor, but reply
+    buffers stored by older versions kept whatever bytes the editor wrote,
+    so tracking data may still carry CRLF.  Everything downstream assumes
+    LF-only text.
+    """
+    return text.replace('\r\n', '\n').replace('\r', '\n')
+
+
 def _parse_reply_trailers(buffer: str) -> List[str]:
     """Parse trailers from the maintainer's own (bare) lines in a buffer.
 
@@ -2640,7 +2651,7 @@ def _insert_trailer_in_reply(reply_text: str, trailer: str) -> str:
     trailing ``-- `` signature, grouped with any trailers already there.  The
     maintainer can move it afterwards — placement is just a sensible default.
     """
-    lines = reply_text.split('\n')
+    lines = _normalize_line_endings(reply_text).split('\n')
     sig_idx = next((i for i, ln in enumerate(lines) if ln == '-- '), len(lines))
     head = lines[:sig_idx]
     tail = lines[sig_idx:]
@@ -2659,17 +2670,29 @@ def _remove_trailer_from_reply(reply_text: str, name: str) -> str:
 
     Quoted (``> ``), external (``| ``) and instruction (``#``) lines are left
     untouched so a ``Foo-by:`` inside the quoted diff is never disturbed.
+    When the removed line sat alone between blank lines, one of the blanks
+    is dropped with it so no doubled gap is left behind.
     """
     lname = name.lower()
+    lines = _normalize_line_endings(reply_text).split('\n')
     out: List[str] = []
-    for line in reply_text.split('\n'):
-        if line.startswith(('>', '|', '#')):
-            out.append(line)
-            continue
-        m = _BARE_TRAILER_RE.match(line)
-        if m and m.group(1).lower() == lname:
-            continue
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.startswith(('>', '|', '#')):
+            m = _BARE_TRAILER_RE.match(line)
+            if m and m.group(1).lower() == lname:
+                if (
+                    out
+                    and not out[-1].strip()
+                    and i + 1 < len(lines)
+                    and not lines[i + 1].strip()
+                ):
+                    i += 1
+                i += 1
+                continue
         out.append(line)
+        i += 1
     return '\n'.join(out)
 
 

@@ -6124,6 +6124,11 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
         with open(temp_fpath, 'rb') as edited_file:
             bdata = edited_file.read()
 
+    # Mail-oriented editor configs may save the buffer with CRLF line
+    # endings (e.g. fileformat=dos forced on *.eml files); every consumer
+    # of the edited text expects unix endings, so canonicalize here.
+    bdata = bdata.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+
     write_branch = git_get_current_branch()
     if write_branch != read_branch:
         with tempfile.NamedTemporaryFile(
