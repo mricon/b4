@@ -1000,6 +1000,138 @@ class TestBuildReviewEmailReplyPath:
         assert '> +a' not in body and '> +b' not in body
 
 
+@mock.patch('b4.get_email_signature', return_value='sig')
+@mock.patch(
+    'b4.get_user_config',
+    return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+)
+class TestReviewReplyTemplate:
+    """Tests for review-reply-template wrapping in _build_review_email()."""
+
+    @staticmethod
+    def _series() -> Dict[str, Any]:
+        return {
+            'subject': 'Test patch',
+            'fromname': 'Jane Developer',
+            'fromemail': 'jane@example.com',
+            'header-info': {
+                'msgid': 'test-msgid@example.com',
+                'to': 'maintainer@example.com',
+                'cc': '',
+                'references': '',
+                'sentdate': 'Mon, 01 Jan 2024 00:00:00 +0000',
+            },
+        }
+
+    @staticmethod
+    def _body(rev: Dict[str, Any], tpt_content: Optional[str], tmp_path: Any) -> str:
+        """Build a review email with the given template and return its body."""
+        config: Dict[str, Any] = {'review-reply-template': None}
+        if tpt_content is not None:
+            tptfile = tmp_path / 'reply-template'
+            tptfile.write_text(tpt_content, encoding='utf-8')
+            config['review-reply-template'] = str(tptfile)
+        with mock.patch('b4.get_main_config', return_value=config):
+            msg = review._build_review_email(
+                TestReviewReplyTemplate._series(), None, rev, '', '', None
+            )
+        assert msg is not None
+        raw = msg.get_payload(decode=True)
+        assert isinstance(raw, bytes)
+        return raw.decode()
+
+    def test_template_wraps_reply(
+        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    ) -> None:
+        tpt = (
+            '# This comment line must be removed\n'
+            'Hi ${firstname},\n'
+            '\n'
+            '${reply}\n'
+            '\n'
+            'Cheers,\n'
+            '${myname}\n'
+        )
+        body = self._body({'reply': 'Looks good.\n'}, tpt, tmp_path)
+        assert body.startswith('Hi Jane,')
+        assert 'Looks good.' in body
+        assert 'Cheers,\nReviewer' in body
+        assert '# This comment line must be removed' not in body
+        # Template order: greeting, reply, sign-off, auto-appended signature
+        assert (
+            body.index('Hi Jane,')
+            < body.index('Looks good.')
+            < body.index('Cheers,')
+            < body.index('\n-- \nsig')
+        )
+
+    def test_no_template_configured(
+        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    ) -> None:
+        body = self._body({'reply': 'Looks good.\n'}, None, tmp_path)
+        assert body.startswith('Looks good.')
+        assert 'Hi ' not in body
+
+    def test_missing_template_file_ignored(
+        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    ) -> None:
+        config = {'review-reply-template': str(tmp_path / 'nonexistent')}
+        with mock.patch('b4.get_main_config', return_value=config):
+            msg = review._build_review_email(
+                self._series(), None, {'reply': 'Looks good.\n'}, '', '', None
+            )
+        assert msg is not None
+        raw = msg.get_payload(decode=True)
+        assert isinstance(raw, bytes)
+        assert raw.decode().startswith('Looks good.')
+
+    def test_template_without_reply_placeholder_ignored(
+        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    ) -> None:
+        body = self._body({'reply': 'Looks good.\n'}, 'Hi ${firstname},\n', tmp_path)
+        assert body.startswith('Looks good.')
+        assert 'Hi Jane,' not in body
+
+    def test_firstname_falls_back_to_localpart(
+        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    ) -> None:
+        tpt = 'Hi ${firstname},\n\n${reply}\n'
+        series = self._series()
+        series['fromname'] = ''
+        tptfile = tmp_path / 'reply-template'
+        tptfile.write_text(tpt, encoding='utf-8')
+        config = {'review-reply-template': str(tptfile)}
+        with mock.patch('b4.get_main_config', return_value=config):
+            msg = review._build_review_email(
+                series, None, {'reply': 'Looks good.\n'}, '', '', None
+            )
+        assert msg is not None
+        raw = msg.get_payload(decode=True)
+        assert isinstance(raw, bytes)
+        assert raw.decode().startswith('Hi jane,')
+
+    def test_signature_placeholder_no_double_append(
+        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    ) -> None:
+        tpt = '${reply}\n\nCheers,\n-- \n${signature}\n'
+        body = self._body({'reply': 'Looks good.\n'}, tpt, tmp_path)
+        assert body.count('sig') == 1
+        assert body.count('-- ') == 1
+
+    def test_trailer_only_reply_wrapped(
+        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    ) -> None:
+        tpt = 'Hi ${firstname},\n\n${reply}\n\nCheers,\n'
+        rev = {'trailers': ['Reviewed-by: Me <me@example.com>']}
+        body = self._body(rev, tpt, tmp_path)
+        assert body.startswith('Hi Jane,')
+        # Auto-composed content (attribution + trailers) lands inside ${reply}
+        assert 'wrote:' in body
+        assert 'Reviewed-by: Me <me@example.com>' in body
+        assert body.index('Hi Jane,') < body.index('wrote:')
+        assert body.index('Reviewed-by:') < body.index('Cheers,')
+
+
 @requires_textual
 class TestAddrsToLines:
     """Tests for review_tui._addrs_to_lines()."""

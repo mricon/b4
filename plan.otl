@@ -85,16 +85,21 @@ v0.16
 		: Clarify config.rst wording ("default target branch to use when
 		: taking patches") that invites the misreading that it drives the base
 		: Intersects with git-bug bd95e9f (apply base resolves to moving HEAD)
-	[_] User-configurable reply templates (b4 ty style)
+	[X] User-configurable reply templates (b4 ty style)
 		: Matthieu Baerts, https://msgid.link/bc88076e-2629-45bf-ab20-242f823dde4e@kernel.org
-		: Template file mechanism like b4 ty's thanks-am-template: a config
-		: option (e.g. b4.review-reply-template) pointing at a file loaded
+		: Template file mechanism like b4 ty's thanks-am-template: the
+		: b4.review-reply-template config option points at a file loaded
 		: via read_template(), '#' comments stripped, string.Template
-		: ${var} substitution (ty.py make_reply())
-		: Template wraps the reply buffer — e.g. "Hi ${firstname}," header
-		: and the user's own sign-off footer around the quoted patch content
-		: Vars from series tracking data: fromname/firstname, fromemail,
-		: subject, revision, ...
+		: safe_substitute (ty.py make_reply())
+		: Applied at email-composition time in _build_review_email() — the
+		: template wraps the composed body via ${reply}, so the WYSIWYG
+		: buffer semantics and the trailing-quote trim stay untouched, and
+		: all reply kinds (patch, cover, trailer-only) are wrapped uniformly
+		: Vars: reply, fromname, firstname, fromemail, subject, sentdate,
+		: msgid, myname, myemail, signature; auto-signature append skipped
+		: when the template renders its own "-- " block
+		: Follow-up quick-replies (lite viewer) not templated — possible
+		: future extension
 	[X] Partial series acceptance without terminal state transition
 		: Mark Brown, https://msgid.link/afk5QvNAQDxFCbvT@sirena.co.uk
 		: New 'partial' state (◐) auto-detected when a cherry-pick take covers only a subset of patches

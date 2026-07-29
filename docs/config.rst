@@ -562,6 +562,29 @@ These settings control ``b4 review`` TUI behaviour.
 
      .. versionadded:: v0.15
 
+   :term:`b4.review-reply-template`
+     Path to a template file used to wrap outgoing review replies sent
+     from the review TUI (both per-patch replies and the cover-letter
+     reply). The template must contain the ``${reply}`` placeholder,
+     which expands to the reply content itself — the quoted patch
+     context, your comments, and any trailers. Substitution follows
+     the same rules as the ``b4 ty`` thank-you templates
+     (``string.Template`` syntax; lines starting with ``#`` are
+     removed). Available placeholders: ``${reply}``, ``${fromname}``,
+     ``${firstname}``, ``${fromemail}``, ``${subject}``,
+     ``${sentdate}``, ``${msgid}``, ``${myname}``, ``${myemail}``,
+     ``${signature}``. See ``review-reply-template.example`` shipped
+     with b4 for a commented starting point.
+
+     If the rendered reply does not already contain a signature
+     delimiter (``-- `` on its own line), your email signature is
+     still appended automatically, so most templates do not need
+     ``${signature}``.
+
+     Default: ``None``
+
+     .. versionadded:: v0.16
+
    :term:`b4.review-no-patatt-sign`
      Instructs b4 not to patatt-sign outgoing review emails (review replies,
      follow-up replies, and thank-you messages). This mirrors the

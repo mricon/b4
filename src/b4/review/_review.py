@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import urllib.parse
+from string import Template
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import liblore.utils
@@ -2746,6 +2747,73 @@ def _trim_quoted_reply(buffer: str) -> str:
     return '\n'.join(lines[:end])
 
 
+def _get_reply_template() -> Optional[str]:
+    """Load the user's review reply template, if one is configured.
+
+    Follows the same mechanism as the b4-ty thanks templates: the
+    ``b4.review-reply-template`` config option points at a template
+    file which is read via :func:`b4.read_template` (lines starting
+    with ``#`` are removed).  Returns None when no template is
+    configured or the configured file does not exist.
+    """
+    config = b4.get_main_config()
+    tptpath = config.get('review-reply-template')
+    if not tptpath or not isinstance(tptpath, str):
+        return None
+    try:
+        return b4.read_template(tptpath)
+    except FileNotFoundError:
+        logger.critical(
+            'ERROR: review-reply-template says to use %s, but it does not exist',
+            tptpath,
+        )
+        return None
+
+
+def _apply_reply_template(
+    body: str,
+    series: Dict[str, Any],
+    header_info: Dict[str, Any],
+    orig_subject: str,
+) -> str:
+    """Wrap a composed review reply body in the user's template.
+
+    The template must contain the ``${reply}`` placeholder, which
+    expands to *body* (the quoted patch context, the maintainer's
+    comments and any trailers).  Substitution uses
+    :class:`string.Template` with the same safe-substitute semantics
+    as the b4-ty thanks templates, so unknown placeholders are left
+    as-is.  Returns *body* unchanged when no template is configured
+    or the template has no ``${reply}`` placeholder.
+    """
+    tpt = _get_reply_template()
+    if not tpt:
+        return body
+    if '${reply}' not in tpt and '$reply' not in tpt:
+        logger.warning('review-reply-template has no ${reply} placeholder, ignoring it')
+        return body
+    fromname = str(series.get('fromname') or '')
+    fromemail = str(series.get('fromemail') or '')
+    if fromname.split():
+        firstname = fromname.split()[0]
+    else:
+        firstname = fromemail.split('@')[0]
+    myname, myemail = b4.get_mailfrom()
+    params = {
+        'reply': body,
+        'fromname': fromname,
+        'firstname': firstname,
+        'fromemail': fromemail,
+        'subject': orig_subject,
+        'sentdate': str(header_info.get('sentdate') or ''),
+        'msgid': str(header_info.get('msgid') or ''),
+        'myname': myname,
+        'myemail': myemail,
+        'signature': b4.get_email_signature(),
+    }
+    return Template(tpt).safe_substitute(params).strip('\n')
+
+
 def _build_review_email(
     series: Dict[str, Any],
     patch_meta: Optional[Dict[str, Any]],
@@ -2860,6 +2928,9 @@ def _build_review_email(
     # relocate them.
     if not reply_text:
         body = _ensure_trailers_in_body(body, trailers)
+
+    # Wrap the body in the user's reply template, if configured
+    body = _apply_reply_template(body, series, header_info, orig_subject)
 
     # Append signature if not already present
     if '\n-- \n' not in body:

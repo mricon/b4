@@ -176,6 +176,8 @@ DEFAULT_CONFIG: ConfigDictT = {
     'sendemail-identity': None,
     # Default target branch for review take flow
     'review-target-branch': None,
+    # See review-reply-template.example
+    'review-reply-template': None,
     # Do not patatt-sign outgoing review emails
     'review-no-patatt-sign': None,
     # Send to myself

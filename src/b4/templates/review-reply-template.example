@@ -1,0 +1,32 @@
+# Lines starting with '#' will be removed
+# This template wraps the review replies sent from the b4 review
+# TUI (both per-patch replies and the cover-letter reply). Point
+# b4.review-reply-template at this file in your git config to
+# enable it:
+# [b4]
+#   review-reply-template = ~/.config/b4/review-reply-template
+#
+# The template MUST contain the ${reply} placeholder -- it expands
+# to the reply content itself: the quoted patch context, your
+# comments and any trailers. A template without ${reply} is ignored.
+#
+# Other available placeholders:
+#   ${fromname}  - sender's full name (e.g. "Jane Developer")
+#   ${firstname} - first word of the sender's name (e.g. "Jane")
+#   ${fromemail} - sender's email address
+#   ${subject}   - subject of the message being replied to
+#   ${sentdate}  - date of the message being replied to
+#   ${msgid}     - message-id of the message being replied to
+#   ${myname}    - your own name
+#   ${myemail}   - your own email address
+#   ${signature} - your email signature (~/.signature if present)
+#
+# If the rendered reply does not already contain a signature
+# delimiter ("-- " on its own line), your signature is appended
+# automatically, so most templates do not need ${signature}.
+Hi ${firstname},
+
+${reply}
+
+Cheers,
+${myname}

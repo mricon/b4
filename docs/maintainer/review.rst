@@ -454,6 +454,34 @@ overlay. This overlay always shows all reviewers — both your own review
 and any external reviewers — so you can see at a glance who has
 commented on the current patch.
 
+**Reply templates**
+
+By default, outgoing review replies contain only the quoted content,
+your comments, and your signature. To wrap every reply in a standard
+greeting and sign-off, point :term:`b4.review-reply-template` at a
+template file::
+
+    [b4]
+      review-reply-template = ~/.config/b4/review-reply-template
+
+The template must contain the ``${reply}`` placeholder, which expands
+to the reply content itself (the quoted patch context, your comments,
+and any trailers)::
+
+    Hi ${firstname},
+
+    ${reply}
+
+    Cheers,
+    ${myname}
+
+Lines starting with ``#`` are removed, and substitution follows the
+same rules as the ``b4 ty`` thank-you templates. The template applies
+to both per-patch replies and the cover-letter reply, and the wrapped
+result is visible in email mode (``e``) before sending. See
+``review-reply-template.example`` shipped with b4 for all supported
+placeholders.
+
 **External inline comments**
 
 B4 can display inline comments from external sources alongside your own
