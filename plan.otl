@@ -75,7 +75,26 @@ v0.16
 	: `b4 prep --claim [branch]` takes ownership by re-stamping the series; also
 	: recovers the "not a prep-managed branch" gotcha after a user.email change
 	: (all cover strategies)
-[X] `b4 review` improvements
+[_] `b4 review` improvements
+	[_] Configurable default apply base in the take dialog
+		: Matthieu Baerts, https://msgid.link/bc88076e-2629-45bf-ab20-242f823dde4e@kernel.org
+		: Base pre-fill is series base-commit → find_base() guess → HEAD
+		: (_tracking_app.py); b4.review-target-branch only feeds the
+		: suggester list, so there is no way to prefer "apply on current
+		: HEAD" — add a config knob to force the default
+		: Clarify config.rst wording ("default target branch to use when
+		: taking patches") that invites the misreading that it drives the base
+		: Intersects with git-bug bd95e9f (apply base resolves to moving HEAD)
+	[_] User-configurable reply templates (b4 ty style)
+		: Matthieu Baerts, https://msgid.link/bc88076e-2629-45bf-ab20-242f823dde4e@kernel.org
+		: Template file mechanism like b4 ty's thanks-am-template: a config
+		: option (e.g. b4.review-reply-template) pointing at a file loaded
+		: via read_template(), '#' comments stripped, string.Template
+		: ${var} substitution (ty.py make_reply())
+		: Template wraps the reply buffer — e.g. "Hi ${firstname}," header
+		: and the user's own sign-off footer around the quoted patch content
+		: Vars from series tracking data: fromname/firstname, fromemail,
+		: subject, revision, ...
 	[X] Partial series acceptance without terminal state transition
 		: Mark Brown, https://msgid.link/afk5QvNAQDxFCbvT@sirena.co.uk
 		: New 'partial' state (◐) auto-detected when a cherry-pick take covers only a subset of patches
