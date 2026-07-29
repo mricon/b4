@@ -162,6 +162,9 @@ DEFAULT_CONFIG: ConfigDictT = {
     'cache-expire': '10',
     # Used when creating summaries for b4 ty
     'thanks-commit-url-mask': None,
+    # Git URL of the public repo used to verify that queued thank-yous
+    # reference published (pushed and replicated) commits
+    'thanks-check-repo': None,
     # Override the tree name used in thank-you messages
     'thanks-treename': None,
     # See thanks-pr-template.example

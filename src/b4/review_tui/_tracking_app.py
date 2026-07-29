@@ -4878,6 +4878,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         # Compute checkurl from last taken commit for queue support
         checkurl: Optional[str] = None
+        checkcommit: Optional[str] = None
         cidmask = config.get('thanks-commit-url-mask')
         if isinstance(cidmask, str) and cidmask and '%' in cidmask:
             # Find the last commit ID (highest patch index with a commit)
@@ -4887,11 +4888,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     last_cid = cid
             if last_cid:
                 checkurl = cidmask % last_cid
+                checkcommit = last_cid
 
-        self._show_thank_preview(msg, checkurl=checkurl)
+        self._show_thank_preview(msg, checkurl=checkurl, checkcommit=checkcommit)
 
     def _show_thank_preview(
-        self, msg: email.message.EmailMessage, checkurl: Optional[str] = None
+        self,
+        msg: email.message.EmailMessage,
+        checkurl: Optional[str] = None,
+        checkcommit: Optional[str] = None,
     ) -> None:
         """Push the ThankScreen modal and handle edit/send/queue/cancel."""
 
@@ -4899,16 +4904,21 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if result is None:
                 return
             if result == '__EDIT__':
-                self._edit_thank_message(msg, checkurl=checkurl)
+                self._edit_thank_message(
+                    msg, checkurl=checkurl, checkcommit=checkcommit
+                )
             elif result == '__SEND__':
                 self._send_thank_message(msg)
             elif result == '__QUEUE__' and checkurl:
-                self._queue_thank_message(msg, checkurl)
+                self._queue_thank_message(msg, checkurl, checkcommit)
 
         self.push_screen(ThankScreen(msg, checkurl=checkurl), _on_thank_result)
 
     def _edit_thank_message(
-        self, msg: email.message.EmailMessage, checkurl: Optional[str] = None
+        self,
+        msg: email.message.EmailMessage,
+        checkurl: Optional[str] = None,
+        checkcommit: Optional[str] = None,
     ) -> None:
         """Open the thank-you message in $EDITOR and re-show preview."""
         msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
@@ -4919,10 +4929,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             self.notify(f'Editor error: {ex}', severity='error')
             return
         new_msg = email.parser.BytesParser(policy=b4.emlpolicy).parsebytes(edited)
-        self._show_thank_preview(new_msg, checkurl=checkurl)
+        self._show_thank_preview(new_msg, checkurl=checkurl, checkcommit=checkcommit)
 
     def _queue_thank_message(
-        self, msg: email.message.EmailMessage, checkurl: str
+        self,
+        msg: email.message.EmailMessage,
+        checkurl: str,
+        checkcommit: Optional[str] = None,
     ) -> None:
         """Queue the thanks message for delivery once commits are public."""
         series = self._selected_series
@@ -4932,7 +4945,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         revision = series.get('revision', 1)
         try:
             b4.ty.queue_message(
-                msg, checkurl, change_id, revision, dryrun=self._email_dryrun
+                msg,
+                checkurl,
+                change_id,
+                revision,
+                dryrun=self._email_dryrun,
+                checkcommit=checkcommit,
             )
         except Exception as ex:
             self.notify(f'Failed to queue message: {ex}', severity='error')

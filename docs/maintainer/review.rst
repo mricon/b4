@@ -989,9 +989,10 @@ commits to a public tree before sending thank-you messages — the
 message references commit URLs that may not resolve until the push is
 complete.
 
-Files are named ``{change-id}-v{revision}.msg`` and the target URL is
-recorded as an ``X-Check-URL`` header, so you can inspect or hand-edit
-queued messages with any mail tool.
+Files are named ``{change-id}-v{revision}.msg`` and the check target is
+recorded as ``X-Check-URL``, ``X-Check-Commit`` and ``X-Check-Repo``
+headers, so you can inspect or hand-edit queued messages with any mail
+tool.
 
 The series remains in ``accepted`` status while its thank-you message is
 queued. The title bar shows a queue count indicator on the right side
@@ -999,9 +1000,16 @@ queued. The title bar shows a queue count indicator on the right side
 
 Press ``T`` to open the queue viewer, which lists all pending messages
 with their subjects and target URLs. From this screen, press ``T``
-again to attempt delivery: b4 checks each queued message's commit URL
-with an HTTP HEAD request, and delivers the message via SMTP once the
-URL resolves. Successfully delivered messages are moved to
+again to attempt delivery: b4 verifies that each queued message's
+commit is reachable from a branch advertised by the public repository
+(``git ls-remote`` against :term:`b4.thanks-check-repo` or a repository
+URL derived from the commit URL), and delivers the message via SMTP
+once the commit is published. Reachability matters because hosts with
+shared object storage (such as git.kernel.org and github) can serve
+commit pages for objects that were pushed to a sibling repository but
+never published in the checked one. When no repository URL is
+available, b4 falls back to checking the commit URL with an HTTP HEAD
+request. Successfully delivered messages are moved to
 ``.git/b4-review/queue/sent/`` and their series are automatically
 marked as ``thanked``.
 

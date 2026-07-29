@@ -423,6 +423,25 @@ Attestation settings
 
      Default: ``None``
 
+   :term:`b4.thanks-check-repo`
+     The git URL of the public repository that queued thank-you messages
+     are checked against before delivery. When processing the queue, b4
+     runs ``git ls-remote`` against this repository and only delivers a
+     thank-you once its commit is reachable from one of the advertised
+     branches. For example::
+
+         thanks-check-repo = https://git.kernel.org/pub/scm/linux/kernel/git/username/tree.git
+
+     If not set, b4 attempts to derive the repository URL from the
+     :term:`b4.thanks-commit-url-mask` value, which works for cgit-,
+     github- and gitlab-style commit URLs, but not for the
+     git.kernel.org ``/username/c/`` short URLs. Set this option
+     explicitly if you use a short-URL mask and want queued thank-yous
+     verified by ref reachability instead of the HTTP fallback check.
+     See :ref:`queuing thanks <thanks_queue>` for details.
+
+     Default: ``None``
+
    :term:`b4.thanks-commit-url-mask`
      Used when creating summaries for ``b4 ty`` and the review TUI
      thank-you flow. Can be a value like::
@@ -433,8 +452,8 @@ Attestation settings
 
      When this option is set, the review TUI's thank-you preview offers
      a **Queue** option that stores the message for delayed delivery.
-     Queued messages are held until their commit URL resolves (via HTTP
-     HEAD), so you can push your commits before the thank-you is sent.
+     Queued messages are held until their commit is verified published,
+     so you can push your commits before the thank-you is sent.
      See :ref:`queuing thanks <thanks_queue>` for details.
 
      .. note::

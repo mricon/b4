@@ -950,20 +950,155 @@ def _parse_queue_file(filepath: str) -> Optional[EmailMessage]:
         return None
 
 
+QUEUE_CHECK_HEADERS = ('X-Check-URL', 'X-Check-Commit', 'X-Check-Repo')
+
+_CHECKURL_RES = (
+    # cgit: https://host/path/repo.git/commit/?id=<sha> (optionally ?h=branch&id=)
+    re.compile(
+        r'^(?P<repo>https?://.+?)/commit/\?(?:[^&]*&)*id=(?P<commit>[0-9a-fA-F]{7,64})'
+    ),
+    # github/gitea: <repo>/commit/<sha>; gitlab: <repo>/-/commit/<sha>
+    re.compile(r'^(?P<repo>https?://.+?)(?:/-)?/commit/(?P<commit>[0-9a-fA-F]{7,64})'),
+)
+
+
+def _parse_checkurl(checkurl: str) -> Tuple[Optional[str], Optional[str]]:
+    """Extract (repo_url, commit_id) from a thanks-commit-url-mask URL.
+
+    The repo URL is only derivable from cgit/github/gitlab-style commit
+    URLs; for anything else (e.g. git.kernel.org /username/c/ shortlinks)
+    we can usually still recover the commit id from a trailing hex run.
+    Either element may be None.
+    """
+    for pat in _CHECKURL_RES:
+        m = pat.match(checkurl)
+        if m:
+            return m.group('repo'), m.group('commit')
+    m = re.search(r'([0-9a-fA-F]{7,64})$', checkurl.rstrip('/'))
+    if m:
+        return None, m.group(1)
+    return None, None
+
+
+def _get_check_repo(checkurl: str) -> Optional[str]:
+    """Return the git URL of the public repo to check commits against.
+
+    The b4.thanks-check-repo config option takes precedence; otherwise
+    attempt to derive the repo URL from the commit check URL.
+    """
+    config = b4.get_main_config()
+    crepo = config.get('thanks-check-repo')
+    if isinstance(crepo, str) and crepo:
+        return crepo
+    repo, _commit = _parse_checkurl(checkurl)
+    return repo
+
+
+def commit_reachable_on_remote(commit: str, repo_url: str) -> Optional[bool]:
+    """Check if a commit is reachable from a branch advertised by repo_url.
+
+    A commit only counts as published once a ref on the public repo
+    contains it. Merely existing in the remote odb is not enough: hosts
+    with shared object storage (grokmirror objstore repos, github fork
+    networks) will happily serve commit pages for objects that were
+    pushed to a sibling repo but never published in this one.
+
+    Ancestry is computed locally against the advertised tips, so tips we
+    do not have objects for are ignored. Returns True/False, or None if
+    the state could not be determined (e.g. the remote is unreachable).
+    """
+    gitargs = [
+        '-c',
+        'http.lowSpeedLimit=1000',
+        '-c',
+        'http.lowSpeedTime=15',
+        'ls-remote',
+        '--heads',
+        repo_url,
+    ]
+    ecode, out = b4.git_run_command(None, gitargs)
+    if ecode > 0:
+        logger.debug('ls-remote failed for %s (exit code %s)', repo_url, ecode)
+        return None
+    tips: Set[str] = set()
+    for line in out.splitlines():
+        chunks = line.split(None, 1)
+        if chunks:
+            tips.add(chunks[0])
+    if not tips:
+        return False
+    # Filter out tips we don't have locally -- we can't compute ancestry
+    # for them, so treat them as not containing the commit
+    stdin = ('\n'.join(sorted(tips)) + '\n').encode()
+    _ecode, out = b4.git_run_command(
+        None, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], stdin=stdin
+    )
+    known: List[str] = []
+    for line in out.splitlines():
+        chunks = line.split()
+        if len(chunks) == 2 and chunks[1] == 'commit':
+            known.append(chunks[0])
+    if not known:
+        logger.debug('No advertised heads of %s exist locally', repo_url)
+        return False
+    # Empty output means every commit reachable from ours is also
+    # reachable from one of the known tips, i.e. ours is published
+    ecode, out = b4.git_run_command(None, ['rev-list', '-1', commit, '--not', *known])
+    if ecode > 0:
+        logger.debug('rev-list failed for %s (exit code %s)', commit, ecode)
+        return None
+    return not out.strip()
+
+
+def _check_published(checkurl: str, checkcommit: str, checkrepo: str) -> Optional[bool]:
+    """Tri-state publish check for a queued thanks message.
+
+    Returns True when the commit is verified published, False when it is
+    not yet visible, None when the check could not be performed. Prefers
+    ref reachability on the public repo; falls back to an HTTP status
+    check of checkurl when no repo URL is available (that check cannot
+    detect unpublished commits served out of shared object storage).
+    """
+    if checkurl and not checkcommit:
+        _repo, pcommit = _parse_checkurl(checkurl)
+        checkcommit = pcommit or ''
+    if checkurl and not checkrepo:
+        checkrepo = _get_check_repo(checkurl) or ''
+    if checkcommit and checkrepo:
+        return commit_reachable_on_remote(checkcommit, checkrepo)
+    if not checkurl:
+        return True
+    try:
+        session = b4.get_requests_session()
+        resp = session.head(checkurl, timeout=15, allow_redirects=True)
+        return resp.status_code < 300
+    except Exception:
+        return None
+
+
 def queue_message(
     msg: EmailMessage,
     checkurl: str,
     change_id: str,
     revision: int,
     dryrun: bool = False,
+    checkcommit: Optional[str] = None,
 ) -> None:
     """Write a thanks message to the file-based queue."""
     qdir = _get_queue_dir(dryrun=dryrun)
     os.makedirs(qdir, exist_ok=True)
-    # Inject the check URL as a header
-    if 'X-Check-URL' in msg:
-        del msg['X-Check-URL']
+    # Inject the check info as headers for process_queue()
+    for hdr in QUEUE_CHECK_HEADERS:
+        if hdr in msg:
+            del msg[hdr]
     msg['X-Check-URL'] = checkurl
+    if not checkcommit:
+        _repo, checkcommit = _parse_checkurl(checkurl)
+    checkrepo = _get_check_repo(checkurl)
+    if checkcommit:
+        msg['X-Check-Commit'] = checkcommit
+    if checkrepo:
+        msg['X-Check-Repo'] = checkrepo
     filepath = os.path.join(qdir, _queue_filename(change_id, revision))
     with open(filepath, 'wb') as fh:
         fh.write(msg.as_bytes(policy=b4.emlpolicy))
@@ -1072,29 +1207,30 @@ def process_queue(
             continue
 
         checkurl = str(msg.get('X-Check-URL', ''))
+        checkcommit = str(msg.get('X-Check-Commit', ''))
+        checkrepo = str(msg.get('X-Check-Repo', ''))
         subject = str(msg.get('Subject', '(no subject)'))
         if progress_cb:
             progress_cb(i, total, f'Checking: {subject}')
 
         # Check if the commit is publicly visible
-        if not dryrun and checkurl:
-            try:
-                session = b4.get_requests_session()
-                resp = session.head(checkurl, timeout=15, allow_redirects=True)
-                if resp.status_code >= 300:
-                    still_pending += 1
-                    if progress_cb:
-                        progress_cb(i + 1, total, f'Not yet visible: {subject}')
-                    continue
-            except Exception:
+        if not dryrun and (checkurl or (checkcommit and checkrepo)):
+            published = _check_published(checkurl, checkcommit, checkrepo)
+            if published is None:
                 still_pending += 1
                 if progress_cb:
                     progress_cb(i + 1, total, f'Check failed: {subject}')
                 continue
+            if not published:
+                still_pending += 1
+                if progress_cb:
+                    progress_cb(i + 1, total, f'Not yet visible: {subject}')
+                continue
 
-        # Strip the internal header before sending
-        if 'X-Check-URL' in msg:
-            del msg['X-Check-URL']
+        # Strip the internal headers before sending
+        for hdr in QUEUE_CHECK_HEADERS:
+            if hdr in msg:
+                del msg[hdr]
 
         # Commit is visible — deliver the message
         try:

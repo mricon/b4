@@ -1,3 +1,6 @@
+import os
+import pathlib
+from email.message import EmailMessage
 from typing import List, Optional, Tuple
 
 import pytest
@@ -211,3 +214,197 @@ def test_get_applied_info_none_without_commits() -> None:
     """No recorded commit-ids means no applied date and no commit lines."""
     assert b4.ty.get_applied_info(None, {'commits': [[1, None]]}) == (None, [])
     assert b4.ty.get_applied_info(None, {}) == (None, [])
+
+
+@pytest.mark.parametrize(
+    'checkurl,repo,commit',
+    [
+        (
+            'https://git.kernel.org/pub/scm/linux/kernel/git/broonie/misc.git/commit/?id=6c2505e185b0',
+            'https://git.kernel.org/pub/scm/linux/kernel/git/broonie/misc.git',
+            '6c2505e185b0',
+        ),
+        (
+            'https://host.example/repo.git/commit/?h=for-next&id=abcdef123456',
+            'https://host.example/repo.git',
+            'abcdef123456',
+        ),
+        (
+            'https://github.com/user/repo/commit/0123456789abcdef',
+            'https://github.com/user/repo',
+            '0123456789abcdef',
+        ),
+        (
+            'https://gitlab.com/group/repo/-/commit/0123456789abcdef',
+            'https://gitlab.com/group/repo',
+            '0123456789abcdef',
+        ),
+        # git.kernel.org shortlink: commit recoverable, repo is not
+        ('https://git.kernel.org/username/c/abc123def456', None, 'abc123def456'),
+        ('https://example.com/whatever', None, None),
+    ],
+)
+def test_parse_checkurl(
+    checkurl: str, repo: Optional[str], commit: Optional[str]
+) -> None:
+    assert b4.ty._parse_checkurl(checkurl) == (repo, commit)
+
+
+def test_get_check_repo_config_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """b4.thanks-check-repo wins over URL derivation."""
+    checkurl = 'https://github.com/user/repo/commit/0123456789abcdef'
+    assert b4.ty._get_check_repo(checkurl) == 'https://github.com/user/repo'
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG, 'thanks-check-repo', 'https://example.com/r.git'
+    )
+    assert b4.ty._get_check_repo(checkurl) == 'https://example.com/r.git'
+
+
+def _init_repo(path: str) -> None:
+    ecode, out = b4.git_run_command(None, ['init', path])
+    assert ecode == 0, out
+    b4.git_set_config(path, 'user.name', 'Test')
+    b4.git_set_config(path, 'user.email', 'test@example.com')
+
+
+def _commit_empty(msg: str) -> str:
+    ecode, out = b4.git_run_command(None, ['commit', '--allow-empty', '-m', msg])
+    assert ecode == 0, out
+    ecode, out = b4.git_run_command(None, ['rev-parse', 'HEAD'])
+    assert ecode == 0, out
+    return out.strip()
+
+
+def test_commit_reachable_on_remote(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Reachability from an advertised head is what makes a commit
+    published; mere presence in the remote odb is not enough."""
+    local = str(tmp_path / 'local')
+    pub = str(tmp_path / 'pub')
+    _init_repo(local)
+    ecode, out = b4.git_run_command(None, ['init', '--bare', pub])
+    assert ecode == 0, out
+    monkeypatch.chdir(local)
+    c1 = _commit_empty('c1')
+    ecode, out = b4.git_run_command(None, ['push', pub, 'HEAD:refs/heads/master'])
+    assert ecode == 0, out
+    c2 = _commit_empty('c2')
+
+    # c1 is on the remote's master; c2 exists only locally
+    assert b4.ty.commit_reachable_on_remote(c1, pub) is True
+    assert b4.ty.commit_reachable_on_remote(c2, pub) is False
+
+    # Emulate shared object storage: c2's object is in the remote odb
+    # (push a ref, then delete it) but no head reaches it
+    ecode, out = b4.git_run_command(None, ['push', pub, f'{c2}:refs/heads/tmp'])
+    assert ecode == 0, out
+    ecode, out = b4.git_run_command(None, ['push', pub, ':refs/heads/tmp'])
+    assert ecode == 0, out
+    assert b4.ty.commit_reachable_on_remote(c2, pub) is False
+
+    # Unreachable remote: undeterminable, not a verdict
+    assert b4.ty.commit_reachable_on_remote(c1, str(tmp_path / 'nope')) is None
+
+
+def test_commit_reachable_unknown_tips(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Advertised tips we have no objects for cannot prove anything, so
+    the check stays conservative (pending) until the next fetch."""
+    local = str(tmp_path / 'local')
+    pub = str(tmp_path / 'pub')
+    other = str(tmp_path / 'other')
+    _init_repo(local)
+    ecode, out = b4.git_run_command(None, ['init', '--bare', pub])
+    assert ecode == 0, out
+    monkeypatch.chdir(local)
+    c1 = _commit_empty('c1')
+    ecode, out = b4.git_run_command(None, ['push', pub, 'HEAD:refs/heads/master'])
+    assert ecode == 0, out
+    # Advance the remote's master from a different clone
+    ecode, out = b4.git_run_command(None, ['clone', pub, other])
+    assert ecode == 0, out
+    b4.git_set_config(other, 'user.name', 'Test')
+    b4.git_set_config(other, 'user.email', 'test@example.com')
+    monkeypatch.chdir(other)
+    _commit_empty('c2-elsewhere')
+    ecode, out = b4.git_run_command(None, ['push', 'origin', 'HEAD:refs/heads/master'])
+    assert ecode == 0, out
+    monkeypatch.chdir(local)
+    # c1 is actually published, but the only advertised tip is unknown here
+    assert b4.ty.commit_reachable_on_remote(c1, pub) is False
+
+
+def test_queue_message_check_headers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Queueing records X-Check-Commit/X-Check-Repo alongside X-Check-URL."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    fullsha = 'ab12' * 10
+    checkurl = f'https://git.kernel.org/pub/scm/utils/b4/b4.git/commit/?id={fullsha}'
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    b4.ty.queue_message(msg, checkurl, 'test-change-id', 1)
+    qdir = b4.ty._get_queue_dir()
+    parsed = b4.ty._parse_queue_file(os.path.join(qdir, 'test-change-id-v1.msg'))
+    assert parsed is not None
+    assert parsed['X-Check-URL'] == checkurl
+    assert parsed['X-Check-Commit'] == fullsha
+    assert parsed['X-Check-Repo'] == 'https://git.kernel.org/pub/scm/utils/b4/b4.git'
+
+
+def test_queue_message_shortlink_mask(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """With a shortlink mask the repo comes from b4.thanks-check-repo and
+    the commit from the explicit checkcommit argument."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG, 'thanks-check-repo', 'https://example.com/r.git'
+    )
+    fullsha = 'cd34' * 10
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    checkurl = f'https://git.kernel.org/username/c/{fullsha[:12]}'
+    b4.ty.queue_message(msg, checkurl, 'test-change-id', 2, checkcommit=fullsha)
+    qdir = b4.ty._get_queue_dir()
+    parsed = b4.ty._parse_queue_file(os.path.join(qdir, 'test-change-id-v2.msg'))
+    assert parsed is not None
+    assert parsed['X-Check-Commit'] == fullsha
+    assert parsed['X-Check-Repo'] == 'https://example.com/r.git'
+
+
+def test_process_queue_holds_unpublished(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A queued message whose commit is not reachable on the public repo
+    stays queued, and the reachability check gets the header values."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    fullsha = 'ef56' * 10
+    checkurl = f'https://git.kernel.org/pub/scm/utils/b4/b4.git/commit/?id={fullsha}'
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    b4.ty.queue_message(msg, checkurl, 'test-change-id', 1)
+
+    calls: List[Tuple[str, str]] = []
+
+    def fake_reachable(commit: str, repo_url: str) -> Optional[bool]:
+        calls.append((commit, repo_url))
+        return False
+
+    monkeypatch.setattr(b4.ty, 'commit_reachable_on_remote', fake_reachable)
+    delivered, pending, dseries = b4.ty.process_queue()
+    assert (delivered, pending, dseries) == (0, 1, [])
+    assert calls == [(fullsha, 'https://git.kernel.org/pub/scm/utils/b4/b4.git')]
+    qdir = b4.ty._get_queue_dir()
+    assert os.path.exists(os.path.join(qdir, 'test-change-id-v1.msg'))
