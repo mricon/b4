@@ -196,6 +196,103 @@ def _worktree_for_branch(topdir: str, branch: str) -> Optional[str]:
     return out.strip() or None
 
 
+def _detect_initial_base(
+    lser: 'b4.LoreSeries', topdir: Optional[str]
+) -> Tuple[str, str]:
+    """Determine the base commit pre-filled in the base selection dialog.
+
+    Auto-detection tries the series-specified base-commit first, then a
+    find_base() guess, then falls back to HEAD. When b4.review-apply-base
+    is configured and resolves to a commit, it overrides the auto-detected
+    pre-fill; the auto-detection result moves into the hint so the
+    information is not lost. The value is only a pre-fill -- the dialog
+    input remains editable and is validated on confirmation.
+
+    Returns (initial_base, base_hint).
+    """
+    initial_base = 'HEAD'
+    base_hint = ''
+    if lser.base_commit and topdir:
+        bc = lser.base_commit
+        short = bc[:12] if len(bc) > 12 else bc
+        if b4.git_commit_exists(topdir, bc):
+            initial_base = short
+            base_hint = f'Series base: {short}'
+        else:
+            base_hint = f'Series base: {short} (not in repo)'
+    if topdir and initial_base == 'HEAD':
+        # No usable series base -- try guessing.
+        # Exclude b4 review branches -- they are never
+        # useful as a base for applying new series.
+        try:
+            guessed, nblobs, mismatches = lser.find_base(
+                topdir,
+                branches=['--exclude=refs/heads/b4/review/*', '--all'],
+                maxdays=30,
+            )
+            if guessed:
+                # find_base returns a describe name (e.g. heads/foo);
+                # resolve it to a SHA for the input field
+                ecode, sha_out = b4.git_run_command(
+                    topdir, ['rev-parse', '--verify', guessed]
+                )
+                sha = sha_out.strip() if ecode == 0 else ''
+                short_sha = sha[:12] if sha else guessed
+                if mismatches == 0:
+                    initial_base = short_sha
+                    base_hint = f'Guessed base: {guessed} (exact match)'
+                elif nblobs != mismatches:
+                    matched = nblobs - mismatches
+                    initial_base = short_sha
+                    base_hint = f'Guessed base: {guessed} ({matched}/{nblobs} blobs)'
+                else:
+                    base_hint = 'Could not find a matching base'
+        except (IndexError, Exception):
+            pass
+
+    cfg_base = b4.get_main_config().get('review-apply-base')
+    if cfg_base and isinstance(cfg_base, str) and topdir:
+        ecode, _out = b4.git_run_command(
+            topdir, ['rev-parse', '--verify', '--quiet', cfg_base + '^{commit}']
+        )
+        if ecode == 0:
+            initial_base = cfg_base
+            base_hint = f'Configured base: {cfg_base}' + (
+                f'; {base_hint}' if base_hint else ''
+            )
+        else:
+            base_hint = f'Configured base {cfg_base} not found' + (
+                f'; {base_hint}' if base_hint else ''
+            )
+
+    return initial_base, base_hint
+
+
+def _build_base_suggestions() -> List[str]:
+    """Build the suggestion list for the base selection input.
+
+    HEAD first, then the configured apply base and target branches,
+    then recently used take branches.
+    """
+    suggestions: List[str] = ['HEAD']
+    cfg_base = b4.get_main_config().get('review-apply-base')
+    if cfg_base and isinstance(cfg_base, str) and cfg_base not in suggestions:
+        suggestions.append(cfg_base)
+    for cb in b4.review.tracking.get_review_target_branches():
+        if cb not in suggestions:
+            suggestions.append(cb)
+    topdir = b4.git_get_toplevel()
+    if topdir:
+        gitdir = b4.git_get_common_dir(topdir)
+        if gitdir:
+            recent = b4.review.tracking.get_recent_take_branches(gitdir)
+            if recent:
+                for rb in recent:
+                    if rb not in suggestions:
+                        suggestions.append(rb)
+    return suggestions
+
+
 class _TakeWorktree:
     """Handle for the worktree a take runs in (see :func:`_take_worktree`)."""
 
@@ -1643,50 +1740,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 b4.save_git_am_mbox(am_msgs, ifh)
                 ambytes = ifh.getvalue()
 
-                # Determine best base: series-specified or guessed
-                initial_base = 'HEAD'
-                base_hint = ''
+                # Determine best base: configured, series-specified or guessed
                 topdir = b4.git_get_toplevel()
-                if lser.base_commit and topdir:
-                    bc = lser.base_commit
-                    short = bc[:12] if len(bc) > 12 else bc
-                    if b4.git_commit_exists(topdir, bc):
-                        initial_base = short
-                        base_hint = f'Series base: {short}'
-                    else:
-                        base_hint = f'Series base: {short} (not in repo)'
-                if topdir and initial_base == 'HEAD':
-                    # No usable series base — try guessing.
-                    # Exclude b4 review branches — they are never
-                    # useful as a base for applying new series.
-                    try:
-                        guessed, nblobs, mismatches = lser.find_base(
-                            topdir,
-                            branches=['--exclude=refs/heads/b4/review/*', '--all'],
-                            maxdays=30,
-                        )
-                        if guessed:
-                            # find_base returns a describe name (e.g. heads/foo);
-                            # resolve it to a SHA for the input field
-                            ecode, sha_out = b4.git_run_command(
-                                topdir, ['rev-parse', '--verify', guessed]
-                            )
-                            sha = sha_out.strip() if ecode == 0 else ''
-                            short_sha = sha[:12] if sha else guessed
-                            if mismatches == 0:
-                                initial_base = short_sha
-                                base_hint = f'Guessed base: {guessed} (exact match)'
-                            elif nblobs != mismatches:
-                                matched = nblobs - mismatches
-                                initial_base = short_sha
-                                base_hint = (
-                                    f'Guessed base: {guessed}'
-                                    f' ({matched}/{nblobs} blobs)'
-                                )
-                            else:
-                                base_hint = 'Could not find a matching base'
-                    except (IndexError, Exception):
-                        pass
+                initial_base, base_hint = _detect_initial_base(lser, topdir)
 
                 # Check attestation while we have the messages
                 att = b4.review.check_series_attestation(lser)
@@ -1712,20 +1768,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         lser, ambytes, initial_base, base_hint = result
 
-        # Build base commit suggestions: HEAD, configured targets, recent branches
-        base_suggestions: List[str] = ['HEAD']
-        for cb in b4.review.tracking.get_review_target_branches():
-            if cb not in base_suggestions:
-                base_suggestions.append(cb)
-        topdir = b4.git_get_toplevel()
-        if topdir:
-            gitdir = b4.git_get_common_dir(topdir)
-            if gitdir:
-                recent = b4.review.tracking.get_recent_take_branches(gitdir)
-                if recent:
-                    for rb in recent:
-                        if rb not in base_suggestions:
-                            base_suggestions.append(rb)
+        base_suggestions = _build_base_suggestions()
 
         self.push_screen(
             BaseSelectionScreen(
@@ -4105,45 +4148,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 b4.save_git_am_mbox(am_msgs, ifh)
                 ambytes = ifh.getvalue()
 
-                # Determine best base: series-specified or guessed
-                initial_base = 'HEAD'
-                base_hint = ''
+                # Determine best base: configured, series-specified or guessed
                 topdir = b4.git_get_toplevel()
-                if lser.base_commit and topdir:
-                    bc = lser.base_commit
-                    short = bc[:12] if len(bc) > 12 else bc
-                    if b4.git_commit_exists(topdir, bc):
-                        initial_base = short
-                        base_hint = f'Series base: {short}'
-                    else:
-                        base_hint = f'Series base: {short} (not in repo)'
-                if topdir and initial_base == 'HEAD':
-                    try:
-                        guessed, nblobs, mismatches = lser.find_base(
-                            topdir,
-                            branches=['--exclude=refs/heads/b4/review/*', '--all'],
-                            maxdays=30,
-                        )
-                        if guessed:
-                            ecode, sha_out = b4.git_run_command(
-                                topdir, ['rev-parse', '--verify', guessed]
-                            )
-                            sha = sha_out.strip() if ecode == 0 else ''
-                            short_sha = sha[:12] if sha else guessed
-                            if mismatches == 0:
-                                initial_base = short_sha
-                                base_hint = f'Guessed base: {guessed} (exact match)'
-                            elif nblobs != mismatches:
-                                matched = nblobs - mismatches
-                                initial_base = short_sha
-                                base_hint = (
-                                    f'Guessed base: {guessed}'
-                                    f' ({matched}/{nblobs} blobs)'
-                                )
-                            else:
-                                base_hint = 'Could not find a matching base'
-                    except (IndexError, Exception):
-                        pass
+                initial_base, base_hint = _detect_initial_base(lser, topdir)
 
                 return lser, ambytes, initial_base, base_hint, len(am_msgs)
 
@@ -4178,20 +4185,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         lser, ambytes, initial_base, base_hint, num_am = result
 
-        # Build base commit suggestions: HEAD, configured targets, recent branches
-        base_suggestions: List[str] = ['HEAD']
-        for cb in b4.review.tracking.get_review_target_branches():
-            if cb not in base_suggestions:
-                base_suggestions.append(cb)
-        topdir = b4.git_get_toplevel()
-        if topdir:
-            gitdir = b4.git_get_common_dir(topdir)
-            if gitdir:
-                recent = b4.review.tracking.get_recent_take_branches(gitdir)
-                if recent:
-                    for rb in recent:
-                        if rb not in base_suggestions:
-                            base_suggestions.append(rb)
+        base_suggestions = _build_base_suggestions()
 
         self.push_screen(
             BaseSelectionScreen(

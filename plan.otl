@@ -75,16 +75,24 @@ v0.16
 	: `b4 prep --claim [branch]` takes ownership by re-stamping the series; also
 	: recovers the "not a prep-managed branch" gotcha after a user.email change
 	: (all cover strategies)
-[_] `b4 review` improvements
-	[_] Configurable default apply base in the take dialog
+[X] `b4 review` improvements
+	[X] Configurable default apply base in the take dialog
 		: Matthieu Baerts, https://msgid.link/bc88076e-2629-45bf-ab20-242f823dde4e@kernel.org
-		: Base pre-fill is series base-commit → find_base() guess → HEAD
-		: (_tracking_app.py); b4.review-target-branch only feeds the
-		: suggester list, so there is no way to prefer "apply on current
-		: HEAD" — add a config knob to force the default
-		: Clarify config.rst wording ("default target branch to use when
-		: taking patches") that invites the misreading that it drives the base
-		: Intersects with git-bug bd95e9f (apply base resolves to moving HEAD)
+		: New b4.review-apply-base config knob: when set and resolvable,
+		: it wins the base pre-fill over series base-commit and
+		: find_base() guess; auto-detection result moves into the dialog
+		: hint so no information is lost; unresolvable value warns and
+		: falls back to the auto chain
+		: Chain extracted into _detect_initial_base() shared by the take
+		: and upgrade flows (was duplicated verbatim); suggestions list
+		: extracted into _build_base_suggestions(), includes the knob
+		: Reworded config.rst review-target-branch ("destination branch",
+		: explicit pointer to review-apply-base for the base)
+		: Dialog resolves to a SHA at confirm, so a configured HEAD is
+		: pinned at dialog time — does not inherit the bd95e9f
+		: moving-HEAD lazy resolution (that bug remains open)
+		: Possible future extension: symbolic 'target-branch' value
+		: (Mark Brown's workflow); wait for bd95e9f fix to decide pinning
 	[X] User-configurable reply templates (b4 ty style)
 		: Matthieu Baerts, https://msgid.link/bc88076e-2629-45bf-ab20-242f823dde4e@kernel.org
 		: Template file mechanism like b4 ty's thanks-am-template: the

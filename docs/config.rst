@@ -545,10 +545,11 @@ These settings control ``b4 review`` TUI behaviour.
      .. versionadded:: v0.15
 
    :term:`b4.review-target-branch`
-     The default target branch to use when taking patches. This is also
-     used in the notification shown when the TUI is launched from a review
-     branch, to tell you which branch to switch to for the tracking list.
-     If not set, b4 falls back to ``master`` or ``main``.
+     The default *destination* branch for taking patches — the branch a
+     take lands on once you accept a series. This is also used in the
+     notification shown when the TUI is launched from a review branch,
+     to tell you which branch to switch to for the tracking list. If
+     not set, b4 falls back to ``master`` or ``main``.
 
      This option supports multiple values. When multiple branches are
      configured (e.g. ``sound/for-next`` and ``regulator/for-next``),
@@ -558,9 +559,35 @@ These settings control ``b4 review`` TUI behaviour.
      more are configured, the per-series target (set via ``t``) takes
      priority instead.
 
+     Note that this option does not choose the *base* the series is
+     applied on when starting a review — use
+     :term:`b4.review-apply-base` for that.
+
      Default: ``None``
 
      .. versionadded:: v0.15
+
+   :term:`b4.review-apply-base`
+     The base commit to pre-fill in the base selection dialog shown
+     when starting a review or upgrading a tracked series to a newer
+     revision. Accepts anything that resolves to a commit — ``HEAD``,
+     a branch name, a tag, or a SHA::
+
+         git config b4.review-apply-base HEAD
+
+     When set and resolvable, this value takes priority over the base
+     specified by the series itself and over b4's own guess; what b4
+     would have picked automatically is still shown in the dialog
+     hint, so no information is lost. When the configured value does
+     not resolve to a commit in the repository, b4 warns in the hint
+     and falls back to the automatic detection.
+
+     This only controls the pre-filled suggestion — the dialog input
+     remains editable and the base is validated when you confirm.
+
+     Default: ``None``
+
+     .. versionadded:: v0.16
 
    :term:`b4.review-reply-template`
      Path to a template file used to wrap outgoing review replies sent

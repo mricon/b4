@@ -50,6 +50,8 @@ from b4.review_tui._modals import (
 from b4.review_tui._tracking_app import (
     TrackedSeriesItem,
     TrackingApp,
+    _build_base_suggestions,
+    _detect_initial_base,
     _effective_tier,
     _resolve_worktree_take_conflict,
     _shazam_merge_flags,
@@ -3258,6 +3260,83 @@ class TestTargetBranch:
             target = tracking.get_target_branch(conn, change_id)
             conn.close()
             assert target is None
+
+
+class TestDetectInitialBase:
+    """The b4.review-apply-base override in the base pre-fill chain."""
+
+    @staticmethod
+    def _head_sha(gitdir: str) -> str:
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        return out.strip()
+
+    def test_series_base_prefilled_without_config(self, gitdir: str) -> None:
+        lser = _make_mock_lser()
+        lser.base_commit = self._head_sha(gitdir)
+        short = lser.base_commit[:12]
+        with patch('b4.get_main_config', return_value={}):
+            initial_base, base_hint = _detect_initial_base(lser, gitdir)
+        assert initial_base == short
+        assert base_hint == f'Series base: {short}'
+
+    def test_config_base_overrides_series_base(self, gitdir: str) -> None:
+        lser = _make_mock_lser()
+        lser.base_commit = self._head_sha(gitdir)
+        short = lser.base_commit[:12]
+        with patch('b4.get_main_config', return_value={'review-apply-base': 'HEAD'}):
+            initial_base, base_hint = _detect_initial_base(lser, gitdir)
+        assert initial_base == 'HEAD'
+        assert base_hint == f'Configured base: HEAD; Series base: {short}'
+
+    def test_config_base_branch_name_no_series_base(self, gitdir: str) -> None:
+        lser = _make_mock_lser()
+        with (
+            patch('b4.get_main_config', return_value={'review-apply-base': 'master'}),
+            patch.object(b4.LoreSeries, 'find_base', side_effect=IndexError),
+        ):
+            initial_base, base_hint = _detect_initial_base(lser, gitdir)
+        assert initial_base == 'master'
+        assert base_hint == 'Configured base: master'
+
+    def test_config_base_unresolvable_falls_back(self, gitdir: str) -> None:
+        lser = _make_mock_lser()
+        lser.base_commit = self._head_sha(gitdir)
+        short = lser.base_commit[:12]
+        with patch(
+            'b4.get_main_config', return_value={'review-apply-base': 'no-such-ref'}
+        ):
+            initial_base, base_hint = _detect_initial_base(lser, gitdir)
+        assert initial_base == short
+        assert base_hint == (
+            f'Configured base no-such-ref not found; Series base: {short}'
+        )
+
+    def test_config_base_unresolvable_no_series_base(self, gitdir: str) -> None:
+        lser = _make_mock_lser()
+        with (
+            patch(
+                'b4.get_main_config', return_value={'review-apply-base': 'no-such-ref'}
+            ),
+            patch.object(b4.LoreSeries, 'find_base', side_effect=IndexError),
+        ):
+            initial_base, base_hint = _detect_initial_base(lser, gitdir)
+        assert initial_base == 'HEAD'
+        assert base_hint == 'Configured base no-such-ref not found'
+
+    def test_suggestions_include_config_base(self, gitdir: str) -> None:
+        cfg = {
+            'review-apply-base': 'master',
+            'review-target-branch': ['for-next'],
+        }
+        with patch('b4.get_main_config', return_value=cfg):
+            suggestions = _build_base_suggestions()
+        assert suggestions[:3] == ['HEAD', 'master', 'for-next']
+
+    def test_suggestions_no_config_base(self, gitdir: str) -> None:
+        with patch('b4.get_main_config', return_value={}):
+            suggestions = _build_base_suggestions()
+        assert suggestions == ['HEAD']
 
 
 # ---------------------------------------------------------------------------

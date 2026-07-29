@@ -217,6 +217,18 @@ to confirm without checking, ``Ctrl-d`` to clear the per-series target
 and fall back to the configured default, or ``Escape`` to cancel
 without changes.
 
+Press ``r`` to start a review. Before applying the series to a review
+branch, b4 shows a base selection dialog pre-filled with the best base
+it can determine: the base specified by the series itself (when the
+commit is present in your repository), a guess based on blob matching,
+or ``HEAD`` as the last resort. If you always want a specific pre-fill
+(for example, the current ``HEAD``), set :term:`b4.review-apply-base` —
+what b4 would have detected automatically is then shown in the dialog
+hint instead. The input remains editable either way, and the chosen
+base is validated before the series is applied. The same dialog (and
+the same pre-fill logic) is used when upgrading a tracked series to a
+newer revision.
+
 The ``a`` key opens a context-sensitive action menu. Each action has a
 single-keypress shortcut shown in square brackets so you can act
 quickly — for example, ``a`` then ``T`` to take a series. Available
