@@ -3370,11 +3370,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             with b4.git_temp_worktree(topdir, target_head) as gwt:
                 # Set up sparse checkout for minimal disk usage
                 ecode, out = b4.git_run_command(
-                    gwt, ['sparse-checkout', 'set'], logstderr=True
+                    gwt,
+                    [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set'],
+                    logstderr=True,
                 )
                 if ecode != 0:
                     logger.warning('Could not set up sparse checkout: %s', out.strip())
-                ecode, out = b4.git_run_command(gwt, ['checkout', '-f'], logstderr=True)
+                ecode, out = b4.git_run_command(
+                    gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f'], logstderr=True
+                )
                 if ecode != 0:
                     logger.warning(
                         'Could not checkout sparse worktree: %s', out.strip()
@@ -3382,8 +3386,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
                 # Try cherry-picking the commits
                 gitargs = [
-                    '-c',
-                    'commit.gpgsign=false',
+                    *b4.SCRATCH_GIT_OPTS,
                     'cherry-pick',
                     f'{base_commit}..{series_tip}',
                 ]
