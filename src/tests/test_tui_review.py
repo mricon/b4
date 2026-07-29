@@ -286,6 +286,80 @@ class TestReplyVerbatim:
                 await pilot.pause()
                 assert 'Reviewed-by: Me <me@example.com>' in seen[-1]
 
+    @pytest.mark.asyncio
+    async def test_trailer_menu_keeps_unmanaged_trailers(self, gitdir: str) -> None:
+        """Toggling a menu trailer must not delete a hand-typed Fixes: line.
+
+        Regression test for the report in
+        https://lore.kernel.org/tools/b2c44799-85a9-4576-9aae-b43eb1092315@kernel.org/
+        """
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'trailer-menu-fixes', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        my_email = str(session['usercfg']['email'])
+        buffer = (
+            'Please add a Fixes tag. Here I guess it should be:\n'
+            '\n'
+            'Fixes: 1234567890ab ("some patch")\n'
+        )
+        session['patches'][0]['reviews'] = {
+            my_email: {
+                'name': str(session['usercfg']['name']),
+                'reply': buffer,
+            }
+        }
+
+        app = ReviewApp(session)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_idx = 1
+            await pilot.press('t')
+            await pilot.pause()
+            await pilot.press('r')
+            await pilot.press('q')
+            await pilot.pause()
+
+            review = app._patches[0]['reviews'][my_email]
+            assert 'Fixes: 1234567890ab ("some patch")' in review['reply']
+            assert f'Reviewed-by: {app._default_identity}' in review['reply']
+            assert review['trailers'] == [
+                'Fixes: 1234567890ab ("some patch")',
+                f'Reviewed-by: {app._default_identity}',
+            ]
+
+    @pytest.mark.asyncio
+    async def test_trailer_menu_heals_crlf_buffer(self, gitdir: str) -> None:
+        """A stored buffer with legacy CRLF endings comes out LF-only after a
+        trailer toggle, instead of gaining mixed line endings."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'trailer-menu-crlf', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        my_email = str(session['usercfg']['email'])
+        session['patches'][0]['reviews'] = {
+            my_email: {
+                'name': str(session['usercfg']['name']),
+                'reply': 'Thanks, looks good!\r\n',
+            }
+        }
+
+        app = ReviewApp(session)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_idx = 1
+            await pilot.press('t')
+            await pilot.pause()
+            await pilot.press('r')
+            await pilot.press('q')
+            await pilot.pause()
+
+            review = app._patches[0]['reviews'][my_email]
+            assert '\r' not in review['reply']
+            assert review['reply'] == (
+                f'Thanks, looks good!\n\nReviewed-by: {app._default_identity}'
+            )
+
 
 class TestReconcileAfterShell:
     """Tests for _reconcile_after_shell tracking fixup."""

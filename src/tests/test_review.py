@@ -863,6 +863,60 @@ class TestReplyTrailerEditing:
         assert out == 'Thanks!\n'
 
 
+class TestSyncReplyTrailers:
+    """Tests for _sync_reply_trailers() — the trailer-menu buffer sync.
+
+    The menu may only add/remove the trailer names it offers; anything else
+    the maintainer typed into the buffer is their content and must survive.
+    """
+
+    IDENTITY = 'Me <me@x.com>'
+
+    def test_unmanaged_trailer_survives_menu_toggle(self) -> None:
+        # Reported by Matthieu Baerts: a hand-typed Fixes: line was deleted
+        # when Reviewed-by was added via the trailer menu.
+        buf = (
+            'Please add a Fixes tag. Here I guess it should be:\n'
+            '\n'
+            'Fixes: 1234567890ab ("some patch")\n'
+        )
+        out = review._sync_reply_trailers(buf, ['Reviewed-by'], self.IDENTITY)
+        assert 'Fixes: 1234567890ab ("some patch")' in out
+        assert f'Reviewed-by: {self.IDENTITY}' in out
+
+    def test_untoggle_removes_managed_trailer(self) -> None:
+        buf = 'Looks good.\n\nReviewed-by: Me <me@x.com>\n'
+        out = review._sync_reply_trailers(buf, [], self.IDENTITY)
+        assert 'Reviewed-by' not in out
+        assert 'Looks good.' in out
+
+    def test_nack_supersedes_managed_keeps_unmanaged(self) -> None:
+        buf = (
+            'This breaks things.\n'
+            '\n'
+            'Fixes: 1234567890ab ("some patch")\n'
+            'Reviewed-by: Me <me@x.com>\n'
+        )
+        out = review._sync_reply_trailers(
+            buf, ['Reviewed-by', 'NACKed-by'], self.IDENTITY
+        )
+        assert 'Reviewed-by' not in out
+        assert 'Fixes: 1234567890ab ("some patch")' in out
+        assert f'NACKed-by: {self.IDENTITY}' in out
+
+    def test_noop_selection_keeps_buffer_verbatim(self) -> None:
+        buf = 'Prose here.\n\nFixes: 1234567890ab ("x")\nAcked-by: Me <me@x.com>\n'
+        out = review._sync_reply_trailers(buf, ['Acked-by'], self.IDENTITY)
+        assert out == buf
+
+    def test_crlf_buffer_healed(self) -> None:
+        buf = 'Thanks!\r\n\r\nFixes: 1234567890ab ("x")\r\n'
+        out = review._sync_reply_trailers(buf, ['Reviewed-by'], self.IDENTITY)
+        assert '\r' not in out
+        assert 'Fixes: 1234567890ab ("x")' in out
+        assert f'Reviewed-by: {self.IDENTITY}' in out
+
+
 class TestBuildReviewEmailReplyPath:
     """The verbatim reply path must not relocate or duplicate trailers."""
 

@@ -122,7 +122,7 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
     }
     """
 
-    TRAILER_NAMES = ['Acked-by', 'Reviewed-by', 'Tested-by', 'NACKed-by']
+    TRAILER_NAMES = list(b4.review.TRAILER_MENU_NAMES)
 
     def __init__(self, existing_trailers: List[str]) -> None:
         super().__init__()

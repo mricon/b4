@@ -1146,26 +1146,15 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             # When a hand-edited reply buffer exists it is authoritative:
             # insert/remove the trailer line within the text itself and
             # re-derive the display index, rather than maintaining a separate
-            # list and reassembling.  Cross-patch consolidation is skipped in
+            # list and reassembling.  Only the menu's own trailer names are
+            # touched — a hand-typed Fixes:/Cc:/... stays where the
+            # maintainer put it.  Cross-patch consolidation is skipped in
             # this mode — the trailer lives inside the maintainer's prose.
             reply_text = review.get('reply', '')
             if reply_text:
-                desired = ['NACKed-by'] if 'NACKed-by' in result else list(result)
-                desired_lower = {n.lower() for n in desired}
-                current = {
-                    t.split(':', 1)[0].strip().lower(): t
-                    for t in b4.review._parse_reply_trailers(reply_text)
-                }
-                for lname in list(current):
-                    if lname not in desired_lower:
-                        reply_text = b4.review._remove_trailer_from_reply(
-                            reply_text, lname
-                        )
-                for name in desired:
-                    if name.lower() not in current:
-                        reply_text = b4.review._insert_trailer_in_reply(
-                            reply_text, f'{name}: {self._default_identity}'
-                        )
+                reply_text = b4.review._sync_reply_trailers(
+                    reply_text, result, self._default_identity
+                )
                 review['reply'] = reply_text
                 trailers_now = b4.review._parse_reply_trailers(reply_text)
                 if trailers_now:

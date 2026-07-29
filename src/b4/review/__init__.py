@@ -1,6 +1,7 @@
 # Re-export everything from the original review module
 from b4.review._review import *  # noqa: F403
 from b4.review._review import (
+    TRAILER_MENU_NAMES,
     _apply_findings_locations,
     _build_reply_from_comments,
     _build_review_email,
@@ -29,6 +30,7 @@ from b4.review._review import (
     _retrieve_messages,
     _set_patch_state,
     _strip_subject,
+    _sync_reply_trailers,
     _toggle_patch_done,
     _trim_quoted_reply,
     retrieve_series_messages,
@@ -60,6 +62,8 @@ __all__ = [
     '_parse_reply_trailers',
     '_insert_trailer_in_reply',
     '_remove_trailer_from_reply',
+    '_sync_reply_trailers',
+    'TRAILER_MENU_NAMES',
     '_build_review_email',
     '_integrate_agent_reviews',
     '_extract_comments_from_quoted_reply',

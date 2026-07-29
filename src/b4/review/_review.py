@@ -2643,6 +2643,11 @@ def _parse_reply_trailers(buffer: str) -> List[str]:
 
 _BARE_TRAILER_RE = re.compile(r'^\s*([\w-]+):\s')
 
+# The trailer names the TUI trailer menu offers.  The menu (and
+# _sync_reply_trailers below) may only ever add or remove these; any other
+# trailer in a hand-edited reply buffer is the maintainer's own content.
+TRAILER_MENU_NAMES = ['Acked-by', 'Reviewed-by', 'Tested-by', 'NACKed-by']
+
 
 def _insert_trailer_in_reply(reply_text: str, trailer: str) -> str:
     """Append *trailer* as its own bare line in the reply buffer.
@@ -2694,6 +2699,32 @@ def _remove_trailer_from_reply(reply_text: str, name: str) -> str:
         out.append(line)
         i += 1
     return '\n'.join(out)
+
+
+def _sync_reply_trailers(reply_text: str, selected: List[str], identity: str) -> str:
+    """Sync the menu-managed trailers in a hand-edited reply buffer.
+
+    *selected* is the list of trailer names confirmed in the trailer menu.
+    Only the names the menu offers (TRAILER_MENU_NAMES) are ever added or
+    removed; any other trailer the maintainer typed into the buffer
+    (``Fixes:``, ``Cc:``, ``Suggested-by:``, ...) is their own content and
+    stays exactly where they put it.  NACKed-by supersedes the other managed
+    trailers.  Returns the updated buffer, line endings normalized.
+    """
+    reply_text = _normalize_line_endings(reply_text)
+    desired = ['NACKed-by'] if 'NACKed-by' in selected else list(selected)
+    desired_lower = {n.lower() for n in desired}
+    managed_lower = {n.lower() for n in TRAILER_MENU_NAMES}
+    current_lower = {
+        t.split(':', 1)[0].strip().lower() for t in _parse_reply_trailers(reply_text)
+    }
+    for lname in current_lower:
+        if lname in managed_lower and lname not in desired_lower:
+            reply_text = _remove_trailer_from_reply(reply_text, lname)
+    for name in desired:
+        if name.lower() not in current_lower:
+            reply_text = _insert_trailer_in_reply(reply_text, f'{name}: {identity}')
+    return reply_text
 
 
 def _trim_quoted_reply(buffer: str) -> str:

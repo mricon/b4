@@ -154,6 +154,13 @@ pop-up lets you select the trailer type — Reviewed-by, Acked-by,
 Tested-by, etc. The trailer is recorded in the review branch and will
 be included when you send the review.
 
+If you have hand-edited a reply for the patch, the selected trailer is
+inserted into the reply text itself, where you can move it around
+freely. The pop-up only ever manages the trailer types it offers: any
+other trailer you typed into the reply yourself (for example a
+``Fixes:`` suggestion for the submitter) is treated as your own
+content and is never moved or removed.
+
 Previewing outgoing email
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 Press ``e`` to toggle email preview mode. The right pane switches to
