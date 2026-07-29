@@ -321,6 +321,59 @@ class TestTrackingNavigation:
             assert lv.index == 1
 
     @pytest.mark.asyncio
+    async def test_refresh_preserves_scroll_position(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """A list rebuild (e.g. after 'u') must not scroll the viewport."""
+        many = [
+            {
+                'change_id': f'test-change-{i:02d}',
+                'subject': f'[PATCH] series {i:02d}',
+                'sender_name': f'Author {i:02d}',
+                'sender_email': f'a{i:02d}@example.com',
+                'sent_at': f'2026-03-{(i % 27) + 1:02d}T10:00:00+00:00',
+                'message_id': f'series-{i:02d}-v1@example.com',
+            }
+            for i in range(40)
+        ]
+        _seed_db('test-scroll', many)
+
+        app = TrackingApp('test-scroll')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            lv = app.query_one('#tracking-list', ListView)
+            # Move deep enough into the list that the view scrolls down,
+            # then back up a bit so the cursor sits mid-viewport rather
+            # than at the bottom edge (which a minimal scroll-into-view
+            # after the rebuild would happen to reproduce).
+            lv.index = 30
+            await pilot.pause()
+            await pilot.pause()
+            lv.index = 26
+            await pilot.pause()
+            await pilot.pause()
+            scroll_before = round(lv.scroll_y)
+            assert scroll_before > 0
+            assert app._selected_series is not None
+            change_id = app._selected_series['change_id']
+
+            # Reload the same way _on_update_complete does after 'u'
+            app._focus_change_id = change_id
+            app._invalidate_caches()
+            app._load_series()
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+
+            new_lv = app.query_one('#tracking-list', ListView)
+            assert new_lv is not lv
+            assert new_lv.index == 26
+            assert round(new_lv.scroll_y) == scroll_before
+            assert round(new_lv.vertical_scrollbar.position) == scroll_before
+            assert app._selected_series is not None
+            assert app._selected_series['change_id'] == change_id
+
+    @pytest.mark.asyncio
     async def test_help_opens_and_closes(self, tmp_path: pathlib.Path) -> None:
         _seed_db('test-help', SAMPLE_SERIES)
 
