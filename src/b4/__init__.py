@@ -3664,9 +3664,13 @@ def git_run_command(
                 gitdir = dotgit
             cmdargs += ['--git-dir', str(gitdir)]
 
-    # counteract some potential local settings
-    if args[0] == 'log':
-        args.insert(1, '--no-abbrev-commit')
+    # counteract some potential local settings; the subcommand is not
+    # necessarily args[0] because callers may prefix -c overrides
+    subcmd = 0
+    while subcmd + 1 < len(args) and args[subcmd] == '-c':
+        subcmd += 2
+    if subcmd < len(args) and args[subcmd] == 'log':
+        args = args[: subcmd + 1] + ['--no-abbrev-commit'] + args[subcmd + 1 :]
 
     cmdargs += args
 
