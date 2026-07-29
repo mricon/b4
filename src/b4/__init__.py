@@ -132,6 +132,24 @@ DEVSIG_HDR = 'X-Developer-Signature'
 LOREADDR = 'https://lore.kernel.org'
 LINKADDR = 'https://patch.msgid.link'
 
+# Overrides for git commands b4 runs inside its own scratch worktrees. A fresh
+# linked worktree has no per-worktree submodule clones, so a checkout or reset
+# obeying submodule.recurse=true dies with "fatal: not a git repository:
+# .../worktrees/<wt>/modules/<name>"; and unattended commit-creating commands
+# must never gpg-sign -- signing hangs on a pinentry prompt no terminal will
+# answer. Each override is inert where the other matters, so the one list
+# serves every scratch-worktree git command. Commits that outlive the worktree
+# are the exception and keep the user's signing config: the real apply in
+# git_fetch_am_into_repo. Fetching *out of* a
+# worktree takes nothing -- that one runs in the user's repo, not in the
+# scratch, so the user's config still governs it.
+SCRATCH_GIT_OPTS: List[str] = [
+    '-c',
+    'submodule.recurse=false',
+    '-c',
+    'commit.gpgsign=false',
+]
+
 DEFAULT_CONFIG: ConfigDictT = {
     'midmask': LOREADDR + '/all/%s',
     'searchmask': LOREADDR + '/all/?x=m&q=%s',
@@ -5972,19 +5990,24 @@ def git_fetch_am_into_repo(
     try:
         logger.info('Magic: Preparing a sparse worktree')
         ecode, out = git_run_command(
-            gwt, ['sparse-checkout', 'set'], logstderr=True, rundir=gwt
+            gwt,
+            [*SCRATCH_GIT_OPTS, 'sparse-checkout', 'set'],
+            logstderr=True,
+            rundir=gwt,
         )
         if ecode > 0:
             logger.critical('Error running sparse-checkout set')
             logger.critical(out)
             raise RuntimeError
         ecode, out = git_run_command(
-            gwt, ['checkout', '-f'], logstderr=True, rundir=gwt
+            gwt, [*SCRATCH_GIT_OPTS, 'checkout', '-f'], logstderr=True, rundir=gwt
         )
         if ecode > 0:
             logger.critical('Error running checkout into sparse workdir')
             logger.critical(out)
             raise RuntimeError
+        # No SCRATCH_GIT_OPTS on the apply: its commits are the real series,
+        # not scratch throwaways, so the user's signing config stays in force.
         amargs = ['am']
         if am_flags:
             amargs.extend(am_flags)
