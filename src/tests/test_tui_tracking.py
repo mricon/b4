@@ -732,7 +732,7 @@ class TestTrackingQuit:
     """Tests for quitting the app."""
 
     @pytest.mark.asyncio
-    async def test_q_exits(self, tmp_path: pathlib.Path) -> None:
+    async def test_q_warns_instead_of_quitting(self, tmp_path: pathlib.Path) -> None:
         _seed_db('test-quit', SAMPLE_SERIES)
 
         app = TrackingApp('test-quit')
@@ -740,8 +740,21 @@ class TestTrackingQuit:
             await pilot.pause()
             await pilot.press('q')
             await pilot.pause()
-            # App should have exited (return value is None)
-            assert app.return_value is None
+            # Bare 'q' must not quit; it shows a hint pointing at 'Q'
+            assert app._exit is False
+            messages = [n.message for n in app._notifications]
+            assert any("'Q'" in m for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_capital_q_exits(self, tmp_path: pathlib.Path) -> None:
+        _seed_db('test-quit-cap', SAMPLE_SERIES)
+
+        app = TrackingApp('test-quit-cap')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('Q')
+            await pilot.pause()
+            assert app._exit is True
 
 
 # ---------------------------------------------------------------------------

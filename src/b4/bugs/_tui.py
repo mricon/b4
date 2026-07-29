@@ -37,6 +37,7 @@ from textual.worker import Worker, WorkerState
 import b4
 from b4.bugs._import import is_comment_removed, make_tombstone, parse_comment_header
 from b4.tui import (
+    QUIT_BINDINGS,
     ActionScreen,
     ConfirmScreen,
     JKListNavMixin,
@@ -45,6 +46,7 @@ from b4.tui import (
     _quiet_worker,
     _wait_for_enter,
     display_width,
+    notify_quit_hint,
     pad_display,
     resolve_styles,
     reviewer_colours,
@@ -1859,7 +1861,7 @@ class BugListApp(JKListNavMixin, App[None]):
         Binding('P', 'push', 'push'),
         Binding('l', 'limit', 'limit'),
         Binding('s', 'toggle_closed', 'show closed'),
-        Binding('q', 'quit', 'quit'),
+        *QUIT_BINDINGS,
     ]
 
     BINDING_GROUPS = {
@@ -2185,6 +2187,10 @@ class BugListApp(JKListNavMixin, App[None]):
         self._save_focus()
         self._show_closed = not self._show_closed
         await self._refresh_list()
+
+    def action_quit_hint(self) -> None:
+        """Warn that quitting takes a capital Q."""
+        notify_quit_hint(self)
 
     def action_limit(self) -> None:
         self.push_screen(

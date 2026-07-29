@@ -730,3 +730,25 @@ class TestPwSetStateNullName:
             assert modal._series_name == '(no subject)'
             label = modal.query_one('#apply-series', Label)
             assert _static_text(label) == '(no subject)'
+
+
+class TestPwQuitKeys:
+    """Bare 'q' warns instead of quitting; capital 'Q' quits."""
+
+    @pytest.mark.asyncio
+    async def test_q_warns_capital_q_quits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install_series(monkeypatch, [_mk_series(1)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press('q')
+            await pilot.pause()
+            assert app._exit is False
+            messages = [n.message for n in app._notifications]
+            assert any("'Q'" in m for m in messages)
+            await pilot.press('Q')
+            await pilot.pause()
+            assert app._exit is True

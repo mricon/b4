@@ -23,11 +23,13 @@ import b4.review
 import b4.review.tracking
 import liblore
 from b4.review_tui._common import (
+    QUIT_BINDINGS,
     LoreNodeShutdownMixin,
     SeparatedFooter,
     _fix_ansi_theme,
     ci_styles,
     logger,
+    notify_quit_hint,
     pad_display,
     resolve_styles,
     run_lore_worker,
@@ -282,7 +284,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         Binding('r', 'refresh', 'refresh'),
         Binding('l', 'limit', 'limit'),
         Binding('H', 'toggle_show_hidden', 'show hidden', key_display='H'),
-        Binding('q', 'quit', 'quit'),
+        *QUIT_BINDINGS,
         Binding('question_mark', 'help', 'help', key_display='?'),
     ]
 
@@ -1004,3 +1006,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
 
     async def action_quit(self) -> None:
         self.exit()
+
+    def action_quit_hint(self) -> None:
+        """Warn that quitting takes a capital Q."""
+        notify_quit_hint(self)

@@ -12,7 +12,7 @@ import unicodedata
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Protocol
 
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, ListView
 from textual.widgets._footer import FooterKey
@@ -26,6 +26,20 @@ import b4
 from b4 import _suspend_to_shell as _suspend_to_shell
 
 logger = b4.logger
+
+# Bare 'q' shares the key namespace with the heavily used navigation keys
+# (j/k/n/p/h/l, space), so a single stray keypress used to quit an app
+# outright. All b4 TUI apps quit on capital 'Q' instead; bare 'q' lands on
+# quit_hint, which shows a warning pointing at 'Q'.
+QUIT_BINDINGS: List[Binding] = [
+    Binding('Q', 'quit', 'quit', key_display='Q'),
+    Binding('q', 'quit_hint', 'quit', show=False),
+]
+
+
+def notify_quit_hint(app: 'App[Any]') -> None:
+    """Tell the user that quitting takes a capital Q."""
+    app.notify("Press 'Q' (capital) to quit", severity='warning')
 
 
 def worker_cancelled() -> bool:

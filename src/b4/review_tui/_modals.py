@@ -287,7 +287,7 @@ def _review_help_lines(has_agent: bool = False) -> List[str]:
         '  [bold]e[/bold]         Toggle email mode\n',
         '\n',
         '  [bold]s[/bold]         Suspend to shell\n',
-        '  [bold]q[/bold]         Quit\n',
+        '  [bold]Q[/bold]         Quit\n',
         '  [bold]?[/bold]         Show this help\n',
     ]
     return lines
@@ -335,7 +335,8 @@ TRACKING_HELP_LINES = [
     '  [bold]l[/bold]         Filter series by pattern\n',
     '  [bold]s[/bold]         Suspend to shell\n',
     '  [bold]p[/bold]         Switch to Patchwork TUI\n',
-    '  [bold]q[/bold]         Quit\n',
+    '  [bold]T[/bold]         Thank-you queue (when non-empty)\n',
+    '  [bold]Q[/bold]         Quit\n',
     '  [bold]?[/bold]         Show this help\n',
 ]
 
@@ -364,7 +365,7 @@ PW_HELP_LINES = [
     '  [bold]r[/bold]         Refresh series list\n',
     '  [bold]l[/bold]         Filter series by pattern\n',
     '  [bold]H[/bold]         Toggle showing hidden series\n',
-    '  [bold]q[/bold]         Quit\n',
+    '  [bold]Q[/bold]         Quit\n',
     '  [bold]?[/bold]         Show this help\n',
 ]
 
@@ -1390,12 +1391,12 @@ class ThankScreen(ModalScreen[Optional[str]]):
 class QueueScreen(ModalScreen[Optional[str]]):
     """Modal listing queued thanks messages.
 
-    Dismisses with ``'__DELIVER__'`` when the user presses Q to
+    Dismisses with ``'__DELIVER__'`` when the user presses T to
     attempt delivery, or ``None`` on close.
     """
 
     BINDINGS = [
-        Binding('Q', 'deliver', '[Q] deliver', key_display='Q'),
+        Binding('T', 'deliver', '[T] deliver', key_display='T'),
         Binding('escape', 'close', 'Close'),
         Binding('q', 'close', 'Close', show=False),
     ]

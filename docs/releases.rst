@@ -96,6 +96,16 @@ attestation checks, tracking a new series — can now be interrupted at
 any time by pressing ``Escape`` or ``q``. B4 exits cleanly from any
 cancellation point without leaving dangling state.
 
+**Quitting takes a capital Q**
+
+Bare ``q`` shares the keyboard with the heavily used navigation keys,
+making it too easy to quit a TUI accidentally. All b4 TUI apps
+(tracking list, review interface, Patchwork browser, and ``b4 bugs``)
+now quit on capital ``Q``; bare ``q`` shows a reminder notification
+instead. Modal dialogs and sub-views still close with ``q`` as before.
+In the tracking list, the thank-you queue moved from ``Q`` to ``T`` to
+make room.
+
 **Patchwork backlog gate**
 
 Opening the Patchwork browser against a project with a large number of

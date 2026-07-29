@@ -40,6 +40,7 @@ import b4.review.tracking
 import b4.ty
 from b4.review._review import NO_COVER_NOTE
 from b4.review_tui._common import (
+    QUIT_BINDINGS,
     CheckRunnerMixin,
     LoreNodeShutdownMixin,
     SeparatedFooter,
@@ -49,6 +50,7 @@ from b4.review_tui._common import (
     _wait_for_enter,
     display_width,
     logger,
+    notify_quit_hint,
     pad_display,
     resolve_styles,
     run_lore_worker,
@@ -868,8 +870,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         Binding('s', 'suspend', 'shell'),
         Binding('p', 'patchwork', 'patchwork'),
         Binding('U', 'update_all', 'Update all', key_display='U'),
-        Binding('Q', 'process_queue', 'Queue', key_display='Q'),
-        Binding('q', 'quit', 'quit'),
+        Binding('T', 'process_queue', 'Queue', key_display='T'),
+        *QUIT_BINDINGS,
         Binding('question_mark', 'help', 'help', key_display='?'),
     ]
 
@@ -5081,3 +5083,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
     async def action_quit(self) -> None:
         self.exit()
+
+    def action_quit_hint(self) -> None:
+        """Warn that quitting takes a capital Q."""
+        notify_quit_hint(self)

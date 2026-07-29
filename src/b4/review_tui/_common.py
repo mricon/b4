@@ -41,6 +41,9 @@ import b4.review.tracking
 
 # -- Re-exported from b4.tui (canonical home for shared TUI utilities) --------
 from b4.tui._common import (
+    QUIT_BINDINGS as QUIT_BINDINGS,
+)
+from b4.tui._common import (
     JKListNavMixin as JKListNavMixin,
 )
 from b4.tui._common import (
@@ -81,6 +84,9 @@ from b4.tui._common import (
 )
 from b4.tui._common import (
     display_width as display_width,
+)
+from b4.tui._common import (
+    notify_quit_hint as notify_quit_hint,
 )
 from b4.tui._common import (
     pad_display as pad_display,

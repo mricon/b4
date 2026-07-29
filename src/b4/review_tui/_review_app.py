@@ -29,6 +29,7 @@ import liblore
 from b4.review._review import COMMIT_MESSAGE_PATH, NO_COVER_NOTE
 from b4.review_tui._common import (
     PATCH_STATE_MARKERS,
+    QUIT_BINDINGS,
     CheckRunnerMixin,
     LoreNodeShutdownMixin,
     SeparatedFooter,
@@ -47,6 +48,7 @@ from b4.review_tui._common import (
     _write_followup_trailers,
     get_thread_msgs,
     logger,
+    notify_quit_hint,
     resolve_styles,
     reviewer_colours,
     run_lore_worker,
@@ -248,7 +250,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         # App bindings
         Binding('e', 'toggle_preview', 'email mode'),
         Binding('s', 'suspend', 'shell'),
-        Binding('q', 'quit', 'quit'),
+        *QUIT_BINDINGS,
         Binding('question_mark', 'help', 'help', key_display='?'),
         Binding('tab', 'focus_next', 'Tab', show=False),
         Binding('space', 'page_down', 'Page down', show=False),
@@ -2317,6 +2319,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     async def action_quit(self) -> None:
         """Quit the TUI."""
         self.exit()
+
+    def action_quit_hint(self) -> None:
+        """Warn that quitting takes a capital Q."""
+        notify_quit_hint(self)
 
     def action_help(self) -> None:
         """Show help overlay."""

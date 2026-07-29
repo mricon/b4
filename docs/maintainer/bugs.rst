@@ -58,8 +58,8 @@ Bug list keybindings
      - Limit (filter) the bug list
    * - ``s``
      - Toggle showing closed bugs
-   * - ``q``
-     - Quit
+   * - ``Q``
+     - Quit (bare ``q`` only shows a reminder)
 
 Bug detail keybindings
 ~~~~~~~~~~~~~~~~~~~~~~

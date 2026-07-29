@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from b4.tui._common import (
+        QUIT_BINDINGS,
         JKListNavMixin,
         SeparatedFooter,
         _addrs_to_lines,
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
         ci_markup,
         ci_styles,
         display_width,
+        notify_quit_hint,
         pad_display,
         resolve_styles,
         reviewer_colours,
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    'QUIT_BINDINGS',
     'ActionItem',
     'ActionScreen',
     'ConfirmScreen',
@@ -59,12 +62,14 @@ __all__ = [
     'ci_markup',
     'ci_styles',
     'display_width',
+    'notify_quit_hint',
     'pad_display',
     'resolve_styles',
     'reviewer_colours',
 ]
 
 _LAZY_ATTRS: dict[str, str] = {
+    'QUIT_BINDINGS': '_common',
     'JKListNavMixin': '_common',
     'SeparatedFooter': '_common',
     '_addrs_to_lines': '_common',
@@ -79,6 +84,7 @@ _LAZY_ATTRS: dict[str, str] = {
     'ci_markup': '_common',
     'ci_styles': '_common',
     'display_width': '_common',
+    'notify_quit_hint': '_common',
     'pad_display': '_common',
     'resolve_styles': '_common',
     'reviewer_colours': '_common',

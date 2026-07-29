@@ -78,7 +78,7 @@ The TUI updates automatically to show the newly added series.
 - ``u`` — update: fetch latest trailers, check for newer revisions,
   and refresh message counts
 - ``a`` — open the action menu (context-sensitive)
-- ``q`` — quit
+- ``Q`` — quit (bare ``q`` only shows a reminder)
 
 If you are no longer interested in a series, press ``a`` and select
 **Abandon** to remove it from the tracking list.
@@ -339,7 +339,7 @@ Tracking from Patchwork
 ~~~~~~~~~~~~~~~~~~~~~~~~
 If you see a series worth reviewing, press ``t`` to track it. B4
 fetches the series from lore and adds it to your local tracking
-database. Press ``q`` to return to the tracking list, where the newly
+database. Press ``Q`` to return to the tracking list, where the newly
 tracked series is ready for review.
 
 You can also view the email thread directly from the Patchwork browser

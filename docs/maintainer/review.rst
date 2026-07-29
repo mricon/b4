@@ -201,13 +201,23 @@ Key           Action
               (``up:no`` inverts). Multiple tokens combine with AND
 ``s``         Shell — suspend to an interactive sub-shell
 ``p``         Patchwork — switch to the Patchwork browser (if configured)
-``Q``         Queue — view and deliver queued thank-you messages (visible
+``T``         Queue — view and deliver queued thank-you messages (visible
               only when the queue is non-empty; see
               :ref:`queuing thanks <thanks_queue>`)
 ``j``/``k``   Move cursor down/up
 ``?``         Help — show keybinding reference
-``q``         Quit
+``Q``         Quit
 ============  ===========================================================
+
+Quitting takes a capital ``Q`` in all b4 TUI apps (tracking list,
+review interface, Patchwork browser, and ``b4 bugs``). Bare ``q``
+only shows a reminder notification, so a stray keypress during
+navigation cannot quit the app accidentally. Modal dialogs and
+sub-views (thread viewer, message view, help) still close with
+``q`` as before.
+
+.. versionchanged:: v0.16
+   Previously bare ``q`` quit the app directly.
 
 Press ``t`` to open the target branch dialog. Type a branch name
 (recently used branches are suggested) and press ``Enter`` to run an
@@ -408,7 +418,7 @@ Key                        Action
 ``e``                      Toggle email mode
 ``s``                      Shell — suspend to an interactive sub-shell
 ``?``                      Help — show keybinding reference
-``q``                      Quit
+``Q``                      Quit (bare ``q`` only shows a reminder)
 =========================  =============================================
 
 **Email preview mode keybindings**
@@ -985,10 +995,10 @@ queued messages with any mail tool.
 
 The series remains in ``accepted`` status while its thank-you message is
 queued. The title bar shows a queue count indicator on the right side
-(e.g. ``3 queued``) and the ``Q`` keybinding appears in the footer.
+(e.g. ``3 queued``) and the ``T`` keybinding appears in the footer.
 
-Press ``Q`` to open the queue viewer, which lists all pending messages
-with their subjects and target URLs. From this screen, press ``Q``
+Press ``T`` to open the queue viewer, which lists all pending messages
+with their subjects and target URLs. From this screen, press ``T``
 again to attempt delivery: b4 checks each queued message's commit URL
 with an HTTP HEAD request, and delivers the message via SMTP once the
 URL resolves. Successfully delivered messages are moved to

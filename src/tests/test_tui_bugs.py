@@ -522,3 +522,15 @@ class TestParseMsgidForImport:
 
         result = b4.parse_msgid('not-a-msgid')
         assert '@' not in result
+
+
+class TestQuitBindings:
+    """BugListApp quits on capital 'Q'; bare 'q' only shows a hint."""
+
+    def test_quit_takes_capital_q(self) -> None:
+        from textual.binding import Binding
+
+        bmap = {b.key: b for b in BugListApp.BINDINGS if isinstance(b, Binding)}
+        assert bmap['Q'].action == 'quit'
+        assert bmap['q'].action == 'quit_hint'
+        assert bmap['q'].show is False

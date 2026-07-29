@@ -528,11 +528,30 @@ class TestLoreNodeShutdown:
         with mock.patch('b4.get_lore_node', return_value=node):
             async with app.run_test(size=(120, 30)) as pilot:
                 await pilot.pause()
-                await pilot.press('q')
+                await pilot.press('Q')
                 await pilot.pause()
 
         # on_unmount fired during shutdown and cancelled the node.
         assert node.cancel.called
+
+
+class TestQuitKeys:
+    """Bare 'q' warns instead of quitting; capital 'Q' quits."""
+
+    @pytest.mark.asyncio
+    async def test_q_warns_instead_of_quitting(self, gitdir: str) -> None:
+        branch, _patch_shas = _create_review_branch_with_patches(
+            gitdir, 'quit-hint', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        app = ReviewApp(session)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press('q')
+            await pilot.pause()
+            assert app._exit is False
+            messages = [n.message for n in app._notifications]
+            assert any("'Q'" in m for m in messages)
 
 
 class TestRenderDetailLines:
