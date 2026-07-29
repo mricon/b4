@@ -1219,3 +1219,18 @@ def test_edit_in_editor_normalizes_crlf(
     monkeypatch.setenv('GIT_EDITOR', 'true')
     out = b4.edit_in_editor(b'line one\r\nline two\r\rlast\r\n', filehint='reply.eml')
     assert out == b'line one\nline two\n\nlast\n'
+
+
+def test_git_run_command_log_fixup_looks_past_option_prefix(gitdir: str) -> None:
+    """``--no-abbrev-commit`` must survive a leading ``-c`` override.
+
+    git_run_command counteracts log.abbrevCommit by injecting the flag after
+    the subcommand -- which it can only find by skipping the ``-c key=value``
+    pairs callers prefix (see SCRATCH_GIT_OPTS).
+    """
+    b4.git_set_config(gitdir, 'log.abbrevCommit', 'true')
+    ecode, out = b4.git_run_command(gitdir, ['-c', 'gc.auto=0', 'log', '-1'])
+    assert ecode == 0
+    assert out.startswith('commit '), out
+    sha = out.split('\n', 1)[0].split()[1]
+    assert len(sha) == 40, f'log abbreviated the sha despite the fixup: {sha}'

@@ -15,7 +15,7 @@ import datetime
 import email.message
 import os
 import pathlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
 import pytest
@@ -3010,6 +3010,114 @@ class TestCrossWorktreeFetch:
         assert blob.strip() == 'cross-worktree marker'
 
 
+def _gitlink_bump_series(gitdir: str, name: str = 'sub') -> b4.LoreSeries:
+    """A 1-patch series that bumps the submodule gitlink.
+
+    The patch carries an ``index <old>..<new> 160000`` line, so the fake-am
+    tree synthesized from it holds a gitlink of its own -- which is what makes
+    make_fake_am_range's ``reset --hard`` recurse.
+    """
+    ecode, newlink = b4.git_run_command(gitdir, ['rev-parse', 'master'])
+    assert ecode == 0
+    ecode, _ = b4.git_run_command(
+        gitdir,
+        ['update-index', '--cacheinfo', f'160000,{newlink.strip()},{name}'],
+    )
+    assert ecode == 0
+    ecode, tree = b4.git_run_command(gitdir, ['write-tree'])
+    assert ecode == 0
+    ecode, commit = b4.git_run_command(
+        gitdir,
+        ['commit-tree', tree.strip(), '-p', 'master'],
+        stdin=f'bump {name}\n'.encode(),
+    )
+    assert ecode == 0
+    ecode, mbox = b4.git_run_command(
+        gitdir, ['format-patch', '-1', '--stdout', commit.strip()], decode=False
+    )
+    assert ecode == 0
+    assert b'160000' in mbox, 'patch does not carry a gitlink index line'
+    ecode, _ = b4.git_run_command(gitdir, ['reset', '--hard', 'master'])
+    assert ecode == 0
+    msgs = b4.mailsplit_bytes(mbox)
+    for idx, msg in enumerate(msgs):
+        if not msg['Message-Id']:
+            msg['Message-Id'] = f'<gitlink-bump-{idx}@test.local>'
+    return b4.review._get_lore_series(msgs)
+
+
+class TestScratchWorktreeSubmodules:
+    """b4's scratch worktrees must ignore the user's submodule.recurse.
+
+    A fresh linked worktree has no per-worktree submodule clones, so a
+    recursing checkout or reset dies with "fatal: not a git repository:
+    .../worktrees/<wt>/modules/<name>" before anything is applied. In a repo
+    carrying submodules (the b4 repo itself among them) that killed every
+    review-branch creation and shazam apply.
+    """
+
+    def test_fetch_am_ignores_submodule_recurse(
+        self, gitdir: str, add_unpopulated_submodule: Callable[..., str]
+    ) -> None:
+        add_unpopulated_submodule(gitdir)
+
+        # An am-able patch on top of the submodule-bearing master.
+        patchfile = pathlib.Path(gitdir) / 'sub_recurse_patch.txt'
+        patchfile.write_text('submodule recurse marker\n')
+        ecode, _ = b4.git_run_command(gitdir, ['add', 'sub_recurse_patch.txt'])
+        assert ecode == 0
+        ecode, tree = b4.git_run_command(gitdir, ['write-tree'])
+        assert ecode == 0
+        ecode, commit = b4.git_run_command(
+            gitdir,
+            ['commit-tree', tree.strip(), '-p', 'master'],
+            stdin=b'add sub_recurse_patch\n',
+        )
+        assert ecode == 0
+        ecode, mbox = b4.git_run_command(
+            gitdir, ['format-patch', '-1', '--stdout', commit.strip()], decode=False
+        )
+        assert ecode == 0
+        ecode, _ = b4.git_run_command(gitdir, ['reset', '--hard', 'master'])
+        assert ecode == 0
+
+        # Only now flip the config the bug needs, so the fixture setup above
+        # never ran under recursion itself.
+        b4.git_set_config(gitdir, 'submodule.recurse', 'true')
+
+        b4.git_fetch_am_into_repo(gitdir, mbox, at_base='master', am_flags=['-3'])
+
+        ecode, blob = b4.git_run_command(
+            gitdir, ['show', 'FETCH_HEAD:sub_recurse_patch.txt']
+        )
+        assert ecode == 0, 'scratch-worktree apply failed under submodule.recurse'
+        assert blob.strip() == 'submodule recurse marker'
+
+    def test_fake_am_range_ignores_scratch_worktree_config(
+        self,
+        gitdir: str,
+        monkeypatch: pytest.MonkeyPatch,
+        add_unpopulated_submodule: Callable[..., str],
+    ) -> None:
+        """The fake-am staging worktree is a scratch worktree too.
+
+        Its ``reset --hard`` recurses once the synthesized tree carries a
+        gitlink, and its ``git am`` builds throwaway commits nothing will ever
+        ship -- so it must not reach for the user's signing key either.
+        """
+        add_unpopulated_submodule(gitdir)
+        lser = _gitlink_bump_series(gitdir)
+        b4.git_set_config(gitdir, 'submodule.recurse', 'true')
+        _poison_gpg_signing(monkeypatch)
+
+        start, end = lser.make_fake_am_range(gitdir=gitdir, at_base='master')
+
+        assert start, 'fake-am range died in the scratch worktree'
+        assert end
+        assert b4.git_commit_exists(gitdir, start)
+        assert b4.git_commit_exists(gitdir, end)
+
+
 class TestMergeTakeSkipRouting:
     """Take routing when patches are skipped (bug 6d1d35c).
 
@@ -4596,3 +4704,39 @@ class TestTestApplyNoSigning:
         screen = TakeConfirmScreen('linear', 'master', branch)
         ok, detail = screen._test_take()
         assert ok, f'take test-apply tried to sign: {detail}'
+
+
+class TestTestApplySubmoduleRecurse:
+    """The same test-applies must survive the user's submodule.recurse.
+
+    Their scratch worktree is as fresh as any other, so the sparse
+    ``checkout -f`` hits the same missing-submodule-clone fatal and every
+    probe reports a failure that has nothing to do with the patches.
+    """
+
+    @pytest.mark.parametrize(
+        'screen_cls',
+        [RebaseScreen, TargetBranchScreen, BaseSelectionScreen],
+        ids=lambda c: c.__name__,
+    )
+    def test_static_test_apply_ignores_submodule_recurse(
+        self,
+        gitdir: str,
+        screen_cls: Any,
+        add_unpopulated_submodule: Callable[..., str],
+    ) -> None:
+        ambytes = _one_patch_mbox(gitdir)
+        add_unpopulated_submodule(gitdir)
+        b4.git_set_config(gitdir, 'submodule.recurse', 'true')
+        ok, detail = screen_cls._test_apply_at(ambytes, 'master')
+        assert ok, f'{screen_cls.__name__} test-apply recursed: {detail}'
+
+    def test_take_confirm_test_apply_ignores_submodule_recurse(
+        self, gitdir: str, add_unpopulated_submodule: Callable[..., str]
+    ) -> None:
+        branch = _create_review_branch(gitdir, 'recurse-take', with_patch=True)
+        add_unpopulated_submodule(gitdir)
+        b4.git_set_config(gitdir, 'submodule.recurse', 'true')
+        screen = TakeConfirmScreen('linear', 'master', branch)
+        ok, detail = screen._test_take()
+        assert ok, f'take test-apply recursed: {detail}'
