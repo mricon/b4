@@ -14,7 +14,9 @@ from typing import Any, Dict, List, Optional, Protocol
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, ListView
+from textual.css.query import NoMatches
+from textual.dom import DOMNode
+from textual.widgets import Footer, ListItem, ListView
 from textual.widgets._footer import FooterKey
 from textual.worker import NoActiveWorker, get_current_worker
 
@@ -265,6 +267,57 @@ def _validate_addrs(text: str) -> Optional[str]:
             if not addr or '@' not in addr:
                 return f'Invalid address: {line}'
     return None
+
+
+class ReplacementListView(ListView):
+    """A ListView that replaces a predecessor without moving the viewport.
+
+    The tracker-style screens rebuild their ListView wholesale on every
+    refresh, so the scroll position dies with the old widget.  Restoring
+    the cursor index alone only scrolls the minimum needed to reveal
+    that row, which made the viewport visibly jump towards the top on
+    every refresh.  Capture the predecessor's offset with
+    :meth:`capture_scroll` before removing it, pass it as *scroll_y*,
+    and the replacement seeds its scroll state on mount, before the
+    first paint.
+
+    There is deliberately no ``initial_index``: ListView's default of 0
+    schedules a scroll-into-view for row 0 on mount, which would fire
+    after the restore and undo it.  Assign ``index`` explicitly after
+    mounting instead — that schedules a minimal scroll-into-view which
+    is a no-op when the restored offset already shows the row, and
+    otherwise keeps the cursor visible (e.g. after a re-sort moved it).
+    """
+
+    def __init__(
+        self, *children: ListItem, scroll_y: float = 0.0, id: Optional[str] = None
+    ) -> None:
+        super().__init__(*children, initial_index=None, id=id)
+        self._replaced_scroll_y = scroll_y
+
+    @staticmethod
+    def capture_scroll(node: DOMNode, selector: str) -> float:
+        """Return the scroll offset of *selector*'s ListView, or 0.0."""
+        try:
+            return node.query_one(selector, ListView).scroll_y
+        except NoMatches:
+            return 0.0
+
+    def on_mount(self) -> None:
+        if not self._replaced_scroll_y:
+            return
+        # scroll_to() cannot seed the position here: layout hasn't run
+        # yet, so it would clamp against a zero virtual size.  The first
+        # reflow re-validates these values against the real size, which
+        # clamps them if the new list is shorter.  scroll_target_y feeds
+        # wheel/page scrolling, and nothing syncs the scrollbar thumb
+        # when that re-validation is a no-op, so seed both as well.
+        self.set_scroll(None, self._replaced_scroll_y)
+        self.set_reactive(
+            ListView.scroll_target_y,  # pyright: ignore[reportArgumentType] # cannot pick Reactive's class-access __get__ overload
+            float(round(self._replaced_scroll_y)),
+        )
+        self.vertical_scrollbar.position = round(self._replaced_scroll_y)
 
 
 class _ListViewHost(Protocol):

@@ -47,6 +47,9 @@ from b4.tui._common import (
     JKListNavMixin as JKListNavMixin,
 )
 from b4.tui._common import (
+    ReplacementListView as ReplacementListView,
+)
+from b4.tui._common import (
     SeparatedFooter as SeparatedFooter,
 )
 from b4.tui._common import (

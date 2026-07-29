@@ -43,6 +43,7 @@ from b4.review_tui._common import (
     QUIT_BINDINGS,
     CheckRunnerMixin,
     LoreNodeShutdownMixin,
+    ReplacementListView,
     SeparatedFooter,
     _fix_ansi_theme,
     _quiet_worker,
@@ -1276,6 +1277,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             title_text += f' (limit: {self._limit_pattern})'
         left.update(title_text)
 
+        scroll_y = ReplacementListView.capture_scroll(self, '#tracking-list')
+
         # Suppress rendering while we swap old widgets for new ones.
         # Without this, the remove-then-mount sequence can produce a
         # single intermediate frame showing only the title bar before
@@ -1299,19 +1302,21 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             header = Static(header_text, id='tracking-header')
 
             list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
-            lv = ListView(*list_items, id='tracking-list')
+            lv = ReplacementListView(*list_items, id='tracking-list', scroll_y=scroll_y)
             await self.mount(header, before=self.query_one(Footer))
             await self.mount(lv, before=self.query_one(Footer))
 
+        new_index = 0
         if self._focus_change_id:
             for idx, item in enumerate(list_items):
                 if (
                     isinstance(item, TrackedSeriesItem)
                     and item.series.get('change_id') == self._focus_change_id
                 ):
-                    lv.index = idx
+                    new_index = idx
                     break
             self._focus_change_id = None
+        lv.index = new_index
         lv.focus()
 
         # Populate the details panel for the highlighted item now that

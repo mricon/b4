@@ -42,6 +42,7 @@ from b4.tui import (
     ConfirmScreen,
     JKListNavMixin,
     LimitScreen,
+    ReplacementListView,
     SeparatedFooter,
     _quiet_worker,
     _wait_for_enter,
@@ -2038,7 +2039,11 @@ class BugListApp(JKListNavMixin, App[None]):
             seen = self._seen_counts.get(bug.id, count)
             unseen = max(0, count - seen)
             items.append(BugListItem(bug, unseen=unseen))
-        lv = ListView(*items, id='bug-list')
+        lv = ReplacementListView(
+            *items,
+            id='bug-list',
+            scroll_y=ReplacementListView.capture_scroll(self, '#bug-list'),
+        )
 
         with self.app.batch_update():
             old_lv = self.query_one('#bug-list', ListView)
@@ -2046,12 +2051,14 @@ class BugListApp(JKListNavMixin, App[None]):
             await self.mount(lv, before=self.query_one('#details-panel', Vertical))
 
         # Restore cursor to previously focused bug
+        new_index = 0
         if self._focus_bug_id:
             for idx, item in enumerate(items):
                 if item.bug.id == self._focus_bug_id:
-                    lv.index = idx
+                    new_index = idx
                     self._focus_bug_id = None
                     break
+        lv.index = new_index
         lv.focus()
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
