@@ -1624,6 +1624,46 @@ def update_series_revision(
     conn.commit()
 
 
+def realign_series_subject(
+    conn: sqlite3.Connection,
+    change_id: str,
+    revision: int,
+    lmbx: 'b4.LoreMailbox',
+) -> bool:
+    """Re-title a tracked series from *lmbx*'s cover letter for *revision*.
+
+    ``series.subject`` is only ever written when a series is first tracked or
+    upgraded, so a row that took its title from the first patch before the
+    cover letter was seen (bug 8bb6e4c) keeps showing it forever — unlike the
+    revisions catalog, which heals itself on every re-add (see
+    :func:`add_revision`).
+
+    Only a cover-derived title is trusted: with nothing but a first-patch
+    fallback in hand there is nothing better than what is already stored, and
+    writing it back would corrupt a correctly titled row.  The bare titles are
+    what get compared, since the tracking and upgrade paths format the
+    ``[PATCH vN x/y]`` prefix differently and neither is wrong.  Returns True
+    if the row was re-titled.
+    """
+    _msgid, subject, from_cover = _raw_revision_ref(lmbx, revision)
+    if not from_cover or not subject:
+        return False
+    row = conn.execute(
+        'SELECT subject FROM series WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    ).fetchone()
+    if row is None:
+        return False
+    if b4.LoreSubject(str(row[0] or '')).subject == b4.LoreSubject(subject).subject:
+        return False
+    conn.execute(
+        'UPDATE series SET subject = ? WHERE change_id = ? AND revision = ?',
+        (subject, change_id, revision),
+    )
+    conn.commit()
+    return True
+
+
 def snooze_series(
     conn: sqlite3.Connection,
     change_id: str,

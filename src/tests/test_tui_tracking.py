@@ -2824,18 +2824,23 @@ class TestSeriesLifecycle:
         v1_mock.fromname = 'Test Author'
         v1_mock.fromemail = 'author@example.com'
         v1_mock.subject = '[PATCH 0/3] a three-patch series'
+        v1_mock.fingerprint = None
 
-        # v2 mock: needs a patch with msgid so add_revision can record it
-        v2_patch = mock.Mock()
-        v2_patch.msgid = 'cover-v2@example.com'
-        v2_patch.full_subject = '[PATCH v2 0/3] a three-patch series'
+        # v2 mock: needs a cover with msgid so add_revision can record it
+        v2_cover = mock.Mock()
+        v2_cover.msgid = 'cover-v2@example.com'
+        v2_cover.full_subject = '[PATCH v2 0/3] a three-patch series'
         v2_mock = mock.Mock()
         v2_mock.revision = 2
         v2_mock.change_id = change_id
-        v2_mock.patches = [v2_patch, None, None, None]
+        v2_mock.patches = [None, None, None, None]
+        v2_mock.fingerprint = None
 
         mock_lmbx = mock.Mock()
         mock_lmbx.series = {1: v1_mock, 2: v2_mock}
+        # Cover letters live in the mailbox's parse-time covers dict, never in
+        # a raw series' patches[0] — that only happens in get_series().
+        mock_lmbx.covers = {2: v2_cover}
         mock_lmbx.get_series.return_value = v1_mock
 
         series_dict = {
