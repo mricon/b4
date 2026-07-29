@@ -140,7 +140,7 @@ LINKADDR = 'https://patch.msgid.link'
 # answer. Each override is inert where the other matters, so the one list
 # serves every scratch-worktree git command. Commits that outlive the worktree
 # are the exception and keep the user's signing config: the real apply in
-# git_fetch_am_into_repo. Fetching *out of* a
+# git_fetch_am_into_repo, the cherry-pick in ez.reroll(). Fetching *out of* a
 # worktree takes nothing -- that one runs in the user's repo, not in the
 # scratch, so the user's config still governs it.
 SCRATCH_GIT_OPTS: List[str] = [
