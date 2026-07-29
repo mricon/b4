@@ -10,7 +10,7 @@ import email.utils
 import io
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from rich import box
 from rich.panel import Panel
@@ -37,7 +37,6 @@ from textual.worker import Worker, WorkerState
 
 import b4
 import b4.review
-import b4.review.tracking
 import b4.ty
 import liblore
 from b4.review_tui._common import (
@@ -47,7 +46,6 @@ from b4.review_tui._common import (
     _render_email_to_viewer,
     _write_diff_line,
     ci_check_styles,
-    logger,
     resolve_styles,
     run_lore_worker,
     worker_cancelled,
@@ -1456,13 +1454,19 @@ class QueueScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+#: Dismissal value when another queue delivery already holds the lock.
+QUEUE_BUSY = '__QUEUE_BUSY__'
+
+
 class QueueDeliveryScreen(
-    ModalScreen[Optional[Tuple[int, int, List[Tuple[str, int]]]]]
+    ModalScreen[Union[None, str, Tuple[int, int, List[Tuple[str, int]]]]]
 ):
     """Modal that processes the thanks queue with a progress bar.
 
     Dismisses with ``(delivered, still_pending, delivered_series)``
-    on completion, or ``None`` on cancel.
+    on completion, ``QUEUE_BUSY`` when another delivery (e.g. a
+    ``b4 review cron`` run) holds the queue lock, or ``None`` on
+    cancel.
     """
 
     BINDINGS = [
@@ -1484,12 +1488,19 @@ class QueueDeliveryScreen(
     """
 
     def __init__(
-        self, total: int, dryrun: bool = False, patatt_sign: bool = True
+        self,
+        total: int,
+        dryrun: bool = False,
+        patatt_sign: bool = True,
+        identifier: Optional[str] = None,
+        topdir: Optional[str] = None,
     ) -> None:
         super().__init__()
         self._total = total
         self._dryrun = dryrun
         self._patatt_sign = patatt_sign
+        self._identifier = identifier
+        self._topdir = topdir
         self._cancelled = False
 
     def compose(self) -> ComposeResult:
@@ -1505,18 +1516,23 @@ class QueueDeliveryScreen(
     def action_cancel(self) -> None:
         self._cancelled = True
 
-    def _do_deliver(self) -> Tuple[int, int, List[Tuple[str, int]]]:
+    def _do_deliver(self) -> Union[str, Tuple[int, int, List[Tuple[str, int]]]]:
         def _on_progress(completed: int, total: int, status: str) -> None:
             if not self._cancelled:
                 self.app.call_from_thread(
                     self._update_progress, completed, total, status
                 )
 
-        return b4.ty.process_queue(
-            dryrun=self._dryrun,
-            patatt_sign=self._patatt_sign,
-            progress_cb=_on_progress,
-        )
+        try:
+            return b4.ty.process_queue(
+                dryrun=self._dryrun,
+                patatt_sign=self._patatt_sign,
+                progress_cb=_on_progress,
+                identifier=self._identifier,
+                topdir=self._topdir,
+            )
+        except b4.LockHeldError:
+            return QUEUE_BUSY
 
     def _update_progress(self, completed: int, total: int, status: str) -> None:
         self.query_one('#qdeliver-status', Label).update(
@@ -2808,48 +2824,26 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
         b4.get_lore_node().cancel()
 
     def _do_updates(self) -> Dict[str, Any]:
+        def _on_progress(completed: int, total: int, subject: str) -> None:
+            self.app.call_from_thread(self._update_progress, completed, subject)
+
+        def _should_cancel() -> bool:
+            # self._cancelled covers an explicit Esc; worker_cancelled()
+            # additionally covers the app quitting mid-update.
+            return self._cancelled or worker_cancelled()
+
         with _quiet_worker():
-            # Rescan local review branches first so the DB reflects current
-            # on-disk state before the network update runs.
-            if self._topdir:
-                try:
-                    rescan = b4.review.tracking.rescan_branches(
-                        self._identifier, self._topdir
-                    )
-                    self._result['gone'] = rescan.get('gone', 0)
-                except Exception as ex:
-                    logger.warning('Pre-update rescan failed: %s', ex)
-
-            for i, series in enumerate(self._series_list):
-                # self._cancelled covers an explicit Esc; worker_cancelled()
-                # additionally covers the app quitting mid-update.
-                if self._cancelled or worker_cancelled():
-                    break
-
-                subject = series.get('subject', '(no subject)')
-                self.app.call_from_thread(self._update_progress, i, subject)
-
-                try:
-                    r = b4.review.update_series_tracking(
-                        series,
-                        self._identifier,
-                        self._linkmask,
-                        topdir=self._topdir,
-                    )
-                except liblore.OperationCancelledError:
-                    self._cancelled = True
-                    break
-                self._result['series_checked'] += 1
-                if r.get('new_revisions') or r.get('new_trailers'):
-                    self._result['series_updated'] += 1
-                if r.get('error'):
-                    self._result['errors'] += 1
-                    submitter = series.get('submitter', 'unknown')
-                    self._result['error_details'].append((submitter, r['error']))
-                if r.get('counts_updated'):
-                    self._result['followup_updated'] += 1
-
-                self.app.call_from_thread(self._update_progress, i + 1, subject)
+            try:
+                self._result = b4.review.update_all_tracking(
+                    self._identifier,
+                    self._linkmask,
+                    topdir=self._topdir,
+                    series_list=self._series_list,
+                    progress_cb=_on_progress,
+                    cancel_cb=_should_cancel,
+                )
+            except b4.LockHeldError:
+                self._result['busy'] = True
 
         return self._result
 

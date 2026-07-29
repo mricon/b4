@@ -111,10 +111,21 @@ def db_exists(identifier: str) -> bool:
     return os.path.exists(get_db_path(identifier))
 
 
+def _configure_conn(conn: sqlite3.Connection) -> None:
+    """Apply per-connection settings.
+
+    A generous busy_timeout keeps concurrent writers (the TUI and a
+    ``b4 review cron`` sweep) waiting on each other's short write
+    transactions instead of throwing 'database is locked'.
+    """
+    conn.execute('PRAGMA busy_timeout = 15000')
+
+
 def init_db(identifier: str) -> sqlite3.Connection:
     """Initialize a new database for the given identifier."""
     db_path = get_db_path(identifier)
     conn = sqlite3.connect(db_path)
+    _configure_conn(conn)
     conn.executescript(SCHEMA_SQL)
     conn.execute(
         'INSERT OR REPLACE INTO schema_version (version) VALUES (?)', (SCHEMA_VERSION,)
@@ -197,6 +208,7 @@ def get_db(identifier: str) -> sqlite3.Connection:
     if not os.path.exists(db_path):
         raise FileNotFoundError(f'No database found for identifier: {identifier}')
     conn = sqlite3.connect(db_path)
+    _configure_conn(conn)
     conn.row_factory = sqlite3.Row
     _migrate_db_if_needed(conn)
     return conn
@@ -225,6 +237,67 @@ def get_repo_identifier(topdir: str) -> Optional[str]:
     except (json.JSONDecodeError, OSError) as e:
         logger.warning('Failed to read metadata file: %s', e)
         return None
+
+
+def _get_repopath_path(identifier: str) -> str:
+    """Path of the sidecar file recording an identifier's repo toplevel."""
+    return os.path.join(get_review_data_dir(), f'{identifier}.repopath')
+
+
+def record_repo_path(identifier: str, topdir: str) -> None:
+    """Record the repository toplevel for an identifier.
+
+    This is the reverse of the in-repo metadata file: it lets
+    ``b4 review cron -i __all__`` find each project's repository (for
+    branch rescans and the thanks queue) without being run from inside
+    it.  Refreshed opportunistically whenever the TUI or cron runs from
+    within the repository, so it survives repositories being moved.
+    """
+    path = _get_repopath_path(identifier)
+    try:
+        with open(path) as fh:
+            if fh.read().strip() == topdir:
+                return
+    except OSError:
+        pass
+    try:
+        with open(path, 'w') as fh:
+            fh.write(topdir + '\n')
+    except OSError as ex:
+        logger.debug('Could not record repo path for %s: %s', identifier, ex)
+
+
+def get_repo_path(identifier: str) -> Optional[str]:
+    """Return the recorded repository toplevel for an identifier.
+
+    Returns None when no path was recorded or the recorded path no
+    longer belongs to this identifier (e.g. the repository was moved
+    or deleted).
+    """
+    try:
+        with open(_get_repopath_path(identifier)) as fh:
+            candidate = fh.read().strip()
+    except OSError:
+        return None
+    if candidate and get_repo_identifier(candidate) == identifier:
+        return candidate
+    return None
+
+
+def get_known_projects() -> List[Tuple[str, Optional[str]]]:
+    """Return (identifier, topdir) for every known tracking database.
+
+    *topdir* is the recorded repository toplevel, or None (see
+    get_repo_path).
+    """
+    reviewdir = get_review_data_dir()
+    projects: List[Tuple[str, Optional[str]]] = []
+    for fname in sorted(os.listdir(reviewdir)):
+        if not fname.endswith('.sqlite3'):
+            continue
+        identifier = fname[: -len('.sqlite3')]
+        projects.append((identifier, get_repo_path(identifier)))
+    return projects
 
 
 def save_repo_metadata(gitdir: str, identifier: str) -> None:
@@ -356,6 +429,7 @@ def cmd_enroll(cmdargs: argparse.Namespace) -> None:
     # Create metadata file in shared .git directory
     save_repo_metadata(gitdir, identifier)
     logger.info('Created metadata file: %s', get_repo_metadata_path(gitdir))
+    record_repo_path(identifier, repo_path)
 
     logger.info('Project enrolled successfully with identifier: %s', identifier)
 
@@ -1720,6 +1794,72 @@ def get_tag_snoozed(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
             }
         )
     return results
+
+
+def restore_snoozed_tracking(topdir: str, review_branch: str) -> str:
+    """Restore previous state from snoozed tracking commit metadata.
+
+    Reads the snoozed dict from the tracking commit, restores the
+    previous status, removes the snoozed key, and saves the commit.
+    Returns the previous status (defaults to 'reviewing').
+    """
+    import b4.review
+
+    cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
+    trk_series = tracking.get('series', {})
+    snoozed_info = trk_series.get('snoozed', {})
+    prev_status = str(snoozed_info.get('previous_state', 'reviewing'))
+    trk_series['status'] = prev_status
+    trk_series.pop('snoozed', None)
+    tracking['series'] = trk_series
+    b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
+    return prev_status
+
+
+def _wake_snoozed_entry(
+    conn: sqlite3.Connection, entry: Dict[str, Any], topdir: Optional[str]
+) -> None:
+    """Restore a single snoozed series to its previous state."""
+    cid = entry['change_id']
+    rev = entry['revision']
+    prev_status = 'reviewing'
+    review_branch = f'b4/review/{cid}'
+    if topdir and b4.git_branch_exists(topdir, review_branch):
+        try:
+            prev_status = restore_snoozed_tracking(topdir, review_branch)
+        except (SystemExit, Exception):
+            pass
+    unsnooze_series(conn, cid, prev_status, revision=rev)
+
+
+def auto_wake_snoozed(identifier: str, topdir: Optional[str]) -> int:
+    """Wake snoozed series whose wake-up condition has been met.
+
+    Checks two conditions:
+    - Time-based: the snoozed_until date has passed.
+    - Tag-based: the target git tag now exists.
+
+    For each woken series, restores the previous status in both the
+    tracking commit and the database.  Returns the number woken.
+    """
+    woken = 0
+    try:
+        conn = get_db(identifier)
+    except (FileNotFoundError, Exception):
+        return woken
+    try:
+        for entry in get_expired_snoozed(conn):
+            _wake_snoozed_entry(conn, entry, topdir)
+            woken += 1
+        if topdir:
+            for entry in get_tag_snoozed(conn):
+                tagname = entry['snoozed_until'][4:]  # strip 'tag:' prefix
+                if b4.git_revparse_tag(topdir, tagname):
+                    _wake_snoozed_entry(conn, entry, topdir)
+                    woken += 1
+    finally:
+        conn.close()
+    return woken
 
 
 def get_snoozed_until(

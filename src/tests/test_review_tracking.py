@@ -4081,3 +4081,52 @@ class TestSyncRevisionsCatalogToBranch:
             )
             is False
         )
+
+
+class TestKnownProjects:
+    """Tests for the identifier→repository reverse mapping."""
+
+    def test_record_and_list(self, gitdir: str) -> None:
+        conn = review_tracking.init_db('mapped')
+        conn.close()
+        review_tracking.save_repo_metadata(os.path.join(gitdir, '.git'), 'mapped')
+        review_tracking.record_repo_path('mapped', gitdir)
+        assert review_tracking.get_known_projects() == [('mapped', gitdir)]
+
+    def test_stale_path_yields_none(self, tmp_path: pathlib.Path) -> None:
+        conn = review_tracking.init_db('ghost')
+        conn.close()
+        review_tracking.record_repo_path('ghost', str(tmp_path / 'moved-away'))
+        assert review_tracking.get_known_projects() == [('ghost', None)]
+
+    def test_unrecorded_yields_none(self, tmp_path: pathlib.Path) -> None:
+        conn = review_tracking.init_db('bare')
+        conn.close()
+        assert review_tracking.get_known_projects() == [('bare', None)]
+
+
+class TestAutoWakeSnoozed:
+    """Tests for the extracted snooze wake-up sweep."""
+
+    def test_wakes_expired(self, tmp_path: pathlib.Path) -> None:
+        conn = review_tracking.init_db('wakeful')
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-1',
+            1,
+            'subj',
+            'Name',
+            'e@example.com',
+            None,
+            '<m@id>',
+            1,
+        )
+        review_tracking.snooze_series(conn, 'cid-1', '2000-01-01T00:00:00')
+        conn.close()
+        assert review_tracking.auto_wake_snoozed('wakeful', None) == 1
+        conn = review_tracking.get_db('wakeful')
+        row = conn.execute(
+            'SELECT status FROM series WHERE change_id = ?', ('cid-1',)
+        ).fetchone()
+        conn.close()
+        assert row[0] == 'reviewing'

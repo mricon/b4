@@ -1115,6 +1115,130 @@ state::
    actually changed are re-read, so the background rescan adds no
    perceptible delay even in large repositories.
 
+.. _review_cron:
+
+Non-interactive maintenance (b4 review cron)
+--------------------------------------------
+Everything the TUI does periodically can also run from a scheduler or
+a script, without the TUI open::
+
+    b4 review cron
+
+With no flags, this runs the full maintenance sweep:
+
+* wake up snoozed series whose date has passed or whose target tag now
+  exists;
+* rescan local review branches (same as the pre-update rescan in the
+  TUI);
+* fetch threads and update revisions/trailers for every tracked series
+  (same as ``U`` in the TUI);
+* deliver queued thank-you messages whose commits are now published
+  (same as ``T`` → ``T`` in the TUI; see :ref:`the thanks queue
+  <thanks_queue>`).
+
+Pass ``--update`` or ``--deliver-queue`` to run only one of the two
+task groups. ``--dry-run`` skips the update entirely and reports what
+the queue delivery *would* do — including the publication check — which
+is handy for verifying that b4 detects your pushes::
+
+    b4 review cron --deliver-queue --dry-run
+
+Unlike the TUI, cron does not patatt-sign the thank-you messages it
+delivers: timer processes usually have no access to agents or
+passphrase-protected keys, and a signature adds little to a thank-you
+note. If your signing setup works headless (e.g. a plain ed25519
+patatt key), pass ``--sign`` to restore the TUI behaviour.
+
+Cron is quiet when there is nothing to report, so a scheduler that
+mails command output (like cron itself) only bothers you when
+something actually happened. Messages held back by the publication
+check do not count as news; use ``--dry-run`` to see them.
+
+Concurrency is safe by design: the update sweep and the queue delivery
+each hold a lock shared with the TUI, so a cron run overlapping an
+interactive session (or another cron run) skips the busy task with a
+note and exits 0. You never need to worry about a timer firing while
+you are in the TUI — the worst case is a "not delivered twice" outcome,
+never a "delivered twice" one.
+
+Project selection and repositories
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Run from within an enrolled repository, cron works on that project,
+like the TUI. Run from anywhere else — which is where schedulers
+start — it sweeps *every* known project, so timers require no
+working-directory setup. To pick specific projects regardless of the
+current directory, pass ``-i`` (repeatable)::
+
+    b4 review cron -i linux-subsystemA -i linux-subsystemB
+
+B4 finds each project's repository through a recorded path: it is
+saved when you enroll, and refreshed whenever ``b4 review tui`` or
+``b4 review cron`` runs from within the repository. Projects enrolled
+with an older b4 need one such run before cron can find their
+repository; until then they get a database-only update and a warning
+that queue delivery was skipped.
+
+Repository-local git configuration (``b4.*``, ``user.*`` and
+``sendemail.*`` settings, and the toplevel ``.b4-config`` file) is
+reloaded for each project as the sweep enters it, so per-repository
+settings like :term:`b4.thanks-check-repo` or a per-project sendemail
+identity work the same as when running from within the repository.
+
+Scheduling with a systemd timer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Create ``~/.config/systemd/user/b4-review-cron.service``:
+
+.. code-block:: ini
+
+    [Unit]
+    Description=b4 review periodic maintenance
+
+    [Service]
+    Type=oneshot
+    # Sweeps all enrolled projects; add -i identifier to limit
+    ExecStart=/usr/bin/b4 review cron
+
+and ``~/.config/systemd/user/b4-review-cron.timer``:
+
+.. code-block:: ini
+
+    [Unit]
+    Description=Run b4 review maintenance every 30 minutes
+
+    [Timer]
+    OnBootSec=5min
+    OnUnitActiveSec=30min
+
+    [Install]
+    WantedBy=timers.target
+
+Then enable it::
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now b4-review-cron.timer
+
+Check the output of past runs with::
+
+    journalctl --user -u b4-review-cron.service
+
+A classic crontab entry works just as well::
+
+    */30 * * * * b4 review cron
+
+Kicking the queue after a push
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Git has no client-side post-push hook, so the usual way to deliver
+queued thanks right after pushing is a wrapper or alias::
+
+    git push korg && b4 review cron --deliver-queue
+
+Since this runs from within the repository you just pushed, it
+delivers that project's queue only.
+
+If your push lands on the public replica with a delay, messages that
+are not yet visible simply stay queued — the next cron sweep delivers
+them once the publication check passes.
+
 Optional flags
 --------------
 
@@ -1212,6 +1336,32 @@ commit SHAs, and other tracking data.
 
       b4 review show-info --json
       b4 review show-info --list --json
+
+``b4 review cron``
+~~~~~~~~~~~~~~~~~~
+Runs periodic review maintenance non-interactively (see
+:ref:`review_cron`). With no task flags, runs everything.
+
+``-i IDENTIFIER, --identifier IDENTIFIER``
+  Limit the run to this project identifier; may be given multiple
+  times (default: the enrolled repository containing the current
+  directory, or all known projects when not inside one).
+
+``--update``
+  Rescan branches, update all tracked series, and wake expired
+  snoozes.
+
+``--deliver-queue``
+  Deliver queued thank-you messages whose commits are now published.
+
+``--dry-run``
+  Only report what would be delivered from the queue; skip the series
+  update.
+
+``--sign``
+  Patatt-sign outgoing thank-you messages. Unlike the TUI, cron does
+  not sign by default, because signing keys are usually not available
+  to timer processes.
 
 The available keys are:
 

@@ -18,11 +18,20 @@ import pathlib
 import re
 import shlex
 import shutil
-import sqlite3
 import subprocess
 import sys
 from string import Template
-from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -56,6 +65,7 @@ from b4.review_tui._common import (
     run_lore_worker,
 )
 from b4.review_tui._modals import (
+    QUEUE_BUSY,
     TRACKING_HELP_LINES,
     AbandonConfirmScreen,
     ActionScreen,
@@ -1034,66 +1044,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 self._invalidate_caches()
                 self._load_series()
 
-    @staticmethod
-    def _restore_snoozed_tracking(topdir: str, review_branch: str) -> str:
-        """Restore previous state from snoozed tracking commit metadata.
-
-        Reads the snoozed dict from the tracking commit, restores the
-        previous status, removes the snoozed key, and saves the commit.
-        Returns the previous status (defaults to 'reviewing').
-        """
-        cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
-        trk_series = tracking.get('series', {})
-        snoozed_info = trk_series.get('snoozed', {})
-        prev_status = str(snoozed_info.get('previous_state', 'reviewing'))
-        trk_series['status'] = prev_status
-        trk_series.pop('snoozed', None)
-        tracking['series'] = trk_series
-        b4.review.save_tracking_ref(topdir, review_branch, cover_text, tracking)
-        return prev_status
-
     def _auto_wake_snoozed(self) -> None:
-        """Auto-wake snoozed series whose wake-up condition has been met.
-
-        Checks two conditions:
-        - Time-based: the snoozed_until date has passed.
-        - Tag-based: the target git tag now exists.
-
-        For each woken series, restores the previous status in both
-        the tracking commit and the database.
-        """
-        try:
-            conn = b4.review.tracking.get_db(self._identifier)
-        except (FileNotFoundError, Exception):
-            return
-        try:
-            topdir = b4.git_get_toplevel()
-            # Wake series whose snooze date has passed
-            for entry in b4.review.tracking.get_expired_snoozed(conn):
-                self._wake_one(conn, entry, topdir)
-            # Wake series whose target tag now exists
-            if topdir:
-                for entry in b4.review.tracking.get_tag_snoozed(conn):
-                    tagname = entry['snoozed_until'][4:]  # strip 'tag:' prefix
-                    if b4.git_revparse_tag(topdir, tagname):
-                        self._wake_one(conn, entry, topdir)
-        finally:
-            conn.close()
-
-    def _wake_one(
-        self, conn: 'sqlite3.Connection', entry: Dict[str, Any], topdir: Optional[str]
-    ) -> None:
-        """Restore a single snoozed series to its previous state."""
-        cid = entry['change_id']
-        rev = entry['revision']
-        prev_status = 'reviewing'
-        review_branch = f'b4/review/{cid}'
-        if topdir and b4.git_branch_exists(topdir, review_branch):
-            try:
-                prev_status = self._restore_snoozed_tracking(topdir, review_branch)
-            except (SystemExit, Exception):
-                pass
-        b4.review.tracking.unsnooze_series(conn, cid, prev_status, revision=rev)
+        """Auto-wake snoozed series whose wake-up condition has been met."""
+        b4.review.tracking.auto_wake_snoozed(self._identifier, b4.git_get_toplevel())
 
     def _load_series(self) -> None:
         self._auto_wake_snoozed()
@@ -1565,7 +1518,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     # Unsnooze: clear snoozed_until + restore tracking commit
                     if topdir and b4.git_branch_exists(topdir, branch_name):
                         try:
-                            self._restore_snoozed_tracking(topdir, branch_name)
+                            b4.review.tracking.restore_snoozed_tracking(
+                                topdir, branch_name
+                            )
                         except (SystemExit, Exception):
                             pass
                     if conn:
@@ -2343,6 +2298,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     def _on_update_complete(self, result: Optional[Dict[str, Any]]) -> None:
         """Build a summary notification from an update result."""
         if result is None:
+            return
+        if result.get('busy'):
+            self.notify(
+                'Series update is already running elsewhere (cron?)',
+                severity='warning',
+            )
             return
         checked = result.get('series_checked', 0)
         updated = result.get('series_updated', 0)
@@ -4625,7 +4586,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         review_branch = f'b4/review/{change_id}'
         if topdir and b4.git_branch_exists(topdir, review_branch):
             try:
-                previous_status = self._restore_snoozed_tracking(topdir, review_branch)
+                previous_status = b4.review.tracking.restore_snoozed_tracking(
+                    topdir, review_branch
+                )
             except (SystemExit, Exception) as ex:
                 logger.warning('Could not update tracking commit: %s', ex)
 
@@ -5029,33 +4992,27 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self.push_screen(QueueScreen(entries), _on_queue_result)
 
     def _deliver_queue(self) -> None:
-        """Push a delivery modal with progress bar."""
+        """Push a delivery modal with progress bar.
+
+        Delivered series are marked 'thanked' by process_queue itself
+        (DB + tracking commit); the callback only reports and reloads.
+        """
 
         def _on_delivery_result(
-            result: Optional[Tuple[int, int, List[Tuple[str, int]]]],
+            result: Union[None, str, Tuple[int, int, List[Tuple[str, int]]]],
         ) -> None:
-            if result is None:
+            if result == QUEUE_BUSY:
+                self.notify(
+                    'Queue delivery is already running elsewhere (cron?)',
+                    severity='warning',
+                )
+                self._refresh_queue_indicator()
+                return
+            if result is None or isinstance(result, str):
                 self.notify('Queue delivery cancelled or failed', severity='warning')
                 self._refresh_queue_indicator()
                 return
             delivered, pending, delivered_series = result
-            # Mark delivered series as thanked
-            for change_id, revision in delivered_series:
-                if self._identifier and change_id:
-                    try:
-                        conn = b4.review.tracking.get_db(self._identifier)
-                        b4.review.tracking.update_series_status(
-                            conn, change_id, 'thanked', revision=revision
-                        )
-                        conn.close()
-                    except Exception as ex:
-                        logger.warning('Could not update series status: %s', ex)
-                    topdir = b4.git_get_toplevel()
-                    if topdir:
-                        review_branch = f'b4/review/{change_id}'
-                        b4.review.update_tracking_status(
-                            topdir, review_branch, 'thanked'
-                        )
             parts = []
             if delivered:
                 parts.append(f'{delivered} delivered')
@@ -5073,6 +5030,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 self._queue_count,
                 dryrun=self._email_dryrun,
                 patatt_sign=self._patatt_sign,
+                identifier=self._identifier,
+                topdir=b4.git_get_toplevel(),
             ),
             _on_delivery_result,
         )

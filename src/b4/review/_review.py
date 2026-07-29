@@ -25,6 +25,7 @@ import b4
 import b4.mbox
 import b4.review
 import b4.review.tracking
+import b4.ty
 
 logger = b4.logger
 
@@ -456,6 +457,8 @@ def main(cmdargs: argparse.Namespace) -> None:
         b4.review.tracking.cmd_track(cmdargs)
     elif cmdargs.review_subcmd == 'show-info':
         cmd_show_info(cmdargs)
+    elif cmdargs.review_subcmd == 'cron':
+        cmd_cron(cmdargs)
 
 
 def get_review_branch_patch_ids(
@@ -2423,6 +2426,282 @@ def update_series_tracking(
     return result
 
 
+def _get_update_lock_path(identifier: str) -> str:
+    """Path of the flock guarding a tracking-update sweep.
+
+    Per-identifier, next to the sqlite database it protects; shared by
+    the TUI's update-all and ``b4 review cron``.
+    """
+    reviewdir = b4.review.tracking.get_review_data_dir()
+    return os.path.join(reviewdir, f'{identifier}.update.lock')
+
+
+def update_all_tracking(
+    identifier: str,
+    linkmask: str,
+    topdir: Optional[str] = None,
+    series_list: Optional[List[Dict[str, Any]]] = None,
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
+    cancel_cb: Optional[Callable[[], bool]] = None,
+) -> Dict[str, Any]:
+    """Rescan branches, then fetch threads and update all tracked series.
+
+    The whole sweep holds a per-identifier flock, so a cron run and the
+    TUI's update-all can never write over each other; if another sweep
+    is already running, b4.LockHeldError is raised immediately.
+
+    *series_list* limits the sweep to the given series (as returned by
+    tracking.get_all_tracked_series); when None, all non-snoozed series
+    are updated.  *progress_cb*, when provided, is called as
+    ``progress_cb(completed, total, subject)`` around each series.
+    *cancel_cb* is polled between series; returning True stops the
+    sweep.
+
+    Returns a summary dict with keys: series_checked, series_updated,
+    errors, gone, followup_updated, error_details, cancelled.
+    """
+    result: Dict[str, Any] = {
+        'series_checked': 0,
+        'series_updated': 0,
+        'errors': 0,
+        'gone': 0,
+        'followup_updated': 0,
+        'error_details': [],
+        'cancelled': False,
+    }
+
+    with b4.lockfile_nb(_get_update_lock_path(identifier)):
+        # Rescan local review branches first so the DB reflects current
+        # on-disk state before the network update runs.
+        if topdir:
+            try:
+                rescan = b4.review.tracking.rescan_branches(identifier, topdir)
+                result['gone'] = rescan.get('gone', 0)
+            except Exception as ex:
+                logger.warning('Pre-update rescan failed: %s', ex)
+
+        if series_list is None:
+            series_list = [
+                s
+                for s in b4.review.tracking.get_all_tracked_series(identifier)
+                if s.get('status') not in ('snoozed', 'archived')
+            ]
+
+        total = len(series_list)
+        for i, series in enumerate(series_list):
+            if cancel_cb and cancel_cb():
+                result['cancelled'] = True
+                break
+
+            subject = series.get('subject', '(no subject)')
+            if progress_cb:
+                progress_cb(i, total, subject)
+
+            try:
+                # Called via the package attribute: it is the established
+                # patch seam for tests and TUI callers alike
+                r = b4.review.update_series_tracking(
+                    series, identifier, linkmask, topdir=topdir
+                )
+            except liblore.OperationCancelledError:
+                result['cancelled'] = True
+                break
+            result['series_checked'] += 1
+            if r.get('new_revisions') or r.get('new_trailers'):
+                result['series_updated'] += 1
+            if r.get('error'):
+                result['errors'] += 1
+                submitter = series.get('sender_name', 'unknown')
+                result['error_details'].append((submitter, r['error']))
+            if r.get('counts_updated'):
+                result['followup_updated'] += 1
+
+            if progress_cb:
+                progress_cb(i + 1, total, subject)
+
+    return result
+
+
+def _cron_update(identifier: str, topdir: Optional[str]) -> None:
+    """Run the update portion of a cron sweep: wake snoozes, update all."""
+    # Wake expired snoozes first, so newly-woken series are included in
+    # the update sweep below.
+    woken = b4.review.tracking.auto_wake_snoozed(identifier, topdir)
+    if woken:
+        logger.info('Woke %s snoozed series', woken)
+
+    config = b4.get_main_config()
+    linkmask = str(config.get('linkmask', 'https://lore.kernel.org/r/%s'))
+    try:
+        result = update_all_tracking(identifier, linkmask, topdir=topdir)
+    except b4.LockHeldError:
+        logger.info('Series update already running elsewhere, skipping')
+        return
+
+    if result['gone']:
+        logger.warning('%s review branch(es) are gone', result['gone'])
+    if result['series_updated']:
+        logger.info(
+            'Updated %s of %s tracked series',
+            result['series_updated'],
+            result['series_checked'],
+        )
+    else:
+        logger.debug('Checked %s series, no updates', result['series_checked'])
+    for submitter, error in result['error_details']:
+        logger.warning('Update error (%s): %s', submitter, error)
+
+
+def _cron_deliver(
+    identifier: str, topdir: Optional[str], patatt_sign: bool, check_only: bool
+) -> None:
+    """Run the queue-delivery portion of a cron sweep."""
+    if b4.ty.get_queued_count(topdir=topdir) == 0:
+        if check_only:
+            logger.info('Thanks queue is empty')
+        else:
+            logger.debug('Thanks queue is empty')
+        return
+
+    def _progress(completed: int, total: int, status: str) -> None:
+        if status.startswith('Checking: '):
+            return
+        if check_only:
+            logger.info('%s', status)
+        elif status.startswith(('Not yet visible:', 'Check failed:')):
+            # Pending is normal operation; don't generate cron mail
+            logger.debug('%s', status)
+        elif status.startswith('Send failed:'):
+            # process_queue already logged a warning
+            pass
+        else:
+            logger.info('Delivered: %s', status)
+
+    try:
+        delivered, pending, _series = b4.ty.process_queue(
+            patatt_sign=patatt_sign,
+            progress_cb=_progress,
+            check_only=check_only,
+            identifier=identifier,
+            topdir=topdir,
+        )
+    except b4.LockHeldError:
+        logger.info('Queue delivery already running elsewhere, skipping')
+        return
+
+    if check_only:
+        logger.info(
+            '%s message(s) would be delivered, %s still pending', delivered, pending
+        )
+    elif delivered:
+        logger.info('Delivered %s message(s), %s still pending', delivered, pending)
+    else:
+        logger.debug('Nothing delivered; %s still pending', pending)
+
+
+def _cron_run_one(
+    identifier: str,
+    topdir: Optional[str],
+    *,
+    do_update: bool,
+    do_deliver: bool,
+    dryrun: bool,
+    patatt_sign: bool,
+) -> None:
+    """Run the requested cron tasks for a single project."""
+    if do_update:
+        if dryrun:
+            logger.info('--dry-run: skipping series update')
+        else:
+            _cron_update(identifier, topdir)
+    if do_deliver:
+        _cron_deliver(identifier, topdir, patatt_sign=patatt_sign, check_only=dryrun)
+
+
+def cmd_cron(cmdargs: argparse.Namespace) -> None:
+    """Run periodic review maintenance non-interactively.
+
+    With no task flags, runs everything: snooze wake-up, branch rescan,
+    series update, and queue delivery.  Designed for cron/systemd
+    timers or a git-push wrapper: quiet when there is nothing to
+    report, and exits 0 when another run already holds a lock.
+
+    ``-i`` (repeatable) limits the run to the named projects.  With no
+    ``-i``, runs on the enrolled repository containing the current
+    directory, or on every known tracking database when not inside
+    one.  A project whose repository path is not known (never enrolled
+    or run from within its repository with this b4 version) gets a
+    database-only update and no queue delivery.
+    """
+    do_update = cmdargs.cron_update
+    do_deliver = cmdargs.cron_deliver
+    if not do_update and not do_deliver:
+        do_update = do_deliver = True
+    dryrun = bool(cmdargs.dryrun)
+    # Unlike the TUI, signing is opt-in: cron typically runs from a timer
+    # process that has no access to agents or passphrase-protected keys
+    patatt_sign = bool(cmdargs.sign)
+
+    cwd_topdir = b4.git_get_toplevel()
+    cwd_id = b4.review.tracking.get_repo_identifier(cwd_topdir) if cwd_topdir else None
+    if cwd_id and not b4.review.tracking.db_exists(cwd_id):
+        cwd_id = None
+    if cwd_topdir and cwd_id:
+        # Keep the identifier→repository mapping fresh whenever cron
+        # runs from within an enrolled repository
+        b4.review.tracking.record_repo_path(cwd_id, cwd_topdir)
+
+    requested = cmdargs.identifier
+    if not requested and cwd_id:
+        # Inside an enrolled repository, bare cron runs on that project
+        requested = [cwd_id]
+    projects: List[Tuple[str, Optional[str]]]
+    if not requested or '__all__' in requested:
+        projects = b4.review.tracking.get_known_projects()
+        if not projects:
+            logger.critical('No tracking databases found.')
+            sys.exit(1)
+    else:
+        projects = []
+        for one_id in requested:
+            if not b4.review.tracking.db_exists(one_id):
+                logger.critical('No tracking database for identifier: %s', one_id)
+                sys.exit(1)
+            if one_id == cwd_id:
+                one_topdir = cwd_topdir
+            else:
+                one_topdir = b4.review.tracking.get_repo_path(one_id)
+            projects.append((one_id, one_topdir))
+
+    for one_id, one_topdir in projects:
+        logger.debug(
+            'Processing project: %s (%s)',
+            one_id,
+            one_topdir or 'no repository path',
+        )
+        if do_deliver and one_topdir is None:
+            logger.warning(
+                'No repository path known for %s; skipping queue delivery',
+                one_id,
+            )
+        try:
+            # Apply this project's repository-local git configuration
+            # (b4.*, user.*, sendemail.*) for the duration of its run
+            b4.setup_config(cmdargs, topdir=one_topdir)
+            _cron_run_one(
+                one_id,
+                one_topdir,
+                do_update=do_update,
+                do_deliver=bool(do_deliver and one_topdir),
+                dryrun=dryrun,
+                patatt_sign=patatt_sign,
+            )
+        except Exception as ex:
+            logger.warning('Cron run failed for %s: %s', one_id, ex)
+    # Restore the configuration of the starting directory
+    b4.setup_config(cmdargs)
+
+
 def cmd_tui(cmdargs: argparse.Namespace) -> None:
     try:
         from b4.review_tui._entry import run_tracking_tui
@@ -2436,6 +2715,11 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
         logger.critical('Could not determine project identifier.')
         logger.critical('First run "b4 review enroll" or specify -i identifier')
         sys.exit(1)
+
+    # Keep the identifier→repository mapping fresh for cron -i __all__
+    tui_topdir = b4.git_get_toplevel()
+    if tui_topdir and b4.review.tracking.get_repo_identifier(tui_topdir) == identifier:
+        b4.review.tracking.record_repo_path(identifier, tui_topdir)
 
     if not b4.review.tracking.db_exists(identifier):
         topdir = b4.git_get_toplevel()

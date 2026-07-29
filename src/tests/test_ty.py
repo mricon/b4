@@ -408,3 +408,145 @@ def test_process_queue_holds_unpublished(
     assert calls == [(fullsha, 'https://git.kernel.org/pub/scm/utils/b4/b4.git')]
     qdir = b4.ty._get_queue_dir()
     assert os.path.exists(os.path.join(qdir, 'test-change-id-v1.msg'))
+
+
+def test_queue_message_atomic_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Queue files appear atomically: no temp leftovers in the queue dir."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    b4.ty.queue_message(msg, 'https://example.com/c/abcdef123456', 'cid', 1)
+    qdir = b4.ty._get_queue_dir()
+    entries = os.listdir(qdir)
+    assert 'cid-v1.msg' in entries
+    assert not [f for f in entries if f.endswith('.tmp')]
+
+
+def _queue_test_message(change_id: str = 'test-change-id', revision: int = 1) -> str:
+    """Queue a minimal thanks message; returns the expected full sha."""
+    fullsha = '9a8b' * 10
+    checkurl = f'https://git.kernel.org/pub/scm/utils/b4/b4.git/commit/?id={fullsha}'
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    b4.ty.queue_message(msg, checkurl, change_id, revision)
+    return fullsha
+
+
+def test_process_queue_lock_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A second delivery run must fail fast while the lock is held, and
+    succeed normally once it is released."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _queue_test_message()
+    monkeypatch.setattr(
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: False
+    )
+    with b4.lockfile_nb(b4.ty._get_queue_lock_path()):
+        with pytest.raises(b4.LockHeldError):
+            b4.ty.process_queue()
+    # After release, the queue is processable again
+    assert b4.ty.process_queue() == (0, 1, [])
+
+
+def test_process_queue_check_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """check_only reports what would be delivered without sending or
+    moving anything."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _queue_test_message()
+    monkeypatch.setattr(
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+    )
+
+    def _no_send(dryrun: bool = False) -> Tuple[None, str]:
+        raise AssertionError('check_only must not open an smtp connection')
+
+    monkeypatch.setattr(b4, 'get_smtp', _no_send)
+    statuses: List[str] = []
+    delivered, pending, dseries = b4.ty.process_queue(
+        check_only=True, progress_cb=lambda c, t, s: statuses.append(s)
+    )
+    assert (delivered, pending) == (1, 0)
+    assert dseries == [('test-change-id', 1)]
+    assert 'Would deliver: Re: [PATCH] test' in statuses
+    qdir = b4.ty._get_queue_dir()
+    assert os.path.exists(os.path.join(qdir, 'test-change-id-v1.msg'))
+
+
+def test_process_queue_explicit_topdir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The queue of an explicitly-given repository is processed even when
+    the current directory is not inside it (cron -i __all__)."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _queue_test_message()
+    monkeypatch.setattr(
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+    )
+    outside = tmp_path / 'elsewhere'
+    outside.mkdir()
+    monkeypatch.chdir(str(outside))
+    assert b4.ty.get_queued_count() == 0
+    assert b4.ty.get_queued_count(topdir=repo) == 1
+    delivered, pending, _dseries = b4.ty.process_queue(check_only=True, topdir=repo)
+    assert (delivered, pending) == (1, 0)
+
+
+def test_process_queue_finalizes_thanked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Delivering a queued message marks the series 'thanked' in the
+    tracking database."""
+    import b4.review.tracking as tracking
+
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    conn = tracking.init_db('cronproj')
+    tracking.add_series_to_db(
+        conn,
+        'test-change-id',
+        1,
+        'test subject',
+        'Test',
+        't@example.com',
+        None,
+        '<msg@id>',
+        1,
+    )
+    conn.commit()
+    conn.close()
+
+    _queue_test_message()
+    monkeypatch.setattr(
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+    )
+    monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
+    monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)
+
+    delivered, pending, dseries = b4.ty.process_queue(identifier='cronproj')
+    assert (delivered, pending) == (1, 0)
+    assert dseries == [('test-change-id', 1)]
+    conn = tracking.get_db('cronproj')
+    row = conn.execute(
+        'SELECT status FROM series WHERE change_id = ?', ('test-change-id',)
+    ).fetchone()
+    conn.close()
+    assert row[0] == 'thanked'
+    qdir = b4.ty._get_queue_dir()
+    assert not os.path.exists(os.path.join(qdir, 'test-change-id-v1.msg'))
+    assert os.path.exists(os.path.join(qdir, 'sent', 'test-change-id-v1.msg'))

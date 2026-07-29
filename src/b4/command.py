@@ -603,6 +603,51 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Output in JSON format',
     )
 
+    # b4 review cron
+    sp_rev_cron = rev_subparsers.add_parser(
+        'cron',
+        help='Run periodic review maintenance non-interactively '
+        '(suitable for cron or a git-push wrapper)',
+    )
+    sp_rev_cron.add_argument(
+        '-i',
+        '--identifier',
+        dest='identifier',
+        action='append',
+        default=None,
+        help='Limit the run to this project identifier; may be given multiple '
+        'times (default: the enrolled repository containing the current '
+        'directory, or all known projects when not inside one)',
+    )
+    sp_rev_cron.add_argument(
+        '--update',
+        dest='cron_update',
+        action='store_true',
+        default=False,
+        help='Rescan branches, update all tracked series, wake expired snoozes',
+    )
+    sp_rev_cron.add_argument(
+        '--deliver-queue',
+        dest='cron_deliver',
+        action='store_true',
+        default=False,
+        help='Deliver queued thanks messages whose commits are now published',
+    )
+    sp_rev_cron.add_argument(
+        '--dry-run',
+        dest='dryrun',
+        action='store_true',
+        default=False,
+        help='Only report what would be delivered from the queue; skip updates',
+    )
+    sp_rev_cron.add_argument(
+        '--sign',
+        dest='sign',
+        action='store_true',
+        default=False,
+        help='Patatt-sign outgoing thanks messages (off by default)',
+    )
+
     # b4 pr
     sp_pr = subparsers.add_parser(
         'pr', help='Fetch a pull request found in a message ID'

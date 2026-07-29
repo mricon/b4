@@ -917,21 +917,34 @@ def get_wanted_branch(cmdargs: argparse.Namespace) -> str:
     return wantbranch
 
 
-def _get_queue_dir(dryrun: bool = False) -> str:
+def _get_queue_dir(dryrun: bool = False, topdir: Optional[str] = None) -> str:
     """Return the path to the thanks queue directory.
 
     Uses .git/b4-review/queue (via git-common-dir for worktree
-    support).  Dry-run messages go into a ``dryrun`` subdirectory.
-    When not inside a git repository, returns a path that will not
-    exist so callers that check os.path.isdir() get empty results.
+    support) of *topdir*, or of the current directory when not given.
+    Dry-run messages go into a ``dryrun`` subdirectory.  When no git
+    repository can be found, returns a path that will not exist so
+    callers that check os.path.isdir() get empty results.
     """
-    gitdir = b4.git_get_common_dir()
+    gitdir = b4.git_get_common_dir(topdir)
     if not gitdir:
         return ''
     qdir = os.path.join(gitdir, 'b4-review', 'queue')
     if dryrun:
         qdir = os.path.join(qdir, 'dryrun')
     return qdir
+
+
+def _get_queue_lock_path(topdir: Optional[str] = None) -> str:
+    """Path of the flock guarding queue delivery.
+
+    Shared by the TUI and ``b4 review cron`` so two delivery runs can
+    never process the queue concurrently (which would double-send).
+    """
+    gitdir = b4.git_get_common_dir(topdir)
+    if not gitdir:
+        return ''
+    return os.path.join(gitdir, 'b4-review', 'queue.lock')
 
 
 def _queue_filename(change_id: str, revision: int) -> str:
@@ -1100,13 +1113,17 @@ def queue_message(
     if checkrepo:
         msg['X-Check-Repo'] = checkrepo
     filepath = os.path.join(qdir, _queue_filename(change_id, revision))
-    with open(filepath, 'wb') as fh:
+    # Write to a temp name and rename into place, so a concurrent
+    # delivery sweep can never see (and send) a half-written message.
+    tmppath = filepath + '.tmp'
+    with open(tmppath, 'wb') as fh:
         fh.write(msg.as_bytes(policy=b4.emlpolicy))
+    os.rename(tmppath, filepath)
 
 
-def get_queued_count(dryrun: bool = False) -> int:
+def get_queued_count(dryrun: bool = False, topdir: Optional[str] = None) -> int:
     """Return the number of queued .msg files."""
-    qdir = _get_queue_dir(dryrun=dryrun)
+    qdir = _get_queue_dir(dryrun=dryrun, topdir=topdir)
     if not os.path.isdir(qdir):
         return 0
     return sum(1 for f in os.listdir(qdir) if f.endswith('.msg'))
@@ -1173,22 +1190,87 @@ def _parse_change_revision(fname: str) -> Tuple[str, int]:
     return (stem, 0)
 
 
+def _mark_series_thanked(
+    change_id: str, revision: int, identifier: Optional[str], topdir: Optional[str]
+) -> None:
+    """Record 'thanked' status for a delivered series.
+
+    Updates the tracking database (when *identifier* is given) and the
+    review branch's tracking commit (when *topdir* is given).  Never
+    raises: the thanks mail is already out, so bookkeeping failures
+    must not make the caller count the message as still pending.
+    """
+    if not change_id:
+        return
+    # Imported here to keep b4.ty usable without the review machinery
+    import b4.review
+    import b4.review.tracking
+
+    if identifier:
+        try:
+            conn = b4.review.tracking.get_db(identifier)
+            b4.review.tracking.update_series_status(
+                conn, change_id, 'thanked', revision=revision
+            )
+            conn.close()
+        except Exception as ex:
+            logger.warning('Could not update series status: %s', ex)
+    if topdir:
+        review_branch = f'b4/review/{change_id}'
+        b4.review.update_tracking_status(topdir, review_branch, 'thanked')
+
+
 def process_queue(
     dryrun: bool = False,
     patatt_sign: bool = True,
     progress_cb: ProgressCallbackT = None,
+    check_only: bool = False,
+    identifier: Optional[str] = None,
+    topdir: Optional[str] = None,
 ) -> QueueResultT:
     """Check queued messages and deliver those whose commits are visible.
+
+    The whole run holds an exclusive flock, so a cron sweep and a TUI
+    delivery can never process the queue concurrently (which would
+    double-send).  If another delivery is already running,
+    b4.LockHeldError is raised immediately.
+
+    With *check_only*, messages are checked and reported but nothing
+    is sent or moved; the returned 'delivered' count means 'would
+    deliver'.
+
+    When *identifier* (and *topdir*) are given, each delivered series
+    is marked 'thanked' in the tracking database and its tracking
+    commit as its message goes out.
+
+    *topdir* selects which repository's queue to process (default: the
+    one containing the current directory); it is also where tracking
+    commits get their status update.
 
     *progress_cb*, when provided, is called as
     ``progress_cb(completed, total, status_text)`` after each message.
     Returns (delivered, still_pending, delivered_series) where
     delivered_series is a list of (change_id, revision) tuples.
     """
-    qdir = _get_queue_dir(dryrun=dryrun)
+    qdir = _get_queue_dir(dryrun=dryrun, topdir=topdir)
     if not os.path.isdir(qdir):
         return (0, 0, [])
 
+    with b4.lockfile_nb(_get_queue_lock_path(topdir)):
+        return _process_queue_locked(
+            qdir, dryrun, patatt_sign, progress_cb, check_only, identifier, topdir
+        )
+
+
+def _process_queue_locked(
+    qdir: str,
+    dryrun: bool,
+    patatt_sign: bool,
+    progress_cb: ProgressCallbackT,
+    check_only: bool,
+    identifier: Optional[str],
+    topdir: Optional[str],
+) -> QueueResultT:
     files = sorted(f for f in os.listdir(qdir) if f.endswith('.msg'))
     if not files:
         return (0, 0, [])
@@ -1227,6 +1309,14 @@ def process_queue(
                     progress_cb(i + 1, total, f'Not yet visible: {subject}')
                 continue
 
+        if check_only:
+            delivered += 1
+            change_id, revision = _parse_change_revision(fname)
+            delivered_series.append((change_id, revision))
+            if progress_cb:
+                progress_cb(i + 1, total, f'Would deliver: {subject}')
+            continue
+
         # Strip the internal headers before sending
         for hdr in QUEUE_CHECK_HEADERS:
             if hdr in msg:
@@ -1253,7 +1343,11 @@ def process_queue(
         except Exception as ex:
             logger.warning('Failed to send queued message %s: %s', fname, ex)
             still_pending += 1
+            if progress_cb:
+                progress_cb(i + 1, total, f'Send failed: {subject}')
+            continue
 
+        _mark_series_thanked(change_id, revision, identifier, topdir)
         if progress_cb:
             progress_cb(i + 1, total, subject)
 

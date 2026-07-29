@@ -9,6 +9,7 @@ import email.parser
 import email.policy
 import email.quoprimime
 import email.utils
+import fcntl
 import fnmatch
 import hashlib
 import io
@@ -85,6 +86,34 @@ class AmConflictError(RuntimeError):
         self.output = output
         self.base_sha = base_sha
         super().__init__(output)
+
+
+class LockHeldError(RuntimeError):
+    """Raised when a non-blocking lock file is already held elsewhere."""
+
+
+@contextmanager
+def lockfile_nb(path: str) -> Generator[None, None, None]:
+    """Hold an exclusive flock on *path* for the duration of the context.
+
+    The lock is non-blocking: if another process (or another thread in
+    this process) already holds it, LockHeldError is raised immediately.
+    The kernel releases the lock when the holding process dies, so no
+    stale-lock cleanup is ever needed. The lock file itself is left in
+    place after use.
+    """
+    lockdir = os.path.dirname(path)
+    if lockdir:
+        os.makedirs(lockdir, exist_ok=True)
+    fh = open(path, 'w')
+    try:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as ex:
+            raise LockHeldError(f'Lock is held elsewhere: {path}') from ex
+        yield
+    finally:
+        fh.close()
 
 
 def _dkim_log_filter(record: logging.LogRecord) -> bool:
@@ -3775,14 +3804,20 @@ def git_temp_clone(gitdir: Optional[str] = None) -> Generator[str, None, None]:
         yield dfn
 
 
-def setup_config(cmdargs: argparse.Namespace) -> None:
+def setup_config(cmdargs: argparse.Namespace, topdir: Optional[str] = None) -> None:
     """Setup configuration options. Needs to be called before accessing any of
-    the config options."""
-    _setup_main_config(cmdargs)
-    _setup_user_config(cmdargs)
+    the config options.
+
+    *topdir* selects which repository's local git configuration applies
+    (default: the one containing the current directory).  Callers that
+    operate on several repositories in one run (``b4 review cron -i
+    __all__``) call this again per repository.
+    """
+    _setup_main_config(cmdargs, topdir=topdir)
+    _setup_user_config(cmdargs, gitdir=topdir)
 
     # Depends on main config!
-    _setup_sendemail_config(cmdargs)
+    _setup_sendemail_config(cmdargs, gitdir=topdir)
 
 
 def _cmdline_config_override(
@@ -3816,6 +3851,7 @@ def get_config_from_git(
     defaults: Optional[Dict[str, Any]] = None,
     multivals: Optional[List[str]] = None,
     source: Optional[str] = None,
+    gitdir: Optional[str] = None,
 ) -> Dict[str, Any]:
     if multivals is None:
         multivals = list()
@@ -3823,7 +3859,7 @@ def get_config_from_git(
     if source:
         args += ['--file', source]
     args += ['-z', '--get-regexp', regexp]
-    _ecode, out = git_run_command(None, args)
+    _ecode, out = git_run_command(gitdir, args)
     gitconfig = defaults
     if not gitconfig:
         gitconfig = dict()
@@ -3859,13 +3895,16 @@ def _val_to_path(topdir: str, val: str) -> str:
     return val
 
 
-def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
+def _setup_main_config(
+    cmdargs: Optional[argparse.Namespace] = None, topdir: Optional[str] = None
+) -> None:
     global MAIN_CONFIG
 
     defcfg = copy.deepcopy(DEFAULT_CONFIG)
     # some options can be provided via the toplevel .b4-config file,
     # so load them up and use as defaults
-    topdir = git_get_toplevel()
+    if topdir is None:
+        topdir = git_get_toplevel()
     wtglobs = [
         'prep-*-check-cmd',
         'prep-pre-flight-checks',
@@ -3899,12 +3938,14 @@ def _setup_main_config(cmdargs: Optional[argparse.Namespace] = None) -> None:
                         logger.debug('wtcfg: %s=%s', key, val)
                         defcfg[key] = val
                         break
-    config = get_config_from_git(r'b4\..*', defaults=defcfg, multivals=multivals)
+    config = get_config_from_git(
+        r'b4\..*', defaults=defcfg, multivals=multivals, gitdir=topdir
+    )
     config['listid-preference'] = config['listid-preference'].split(',')
     config['listid-preference'].remove('*')
     config['listid-preference'].append('*')
     if config['gpgbin'] is None:
-        gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'})
+        gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'}, gitdir=topdir)
         config['gpgbin'] = gpgcfg['program']
 
     # If we specify DNS resolvers, configure them now
@@ -4036,10 +4077,12 @@ def save_cache(
         logger.debug('Could not write cache %s for %s', fullpath, identifier)
 
 
-def _setup_user_config(cmdargs: argparse.Namespace) -> None:
+def _setup_user_config(
+    cmdargs: argparse.Namespace, gitdir: Optional[str] = None
+) -> None:
     global USER_CONFIG
 
-    USER_CONFIG = get_config_from_git(r'user\..*')
+    USER_CONFIG = get_config_from_git(r'user\..*', gitdir=gitdir)
     if 'name' not in USER_CONFIG:
         if 'GIT_COMMITTER_NAME' in os.environ:
             USER_CONFIG['name'] = os.environ['GIT_COMMITTER_NAME']
@@ -4812,12 +4855,16 @@ def read_template(tptfile: str) -> str:
     return tpt
 
 
-def _setup_sendemail_config(cmdargs: argparse.Namespace) -> None:
+def _setup_sendemail_config(
+    cmdargs: argparse.Namespace, gitdir: Optional[str] = None
+) -> None:
     global SENDEMAIL_CONFIG
 
     # Get the default settings first
     config = get_main_config()
-    _basecfg = get_config_from_git(r'sendemail\.[^.]+$', multivals=['smtpserveroption'])
+    _basecfg = get_config_from_git(
+        r'sendemail\.[^.]+$', multivals=['smtpserveroption'], gitdir=gitdir
+    )
     identity = config.get('sendemail-identity') or _basecfg.get('identity')
     if identity:
         # Use this identity to override what we got from the default one
@@ -4825,6 +4872,7 @@ def _setup_sendemail_config(cmdargs: argparse.Namespace) -> None:
             rf'sendemail\.{identity}\..*',
             multivals=['smtpserveroption'],
             defaults=_basecfg,
+            gitdir=gitdir,
         )
         sectname = f'sendemail.{identity}'
         if not len(sconfig):

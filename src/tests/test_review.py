@@ -1,13 +1,16 @@
+import argparse
 import email.message
 import importlib.util
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from unittest import mock
 
 import pytest
 
 import b4
+import b4.review.tracking
 from b4 import review, review_tui
+from b4.review import _review
 from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
 
 # The address-helper functions exposed via review_tui live in a module that
@@ -4195,3 +4198,240 @@ class TestCollectReviewEmails:
         )
         msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
         assert msgs == []
+
+
+def _cron_args(**kwargs: Any) -> argparse.Namespace:
+    defaults: Dict[str, Any] = {
+        'identifier': None,
+        'cron_update': False,
+        'cron_deliver': False,
+        'dryrun': False,
+        'sign': False,
+        # Global b4 options consulted by setup_config()
+        'config': [],
+    }
+    defaults.update(kwargs)
+    return argparse.Namespace(**defaults)
+
+
+def test_cmd_cron_flag_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare cron runs all tasks; task flags select; --dry-run skips the
+    update and turns delivery into check-only."""
+    calls: List[Tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        _review,
+        '_cron_update',
+        lambda identifier, topdir: calls.append(('update', identifier)),
+    )
+    monkeypatch.setattr(
+        _review,
+        '_cron_deliver',
+        lambda identifier, topdir, patatt_sign, check_only: calls.append(
+            ('deliver', identifier, patatt_sign, check_only)
+        ),
+    )
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+    monkeypatch.setattr(b4, 'setup_config', lambda cmdargs, topdir=None: None)
+    monkeypatch.setattr(
+        b4.review.tracking, 'get_known_projects', lambda: [('proj', '/repo/proj')]
+    )
+
+    # Signing is opt-in for cron: timer processes rarely have key access
+    _review.cmd_cron(_cron_args())
+    assert calls == [('update', 'proj'), ('deliver', 'proj', False, False)]
+
+    calls.clear()
+    _review.cmd_cron(_cron_args(cron_deliver=True, sign=True))
+    assert calls == [('deliver', 'proj', True, False)]
+
+    calls.clear()
+    _review.cmd_cron(_cron_args(cron_update=True))
+    assert calls == [('update', 'proj')]
+
+    calls.clear()
+    _review.cmd_cron(_cron_args(dryrun=True))
+    assert calls == [('deliver', 'proj', False, True)]
+
+
+def test_cmd_cron_all_projects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare cron (no -i) sweeps every known project, reloading
+    repository-local configuration per project and skipping queue
+    delivery (but not updates) for projects without a recorded
+    repository."""
+    calls: List[Tuple[str, Optional[str], bool, bool]] = []
+    config_reloads: List[Optional[str]] = []
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+    monkeypatch.setattr(
+        b4.review.tracking,
+        'get_known_projects',
+        lambda: [('alpha', '/path/to/alpha'), ('beta', None)],
+    )
+    monkeypatch.setattr(
+        b4,
+        'setup_config',
+        lambda cmdargs, topdir=None: config_reloads.append(topdir),
+    )
+
+    def fake_run_one(
+        identifier: str,
+        topdir: Optional[str],
+        *,
+        do_update: bool,
+        do_deliver: bool,
+        dryrun: bool,
+        patatt_sign: bool,
+    ) -> None:
+        calls.append((identifier, topdir, do_update, do_deliver))
+
+    monkeypatch.setattr(_review, '_cron_run_one', fake_run_one)
+    _review.cmd_cron(_cron_args())
+    assert calls == [
+        ('alpha', '/path/to/alpha', True, True),
+        ('beta', None, True, False),
+    ]
+    # Per-project config reloads, plus the final restore
+    assert config_reloads == ['/path/to/alpha', None, None]
+
+    # An explicit -i __all__ means the same thing
+    calls.clear()
+    config_reloads.clear()
+    _review.cmd_cron(_cron_args(identifier=['__all__']))
+    assert [c[0] for c in calls] == ['alpha', 'beta']
+
+
+def test_cmd_cron_cwd_scopes_bare_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare cron inside an enrolled repository runs on that project
+    only (refreshing its recorded path); the all-projects sweep is
+    never consulted."""
+    calls: List[Tuple[str, Optional[str]]] = []
+    recorded: List[Tuple[str, str]] = []
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: '/repo/alpha')
+    monkeypatch.setattr(b4, 'setup_config', lambda cmdargs, topdir=None: None)
+    monkeypatch.setattr(
+        b4.review.tracking, 'get_repo_identifier', lambda topdir: 'alpha'
+    )
+    monkeypatch.setattr(b4.review.tracking, 'db_exists', lambda identifier: True)
+    monkeypatch.setattr(
+        b4.review.tracking,
+        'record_repo_path',
+        lambda identifier, topdir: recorded.append((identifier, topdir)),
+    )
+
+    def fail_known_projects() -> List[Tuple[str, Optional[str]]]:
+        raise AssertionError('get_known_projects should not be consulted')
+
+    monkeypatch.setattr(b4.review.tracking, 'get_known_projects', fail_known_projects)
+
+    def fake_run_one(identifier: str, topdir: Optional[str], **kwargs: Any) -> None:
+        calls.append((identifier, topdir))
+
+    monkeypatch.setattr(_review, '_cron_run_one', fake_run_one)
+    _review.cmd_cron(_cron_args())
+    assert calls == [('alpha', '/repo/alpha')]
+    assert recorded == [('alpha', '/repo/alpha')]
+
+
+def test_cmd_cron_selected_identifiers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """-i is repeatable and limits the sweep to the named projects,
+    finding each repository through the recorded path; an unknown
+    identifier aborts before anything runs."""
+    calls: List[Tuple[str, Optional[str], bool]] = []
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+    monkeypatch.setattr(b4, 'setup_config', lambda cmdargs, topdir=None: None)
+    monkeypatch.setattr(
+        b4.review.tracking,
+        'db_exists',
+        lambda identifier: identifier in ('alpha', 'beta'),
+    )
+    monkeypatch.setattr(
+        b4.review.tracking,
+        'get_repo_path',
+        lambda identifier: '/path/to/alpha' if identifier == 'alpha' else None,
+    )
+
+    def fake_run_one(
+        identifier: str,
+        topdir: Optional[str],
+        *,
+        do_update: bool,
+        do_deliver: bool,
+        dryrun: bool,
+        patatt_sign: bool,
+    ) -> None:
+        calls.append((identifier, topdir, do_deliver))
+
+    monkeypatch.setattr(_review, '_cron_run_one', fake_run_one)
+    _review.cmd_cron(_cron_args(identifier=['alpha', 'beta']))
+    assert calls == [
+        ('alpha', '/path/to/alpha', True),
+        ('beta', None, False),
+    ]
+
+    calls.clear()
+    with pytest.raises(SystemExit):
+        _review.cmd_cron(_cron_args(identifier=['alpha', 'nosuch']))
+    assert calls == []
+
+
+def test_cmd_cron_all_isolates_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One project's failure must not stop the sweep for the others."""
+    seen: List[str] = []
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+    monkeypatch.setattr(
+        b4.review.tracking,
+        'get_known_projects',
+        lambda: [('alpha', '/a'), ('beta', '/b')],
+    )
+
+    def fake_run_one(identifier: str, topdir: Optional[str], **kwargs: Any) -> None:
+        seen.append(identifier)
+        if identifier == 'alpha':
+            raise RuntimeError('boom')
+
+    monkeypatch.setattr(_review, '_cron_run_one', fake_run_one)
+    _review.cmd_cron(_cron_args())
+    assert seen == ['alpha', 'beta']
+
+
+def test_update_all_tracking_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second update sweep must fail fast while the lock is held."""
+    with b4.lockfile_nb(_review._get_update_lock_path('lockproj')):
+        with pytest.raises(b4.LockHeldError):
+            review.update_all_tracking('lockproj', 'https://lore.example/r/%s')
+
+
+def test_update_all_tracking_skips_snoozed_and_archived(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default sweep covers active series only, and aggregates
+    per-series results into the summary."""
+    series = [
+        {'change_id': 'a', 'subject': 's-a', 'status': 'new', 'sender_name': 'A'},
+        {'change_id': 'b', 'subject': 's-b', 'status': 'snoozed', 'sender_name': 'B'},
+        {'change_id': 'c', 'subject': 's-c', 'status': 'archived', 'sender_name': 'C'},
+        {'change_id': 'd', 'subject': 's-d', 'status': 'reviewing', 'sender_name': 'D'},
+    ]
+    monkeypatch.setattr(
+        b4.review.tracking, 'get_all_tracked_series', lambda identifier: series
+    )
+    updated: List[str] = []
+
+    def fake_update(
+        one: Dict[str, Any],
+        identifier: str,
+        linkmask: str,
+        topdir: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        updated.append(one['change_id'])
+        if one['change_id'] == 'd':
+            return {'new_revisions': 0, 'new_trailers': 0, 'error': 'kaboom'}
+        return {'new_revisions': 1, 'new_trailers': 0, 'error': None}
+
+    monkeypatch.setattr(review, 'update_series_tracking', fake_update)
+    result = review.update_all_tracking('sweeper', 'https://lore.example/r/%s')
+    assert updated == ['a', 'd']
+    assert result['series_checked'] == 2
+    assert result['series_updated'] == 1
+    assert result['errors'] == 1
+    assert result['error_details'] == [('D', 'kaboom')]
+    assert result['cancelled'] is False
