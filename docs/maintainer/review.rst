@@ -1159,8 +1159,11 @@ patatt key), pass ``--sign`` to restore the TUI behaviour.
 
 Cron is quiet when there is nothing to report, so a scheduler that
 mails command output (like cron itself) only bothers you when
-something actually happened. Messages held back by the publication
-check do not count as news; use ``--dry-run`` to see them.
+something actually happened. The progress narration you would see
+when running the same tasks interactively is suppressed; only
+summaries, deliveries and errors are printed. Messages held back by
+the publication check do not count as news; use ``--dry-run`` to see
+them, and ``b4 -d review cron`` to see the full narration.
 
 Concurrency is safe by design: the update sweep and the queue delivery
 each hold a lock shared with the TUI, so a cron run overlapping an

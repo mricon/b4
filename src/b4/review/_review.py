@@ -10,6 +10,7 @@ import datetime
 import email.message
 import email.utils
 import json
+import logging
 import os
 import re
 import shutil
@@ -2622,6 +2623,53 @@ def update_all_tracking(
     return result
 
 
+# Cron reporting that must survive _quiet_cron suppression (e.g. from a
+# progress callback invoked inside a silenced block) goes through this
+# child logger; everything it emits is exempt from the filter.
+cron_logger = logging.getLogger('b4.review.cron')
+
+
+class _quiet_cron:
+    """Context manager that silences chatty logging during a cron sweep.
+
+    Cron reuses the same code paths as the interactive commands (lore
+    lookups, thread analysis, SMTP delivery), which narrate their
+    progress at INFO and WARNING levels.  That is fine in a terminal,
+    but a cron job mails every line to the maintainer, so records below
+    *threshold* are dropped while the block runs, and the cron code
+    emits its own summaries afterwards -- either after the block, or
+    from within it via the exempt ``cron_logger``.  A --debug run
+    bypasses the filter entirely.
+    """
+
+    def __init__(self, threshold: int = logging.ERROR) -> None:
+        self._threshold = threshold
+
+    def __enter__(self) -> '_quiet_cron':
+        class _Filter(logging.Filter):
+            def __init__(self, threshold: int) -> None:
+                super().__init__()
+                self._threshold = threshold
+
+            def filter(self, record: logging.LogRecord) -> bool:
+                if record.name == cron_logger.name:
+                    return True
+                return record.levelno >= self._threshold
+
+        self._filt = _Filter(self._threshold)
+        # Filters go on the handlers so that records propagated from
+        # child loggers (b4.*, liblore) are caught too.  A handler at
+        # DEBUG level means a --debug run: leave it alone.
+        self._handlers = [h for h in b4.logger.handlers if h.level > logging.DEBUG]
+        for h in self._handlers:
+            h.addFilter(self._filt)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        for h in self._handlers:
+            h.removeFilter(self._filt)
+
+
 def _cron_update(identifier: str, topdir: Optional[str]) -> None:
     """Run the update portion of a cron sweep: wake snoozes, update all."""
     # Wake expired snoozes first, so newly-woken series are included in
@@ -2633,7 +2681,8 @@ def _cron_update(identifier: str, topdir: Optional[str]) -> None:
     config = b4.get_main_config()
     linkmask = str(config.get('linkmask', 'https://lore.kernel.org/r/%s'))
     try:
-        result = update_all_tracking(identifier, linkmask, topdir=topdir)
+        with _quiet_cron():
+            result = update_all_tracking(identifier, linkmask, topdir=topdir)
     except b4.LockHeldError:
         logger.info('Series update already running elsewhere, skipping')
         return
@@ -2664,27 +2713,32 @@ def _cron_deliver(
         return
 
     def _progress(completed: int, total: int, status: str) -> None:
+        # Runs inside a _quiet_cron block, so report through the
+        # exempt cron_logger
         if status.startswith('Checking: '):
             return
         if check_only:
-            logger.info('%s', status)
+            cron_logger.info('%s', status)
         elif status.startswith(('Not yet visible:', 'Check failed:')):
             # Pending is normal operation; don't generate cron mail
-            logger.debug('%s', status)
+            cron_logger.debug('%s', status)
         elif status.startswith('Send failed:'):
             # process_queue already logged a warning
             pass
         else:
-            logger.info('Delivered: %s', status)
+            cron_logger.info('Delivered: %s', status)
 
     try:
-        delivered, pending, _series = b4.ty.process_queue(
-            patatt_sign=patatt_sign,
-            progress_cb=_progress,
-            check_only=check_only,
-            identifier=identifier,
-            topdir=topdir,
-        )
+        # WARNING threshold: SMTP progress chatter is dropped, but
+        # "Failed to send" warnings still make it to the cron mail
+        with _quiet_cron(logging.WARNING):
+            delivered, pending, _series = b4.ty.process_queue(
+                patatt_sign=patatt_sign,
+                progress_cb=_progress,
+                check_only=check_only,
+                identifier=identifier,
+                topdir=topdir,
+            )
     except b4.LockHeldError:
         logger.info('Queue delivery already running elsewhere, skipping')
         return

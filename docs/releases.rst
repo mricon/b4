@@ -157,8 +157,10 @@ works on that project; from anywhere else it sweeps every known
 project, with ``-i`` (repeatable) limiting the run to the named ones.
 The shared code paths are guarded by per-repository locks, so a cron
 run overlapping an interactive session skips the busy task instead of
-double-sending thanks or racing the tracking database. See
-:ref:`review_cron`.
+double-sending thanks or racing the tracking database. Output is
+scheduler-friendly: the progress narration of the underlying
+interactive code paths is suppressed, so a cron mail only arrives
+when something actually happened. See :ref:`review_cron`.
 
 **Your own replies no longer show up as unread**
 

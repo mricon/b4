@@ -2,7 +2,8 @@ import argparse
 import email.message
 import importlib.util
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union
+import logging
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from unittest import mock
 
 import pytest
@@ -4391,6 +4392,75 @@ def test_cmd_cron_all_isolates_failures(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(_review, '_cron_run_one', fake_run_one)
     _review.cmd_cron(_cron_args())
     assert seen == ['alpha', 'beta']
+
+
+class _RecordingHandler(logging.Handler):
+    def __init__(self, level: int) -> None:
+        super().__init__(level)
+        self.messages: List[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+class TestQuietCron:
+    """The cron sweep must not spam the maintainer's mailbox with the
+    progress narration of the interactive code paths it reuses."""
+
+    @pytest.fixture
+    def handler(self) -> Iterator[_RecordingHandler]:
+        hdl = _RecordingHandler(logging.INFO)
+        old_level = b4.logger.level
+        b4.logger.setLevel(logging.DEBUG)
+        b4.logger.addHandler(hdl)
+        yield hdl
+        b4.logger.removeHandler(hdl)
+        b4.logger.setLevel(old_level)
+
+    def test_suppresses_below_threshold(self, handler: _RecordingHandler) -> None:
+        with _review._quiet_cron():
+            b4.logger.info('Looking up something')
+            b4.logger.warning('duplicate messages found')
+            b4.logger.error('genuine error')
+        assert handler.messages == ['genuine error']
+
+    def test_child_and_liblore_records_suppressed(
+        self, handler: _RecordingHandler
+    ) -> None:
+        """Records propagated from child loggers hit the handler filter."""
+        with _review._quiet_cron():
+            logging.getLogger('b4.review.tracking').info('Checking for newer')
+            logging.getLogger('liblore').info('Grabbing search results')
+        assert handler.messages == []
+
+    def test_warning_threshold_keeps_warnings(self, handler: _RecordingHandler) -> None:
+        with _review._quiet_cron(logging.WARNING):
+            b4.logger.info('Connecting to smtp:465')
+            b4.logger.warning('Failed to send queued message')
+        assert handler.messages == ['Failed to send queued message']
+
+    def test_cron_logger_is_exempt(self, handler: _RecordingHandler) -> None:
+        with _review._quiet_cron():
+            _review.cron_logger.info('Delivered: some subject')
+        assert handler.messages == ['Delivered: some subject']
+
+    def test_filter_removed_after_exit(self, handler: _RecordingHandler) -> None:
+        with _review._quiet_cron():
+            b4.logger.info('suppressed')
+        b4.logger.info('audible again')
+        assert handler.messages == ['audible again']
+
+    def test_debug_handler_left_alone(self, handler: _RecordingHandler) -> None:
+        """A --debug run must still see the full narration."""
+        dbg = _RecordingHandler(logging.DEBUG)
+        b4.logger.addHandler(dbg)
+        try:
+            with _review._quiet_cron():
+                b4.logger.info('Looking up something')
+        finally:
+            b4.logger.removeHandler(dbg)
+        assert dbg.messages == ['Looking up something']
+        assert handler.messages == []
 
 
 def test_update_all_tracking_lock(monkeypatch: pytest.MonkeyPatch) -> None:
