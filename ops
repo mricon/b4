@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1785444687,"nonce":"5iIjbCB8FzpARS72loiNT9Wo8qM=","added":["b4/prep"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1785444986,"nonce":"b2aZyTVQeHJ+42YTmDSwJSv2Zqo=","title":"b4 feature request: configurable removal of trailers (e.g. Upstream-Status) when sending","was":"Marc Kleine-Budde \u003cmkl@pengutronix.de\u003e writes:"}]}
