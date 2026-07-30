@@ -144,6 +144,22 @@ now always takes precedence over a fingerprint match. Discovered
 revisions are also identified by their cover letter rather than their
 first patch, so revision listings show the real series subject.
 
+**Non-interactive maintenance with b4 review cron**
+
+Everything the TUI does periodically can now run from a scheduler or a
+git-push wrapper. ``b4 review cron`` wakes expired snoozes, rescans
+review branches, updates all tracked series, and delivers queued
+thank-you messages whose commits have been published. With no flags it
+runs the full sweep; ``--update`` and ``--deliver-queue`` select one
+task group, and ``--dry-run`` reports what queue delivery would do
+without sending anything. Run from within an enrolled repository it
+works on that project; from anywhere else it sweeps every known
+project, with ``-i`` (repeatable) limiting the run to the named ones.
+The shared code paths are guarded by per-repository locks, so a cron
+run overlapping an interactive session skips the busy task instead of
+double-sending thanks or racing the tracking database. See
+:ref:`review_cron`.
+
 **Your own replies no longer show up as unread**
 
 After sending a reply, the reply itself would arrive back from the
