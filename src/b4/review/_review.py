@@ -9,6 +9,7 @@ import argparse
 import datetime
 import email.message
 import email.utils
+import io
 import json
 import logging
 import os
@@ -754,6 +755,134 @@ def update_tracking_status(topdir: str, branch: str, status: str) -> bool:
     except (Exception, SystemExit):
         logger.warning('Could not update tracking commit status on %s', branch)
         return False
+
+
+def delete_review_branch(
+    topdir: str, review_branch: str, allow_switch: bool = True
+) -> Tuple[bool, str]:
+    """Delete a review branch, optionally switching away if checked out.
+
+    When HEAD is on *review_branch*, *allow_switch* permits detaching to
+    its parent commit first (fine for interactive callers); without it
+    the deletion is refused, so a non-interactive caller (queue
+    delivery, cron) never yanks the checkout out from under the user.
+
+    Returns (success, error_message).
+    """
+    if b4.git_get_current_branch(topdir) == review_branch:
+        if not allow_switch:
+            return False, f'{review_branch} is currently checked out'
+        ecode, out = b4.git_run_command(
+            topdir, ['rev-parse', f'{review_branch}~1'], logstderr=True
+        )
+        if ecode > 0:
+            return False, 'Could not determine parent commit'
+        ecode, out = b4.git_run_command(
+            topdir, ['checkout', out.strip()], logstderr=True
+        )
+        if ecode > 0:
+            return False, f'Could not switch away from {review_branch}'
+    ecode, _out = b4.git_run_command(
+        topdir, ['branch', '-D', review_branch], logstderr=True
+    )
+    if ecode > 0:
+        return False, f'Failed to delete branch {review_branch}'
+    return True, ''
+
+
+def archive_series(
+    topdir: Optional[str],
+    identifier: str,
+    change_id: str,
+    revision: Optional[int] = None,
+    pw_series_id: Optional[int] = None,
+    allow_switch: bool = False,
+) -> Tuple[bool, str]:
+    """Archive a tracked series.
+
+    Tars the cover letter, tracking metadata and patches from the
+    review branch into the data directory, deletes the branch, marks
+    the series 'archived' in the tracking database, and (when
+    *pw_series_id* is given) archives the series in Patchwork.  A
+    series whose review branch is already gone is archived
+    database-only, so the operation is idempotent.
+
+    Returns (success, detail): detail is the archive tarball path on
+    success (empty for a database-only archive), or an error message.
+    """
+    # Imported here: the tarball machinery is only needed when archiving.
+    # b4.review.tracking is re-imported alongside b4.ez because a local
+    # "import b4.ez" rebinds the name b4 locally.
+    import tarfile
+    import time
+
+    import b4.ez
+    import b4.review.tracking
+
+    review_branch = f'{REVIEW_BRANCH_PREFIX}{change_id}'
+    tarpath = ''
+    has_branch = bool(topdir) and b4.git_branch_exists(topdir, review_branch)
+    if has_branch and topdir:
+        try:
+            cover_text, tracking = load_tracking(topdir, review_branch)
+        except (Exception, SystemExit):
+            return False, f'Could not load tracking data from {review_branch}'
+
+        series_info = tracking.get('series', {})
+        first_patch = series_info.get('first-patch-commit', '')
+        if not first_patch:
+            return False, 'No patch commits found in tracking data'
+
+        tio = io.BytesIO()
+        mnow = int(time.time())
+        with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
+            # Add cover letter
+            ifh = io.BytesIO()
+            ifh.write(cover_text.encode())
+            b4.ez.write_to_tar(tfh, f'{change_id}/cover.txt', mnow, ifh)
+            ifh.close()
+            # Add tracking metadata
+            ifh = io.BytesIO()
+            ifh.write(make_review_magic_json(tracking).encode())
+            b4.ez.write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
+            ifh.close()
+            # Add patches as mbox
+            patches = b4.git_range_to_patches(
+                topdir, f'{first_patch}~1', f'{review_branch}~1'
+            )
+            if patches:
+                ifh = io.BytesIO()
+                b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
+                b4.ez.write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
+                ifh.close()
+
+        # Write archive to data directory
+        datadir = b4.get_data_dir()
+        archpath = os.path.join(datadir, 'review-archived')
+        os.makedirs(archpath, exist_ok=True)
+        tarpath = os.path.join(archpath, f'{change_id}.tar.gz')
+        with open(tarpath, mode='wb') as tout:
+            tout.write(tio.getvalue())
+
+        ok, err = delete_review_branch(topdir, review_branch, allow_switch=allow_switch)
+        if not ok:
+            return False, err
+
+    # Update tracking database
+    try:
+        conn = b4.review.tracking.get_db(identifier)
+        b4.review.tracking.update_series_status(
+            conn, change_id, 'archived', revision=revision
+        )
+        conn.close()
+    except Exception as ex:
+        return False, f'DB error: {ex}'
+
+    # Mark as archived in Patchwork
+    if pw_series_id:
+        pw_update_series_state(pw_series_id, 'accepted', archived=True)
+
+    return True, tarpath
 
 
 def save_tracking(topdir: str, cover_text: str, tracking: Dict[str, Any]) -> None:

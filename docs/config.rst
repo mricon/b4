@@ -534,6 +534,19 @@ These settings control ``b4 review`` TUI behaviour.
      .. versionchanged:: v0.16
         Series without a cover letter now default to ``linear``.
 
+   :term:`b4.review-thank-and-archive`
+     When ``yes``, the *thank and archive on delivery* checkbox in the
+     Take dialog starts checked, so a fully accepted take chains
+     straight into the thank-you flow and the series is archived
+     automatically once the thank-you message is actually delivered
+     (immediately for a direct send, or when the queued message goes
+     out). The checkbox can still be toggled per take. See
+     :ref:`thank and archive in one motion <review_take_thank_archive>`.
+
+     Default: ``no``
+
+     .. versionadded:: v0.16
+
    :term:`b4.review-perpatch-check-cmd`
      Command to run once per patch when CI checks are triggered (``c`` in
      the tracking list). Each patch is piped to stdin as an RFC 2822

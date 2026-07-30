@@ -1917,6 +1917,38 @@ def get_target_branch(
     return row[0] if row else None
 
 
+def get_series_status(
+    conn: sqlite3.Connection, change_id: str, revision: Optional[int] = None
+) -> Optional[str]:
+    """Return the current status of a tracked series, or None if unknown."""
+    if revision is not None:
+        row = conn.execute(
+            'SELECT status FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, revision),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            'SELECT status FROM series WHERE change_id = ?', (change_id,)
+        ).fetchone()
+    return row[0] if row else None
+
+
+def get_pw_series_id(
+    conn: sqlite3.Connection, change_id: str, revision: Optional[int] = None
+) -> Optional[int]:
+    """Return the Patchwork series id of a tracked series, or None."""
+    if revision is not None:
+        row = conn.execute(
+            'SELECT pw_series_id FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, revision),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            'SELECT pw_series_id FROM series WHERE change_id = ?', (change_id,)
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def get_review_target_branches() -> list[str]:
     """Return all configured review-target-branch values."""
     config = b4.get_main_config()

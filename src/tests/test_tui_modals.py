@@ -18,7 +18,7 @@ import pytest
 pytest.importorskip('textual')
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Label, ListView, Select, Static
+from textual.widgets import Checkbox, Input, Label, ListView, Select, Static
 
 import b4
 import liblore
@@ -1449,3 +1449,34 @@ class TestTakeScreen:
             # The missing cover is still surfaced even when the default is
             # overridden.
             assert app.screen.query('#take-nocover')
+
+    @pytest.mark.asyncio
+    async def test_thank_and_archive_defaults_off(self) -> None:
+        """The thank-and-archive checkbox is opt-in per take by default."""
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                TakeScreen('main', 'b4/review/test', num_patches=3, has_cover=True)
+            )
+            await pilot.pause()
+            assert not app.screen.query_one('#take-thank-archive', Checkbox).value
+
+    @pytest.mark.asyncio
+    async def test_thank_and_archive_config_default(self) -> None:
+        """b4.review-thank-and-archive pre-checks the checkbox, and the
+        result attribute follows the widget on confirm."""
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            screen = TakeScreen(
+                'main',
+                'b4/review/test',
+                num_patches=3,
+                has_cover=True,
+                default_thank_archive=True,
+            )
+            app.push_screen(screen)
+            await pilot.pause()
+            assert app.screen.query_one('#take-thank-archive', Checkbox).value
+            assert screen.thank_and_archive

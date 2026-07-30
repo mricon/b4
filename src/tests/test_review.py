@@ -4586,3 +4586,159 @@ class TestOwnMessageEntries:
         ]
         entries = _review._own_message_entries(msgs, 'maint@example.com')
         assert [e['msgid'] for e in entries] == ['b@example.com', 'd@example.com']
+
+
+# ---------------------------------------------------------------------------
+# archive_series
+# ---------------------------------------------------------------------------
+
+
+class TestArchiveSeries:
+    """Tests for b4.review.archive_series() and delete_review_branch()."""
+
+    CHANGE_ID = 'arch-cid'
+    IDENTIFIER = 'archproj'
+
+    def _make_repo(self, tmp_path: Any) -> str:
+        """Create a repo with a review branch (2 patches + tracking commit)
+        and a matching 'accepted' series in the tracking database.
+
+        Returns the repository path; HEAD is left on the base branch.
+        """
+        repo = str(tmp_path / 'arch-repo')
+        ecode, out = b4.git_run_command(None, ['init', '-b', 'main', repo])
+        assert ecode == 0, out
+        b4.git_set_config(repo, 'user.name', 'Test')
+        b4.git_set_config(repo, 'user.email', 'test@example.com')
+        ecode, out = b4.git_run_command(
+            repo, ['commit', '--allow-empty', '-m', 'base'], rundir=repo
+        )
+        assert ecode == 0, out
+        ecode, base_sha = b4.git_run_command(repo, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        base_sha = base_sha.strip()
+
+        branch = f'b4/review/{self.CHANGE_ID}'
+        ecode, _out = b4.git_run_command(repo, ['checkout', '-b', branch], rundir=repo)
+        assert ecode == 0
+        patch_shas: List[str] = []
+        for i in (1, 2):
+            with open(f'{repo}/file{i}.txt', 'w') as fh:
+                fh.write(f'content {i}\n')
+            ecode, _out = b4.git_run_command(repo, ['add', f'file{i}.txt'], rundir=repo)
+            assert ecode == 0
+            ecode, _out = b4.git_run_command(
+                repo, ['commit', '-m', f'patch {i}'], rundir=repo
+            )
+            assert ecode == 0
+            ecode, sha = b4.git_run_command(repo, ['rev-parse', 'HEAD'])
+            assert ecode == 0
+            patch_shas.append(sha.strip())
+
+        trk: Dict[str, Any] = {
+            'series': {
+                'identifier': self.IDENTIFIER,
+                'change-id': self.CHANGE_ID,
+                'revision': 1,
+                'status': 'accepted',
+                'subject': 'Test series',
+                'base-commit': base_sha,
+                'first-patch-commit': patch_shas[0],
+                'header-info': {},
+            },
+            'followups': [],
+            'patches': [{'header-info': {}, 'followups': []} for _ in patch_shas],
+        }
+        commit_msg = f'Test series\n\n{review.make_review_magic_json(trk)}'
+        ecode, _out = b4.git_run_command(
+            repo, ['commit', '--allow-empty', '-m', commit_msg], rundir=repo
+        )
+        assert ecode == 0
+        ecode, _out = b4.git_run_command(repo, ['checkout', 'main'], rundir=repo)
+        assert ecode == 0
+
+        conn = b4.review.tracking.init_db(self.IDENTIFIER)
+        b4.review.tracking.add_series_to_db(
+            conn,
+            self.CHANGE_ID,
+            1,
+            'Test series',
+            'Test',
+            't@example.com',
+            None,
+            '<msg@id>',
+            2,
+        )
+        b4.review.tracking.update_series_status(
+            conn, self.CHANGE_ID, 'accepted', revision=1
+        )
+        conn.commit()
+        conn.close()
+        return repo
+
+    def _db_status(self) -> str:
+        conn = b4.review.tracking.get_db(self.IDENTIFIER)
+        row = conn.execute(
+            'SELECT status FROM series WHERE change_id = ?', (self.CHANGE_ID,)
+        ).fetchone()
+        conn.close()
+        return str(row[0])
+
+    def test_archives_branch_and_db(self, tmp_path: Any) -> None:
+        """Archiving tars up the branch contents, deletes the branch, and
+        marks the series archived in the database."""
+        import tarfile
+
+        repo = self._make_repo(tmp_path)
+        branch = f'b4/review/{self.CHANGE_ID}'
+        ok, detail = review.archive_series(repo, self.IDENTIFIER, self.CHANGE_ID, 1)
+        assert ok, detail
+        assert detail.endswith(f'{self.CHANGE_ID}.tar.gz')
+        with tarfile.open(detail) as tfh:
+            names = set(tfh.getnames())
+        assert names == {
+            f'{self.CHANGE_ID}/cover.txt',
+            f'{self.CHANGE_ID}/tracking.js',
+            f'{self.CHANGE_ID}/patches.mbx',
+        }
+        assert not b4.git_branch_exists(repo, branch)
+        assert self._db_status() == 'archived'
+
+    def test_idempotent_when_branch_missing(self, tmp_path: Any) -> None:
+        """A second archive (branch already gone) is a database-only no-op
+        success, so queue delivery can never fail on a manual archive."""
+        repo = self._make_repo(tmp_path)
+        ok, _detail = review.archive_series(repo, self.IDENTIFIER, self.CHANGE_ID, 1)
+        assert ok
+        ok, detail = review.archive_series(repo, self.IDENTIFIER, self.CHANGE_ID, 1)
+        assert ok
+        assert detail == ''
+        assert self._db_status() == 'archived'
+
+    def test_refuses_checked_out_branch_without_switch(self, tmp_path: Any) -> None:
+        """A non-interactive archive must never yank the checkout out from
+        under the user: it refuses and leaves branch and status alone."""
+        repo = self._make_repo(tmp_path)
+        branch = f'b4/review/{self.CHANGE_ID}'
+        ecode, _out = b4.git_run_command(repo, ['checkout', branch], rundir=repo)
+        assert ecode == 0
+        ok, detail = review.archive_series(
+            repo, self.IDENTIFIER, self.CHANGE_ID, 1, allow_switch=False
+        )
+        assert not ok
+        assert 'currently checked out' in detail
+        assert b4.git_branch_exists(repo, branch)
+        assert self._db_status() == 'accepted'
+
+    def test_allow_switch_archives_checked_out_branch(self, tmp_path: Any) -> None:
+        """An interactive archive may switch away from the branch first."""
+        repo = self._make_repo(tmp_path)
+        branch = f'b4/review/{self.CHANGE_ID}'
+        ecode, _out = b4.git_run_command(repo, ['checkout', branch], rundir=repo)
+        assert ecode == 0
+        ok, detail = review.archive_series(
+            repo, self.IDENTIFIER, self.CHANGE_ID, 1, allow_switch=True
+        )
+        assert ok, detail
+        assert not b4.git_branch_exists(repo, branch)
+        assert self._db_status() == 'archived'

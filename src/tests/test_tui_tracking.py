@@ -4161,6 +4161,85 @@ class TestAmTakeWorktree:
         assert ecode == 0 and status.strip() == ''
 
 
+class TestTakeThankArchiveChain:
+    """The take dialog's thank-and-archive checkbox chains into the thank
+    flow only when the take leaves the series fully accepted."""
+
+    def _run_take_final(
+        self, take_status: Optional[str], thank_and_archive: bool
+    ) -> Tuple[List[Tuple[Dict[str, Any], bool]], List[str]]:
+        """Drive _on_take_final with a mocked take returning *take_status*.
+
+        Returns (recorded _start_thank calls, notification messages).
+        """
+        import contextlib
+        from types import SimpleNamespace
+
+        thanks: List[Tuple[Dict[str, Any], bool]] = []
+        notices: List[str] = []
+        app = TrackingApp.__new__(TrackingApp)
+        take_screen: Any = SimpleNamespace(
+            accept_series=True, thank_and_archive=thank_and_archive
+        )
+        confirm_screen: Any = SimpleNamespace(accept_series=True)
+        series = {'change_id': 'chain-1', 'subject': 'x', 'status': 'reviewing'}
+        with (
+            patch.object(TrackingApp, 'suspend', lambda self: contextlib.nullcontext()),
+            patch.object(TrackingApp, '_invalidate_caches', lambda self, cid: None),
+            patch.object(TrackingApp, '_load_series', lambda self: None),
+            patch.object(
+                TrackingApp, '_do_take_merge', lambda self, *a, **k: take_status
+            ),
+            patch.object(
+                TrackingApp,
+                '_start_thank',
+                lambda self, series, archive_after=False: thanks.append(
+                    (series, archive_after)
+                ),
+            ),
+            patch.object(
+                TrackingApp,
+                'notify',
+                lambda self, message, **k: notices.append(str(message)),
+            ),
+        ):
+            app._on_take_final(
+                True,
+                'merge',
+                'chain-1',
+                'b4/review/chain-1',
+                take_screen,
+                series,
+                confirm_screen,
+            )
+        return thanks, notices
+
+    def test_accepted_take_chains_into_thank(self) -> None:
+        thanks, _notices = self._run_take_final('accepted', True)
+        assert len(thanks) == 1
+        chained, archive_after = thanks[0]
+        assert archive_after
+        # The chained series dict reflects the post-take status, so the
+        # thank flow sees an accepted series regardless of reload timing.
+        assert chained['status'] == 'accepted'
+        assert chained['change_id'] == 'chain-1'
+
+    def test_partial_take_does_not_chain(self) -> None:
+        thanks, notices = self._run_take_final('partial', True)
+        assert not thanks
+        assert any('partially applied' in n for n in notices)
+
+    def test_incomplete_take_does_not_chain(self) -> None:
+        thanks, notices = self._run_take_final(None, True)
+        assert not thanks
+        assert any('not marked accepted' in n for n in notices)
+
+    def test_unchecked_box_never_chains(self) -> None:
+        thanks, notices = self._run_take_final('accepted', False)
+        assert not thanks
+        assert not notices
+
+
 # ---------------------------------------------------------------------------
 # take->merge conflict resolution (must never drop a non-empty commit)
 # ---------------------------------------------------------------------------

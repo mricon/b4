@@ -65,6 +65,21 @@ state that can hold a newer revision (including ``waiting`` and
 ``partial`` — previously both required detouring through ``reviewing``
 first), and lands the upgraded series back in ``reviewing``.
 
+**Thank and archive in one motion**
+
+The Take dialog grew a *thank and archive on delivery* checkbox
+(default off; set :term:`b4.review-thank-and-archive` to pre-check it).
+When enabled, a take that fully accepts the series chains straight into
+the thank-you preview, and a successful delivery of the thank-you —
+immediately for a direct send, or when a queued message goes out via
+the queue delivery or ``b4 review cron`` — also archives the series.
+The archive is skipped when a newer revision has appeared in the
+meantime or the series status changed while the message was queued, so
+the automation never sweeps away something you are still working on.
+To go with this, the **Upgrade** action is now also offered on
+``accepted`` and ``thanked`` series with a known newer revision.
+See :ref:`thank and archive in one motion <review_take_thank_archive>`.
+
 **Partial-series state**
 
 When you cherry-pick only a subset of a series' patches, b4 now sets the

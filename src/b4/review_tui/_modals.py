@@ -736,6 +736,7 @@ class TakeScreen(ModalScreen[bool]):
         subject: str = '',
         default_signoff: bool = True,
         has_cover: bool = True,
+        default_thank_archive: bool = False,
     ) -> None:
         """Initialize take screen.
 
@@ -748,6 +749,8 @@ class TakeScreen(ModalScreen[bool]):
             subject: Series subject to display for context
             default_signoff: Initial state of the "add Signed-off-by" checkbox
             has_cover: Whether the series has an author-provided cover letter
+            default_thank_archive: Initial state of the "thank and archive"
+                checkbox
         """
         super().__init__()
         self._target_branch = target_branch
@@ -767,6 +770,7 @@ class TakeScreen(ModalScreen[bool]):
         self.add_link: bool = True
         self.add_signoff: bool = default_signoff
         self.accept_series: bool = True
+        self.thank_and_archive: bool = default_thank_archive
 
     def compose(self) -> ComposeResult:
         method_options = [
@@ -808,6 +812,12 @@ class TakeScreen(ModalScreen[bool]):
                 id='take-add-signoff',
                 classes='take-checkbox',
             )
+            yield Checkbox(
+                'thank and archive on delivery',
+                value=self.thank_and_archive,
+                id='take-thank-archive',
+                classes='take-checkbox',
+            )
             yield Static('Ctrl-y continue  |  Escape cancel', id='take-hint')
 
     def on_mount(self) -> None:
@@ -826,6 +836,7 @@ class TakeScreen(ModalScreen[bool]):
         self.method_result = str(self.query_one('#take-method', Select).value)
         self.add_link = self.query_one('#take-add-link', Checkbox).value
         self.add_signoff = self.query_one('#take-add-signoff', Checkbox).value
+        self.thank_and_archive = self.query_one('#take-thank-archive', Checkbox).value
         self.dismiss(True)
 
     def action_cancel(self) -> None:

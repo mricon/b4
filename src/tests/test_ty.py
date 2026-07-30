@@ -550,3 +550,176 @@ def test_process_queue_finalizes_thanked(
     qdir = b4.ty._get_queue_dir()
     assert not os.path.exists(os.path.join(qdir, 'test-change-id-v1.msg'))
     assert os.path.exists(os.path.join(qdir, 'sent', 'test-change-id-v1.msg'))
+
+
+def _queue_archive_after_message(
+    change_id: str = 'test-change-id', revision: int = 1
+) -> None:
+    """Queue a minimal thanks message with the archive-after-send flag."""
+    fullsha = '9a8b' * 10
+    checkurl = f'https://git.kernel.org/pub/scm/utils/b4/b4.git/commit/?id={fullsha}'
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    b4.ty.queue_message(msg, checkurl, change_id, revision, archive_after=True)
+
+
+def _add_tracked_series(
+    identifier: str,
+    change_id: str = 'test-change-id',
+    revision: int = 1,
+    status: str = 'accepted',
+    revisions: Optional[List[int]] = None,
+) -> None:
+    """Seed a tracking database with one series in the given status."""
+    import b4.review.tracking as tracking
+
+    conn = tracking.init_db(identifier)
+    tracking.add_series_to_db(
+        conn,
+        change_id,
+        revision,
+        'test subject',
+        'Test',
+        't@example.com',
+        None,
+        '<msg@id>',
+        1,
+    )
+    tracking.update_series_status(conn, change_id, status, revision=revision)
+    for rv in revisions or []:
+        tracking.add_revision(conn, change_id, rv, f'<v{rv}@id>')
+    conn.commit()
+    conn.close()
+
+
+def _series_status(identifier: str, change_id: str = 'test-change-id') -> str:
+    import b4.review.tracking as tracking
+
+    conn = tracking.get_db(identifier)
+    row = conn.execute(
+        'SELECT status FROM series WHERE change_id = ?', (change_id,)
+    ).fetchone()
+    conn.close()
+    return str(row[0])
+
+
+def _mock_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+    )
+    monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
+    monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)
+
+
+def test_queue_message_archive_after_header(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """archive_after rides on the queued message as an internal header;
+    without it the header is absent."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    qdir = b4.ty._get_queue_dir()
+
+    _queue_test_message('plain-cid')
+    parsed = b4.ty._parse_queue_file(os.path.join(qdir, 'plain-cid-v1.msg'))
+    assert parsed is not None
+    assert 'X-B4-Archive-After-Send' not in parsed
+
+    _queue_archive_after_message('archive-cid')
+    parsed = b4.ty._parse_queue_file(os.path.join(qdir, 'archive-cid-v1.msg'))
+    assert parsed is not None
+    assert parsed['X-B4-Archive-After-Send'] == 'yes'
+
+
+def test_process_queue_archives_after_send(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A delivered message with the archive-after flag archives the series,
+    and the internal header does not leak into the sent mail."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _add_tracked_series('cronproj')
+    _queue_archive_after_message()
+    _mock_delivery(monkeypatch)
+    sent_msgs: List[EmailMessage] = []
+
+    def _capture_send(smtp: object, msgs: List[EmailMessage], **kwargs: object) -> int:
+        sent_msgs.extend(msgs)
+        return len(msgs)
+
+    monkeypatch.setattr(b4, 'send_mail', _capture_send)
+
+    statuses: List[str] = []
+    delivered, pending, _dseries = b4.ty.process_queue(
+        identifier='cronproj', progress_cb=lambda c, t, s: statuses.append(s)
+    )
+    assert (delivered, pending) == (1, 0)
+    assert _series_status('cronproj') == 'archived'
+    assert 'Re: [PATCH] test + archived' in statuses
+    assert len(sent_msgs) == 1
+    assert 'X-B4-Archive-After-Send' not in sent_msgs[0]
+
+
+def test_process_queue_keeps_series_with_newer_revision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The archive is skipped when a newer revision is known by delivery
+    time; the series stays 'thanked' for the maintainer to deal with."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _add_tracked_series('cronproj', revisions=[1, 2])
+    _queue_archive_after_message()
+    _mock_delivery(monkeypatch)
+
+    statuses: List[str] = []
+    delivered, _pending, _dseries = b4.ty.process_queue(
+        identifier='cronproj', progress_cb=lambda c, t, s: statuses.append(s)
+    )
+    assert delivered == 1
+    assert _series_status('cronproj') == 'thanked'
+    assert 'Re: [PATCH] test (not archived: newer revision available)' in statuses
+
+
+def test_process_queue_keeps_series_after_status_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The archive is skipped when the series status drifted away from
+    'accepted' between queueing and delivery (e.g. back to reviewing)."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _add_tracked_series('cronproj', status='reviewing')
+    _queue_archive_after_message()
+    _mock_delivery(monkeypatch)
+
+    statuses: List[str] = []
+    delivered, _pending, _dseries = b4.ty.process_queue(
+        identifier='cronproj', progress_cb=lambda c, t, s: statuses.append(s)
+    )
+    assert delivered == 1
+    assert _series_status('cronproj') != 'archived'
+    assert (
+        'Re: [PATCH] test (not archived: series status changed since queueing)'
+        in statuses
+    )
+
+
+def test_process_queue_does_not_resurrect_archived(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Delivering a queued thanks for a series that was manually archived
+    in the meantime must not flip it back to 'thanked'."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _add_tracked_series('cronproj', status='archived')
+    _queue_test_message()
+    _mock_delivery(monkeypatch)
+
+    delivered, _pending, _dseries = b4.ty.process_queue(identifier='cronproj')
+    assert delivered == 1
+    assert _series_status('cronproj') == 'archived'

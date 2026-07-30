@@ -963,7 +963,13 @@ def _parse_queue_file(filepath: str) -> Optional[EmailMessage]:
         return None
 
 
-QUEUE_CHECK_HEADERS = ('X-Check-URL', 'X-Check-Commit', 'X-Check-Repo')
+# Internal headers riding on queued messages; stripped before sending.
+QUEUE_CHECK_HEADERS = (
+    'X-Check-URL',
+    'X-Check-Commit',
+    'X-Check-Repo',
+    'X-B4-Archive-After-Send',
+)
 
 _CHECKURL_RES = (
     # cgit: https://host/path/repo.git/commit/?id=<sha> (optionally ?h=branch&id=)
@@ -1096,8 +1102,14 @@ def queue_message(
     revision: int,
     dryrun: bool = False,
     checkcommit: Optional[str] = None,
+    archive_after: bool = False,
 ) -> None:
-    """Write a thanks message to the file-based queue."""
+    """Write a thanks message to the file-based queue.
+
+    With *archive_after*, the series is archived once the message is
+    delivered (unless a newer revision has shown up by then — see
+    process_queue).
+    """
     qdir = _get_queue_dir(dryrun=dryrun)
     os.makedirs(qdir, exist_ok=True)
     # Inject the check info as headers for process_queue()
@@ -1112,6 +1124,8 @@ def queue_message(
         msg['X-Check-Commit'] = checkcommit
     if checkrepo:
         msg['X-Check-Repo'] = checkrepo
+    if archive_after:
+        msg['X-B4-Archive-After-Send'] = 'yes'
     filepath = os.path.join(qdir, _queue_filename(change_id, revision))
     # Write to a temp name and rename into place, so a concurrent
     # delivery sweep can never see (and send) a half-written message.
@@ -1190,6 +1204,26 @@ def _parse_change_revision(fname: str) -> Tuple[str, int]:
     return (stem, 0)
 
 
+def _get_series_status(
+    change_id: str, revision: int, identifier: Optional[str]
+) -> Optional[str]:
+    """Return the tracking-database status of a series, or None."""
+    if not (identifier and change_id):
+        return None
+    # Imported here to keep b4.ty usable without the review machinery
+    import b4.review.tracking
+
+    try:
+        conn = b4.review.tracking.get_db(identifier)
+        status = b4.review.tracking.get_series_status(
+            conn, change_id, revision=revision
+        )
+        conn.close()
+    except Exception:
+        return None
+    return status
+
+
 def _mark_series_thanked(
     change_id: str, revision: int, identifier: Optional[str], topdir: Optional[str]
 ) -> None:
@@ -1199,6 +1233,9 @@ def _mark_series_thanked(
     review branch's tracking commit (when *topdir* is given).  Never
     raises: the thanks mail is already out, so bookkeeping failures
     must not make the caller count the message as still pending.
+
+    A series that was archived while its message sat in the queue is
+    left alone: 'thanked' must never resurrect it.
     """
     if not change_id:
         return
@@ -1206,6 +1243,8 @@ def _mark_series_thanked(
     import b4.review
     import b4.review.tracking
 
+    if _get_series_status(change_id, revision, identifier) == 'archived':
+        return
     if identifier:
         try:
             conn = b4.review.tracking.get_db(identifier)
@@ -1217,7 +1256,61 @@ def _mark_series_thanked(
             logger.warning('Could not update series status: %s', ex)
     if topdir:
         review_branch = f'b4/review/{change_id}'
-        b4.review.update_tracking_status(topdir, review_branch, 'thanked')
+        # An already-deleted branch (e.g. a manually archived series) is
+        # not an error worth warning about
+        if b4.git_branch_exists(topdir, review_branch):
+            b4.review.update_tracking_status(topdir, review_branch, 'thanked')
+
+
+def _maybe_archive_after_send(
+    change_id: str,
+    revision: int,
+    identifier: Optional[str],
+    topdir: Optional[str],
+    prestatus: Optional[str],
+) -> str:
+    """Archive a delivered series if it is still safe to do so.
+
+    *prestatus* is the series status captured before the delivery
+    marked it 'thanked'.  The archive is skipped when the maintainer
+    touched the series since the message was queued (status drifted
+    from 'accepted') or when a newer revision has shown up — in both
+    cases the cleanup defers to the human.  Never raises: the thanks
+    mail is already out.
+
+    Returns a short annotation for the delivery report.
+    """
+    if not (identifier and change_id):
+        return ''
+    # Imported here to keep b4.ty usable without the review machinery
+    import b4.review
+    import b4.review.tracking
+
+    if prestatus != 'accepted':
+        return ' (not archived: series status changed since queueing)'
+    newest = None
+    pw_series_id = None
+    try:
+        conn = b4.review.tracking.get_db(identifier)
+        newest = b4.review.tracking.get_newest_revision(conn, change_id)
+        pw_series_id = b4.review.tracking.get_pw_series_id(
+            conn, change_id, revision=revision
+        )
+        conn.close()
+    except Exception:
+        pass
+    if newest is not None and revision and newest > revision:
+        return ' (not archived: newer revision available)'
+    try:
+        ok, detail = b4.review.archive_series(
+            topdir, identifier, change_id, revision=revision, pw_series_id=pw_series_id
+        )
+    except Exception as ex:
+        ok, detail = False, str(ex)
+    if not ok:
+        logger.warning('Could not archive %s: %s', change_id, detail)
+        return ' (not archived: see warnings)'
+    return ' + archived'
 
 
 def process_queue(
@@ -1291,6 +1384,7 @@ def _process_queue_locked(
         checkurl = str(msg.get('X-Check-URL', ''))
         checkcommit = str(msg.get('X-Check-Commit', ''))
         checkrepo = str(msg.get('X-Check-Repo', ''))
+        archive_after = str(msg.get('X-B4-Archive-After-Send', '')).lower() == 'yes'
         subject = str(msg.get('Subject', '(no subject)'))
         if progress_cb:
             progress_cb(i, total, f'Checking: {subject}')
@@ -1347,9 +1441,17 @@ def _process_queue_locked(
                 progress_cb(i + 1, total, f'Send failed: {subject}')
             continue
 
+        # The status before the 'thanked' mark below decides whether a
+        # requested archive is still safe (see _maybe_archive_after_send)
+        prestatus = _get_series_status(change_id, revision, identifier)
         _mark_series_thanked(change_id, revision, identifier, topdir)
+        note = ''
+        if archive_after:
+            note = _maybe_archive_after_send(
+                change_id, revision, identifier, topdir, prestatus
+            )
         if progress_cb:
-            progress_cb(i + 1, total, subject)
+            progress_cb(i + 1, total, subject + note)
 
     return (delivered, still_pending, delivered_series)
 

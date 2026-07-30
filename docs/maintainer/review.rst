@@ -287,11 +287,13 @@ actions depend on the series status:
 **Accepted:**
 
 * ``[t]`` **Thank** — send a thank-you note
+* ``[U]`` **Upgrade** — switch to a newer revision (when available)
 * ``[r]`` **Return to reviewing** — reopen if accepted prematurely
 * ``[A]`` **Abandon** / ``[x]`` **Archive**
 
 **Thanked:**
 
+* ``[U]`` **Upgrade** — switch to a newer revision (when available)
 * ``[r]`` **Return to reviewing** — reopen if thanked prematurely
 
 The details panel at the bottom shows the full original subject, sender,
@@ -872,8 +874,12 @@ merge commit message from.
 The dialog suggests recently used target branches, with the configured
 :term:`b4.review-target-branch` always included. You can also type a
 branch name directly. Toggle the ``Signed-off-by`` and ``Link:``
-checkboxes to add those trailers to each commit. Press ``Ctrl-y`` to
-continue, or ``Escape`` to cancel.
+checkboxes to add those trailers to each commit. The *thank and
+archive on delivery* checkbox chains the take into the thank-you and
+archive steps (see :ref:`thank and archive in one motion
+<review_take_thank_archive>`); set
+:term:`b4.review-thank-and-archive` to make it start checked. Press
+``Ctrl-y`` to continue, or ``Escape`` to cancel.
 
 **Step 2 — Select patches** (cherry-pick only). When cherry-pick is
 selected, a patch selection dialog lets you choose which patches to
@@ -895,6 +901,34 @@ the series remains in the active working set, and new revisions are
 ingested as normal. When you later take the remaining patches — completing
 coverage — b4 automatically promotes the status from ``partial`` to
 ``accepted``, at which point the thank/archive flow becomes available.
+
+.. _review_take_thank_archive:
+
+**Thank and archive in one motion**
+
+When the *thank and archive on delivery* checkbox is enabled and the
+take leaves the series fully ``accepted``, the thank-you preview opens
+automatically after the take completes. From there the flow is the
+usual one — **Send** (``S``) or **Queue** (``W``) — and a successful
+delivery also archives the series:
+
+* a directly sent thank-you archives the series immediately;
+* a queued thank-you archives it when the message is actually
+  delivered — on the next queue delivery from the TUI (``T`` → ``T``)
+  or by ``b4 review cron``. The intent is recorded as an
+  ``X-B4-Archive-After-Send`` header in the queue file, alongside the
+  ``X-Check-*`` headers.
+
+The archive is skipped — leaving the series ``thanked`` — when it is no
+longer clearly safe: a newer revision of the series has appeared in
+the meantime (use **Upgrade to newer revision** from the action menu
+to start reviewing it), or the series status changed after the message
+was queued (for example, you returned it to reviewing). Cancelling the
+thank-you preview with ``Escape`` aborts the chain and the series
+simply stays ``accepted``.
+
+Partial takes never chain: the thank-you and archive steps stay manual
+while patches remain untaken.
 
 .. _review_conflict_resolution:
 

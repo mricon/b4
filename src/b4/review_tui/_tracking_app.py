@@ -14,7 +14,6 @@ import email.utils
 import io
 import json
 import os
-import pathlib
 import re
 import shlex
 import shutil
@@ -42,7 +41,6 @@ from textual.widgets import Footer, Label, ListItem, ListView, Static
 from textual.worker import Worker, WorkerState
 
 import b4
-import b4.ez
 import b4.mbox
 import b4.review
 import b4.review.tracking
@@ -1392,8 +1390,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         if action == 'update_revision':
             # Upgrade availability is governed by has_newer alone — it is an
             # axis orthogonal to status, so a newer revision can be taken from
-            # any state that can hold one (new, reviewing, replied, partial,
-            # waiting), not only a checked-out 'reviewing' branch.
+            # any state that can hold one (including accepted/thanked, e.g. a
+            # series kept back from auto-archiving because a newer revision
+            # appeared), not only a checked-out 'reviewing' branch.
             return bool(
                 self._selected_series and self._selected_series.get('has_newer')
             )
@@ -1444,6 +1443,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 'replied',
                 'partial',
                 'waiting',
+                'accepted',
+                'thanked',
             ) and self._selected_series.get('has_newer'):
                 actions.append(('upgrade', 'Upgrade to newer revision'))
             if status == 'waiting':
@@ -2451,6 +2452,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         default_signoff = '--signoff' in shlex.split(
             str(b4cfg.get('shazam-merge-flags', '--signoff'))
         )
+        try:
+            default_thank_archive = b4.get_git_bool(
+                str(b4cfg.get('review-thank-and-archive', 'no'))
+            )
+        except ValueError:
+            default_thank_archive = False
         take_screen = TakeScreen(
             target_branch,
             review_branch,
@@ -2460,6 +2467,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             subject=series.get('subject', ''),
             default_signoff=default_signoff,
             has_cover=has_cover,
+            default_thank_archive=default_thank_archive,
         )
         self.push_screen(
             take_screen,
@@ -2609,16 +2617,33 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._invalidate_caches(change_id)
         if method == 'merge':
             with self.suspend():
-                self._do_take_merge(
+                new_status = self._do_take_merge(
                     change_id, review_branch, take_screen, series, cherrypick=cherrypick
                 )
             self._load_series()
         else:
             with self.suspend():
-                self._do_take_am(
+                new_status = self._do_take_am(
                     change_id, review_branch, take_screen, series, cherrypick=cherrypick
                 )
             self._load_series()
+        if take_screen.thank_and_archive:
+            if new_status == 'accepted':
+                # Chain straight into the thank flow; a successful send or
+                # delivery of the queued message will archive the series.
+                chained = dict(series)
+                chained['status'] = new_status
+                self._start_thank(chained, archive_after=True)
+            elif new_status == 'partial':
+                self.notify(
+                    'Thank & archive skipped: series only partially applied',
+                    severity='warning',
+                )
+            else:
+                self.notify(
+                    'Thank & archive skipped: series not marked accepted',
+                    severity='warning',
+                )
 
     @staticmethod
     def _record_take_metadata(
@@ -2704,12 +2729,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         take_screen: 'TakeScreen',
         series: Dict[str, Any],
         cherrypick: Optional[List[int]] = None,
-    ) -> None:
+    ) -> Optional[str]:
         """Perform a merge-based take operation.
 
         When *cherrypick* is set, only those 1-based patch indices are
         included in the merged side, allowing a cover-letter merge commit
         that excludes skipped patches.
+
+        Returns the resulting series status ('accepted'/'partial'), or
+        None when the take did not complete or no status change was
+        requested.
         """
         target_branch = take_screen.target_result
 
@@ -2717,21 +2746,21 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         topdir = b4.git_get_toplevel()
         if not topdir:
             logger.critical('Not in a git repository')
-            return
+            return None
 
         # Prepare trailer-amended mbox bytes from local review branch
         ambytes = self._prepare_am_messages(
             review_branch, take_screen, series, cherrypick=cherrypick
         )
         if ambytes is None:
-            return
+            return None
 
         try:
             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
         except SystemExit:
             logger.critical('Could not load tracking data from %s', review_branch)
             _wait_for_enter()
-            return
+            return None
 
         t_series = tracking.get('series', {})
 
@@ -2747,7 +2776,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     config['shazam-merge-template'],
                 )
                 _wait_for_enter()
-                return
+                return None
 
         # Extract cover message body
         covermessage = ''
@@ -2801,14 +2830,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if ecode != 0:
                 logger.critical('Could not resolve %s', target_branch)
                 _wait_for_enter()
-                return
+                return None
             base_commit = out.strip()
 
         # Merge in whichever worktree holds the target branch (or a throwaway
         # one), so the current checkout is never disturbed.
         with _take_worktree(topdir, target_branch) as wt:
             if wt is None:
-                return
+                return None
             merge_dir = wt.path
             # Apply trailer-amended patches in a sparse worktree and fetch into
             # the target worktree's FETCH_HEAD (which is per-worktree), so the
@@ -2827,17 +2856,17 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     merge_dir, cex, origin=t_series.get('link', '')
                 ):
                     _wait_for_enter()
-                    return
+                    return None
             except RuntimeError:
                 _wait_for_enter()
-                return
+                return None
 
             # Write merge message to the target worktree's git dir
             ecode, gitdir = b4.git_run_command(merge_dir, ['rev-parse', '--git-dir'])
             if ecode != 0:
                 logger.critical('Unable to find git directory')
                 _wait_for_enter()
-                return
+                return None
             mmf = os.path.join(gitdir.strip(), 'b4-merge-msg')
             with open(mmf, 'w') as fh:
                 fh.write(body)
@@ -2906,7 +2935,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                         rundir=merge_dir,
                     )
                     _wait_for_enter()
-                    return
+                    return None
                 logger.critical('Merge conflict:')
                 if out.strip():
                     logger.critical(out.strip())
@@ -2921,7 +2950,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     wt, 'merge', pre_merge_head, b4._worktree_merge_in_progress
                 ):
                     _wait_for_enter()
-                    return
+                    return None
                 logger.info('Conflict resolved, series merged.')
 
             logger.info('Merged %s into %s', review_branch, target_branch)
@@ -2946,6 +2975,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             self._finalize_take(topdir, target_branch, change_id, t_series, new_status)
             _wait_for_enter()
+            return new_status
 
     def _finalize_take(
         self,
@@ -3150,26 +3180,31 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         take_screen: 'TakeScreen',
         series: Dict[str, Any],
         cherrypick: Optional[List[int]],
-    ) -> None:
-        """Perform a linear or cherry-pick take via git-am."""
+    ) -> Optional[str]:
+        """Perform a linear or cherry-pick take via git-am.
+
+        Returns the resulting series status ('accepted'/'partial'), or
+        None when the take did not complete or no status change was
+        requested.
+        """
         target_branch = take_screen.target_result
 
         topdir = b4.git_get_toplevel()
         if not topdir:
             logger.critical('Not in a git repository')
-            return
+            return None
 
         ambytes = self._prepare_am_messages(
             review_branch, take_screen, series, cherrypick=cherrypick
         )
         if ambytes is None:
-            return
+            return None
 
         # Apply in whichever worktree holds the target branch (or a throwaway
         # one), so the current checkout is never disturbed.
         with _take_worktree(topdir, target_branch) as wt:
             if wt is None:
-                return
+                return None
             am_dir = wt.path
 
             # Save HEAD before git-am so we can find the new commits afterwards
@@ -3190,7 +3225,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     wt, 'am', pre_am_head, b4._worktree_rebase_apply_dir
                 ):
                     _wait_for_enter()
-                    return
+                    return None
                 logger.info('Conflict resolved, patches applied.')
 
             logger.info(out.strip())
@@ -3215,6 +3250,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             self._finalize_take(topdir, target_branch, change_id, series, new_status)
             _wait_for_enter()
+            return new_status
 
     def action_rebase(self) -> None:
         """Rebase the review branch on top of current HEAD."""
@@ -4644,93 +4680,36 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> bool:
         """Archive a review branch and update the tracking database.
 
-        Creates a tar.gz archive of the cover letter, tracking metadata,
-        and patches, then deletes the branch and marks the series as
+        Thin TUI wrapper around b4.review.archive_series(): creates a
+        tar.gz archive of the cover letter, tracking metadata, and
+        patches, then deletes the branch and marks the series as
         archived.  Returns True on success.
 
         When *notify* is False, TUI notifications are suppressed (useful
         when called from within ``suspend()``).
         """
-        import tarfile
-        import time
-
         topdir = b4.git_get_toplevel()
         if not topdir:
             if notify:
                 self.notify('Not in a git repository', severity='error')
             return False
 
-        tio = io.BytesIO()
-        mnow = int(time.time())
-        tarpath = ''
-
-        has_branch = b4.git_branch_exists(None, review_branch)
-        if has_branch:
-            # Load tracking data from the review branch
-            cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
-
-            # Get patch range from tracking
-            series_info = tracking.get('series', {})
-            first_patch = series_info.get('first-patch-commit', '')
-            if not first_patch:
-                if notify:
-                    self.notify(
-                        'No patch commits found in tracking data', severity='error'
-                    )
-                return False
-
-            with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
-                # Add cover letter
-                ifh = io.BytesIO()
-                ifh.write(cover_text.encode())
-                b4.ez.write_to_tar(tfh, f'{change_id}/cover.txt', mnow, ifh)
-                ifh.close()
-                # Add tracking metadata
-                ifh = io.BytesIO()
-                ifh.write(b4.review.make_review_magic_json(tracking).encode())
-                b4.ez.write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
-                ifh.close()
-                # Add patches as mbox
-                patches = b4.git_range_to_patches(
-                    None, f'{first_patch}~1', f'{review_branch}~1'
-                )
-                if patches:
-                    ifh = io.BytesIO()
-                    b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
-                    b4.ez.write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
-                    ifh.close()
-
-            # Write archive to data directory
-            datadir = b4.get_data_dir()
-            archpath = os.path.join(datadir, 'review-archived')
-            pathlib.Path(archpath).mkdir(parents=True, exist_ok=True)
-            tarpath = os.path.join(archpath, f'{change_id}.tar.gz')
-            with open(tarpath, mode='wb') as tout:
-                tout.write(tio.getvalue())
-
-            # Delete the review branch
-            if not self._delete_review_branch(topdir, review_branch, notify=notify):
-                return False
-
-        # Update tracking database
-        try:
-            conn = b4.review.tracking.get_db(self._identifier)
-            b4.review.tracking.update_series_status(
-                conn, change_id, 'archived', revision=revision
-            )
-            conn.close()
-        except Exception as ex:
+        ok, detail = b4.review.archive_series(
+            topdir,
+            self._identifier,
+            change_id,
+            revision=revision,
+            pw_series_id=pw_series_id,
+            allow_switch=True,
+        )
+        if not ok:
             if notify:
-                self.notify(f'DB error: {ex}', severity='error')
+                self.notify(detail, severity='error')
             return False
 
-        # Mark as archived in Patchwork
-        if pw_series_id:
-            b4.review.pw_update_series_state(pw_series_id, 'accepted', archived=True)
-
         if notify:
-            if has_branch:
-                self.notify(f'Archived {change_id} to {tarpath}')
+            if detail:
+                self.notify(f'Archived {change_id} to {detail}')
             else:
                 self.notify(f'Archived {change_id}')
         return True
@@ -4757,8 +4736,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
     def action_thank(self) -> None:
         """Compose and preview a thank-you reply for a taken series."""
-        import argparse
-
         series = self._selected_series
         if not series:
             return
@@ -4767,6 +4744,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 'Series must be accepted before sending thanks', severity='warning'
             )
             return
+        self._start_thank(series)
+
+    def _start_thank(self, series: Dict[str, Any], archive_after: bool = False) -> None:
+        """Generate the thank-you message for *series* and show the preview.
+
+        With *archive_after*, a successful send — or the eventual
+        delivery of a queued message — also archives the series (unless
+        a newer revision has shown up by then).
+        """
+        import argparse
 
         change_id = series.get('change_id', '')
         review_branch = f'b4/review/{change_id}'
@@ -4853,13 +4840,21 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 checkurl = cidmask % last_cid
                 checkcommit = last_cid
 
-        self._show_thank_preview(msg, checkurl=checkurl, checkcommit=checkcommit)
+        self._show_thank_preview(
+            msg,
+            series,
+            checkurl=checkurl,
+            checkcommit=checkcommit,
+            archive_after=archive_after,
+        )
 
     def _show_thank_preview(
         self,
         msg: email.message.EmailMessage,
+        series: Dict[str, Any],
         checkurl: Optional[str] = None,
         checkcommit: Optional[str] = None,
+        archive_after: bool = False,
     ) -> None:
         """Push the ThankScreen modal and handle edit/send/queue/cancel."""
 
@@ -4868,20 +4863,28 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 return
             if result == '__EDIT__':
                 self._edit_thank_message(
-                    msg, checkurl=checkurl, checkcommit=checkcommit
+                    msg,
+                    series,
+                    checkurl=checkurl,
+                    checkcommit=checkcommit,
+                    archive_after=archive_after,
                 )
             elif result == '__SEND__':
-                self._send_thank_message(msg)
+                self._send_thank_message(msg, series, archive_after=archive_after)
             elif result == '__QUEUE__' and checkurl:
-                self._queue_thank_message(msg, checkurl, checkcommit)
+                self._queue_thank_message(
+                    msg, series, checkurl, checkcommit, archive_after=archive_after
+                )
 
         self.push_screen(ThankScreen(msg, checkurl=checkurl), _on_thank_result)
 
     def _edit_thank_message(
         self,
         msg: email.message.EmailMessage,
+        series: Dict[str, Any],
         checkurl: Optional[str] = None,
         checkcommit: Optional[str] = None,
+        archive_after: bool = False,
     ) -> None:
         """Open the thank-you message in $EDITOR and re-show preview."""
         msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
@@ -4892,18 +4895,23 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             self.notify(f'Editor error: {ex}', severity='error')
             return
         new_msg = email.parser.BytesParser(policy=b4.emlpolicy).parsebytes(edited)
-        self._show_thank_preview(new_msg, checkurl=checkurl, checkcommit=checkcommit)
+        self._show_thank_preview(
+            new_msg,
+            series,
+            checkurl=checkurl,
+            checkcommit=checkcommit,
+            archive_after=archive_after,
+        )
 
     def _queue_thank_message(
         self,
         msg: email.message.EmailMessage,
+        series: Dict[str, Any],
         checkurl: str,
         checkcommit: Optional[str] = None,
+        archive_after: bool = False,
     ) -> None:
         """Queue the thanks message for delivery once commits are public."""
-        series = self._selected_series
-        if not series:
-            return
         change_id = series.get('change_id', '')
         revision = series.get('revision', 1)
         try:
@@ -4914,19 +4922,25 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 revision,
                 dryrun=self._email_dryrun,
                 checkcommit=checkcommit,
+                archive_after=archive_after,
             )
         except Exception as ex:
             self.notify(f'Failed to queue message: {ex}', severity='error')
             return
 
-        self.notify('Queued — will send when commits are published')
+        if archive_after:
+            self.notify('Queued — will send and archive when commits are published')
+        else:
+            self.notify('Queued — will send when commits are published')
         self._refresh_queue_indicator()
 
-    def _send_thank_message(self, msg: email.message.EmailMessage) -> None:
+    def _send_thank_message(
+        self,
+        msg: email.message.EmailMessage,
+        series: Dict[str, Any],
+        archive_after: bool = False,
+    ) -> None:
         """Send the thank-you message via SMTP."""
-        series = self._selected_series
-        if not series:
-            return
         try:
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
@@ -4959,11 +4973,38 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     review_branch = f'b4/review/{change_id}'
                     b4.review.update_tracking_status(topdir, review_branch, 'thanked')
             self.notify('Thank-you message sent')
+            if archive_after:
+                self._archive_after_thanks(series)
             self._focus_change_id = change_id
             self._invalidate_caches(change_id)
             self._load_series()
         except Exception as ex:
             self.notify(f'Send failed: {ex}', severity='error')
+
+    def _archive_after_thanks(self, series: Dict[str, Any]) -> None:
+        """Archive a just-thanked series, unless a newer revision is known."""
+        change_id = series.get('change_id', '')
+        revision = series.get('revision')
+        newest = None
+        try:
+            conn = b4.review.tracking.get_db(self._identifier)
+            newest = b4.review.tracking.get_newest_revision(conn, change_id)
+            conn.close()
+        except Exception:
+            newest = None
+        if newest is not None and revision and newest > revision:
+            self.notify('Not archived: newer revision available')
+            return
+        review_branch = f'b4/review/{change_id}'
+        if self._archive_branch(
+            change_id,
+            revision,
+            review_branch,
+            pw_series_id=series.get('pw_series_id'),
+        ):
+            self._selected_series = None
+            panel = self.query_one('#details-panel', Vertical)
+            panel.styles.height = 0
 
     def _refresh_queue_indicator(self) -> None:
         """Update the title-bar queue count and Q binding visibility."""
