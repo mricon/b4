@@ -158,6 +158,17 @@ from the cover letter, so there is nothing to build it from — and
 shows a note so the missing cover is visible before you take. Set
 :term:`b4.review-default-take-method` to override the heuristic.
 
+**Configurable apply-base pre-fill**
+
+The base selection dialog shown when starting a review or upgrading to
+a newer revision can now be pre-filled from configuration. Set
+:term:`b4.review-apply-base` to anything that resolves to a commit
+(``HEAD``, a branch, a tag, or a SHA) and it takes priority over the
+base named by the series and over b4's own guess — which is still
+shown in the dialog hint, so no information is lost. The dialog stays
+editable and the value is validated on confirm; an unresolvable
+setting falls back to automatic detection with a warning in the hint.
+
 **More reliable series matching and revision discovery**
 
 Series whose patches carry plain (non-git) diffs no longer collapse
@@ -197,6 +208,16 @@ in the thank-you message on the repository the "Applied to" line
 refers to: the per-remote ``b4-check-repo`` setting,
 :term:`b4.thanks-check-repo`, or by default the URL of the remote the
 target branch tracks. Reported by Mark Brown.
+
+**Custom reply templates**
+
+Outgoing review replies — both per-patch replies and the cover-letter
+reply — can now be wrapped in a template of your own, for example to
+add a standard greeting or a review-process boilerplate. Point
+:term:`b4.review-reply-template` at a template file containing the
+``${reply}`` placeholder; substitution follows the same rules as the
+``b4 ty`` thank-you templates, and a commented starting point ships
+with b4 as ``review-reply-template.example``.
 
 **Your own replies no longer show up as unread**
 
