@@ -28,6 +28,15 @@ v0.17
 		: Colored dot display in tracking list (git-bug deterministic color algorithm)
 		: Extend the review limit command to filter by label: prefix
 		: Reuse LabelScreen/AddLabelScreen label UI from the bugs TUI (extract to _common.py)
+[_] `b4 pr` improvements
+	[_] Compose and send pull requests to upstream (git-request-pull style)
+		: The producer counterpart to b4 pr's existing consumer side
+		: Body from the signed tag message; shortlog + diffstat; auto-cc
+		: contributors from the range; send via the existing send_mail() path
+		[_] Pre-flight: verify the tag is pushed and matches on the advertised pull URL
+			: The "forgot to push" / re-tagged-after-push gotcha; refuse to send on mismatch
+		[_] Pre-flight: verify the tag carries a valid cryptographic signature
+			: Refuse to send when the tag is unsigned or the signature does not verify
 [_] Auto-consume a public-inbox archive ("parse and consume")
 	: Speculative — likely slips past 0.17; recorded now so the 0.16
 	: manual-revision-link groundwork stays compatible with it
