@@ -336,6 +336,74 @@ def test_commit_reachable_unknown_tips(
     assert b4.ty.commit_reachable_on_remote(c1, pub) is False
 
 
+def test_commit_reachable_branch_filter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """With a branch, only that branch qualifies when advertised; an
+    unadvertised branch falls back to checking all heads."""
+    local = str(tmp_path / 'local')
+    pub = str(tmp_path / 'pub')
+    _init_repo(local)
+    ecode, out = b4.git_run_command(None, ['init', '--bare', pub])
+    assert ecode == 0, out
+    monkeypatch.chdir(local)
+    c1 = _commit_empty('c1')
+    ecode, out = b4.git_run_command(None, ['push', pub, 'HEAD:refs/heads/master'])
+    assert ecode == 0, out
+    c2 = _commit_empty('c2')
+    ecode, out = b4.git_run_command(None, ['push', pub, f'{c2}:refs/heads/side'])
+    assert ecode == 0, out
+
+    # c2 is only on 'side': published for 'side' and for the branchless
+    # check, but not yet for the branch the message claims
+    assert b4.ty.commit_reachable_on_remote(c2, pub) is True
+    assert b4.ty.commit_reachable_on_remote(c2, pub, branch='side') is True
+    assert b4.ty.commit_reachable_on_remote(c2, pub, branch='master') is False
+    assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is True
+    # Unadvertised branch (renamed/deleted): any head counts again
+    assert b4.ty.commit_reachable_on_remote(c2, pub, branch='gone') is True
+
+
+def test_get_check_repo_for_branch_priority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Check-repo resolution: per-remote b4-check-repo, then the
+    b4.thanks-check-repo config, then the remote URL, then the mask."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _commit_empty('c1')
+    b4.git_set_config(repo, 'remote.spi.url', 'https://example.com/spi.git')
+    b4.git_set_config(repo, 'branch.for-next.remote', 'spi')
+    b4.git_set_config(repo, 'branch.for-next.merge', 'refs/heads/for-next')
+    checkurl = 'https://github.com/user/repo/commit/0123456789abcdef'
+
+    # No overrides: the branch's remote URL wins over mask derivation
+    assert (
+        b4.ty.get_check_repo_for_branch(repo, 'for-next', checkurl)
+        == 'https://example.com/spi.git'
+    )
+    # A branch with no remote falls back to the mask-derived repo
+    assert (
+        b4.ty.get_check_repo_for_branch(repo, 'orphan', checkurl)
+        == 'https://github.com/user/repo'
+    )
+    # b4.thanks-check-repo beats the remote URL
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG, 'thanks-check-repo', 'https://example.com/g.git'
+    )
+    assert (
+        b4.ty.get_check_repo_for_branch(repo, 'for-next', checkurl)
+        == 'https://example.com/g.git'
+    )
+    # remote.<name>.b4-check-repo beats everything
+    b4.git_set_config(repo, 'remote.spi.b4-check-repo', 'https://example.com/pub.git')
+    assert (
+        b4.ty.get_check_repo_for_branch(repo, 'for-next', checkurl)
+        == 'https://example.com/pub.git'
+    )
+
+
 def test_queue_message_check_headers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
@@ -381,6 +449,70 @@ def test_queue_message_shortlink_mask(
     assert parsed['X-Check-Repo'] == 'https://example.com/r.git'
 
 
+def test_queue_message_explicit_repo_and_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Explicit checkrepo/checkbranch are recorded verbatim, bypassing
+    mask derivation entirely (the shortlink-mask case)."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    fullsha = 'fa11' * 10
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    checkurl = f'https://git.kernel.org/username/c/{fullsha[:12]}'
+    b4.ty.queue_message(
+        msg,
+        checkurl,
+        'test-change-id',
+        3,
+        checkcommit=fullsha,
+        checkrepo='https://example.com/spi.git',
+        checkbranch='for-next',
+    )
+    qdir = b4.ty._get_queue_dir()
+    parsed = b4.ty._parse_queue_file(os.path.join(qdir, 'test-change-id-v3.msg'))
+    assert parsed is not None
+    assert parsed['X-Check-Commit'] == fullsha
+    assert parsed['X-Check-Repo'] == 'https://example.com/spi.git'
+    assert parsed['X-Check-Branch'] == 'for-next'
+
+
+def test_process_queue_passes_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Delivery verifies reachability from the exact branch the thanks
+    message names, when the queue entry recorded one."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    fullsha = 'ba55' * 10
+    msg = EmailMessage()
+    msg['Subject'] = 'Re: [PATCH] test'
+    msg.set_content('Thanks!')
+    b4.ty.queue_message(
+        msg,
+        f'https://git.kernel.org/username/c/{fullsha[:12]}',
+        'test-change-id',
+        1,
+        checkcommit=fullsha,
+        checkrepo='https://example.com/spi.git',
+        checkbranch='for-next',
+    )
+
+    calls: List[Tuple[str, str, str]] = []
+
+    def fake_reachable(commit: str, repo_url: str, branch: str = '') -> Optional[bool]:
+        calls.append((commit, repo_url, branch))
+        return False
+
+    monkeypatch.setattr(b4.ty, 'commit_reachable_on_remote', fake_reachable)
+    delivered, pending, dseries = b4.ty.process_queue()
+    assert (delivered, pending, dseries) == (0, 1, [])
+    assert calls == [(fullsha, 'https://example.com/spi.git', 'for-next')]
+
+
 def test_process_queue_holds_unpublished(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
@@ -398,7 +530,7 @@ def test_process_queue_holds_unpublished(
 
     calls: List[Tuple[str, str]] = []
 
-    def fake_reachable(commit: str, repo_url: str) -> Optional[bool]:
+    def fake_reachable(commit: str, repo_url: str, branch: str = '') -> Optional[bool]:
         calls.append((commit, repo_url))
         return False
 
@@ -448,7 +580,7 @@ def test_process_queue_lock_held(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: False
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': False
     )
     with b4.lockfile_nb(b4.ty._get_queue_lock_path()):
         with pytest.raises(b4.LockHeldError):
@@ -467,7 +599,7 @@ def test_process_queue_check_only(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
     )
 
     def _no_send(dryrun: bool = False) -> Tuple[None, str]:
@@ -495,7 +627,7 @@ def test_process_queue_explicit_topdir(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
     )
     outside = tmp_path / 'elsewhere'
     outside.mkdir()
@@ -533,7 +665,7 @@ def test_process_queue_finalizes_thanked(
 
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
     )
     monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
     monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)
@@ -606,7 +738,7 @@ def _series_status(identifier: str, change_id: str = 'test-change-id') -> str:
 
 def _mock_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url: True
+        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
     )
     monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
     monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)

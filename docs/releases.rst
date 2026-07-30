@@ -185,6 +185,19 @@ scheduler-friendly: the progress narration of the underlying
 interactive code paths is suppressed, so a cron mail only arrives
 when something actually happened. See :ref:`review_cron`.
 
+**Queued thanks wait for the actual push**
+
+Queued thank-you messages used to be held back by an HTTP check of the
+commit URL, which hosts with shared object storage (git.kernel.org,
+github fork networks) answer positively as soon as the commit exists
+in *any* sibling repository — so a push to a CI tree could release the
+thanks before the public tree was updated. Delivery now verifies, via
+``git ls-remote``, that the commit is reachable from the branch named
+in the thank-you message on the repository the "Applied to" line
+refers to: the per-remote ``b4-check-repo`` setting,
+:term:`b4.thanks-check-repo`, or by default the URL of the remote the
+target branch tracks. Reported by Mark Brown.
+
 **Your own replies no longer show up as unread**
 
 After sending a reply, the reply itself would arrive back from the

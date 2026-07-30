@@ -432,12 +432,21 @@ Attestation settings
 
          thanks-check-repo = https://git.kernel.org/pub/scm/linux/kernel/git/username/tree.git
 
-     If not set, b4 attempts to derive the repository URL from the
-     :term:`b4.thanks-commit-url-mask` value, which works for cgit-,
-     github- and gitlab-style commit URLs, but not for the
-     git.kernel.org ``/username/c/`` short URLs. Set this option
-     explicitly if you use a short-URL mask and want queued thank-yous
-     verified by ref reachability instead of the HTTP fallback check.
+     If not set, b4 uses the URL of the remote that the target branch
+     tracks — the same remote the "Applied to" line in the thank-you
+     message refers to, so having the commit reachable there is what
+     qualifies as pushed. As a last resort, b4 attempts to derive the
+     repository URL from the :term:`b4.thanks-commit-url-mask` value,
+     which works for cgit-, github- and gitlab-style commit URLs, but
+     not for the git.kernel.org ``/username/c/`` short URLs.
+
+     If you push to multiple trees from the same repository, you can
+     set this per-remote instead, which takes precedence over
+     everything else::
+
+         [remote "spi"]
+             b4-check-repo = https://git.kernel.org/pub/scm/linux/kernel/git/username/spi.git
+
      See :ref:`queuing thanks <thanks_queue>` for details.
 
      Default: ``None``

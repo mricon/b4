@@ -968,6 +968,7 @@ QUEUE_CHECK_HEADERS = (
     'X-Check-URL',
     'X-Check-Commit',
     'X-Check-Repo',
+    'X-Check-Branch',
     'X-B4-Archive-After-Send',
 )
 
@@ -1013,7 +1014,44 @@ def _get_check_repo(checkurl: str) -> Optional[str]:
     return repo
 
 
-def commit_reachable_on_remote(commit: str, repo_url: str) -> Optional[bool]:
+def get_check_repo_for_branch(
+    gitdir: Optional[str], branch: str, checkurl: str = ''
+) -> Optional[str]:
+    """Return the git URL to verify queued-thanks commits against.
+
+    When the branch named in the thanks message tracks a remote, that
+    remote is what "applied to branch X" refers to, so having the commit
+    reachable there is what qualifies as pushed. Priority:
+
+    1. remote.<name>.b4-check-repo on the branch's remote
+    2. the b4.thanks-check-repo config option
+    3. the branch's remote URL
+    4. a repo URL derived from the commit check URL
+    """
+    # Long-lived callers (the TUI) thank series on different branches;
+    # never serve another branch's cached remote info
+    global BRANCH_INFO
+    BRANCH_INFO = None
+    binfo = get_branch_info(gitdir, branch)
+    crepo = binfo.get('b4-check-repo')
+    if crepo:
+        return crepo
+    config = b4.get_main_config()
+    ccrepo = config.get('thanks-check-repo')
+    if isinstance(ccrepo, str) and ccrepo:
+        return ccrepo
+    crepo = binfo.get('url')
+    if crepo:
+        return crepo
+    if checkurl:
+        repo, _commit = _parse_checkurl(checkurl)
+        return repo
+    return None
+
+
+def commit_reachable_on_remote(
+    commit: str, repo_url: str, branch: str = ''
+) -> Optional[bool]:
     """Check if a commit is reachable from a branch advertised by repo_url.
 
     A commit only counts as published once a ref on the public repo
@@ -1021,6 +1059,11 @@ def commit_reachable_on_remote(commit: str, repo_url: str) -> Optional[bool]:
     with shared object storage (grokmirror objstore repos, github fork
     networks) will happily serve commit pages for objects that were
     pushed to a sibling repo but never published in this one.
+
+    With *branch*, only that branch counts when the remote advertises
+    it — the thanks message claims the commit went into that specific
+    branch. If the remote does not advertise it (renamed, merged and
+    deleted), any advertised branch is accepted as before.
 
     Ancestry is computed locally against the advertised tips, so tips we
     do not have objects for are ignored. Returns True/False, or None if
@@ -1040,10 +1083,21 @@ def commit_reachable_on_remote(commit: str, repo_url: str) -> Optional[bool]:
         logger.debug('ls-remote failed for %s (exit code %s)', repo_url, ecode)
         return None
     tips: Set[str] = set()
+    branchtip: Optional[str] = None
     for line in out.splitlines():
         chunks = line.split(None, 1)
         if chunks:
             tips.add(chunks[0])
+            if branch and len(chunks) > 1 and chunks[1] == f'refs/heads/{branch}':
+                branchtip = chunks[0]
+    if branchtip:
+        tips = {branchtip}
+    elif branch:
+        logger.debug(
+            '%s does not advertise refs/heads/%s, checking all heads',
+            repo_url,
+            branch,
+        )
     if not tips:
         return False
     # Filter out tips we don't have locally -- we can't compute ancestry
@@ -1069,7 +1123,9 @@ def commit_reachable_on_remote(commit: str, repo_url: str) -> Optional[bool]:
     return not out.strip()
 
 
-def _check_published(checkurl: str, checkcommit: str, checkrepo: str) -> Optional[bool]:
+def _check_published(
+    checkurl: str, checkcommit: str, checkrepo: str, checkbranch: str = ''
+) -> Optional[bool]:
     """Tri-state publish check for a queued thanks message.
 
     Returns True when the commit is verified published, False when it is
@@ -1084,7 +1140,7 @@ def _check_published(checkurl: str, checkcommit: str, checkrepo: str) -> Optiona
     if checkurl and not checkrepo:
         checkrepo = _get_check_repo(checkurl) or ''
     if checkcommit and checkrepo:
-        return commit_reachable_on_remote(checkcommit, checkrepo)
+        return commit_reachable_on_remote(checkcommit, checkrepo, branch=checkbranch)
     if not checkurl:
         return True
     try:
@@ -1103,6 +1159,8 @@ def queue_message(
     dryrun: bool = False,
     checkcommit: Optional[str] = None,
     archive_after: bool = False,
+    checkrepo: Optional[str] = None,
+    checkbranch: Optional[str] = None,
 ) -> None:
     """Write a thanks message to the file-based queue.
 
@@ -1119,11 +1177,14 @@ def queue_message(
     msg['X-Check-URL'] = checkurl
     if not checkcommit:
         _repo, checkcommit = _parse_checkurl(checkurl)
-    checkrepo = _get_check_repo(checkurl)
+    if not checkrepo:
+        checkrepo = _get_check_repo(checkurl)
     if checkcommit:
         msg['X-Check-Commit'] = checkcommit
     if checkrepo:
         msg['X-Check-Repo'] = checkrepo
+    if checkbranch:
+        msg['X-Check-Branch'] = checkbranch
     if archive_after:
         msg['X-B4-Archive-After-Send'] = 'yes'
     filepath = os.path.join(qdir, _queue_filename(change_id, revision))
@@ -1384,6 +1445,7 @@ def _process_queue_locked(
         checkurl = str(msg.get('X-Check-URL', ''))
         checkcommit = str(msg.get('X-Check-Commit', ''))
         checkrepo = str(msg.get('X-Check-Repo', ''))
+        checkbranch = str(msg.get('X-Check-Branch', ''))
         archive_after = str(msg.get('X-B4-Archive-After-Send', '')).lower() == 'yes'
         subject = str(msg.get('Subject', '(no subject)'))
         if progress_cb:
@@ -1391,7 +1453,7 @@ def _process_queue_locked(
 
         # Check if the commit is publicly visible
         if not dryrun and (checkurl or (checkcommit and checkrepo)):
-            published = _check_published(checkurl, checkcommit, checkrepo)
+            published = _check_published(checkurl, checkcommit, checkrepo, checkbranch)
             if published is None:
                 still_pending += 1
                 if progress_cb:

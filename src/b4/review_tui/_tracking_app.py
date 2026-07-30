@@ -4840,12 +4840,23 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 checkurl = cidmask % last_cid
                 checkcommit = last_cid
 
+        # The repo and branch the "applied to" line refers to; queue
+        # delivery verifies the commit is reachable from there
+        checkrepo = b4.ty.get_check_repo_for_branch(
+            topdir, target_branch, checkurl or ''
+        )
+        # set_branch_details rewrites 'branch' to the remote branch name
+        _cbranch = jsondata.get('branch')
+        checkbranch = _cbranch if isinstance(_cbranch, str) else target_branch
+
         self._show_thank_preview(
             msg,
             series,
             checkurl=checkurl,
             checkcommit=checkcommit,
             archive_after=archive_after,
+            checkrepo=checkrepo,
+            checkbranch=checkbranch,
         )
 
     def _show_thank_preview(
@@ -4855,6 +4866,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         checkurl: Optional[str] = None,
         checkcommit: Optional[str] = None,
         archive_after: bool = False,
+        checkrepo: Optional[str] = None,
+        checkbranch: Optional[str] = None,
     ) -> None:
         """Push the ThankScreen modal and handle edit/send/queue/cancel."""
 
@@ -4868,12 +4881,20 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     checkurl=checkurl,
                     checkcommit=checkcommit,
                     archive_after=archive_after,
+                    checkrepo=checkrepo,
+                    checkbranch=checkbranch,
                 )
             elif result == '__SEND__':
                 self._send_thank_message(msg, series, archive_after=archive_after)
             elif result == '__QUEUE__' and checkurl:
                 self._queue_thank_message(
-                    msg, series, checkurl, checkcommit, archive_after=archive_after
+                    msg,
+                    series,
+                    checkurl,
+                    checkcommit,
+                    archive_after=archive_after,
+                    checkrepo=checkrepo,
+                    checkbranch=checkbranch,
                 )
 
         self.push_screen(ThankScreen(msg, checkurl=checkurl), _on_thank_result)
@@ -4885,6 +4906,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         checkurl: Optional[str] = None,
         checkcommit: Optional[str] = None,
         archive_after: bool = False,
+        checkrepo: Optional[str] = None,
+        checkbranch: Optional[str] = None,
     ) -> None:
         """Open the thank-you message in $EDITOR and re-show preview."""
         msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
@@ -4901,6 +4924,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             checkurl=checkurl,
             checkcommit=checkcommit,
             archive_after=archive_after,
+            checkrepo=checkrepo,
+            checkbranch=checkbranch,
         )
 
     def _queue_thank_message(
@@ -4910,6 +4935,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         checkurl: str,
         checkcommit: Optional[str] = None,
         archive_after: bool = False,
+        checkrepo: Optional[str] = None,
+        checkbranch: Optional[str] = None,
     ) -> None:
         """Queue the thanks message for delivery once commits are public."""
         change_id = series.get('change_id', '')
@@ -4923,6 +4950,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 dryrun=self._email_dryrun,
                 checkcommit=checkcommit,
                 archive_after=archive_after,
+                checkrepo=checkrepo,
+                checkbranch=checkbranch,
             )
         except Exception as ex:
             self.notify(f'Failed to queue message: {ex}', severity='error')
