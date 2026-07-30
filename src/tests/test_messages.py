@@ -1,4 +1,5 @@
 import datetime
+import email.message
 import os
 from typing import Dict, List, Optional
 
@@ -217,4 +218,103 @@ class TestCleanupOld:
         deleted = messages.cleanup_old(conn, max_days=0)
         assert deleted == 0
         assert messages.get_flags(conn, 'nodate@example.com') == 'Seen'
+        conn.close()
+
+
+class TestSetFlagsBulkReturnValue:
+    """Tests for the newly-flagged count returned by set_flags_bulk()."""
+
+    def test_counts_new_rows(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = messages.get_db()
+        entries: List[Dict[str, Optional[str]]] = [
+            {'msgid': 'n1@example.com', 'msg_date': None},
+            {'msgid': 'n2@example.com', 'msg_date': None},
+        ]
+        assert messages.set_flags_bulk(conn, entries, 'Seen') == 2
+        conn.close()
+
+    def test_repeat_is_zero(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = messages.get_db()
+        entries: List[Dict[str, Optional[str]]] = [
+            {'msgid': 'r1@example.com', 'msg_date': None},
+        ]
+        messages.set_flags_bulk(conn, entries, 'Seen')
+        assert messages.set_flags_bulk(conn, entries, 'Seen') == 0
+        conn.close()
+
+    def test_mixed_new_and_existing(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = messages.get_db()
+        first: List[Dict[str, Optional[str]]] = [
+            {'msgid': 'm1@example.com', 'msg_date': None},
+        ]
+        messages.set_flags_bulk(conn, first, 'Seen')
+        both: List[Dict[str, Optional[str]]] = [
+            {'msgid': 'm1@example.com', 'msg_date': None},
+            {'msgid': 'm2@example.com', 'msg_date': None},
+        ]
+        assert messages.set_flags_bulk(conn, both, 'Seen') == 1
+        conn.close()
+
+    def test_new_flag_on_existing_row(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = messages.get_db()
+        entries: List[Dict[str, Optional[str]]] = [
+            {'msgid': 'f1@example.com', 'msg_date': None},
+        ]
+        messages.set_flags_bulk(conn, entries, 'Seen')
+        assert messages.set_flags_bulk(conn, entries, 'Answered') == 1
+        conn.close()
+
+
+class TestMarkOutgoingSeen:
+    """Tests for mark_outgoing_seen()."""
+
+    @staticmethod
+    def _make_msg(msgid: str, date: Optional[str]) -> 'email.message.EmailMessage':
+        msg = email.message.EmailMessage()
+        msg['Subject'] = 'Test'
+        if msgid:
+            msg['Message-Id'] = f'<{msgid}>'
+        if date:
+            msg['Date'] = date
+        return msg
+
+    def test_marks_seen_and_sent(self, tmp_path: pytest.TempPathFactory) -> None:
+        msg = self._make_msg('out1@example.com', 'Mon, 27 Jul 2026 10:00:00 +0000')
+        messages.mark_outgoing_seen([msg])
+        conn = messages.get_db()
+        flags = messages.get_flags(conn, 'out1@example.com')
+        assert 'Seen' in flags
+        assert 'Sent' in flags
+        conn.close()
+
+    def test_stores_date_from_header(self, tmp_path: pytest.TempPathFactory) -> None:
+        msg = self._make_msg('out2@example.com', 'Mon, 27 Jul 2026 10:00:00 +0000')
+        messages.mark_outgoing_seen([msg])
+        conn = messages.get_db()
+        row = conn.execute(
+            'SELECT msg_date FROM messages WHERE msgid = ?', ('out2@example.com',)
+        ).fetchone()
+        assert row[0] == '2026-07-27T10:00:00+00:00'
+        conn.close()
+
+    def test_stores_date_when_header_missing(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        msg = self._make_msg('out3@example.com', None)
+        messages.mark_outgoing_seen([msg])
+        conn = messages.get_db()
+        row = conn.execute(
+            'SELECT msg_date FROM messages WHERE msgid = ?', ('out3@example.com',)
+        ).fetchone()
+        assert row[0]
+        conn.close()
+
+    def test_skips_message_without_msgid(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        msg = self._make_msg('', None)
+        messages.mark_outgoing_seen([msg])
+        conn = messages.get_db()
+        count = conn.execute('SELECT COUNT(*) FROM messages').fetchone()[0]
+        assert count == 0
         conn.close()

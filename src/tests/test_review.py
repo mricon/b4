@@ -4435,3 +4435,76 @@ def test_update_all_tracking_skips_snoozed_and_archived(
     assert result['errors'] == 1
     assert result['error_details'] == [('D', 'kaboom')]
     assert result['cancelled'] is False
+
+
+class TestOwnMessageEntries:
+    """Tests for _own_message_entries() — the exact-From auto-read match."""
+
+    @staticmethod
+    def _make_msg(
+        fromhdr: str,
+        msgid: str = 'msg@example.com',
+        date: Optional[str] = 'Mon, 27 Jul 2026 10:00:00 +0000',
+    ) -> email.message.EmailMessage:
+        msg = email.message.EmailMessage()
+        msg['Subject'] = 'Test'
+        if fromhdr:
+            msg['From'] = fromhdr
+        if msgid:
+            msg['Message-Id'] = f'<{msgid}>'
+        if date:
+            msg['Date'] = date
+        return msg
+
+    def test_exact_match(self) -> None:
+        msg = self._make_msg('K R <maint@example.com>', 'own@example.com')
+        entries = _review._own_message_entries([msg], 'maint@example.com')
+        assert len(entries) == 1
+        assert entries[0]['msgid'] == 'own@example.com'
+        assert entries[0]['msg_date'] == '2026-07-27T10:00:00+00:00'
+
+    def test_match_is_case_insensitive(self) -> None:
+        msg = self._make_msg('Maint@Example.COM', 'own@example.com')
+        entries = _review._own_message_entries([msg], 'maint@example.com')
+        assert len(entries) == 1
+
+    def test_bare_address_matches(self) -> None:
+        msg = self._make_msg('maint@example.com', 'own@example.com')
+        entries = _review._own_message_entries([msg], 'maint@example.com')
+        assert len(entries) == 1
+
+    def test_other_address_no_match(self) -> None:
+        msg = self._make_msg('K R <other@example.com>', 'own@example.com')
+        assert _review._own_message_entries([msg], 'maint@example.com') == []
+
+    def test_dmarc_munged_from_no_match(self) -> None:
+        # A list that rewrites From keeps the name but swaps the address
+        msg = self._make_msg(
+            'K R via lists.example.com <lists@lists.example.com>',
+            'own@example.com',
+        )
+        assert _review._own_message_entries([msg], 'maint@example.com') == []
+
+    def test_missing_from_no_match(self) -> None:
+        msg = self._make_msg('', 'own@example.com')
+        assert _review._own_message_entries([msg], 'maint@example.com') == []
+
+    def test_missing_msgid_skipped(self) -> None:
+        msg = self._make_msg('maint@example.com', '')
+        assert _review._own_message_entries([msg], 'maint@example.com') == []
+
+    def test_missing_date_gives_none(self) -> None:
+        msg = self._make_msg('maint@example.com', 'own@example.com', date=None)
+        entries = _review._own_message_entries([msg], 'maint@example.com')
+        assert len(entries) == 1
+        assert entries[0]['msg_date'] is None
+
+    def test_filters_mixed_thread(self) -> None:
+        msgs = [
+            self._make_msg('Author <author@example.com>', 'a@example.com'),
+            self._make_msg('K R <maint@example.com>', 'b@example.com'),
+            self._make_msg('Other <other@example.com>', 'c@example.com'),
+            self._make_msg('maint@example.com', 'd@example.com'),
+        ]
+        entries = _review._own_message_entries(msgs, 'maint@example.com')
+        assert [e['msgid'] for e in entries] == ['b@example.com', 'd@example.com']

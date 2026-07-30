@@ -1662,6 +1662,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                             review['sent-revision'] = current_rev
                     self._save_tracking()
                     self._mark_patches_answered(msgs)
+                    self._mark_outgoing_seen(msgs)
                     self.notify(f'Sent {sent} review email(s).')
             except Exception as ex:
                 self.notify(f'Send failed: {ex}', severity='error')
@@ -1743,6 +1744,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             elif self._email_dryrun:
                 self.notify(f'Dry-run: reply to {entry["fromemail"]} logged, not sent')
             else:
+                self._mark_outgoing_seen([msg])
                 self.notify(f'Reply sent to {entry["fromemail"]}')
         except Exception as ex:
             self.notify(f'Send failed: {ex}', severity='error')
@@ -2056,6 +2058,17 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             conn = messages.get_db()
             messages.set_flags_bulk(conn, entries, 'Seen')
             conn.close()
+        except Exception:
+            pass
+
+    def _mark_outgoing_seen(self, msgs: List[Any]) -> None:
+        """Mark just-sent messages as Seen so they never show up as unread."""
+        if self._email_dryrun:
+            return
+        try:
+            from b4.review import messages
+
+            messages.mark_outgoing_seen(msgs)
         except Exception:
             pass
 

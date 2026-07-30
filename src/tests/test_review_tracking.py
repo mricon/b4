@@ -4130,3 +4130,97 @@ class TestAutoWakeSnoozed:
         ).fetchone()
         conn.close()
         assert row[0] == 'reviewing'
+
+
+class TestUpdateMessageCountSeenBump:
+    """Tests for the seen_bump handling in update_message_count_from_msgs()."""
+
+    @staticmethod
+    def _make_msgs(count: int) -> list[EmailMessage]:
+        msgs = []
+        for i in range(count):
+            msg = EmailMessage()
+            msg['Message-Id'] = f'<m{i}@example.com>'
+            msg['Date'] = f'Mon, 27 Jul 2026 10:{i:02d}:00 +0000'
+            msgs.append(msg)
+        return msgs
+
+    @staticmethod
+    def _setup_series(identifier: str) -> sqlite3.Connection:
+        conn = review_tracking.init_db(identifier)
+        conn.row_factory = sqlite3.Row
+        review_tracking.add_series_to_db(
+            conn,
+            'bump-cid',
+            1,
+            'Test series',
+            'Author',
+            'author@example.com',
+            '2026-07-27T09:00:00+00:00',
+            'm0@example.com',
+            2,
+        )
+        return conn
+
+    @staticmethod
+    def _get_counts(conn: sqlite3.Connection) -> tuple[int, int]:
+        row = conn.execute(
+            'SELECT message_count, seen_message_count FROM series'
+            ' WHERE change_id = ? AND revision = ?',
+            ('bump-cid', 1),
+        ).fetchone()
+        return row['message_count'], row['seen_message_count']
+
+    def test_first_fetch_ignores_bump(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = self._setup_series('bump-first')
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(3), seen_bump=5
+        )
+        assert self._get_counts(conn) == (3, 3)
+        conn.close()
+
+    def test_bump_advances_seen(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = self._setup_series('bump-adv')
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(3)
+        )
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(5), seen_bump=1
+        )
+        # 2 new messages, 1 of them already read: badge shows 1 unread
+        assert self._get_counts(conn) == (5, 4)
+        conn.close()
+
+    def test_no_bump_keeps_seen(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = self._setup_series('bump-none')
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(3)
+        )
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(5)
+        )
+        assert self._get_counts(conn) == (5, 3)
+        conn.close()
+
+    def test_bump_clamped_to_count(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = self._setup_series('bump-clamp')
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(3)
+        )
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(4), seen_bump=10
+        )
+        assert self._get_counts(conn) == (4, 4)
+        conn.close()
+
+    def test_unchanged_count_no_write(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = self._setup_series('bump-same')
+        review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(3)
+        )
+        changed = review_tracking.update_message_count_from_msgs(
+            conn, 'bump-cid', 1, self._make_msgs(3), seen_bump=2
+        )
+        assert changed is False
+        assert self._get_counts(conn) == (3, 3)
+        conn.close()

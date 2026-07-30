@@ -2192,6 +2192,65 @@ def _build_reply_from_comments(
     return '\n'.join(result)
 
 
+def _own_message_entries(
+    msgs: List[Any], myaddr: str
+) -> List[Dict[str, Optional[str]]]:
+    """Return flag entries for messages whose From exactly matches *myaddr*.
+
+    Exact address match only: mail the maintainer sent from a different
+    address, or whose From a list rewrote (DMARC munging), is deliberately
+    left alone.  Replies sent through b4 itself are covered separately by
+    message-id at send time (messages.mark_outgoing_seen), so a missed
+    match here only means the message stays unread — never the reverse.
+    """
+    entries: List[Dict[str, Optional[str]]] = []
+    myaddr = myaddr.lower()
+    for msg in msgs:
+        fromaddr = email.utils.parseaddr(str(msg.get('From', '')))[1]
+        if not fromaddr or fromaddr.lower() != myaddr:
+            continue
+        msgid = b4.LoreMessage.get_clean_msgid(msg)
+        if not msgid:
+            continue
+        msg_date: Optional[str] = None
+        dval = msg.get('Date')
+        if dval:
+            try:
+                msg_date = email.utils.parsedate_to_datetime(str(dval)).isoformat()
+            except Exception:
+                pass
+        entries.append({'msgid': msgid, 'msg_date': msg_date})
+    return entries
+
+
+def _prev_thread_msgids(topdir: str, change_id: str) -> Optional[Set[str]]:
+    """Msgids from the previously stored thread blob, or None if unavailable.
+
+    None means "no reliable previous snapshot" — callers must treat that
+    as "cannot tell which messages are new" and skip any accounting that
+    depends on it.
+    """
+    branch = REVIEW_BRANCH_PREFIX + change_id
+    if not b4.git_branch_exists(topdir, branch):
+        return None
+    try:
+        _, tracking = load_tracking(topdir, branch)
+    except (SystemExit, Exception):
+        return None
+    blob_sha = tracking.get('series', {}).get('thread-blob', '')
+    if not blob_sha:
+        return None
+    mbox_bytes = b4.review.tracking.get_thread_mbox(topdir, blob_sha)
+    if not mbox_bytes:
+        return None
+    msgids: Set[str] = set()
+    for m in liblore.utils.split_mbox(mbox_bytes):
+        mid = b4.LoreMessage.get_clean_msgid(m)
+        if mid:
+            msgids.add(mid)
+    return msgids
+
+
 def update_series_tracking(
     series: Dict[str, Any],
     identifier: str,
@@ -2407,6 +2466,42 @@ def update_series_tracking(
             result['error'] = 'Error saving tracking data'
             return result
 
+    # Auto-mark the maintainer's own messages as read.  Two passes:
+    # replies sent through b4 were already flagged Seen at send time and
+    # match here by message-id; anything whose From exactly matches the
+    # configured identity is flagged Seen now.  Anything else (e.g. the
+    # maintainer's other address) is deliberately not auto-flagged.
+    # seen_bump counts new-to-the-thread messages that are already read,
+    # so the unread badge below never lights up for them.
+    seen_bump = 0
+    if thread_msgs and change_id:
+        try:
+            from b4.review import messages
+
+            mconn = messages.get_db()
+            _, myaddr = b4.get_mailfrom()
+            if myaddr:
+                own_entries = _own_message_entries(msgs, myaddr)
+                if own_entries:
+                    messages.set_flags_bulk(mconn, own_entries, 'Seen')
+            if topdir:
+                prev_msgids = _prev_thread_msgids(topdir, change_id)
+                if prev_msgids is not None:
+                    new_msgids = []
+                    for msg in thread_msgs:
+                        mid = b4.LoreMessage.get_clean_msgid(msg)
+                        if mid and mid not in prev_msgids:
+                            new_msgids.append(mid)
+                    flags_map = messages.get_flags_bulk(mconn, new_msgids)
+                    seen_bump = sum(
+                        1
+                        for mid in new_msgids
+                        if 'Seen' in flags_map.get(mid, '').split()
+                    )
+            mconn.close()
+        except Exception as ex:
+            logger.debug('Could not auto-mark own messages as read: %s', ex)
+
     # Update message count and thread blob from the already-fetched
     # thread messages.  No status filtering here: the thread is already
     # in hand, and the unread badge must keep working after a series
@@ -2416,7 +2511,12 @@ def update_series_tracking(
         try:
             conn = b4.review.tracking.get_db(identifier)
             b4.review.tracking.update_message_count_from_msgs(
-                conn, change_id, current_rev, thread_msgs, topdir=topdir
+                conn,
+                change_id,
+                current_rev,
+                thread_msgs,
+                topdir=topdir,
+                seen_bump=seen_bump,
             )
             conn.close()
             result['counts_updated'] = True

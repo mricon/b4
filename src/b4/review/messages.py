@@ -5,10 +5,13 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import datetime
+import email.message
+import email.utils
 import os
 import pathlib
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import b4
 
@@ -41,6 +44,8 @@ def get_db() -> sqlite3.Connection:
     is_new = not os.path.exists(db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    # Both the TUI and 'b4 review cron' may write concurrently
+    conn.execute('PRAGMA busy_timeout = 5000')
     if is_new:
         conn.executescript(SCHEMA_SQL)
         conn.execute(
@@ -96,22 +101,27 @@ def set_flag(
 
 def set_flags_bulk(
     conn: sqlite3.Connection, entries: List[Dict[str, Optional[str]]], flag: str
-) -> None:
+) -> int:
     """Add *flag* to multiple messages in one transaction.
 
     Each entry in *entries* is ``{'msgid': ..., 'msg_date': ...}``.
+    Returns the number of messages that did not have *flag* before.
     """
+    newly_flagged = 0
     for entry in entries:
         msgid = entry.get('msgid', '')
         msg_date = entry.get('msg_date')
         if not msgid:
             continue
-        conn.execute(
+        cursor = conn.execute(
             'INSERT INTO messages (msgid, msg_date, flags)'
             ' VALUES (?, ?, ?)'
             ' ON CONFLICT(msgid) DO NOTHING',
             (msgid, msg_date, flag),
         )
+        if cursor.rowcount > 0:
+            newly_flagged += 1
+            continue
         row = conn.execute(
             'SELECT flags FROM messages WHERE msgid = ?', (msgid,)
         ).fetchone()
@@ -119,11 +129,13 @@ def set_flags_bulk(
             existing = set(row[0].split())
             if flag not in existing:
                 existing.add(flag)
+                newly_flagged += 1
                 conn.execute(
                     'UPDATE messages SET flags = ? WHERE msgid = ?',
                     (' '.join(sorted(existing)), msgid),
                 )
     conn.commit()
+    return newly_flagged
 
 
 def remove_flag(conn: sqlite3.Connection, msgid: str, flag: str) -> None:
@@ -143,6 +155,36 @@ def remove_flag(conn: sqlite3.Connection, msgid: str, flag: str) -> None:
     else:
         conn.execute('DELETE FROM messages WHERE msgid = ?', (msgid,))
     conn.commit()
+
+
+def mark_outgoing_seen(msgs: Sequence[email.message.EmailMessage]) -> None:
+    """Mark messages just sent by b4 as Seen (and Sent) by their Message-Id.
+
+    Called at send time, before the messages ever appear on the list, so
+    that when they are later fetched they are already read.
+    """
+    entries: List[Dict[str, Optional[str]]] = []
+    for msg in msgs:
+        msgid = b4.LoreMessage.get_clean_msgid(msg)
+        if not msgid:
+            continue
+        msg_date: Optional[str] = None
+        dval = msg.get('Date')
+        if dval:
+            try:
+                msg_date = email.utils.parsedate_to_datetime(str(dval)).isoformat()
+            except Exception:
+                pass
+        if not msg_date:
+            # cleanup_old() prunes by msg_date, so always store one
+            msg_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        entries.append({'msgid': msgid, 'msg_date': msg_date})
+    if not entries:
+        return
+    conn = get_db()
+    set_flags_bulk(conn, entries, 'Seen')
+    set_flags_bulk(conn, entries, 'Sent')
+    conn.close()
 
 
 def cleanup_old(conn: sqlite3.Connection, max_days: int = 180) -> int:

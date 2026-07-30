@@ -1972,6 +1972,7 @@ def update_message_count_from_msgs(
     revision: int,
     msgs: List[Any],
     topdir: Optional[str] = None,
+    seen_bump: int = 0,
 ) -> bool:
     """Update message count and thread blob from already-fetched messages.
 
@@ -1979,7 +1980,9 @@ def update_message_count_from_msgs(
     ``message_count`` and ``seen_message_count`` to the same value so
     no unread badge appears until *new* activity arrives.  On subsequent
     calls only ``message_count`` is updated (so the badge reflects new
-    replies).
+    replies), except that ``seen_message_count`` is advanced by
+    *seen_bump* — the caller's count of new-to-the-thread messages that
+    are already read (e.g. the maintainer's own replies).
 
     Returns True if the database was changed, False otherwise.
     """
@@ -1988,7 +1991,8 @@ def update_message_count_from_msgs(
     last_activity = _latest_date_from_msgs(msgs)
 
     row = conn.execute(
-        'SELECT message_count FROM series WHERE change_id = ? AND revision = ?',
+        'SELECT message_count, seen_message_count FROM series'
+        ' WHERE change_id = ? AND revision = ?',
         (change_id, revision),
     ).fetchone()
     existing_count = row['message_count'] if row else None
@@ -2003,14 +2007,26 @@ def update_message_count_from_msgs(
             (count, count, now, last_activity, change_id, revision),
         )
     elif count != existing_count:
-        # Count changed — update count but not seen (badge will appear)
-        conn.execute(
-            'UPDATE series'
-            ' SET message_count = ?, last_update_check = ?,'
-            '     last_activity_at = COALESCE(?, last_activity_at)'
-            ' WHERE change_id = ? AND revision = ?',
-            (count, now, last_activity, change_id, revision),
-        )
+        # Count changed — update count but not seen (badge will appear),
+        # save for any already-read new messages reported by the caller
+        if seen_bump > 0:
+            new_seen = min(count, (row['seen_message_count'] or 0) + seen_bump)
+            conn.execute(
+                'UPDATE series'
+                ' SET message_count = ?, seen_message_count = ?,'
+                '     last_update_check = ?,'
+                '     last_activity_at = COALESCE(?, last_activity_at)'
+                ' WHERE change_id = ? AND revision = ?',
+                (count, new_seen, now, last_activity, change_id, revision),
+            )
+        else:
+            conn.execute(
+                'UPDATE series'
+                ' SET message_count = ?, last_update_check = ?,'
+                '     last_activity_at = COALESCE(?, last_activity_at)'
+                ' WHERE change_id = ? AND revision = ?',
+                (count, now, last_activity, change_id, revision),
+            )
     else:
         # No change — just stamp the check time, skip commit
         conn.execute(
