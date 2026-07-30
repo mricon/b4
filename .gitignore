@@ -4,7 +4,7 @@
 *.json
 *.pdf
 test.log
-build/*
+build/
 docs/_build/
 dist/*
 MANIFEST
