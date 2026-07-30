@@ -4418,9 +4418,10 @@ class TestQuietCron:
         b4.logger.setLevel(old_level)
 
     def test_default_suppresses_everything(self, handler: _RecordingHandler) -> None:
-        """b4 traditionally narrates at CRITICAL ("always show"), e.g.
-        mbox.py's 'Checking for newer revisions', so the default must
-        drop every level."""
+        """b4 traditionally narrates at CRITICAL ("always show", it
+        survives -q), as mbox.py's 'Checking for newer revisions' did
+        until it flipped to INFO, so the default must drop every
+        level."""
         with _review._quiet_cron():
             b4.logger.info('Looking up something')
             b4.logger.warning('duplicate messages found')

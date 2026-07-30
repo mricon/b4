@@ -762,10 +762,10 @@ def get_extra_series(
 
     startdate = time.strftime('%Y%m%d', msgdate[:9])
     if direction > 0:
-        logger.critical('Checking for newer revisions')
+        logger.info('Checking for newer revisions')
         datelim = 'd:%s..' % startdate
     else:
-        logger.critical('Checking for older revisions')
+        logger.info('Checking for older revisions')
         # Cap backward search to 12 months to avoid matching years of
         # identically-named series (common with subject+from fallback).
         earliest = time.strftime(
