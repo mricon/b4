@@ -2634,26 +2634,34 @@ class _quiet_cron:
 
     Cron reuses the same code paths as the interactive commands (lore
     lookups, thread analysis, SMTP delivery), which narrate their
-    progress at INFO and WARNING levels.  That is fine in a terminal,
-    but a cron job mails every line to the maintainer, so records below
-    *threshold* are dropped while the block runs, and the cron code
-    emits its own summaries afterwards -- either after the block, or
-    from within it via the exempt ``cron_logger``.  A --debug run
-    bypasses the filter entirely.
+    progress -- including at CRITICAL level, which b4 traditionally
+    uses for "always show this" output.  That is fine in a terminal,
+    but a cron job mails every line to the maintainer.
+
+    With no *threshold*, every record is dropped while the block runs
+    (like the TUI's _quiet_worker): use this when failures inside the
+    block are collected and re-reported afterwards, as the update
+    sweep does.  With a *threshold*, records at or above it still get
+    through: the delivery sweep passes WARNING because its warnings
+    and criticals are genuine errors, not narration.  The exempt
+    ``cron_logger`` always gets through, for reporting from inside the
+    block.  A --debug run bypasses the filter entirely.
     """
 
-    def __init__(self, threshold: int = logging.ERROR) -> None:
+    def __init__(self, threshold: Optional[int] = None) -> None:
         self._threshold = threshold
 
     def __enter__(self) -> '_quiet_cron':
         class _Filter(logging.Filter):
-            def __init__(self, threshold: int) -> None:
+            def __init__(self, threshold: Optional[int]) -> None:
                 super().__init__()
                 self._threshold = threshold
 
             def filter(self, record: logging.LogRecord) -> bool:
                 if record.name == cron_logger.name:
                     return True
+                if self._threshold is None:
+                    return False
                 return record.levelno >= self._threshold
 
         self._filt = _Filter(self._threshold)
@@ -2681,6 +2689,9 @@ def _cron_update(identifier: str, topdir: Optional[str]) -> None:
     config = b4.get_main_config()
     linkmask = str(config.get('linkmask', 'https://lore.kernel.org/r/%s'))
     try:
+        # Suppress everything: per-series failures are collected into
+        # result['error_details'] and re-reported below, and anything
+        # fatal escapes as an exception
         with _quiet_cron():
             result = update_all_tracking(identifier, linkmask, topdir=topdir)
     except b4.LockHeldError:

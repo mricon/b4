@@ -4417,12 +4417,15 @@ class TestQuietCron:
         b4.logger.removeHandler(hdl)
         b4.logger.setLevel(old_level)
 
-    def test_suppresses_below_threshold(self, handler: _RecordingHandler) -> None:
+    def test_default_suppresses_everything(self, handler: _RecordingHandler) -> None:
+        """b4 traditionally narrates at CRITICAL ("always show"), e.g.
+        mbox.py's 'Checking for newer revisions', so the default must
+        drop every level."""
         with _review._quiet_cron():
             b4.logger.info('Looking up something')
             b4.logger.warning('duplicate messages found')
-            b4.logger.error('genuine error')
-        assert handler.messages == ['genuine error']
+            b4.logger.critical('Checking for newer revisions')
+        assert handler.messages == []
 
     def test_child_and_liblore_records_suppressed(
         self, handler: _RecordingHandler
@@ -4437,7 +4440,11 @@ class TestQuietCron:
         with _review._quiet_cron(logging.WARNING):
             b4.logger.info('Connecting to smtp:465')
             b4.logger.warning('Failed to send queued message')
-        assert handler.messages == ['Failed to send queued message']
+            b4.logger.critical('CRITICAL: could not parse the thank-you review')
+        assert handler.messages == [
+            'Failed to send queued message',
+            'CRITICAL: could not parse the thank-you review',
+        ]
 
     def test_cron_logger_is_exempt(self, handler: _RecordingHandler) -> None:
         with _review._quiet_cron():
