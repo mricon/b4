@@ -144,6 +144,17 @@ now always takes precedence over a fingerprint match. Discovered
 revisions are also identified by their cover letter rather than their
 first patch, so revision listings show the real series subject.
 
+**Your own replies no longer show up as unread**
+
+After sending a reply, the reply itself would arrive back from the
+mailing list a few moments later and light up the series' unread
+badge. Replies sent through b4 are now marked as read at send time,
+and any fetched message whose ``From:`` exactly matches your
+configured identity (``sendemail.from``, falling back to
+``user.email``) is marked as read during update checks. Mail you send
+from any other address is deliberately left untouched, so a missed
+match can only ever leave a message unread — never silently hide one.
+
 **Other review fixes**
 
 - Unread-message badges keep working after a series is applied:

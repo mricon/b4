@@ -345,6 +345,14 @@ in the series are automatically marked as seen. Replies sent by the
 maintainer from an external email client are detected when the thread
 is loaded, and the parent messages are marked as answered.
 
+Your own messages are also marked as seen automatically, so replying
+to a series never lights up its unread badge: replies sent through b4
+are recorded at send time, and messages whose ``From:`` exactly
+matches your configured identity (``sendemail.from``, falling back to
+``user.email``) are marked as seen whenever series updates are
+fetched. Mail sent from any other address is deliberately not
+auto-marked.
+
 **Message view** — full headers (Date, From, To, Cc, Subject, Link,
 Attestation) and message body with diff syntax highlighting and
 quoted-line dimming. Addresses are packed horizontally to make good use
