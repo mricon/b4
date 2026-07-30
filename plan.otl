@@ -13,8 +13,15 @@ v0.17
 	[_] Privacy guardrails — ensure private emails never end up in the feed
 		: Needs brainstorming: allowlist by list-id? opt-in per send? exclude drafts/dry-run?
 [_] `b4 review` improvements
-	[_] Batch trailer selection across multiple patches
-		: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+	[_] Workbooks — review multiple serieses as an ordered, stacked queue
+		: Multi-select serieses in the tracking TUI, order them into a workbook
+		: with a target branch; b4 stacks them in a worktree (apply conflicts
+		: surface during ordering); agent reviews the whole queue in a separate
+		: terminal with cumulative context; results load back into the workbook
+		: and the individual serieses
+		[_] Conflict policy selectable per workbook (skip-and-continue with auto-eject, or stop-at-first)
+		[_] Batch trailer selection applied across a workbook
+			: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
 	[_] Arbitrary labels on tracked review series
 		: Tag tracked review series with free-form labels to organize the tracking list
 		: New series_labels table keyed by change_id (survives revision upgrades)
