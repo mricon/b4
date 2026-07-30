@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1785445693,"nonce":"6wWqW52T8aa3zxEXBlWoQZBzfB8=","title":"b4 prep: configurable removal of trailers (e.g. Upstream-Status) when sending","was":"b4 feature request: configurable removal of trailers (e.g. Upstream-Status) when sending"}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1785445693,"nonce":"mKTSoAqbG4lZiJlwtrrOyVGLZb0=","added":["rfe"],"removed":null}]}
