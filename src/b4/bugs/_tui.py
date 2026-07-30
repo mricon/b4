@@ -1231,7 +1231,9 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
     """
 
     BINDINGS = [
-        Binding('S', 'send', 'Send'),
+        Binding('ctrl+y', 'send', 'Send'),
+        # Legacy alias for maintainers used to the old binding
+        Binding('S', 'send', 'Send', show=False),
         Binding('e', 'edit', 'edit'),
         Binding('t', 'edit_tocc', 'To/Cc'),
         Binding('j', 'scroll_down', 'down', show=False),
@@ -1250,7 +1252,7 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
         yield Static('Reply preview', id='reply-preview-header')
         yield RichLog(id='reply-preview-log', wrap=True, markup=False)
         yield Static(
-            Text('S send  |  e edit body  |  t To/Cc  |  Escape abandon'),
+            Text('Ctrl-y send  |  e edit body  |  t To/Cc  |  Escape abandon'),
             id='reply-preview-hint',
         )
         yield SeparatedFooter()

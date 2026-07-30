@@ -433,13 +433,13 @@ Key                        Action
 
 **Email preview mode keybindings**
 
-======  ================================================================
-Key     Action
-======  ================================================================
-``T``   Edit To/Cc/Bcc recipients
-``S``   Send review emails
-``e``   Toggle email mode
-======  ================================================================
+==========  ============================================================
+Key         Action
+==========  ============================================================
+``T``       Edit To/Cc/Bcc recipients
+``Ctrl-y``  Send review emails (``S`` still works as a legacy alias)
+``e``       Toggle email mode
+==========  ============================================================
 
 **Inline diff comments**
 
@@ -909,7 +909,7 @@ coverage — b4 automatically promotes the status from ``partial`` to
 When the *thank and archive on delivery* checkbox is enabled and the
 take leaves the series fully ``accepted``, the thank-you preview opens
 automatically after the take completes. From there the flow is the
-usual one — **Send** (``S``) or **Queue** (``W``) — and a successful
+usual one — **Send** (``Ctrl-y``) or **Queue** (``W``) — and a successful
 delivery also archives the series:
 
 * a directly sent thank-you archives the series immediately;
@@ -1016,8 +1016,8 @@ select **Thank** to compose and send a thank-you note to the contributor.
 Sending a thank-you for a ``partial`` series acknowledges the patches
 that have already landed without affecting the review of the remaining
 patches. A preview
-screen shows the generated message with keybindings to **Send** (``S``),
-**Edit** (``e``), or **Cancel** (``Escape``).
+screen shows the generated message with keybindings to **Send**
+(``Ctrl-y``), **Edit** (``e``), or **Cancel** (``Escape``).
 
 .. _thanks_queue:
 

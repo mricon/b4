@@ -246,7 +246,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
         # Email mode bindings
         Binding('T', 'edit_tocc', 'edit to/cc', key_display='T'),
-        Binding('S', 'send', 'send', key_display='S'),
+        Binding('ctrl+y', 'send', 'send'),
+        # Legacy alias for maintainers used to the old binding
+        Binding('S', 'send', 'send', key_display='S', show=False),
         # App bindings
         Binding('e', 'toggle_preview', 'email mode'),
         Binding('s', 'suspend', 'shell'),

@@ -10,6 +10,7 @@ tests run without a real terminal.  Only lightweight, self-contained
 modals are exercised here — no database, network, or git needed.
 """
 
+import importlib
 from typing import Any, Dict, Generator, List, Optional, Tuple
 from unittest import mock
 
@@ -1480,3 +1481,29 @@ class TestTakeScreen:
             await pilot.pause()
             assert app.screen.query_one('#take-thank-archive', Checkbox).value
             assert screen.thank_and_archive
+
+
+class TestSendKeybindings:
+    """Ctrl-y is the official send chord everywhere mail is sent; the
+    old capital-S binding survives as an unlisted legacy alias."""
+
+    @staticmethod
+    def _send_bindings(screen_cls: Any) -> Dict[str, Any]:
+        return {b.key: b for b in screen_cls.BINDINGS if b.action == 'send'}
+
+    @pytest.mark.parametrize(
+        'screen_path',
+        [
+            'b4.review_tui._modals.ThankScreen',
+            'b4.review_tui._modals.FollowupReplyPreviewScreen',
+            'b4.review_tui._review_app.ReviewApp',
+            'b4.bugs._tui.ReplyPreviewScreen',
+        ],
+    )
+    def test_ctrl_y_official_s_legacy(self, screen_path: str) -> None:
+        modpath, clsname = screen_path.rsplit('.', 1)
+        mod = importlib.import_module(modpath)
+        bindings = self._send_bindings(getattr(mod, clsname))
+        assert set(bindings) == {'ctrl+y', 'S'}
+        assert bindings['ctrl+y'].show
+        assert not bindings['S'].show

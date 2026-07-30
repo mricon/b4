@@ -281,7 +281,7 @@ def _review_help_lines(has_agent: bool = False) -> List[str]:
         '  [bold]t[/bold]         Trailers (↑↓ navigate, Space toggle, Enter save)\n',
         '  [bold]r[/bold]         Open $EDITOR for reply\n',
         '  [bold]T[/bold]         Edit To/Cc recipients\n',
-        '  [bold]S[/bold]         Send review emails\n',
+        '  [bold]Ctrl-y[/bold]    Send review emails\n',
         '  [bold]e[/bold]         Toggle email mode\n',
         '\n',
         '  [bold]s[/bold]         Suspend to shell\n',
@@ -522,13 +522,16 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
     preview — headers and body in a single scrollable RichLog.
 
     Dismisses with:
-    - 'send'  on S — caller should send the reply immediately
+    - 'send'  on Ctrl-y (or the legacy S) — caller should send the
+      reply immediately
     - 'edit'  on E — caller should re-open the editor with the current text
     - None    on Escape — abandon (no action)
     """
 
     BINDINGS = [
-        Binding('S', 'send', 'Send'),
+        Binding('ctrl+y', 'send', 'Send'),
+        # Legacy alias for maintainers used to the old binding
+        Binding('S', 'send', 'Send', show=False),
         Binding('e', 'edit', 'Edit'),
         Binding('escape', 'abandon', 'Abandon'),
         Binding('q', 'abandon', 'Abandon', show=False),
@@ -571,7 +574,8 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
                 auto_scroll=False,
             )
             yield Static(
-                'S  send  |  e  edit  |  Escape  abandon', id='followup-preview-hint'
+                'Ctrl-y  send  |  e  edit  |  Escape  abandon',
+                id='followup-preview-hint',
             )
 
     def on_mount(self) -> None:
@@ -1289,7 +1293,9 @@ class ThankScreen(ModalScreen[Optional[str]]):
 
     BINDINGS = [
         Binding('e', 'edit', '[e]dit'),
-        Binding('S', 'send', '[S]end', key_display='S'),
+        Binding('ctrl+y', 'send', 'Send'),
+        # Legacy alias for maintainers used to the old binding
+        Binding('S', 'send', '[S]end', key_display='S', show=False),
         Binding('W', 'queue', '[W] queue', key_display='W', show=False),
         Binding('escape', 'cancel', 'Cancel'),
         Binding('q', 'cancel', 'Cancel', show=False),
@@ -1341,9 +1347,9 @@ class ThankScreen(ModalScreen[Optional[str]]):
                 auto_scroll=False,
             )
             if self._checkurl:
-                hint = 'e edit  |  S send now  |  W queue  |  Escape cancel'
+                hint = 'e edit  |  Ctrl-y send now  |  W queue  |  Escape cancel'
             else:
-                hint = 'e edit  |  S send  |  Escape cancel'
+                hint = 'e edit  |  Ctrl-y send  |  Escape cancel'
             yield Static(hint, id='thank-hint')
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:

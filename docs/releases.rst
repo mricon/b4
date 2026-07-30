@@ -80,6 +80,14 @@ To go with this, the **Upgrade** action is now also offered on
 ``accepted`` and ``thanked`` series with a known newer revision.
 See :ref:`thank and archive in one motion <review_take_thank_archive>`.
 
+**Send is now Ctrl-y**
+
+Sending mail from a preview screen — review emails, thank-you notes,
+follow-up replies, and ``b4 bugs`` replies — is now confirmed with
+``Ctrl-y``, matching the confirmation chord used by every other
+important dialog. The old ``S`` binding still works as an unlisted
+legacy alias, so existing muscle memory is not broken.
+
 **Partial-series state**
 
 When you cherry-pick only a subset of a series' patches, b4 now sets the

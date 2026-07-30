@@ -174,7 +174,7 @@ the reply.
 
 Sending the review
 ~~~~~~~~~~~~~~~~~~
-When you are satisfied, press ``S`` (capital S) to send. B4 composes
+When you are satisfied, press ``Ctrl-y`` to send. B4 composes
 proper ``In-Reply-To`` / ``References`` headers so your review appears
 in the correct thread on the mailing list.
 
@@ -241,7 +241,7 @@ Open the action menu (``a``) on an accepted series and select
 **Thank**. B4 composes a thank-you email listing each applied commit
 with its hash, and sends it to the submitter and relevant lists.
 
-You can send the thank-you right away with ``S``, or press ``W`` to
+You can send the thank-you right away with ``Ctrl-y``, or press ``W`` to
 queue it — the message will be held until the specified git ref becomes
 publicly available, ensuring the commit hashes in the thank-you are
 reachable before anyone receives the email.
