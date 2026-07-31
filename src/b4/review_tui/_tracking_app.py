@@ -3791,36 +3791,18 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> bool:
         """Delete a review branch, switching away if currently on it.
 
+        Thin TUI wrapper around b4.review.delete_review_branch() that turns
+        its error string into a notification.  Interactive, so detaching HEAD
+        to get off the branch is fine here.
+
         Returns True on success, False on failure.
         """
-        if b4.git_get_current_branch(topdir) == review_branch:
-            ecode, out = b4.git_run_command(
-                topdir, ['rev-parse', f'{review_branch}~1'], logstderr=True
-            )
-            if ecode > 0:
-                if notify:
-                    self.notify('Could not determine parent commit', severity='error')
-                return False
-            parent = out.strip()
-            ecode, out = b4.git_run_command(
-                topdir, ['checkout', parent], logstderr=True
-            )
-            if ecode > 0:
-                if notify:
-                    self.notify(
-                        f'Could not switch away from {review_branch}', severity='error'
-                    )
-                return False
-        ecode, out = b4.git_run_command(
-            topdir, ['branch', '-D', review_branch], logstderr=True
+        ok, err = b4.review.delete_review_branch(
+            topdir, review_branch, allow_switch=True
         )
-        if ecode > 0:
-            if notify:
-                self.notify(
-                    f'Failed to delete branch {review_branch}', severity='error'
-                )
-            return False
-        return True
+        if not ok and notify:
+            self.notify(err, severity='error')
+        return ok
 
     def action_abandon(self) -> None:
         """Abandon the selected series."""
