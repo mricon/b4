@@ -355,7 +355,10 @@ def test_commit_reachable_unknown_tips(
     pub = str(tmp_path / 'pub')
     other = str(tmp_path / 'other')
     _init_repo(local)
-    ecode, out = b4.git_run_command(None, ['init', '--bare', pub])
+    # -b master: the clone below takes its HEAD from this repository, and an
+    # init.defaultBranch of 'main' would leave it on an unborn branch, with
+    # the "advance the remote" commit landing as an unrelated root commit.
+    ecode, out = b4.git_run_command(None, ['init', '--bare', '-b', 'master', pub])
     assert ecode == 0, out
     monkeypatch.chdir(local)
     c1 = _commit_empty('c1')
