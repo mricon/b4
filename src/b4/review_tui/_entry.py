@@ -69,8 +69,10 @@ def run_tracking_tui(
     patatt_sign = not (no_sign or _cnps.lower() in {'yes', 'true', 'y'})
     use_mouse = not no_mouse and _tui_use_mouse()
 
-    # Get current branch to restore later
+    # Remember where HEAD is so we can put it back later.  A detached HEAD is
+    # a starting point too, so keep the commit alongside the branch name.
     original_branch = b4.git_get_current_branch(topdir)
+    original_head = b4.git_head_restore_args(topdir)
 
     # Check if we're already on a review branch
     if original_branch and original_branch.startswith(b4.review.REVIEW_BRANCH_PREFIX):
@@ -178,7 +180,7 @@ def run_tracking_tui(
         # Anything else means the user moved HEAD themselves -- possibly hours
         # ago, from another terminal sharing this worktree -- and the branch
         # recorded when we started is stale, not something to check back out.
-        if original_branch:
+        if original_head:
             current = b4.git_get_current_branch(topdir)
             if (
                 current
@@ -186,12 +188,8 @@ def run_tracking_tui(
                 and current.startswith(b4.review.REVIEW_BRANCH_PREFIX)
             ):
                 logger.info(
-                    'Checking out %s and starting tracking UI...', original_branch
+                    'Checking out %s and starting tracking UI...', original_head[-1]
                 )
-                ecode, _out = b4.git_run_command(
-                    topdir, ['checkout', original_branch], logstderr=True
-                )
+                ecode, _out = b4.git_run_command(topdir, original_head, logstderr=True)
                 if ecode != 0:
-                    logger.warning(
-                        'Could not restore original branch: %s', original_branch
-                    )
+                    logger.warning('Could not restore %s', original_head[-1])

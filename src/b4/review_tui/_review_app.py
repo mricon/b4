@@ -292,6 +292,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         self._patatt_sign: bool = session.get('patatt_sign', True)
         self._branch: str = session['branch']
         self._original_branch: Optional[str] = session.get('original_branch')
+        self._original_head: List[str] = session.get('original_head') or (
+            ['checkout', self._original_branch] if self._original_branch else []
+        )
         self.branch_checked_out: bool = False
         self._has_cover: bool = NO_COVER_NOTE not in self._cover_text
         self._selected_idx: int = (
@@ -2161,8 +2164,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         return True
 
     def _restore_original_branch(self) -> None:
-        """Switch back to the original branch after shell/agent use."""
-        if not self.branch_checked_out or not self._original_branch:
+        """Put HEAD back where the session found it after shell/agent use."""
+        if not self.branch_checked_out or not self._original_head:
             return
         # Only undo our own checkout. If HEAD is no longer on the review
         # branch we left it on, something else moved it -- the shell we just
@@ -2172,7 +2175,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self.branch_checked_out = False
             return
         ecode, _out = b4.git_run_command(
-            self._topdir, ['checkout', self._original_branch], logstderr=True
+            self._topdir, self._original_head, logstderr=True
         )
         if ecode == 0:
             self.branch_checked_out = False

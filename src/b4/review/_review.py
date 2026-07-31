@@ -3151,8 +3151,9 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
             topdir, change_id, series, patches
         )
 
-    # Record current branch so ReviewApp can restore it if it checks
-    # out the review branch for shell/agent operations.
+    # Record where HEAD is so ReviewApp can put it back if it checks out the
+    # review branch for shell/agent operations.  A detached HEAD is a starting
+    # point too, so remember the commit alongside the branch name.
     ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
     current_branch = out.strip() if ecode == 0 else None
 
@@ -3160,6 +3161,7 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
         'topdir': topdir,
         'branch': branch,
         'original_branch': current_branch,
+        'original_head': b4.git_head_restore_args(topdir),
         'cover_text': cover_text,
         'tracking': tracking,
         'series': series,

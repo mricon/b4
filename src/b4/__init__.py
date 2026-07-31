@@ -5246,6 +5246,23 @@ def git_get_current_branch(
     return mybranch
 
 
+def git_head_restore_args(gitdir: Optional[str] = None) -> List[str]:
+    """git-checkout args that put HEAD back where it is standing right now.
+
+    The branch name when HEAD is on one, the bare commit when it is not, so
+    that a caller which moves HEAD can undo that from a detached start too --
+    a branch name is not the only starting point worth going back to.  Empty
+    when HEAD cannot be read at all, e.g. on an unborn branch.
+    """
+    ecode, out = git_run_command(gitdir, ['symbolic-ref', '--short', 'HEAD'])
+    if ecode == 0:
+        return ['checkout', out.strip()]
+    ecode, out = git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    if ecode == 0:
+        return ['checkout', '--detach', out.strip()]
+    return []
+
+
 def get_excluded_addrs() -> Set[str]:
     config = get_main_config()
     excludes = set()
