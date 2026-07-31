@@ -1075,7 +1075,8 @@ def commit_reachable_on_remote(
     belongs to.
 
     Returns True/False, or None if the state could not be determined
-    (e.g. the remote is unreachable).
+    (e.g. the remote is unreachable, or none of the advertised tips are
+    in the local repository).
     """
     gitargs = [
         '-c',
@@ -1120,8 +1121,19 @@ def commit_reachable_on_remote(
         if len(chunks) == 2 and chunks[1] == 'commit':
             known.append(chunks[0])
     if not known:
-        logger.debug('No advertised heads of %s exist locally', repo_url)
-        return False
+        # Undetermined, not unpublished: without the objects we cannot
+        # say anything about the commit, and reporting "not yet visible"
+        # would hide a stale (or simply wrong) local repository behind
+        # what looks like normal waiting.  Warn rather than debug: a cron
+        # sweep silences narration but keeps warnings, and this one is a
+        # standing misconfiguration that would otherwise wait forever.
+        logger.warning(
+            'None of the heads advertised by %s exist in %s; cannot tell '
+            'whether the commit is published',
+            repo_url,
+            gitdir or os.getcwd(),
+        )
+        return None
     # Empty output means every commit reachable from ours is also
     # reachable from one of the known tips, i.e. ours is published
     ecode, out = b4.git_run_command(gitdir, ['rev-list', '-1', commit, '--not', *known])

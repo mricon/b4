@@ -350,7 +350,8 @@ def test_commit_reachable_unknown_tips(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     """Advertised tips we have no objects for cannot prove anything, so
-    the check stays conservative (pending) until the next fetch."""
+    the answer is 'don't know' -- which keeps the message queued, but
+    reports a failed check rather than normal waiting."""
     local = str(tmp_path / 'local')
     pub = str(tmp_path / 'pub')
     other = str(tmp_path / 'other')
@@ -375,7 +376,7 @@ def test_commit_reachable_unknown_tips(
     assert ecode == 0, out
     monkeypatch.chdir(local)
     # c1 is actually published, but the only advertised tip is unknown here
-    assert b4.ty.commit_reachable_on_remote(c1, pub) is False
+    assert b4.ty.commit_reachable_on_remote(c1, pub) is None
 
 
 def test_commit_reachable_branch_filter(
@@ -426,9 +427,9 @@ def test_commit_reachable_uses_the_gitdir_it_is_given(
     assert ecode == 0, out
 
     # An unrelated cwd knows none of the advertised tips, so on its own it
-    # cannot see the commit -- the objects live in 'local'.
+    # cannot answer -- the objects live in 'local'.
     monkeypatch.chdir(elsewhere)
-    assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is not True
+    assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is None
     assert (
         b4.ty.commit_reachable_on_remote(c1, pub, branch='master', gitdir=local) is True
     )
