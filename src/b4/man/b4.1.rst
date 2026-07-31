@@ -309,6 +309,13 @@ For options and their descriptions, see ``b4 review --help`` and
   Track a series that was sent without proper threading by stitching
   the given messages into a single series.
 
+``b4 review forget <msgid>``
+  Completely erase all records of a tracked series, identified by any
+  of its message-ids, a URL, or its change-id. Prints a summary of the
+  matched series and asks for confirmation before erasing. Works on
+  any tracked series regardless of status, including archived ones the
+  TUI no longer shows.
+
 ``b4 review tui``
   Launch the review TUI.
 

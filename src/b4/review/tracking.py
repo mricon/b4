@@ -744,6 +744,106 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         logger.info('  Known revisions: %s', versions)
 
 
+def cmd_forget(cmdargs: argparse.Namespace) -> None:
+    """Erase all records of a tracked series after confirmation.
+
+    Accepts a message-id, lore URL, or change-id.  Unlike the TUI's
+    abandon action this works on any tracked series regardless of
+    status, so it is the escape hatch for series the TUI no longer
+    shows (e.g. archived ones that a new posting keeps matching).
+    """
+    topdir = b4.git_get_toplevel()
+
+    identifier = resolve_identifier(cmdargs, topdir)
+    if not identifier:
+        logger.critical('Could not determine project identifier.')
+        logger.critical('Run from an enrolled repository or specify -i identifier')
+        sys.exit(1)
+
+    if not db_exists(identifier):
+        logger.critical('Project not enrolled: %s', identifier)
+        logger.critical('Run "b4 review enroll" first')
+        sys.exit(1)
+
+    series_id = cmdargs.series_id
+    if not series_id:
+        series_id = b4.get_msgid_from_stdin()
+        if not series_id:
+            logger.critical('No series identifier provided')
+            logger.critical('Pipe a message or pass msgid/URL/change-id as parameter')
+            sys.exit(1)
+
+    token = b4.parse_msgid(series_id)
+    conn = get_db(identifier)
+    change_id = find_tracked_change_id(conn, token)
+    if change_id is None:
+        conn.close()
+        logger.critical('No tracked series matches: %s', token)
+        logger.critical('Pass a change-id or any message-id recorded for the series')
+        sys.exit(1)
+
+    # Show what is about to be erased.  A change_id can have multiple
+    # series rows (legacy databases); describe the newest one.
+    srow = conn.execute(
+        'SELECT subject, sender_name, sender_email, status, revision, '
+        'num_patches, sent_at FROM series WHERE change_id = ? '
+        'ORDER BY revision DESC LIMIT 1',
+        (change_id,),
+    ).fetchone()
+    revisions = get_revisions(conn, change_id)
+
+    logger.info('Found tracked series:')
+    logger.info('  Change-ID: %s', change_id)
+    if srow:
+        subject, s_name, s_email, status, revision, num_patches, sent_at = srow
+        logger.info('    Subject: %s', subject or '(no subject)')
+        logger.info('       From: %s <%s>', s_name or '?', s_email or '?')
+        logger.info('     Status: %s (v%d, %d patches)', status, revision, num_patches)
+        if sent_at:
+            logger.info('       Sent: %s', sent_at)
+    if revisions:
+        versions = ', '.join(f'v{r["revision"]}' for r in revisions)
+        logger.info('  Known revisions: %s', versions)
+
+    review_branch = f'b4/review/{change_id}'
+    has_branch = bool(topdir) and b4.git_branch_exists(topdir, review_branch)
+    if has_branch:
+        if b4.git_get_current_branch(topdir) == review_branch:
+            conn.close()
+            logger.critical(
+                'Review branch %s is currently checked out; switch away first',
+                review_branch,
+            )
+            sys.exit(1)
+        logger.info('  Review branch %s will be DELETED', review_branch)
+
+    logger.info('---')
+    try:
+        answer = input('Forget this series and erase all its records? (y/N) ')
+    except KeyboardInterrupt:
+        logger.info('')
+        conn.close()
+        sys.exit(130)
+    if answer.strip().lower() not in ('y', 'yes'):
+        logger.info('Aborted, nothing forgotten.')
+        conn.close()
+        sys.exit(0)
+
+    if has_branch and topdir:
+        ecode, out = b4.git_run_command(
+            topdir, ['branch', '-D', review_branch], logstderr=True
+        )
+        if ecode != 0:
+            conn.close()
+            logger.critical('Could not delete branch %s: %s', review_branch, out)
+            sys.exit(1)
+        logger.info('Deleted review branch: %s', review_branch)
+
+    delete_series(conn, change_id)
+    conn.close()
+    logger.info('Forgot series: %s', change_id)
+
+
 def get_tracked_pw_series_ids(identifier: str) -> set[int]:
     """Get the set of Patchwork series IDs that are tracked for a project."""
     if not db_exists(identifier):
@@ -1212,6 +1312,28 @@ def find_existing_change_id(
             match = find_revision_by_fingerprint(conn, fingerprint)
             if match is not None:
                 return str(match['change_id'])
+    return None
+
+
+def find_tracked_change_id(conn: sqlite3.Connection, token: str) -> Optional[str]:
+    """Resolve *token* to the change_id of a tracked series, or None.
+
+    *token* may be a change-id or a clean message-id (no angle brackets).
+    Message-ids are looked up across every table that records one, so any
+    message b4 has ever associated with the series works: the primary
+    tracked message, a discovered/linked revision, or an individual patch.
+    """
+    if not token:
+        return None
+    for query in (
+        'SELECT change_id FROM series WHERE change_id = ? LIMIT 1',
+        'SELECT change_id FROM series WHERE message_id = ? LIMIT 1',
+        'SELECT change_id FROM revisions WHERE message_id = ? LIMIT 1',
+        'SELECT change_id FROM series_patches WHERE message_id = ? LIMIT 1',
+    ):
+        row = conn.execute(query, (token,)).fetchone()
+        if row is not None:
+            return str(row[0])
     return None
 
 
@@ -2803,7 +2925,12 @@ def delete_series(
             'DELETE FROM series WHERE change_id = ? AND revision = ?',
             (change_id, revision),
         )
+        conn.execute(
+            'DELETE FROM series_patches WHERE change_id = ? AND revision = ?',
+            (change_id, revision),
+        )
     else:
         conn.execute('DELETE FROM revisions WHERE change_id = ?', (change_id,))
         conn.execute('DELETE FROM series WHERE change_id = ?', (change_id,))
+        conn.execute('DELETE FROM series_patches WHERE change_id = ?', (change_id,))
     conn.commit()

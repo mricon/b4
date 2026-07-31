@@ -575,6 +575,24 @@ def setup_parser() -> argparse.ArgumentParser:
         '(pass - to read message IDs from stdin, one per line)',
     )
 
+    # b4 review forget
+    sp_rev_forget = rev_subparsers.add_parser(
+        'forget', help='Erase all records of a tracked series (with confirmation)'
+    )
+    sp_rev_forget.add_argument(
+        'series_id',
+        nargs='?',
+        default=None,
+        help='Series identifier (message-id, URL, or change-id); or pipe message to stdin',
+    )
+    sp_rev_forget.add_argument(
+        '-i',
+        '--identifier',
+        dest='identifier',
+        default=None,
+        help='Project identifier (required if not in an enrolled repository)',
+    )
+
     # b4 review show-info
     sp_rev_showinfo = rev_subparsers.add_parser(
         'show-info', help='Show review branch info in a format suitable for scripting'

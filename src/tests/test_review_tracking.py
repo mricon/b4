@@ -1046,15 +1046,18 @@ class TestRevisions:
             1,
         )
         review_tracking.add_revision(conn, 'change-keep', 1, 'keep-v1@example.com')
+        _insert_patches(conn, 'change-del', 1, ['del-p1@example.com'])
+        _insert_patches(conn, 'change-keep', 1, ['keep-p1@example.com'])
 
         review_tracking.delete_series(conn, 'change-del')
 
-        # Deleted change_id should be gone from both tables
+        # Deleted change_id should be gone from all three tables
         cursor = conn.execute(
             'SELECT * FROM series WHERE change_id = ?', ('change-del',)
         )
         assert cursor.fetchone() is None
         assert review_tracking.get_revisions(conn, 'change-del') == []
+        assert review_tracking.get_series_patches(conn, 'change-del', 1) == []
 
         # Other change_id should be untouched
         cursor = conn.execute(
@@ -1062,6 +1065,7 @@ class TestRevisions:
         )
         assert cursor.fetchone() is not None
         assert len(review_tracking.get_revisions(conn, 'change-keep')) == 1
+        assert len(review_tracking.get_series_patches(conn, 'change-keep', 1)) == 1
         conn.close()
 
 
@@ -4408,3 +4412,196 @@ class TestUpdateMessageCountSeenBump:
         assert changed is False
         assert self._get_counts(conn) == (3, 3)
         conn.close()
+
+
+class TestFindTrackedChangeId:
+    """Tests for find_tracked_change_id()."""
+
+    def _seed(self, conn: sqlite3.Connection) -> None:
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-forget',
+            2,
+            'Subject',
+            'Author',
+            'a@example.com',
+            '2026-07-01T10:00:00+00:00',
+            'primary-v2@example.com',
+            2,
+        )
+        review_tracking.add_revision(conn, 'cid-forget', 3, 'linked-v3@example.com')
+        _insert_patches(
+            conn, 'cid-forget', 2, ['p1-v2@example.com', 'p2-v2@example.com']
+        )
+
+    def test_match_by_change_id(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('ftci-cid')
+        self._seed(conn)
+        assert review_tracking.find_tracked_change_id(conn, 'cid-forget') == (
+            'cid-forget'
+        )
+        conn.close()
+
+    def test_match_by_series_message_id(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('ftci-series-mid')
+        self._seed(conn)
+        found = review_tracking.find_tracked_change_id(conn, 'primary-v2@example.com')
+        assert found == 'cid-forget'
+        conn.close()
+
+    def test_match_by_revision_message_id(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('ftci-rev-mid')
+        self._seed(conn)
+        found = review_tracking.find_tracked_change_id(conn, 'linked-v3@example.com')
+        assert found == 'cid-forget'
+        conn.close()
+
+    def test_match_by_patch_message_id(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('ftci-patch-mid')
+        self._seed(conn)
+        found = review_tracking.find_tracked_change_id(conn, 'p2-v2@example.com')
+        assert found == 'cid-forget'
+        conn.close()
+
+    def test_no_match(self, tmp_path: pytest.TempPathFactory) -> None:
+        conn = review_tracking.init_db('ftci-miss')
+        self._seed(conn)
+        assert review_tracking.find_tracked_change_id(conn, 'nope@example.com') is None
+        assert review_tracking.find_tracked_change_id(conn, '') is None
+        conn.close()
+
+
+class TestCmdForget:
+    """Tests for cmd_forget()."""
+
+    def _enroll_and_seed(self, gitdir: str, identifier: str) -> None:
+        cmdargs = argparse.Namespace(repo_path=gitdir, identifier=identifier)
+        review_tracking.cmd_enroll(cmdargs)
+        conn = review_tracking.get_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-gone',
+            1,
+            'Archived series',
+            'Mark',
+            'mark@example.com',
+            '2026-06-01T10:00:00+00:00',
+            'gone-v1@example.com',
+            3,
+        )
+        conn.execute(
+            "UPDATE series SET status = 'archived' WHERE change_id = 'cid-gone'"
+        )
+        review_tracking.add_revision(conn, 'cid-gone', 1, 'gone-v1@example.com')
+        review_tracking.add_revision(conn, 'cid-gone', 2, 'gone-v2@example.com')
+        _insert_patches(conn, 'cid-gone', 1, ['gone-p1@example.com'])
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-keep',
+            1,
+            'Unrelated series',
+            'Other',
+            'other@example.com',
+            '2026-06-02T10:00:00+00:00',
+            'keep-v1@example.com',
+            1,
+        )
+        conn.commit()
+        conn.close()
+
+    def _rows_left(self, identifier: str, change_id: str) -> Dict[str, int]:
+        conn = review_tracking.get_db(identifier)
+        counts = {}
+        for table in ('series', 'revisions', 'series_patches'):
+            counts[table] = conn.execute(
+                f'SELECT COUNT(*) FROM {table} WHERE change_id = ?', (change_id,)
+            ).fetchone()[0]
+        conn.close()
+        return counts
+
+    def test_forget_confirmed(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Confirming erases every record of the series, and only that one."""
+        self._enroll_and_seed(gitdir, 'forget-yes')
+        monkeypatch.setattr('builtins.input', lambda _prompt: 'y')
+        cmdargs = argparse.Namespace(
+            series_id='gone-v2@example.com', identifier='forget-yes'
+        )
+        review_tracking.cmd_forget(cmdargs)
+        assert self._rows_left('forget-yes', 'cid-gone') == {
+            'series': 0,
+            'revisions': 0,
+            'series_patches': 0,
+        }
+        assert self._rows_left('forget-yes', 'cid-keep')['series'] == 1
+
+    def test_forget_declined(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Declining the confirmation leaves everything in place."""
+        self._enroll_and_seed(gitdir, 'forget-no')
+        monkeypatch.setattr('builtins.input', lambda _prompt: 'n')
+        cmdargs = argparse.Namespace(series_id='cid-gone', identifier='forget-no')
+        with pytest.raises(SystemExit) as excinfo:
+            review_tracking.cmd_forget(cmdargs)
+        assert excinfo.value.code == 0
+        assert self._rows_left('forget-no', 'cid-gone') == {
+            'series': 1,
+            'revisions': 2,
+            'series_patches': 1,
+        }
+
+    def test_forget_no_match(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unknown identifier fails without asking for confirmation."""
+        self._enroll_and_seed(gitdir, 'forget-miss')
+
+        def _no_input(_prompt: str) -> str:
+            raise AssertionError('confirmation must not be requested')
+
+        monkeypatch.setattr('builtins.input', _no_input)
+        cmdargs = argparse.Namespace(
+            series_id='unknown@example.com', identifier='forget-miss'
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            review_tracking.cmd_forget(cmdargs)
+        assert excinfo.value.code == 1
+
+    def test_forget_deletes_review_branch(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A leftover review branch is deleted along with the records."""
+        self._enroll_and_seed(gitdir, 'forget-branch')
+        ecode, _ = b4.git_run_command(gitdir, ['branch', 'b4/review/cid-gone'])
+        assert ecode == 0
+        monkeypatch.setattr('builtins.input', lambda _prompt: 'yes')
+        cmdargs = argparse.Namespace(
+            series_id='gone-v1@example.com', identifier='forget-branch'
+        )
+        review_tracking.cmd_forget(cmdargs)
+        assert not b4.git_branch_exists(gitdir, 'b4/review/cid-gone')
+        assert self._rows_left('forget-branch', 'cid-gone')['series'] == 0
+
+    def test_forget_refuses_checked_out_branch(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The review branch being checked out aborts before confirmation."""
+        self._enroll_and_seed(gitdir, 'forget-checkedout')
+        ecode, _ = b4.git_run_command(gitdir, ['checkout', '-b', 'b4/review/cid-gone'])
+        assert ecode == 0
+
+        def _no_input(_prompt: str) -> str:
+            raise AssertionError('confirmation must not be requested')
+
+        monkeypatch.setattr('builtins.input', _no_input)
+        cmdargs = argparse.Namespace(
+            series_id='cid-gone', identifier='forget-checkedout'
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            review_tracking.cmd_forget(cmdargs)
+        assert excinfo.value.code == 1
+        assert self._rows_left('forget-checkedout', 'cid-gone')['series'] == 1
