@@ -189,6 +189,7 @@ def run_tracking_tui(
             # load_tracking() exits rather than raising on a branch with no
             # tracking commit, and SystemExit is not an Exception, so catch it
             # too -- letting it out of here takes the whole TUI down with it.
+            conn = None
             try:
                 _cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
                 tracking_status = tracking.get('series', {}).get('status')
@@ -198,9 +199,11 @@ def run_tracking_tui(
                     b4.review.tracking.update_series_status(
                         conn, focus_change_id, tracking_status, revision=revision
                     )
-                    conn.close()
             except (Exception, SystemExit) as ex:
                 logger.warning('Could not sync tracking status: %s', ex)
+            finally:
+                if conn is not None:
+                    conn.close()
 
             # Put the user back before the tracking list comes up again.
             restore_original_head()
