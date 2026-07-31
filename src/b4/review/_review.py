@@ -2596,6 +2596,7 @@ def update_series_tracking(
     # so the unread badge below never lights up for them.
     seen_bump = 0
     if thread_msgs and change_id:
+        mconn = None
         try:
             from b4.review import messages
 
@@ -2619,9 +2620,11 @@ def update_series_tracking(
                         for mid in new_msgids
                         if 'Seen' in flags_map.get(mid, '').split()
                     )
-            mconn.close()
         except Exception as ex:
             logger.debug('Could not auto-mark own messages as read: %s', ex)
+        finally:
+            if mconn is not None:
+                mconn.close()
 
     # Update message count and thread blob from the already-fetched
     # thread messages.  No status filtering here: the thread is already
