@@ -589,3 +589,40 @@ class TestRenderDetailLines:
         assert 'ERROR: trailing whitespace' in out
         # Only the finding line itself, no indented context underneath.
         assert '\n    ' not in out
+
+
+class TestEditorFailure:
+    """A broken editor is reported, never fatal."""
+
+    @pytest.mark.asyncio
+    async def test_editor_error_does_not_tear_down_the_app(self, gitdir: str) -> None:
+        """An exception from the editor used to unwind out of the key handler
+        and kill the app, taking the rest of the session's unsaved review
+        state with it."""
+        import contextlib
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'editor-error', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        app = ReviewApp(session)
+        my_email = str(session['usercfg']['email'])
+
+        def boom(*args: Any, **kwargs: Any) -> bytes:
+            raise RuntimeError('editor exploded')
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_idx = 1
+            with (
+                mock.patch('b4.edit_in_editor', side_effect=boom),
+                mock.patch.object(app, 'suspend', lambda: contextlib.nullcontext()),
+                mock.patch.object(app, 'notify') as notified,
+            ):
+                app.action_edit_reply()
+                await pilot.pause()
+
+            assert app.is_running
+            assert notified.call_args.kwargs.get('severity') == 'error'
+            reviews = app._patches[0].get('reviews', {})
+            assert not reviews.get(my_email, {}).get('reply')
