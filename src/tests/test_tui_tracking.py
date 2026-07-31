@@ -4405,6 +4405,110 @@ class TestUpdateRevisionWorkflow:
         assert b4.git_branch_exists(gitdir, upgrade_branch)
 
 
+class TestCheckoutFailure:
+    """A series that will not apply costs the series, not the session."""
+
+    @staticmethod
+    def _checkout(app: TrackingApp, dies: Any) -> None:
+        """Run _do_checkout with a create_review_branch that raises *dies*."""
+        series = {'change_id': 'checkout-fail', 'revision': 1, 'message_id': 'm@ex.com'}
+        with (
+            patch.object(
+                app, 'suspend', return_value=__import__('contextlib').nullcontext()
+            ),
+            patch('b4.review_tui._tracking_app._wait_for_enter'),
+            patch('b4.git_fetch_am_into_repo'),
+            patch('b4.review.create_review_branch', side_effect=dies),
+        ):
+            app._do_checkout(_make_mock_lser(revision=1), series, 'HEAD', b'mbox')
+
+    @pytest.mark.asyncio
+    async def test_the_exit_a_failed_create_reports_with_is_caught(
+        self, gitdir: str
+    ) -> None:
+        """create_review_branch() exits rather than raising, and SystemExit is
+        not an Exception, so it used to unwind through the suspend and out of
+        the key handler -- taking the session down over one series."""
+        app = TrackingApp('test-checkout-fail')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            self._checkout(app, SystemExit(1))
+            await pilot.pause()
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_a_create_after_a_resolved_conflict_is_caught_too(
+        self, gitdir: str
+    ) -> None:
+        """The branch used to be created a second time from inside the
+        conflict handler, where the handler beside it cannot reach: an except
+        block is not covered by its own siblings."""
+        app = TrackingApp('test-checkout-conflict')
+        created: List[str] = []
+
+        def _die(topdir: str, branch: str, *a: Any, **kw: Any) -> None:
+            created.append(branch)
+            raise SystemExit(1)
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch(
+                    'b4.git_fetch_am_into_repo',
+                    side_effect=b4.AmConflictError('/tmp/wt', 'conflict'),
+                ),
+                patch('b4.resolve_am_conflict_in_shell', return_value=True),
+                patch('b4.review.create_review_branch', side_effect=_die),
+            ):
+                app._do_checkout(
+                    _make_mock_lser(revision=1),
+                    {'change_id': 'checkout-conflict', 'revision': 1},
+                    'HEAD',
+                    b'mbox',
+                )
+            await pilot.pause()
+            assert app.is_running
+        # The resolve leads into the one create, not a second copy of it.
+        assert created == ['b4/review/checkout-conflict']
+
+    @pytest.mark.asyncio
+    async def test_an_abandoned_conflict_creates_nothing(self, gitdir: str) -> None:
+        """Backing out of the conflict shell leaves the series untouched."""
+        app = TrackingApp('test-checkout-abandon')
+        created: List[str] = []
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch(
+                    'b4.git_fetch_am_into_repo',
+                    side_effect=b4.AmConflictError('/tmp/wt', 'conflict'),
+                ),
+                patch('b4.resolve_am_conflict_in_shell', return_value=False),
+                patch(
+                    'b4.review.create_review_branch',
+                    side_effect=lambda _t, b, *a, **k: created.append(b),
+                ),
+            ):
+                app._do_checkout(
+                    _make_mock_lser(revision=1),
+                    {'change_id': 'checkout-abandon', 'revision': 1},
+                    'HEAD',
+                    b'mbox',
+                )
+            await pilot.pause()
+            assert app.is_running
+        assert not created
+
+
 class TestLoadSeriesCaching:
     """Tests for _load_series batching and caching."""
 
