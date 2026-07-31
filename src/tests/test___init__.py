@@ -1234,3 +1234,67 @@ def test_git_run_command_log_fixup_looks_past_option_prefix(gitdir: str) -> None
     assert out.startswith('commit '), out
     sha = out.split('\n', 1)[0].split()[1]
     assert len(sha) == 40, f'log abbreviated the sha despite the fixup: {sha}'
+
+
+def _fake_editor(tmp_path: pathlib.Path, body: str) -> str:
+    """A stand-in $EDITOR that runs *body* and leaves the buffer alone."""
+    script = tmp_path / 'fake-editor.sh'
+    script.write_text(f'#!/bin/sh\n{body}\n')
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_edit_in_editor_without_guard_survives_branch_switch(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Callers that write to an explicit ref get their text back even if HEAD
+    moved while the editor was open.
+
+    The review TUI stores replies on the review branch and reads the patch it
+    is replying to by SHA, so a branch switch -- its own, or the user's in
+    another terminal sharing the worktree -- is none of its business."""
+    monkeypatch.setenv(
+        'GIT_EDITOR', _fake_editor(tmp_path, f'git -C "{gitdir}" checkout -q -b side')
+    )
+    assert b4.edit_in_editor(b'my reply\n', filehint='reply.eml') == b'my reply\n'
+    assert b4.git_get_current_branch(gitdir) == 'side'
+
+
+def test_edit_in_editor_guard_refuses_branch_switch(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller that opts in is refused when HEAD has moved on, and its text
+    is preserved in a temporary file."""
+    monkeypatch.setenv(
+        'GIT_EDITOR', _fake_editor(tmp_path, f'git -C "{gitdir}" checkout -q -b side')
+    )
+    with pytest.raises(RuntimeError, match='Branch changed during file editing') as ex:
+        b4.edit_in_editor(b'my cover\n', guard_branch=True)
+
+    saved = pathlib.Path(str(ex.value).split(' saved at ')[-1])
+    try:
+        assert saved.read_bytes() == b'my cover\n'
+    finally:
+        saved.unlink()
+
+
+def test_edit_in_editor_guard_covers_a_detached_head(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Starting detached is still a starting point worth guarding.
+
+    'b4 trailers -u' does not require a prep branch, so it can run with HEAD
+    detached and rewrite whatever branch is current when it applies."""
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    monkeypatch.setenv(
+        'GIT_EDITOR', _fake_editor(tmp_path, f'git -C "{gitdir}" checkout -q -b side')
+    )
+    with pytest.raises(RuntimeError, match='Branch changed during file editing') as ex:
+        b4.edit_in_editor(b'my trailers\n', guard_branch=True)
+
+    saved = pathlib.Path(str(ex.value).split(' saved at ')[-1])
+    try:
+        assert saved.read_bytes() == b'my trailers\n'
+    finally:
+        saved.unlink()
