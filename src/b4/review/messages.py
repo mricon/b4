@@ -44,8 +44,9 @@ def get_db() -> sqlite3.Connection:
     is_new = not os.path.exists(db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    # Both the TUI and 'b4 review cron' may write concurrently
-    conn.execute('PRAGMA busy_timeout = 5000')
+    # Both the TUI and 'b4 review cron' may write concurrently; same
+    # generous timeout the tracking database uses, for the same reason
+    conn.execute('PRAGMA busy_timeout = 15000')
     if is_new:
         conn.executescript(SCHEMA_SQL)
         conn.execute(
