@@ -1,6 +1,7 @@
 import datetime
 import email.message
 import os
+import sqlite3
 from typing import Dict, List, Optional
 
 import pytest
@@ -318,3 +319,45 @@ class TestMarkOutgoingSeen:
         count = conn.execute('SELECT COUNT(*) FROM messages').fetchone()[0]
         assert count == 0
         conn.close()
+
+
+class TestMarkOutgoingSeenHelper:
+    """The TUI wrapper every send path funnels through."""
+
+    @staticmethod
+    def _make_msg(msgid: str) -> 'email.message.EmailMessage':
+        msg = email.message.EmailMessage()
+        msg['Subject'] = 'Test'
+        msg['Message-Id'] = f'<{msgid}>'
+        return msg
+
+    def test_records_the_message(self, tmp_path: pytest.TempPathFactory) -> None:
+        from b4.review_tui._common import mark_outgoing_seen
+
+        mark_outgoing_seen([self._make_msg('helper1@example.com')])
+        conn = messages.get_db()
+        assert 'Seen' in messages.get_flags(conn, 'helper1@example.com')
+        conn.close()
+
+    def test_dryrun_records_nothing(self, tmp_path: pytest.TempPathFactory) -> None:
+        """A dry run never puts the message on the list, so there is nothing
+        coming back that would need to be already read."""
+        from b4.review_tui._common import mark_outgoing_seen
+
+        mark_outgoing_seen([self._make_msg('helper2@example.com')], dryrun=True)
+        conn = messages.get_db()
+        assert messages.get_flags(conn, 'helper2@example.com') == ''
+        conn.close()
+
+    def test_never_raises(
+        self, tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """It runs after the message is already gone, so a bookkeeping
+        failure must not reach the caller as a failure to send."""
+        from b4.review_tui._common import mark_outgoing_seen
+
+        def boom(msgs: object) -> None:
+            raise sqlite3.OperationalError('database is locked')
+
+        monkeypatch.setattr(messages, 'mark_outgoing_seen', boom)
+        mark_outgoing_seen([self._make_msg('helper3@example.com')])
