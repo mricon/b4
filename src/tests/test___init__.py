@@ -1298,3 +1298,57 @@ def test_edit_in_editor_guard_covers_a_detached_head(
         assert saved.read_bytes() == b'my trailers\n'
     finally:
         saved.unlink()
+
+
+def test_edit_in_editor_follows_the_topdir_it_is_given(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """topdir, not the process cwd, decides where the scratch file lands and
+    which HEAD the guard reads.
+
+    The TUIs may be driven from a different worktree than the one holding the
+    branch they operate on, so cwd is the wrong repository to ask."""
+    linked = str(tmp_path / 'linked')
+    ecode, out = b4.git_run_command(
+        gitdir, ['worktree', 'add', '-b', 'elsewhere', linked], logstderr=True
+    )
+    assert ecode == 0, out
+    seen = tmp_path / 'editor-argv1'
+    # Move the *cwd* repository's HEAD while the editor is open. The guard is
+    # on, so if it were reading cwd rather than topdir this would refuse.
+    monkeypatch.setenv(
+        'GIT_EDITOR',
+        _fake_editor(
+            tmp_path, f'printf %s "$1" > {seen}; git -C "{gitdir}" checkout -q -b side'
+        ),
+    )
+
+    # cwd is still on master; only the linked worktree is on 'elsewhere'.
+    assert b4.git_get_current_branch(gitdir) == 'master'
+    edited = b4.edit_in_editor(
+        b'note\n', filehint='note.txt', topdir=linked, guard_branch=True
+    )
+    assert edited == b'note\n'
+    assert seen.read_text().startswith(linked + os.sep)
+    assert b4.git_get_current_branch(gitdir) == 'side'
+    assert b4.git_get_current_branch(linked) == 'elsewhere'
+
+
+def test_edit_in_editor_reads_core_editor_from_topdir(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """core.editor is read from the named tree too, so a repository-local
+    setting is the one belonging to the branch being edited."""
+    other = str(tmp_path / 'other')
+    ecode, out = b4.git_run_command(None, ['init', '-b', 'master', other])
+    assert ecode == 0, out
+    seen = tmp_path / 'which-editor'
+    b4.git_set_config(
+        other, 'core.editor', _fake_editor(tmp_path, f'printf topdir > {seen}')
+    )
+    b4.git_set_config(gitdir, 'core.editor', 'false')
+    for var in ('GIT_EDITOR', 'VISUAL', 'EDITOR'):
+        monkeypatch.delenv(var, raising=False)
+
+    assert b4.edit_in_editor(b'note\n', filehint='note.txt', topdir=other) == b'note\n'
+    assert seen.read_text() == 'topdir'
