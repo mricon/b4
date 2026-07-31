@@ -2507,9 +2507,25 @@ def update_series_tracking(
     # explicitly; status is only ever changed by an explicit user action, not
     # as a side effect of updating.  Do not re-add auto-promotion here.
 
-    # Update follow-up trailers if the series has a review branch
-    if status in ('reviewing', 'replied', 'partial', 'waiting') and topdir:
-        branch = f'b4/review/{change_id}'
+    # Update follow-up trailers if the series has a review branch.  A
+    # branch that is checked out (in any worktree) is left strictly
+    # alone: the maintainer is working on it right there, possibly
+    # mid-rebase, and rewriting its tip under them risks corrupting
+    # their work.  The database updates above have already happened;
+    # the tracking commit catches up on the next sweep after the
+    # branch is no longer checked out.
+    branch = f'b4/review/{change_id}'
+    update_branch = bool(topdir) and status in (
+        'reviewing',
+        'replied',
+        'partial',
+        'waiting',
+    )
+    if update_branch and topdir and b4.git_branch_checked_out(topdir, branch):
+        logger.debug('%s is checked out, leaving the branch alone', branch)
+        result['checked_out'] = True
+        update_branch = False
+    if update_branch and topdir:
         wantver = current_rev
 
         try:
@@ -2689,6 +2705,7 @@ def update_all_tracking(
         'errors': 0,
         'gone': 0,
         'followup_updated': 0,
+        'checked_out_skipped': 0,
         'error_details': [],
         'cancelled': False,
     }
@@ -2736,6 +2753,8 @@ def update_all_tracking(
                 result['errors'] += 1
                 submitter = series.get('sender_name', 'unknown')
                 result['error_details'].append((submitter, r['error']))
+            if r.get('checked_out'):
+                result['checked_out_skipped'] += 1
             if r.get('counts_updated'):
                 result['followup_updated'] += 1
 
@@ -2830,6 +2849,12 @@ def _cron_update(identifier: str, topdir: Optional[str]) -> None:
         )
     else:
         logger.debug('Checked %s series, no updates', result['series_checked'])
+    if result.get('checked_out_skipped'):
+        # Normal while the maintainer works on a branch — debug, not
+        # cron mail.  The branch catches up on a later sweep.
+        logger.debug(
+            '%s branch(es) checked out, left alone', result['checked_out_skipped']
+        )
     for submitter, error in result['error_details']:
         logger.warning('Update error (%s): %s', submitter, error)
 

@@ -4577,6 +4577,28 @@ def git_branch_exists(gitdir: Optional[str], branch_name: str) -> bool:
     return ecode == 0
 
 
+def git_branch_checked_out(gitdir: Optional[str], branch_name: str) -> bool:
+    """Check if a branch is checked out in the main or any linked worktree.
+
+    Background maintenance (e.g. a cron sweep rewriting a review
+    branch's tracking commit) must leave a checked-out branch alone:
+    the maintainer may be mid-rebase or otherwise working on it, and
+    moving the ref under them risks corrupting their work.
+    """
+    gitargs = ['worktree', 'list', '--porcelain']
+    ecode, out = git_run_command(gitdir, gitargs)
+    if ecode != 0:
+        logger.debug(
+            'Could not list worktrees, assuming %s not checked out', branch_name
+        )
+        return False
+    wantref = f'refs/heads/{branch_name.removeprefix("refs/heads/")}'
+    for line in out.splitlines():
+        if line.startswith('branch ') and line[7:].strip() == wantref:
+            return True
+    return False
+
+
 def git_revparse_tag(gitdir: Optional[str], tagname: str) -> Optional[str]:
     if not tagname.startswith('refs/tags/'):
         fulltag = f'refs/tags/{tagname}'

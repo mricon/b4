@@ -1320,7 +1320,16 @@ def _mark_series_thanked(
         # An already-deleted branch (e.g. a manually archived series) is
         # not an error worth warning about
         if b4.git_branch_exists(topdir, review_branch):
-            b4.review.update_tracking_status(topdir, review_branch, 'thanked')
+            if b4.git_branch_checked_out(topdir, review_branch):
+                # The maintainer is working on the branch right now;
+                # rewriting its tip under them is off limits.  The DB
+                # already records 'thanked' above.
+                logger.debug(
+                    '%s is checked out, not updating tracking commit',
+                    review_branch,
+                )
+            else:
+                b4.review.update_tracking_status(topdir, review_branch, 'thanked')
 
 
 def _maybe_archive_after_send(
@@ -1362,6 +1371,11 @@ def _maybe_archive_after_send(
         pass
     if newest is not None and revision and newest > revision:
         return ' (not archived: newer revision available)'
+    review_branch = f'b4/review/{change_id}'
+    if topdir and b4.git_branch_checked_out(topdir, review_branch):
+        # Archiving deletes the review branch; a checked-out branch is
+        # being worked on and must be left alone.
+        return ' (not archived: branch is checked out)'
     try:
         ok, detail = b4.review.archive_series(
             topdir, identifier, change_id, revision=revision, pw_series_id=pw_series_id

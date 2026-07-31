@@ -2,6 +2,7 @@ import os
 import pathlib
 from email.message import EmailMessage
 from typing import List, Optional, Tuple
+from unittest import mock
 
 import pytest
 
@@ -855,3 +856,59 @@ def test_process_queue_does_not_resurrect_archived(
     delivered, _pending, _dseries = b4.ty.process_queue(identifier='cronproj')
     assert delivered == 1
     assert _series_status('cronproj') == 'archived'
+
+
+def test_process_queue_skips_archive_when_checked_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A checked-out review branch is left alone by delivery cleanup:
+    no tracking-commit write, no archive.  The DB still records
+    'thanked' — the fact of the sent thanks."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _commit_empty('base')
+    _add_tracked_series('cronproj')
+    review_branch = 'b4/review/test-change-id'
+    ecode, out = b4.git_run_command(None, ['checkout', '-b', review_branch])
+    assert ecode == 0, out
+    _queue_archive_after_message()
+    _mock_delivery(monkeypatch)
+
+    statuses: List[str] = []
+    with mock.patch('b4.review.update_tracking_status') as mock_uts:
+        delivered, _pending, _dseries = b4.ty.process_queue(
+            identifier='cronproj',
+            topdir=repo,
+            progress_cb=lambda c, t, s: statuses.append(s),
+        )
+    assert delivered == 1
+    mock_uts.assert_not_called()
+    assert _series_status('cronproj') == 'thanked'
+    assert 'Re: [PATCH] test (not archived: branch is checked out)' in statuses
+    assert b4.git_branch_exists(None, review_branch)
+
+
+def test_process_queue_updates_parked_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Control: with the review branch parked, delivery still writes the
+    'thanked' status to its tracking commit."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    monkeypatch.chdir(repo)
+    _commit_empty('base')
+    _add_tracked_series('cronproj')
+    review_branch = 'b4/review/test-change-id'
+    ecode, out = b4.git_run_command(None, ['branch', review_branch])
+    assert ecode == 0, out
+    _queue_test_message()
+    _mock_delivery(monkeypatch)
+
+    with mock.patch('b4.review.update_tracking_status') as mock_uts:
+        delivered, _pending, _dseries = b4.ty.process_queue(
+            identifier='cronproj', topdir=repo
+        )
+    assert delivered == 1
+    mock_uts.assert_called_once()
+    assert mock_uts.call_args.args[1:] == (review_branch, 'thanked')

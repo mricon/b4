@@ -1995,18 +1995,30 @@ def restore_snoozed_tracking(topdir: str, review_branch: str) -> str:
 
 def _wake_snoozed_entry(
     conn: sqlite3.Connection, entry: Dict[str, Any], topdir: Optional[str]
-) -> None:
-    """Restore a single snoozed series to its previous state."""
+) -> bool:
+    """Restore a single snoozed series to its previous state.
+
+    A series whose review branch is currently checked out is not woken
+    at all: the wake-up writes both the tracking commit and the
+    database, and rewriting a checked-out branch under the maintainer
+    is off limits.  Waking only the database side would leave the two
+    contradicting each other (the next rescan would re-snooze it).
+    Returns True if the series was woken.
+    """
     cid = entry['change_id']
     rev = entry['revision']
     prev_status = 'reviewing'
     review_branch = f'b4/review/{cid}'
     if topdir and b4.git_branch_exists(topdir, review_branch):
+        if b4.git_branch_checked_out(topdir, review_branch):
+            logger.debug('%s is checked out, deferring snooze wake-up', review_branch)
+            return False
         try:
             prev_status = restore_snoozed_tracking(topdir, review_branch)
         except (SystemExit, Exception):
             pass
     unsnooze_series(conn, cid, prev_status, revision=rev)
+    return True
 
 
 def auto_wake_snoozed(identifier: str, topdir: Optional[str]) -> int:
@@ -2026,14 +2038,14 @@ def auto_wake_snoozed(identifier: str, topdir: Optional[str]) -> int:
         return woken
     try:
         for entry in get_expired_snoozed(conn):
-            _wake_snoozed_entry(conn, entry, topdir)
-            woken += 1
+            if _wake_snoozed_entry(conn, entry, topdir):
+                woken += 1
         if topdir:
             for entry in get_tag_snoozed(conn):
                 tagname = entry['snoozed_until'][4:]  # strip 'tag:' prefix
                 if b4.git_revparse_tag(topdir, tagname):
-                    _wake_snoozed_entry(conn, entry, topdir)
-                    woken += 1
+                    if _wake_snoozed_entry(conn, entry, topdir):
+                        woken += 1
     finally:
         conn.close()
     return woken

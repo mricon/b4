@@ -1234,3 +1234,36 @@ def test_git_run_command_log_fixup_looks_past_option_prefix(gitdir: str) -> None
     assert out.startswith('commit '), out
     sha = out.split('\n', 1)[0].split()[1]
     assert len(sha) == 40, f'log abbreviated the sha despite the fixup: {sha}'
+
+
+class TestGitBranchCheckedOut:
+    """Tests for git_branch_checked_out()."""
+
+    def test_current_branch(self, gitdir: str) -> None:
+        """The branch checked out in the main worktree is detected."""
+        ecode, out = b4.git_run_command(gitdir, ['branch', '--show-current'])
+        assert ecode == 0
+        current = out.strip()
+        assert b4.git_branch_checked_out(gitdir, current) is True
+
+    def test_other_branch(self, gitdir: str) -> None:
+        """An existing but not checked-out branch is not flagged."""
+        ecode, _ = b4.git_run_command(gitdir, ['branch', 'parked-branch'])
+        assert ecode == 0
+        assert b4.git_branch_checked_out(gitdir, 'parked-branch') is False
+
+    def test_nonexistent_branch(self, gitdir: str) -> None:
+        assert b4.git_branch_checked_out(gitdir, 'no-such-branch') is False
+
+    def test_linked_worktree_branch(self, gitdir: str, tmp_path: pathlib.Path) -> None:
+        """A branch checked out in a linked worktree is detected too."""
+        wtpath = str(tmp_path / 'linked-wt')
+        ecode, out = b4.git_run_command(
+            gitdir, ['worktree', 'add', '-b', 'wt-branch', wtpath], logstderr=True
+        )
+        assert ecode == 0, out
+        try:
+            assert b4.git_branch_checked_out(gitdir, 'wt-branch') is True
+            assert b4.git_branch_checked_out(gitdir, 'refs/heads/wt-branch') is True
+        finally:
+            b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wtpath])

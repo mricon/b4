@@ -4694,3 +4694,173 @@ class TestCmdForget:
             review_tracking.cmd_forget(cmdargs)
         assert excinfo.value.code == 1
         assert self._rows_left('forget-checkedout', 'cid-gone')['series'] == 1
+
+
+class TestUpdateSkipsCheckedOutBranch:
+    """update_series_tracking leaves a checked-out review branch alone."""
+
+    def _tracking_data(self, change_id: str) -> Dict[str, Any]:
+        return {
+            'series': {
+                'identifier': 'co-test',
+                'status': 'reviewing',
+                'revision': 1,
+                'change-id': change_id,
+                'subject': 'Test',
+                'fromname': 'Author',
+                'fromemail': 'a@example.com',
+                'expected': 1,
+                'complete': True,
+                'base-commit': 'abc123',
+                'prerequisite-commits': [],
+                'first-patch-commit': 'def456',
+                'header-info': {},
+                'link': '',
+            },
+            'followups': [],
+            'patches': [],
+        }
+
+    def _run_update(self, gitdir: str, change_id: str) -> Dict[str, Any]:
+        conn = review_tracking.init_db('co-test')
+        review_tracking.add_series_to_db(
+            conn,
+            change_id,
+            1,
+            'Test',
+            'Author',
+            'a@example.com',
+            '2026-07-01T00:00:00+00:00',
+            'cover@example.com',
+            1,
+        )
+        review_tracking.update_series_status(conn, change_id, 'reviewing')
+        conn.close()
+
+        msgs = [_make_test_msg('cover@example.com')]
+        mock_lmbx = mock.Mock()
+        mock_lmbx.series = {}
+        mock_lmbx.covers = {}
+        # get_series returning None makes the branch-update section fail
+        # with a recognizable error — a sentinel showing it was entered.
+        mock_lmbx.get_series.return_value = None
+
+        series_dict: Dict[str, Any] = {
+            'change_id': change_id,
+            'revision': 1,
+            'status': 'reviewing',
+            'message_id': 'cover@example.com',
+        }
+        with (
+            mock.patch('b4.review._review.retrieve_series_messages', return_value=msgs),
+            mock.patch('b4.LoreMailbox', return_value=mock_lmbx),
+        ):
+            return b4.review.update_series_tracking(
+                series_dict, 'co-test', 'https://example.com/%s', topdir=gitdir
+            )
+
+    def test_checked_out_branch_left_alone(self, gitdir: str) -> None:
+        """A checked-out branch is skipped: flag set, tip untouched."""
+        change_id = 'co-checkedout'
+        branch = _create_review_branch(
+            gitdir, change_id, self._tracking_data(change_id)
+        )
+        ecode, _ = b4.git_run_command(gitdir, ['checkout', branch])
+        assert ecode == 0
+        ecode, tip_before = b4.git_run_command(gitdir, ['rev-parse', branch])
+        assert ecode == 0
+
+        result = self._run_update(gitdir, change_id)
+
+        assert result.get('checked_out') is True
+        assert result.get('error') is None
+        ecode, tip_after = b4.git_run_command(gitdir, ['rev-parse', branch])
+        assert ecode == 0
+        assert tip_after == tip_before
+        # DB-side maintenance still ran
+        assert result.get('counts_updated') is True
+
+    def test_parked_branch_still_updated(self, gitdir: str) -> None:
+        """Control: with the branch not checked out the section is entered
+        (and fails on the mocked-away series — the sentinel error)."""
+        change_id = 'co-parked'
+        _create_review_branch(gitdir, change_id, self._tracking_data(change_id))
+
+        result = self._run_update(gitdir, change_id)
+
+        assert result.get('checked_out') is None
+        assert result.get('error') == 'Could not find series v1 in retrieved messages'
+
+
+class TestAutoWakeSkipsCheckedOutBranch:
+    """auto_wake_snoozed defers waking a checked-out review branch."""
+
+    def _seed_snoozed(self, gitdir: str, identifier: str, change_id: str) -> str:
+        tracking_data = {
+            'series': {
+                'identifier': identifier,
+                'status': 'snoozed',
+                'revision': 1,
+                'change-id': change_id,
+                'subject': 'Test',
+                'fromname': 'Author',
+                'fromemail': 'a@example.com',
+                'expected': 1,
+                'complete': True,
+                'base-commit': 'abc123',
+                'prerequisite-commits': [],
+                'first-patch-commit': 'def456',
+                'header-info': {},
+                'link': '',
+                'snoozed': {'previous_state': 'replied'},
+            },
+            'followups': [],
+            'patches': [],
+        }
+        branch = _create_review_branch(gitdir, change_id, tracking_data)
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            change_id,
+            1,
+            'Test',
+            'Author',
+            'a@example.com',
+            '2026-07-01T00:00:00+00:00',
+            'cover@example.com',
+            1,
+        )
+        review_tracking.snooze_series(conn, change_id, '2020-01-01')
+        conn.close()
+        return branch
+
+    def _status(self, identifier: str, change_id: str) -> str:
+        conn = review_tracking.get_db(identifier)
+        row = conn.execute(
+            'SELECT status FROM series WHERE change_id = ?', (change_id,)
+        ).fetchone()
+        conn.close()
+        return str(row[0])
+
+    def test_wake_deferred_while_checked_out(self, gitdir: str) -> None:
+        identifier = 'wake-co-test'
+        change_id = 'wake-co'
+        branch = self._seed_snoozed(gitdir, identifier, change_id)
+        ecode, _ = b4.git_run_command(gitdir, ['checkout', branch])
+        assert ecode == 0
+        ecode, tip_before = b4.git_run_command(gitdir, ['rev-parse', branch])
+        assert ecode == 0
+
+        woken = review_tracking.auto_wake_snoozed(identifier, gitdir)
+
+        assert woken == 0
+        assert self._status(identifier, change_id) == 'snoozed'
+        ecode, tip_after = b4.git_run_command(gitdir, ['rev-parse', branch])
+        assert tip_after == tip_before
+
+        # Once the maintainer moves away, the next sweep wakes it up.
+        ecode, _ = b4.git_run_command(gitdir, ['checkout', 'master'])
+        assert ecode == 0
+        woken = review_tracking.auto_wake_snoozed(identifier, gitdir)
+        assert woken == 1
+        assert self._status(identifier, change_id) == 'replied'

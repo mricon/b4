@@ -2325,6 +2325,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             parts.append(f'{updated} updated')
         if errors:
             parts.append(f'{errors} error(s)')
+        skipped = result.get('checked_out_skipped', 0)
+        if skipped:
+            parts.append(f'{skipped} checked-out branch(es) left alone')
 
         severity: Literal['information', 'warning'] = (
             'warning' if errors else 'information'
