@@ -1088,15 +1088,18 @@ class TakeConfirmScreen(ModalScreen[bool]):
             # Test apply in a temporary sparse worktree
             try:
                 with b4.git_temp_worktree(topdir, resolved_base) as gwt:
-                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
+                    )
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
+                    )
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    # No signing: gpg would prompt while the TUI owns the tty.
                     ecode, out = b4.git_run_command(
-                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
                     )
                     if ecode > 0:
                         for line in out.splitlines():
@@ -2102,15 +2105,18 @@ class RebaseScreen(ModalScreen[bool]):
         with _quiet_worker():
             try:
                 with b4.git_temp_worktree(topdir, branch) as gwt:
-                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
+                    )
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
+                    )
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    # No signing: gpg would prompt while the TUI owns the tty.
                     ecode, out = b4.git_run_command(
-                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
                     )
                     if ecode > 0:
                         for line in out.splitlines():
@@ -2375,15 +2381,18 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         with _quiet_worker():
             try:
                 with b4.git_temp_worktree(topdir, branch) as gwt:
-                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
+                    )
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
+                    )
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    # No signing: gpg would prompt while the TUI owns the tty.
                     ecode, out = b4.git_run_command(
-                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
                     )
                     if ecode > 0:
                         for line in out.splitlines():
@@ -3070,15 +3079,18 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         with _quiet_worker():
             try:
                 with b4.git_temp_worktree(topdir, base) as gwt:
-                    ecode, out = b4.git_run_command(gwt, ['sparse-checkout', 'set'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
+                    )
                     if ecode > 0:
                         return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(gwt, ['checkout', '-f'])
+                    ecode, out = b4.git_run_command(
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
+                    )
                     if ecode > 0:
                         return False, 'failed to checkout base'
-                    # No signing: gpg would prompt while the TUI owns the tty.
                     ecode, out = b4.git_run_command(
-                        gwt, ['-c', 'commit.gpgsign=false', 'am'], stdin=ambytes
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
                     )
                     if ecode > 0:
                         # Extract just the "Patch failed" line

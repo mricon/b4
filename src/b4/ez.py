@@ -3302,19 +3302,23 @@ def reroll(
                 with b4.git_temp_worktree(topdir, base_commit) as gwt:
                     logger.debug('Preparing a sparse worktree')
                     ecode, out = b4.git_run_command(
-                        gwt, ['sparse-checkout', 'set'], logstderr=True
+                        gwt,
+                        [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set'],
+                        logstderr=True,
                     )
                     if ecode > 0:
                         logger.critical('Error running sparse-checkout set')
                         logger.critical(out)
                         raise RuntimeError
                     ecode, out = b4.git_run_command(
-                        gwt, ['checkout', '-f'], logstderr=True
+                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f'], logstderr=True
                     )
                     if ecode > 0:
                         logger.critical('Error running checkout into sparse workdir')
                         logger.critical(out)
                         raise RuntimeError
+                    # No SCRATCH_GIT_OPTS: the sent tag points at these commits,
+                    # so the user's signing config stays in force.
                     gitargs = ['cherry-pick', f'{start_commit}..{end_commit}']
                     ecode, out = b4.git_run_command(gwt, gitargs, logstderr=True)
                     if ecode > 0:

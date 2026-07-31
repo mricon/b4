@@ -1,7 +1,7 @@
 import logging
 import os
 from email.message import EmailMessage
-from typing import Any, Dict, Generator, List, Optional, Set, Tuple, cast
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, cast
 from unittest.mock import patch
 
 import pytest
@@ -1253,3 +1253,46 @@ def test_claim_branch_description_restamps_series(prepdir: str) -> None:
     # Authorship preserved; committer re-stamped to the current identity.
     assert all(a == orig_email for a, _c in post)
     assert all(c == 'changed@example.com' for _a, c in post)
+
+
+def test_reroll_ignores_submodule_recurse(
+    gitdir: str, add_unpopulated_submodule: Callable[..., str]
+) -> None:
+    """reroll()'s sent-tag worktree is one of b4's scratch worktrees too.
+
+    Under prep-cover-strategy=commit the series is cherry-picked into a fresh
+    sparse worktree whose ``checkout -f`` dies on the user's submodule.recurse
+    -- and the sent tag goes with it, swallowed as "Error tagging the
+    revision".
+    """
+    add_unpopulated_submodule(gitdir)
+
+    b4.MAIN_CONFIG.update({'prep-cover-strategy': 'commit'})
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        ['--no-stdin', '--no-interactive', '--offline-mode', 'prep', '-n', 'pytest']
+    )
+    b4.ez.cmd_prep(cmdargs)
+
+    with open(os.path.join(gitdir, 'file1.txt'), 'a') as fh:
+        fh.write('reroll tweak\n')
+    b4.git_run_command(gitdir, ['add', 'file1.txt'])
+    ecode, _ = b4.git_run_command(gitdir, ['commit', '-m', 'reroll: tweak file1'])
+    assert ecode == 0
+
+    _cover, tracking = b4.ez.load_cover(strip_comments=True)
+    tagname, _rev = b4.ez.get_sent_tagname(
+        tracking['series']['change-id'], b4.ez.SENT_TAG_PREFIX, 1
+    )
+
+    # Only now flip the config the bug needs, so the fixture setup above never
+    # ran under recursion itself.
+    b4.git_set_config(gitdir, 'submodule.recurse', 'true')
+
+    mybranch = b4.git_get_current_branch()
+    assert mybranch is not None
+    b4.ez.reroll(mybranch, 'sent tag message\n', 'reroll-recurse@test.local')
+
+    assert b4.git_revparse_tag(None, tagname), (
+        f'reroll did not tag {tagname}: the scratch worktree recursed'
+    )

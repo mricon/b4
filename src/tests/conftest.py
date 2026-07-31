@@ -2,7 +2,7 @@ import copy
 import os
 import pathlib
 import sys
-from typing import Generator
+from typing import Callable, Generator
 
 import pytest
 
@@ -47,6 +47,56 @@ def settestdefaults(
 @pytest.fixture(scope='function')
 def sampledir(request: pytest.FixtureRequest) -> str:
     return os.path.join(request.path.parent, 'samples')
+
+
+@pytest.fixture(scope='function')
+def add_unpopulated_submodule() -> Callable[..., str]:
+    """Factory: advance master with an active but unpopulated submodule.
+
+    A gitlink and .gitmodules in the tree plus a configured url is all it
+    takes: no clone exists anywhere, which is exactly what any fresh linked
+    worktree sees, and a git command recursing into submodules there dies with
+    "fatal: not a git repository: .../worktrees/<wt>/modules/<name>". Built
+    with plumbing so nothing is signed and master can be advanced in place.
+    Callers flip submodule.recurse on only once their own fixtures are built --
+    this setup would trip over it too. Returns the sha the gitlink points at.
+    """
+
+    def _add(gitdir: str, name: str = 'sub') -> str:
+        ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'master'])
+        assert ecode == 0
+        gitlink = head.strip()
+        gm = pathlib.Path(gitdir) / '.gitmodules'
+        gm.write_text(f'[submodule "{name}"]\n\tpath = {name}\n\turl = ./{name}\n')
+        ecode, _ = b4.git_run_command(gitdir, ['add', '.gitmodules'])
+        assert ecode == 0
+        ecode, _ = b4.git_run_command(
+            gitdir,
+            ['update-index', '--add', '--cacheinfo', f'160000,{gitlink},{name}'],
+        )
+        assert ecode == 0
+        ecode, tree = b4.git_run_command(gitdir, ['write-tree'])
+        assert ecode == 0
+        ecode, commit = b4.git_run_command(
+            gitdir,
+            ['commit-tree', tree.strip(), '-p', 'master'],
+            stdin=f'add {name} gitlink\n'.encode(),
+        )
+        assert ecode == 0
+        ecode, _ = b4.git_run_command(
+            gitdir, ['update-ref', 'refs/heads/master', commit.strip()]
+        )
+        assert ecode == 0
+        ecode, _ = b4.git_run_command(gitdir, ['reset', '--hard', 'master'])
+        assert ecode == 0
+        ecode, entry = b4.git_run_command(gitdir, ['ls-tree', 'master', name])
+        assert ecode == 0 and entry.startswith('160000 commit'), (
+            f'gitlink did not land in master: {entry!r}'
+        )
+        b4.git_set_config(gitdir, f'submodule.{name}.url', f'./{name}')
+        return gitlink
+
+    return _add
 
 
 @pytest.fixture(scope='function')
