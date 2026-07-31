@@ -186,6 +186,9 @@ def run_tracking_tui(
             # Sync status from tracking commit to DB.  The ReviewApp writes
             # status changes (e.g. 'replied') into the tracking commit JSON,
             # so we read it back here and propagate to the SQLite database.
+            # load_tracking() exits rather than raising on a branch with no
+            # tracking commit, and SystemExit is not an Exception, so catch it
+            # too -- letting it out of here takes the whole TUI down with it.
             try:
                 _cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
                 tracking_status = tracking.get('series', {}).get('status')
@@ -196,7 +199,7 @@ def run_tracking_tui(
                         conn, focus_change_id, tracking_status, revision=revision
                     )
                     conn.close()
-            except Exception as ex:
+            except (Exception, SystemExit) as ex:
                 logger.warning('Could not sync tracking status: %s', ex)
 
             # Put the user back before the tracking list comes up again.
