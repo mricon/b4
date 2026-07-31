@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import io
+import logging
 import os
 import pathlib
 import re
@@ -839,6 +840,94 @@ class TestCmdTrack:
         revs = {r['revision'] for r in review_tracking.get_revisions(conn, change_id)}
         conn.close()
         assert revs == {2, 3}, f'expected v2+v3 under one change-id, got {revs}'
+
+    def _track(self, series_id: str, identifier: str) -> None:
+        review_tracking.cmd_track(
+            argparse.Namespace(
+                series_id=series_id,
+                identifier=identifier,
+                msgid=None,
+                noparent=False,
+                wantname=None,
+                wantver=None,
+            )
+        )
+
+    @mock.patch('b4.retrieve_messages')
+    @mock.patch('b4.LoreMailbox')
+    def test_track_new_version_of_archived_series_hints_forget(
+        self,
+        mock_mailbox_class: mock.Mock,
+        mock_retrieve: mock.Mock,
+        gitdir: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A new version folding into an archived series must hint at forget.
+
+        Archived series are not shown in the review TUI, so the usual
+        "upgrade in the TUI" advice points at nothing the maintainer can
+        find (Mark Brown's partially-applied-series report).
+        """
+        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='arch-hint')
+        review_tracking.cmd_enroll(cmdargs_enroll)
+        mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
+
+        v1 = self._make_mock_lore_series(
+            revision=1, change_id='cid-arch', cover_msgid='arch-v1@example.com'
+        )
+        mbx_v1 = mock.Mock()
+        mbx_v1.series = {1: v1}
+        mbx_v1.get_series.return_value = v1
+        mock_mailbox_class.return_value = mbx_v1
+        self._track('arch-v1@example.com', 'arch-hint')
+
+        conn = review_tracking.get_db('arch-hint')
+        conn.execute("UPDATE series SET status = 'archived'")
+        conn.commit()
+        conn.close()
+
+        v2 = self._make_mock_lore_series(
+            revision=2, change_id='cid-arch', cover_msgid='arch-v2@example.com'
+        )
+        mbx_v2 = mock.Mock()
+        mbx_v2.series = {1: v1, 2: v2}
+        mbx_v2.get_series.return_value = v2
+        mock_mailbox_class.return_value = mbx_v2
+
+        with caplog.at_level(logging.INFO, logger='b4'):
+            self._track('arch-v2@example.com', 'arch-hint')
+
+        assert 'b4 review forget cid-arch' in caplog.text
+        assert 'Upgrade the series in the review TUI' not in caplog.text
+
+    @mock.patch('b4.retrieve_messages')
+    @mock.patch('b4.LoreMailbox')
+    def test_track_already_tracked_hints_forget(
+        self,
+        mock_mailbox_class: mock.Mock,
+        mock_retrieve: mock.Mock,
+        gitdir: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Re-tracking with nothing new to record must hint at forget."""
+        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='dup-hint')
+        review_tracking.cmd_enroll(cmdargs_enroll)
+        mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
+
+        v1 = self._make_mock_lore_series(
+            revision=1, change_id='cid-dup', cover_msgid='dup-v1@example.com'
+        )
+        mbx = mock.Mock()
+        mbx.series = {1: v1}
+        mbx.get_series.return_value = v1
+        mock_mailbox_class.return_value = mbx
+        self._track('dup-v1@example.com', 'dup-hint')
+
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit) as excinfo:
+                self._track('dup-v1@example.com', 'dup-hint')
+        assert excinfo.value.code == 1
+        assert 'b4 review forget cid-dup' in caplog.text
 
     @mock.patch('b4.review.tracking.resolve_identifier', return_value=None)
     def test_track_fails_without_identifier(

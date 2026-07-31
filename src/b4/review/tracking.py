@@ -699,12 +699,27 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
                 '  Recorded new revision(s): %s',
                 ', '.join(f'v{v}' for v in new_revs),
             )
-            logger.info('  Upgrade the series in the review TUI to the new version.')
+            if status_str == 'archived':
+                # Archived series are not shown in the review TUI, so the
+                # usual upgrade advice would point at nothing actionable.
+                logger.info('  This series is archived and not shown in the TUI.')
+                logger.info(
+                    '  Use "b4 review forget %s" to erase it and track afresh.',
+                    existing_change_id,
+                )
+            else:
+                logger.info(
+                    '  Upgrade the series in the review TUI to the new version.'
+                )
             return
         logger.critical(
             'This series is already tracked (status: %s, v%d)', status_str, cur_rev
         )
         logger.critical('Change-ID: %s', existing_change_id)
+        logger.critical(
+            'Use "b4 review forget %s" to erase it and track afresh.',
+            existing_change_id,
+        )
         sys.exit(1)
 
     # Not tracked yet — create a new series and record its revisions.
