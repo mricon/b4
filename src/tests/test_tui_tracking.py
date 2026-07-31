@@ -1649,6 +1649,142 @@ class TestTrackingAbandon:
             assert cursor.fetchone() is None
             conn.close()
 
+    @pytest.mark.asyncio
+    async def test_abandon_from_the_branch_lands_on_a_branch(self, gitdir: str) -> None:
+        """Deleting the branch HEAD is on detaches it to the parent commit
+        first, because that is all delete_review_branch() can name.  Left
+        that way the session ends on a commit with no branch on it, and the
+        restore in run_tracking_tui() reads a detached HEAD as no branch of
+        ours and declines to help."""
+        identifier = 'test-abandon-onbranch'
+        change_id = 'abandon-onbranch-1'
+        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] abandon from the branch',
+                    'status': 'reviewing',
+                    'message_id': 'abo@ex.com',
+                }
+            ],
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch_name])
+        assert ecode == 0
+
+        app = TrackingApp(identifier, 'master')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_abandon_confirmed(True, change_id, branch_name, True)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) == 'master'
+
+    @pytest.mark.asyncio
+    async def test_archive_from_the_branch_lands_on_a_branch(self, gitdir: str) -> None:
+        """Archiving deletes the branch at the end, so it detaches HEAD the
+        same way abandoning does."""
+        identifier = 'test-archive-onbranch'
+        change_id = 'archive-onbranch-1'
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier=identifier, with_patch=True
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] archive from the branch',
+                    'status': 'accepted',
+                    'message_id': 'aro@ex.com',
+                }
+            ],
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch_name])
+        assert ecode == 0
+
+        app = TrackingApp(identifier, 'master')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app._archive_branch(change_id, 1, branch_name)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) == 'master'
+
+    @pytest.mark.asyncio
+    async def test_abandon_lands_back_on_a_detached_head(self, gitdir: str) -> None:
+        """A session that started detached came from a commit, not a branch.
+
+        delete_review_branch() can only name the deleted branch's parent, so
+        without the session's own starting point the user is left parked on
+        whatever that happens to be."""
+        identifier = 'test-abandon-detached'
+        change_id = 'abandon-detached-1'
+        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] abandon detached',
+                    'status': 'reviewing',
+                    'message_id': 'abd@ex.com',
+                }
+            ],
+        )
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'master'])
+        assert ecode == 0
+        start_sha = out.strip()
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch_name])
+        assert ecode == 0
+
+        app = TrackingApp(
+            identifier, None, original_head=['checkout', '--detach', start_sha]
+        )
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_abandon_confirmed(True, change_id, branch_name, True)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+
+    @pytest.mark.asyncio
+    async def test_abandon_from_elsewhere_leaves_head_alone(self, gitdir: str) -> None:
+        """HEAD was never on the deleted branch, so nothing moved it and
+        nothing should move it back."""
+        identifier = 'test-abandon-elsewhere'
+        change_id = 'abandon-elsewhere-1'
+        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] abandon from elsewhere',
+                    'status': 'reviewing',
+                    'message_id': 'abe@ex.com',
+                }
+            ],
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'mine'])
+        assert ecode == 0
+
+        app = TrackingApp(identifier, 'master')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_abandon_confirmed(True, change_id, branch_name, True)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) == 'mine'
+
 
 class TestTrackingWaiting:
     """Tests for the 'mark as waiting' workflow."""
