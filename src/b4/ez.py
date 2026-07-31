@@ -1163,7 +1163,9 @@ def edit_cover() -> None:
     is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     bcover = cover.encode()
-    new_bcover = b4.edit_in_editor(bcover, filehint='COMMIT_EDITMSG')
+    # store_cover() writes to whatever branch is current, so refuse the edit
+    # rather than overwrite another series' cover letter.
+    new_bcover = b4.edit_in_editor(bcover, filehint='COMMIT_EDITMSG', guard_branch=True)
     if new_bcover == bcover:
         logger.info('Cover letter unchanged.')
         return
@@ -1183,7 +1185,9 @@ def edit_deps() -> None:
     deps = '\n'.join(prereqs)
     toedit = f'{deps}\n{DEPS_HELP}'
     bdata = toedit.encode()
-    new_bdata = b4.edit_in_editor(bdata, filehint='prereqs.yaml')
+    # Same as edit_cover(): the prerequisites land in the current branch's
+    # tracking commit.
+    new_bdata = b4.edit_in_editor(bdata, filehint='prereqs.yaml', guard_branch=True)
     if new_bdata == bdata:
         logger.info('Dependencies unchanged.')
         return
@@ -1629,7 +1633,11 @@ def interactive_trailer_review(
         sections.append((clmsg.subject, disp))
 
     buf = render_trailer_review(sections)
-    edited = b4.edit_in_editor(buf, filehint='b4-trailers.COMMIT_EDITMSG')
+    # The kept trailers are applied by rewriting the current branch's commits,
+    # so a branch switch while the editor is open would target the wrong series.
+    edited = b4.edit_in_editor(
+        buf, filehint='b4-trailers.COMMIT_EDITMSG', guard_branch=True
+    )
     try:
         rejected_idx = parse_trailer_review(edited, sections)
     except ValueError as ex:

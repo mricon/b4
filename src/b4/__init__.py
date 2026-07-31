@@ -6172,11 +6172,30 @@ def _suspend_to_shell(
         subprocess.run([shell], env=env, cwd=cwd)
 
 
-def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
-    # To avoid losing the cover letter, ensure that we are still on the same
-    # branch as when the cover-letter was originally opened.
-    read_branch = git_get_current_branch()
+def edit_in_editor(
+    bdata: bytes,
+    filehint: str = 'COMMIT_EDITMSG',
+    *,
+    guard_branch: bool = False,
+) -> bytes:
+    """Open the user's editor on bdata and return what they saved.
 
+    guard_branch opts into a collision check, and only callers that store
+    the result into whatever branch HEAD happens to point at may set it
+    (b4 prep keeps the cover letter in the current branch's tracking commit,
+    so a branch switch mid-edit would clobber an unrelated series).  HEAD is
+    read before and after the editor runs; if it moved, the text is saved to
+    a temporary file and RuntimeError is raised.
+
+    Callers that write to an explicit ref must leave it unset: HEAD is not
+    where their data lands, so refusing the edit would throw away the user's
+    work to prevent a collision that cannot happen.
+    """
+    # Read before the edit and compare after, so this can never end up
+    # comparing two different points in time.  A detached HEAD reads as None
+    # and still guards: None is not a branch we started on, so checking one
+    # out mid-edit is caught like any other switch.
+    read_branch = git_get_current_branch() if guard_branch else None
     corecfg = get_config_from_git(r'core\..*')
     editor = (
         os.environ.get('GIT_EDITOR')
@@ -6213,23 +6232,26 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
     # of the edited text expects unix endings, so canonicalize here.
     bdata = bdata.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
 
-    write_branch = git_get_current_branch()
-    if write_branch != read_branch:
-        with tempfile.NamedTemporaryFile(
-            mode='wb', prefix=f'old-{read_branch}'.replace('/', '-'), delete=False
-        ) as save_file:
-            save_file.write(bdata)
-            logger.critical(
-                'Editing started on branch %s, but current branch is %s.',
-                read_branch,
-                write_branch,
+    if guard_branch:
+        write_branch = git_get_current_branch()
+        if write_branch != read_branch:
+            with tempfile.NamedTemporaryFile(
+                mode='wb',
+                prefix=f'old-{read_branch}'.replace('/', '-'),
+                delete=False,
+            ) as save_file:
+                save_file.write(bdata)
+                logger.critical(
+                    'Editing started on branch %s, but current branch is %s.',
+                    read_branch,
+                    write_branch,
+                )
+                logger.critical(
+                    'To avoid a collision, your text was saved in %s', save_file.name
+                )
+            raise RuntimeError(
+                f'Branch changed during file editing, the temporary file was saved at {save_file.name}'
             )
-            logger.critical(
-                'To avoid a collision, your text was saved in %s', save_file.name
-            )
-        raise RuntimeError(
-            f'Branch changed during file editing, the temporary file was saved at {save_file.name}'
-        )
     return bdata
 
 

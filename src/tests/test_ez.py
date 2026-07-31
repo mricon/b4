@@ -892,7 +892,9 @@ def test_interactive_trailer_review_drops_and_remembers(
         'commitA': cast(b4.LoreMessage, _Commit('[PATCH 1/1] do a thing', 'patchid-A'))
     }
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         # Maintainer rejects the Reviewed-by, keeps the Acked-by.
         text = bdata.decode('utf-8')
         text = text.replace('  + Reviewed-by:', '  x Reviewed-by:')
@@ -939,7 +941,9 @@ def test_interactive_trailer_review_same_trailer_two_patches(
         'commitB': cast(b4.LoreMessage, _Commit('[PATCH 2/2] second', 'patchid-B')),
     }
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         # Reject only the first occurrence -- the copy under PATCH 1/2.
         return bdata.decode('utf-8').replace('  + ', '  x ', 1).encode('utf-8')
 
@@ -983,7 +987,9 @@ def test_trailers_interactive_reject_persists_across_runs(
         b4.mbox.main(cmdargs)
         assert e.value.code == 0
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         # Reject the only follow-up trailer (Reviewed-by: Follow Upper).
         text = bdata.decode('utf-8')
         text = text.replace('  + Reviewed-by:', '  x Reviewed-by:')
@@ -1066,7 +1072,9 @@ def test_trailers_fuzzy_composes_with_interactive(
 
     seen = {'offered': False}
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         # The fuzzy-matched Reviewed-by must be presented for review; accept it
         # by leaving the text unchanged.
         if b'Reviewed-by: Follow Upper' in bdata:
