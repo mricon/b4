@@ -626,3 +626,39 @@ class TestEditorFailure:
             assert notified.call_args.kwargs.get('severity') == 'error'
             reviews = app._patches[0].get('reviews', {})
             assert not reviews.get(my_email, {}).get('reply')
+
+
+class TestBranchRestore:
+    """b4 only puts back a branch it moved itself."""
+
+    def test_restore_skips_a_checkout_b4_did_not_make(self, gitdir: str) -> None:
+        """The worktree the TUI runs in is shared with the user's other
+        terminals; a branch they switched to there is not ours to undo."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'restore-foreign', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['original_branch'] = 'master'
+        app = ReviewApp(session)
+        app.branch_checked_out = True
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'mine'])
+        assert ecode == 0
+
+        app._restore_original_branch()
+        assert b4.git_get_current_branch(gitdir) == 'mine'
+        assert app.branch_checked_out is False
+
+    def test_restore_undoes_b4s_own_checkout(self, gitdir: str) -> None:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'restore-own', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['original_branch'] = 'master'
+        app = ReviewApp(session)
+        assert app._ensure_branch_checked_out()
+        assert b4.git_get_current_branch(gitdir) == branch
+
+        app._restore_original_branch()
+        assert b4.git_get_current_branch(gitdir) == 'master'
+        assert app.branch_checked_out is False
