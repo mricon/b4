@@ -1918,16 +1918,29 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                         )
 
             _is_rt = bool(series.get('is_rethreaded'))
+            # create_review_branch() reports failure by exiting rather than
+            # raising, and SystemExit is not an Exception, so catch it too --
+            # letting it out of here unwinds straight through the suspend and
+            # takes the session down over one series that would not apply.
             try:
                 logger.info('Base: %s', base_commit)
-                b4.git_fetch_am_into_repo(
-                    topdir,
-                    ambytes=ambytes,
-                    at_base=base_commit,
-                    origin=linkurl,
-                    am_flags=['-3'],
-                    resolve=True,
-                )
+                # Only the am can conflict, and it runs before anything is
+                # created, so the resolve belongs around it rather than around
+                # the whole block: creating the branch is then written once and
+                # covered by the handler below on both routes to it.
+                try:
+                    b4.git_fetch_am_into_repo(
+                        topdir,
+                        ambytes=ambytes,
+                        at_base=base_commit,
+                        origin=linkurl,
+                        am_flags=['-3'],
+                        resolve=True,
+                    )
+                except b4.AmConflictError as cex:
+                    if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
+                        _wait_for_enter()
+                        return
 
                 # Create the review branch
                 b4.review.create_review_branch(
@@ -1944,27 +1957,11 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 )
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
-            except b4.AmConflictError as cex:
-                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
-                    _wait_for_enter()
-                    return
-                # Create the review branch from resolved result
-                b4.review.create_review_branch(
-                    topdir,
-                    branch_name,
-                    base_commit,
-                    lser,
-                    linkurl,
-                    linkmask,
-                    num_prereqs=0,
-                    identifier=self._identifier,
-                    status='reviewing',
-                    is_rethreaded=_is_rt,
-                )
-                logger.info('Review branch created: %s', branch_name)
-                checkout_success = True
-            except Exception as ex:
-                logger.critical('Error creating review branch: %s', ex)
+            except (Exception, SystemExit) as ex:
+                # SystemExit only carries the exit code; create_review_branch()
+                # has already said why on its way out.
+                reason = 'see above' if isinstance(ex, SystemExit) else str(ex)
+                logger.critical('Error creating review branch: %s', reason)
                 _wait_for_enter()
 
         if not checkout_success:
