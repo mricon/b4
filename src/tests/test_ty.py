@@ -170,6 +170,41 @@ def test_interactive_ty_review_keeps_all_when_pristine(
     assert kept == applied
 
 
+def test_interactive_ty_review_edits_in_the_named_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'b4 ty -g' names the tree the thank-yous belong to, so the editor runs
+    there: a repository-local core.editor is the one that applies, and the
+    scratch file lands inside that tree rather than wherever the process was
+    started from."""
+    applied: List[b4.ty.JsonDictT] = [
+        {
+            'subject': '[PATCH] Add frobnicator support',
+            'fromname': 'Foo Bar',
+            'fromemail': 'foo@example.com',
+            'sentdate': 'Mon, 1 Jan 2026 00:00:00 +0000',
+            'msgid': 'patch-1@example.com',
+            'trackfile': 'aaa.am',
+        },
+    ]
+    seen: List[Optional[str]] = []
+
+    def fake_edit(
+        bdata: bytes,
+        filehint: str = 'COMMIT_EDITMSG',
+        *,
+        topdir: Optional[str] = None,
+        guard_branch: bool = False,
+    ) -> bytes:
+        seen.append(topdir)
+        return bdata
+
+    monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
+
+    b4.ty.interactive_ty_review(applied, '/some/other/tree')
+    assert seen == ['/some/other/tree']
+
+
 def test_get_applied_info_picks_latest_and_lists_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
