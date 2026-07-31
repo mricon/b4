@@ -4742,3 +4742,24 @@ class TestArchiveSeries:
         assert ok, detail
         assert not b4.git_branch_exists(repo, branch)
         assert self._db_status() == 'archived'
+
+    def test_unwritable_archive_is_reported_not_raised(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Archiving happens after a thank-you has gone out, so an I/O
+        failure must come back as (False, detail).  Raising here would be
+        caught upstream and shown as a send failure, telling the maintainer
+        to send a note that is already on the list."""
+        repo = self._make_repo(tmp_path)
+        branch = f'b4/review/{self.CHANGE_ID}'
+
+        def boom(*args: Any, **kwargs: Any) -> None:
+            raise OSError(28, 'No space left on device')
+
+        monkeypatch.setattr('b4.ez.write_to_tar', boom)
+        ok, detail = review.archive_series(repo, self.IDENTIFIER, self.CHANGE_ID, 1)
+        assert not ok
+        assert 'No space left on device' in detail
+        # Nothing was destroyed, so the maintainer can simply retry
+        assert b4.git_branch_exists(repo, branch)
+        assert self._db_status() == 'accepted'
