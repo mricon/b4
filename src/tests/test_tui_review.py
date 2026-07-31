@@ -691,6 +691,106 @@ class TestBranchRestore:
         assert app.branch_checked_out is False
 
 
+class TestSendBookkeeping:
+    """Everything after the SMTP handoff is bookkeeping, and bookkeeping must
+    never be able to claim the send failed."""
+
+    async def _send(
+        self, gitdir: str, change_id: str, dryrun: bool = False, **patches: Any
+    ) -> Tuple[List[str], bool]:
+        """Drive action_send with a staged review and a send that succeeds.
+
+        *patches* are extra mock.patch.object() keyword targets on the app.
+        Returns (notification texts, app still running).
+        """
+        import contextlib
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, change_id, ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['email_dryrun'] = dryrun
+        app = ReviewApp(session)
+        my_email = str(session['usercfg']['email'])
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._patches[0]['reviews'] = {
+                my_email: {
+                    'reply': 'Looks good.',
+                    'trailers': ['Reviewed-by: Me <me@example.com>'],
+                    'patch-state': 'done',
+                }
+            }
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(app, 'suspend', lambda: contextlib.nullcontext())
+                )
+
+                # SendScreen is a confirmation dialog; answer yes for it.
+                def _confirm(screen: Any, callback: Any = None) -> None:
+                    assert callback is not None
+                    callback(True)
+
+                stack.enter_context(mock.patch.object(app, 'push_screen', _confirm))
+                stack.enter_context(mock.patch('b4.get_smtp', return_value=(None, 'm')))
+                stack.enter_context(
+                    mock.patch('b4.send_mail', return_value=0 if dryrun else 1)
+                )
+                stack.enter_context(
+                    mock.patch('b4.review_tui._review_app.mark_outgoing_seen')
+                )
+                stack.enter_context(mock.patch.object(app, '_mark_patches_answered'))
+                for name, kwargs in patches.items():
+                    stack.enter_context(mock.patch.object(app, name, **kwargs))
+                notified = stack.enter_context(mock.patch.object(app, 'notify'))
+                app.action_send()
+                await pilot.pause()
+            texts = [str(call.args[0]) for call in notified.call_args_list]
+            return texts, app.is_running
+
+    @pytest.mark.asyncio
+    async def test_unwritable_tracking_is_reported_but_not_as_a_send_failure(
+        self, gitdir: str
+    ) -> None:
+        """save_tracking_ref() returns False rather than raising, so this used
+        to pass unnoticed -- and the next session would offer the same reviews
+        as unsent, inviting the maintainer to send them twice."""
+        texts, running = await self._send(
+            gitdir, 'send-notracking', _save_tracking={'return_value': False}
+        )
+        assert running
+        assert any('Sent 1 review email' in t for t in texts)
+        assert not any('Send failed' in t for t in texts)
+        assert any('could not record it' in t for t in texts)
+
+    @pytest.mark.asyncio
+    async def test_raising_bookkeeping_is_not_a_send_failure(self, gitdir: str) -> None:
+        """The mail is on the list by then; reporting 'Send failed' would tell
+        the maintainer to send it again."""
+        texts, running = await self._send(
+            gitdir,
+            'send-bookkeeping-boom',
+            _mark_patches_answered={
+                'side_effect': OSError(28, 'No space left on device')
+            },
+        )
+        assert running
+        assert any('Sent 1 review email' in t for t in texts)
+        assert not any('Send failed' in t for t in texts)
+        assert any('No space left on device' in t for t in texts)
+
+    @pytest.mark.asyncio
+    async def test_a_dry_run_is_not_recorded_as_sent(self, gitdir: str) -> None:
+        """--email-dry-run logs the mail and stops there.  Stamping
+        sent-revision on it would make the next real session treat these
+        reviews as already sent and offer none of them."""
+        texts, running = await self._send(gitdir, 'send-dryrun', dryrun=True)
+        assert running
+        assert any('Dry-run' in t for t in texts)
+        assert not any('Sent 0 review email' in t for t in texts)
+
+
 class TestSessionRestorePoint:
     """_prepare_review_session() records where HEAD has to go back to."""
 
