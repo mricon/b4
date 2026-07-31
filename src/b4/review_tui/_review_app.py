@@ -2164,6 +2164,13 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         """Switch back to the original branch after shell/agent use."""
         if not self.branch_checked_out or not self._original_branch:
             return
+        # Only undo our own checkout. If HEAD is no longer on the review
+        # branch we left it on, something else moved it -- the shell we just
+        # suspended into, or another terminal in the same worktree -- and it
+        # is not ours to move back.
+        if b4.git_get_current_branch(self._topdir) != self._branch:
+            self.branch_checked_out = False
+            return
         ecode, _out = b4.git_run_command(
             self._topdir, ['checkout', self._original_branch], logstderr=True
         )

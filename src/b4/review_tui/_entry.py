@@ -174,9 +174,17 @@ def run_tracking_tui(
         # This covers two cases:
         # - ReviewApp checked out the review branch (shell suspend/agent)
         # - TrackingApp checked out a new series via create_review_branch
+        # Both land on a review branch, and that is the only case we may undo.
+        # Anything else means the user moved HEAD themselves -- possibly hours
+        # ago, from another terminal sharing this worktree -- and the branch
+        # recorded when we started is stale, not something to check back out.
         if original_branch:
             current = b4.git_get_current_branch(topdir)
-            if current and current != original_branch:
+            if (
+                current
+                and current != original_branch
+                and current.startswith(b4.review.REVIEW_BRANCH_PREFIX)
+            ):
                 logger.info(
                     'Checking out %s and starting tracking UI...', original_branch
                 )
