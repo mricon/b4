@@ -320,6 +320,34 @@ class _TakeWorktree:
 
 
 @contextlib.contextmanager
+def _keep_current_branch(topdir: str) -> Generator[Callable[[], None], None, None]:
+    """Put HEAD back where it was when the block started.
+
+    Tracking-list actions run with the UI suspended, and some of them check
+    out a branch of their own to get their work done. The list comes back up
+    when they return, so the branch they moved to must not outlive them: the
+    worktree is the user's, shared with their other terminals, and they never
+    asked to be moved. Restores however the block ends, including when the
+    action bails out early or something under it raises.
+
+    Yields the restore itself, for the callers that need to be off the branch
+    before the block ends -- deleting it, say, which git refuses while it is
+    checked out. Calling it early is safe: the one on the way out then has
+    nothing left to do.
+    """
+    start_head = b4.git_head_restore_args(topdir)
+
+    def restore() -> None:
+        if start_head and b4.git_head_restore_args(topdir) != start_head:
+            b4.git_run_command(topdir, start_head, logstderr=True)
+
+    try:
+        yield restore
+    finally:
+        restore()
+
+
+@contextlib.contextmanager
 def _take_worktree(
     topdir: str, target_branch: str
 ) -> Generator[Optional[_TakeWorktree], None, None]:
@@ -4256,13 +4284,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         upgrade_branch = f'b4/review/_tmp-{change_id}-v{target_rev}-upgrade'
 
-        with self.suspend():
-            topdir = b4.git_get_toplevel()
-            if not topdir:
-                logger.critical('Not in a git repository')
-                _wait_for_enter()
-                return
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            self.notify('Not in a git repository', severity='error')
+            return
 
+        # The apply below checks out the upgrade branch and renames it onto the
+        # review branch, so HEAD ends up there whether the upgrade succeeds or
+        # not. The tracking list comes back up when this returns; leaving the
+        # worktree moved strands the user on the review branch when they quit.
+        with self.suspend(), _keep_current_branch(topdir) as restore_branch:
             # --- 1. Save maintainer review data keyed by patch-id ---
             logger.info('Saving review data from v%d...', current_rev)
             patch_ids = b4.review.get_review_branch_patch_ids(topdir, review_branch)
@@ -4348,16 +4379,33 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             # Use the target revision's own rethread state, not the currently
             # tracked revision's — they can differ across an upgrade.
             _is_rt = bool(target_is_rethreaded)
+            # create_review_branch() reports failure by exiting rather than
+            # raising, and SystemExit is not an Exception, so catch it too --
+            # letting it out of here skips the cleanup below and unwinds
+            # straight through the suspend and into the UI.
             try:
                 logger.info('Base: %s', base_sha)
-                b4.git_fetch_am_into_repo(
-                    topdir,
-                    ambytes=ambytes,
-                    at_base=base_sha,
-                    origin=linkurl,
-                    am_flags=['-3'],
-                    resolve=True,
-                )
+                try:
+                    b4.git_fetch_am_into_repo(
+                        topdir,
+                        ambytes=ambytes,
+                        at_base=base_sha,
+                        origin=linkurl,
+                        am_flags=['-3'],
+                        resolve=True,
+                    )
+                except b4.AmConflictError as cex:
+                    if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
+                        # User aborted.  Nothing this run made is left -- the
+                        # upgrade branch is not created until the am lands --
+                        # but the name is derived from the change-id and the
+                        # revision, so an earlier attempt that ended somewhere
+                        # without cleanup left one sitting on it.  Take it with
+                        # us rather than let it fail the next attempt.
+                        if b4.git_branch_exists(topdir, upgrade_branch):
+                            b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
+                        _wait_for_enter()
+                        return
                 b4.review.create_review_branch(
                     topdir,
                     upgrade_branch,
@@ -4371,29 +4419,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     is_rethreaded=_is_rt,
                 )
                 logger.info('Upgrade branch created: %s', upgrade_branch)
-            except b4.AmConflictError as cex:
-                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
-                    # User aborted — clean up upgrade branch if it was
-                    # partially created before the conflict
-                    if b4.git_branch_exists(topdir, upgrade_branch):
-                        b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
-                    _wait_for_enter()
-                    return
-                b4.review.create_review_branch(
-                    topdir,
-                    upgrade_branch,
-                    base_sha,
-                    lser,
-                    linkurl,
-                    linkmask,
-                    num_prereqs=0,
-                    identifier=self._identifier,
-                    status='reviewing',
-                    is_rethreaded=_is_rt,
-                )
-                logger.info('Upgrade branch created: %s', upgrade_branch)
-            except Exception as ex:
-                logger.critical('Error creating review branch: %s', ex)
+            except (Exception, SystemExit) as ex:
+                # SystemExit only carries the exit code; create_review_branch()
+                # has already said why on its way out.
+                reason = 'see above' if isinstance(ex, SystemExit) else str(ex)
+                logger.critical('Error creating review branch: %s', reason)
+                # Off the half-built branch before dropping it: git refuses to
+                # delete the branch it has checked out.
+                restore_branch()
                 if b4.git_branch_exists(topdir, upgrade_branch):
                     b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
                 _wait_for_enter()
