@@ -1,7 +1,7 @@
 import os
 import pathlib
 from email.message import EmailMessage
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import pytest
 
@@ -123,7 +123,9 @@ def test_interactive_ty_review_drops_skipped(monkeypatch: pytest.MonkeyPatch) ->
         },
     ]
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         # Maintainer skips the pull request, keeps the patch series.
         text = bdata.decode('utf-8').replace('+ [GIT PULL]', 'x [GIT PULL]')
         return text.encode('utf-8')
@@ -157,7 +159,9 @@ def test_interactive_ty_review_keeps_all_when_pristine(
         },
     ]
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         return bdata
 
     monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)

@@ -582,7 +582,9 @@ def interactive_ty_review(
         sections.append((str(jsondata['subject']), details))
 
     buf = render_ty_review(sections)
-    edited = b4.edit_in_editor(buf, filehint='b4-ty-review.COMMIT_EDITMSG')
+    edited = b4.edit_in_editor(
+        buf, filehint='b4-ty-review.COMMIT_EDITMSG', topdir=gitdir
+    )
     try:
         skipped = parse_ty_review(edited, sections)
     except ValueError as ex:
