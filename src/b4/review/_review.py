@@ -283,11 +283,16 @@ def create_review_branch(
         logger.critical('Branch %s already exists', branch_name)
         sys.exit(1)
 
-    # Save current branch for potential restore on error
-    current_branch: Optional[str] = None
-    ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
-    if ecode == 0:
-        current_branch = out.strip()
+    # Save the current position for potential restore on error: everything
+    # past the checkout below runs on the new branch, and git refuses to
+    # delete the branch HEAD is sitting on.
+    restore_head = b4.git_head_restore_args(topdir)
+
+    def drop_half_built_branch() -> None:
+        """Put the caller back and take the unfinished branch with us."""
+        if restore_head:
+            b4.git_run_command(topdir, restore_head, logstderr=True)
+        b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
 
     # Resolve base_commit to a concrete hash before checkout changes HEAD
     ecode, out = b4.git_run_command(
@@ -316,10 +321,7 @@ def create_review_branch(
         logger.critical(out.strip())
         # Abort the cherry-pick if in progress
         b4.git_run_command(topdir, ['cherry-pick', '--abort'], logstderr=True)
-        # Restore previous branch
-        if current_branch:
-            b4.git_run_command(topdir, ['checkout', current_branch], logstderr=True)
-        b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
+        drop_half_built_branch()
         sys.exit(1)
 
     # Record the first patch commit (the one right after base)
@@ -328,6 +330,9 @@ def create_review_branch(
     )
     if ecode > 0 or not out.strip():
         logger.critical('Unable to determine first patch commit')
+        # HEAD is on a branch that was never finished, as in the other two
+        # post-checkout failures around this one.
+        drop_half_built_branch()
         sys.exit(1)
     all_commits = out.strip().splitlines()
     prereq_commits = all_commits[:num_prereqs]
@@ -420,10 +425,7 @@ def create_review_branch(
     if ecode > 0:
         logger.critical('Unable to create tracking commit')
         logger.critical(out.strip())
-        # Restore previous branch
-        if current_branch:
-            b4.git_run_command(topdir, ['checkout', current_branch], logstderr=True)
-        b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
+        drop_half_built_branch()
         sys.exit(1)
 
     # Mark cover + patch messages as Seen in the messages DB
