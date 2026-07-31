@@ -2623,8 +2623,10 @@ class TestUpdateSeriesTrackingCounts:
         v1_mock = mock.Mock()
         v1_mock.revision = 1
         v1_mock.patches = [v1_patch, None, None, None]
+        v1_mock.fingerprint = None
         mock_lmbx = mock.Mock()
         mock_lmbx.series = {1: v1_mock}
+        mock_lmbx.covers = {}
         mock_lmbx.get_series.return_value = None
 
         series_dict: Dict[str, Any] = {
@@ -3514,6 +3516,30 @@ def _pos_diff(n: int) -> str:
     )
 
 
+def _series_msgs(
+    base: str, author: str, rev: int, n: int, cover: bool = False
+) -> list[EmailMessage]:
+    """Return the messages making up an n-patch series at the given revision."""
+    msgs: list[EmailMessage] = []
+    if cover:
+        msg = EmailMessage()
+        msg['Subject'] = f'[PATCH v{rev} 0/{n}] {base}: do things better'
+        msg['From'] = author
+        msg['Date'] = 'Thu, 19 Mar 2026 08:51:10 +0530'
+        msg['Message-Id'] = f'<{base}-v{rev}-p0@example.com>'
+        msg.set_payload('This series makes things better.\n')
+        msgs.append(msg)
+    for i in range(1, n + 1):
+        msg = EmailMessage()
+        msg['Subject'] = f'[PATCH v{rev} {i}/{n}] {base}: part {i}'
+        msg['From'] = author
+        msg['Date'] = 'Thu, 19 Mar 2026 08:51:12 +0530'
+        msg['Message-Id'] = f'<{base}-v{rev}-p{i}@example.com>'
+        msg.set_payload(_pos_diff(i))
+        msgs.append(msg)
+    return msgs
+
+
 def _build_lmbx(
     base: str, author: str, rev: int, n: int, cover: bool = False
 ) -> 'b4.LoreMailbox':
@@ -3524,21 +3550,7 @@ def _build_lmbx(
     tests do not run ``get_series()``).
     """
     lmbx = b4.LoreMailbox()
-    if cover:
-        msg = EmailMessage()
-        msg['Subject'] = f'[PATCH v{rev} 0/{n}] {base}: do things better'
-        msg['From'] = author
-        msg['Date'] = 'Thu, 19 Mar 2026 08:51:10 +0530'
-        msg['Message-Id'] = f'<{base}-v{rev}-p0@example.com>'
-        msg.set_payload('This series makes things better.\n')
-        lmbx.add_message(msg)
-    for i in range(1, n + 1):
-        msg = EmailMessage()
-        msg['Subject'] = f'[PATCH v{rev} {i}/{n}] {base}: part {i}'
-        msg['From'] = author
-        msg['Date'] = 'Thu, 19 Mar 2026 08:51:12 +0530'
-        msg['Message-Id'] = f'<{base}-v{rev}-p{i}@example.com>'
-        msg.set_payload(_pos_diff(i))
+    for msg in _series_msgs(base, author, rev, n, cover=cover):
         lmbx.add_message(msg)
     return lmbx
 
@@ -3748,6 +3760,178 @@ class TestRecordDiscoveredCoverSubject:
         conn.close()
         r6 = next(r for r in revs if r['revision'] == 6)
         assert r6['subject'] == 'Manually linked subject'
+
+
+class TestUpdateSeriesTrackingCoverSubject:
+    """[u]pdate discovers revisions too, and must name them the same way.
+
+    update_series_tracking() recorded them by hand instead of going through
+    _record_discovered_revisions(), so it kept picking the first present patch
+    of a raw LoreSeries (bug 8bb6e4c).  That is the path the TUI actually runs,
+    so an upgrade re-titled the series after patch 1/N.
+    """
+
+    def _update(
+        self, identifier: str, change_id: str, revision: int, msgs: list[EmailMessage]
+    ) -> Dict[str, Any]:
+        series: Dict[str, Any] = {
+            'change_id': change_id,
+            'revision': revision,
+            'status': 'new',
+            'message_id': f'thing-v{revision}-p0@example.com',
+        }
+        with (
+            mock.patch('b4.review._review.retrieve_series_messages', return_value=msgs),
+            mock.patch('b4.review._review.check_series_attestation', return_value=None),
+        ):
+            return b4.review.update_series_tracking(
+                series, identifier, 'https://example.com/%s'
+            )
+
+    def test_discovered_revision_named_after_cover(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        identifier = 'ust-cover'
+        change_id = 'cid-U'
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            change_id,
+            1,
+            'thing: do things better',
+            'Author',
+            'author@example.com',
+            '2026-03-19T08:51:10+00:00',
+            'thing-v1-p0@example.com',
+            3,
+        )
+        review_tracking.add_revision(
+            conn,
+            change_id,
+            1,
+            'thing-v1-p0@example.com',
+            subject='[PATCH v1 0/3] thing: do things better',
+        )
+        conn.close()
+
+        msgs = _series_msgs('thing', _AUTHOR, 1, 3, cover=True)
+        msgs += _series_msgs('thing', _AUTHOR, 2, 3, cover=True)
+        result = self._update(identifier, change_id, 1, msgs)
+
+        assert result['error'] is None
+        assert result['new_revisions'] == 1
+        conn = review_tracking.get_db(identifier)
+        revs = review_tracking.get_revisions(conn, change_id)
+        conn.close()
+        r2 = next(r for r in revs if r['revision'] == 2)
+        assert r2['subject'] == '[PATCH v2 0/3] thing: do things better'
+        assert r2['message_id'] == 'thing-v2-p0@example.com'
+
+    def test_stale_series_title_is_realigned(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """A series an upgrade left titled after patch 1/N heals on update."""
+        identifier = 'ust-realign'
+        change_id = 'cid-V'
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            change_id,
+            2,
+            '[PATCH v2 1/3] thing: part 1',
+            'Author',
+            'author@example.com',
+            '2026-03-19T08:51:12+00:00',
+            'thing-v2-p1@example.com',
+            3,
+        )
+        review_tracking.add_revision(
+            conn,
+            change_id,
+            2,
+            'thing-v2-p1@example.com',
+            subject='[PATCH v2 1/3] thing: part 1',
+        )
+        conn.close()
+
+        msgs = _series_msgs('thing', _AUTHOR, 2, 3, cover=True)
+        result = self._update(identifier, change_id, 2, msgs)
+
+        assert result['error'] is None
+        conn = review_tracking.get_db(identifier)
+        row = conn.execute(
+            'SELECT subject FROM series WHERE change_id = ? AND revision = ?',
+            (change_id, 2),
+        ).fetchone()
+        conn.close()
+        assert row['subject'] == '[PATCH v2 0/3] thing: do things better'
+
+
+class TestRealignSeriesSubject:
+    """realign_series_subject() re-titles only from an actual cover letter."""
+
+    def _seed(self, identifier: str, series_subject: str) -> None:
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-A',
+            3,
+            series_subject,
+            'Author',
+            'author@example.com',
+            '2026-03-19T08:51:10+00:00',
+            'thing-v3-p1@example.com',
+            2,
+        )
+        conn.close()
+
+    def _realign(self, identifier: str, cover: bool) -> bool:
+        lmbx = _build_lmbx('thing', _AUTHOR, 3, 2, cover=cover)
+        conn = review_tracking.get_db(identifier)
+        ret = review_tracking.realign_series_subject(conn, 'cid-A', 3, lmbx)
+        conn.close()
+        return ret
+
+    def _subject(self, identifier: str) -> str:
+        conn = review_tracking.get_db(identifier)
+        row = conn.execute(
+            "SELECT subject FROM series WHERE change_id = 'cid-A'"
+        ).fetchone()
+        conn.close()
+        return str(row['subject'])
+
+    def test_realigns_first_patch_title(self, tmp_path: pytest.TempPathFactory) -> None:
+        self._seed('rsj-fix', '[PATCH v3 1/2] thing: part 1')
+        assert self._realign('rsj-fix', cover=True) is True
+        assert self._subject('rsj-fix') == '[PATCH v3 0/2] thing: do things better'
+
+    def test_prefix_only_difference_is_left_alone(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """The track and upgrade paths format the prefix differently."""
+        self._seed('rsj-pfx', 'thing: do things better')
+        assert self._realign('rsj-pfx', cover=True) is False
+        assert self._subject('rsj-pfx') == 'thing: do things better'
+
+    def test_coverless_thread_never_overwrites(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        """Without a cover there is nothing better than what is stored.
+
+        Re-titling from the first-patch fallback would corrupt every correctly
+        titled row whose cover letter is not in the fetched thread.
+        """
+        self._seed('rsj-nocover', 'thing: do things better')
+        assert self._realign('rsj-nocover', cover=False) is False
+        assert self._subject('rsj-nocover') == 'thing: do things better'
+
+    def test_missing_series_row_is_a_noop(
+        self, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        conn = review_tracking.init_db('rsj-none')
+        lmbx = _build_lmbx('thing', _AUTHOR, 3, 2, cover=True)
+        assert review_tracking.realign_series_subject(conn, 'cid-A', 3, lmbx) is False
+        conn.close()
 
 
 class TestCmdTrackRethreadUpgrade:

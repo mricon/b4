@@ -2877,18 +2877,23 @@ class TestSeriesLifecycle:
         v1_mock.fromname = 'Test Author'
         v1_mock.fromemail = 'author@example.com'
         v1_mock.subject = '[PATCH 0/3] a three-patch series'
+        v1_mock.fingerprint = None
 
-        # v2 mock: needs a patch with msgid so add_revision can record it
-        v2_patch = mock.Mock()
-        v2_patch.msgid = 'cover-v2@example.com'
-        v2_patch.full_subject = '[PATCH v2 0/3] a three-patch series'
+        # v2 mock: needs a cover with msgid so add_revision can record it
+        v2_cover = mock.Mock()
+        v2_cover.msgid = 'cover-v2@example.com'
+        v2_cover.full_subject = '[PATCH v2 0/3] a three-patch series'
         v2_mock = mock.Mock()
         v2_mock.revision = 2
         v2_mock.change_id = change_id
-        v2_mock.patches = [v2_patch, None, None, None]
+        v2_mock.patches = [None, None, None, None]
+        v2_mock.fingerprint = None
 
         mock_lmbx = mock.Mock()
         mock_lmbx.series = {1: v1_mock, 2: v2_mock}
+        # Cover letters live in the mailbox's parse-time covers dict, never in
+        # a raw series' patches[0] — that only happens in get_series().
+        mock_lmbx.covers = {2: v2_cover}
         mock_lmbx.get_series.return_value = v1_mock
 
         series_dict = {
@@ -3411,7 +3416,10 @@ class TestDetectInitialBase:
 
 
 def _make_mock_lser(
-    revision: int = 2, expected: int = 1, complete: bool = False
+    revision: int = 2,
+    expected: int = 1,
+    complete: bool = False,
+    subject: str = '(untitled)',
 ) -> b4.LoreSeries:
     """Build a minimal LoreSeries usable by _on_update_* callbacks.
 
@@ -3422,6 +3430,7 @@ def _make_mock_lser(
 
     lser = b4.LoreSeries(revision, expected)
     lser.complete = complete
+    lser.subject = subject
     lser.fromname = 'Test Author'
     lser.fromemail = 'test@example.com'
     mock_patch = MagicMock()
@@ -3585,6 +3594,91 @@ class TestUpdateRevisionWorkflow:
             from b4.review_tui._modals import BaseSelectionScreen
 
             assert isinstance(app.screen, BaseSelectionScreen)
+
+    @pytest.mark.asyncio
+    async def test_prepared_prefers_series_own_title(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The fetched series' title wins over a stale catalog subject.
+
+        Regression (bug 8bb6e4c): the catalog may name patch 1/N when the
+        revision was recorded before its cover letter was seen, and the
+        upgrade carried that through to the series list.
+        """
+        identifier = 'test-update-title'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'title-1',
+                    'subject': 'thing: do things better',
+                    'message_id': 'v1@ex.com',
+                }
+            ],
+        )
+        lser = _make_mock_lser(subject='thing: do things better')
+        result = (lser, b'fake mbox', 'abc123456789', '', 1)
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_update_prepared(
+                result,
+                'title-1',
+                1,
+                2,
+                'v2@ex.com',
+                '[PATCH v2 1/3] thing: part 1',
+                'b4/review/title-1',
+            )
+            await pilot.pause()
+            from b4.review_tui._modals import BaseSelectionScreen
+
+            assert isinstance(app.screen, BaseSelectionScreen)
+            assert app.screen._subject == 'thing: do things better'
+
+    @pytest.mark.asyncio
+    async def test_prepared_untitled_series_keeps_catalog_title(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """A series that never learned its title must not beat the catalog.
+
+        LoreSeries carries an '(untitled)' placeholder until its cover or
+        patch 1 is seen; a thread missing both still am-preps (get_am_ready()
+        skips absent patches), and storing the placeholder would clobber a
+        good catalog subject.
+        """
+        identifier = 'test-update-untitled'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'title-2',
+                    'subject': 'thing: do things better',
+                    'message_id': 'v1@ex.com',
+                }
+            ],
+        )
+        lser = _make_mock_lser(subject='(untitled)')
+        result = (lser, b'fake mbox', 'abc123456789', '', 1)
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_update_prepared(
+                result,
+                'title-2',
+                1,
+                2,
+                'v2@ex.com',
+                '[PATCH v2 0/3] thing: do things better',
+                'b4/review/title-2',
+            )
+            await pilot.pause()
+            from b4.review_tui._modals import BaseSelectionScreen
+
+            assert isinstance(app.screen, BaseSelectionScreen)
+            assert app.screen._subject == '[PATCH v2 0/3] thing: do things better'
 
     # --- Phase 3: _on_update_base_selected (apply + swap) ----------------
 

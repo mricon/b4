@@ -2476,32 +2476,23 @@ def update_series_tracking(
         att = check_series_attestation(lser_att)
         b4.review.tracking.update_attestation(identifier, change_id, current_rev, att)
 
-    # Record all discovered revisions in SQLite, keeping track of what
-    # was already known so we can distinguish genuinely new versions.
-    previously_known: Set[int] = set()
+    # Record all discovered revisions in SQLite through the shared helper, so
+    # a revision is identified by its cover letter when the author sent one.
+    # Recording them here by hand picked the first present patch of the raw,
+    # never-get_series()'d LoreSeries — which has no cover injected into
+    # patches[0] — and left the series titled after patch 1/N (bug 8bb6e4c).
     try:
         conn = b4.review.tracking.get_db(identifier)
-        previously_known = set(
-            r['revision'] for r in b4.review.tracking.get_revisions(conn, change_id)
+        new_revs = b4.review.tracking._record_discovered_revisions(
+            conn, change_id, lmbx, str(linkmask)
         )
-        for v in sorted(lmbx.series.keys()):
-            v_ser = lmbx.series[v]
-            v_msgid = ''
-            v_subject = ''
-            if hasattr(v_ser, 'patches') and v_ser.patches:
-                for p in v_ser.patches:
-                    if p is not None:
-                        v_msgid = p.msgid
-                        v_subject = getattr(p, 'full_subject', '') or getattr(
-                            p, 'subject', ''
-                        )
-                        break
-            v_link = (linkmask % v_msgid) if v_msgid and '%s' in str(linkmask) else ''
-            b4.review.tracking.add_revision(
-                conn, change_id, v, v_msgid, v_subject, v_link
+        result['new_revisions'] = len(new_revs)
+        try:
+            b4.review.tracking.realign_series_subject(
+                conn, change_id, current_rev, lmbx
             )
-            if v not in previously_known:
-                result['new_revisions'] += 1
+        except Exception as ex:
+            logger.warning('Could not realign series subject: %s', ex)
         conn.close()
     except Exception as ex:
         logger.warning('Could not record revisions: %s', ex)

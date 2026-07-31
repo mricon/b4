@@ -4189,6 +4189,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         lser, ambytes, initial_base, base_hint, num_am = result
 
+        # The resolved series knows its own title — its cover letter's when it
+        # has one.  Prefer it over the catalog's, which may predate the cover
+        # being seen and name patch 1/N instead (bug 8bb6e4c).  A thread
+        # missing both cover and patch 1 still am-preps but leaves LoreSeries'
+        # '(untitled)' placeholder — the catalog title beats that.
+        lser_subject = getattr(lser, 'subject', '') or ''
+        if lser_subject and lser_subject != '(untitled)':
+            target_subject = lser_subject
+
         base_suggestions = _build_base_suggestions()
 
         self.push_screen(
