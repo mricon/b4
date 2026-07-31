@@ -58,6 +58,7 @@ from b4.review_tui._common import (
     _wait_for_enter,
     display_width,
     logger,
+    mark_outgoing_seen,
     notify_quit_hint,
     pad_display,
     resolve_styles,
@@ -4999,10 +5000,27 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     output_dir=None,
                     reflect=False,
                 )
-            if sent is None:
-                self.notify('Failed to send thank-you message', severity='error')
-                return
-            # Update status to thanked
+        except Exception as ex:
+            self.notify(f'Send failed: {ex}', severity='error')
+            return
+        if sent is None:
+            self.notify('Failed to send thank-you message', severity='error')
+            return
+        if self._email_dryrun:
+            # Nothing went out, so there is nothing to record.  Marking the
+            # series thanked here -- and archiving it, which deletes the
+            # review branch -- would spend a real series on a rehearsal.
+            self.notify('Dry-run: thank-you logged, not sent')
+            return
+        self.notify('Thank-you message sent')
+
+        # The message is out, so what follows is bookkeeping and gets its own
+        # handler.  Reporting a failed archive as 'Send failed' would tell the
+        # maintainer to send a note that is already on the list, and letting
+        # it escape would unwind out of the screen callback and take the rest
+        # of the session down over an already-successful send.
+        try:
+            mark_outgoing_seen([msg])
             change_id = series.get('change_id', '')
             revision = series.get('revision')
             if self._identifier and change_id:
@@ -5018,14 +5036,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 if topdir:
                     review_branch = f'b4/review/{change_id}'
                     b4.review.update_tracking_status(topdir, review_branch, 'thanked')
-            self.notify('Thank-you message sent')
             if archive_after:
                 self._archive_after_thanks(series)
             self._focus_change_id = change_id
             self._invalidate_caches(change_id)
             self._load_series()
         except Exception as ex:
-            self.notify(f'Send failed: {ex}', severity='error')
+            logger.debug('Post-send bookkeeping failed: %s', ex, exc_info=True)
+            self.notify(f'Sent, but recording it failed: {ex}', severity='warning')
 
     def _archive_after_thanks(self, series: Dict[str, Any]) -> None:
         """Archive a just-thanked series, unless a newer revision is known."""
