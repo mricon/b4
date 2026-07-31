@@ -6,11 +6,13 @@
 """Unit tests for b4 bugs helpers.
 
 Tests the pure-logic functions in _import.py and _tui.py that don't
-need Textual, git-bug, or network access.
+need Textual, git-bug, or network access, plus one Textual-driven
+test of bug-list scroll preservation (with a stubbed repo, so still
+no git-bug or network).
 """
 
-from datetime import datetime, timezone
-from typing import Set
+from datetime import datetime, timedelta, timezone
+from typing import Set, cast
 from unittest import mock
 
 import pytest
@@ -33,7 +35,7 @@ from b4.bugs._tui import (
     build_label_text,
     label_color,
 )
-from ezgb import Bug, BugSummary, Comment, Identity, Status
+from ezgb import Bug, BugSummary, Comment, GitBugRepo, Identity, Status
 
 # ---------------------------------------------------------------------------
 # Helpers -- factory functions for real Bug and BugSummary objects
@@ -82,9 +84,10 @@ def make_summary(
     title: str = '',
     comment_count: int = 0,
     author_name: str = '',
+    bug_id: str | None = None,
 ) -> BugSummary:
     return BugSummary(
-        id='deadbeef' * 8,
+        id=bug_id or 'deadbeef' * 8,
         title=title,
         status=status,
         creator_id='test',
@@ -534,3 +537,62 @@ class TestQuitBindings:
         assert bmap['Q'].action == 'quit'
         assert bmap['q'].action == 'quit_hint'
         assert bmap['q'].show is False
+
+
+class TestRefreshScrollPreservation:
+    """The bug list is rebuilt wholesale on refresh; the viewport must stay put."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_scroll_position(self) -> None:
+        from textual.widgets import ListView
+
+        many = [
+            make_summary(
+                bug_id=f'{i:064x}',
+                title=f'bug {i:02d}',
+                edited_at=_EPOCH + timedelta(hours=40 - i),
+            )
+            for i in range(40)
+        ]
+        repo = mock.Mock()
+        repo._repo = '/nonexistent/bugs-repo'
+        repo.list_bug_summaries.return_value = many
+
+        app = BugListApp(cast(GitBugRepo, repo))
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.pause()
+            lv = app.query_one('#bug-list', ListView)
+            # Move deep enough into the list that the view scrolls down,
+            # then back up a bit so the cursor sits mid-viewport rather
+            # than at the bottom edge (which a minimal scroll-into-view
+            # after the rebuild would happen to reproduce).
+            lv.index = 30
+            await pilot.pause()
+            await pilot.pause()
+            lv.index = 26
+            await pilot.pause()
+            await pilot.pause()
+            scroll_before = round(lv.scroll_y)
+            assert scroll_before > 0
+            selected = app._get_selected_bug()
+            assert selected is not None
+            bug_id = selected.id
+
+            # Reload the same way _check_cache_changed does
+            app._save_focus()
+            app.run_worker(app._load_bugs, name='load_bugs', thread=True)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
+
+            new_lv = app.query_one('#bug-list', ListView)
+            assert new_lv is not lv
+            assert new_lv.index == 26
+            assert round(new_lv.scroll_y) == scroll_before
+            assert round(new_lv.vertical_scrollbar.position) == scroll_before
+            selected = app._get_selected_bug()
+            assert selected is not None
+            assert selected.id == bug_id

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from b4.tui._common import (
         QUIT_BINDINGS,
         JKListNavMixin,
+        ReplacementListView,
         SeparatedFooter,
         _addrs_to_lines,
         _fix_ansi_theme,
@@ -48,6 +49,7 @@ __all__ = [
     'ConfirmScreen',
     'JKListNavMixin',
     'LimitScreen',
+    'ReplacementListView',
     'SeparatedFooter',
     'ToCcScreen',
     '_addrs_to_lines',
@@ -71,6 +73,7 @@ __all__ = [
 _LAZY_ATTRS: dict[str, str] = {
     'QUIT_BINDINGS': '_common',
     'JKListNavMixin': '_common',
+    'ReplacementListView': '_common',
     'SeparatedFooter': '_common',
     '_addrs_to_lines': '_common',
     '_fix_ansi_theme': '_common',
