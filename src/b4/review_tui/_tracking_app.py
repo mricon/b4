@@ -63,6 +63,7 @@ from b4.review_tui._common import (
     pad_display,
     resolve_styles,
     run_lore_worker,
+    suspend_and_edit,
 )
 from b4.review_tui._modals import (
     QUEUE_BUSY,
@@ -4930,11 +4931,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> None:
         """Open the thank-you message in $EDITOR and re-show preview."""
         msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
-        try:
-            with self.suspend():
-                edited = b4.edit_in_editor(msg_bytes, filehint='thanks.eml')
-        except Exception as ex:
-            self.notify(f'Editor error: {ex}', severity='error')
+        edited = suspend_and_edit(self, msg_bytes, 'thanks.eml')
+        if edited is None:
             return
         new_msg = email.parser.BytesParser(policy=b4.emlpolicy).parsebytes(edited)
         self._show_thank_preview(

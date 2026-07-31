@@ -30,6 +30,7 @@ from b4.review_tui._common import (
     pad_display,
     resolve_styles,
     run_lore_worker,
+    suspend_and_edit,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
 
@@ -771,8 +772,9 @@ class LiteThreadScreen(ModalScreen[None]):
             quoted = '\n'.join(f'> {line}' for line in body.splitlines())
             editor_text = f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
 
-        with self.app.suspend():
-            result = b4.edit_in_editor(editor_text.encode(), filehint='reply.eml')
+        result = suspend_and_edit(self.app, editor_text.encode(), 'reply.eml')
+        if result is None:
+            return
         reply_text = result.decode(errors='replace')
         if reply_text == editor_text:
             self.app.notify('No changes made')

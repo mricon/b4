@@ -44,6 +44,33 @@ def notify_quit_hint(app: 'App[Any]') -> None:
     app.notify("Press 'Q' (capital) to quit", severity='warning')
 
 
+def suspend_and_edit(
+    app: 'App[Any]',
+    bdata: bytes,
+    filehint: str,
+    *,
+    topdir: Optional[str] = None,
+) -> Optional[bytes]:
+    """Drop out of the TUI and run the user's editor on *bdata*.
+
+    Returns what they saved, or ``None`` if the editor could not be run --
+    it has already been reported through a notification by then.  Letting
+    that escape instead would unwind out of the key handler and tear the app
+    down, taking every other unsaved change in the session with it, over an
+    editor that would not start.
+
+    *topdir* is the working tree the edit belongs to; pass the one the app
+    operates on, since it need not be the tree b4 was started in.
+    """
+    try:
+        with app.suspend():
+            return b4.edit_in_editor(bdata, filehint=filehint, topdir=topdir)
+    except Exception as ex:
+        logger.debug('Editor failed: %s', ex, exc_info=True)
+        app.notify(f'Editor error: {ex}', severity='error')
+        return None
+
+
 def worker_cancelled() -> bool:
     """Return ``True`` if the active Textual thread worker was cancelled.
 

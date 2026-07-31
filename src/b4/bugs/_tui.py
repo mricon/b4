@@ -51,6 +51,7 @@ from b4.tui import (
     pad_display,
     resolve_styles,
     reviewer_colours,
+    suspend_and_edit,
 )
 from ezgb import Bug, BugSummary, Comment, GitBugRepo, Status
 
@@ -818,15 +819,9 @@ class BugDetailScreen(ModalScreen[None]):
             '     Everything between these markers will be removed. -->\n'
             '\n'
         ) % self.bug.id[:7]
-        with self.app.suspend():
-            try:
-                result = b4.edit_in_editor(
-                    template.encode(),
-                    filehint='bug-comment.md',
-                )
-            except Exception as exc:
-                logger.critical('Editor error: %s', exc)
-                return
+        result = suspend_and_edit(self.app, template.encode(), 'bug-comment.md')
+        if result is None:
+            return
         # Strip HTML comments and check if anything remains
         import re
 
@@ -963,15 +958,9 @@ class BugDetailScreen(ModalScreen[None]):
     def _reply_edit_loop(
         self, lmsg: 'b4.LoreMessage', reply_text: str, is_reedit: bool = False
     ) -> None:
-        with self.app.suspend():
-            try:
-                result = b4.edit_in_editor(
-                    reply_text.encode(),
-                    filehint='reply.eml',
-                )
-            except Exception as exc:
-                logger.critical('Editor error: %s', exc)
-                return
+        result = suspend_and_edit(self.app, reply_text.encode(), 'reply.eml')
+        if result is None:
+            return
 
         edited = result.decode(errors='replace')
         if edited.strip() == reply_text.strip() and not is_reedit:
@@ -2252,15 +2241,9 @@ class BugListApp(JKListNavMixin, App[None]):
             '     Everything between these markers will be removed. -->\n'
             '\n'
         )
-        with self.suspend():
-            try:
-                result = b4.edit_in_editor(
-                    template.encode(),
-                    filehint='new-bug.md',
-                )
-            except Exception as exc:
-                logger.critical('Editor error: %s', exc)
-                return
+        result = suspend_and_edit(self, template.encode(), 'new-bug.md')
+        if result is None:
+            return
         import re
 
         text = result.decode(errors='replace')

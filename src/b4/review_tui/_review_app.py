@@ -53,6 +53,7 @@ from b4.review_tui._common import (
     resolve_styles,
     reviewer_colours,
     run_lore_worker,
+    suspend_and_edit,
     worker_cancelled,
 )
 from b4.review_tui._modals import (
@@ -1327,13 +1328,14 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     '', all_reviews, my_email, commit_msg=self._cover_text
                 )
 
-        with self.suspend():
-            result = b4.edit_in_editor(
-                editor_text.encode(),
-                filehint='reply.b4-review.eml',
-                topdir=self._topdir,
-            )
-
+        result = suspend_and_edit(
+            self,
+            editor_text.encode(),
+            'reply.b4-review.eml',
+            topdir=self._topdir,
+        )
+        if result is None:
+            return
         if not result:
             self.notify('Editor returned no content')
             return
@@ -1450,11 +1452,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     def _edit_note_in_editor(self, target: Dict[str, Any], existing: str) -> None:
         """Launch $EDITOR for the maintainer's note on *target*."""
         editor_text = existing + self._NOTE_FOOTER
-        with self.suspend():
-            result = b4.edit_in_editor(
-                editor_text.encode(), filehint='note.txt', topdir=self._topdir
-            )
-
+        result = suspend_and_edit(
+            self, editor_text.encode(), 'note.txt', topdir=self._topdir
+        )
+        if result is None:
+            return
         if not result:
             self.notify('Editor returned no content')
             return
@@ -1716,10 +1718,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             quoted = '\n'.join(f'> {line}' for line in body.splitlines())
             editor_text = f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
 
-        with self.suspend():
-            result = b4.edit_in_editor(
-                editor_text.encode(), filehint='reply.eml', topdir=self._topdir
-            )
+        result = suspend_and_edit(
+            self, editor_text.encode(), 'reply.eml', topdir=self._topdir
+        )
+        if result is None:
+            return
         reply_text = result.decode(errors='replace')
         if reply_text == editor_text:
             self.notify('No changes made')
