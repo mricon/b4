@@ -26,6 +26,7 @@ from b4.review_tui._common import (
     _quiet_worker,
     _write_diff_line,
     display_width,
+    mark_outgoing_seen,
     pad_display,
     resolve_styles,
     run_lore_worker,
@@ -816,6 +817,7 @@ class LiteThreadScreen(ModalScreen[None]):
                 self.app.notify(f'Dry-run: reply to {lmsg.fromemail} logged, not sent')
                 self._mark_answered(node)
             else:
+                mark_outgoing_seen([msg], dryrun=self._email_dryrun)
                 self.app.notify(f'Reply sent to {lmsg.fromemail}')
                 self._mark_answered(node)
         except Exception as ex:

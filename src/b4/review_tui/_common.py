@@ -114,6 +114,29 @@ _CallFromThreadReturn = TypeVar('_CallFromThreadReturn')
 _WorkerResult = TypeVar('_WorkerResult')
 
 
+def mark_outgoing_seen(
+    msgs: List[email.message.EmailMessage], dryrun: bool = False
+) -> None:
+    """Flag messages b4 just sent as read, before the list echoes them back.
+
+    Every send path that puts a message into a tracked thread wants this:
+    a reply, a follow-up, a thank-you note.  Without it the maintainer's
+    own mail comes back a few minutes later and lights up the series'
+    unread badge.
+
+    Never raises: the message is already gone, so a bookkeeping failure
+    here must not be reported to the caller as a failure to send.
+    """
+    if dryrun:
+        return
+    try:
+        from b4.review import messages
+
+        messages.mark_outgoing_seen(msgs)
+    except Exception as ex:
+        logger.debug('Could not mark sent messages as seen: %s', ex)
+
+
 def get_thread_msgs(
     topdir: str,
     message_id: str,
