@@ -503,7 +503,9 @@ def test_process_queue_passes_branch(
 
     calls: List[Tuple[str, str, str]] = []
 
-    def fake_reachable(commit: str, repo_url: str, branch: str = '') -> Optional[bool]:
+    def fake_reachable(
+        commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
+    ) -> Optional[bool]:
         calls.append((commit, repo_url, branch))
         return False
 
@@ -530,7 +532,9 @@ def test_process_queue_holds_unpublished(
 
     calls: List[Tuple[str, str]] = []
 
-    def fake_reachable(commit: str, repo_url: str, branch: str = '') -> Optional[bool]:
+    def fake_reachable(
+        commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
+    ) -> Optional[bool]:
         calls.append((commit, repo_url))
         return False
 
@@ -580,7 +584,9 @@ def test_process_queue_lock_held(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': False
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: False,
     )
     with b4.lockfile_nb(b4.ty._get_queue_lock_path()):
         with pytest.raises(b4.LockHeldError):
@@ -599,7 +605,9 @@ def test_process_queue_check_only(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
 
     def _no_send(dryrun: bool = False) -> Tuple[None, str]:
@@ -627,7 +635,9 @@ def test_process_queue_explicit_topdir(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
     outside = tmp_path / 'elsewhere'
     outside.mkdir()
@@ -665,7 +675,9 @@ def test_process_queue_finalizes_thanked(
 
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
     monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
     monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)
@@ -738,7 +750,9 @@ def _series_status(identifier: str, change_id: str = 'test-change-id') -> str:
 
 def _mock_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
     monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
     monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)
