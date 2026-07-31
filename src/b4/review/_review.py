@@ -875,14 +875,17 @@ def archive_series(
             return False, err
 
     # Update tracking database
+    conn = None
     try:
         conn = b4.review.tracking.get_db(identifier)
         b4.review.tracking.update_series_status(
             conn, change_id, 'archived', revision=revision
         )
-        conn.close()
     except Exception as ex:
         return False, f'DB error: {ex}'
+    finally:
+        if conn is not None:
+            conn.close()
 
     # Mark as archived in Patchwork.  The local archive is already done and
     # cannot be retried, so a Patchwork hiccup is a warning, not a failure.
