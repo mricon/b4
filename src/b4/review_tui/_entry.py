@@ -139,6 +139,7 @@ def run_tracking_tui(
                 focus_change_id=focus_change_id,
                 email_dryrun=email_dryrun,
                 patatt_sign=patatt_sign,
+                original_head=original_head,
             )
             focus_change_id = None
             branch_name = app.run(mouse=use_mouse)

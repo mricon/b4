@@ -348,6 +348,31 @@ def _keep_current_branch(topdir: str) -> Generator[Callable[[], None], None, Non
 
 
 @contextlib.contextmanager
+def _land_off_deleted_branch(
+    topdir: str, branch: str, fallback: List[str]
+) -> Generator[None, None, None]:
+    """Land HEAD back on *fallback* if *branch* is deleted out from under it.
+
+    Deleting the branch HEAD is on means getting off it first, and git can
+    only be pointed at the parent commit: it does not know where the user
+    was before they came here. We do, so put them back where the session
+    started rather than leave the worktree detached at a commit for them to
+    find later.  *fallback* is git-checkout args, so a session that started
+    on a detached HEAD lands back on its own commit and not on this one.
+
+    Does nothing unless HEAD was on *branch* going in and is detached
+    coming out, which only the deletion can have done -- nothing in
+    between suspends the UI, so the user cannot have moved it themselves.
+    """
+    on_branch = b4.git_get_current_branch(topdir) == branch
+    try:
+        yield
+    finally:
+        if on_branch and fallback and b4.git_get_current_branch(topdir) is None:
+            b4.git_run_command(topdir, fallback, logstderr=True)
+
+
+@contextlib.contextmanager
 def _take_worktree(
     topdir: str, target_branch: str
 ) -> Generator[Optional[_TakeWorktree], None, None]:
@@ -921,10 +946,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         focus_change_id: Optional[str] = None,
         email_dryrun: bool = False,
         patatt_sign: bool = True,
+        original_head: Optional[List[str]] = None,
     ) -> None:
         super().__init__()
         self._identifier = identifier
         self._original_branch = original_branch
+        # Where to put HEAD back when an action detaches it.  A caller that
+        # only named a branch gets that branch back.
+        self._original_head: List[str] = original_head or (
+            ['checkout', original_branch] if original_branch else []
+        )
         self._focus_change_id = focus_change_id
         self._email_dryrun = email_dryrun
         self._patatt_sign = patatt_sign
@@ -3819,13 +3850,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         Thin TUI wrapper around b4.review.delete_review_branch() that turns
         its error string into a notification.  Interactive, so detaching HEAD
-        to get off the branch is fine here.
+        to get off the branch is fine here -- as long as we do not leave it
+        that way.
 
         Returns True on success, False on failure.
         """
-        ok, err = b4.review.delete_review_branch(
-            topdir, review_branch, allow_switch=True
-        )
+        with _land_off_deleted_branch(topdir, review_branch, self._original_head):
+            ok, err = b4.review.delete_review_branch(
+                topdir, review_branch, allow_switch=True
+            )
         if not ok and notify:
             self.notify(err, severity='error')
         return ok
@@ -4744,14 +4777,17 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 self.notify('Not in a git repository', severity='error')
             return False
 
-        ok, detail = b4.review.archive_series(
-            topdir,
-            self._identifier,
-            change_id,
-            revision=revision,
-            pw_series_id=pw_series_id,
-            allow_switch=True,
-        )
+        # Archiving deletes the branch, so it detaches HEAD to get off it the
+        # same way an outright delete does.
+        with _land_off_deleted_branch(topdir, review_branch, self._original_head):
+            ok, detail = b4.review.archive_series(
+                topdir,
+                self._identifier,
+                change_id,
+                revision=revision,
+                pw_series_id=pw_series_id,
+                allow_switch=True,
+            )
         if not ok:
             if notify:
                 self.notify(detail, severity='error')
