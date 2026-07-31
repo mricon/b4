@@ -4075,6 +4075,276 @@ class TestUpdateRevisionWorkflow:
             assert app.is_running
 
     @pytest.mark.asyncio
+    async def test_successful_upgrade_restores_original_branch(
+        self, gitdir: str
+    ) -> None:
+        """A finished upgrade puts the worktree back where it found it.
+
+        create_review_branch() checks HEAD out onto the upgrade branch and the
+        swap renames that onto the review branch, so HEAD is left sitting on
+        the review branch.  The tracking list comes back up when this returns,
+        and quitting from there stranded the user on the review branch.
+        """
+        identifier = 'test-update-restore'
+        change_id = 'update-restore-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+
+        lser = _make_mock_lser()
+
+        def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
+            """Create the branch and check it out, as the real one does."""
+            _create_review_branch(
+                topdir,
+                branch.removeprefix('b4/review/'),
+                identifier=identifier,
+                revision=2,
+                status='reviewing',
+            )
+            ecode, _o = b4.git_run_command(topdir, ['checkout', '-q', branch])
+            assert ecode == 0
+
+        def _mock_archive(
+            self_app: TrackingApp,
+            cid: str,
+            rev: Optional[int],
+            rbranch: str,
+            pw_series_id: Optional[int] = None,
+            notify: bool = True,
+        ) -> bool:
+            b4.git_run_command(gitdir, ['branch', '-D', rbranch])
+            aconn = tracking.get_db(self_app._identifier)
+            tracking.update_series_status(aconn, cid, 'archived', revision=rev)
+            aconn.close()
+            return True
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+                patch('b4.review.get_review_branch_patch_ids', return_value=[]),
+                patch(
+                    'b4.review.load_tracking',
+                    return_value=('', {'series': {}, 'patches': []}),
+                ),
+                patch('b4.review.reanchor_patch_comments'),
+                patch('b4.review.save_tracking_ref'),
+                patch.object(TrackingApp, '_archive_branch', _mock_archive),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    '[PATCH v2] update test',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        # The upgrade landed, and the worktree is back on the user's branch.
+        assert b4.git_branch_exists(gitdir, review_branch)
+        assert b4.git_get_current_branch(gitdir) == 'work'
+
+    @pytest.mark.asyncio
+    async def test_upgrade_from_a_detached_head_puts_it_back(self, gitdir: str) -> None:
+        """A detached HEAD is where the user was too.
+
+        The upgrade renames the temporary branch onto the review branch and
+        HEAD follows, so a session that started detached ends up parked on a
+        branch it never asked for, with its own commit only in the reflog.
+        """
+        identifier = 'test-update-detached'
+        change_id = 'update-detached-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+        assert ecode == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        start_sha = out.strip()
+
+        lser = _make_mock_lser()
+
+        def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
+            _create_review_branch(
+                topdir,
+                branch.removeprefix('b4/review/'),
+                identifier=identifier,
+                revision=2,
+                status='reviewing',
+            )
+            ecode, _o = b4.git_run_command(topdir, ['checkout', '-q', branch])
+            assert ecode == 0
+
+        def _mock_archive(
+            self_app: TrackingApp,
+            cid: str,
+            rev: Optional[int],
+            rbranch: str,
+            pw_series_id: Optional[int] = None,
+            notify: bool = True,
+        ) -> bool:
+            b4.git_run_command(gitdir, ['branch', '-D', rbranch])
+            aconn = tracking.get_db(self_app._identifier)
+            tracking.update_series_status(aconn, cid, 'archived', revision=rev)
+            aconn.close()
+            return True
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+                patch('b4.review.get_review_branch_patch_ids', return_value=[]),
+                patch(
+                    'b4.review.load_tracking',
+                    return_value=('', {'series': {}, 'patches': []}),
+                ),
+                patch('b4.review.reanchor_patch_comments'),
+                patch('b4.review.save_tracking_ref'),
+                patch.object(TrackingApp, '_archive_branch', _mock_archive),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    '[PATCH v2] update test',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        assert b4.git_branch_exists(gitdir, review_branch)
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+
+    @pytest.mark.asyncio
+    async def test_apply_failure_restores_original_branch(self, gitdir: str) -> None:
+        """A create that moves HEAD and then fails leaves nothing behind.
+
+        create_review_branch() reports failure by exiting rather than raising,
+        and SystemExit is not an Exception, so the handler has to catch it too
+        or the cleanup is skipped and the user is left standing on a half-built
+        upgrade branch.
+        """
+        identifier = 'test-update-failrestore'
+        change_id = 'update-failrestore-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+
+        lser = _make_mock_lser()
+
+        def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
+            """Move HEAD onto the new branch, then die the way the real one does."""
+            ecode, _o = b4.git_run_command(topdir, ['checkout', '-q', '-b', branch])
+            assert ecode == 0
+            raise SystemExit(1)
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
+        assert not b4.git_branch_exists(gitdir, upgrade_branch)
+        assert b4.git_branch_exists(gitdir, review_branch)
+
+    @pytest.mark.asyncio
+    async def test_abandoned_conflict_clears_a_leftover_branch(
+        self, gitdir: str
+    ) -> None:
+        """The upgrade branch name is derived from the series, so every
+        attempt at the same upgrade reuses it.  Backing out of the conflict
+        shell has to take an earlier attempt's leftover with it, or the next
+        attempt walks into create_review_branch() refusing the name."""
+        identifier = 'test-update-leftover'
+        change_id = 'update-leftover-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
+
+        # An earlier attempt that ended somewhere without cleanup.
+        ecode, _out = b4.git_run_command(gitdir, ['branch', upgrade_branch])
+        assert ecode == 0
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch(
+                    'b4.git_fetch_am_into_repo',
+                    side_effect=b4.AmConflictError('/tmp/wt', 'conflict'),
+                ),
+                patch('b4.resolve_am_conflict_in_shell', return_value=False),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    _make_mock_lser(),
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, upgrade_branch)
+        # Backing out costs the upgrade, never the series being upgraded.
+        assert b4.git_branch_exists(gitdir, review_branch)
+
+    @pytest.mark.asyncio
     async def test_archive_failure_leaves_both_branches(self, gitdir: str) -> None:
         """If archiving fails, both branches are left for manual recovery."""
         identifier = 'test-update-archfail'
