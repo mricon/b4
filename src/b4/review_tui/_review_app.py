@@ -1657,27 +1657,48 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                         output_dir=None,
                         reflect=False,
                     )
-                if sent is None:
-                    self.notify('Failed to send review emails.', severity='error')
-                else:
-                    self._reply_sent = True
-                    self._tracking['series']['status'] = 'replied'
-                    # Stamp sent-revision on every non-skip review so that
-                    # if this series is later upgraded to a newer revision,
-                    # the upgrade step can detect which reviews were already
-                    # sent and auto-skip the unchanged patches.
-                    my_email = str(self._usercfg.get('email', 'unknown@example.com'))
-                    current_rev = int(self._series.get('revision', 1))
-                    for target in [self._series] + list(self._patches):
-                        review = target.get('reviews', {}).get(my_email, {})
-                        if review and review.get('patch-state') != 'skip':
-                            review['sent-revision'] = current_rev
-                    self._save_tracking()
-                    self._mark_patches_answered(msgs)
-                    mark_outgoing_seen(msgs, dryrun=self._email_dryrun)
-                    self.notify(f'Sent {sent} review email(s).')
             except Exception as ex:
                 self.notify(f'Send failed: {ex}', severity='error')
+                return
+            if sent is None:
+                self.notify('Failed to send review emails.', severity='error')
+                return
+            if self._email_dryrun:
+                # Nothing went out, so there is nothing to record. Stamping
+                # sent-revision here would make the next real session treat
+                # these reviews as already sent and offer none of them.
+                self.notify(f'Dry-run: {len(msgs)} review email(s) logged, not sent')
+                return
+            self.notify(f'Sent {sent} review email(s).')
+
+            # The mail is out; everything below only records that. It gets its
+            # own handler so a bookkeeping failure is never reported as a send
+            # failure, and never escapes this screen callback.
+            try:
+                self._reply_sent = True
+                self._tracking['series']['status'] = 'replied'
+                # Stamp sent-revision on every non-skip review so that
+                # if this series is later upgraded to a newer revision,
+                # the upgrade step can detect which reviews were already
+                # sent and auto-skip the unchanged patches.
+                my_email = str(self._usercfg.get('email', 'unknown@example.com'))
+                current_rev = int(self._series.get('revision', 1))
+                for target in [self._series] + list(self._patches):
+                    review = target.get('reviews', {}).get(my_email, {})
+                    if review and review.get('patch-state') != 'skip':
+                        review['sent-revision'] = current_rev
+                if not self._save_tracking():
+                    # Silence here means the next session offers these reviews
+                    # as unsent and the maintainer sends them twice.
+                    self.notify(
+                        f'Sent, but could not record it on {self._branch}',
+                        severity='warning',
+                    )
+                self._mark_patches_answered(msgs)
+                mark_outgoing_seen(msgs)
+            except Exception as ex:
+                logger.debug('Post-send bookkeeping failed: %s', ex, exc_info=True)
+                self.notify(f'Sent, but recording it failed: {ex}', severity='warning')
 
         self.push_screen(SendScreen(msgs), _on_send_confirmed)
 
@@ -1754,15 +1775,16 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     output_dir=None,
                     reflect=False,
                 )
-            if sent is None:
-                self.notify('Failed to send reply.', severity='error')
-            elif self._email_dryrun:
-                self.notify(f'Dry-run: reply to {entry["fromemail"]} logged, not sent')
-            else:
-                mark_outgoing_seen([msg], dryrun=self._email_dryrun)
-                self.notify(f'Reply sent to {entry["fromemail"]}')
         except Exception as ex:
             self.notify(f'Send failed: {ex}', severity='error')
+            return
+        if sent is None:
+            self.notify('Failed to send reply.', severity='error')
+        elif self._email_dryrun:
+            self.notify(f'Dry-run: reply to {entry["fromemail"]} logged, not sent')
+        else:
+            mark_outgoing_seen([msg])
+            self.notify(f'Reply sent to {entry["fromemail"]}')
 
     def _load_followup_msgs(self, msgs: List[Any]) -> None:
         """Parse msgs into follow-up comments and refresh the display."""
@@ -2243,9 +2265,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self.notify('Agent review data loaded')
         self._restore_original_branch()
 
-    def _save_tracking(self) -> None:
-        """Save tracking data to the review branch."""
-        b4.review.save_tracking_ref(
+    def _save_tracking(self) -> bool:
+        """Save tracking data to the review branch.  True if it landed."""
+        return b4.review.save_tracking_ref(
             self._topdir, self._branch, self._cover_text, self._tracking
         )
 

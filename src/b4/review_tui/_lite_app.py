@@ -813,17 +813,18 @@ class LiteThreadScreen(ModalScreen[None]):
                     output_dir=None,
                     reflect=False,
                 )
-            if sent is None:
-                self.app.notify('Failed to send reply.', severity='error')
-            elif self._email_dryrun:
-                self.app.notify(f'Dry-run: reply to {lmsg.fromemail} logged, not sent')
-                self._mark_answered(node)
-            else:
-                mark_outgoing_seen([msg], dryrun=self._email_dryrun)
-                self.app.notify(f'Reply sent to {lmsg.fromemail}')
-                self._mark_answered(node)
         except Exception as ex:
             self.app.notify(f'Send failed: {ex}', severity='error')
+            return
+        if sent is None:
+            self.app.notify('Failed to send reply.', severity='error')
+            return
+        if self._email_dryrun:
+            self.app.notify(f'Dry-run: reply to {lmsg.fromemail} logged, not sent')
+        else:
+            mark_outgoing_seen([msg])
+            self.app.notify(f'Reply sent to {lmsg.fromemail}')
+        self._mark_answered(node)
 
     def action_back(self) -> None:
         if self._thread_nodes:
