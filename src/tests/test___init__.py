@@ -1352,3 +1352,33 @@ def test_edit_in_editor_reads_core_editor_from_topdir(
 
     assert b4.edit_in_editor(b'note\n', filehint='note.txt', topdir=other) == b'note\n'
     assert seen.read_text() == 'topdir'
+
+
+def test_git_head_restore_args_names_the_branch(gitdir: str) -> None:
+    assert b4.git_head_restore_args(gitdir) == ['checkout', 'master']
+
+
+def test_git_head_restore_args_names_the_commit_when_detached(gitdir: str) -> None:
+    """A detached HEAD is a starting point too, and the only thing that can
+    be named for it is the commit."""
+    ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    assert ecode == 0, out
+    sha = out.strip()
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    assert b4.git_head_restore_args(gitdir) == ['checkout', '--detach', sha]
+
+
+def test_git_head_restore_args_round_trip(gitdir: str) -> None:
+    """Running what it returns puts HEAD back exactly where it was read."""
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    restore = b4.git_head_restore_args(gitdir)
+
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'elsewhere'])
+    assert ecode == 0, out
+    ecode, out = b4.git_run_command(gitdir, restore)
+    assert ecode == 0, out
+
+    assert b4.git_get_current_branch(gitdir) is None
+    assert b4.git_head_restore_args(gitdir) == restore

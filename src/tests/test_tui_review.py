@@ -662,3 +662,66 @@ class TestBranchRestore:
         app._restore_original_branch()
         assert b4.git_get_current_branch(gitdir) == 'master'
         assert app.branch_checked_out is False
+
+    def test_restore_lands_back_on_a_detached_head(self, gitdir: str) -> None:
+        """A session that started detached has a commit to go back to, and a
+        branch name is not it -- so nothing used to put the user back."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'restore-detached', ['patch 1']
+        )
+        ecode, _out = b4.git_run_command(
+            gitdir, ['checkout', '-q', '--detach', 'master']
+        )
+        assert ecode == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        start_sha = out.strip()
+
+        session = _build_session(gitdir, branch)
+        session['original_head'] = ['checkout', '--detach', start_sha]
+        app = ReviewApp(session)
+        assert app._ensure_branch_checked_out()
+        assert b4.git_get_current_branch(gitdir) == branch
+
+        app._restore_original_branch()
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+        assert app.branch_checked_out is False
+
+
+class TestSessionRestorePoint:
+    """_prepare_review_session() records where HEAD has to go back to."""
+
+    def test_records_the_branch(self, gitdir: str) -> None:
+        import argparse
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'session-head-branch', ['patch 1']
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', 'master'])
+        assert ecode == 0
+        session = b4.review._prepare_review_session(argparse.Namespace(branch=branch))
+        assert session['original_branch'] == 'master'
+        assert session['original_head'] == ['checkout', 'master']
+
+    def test_records_a_detached_head(self, gitdir: str) -> None:
+        """Without the commit there is no name for where the user was, so the
+        review app has nothing to put them back on."""
+        import argparse
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'session-head-detached', ['patch 1']
+        )
+        ecode, _out = b4.git_run_command(
+            gitdir, ['checkout', '-q', '--detach', 'master']
+        )
+        assert ecode == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0, out
+        sha = out.strip()
+
+        session = b4.review._prepare_review_session(argparse.Namespace(branch=branch))
+        assert session['original_branch'] is None
+        assert session['original_head'] == ['checkout', '--detach', sha]
