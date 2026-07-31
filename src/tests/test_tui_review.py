@@ -260,7 +260,7 @@ class TestReplyVerbatim:
         )
         seen: List[str] = []
 
-        def fake_editor(data: bytes, filehint: str = '') -> bytes:
+        def fake_editor(data: bytes, filehint: str = '', **kwargs: Any) -> bytes:
             seen.append(data.decode())
             return buffer.encode()
 

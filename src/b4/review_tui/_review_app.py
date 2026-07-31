@@ -1329,7 +1329,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
         with self.suspend():
             result = b4.edit_in_editor(
-                editor_text.encode(), filehint='reply.b4-review.eml'
+                editor_text.encode(),
+                filehint='reply.b4-review.eml',
+                topdir=self._topdir,
             )
 
         if not result:
@@ -1449,7 +1451,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         """Launch $EDITOR for the maintainer's note on *target*."""
         editor_text = existing + self._NOTE_FOOTER
         with self.suspend():
-            result = b4.edit_in_editor(editor_text.encode(), filehint='note.txt')
+            result = b4.edit_in_editor(
+                editor_text.encode(), filehint='note.txt', topdir=self._topdir
+            )
 
         if not result:
             self.notify('Editor returned no content')
@@ -1713,7 +1717,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             editor_text = f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
 
         with self.suspend():
-            result = b4.edit_in_editor(editor_text.encode(), filehint='reply.eml')
+            result = b4.edit_in_editor(
+                editor_text.encode(), filehint='reply.eml', topdir=self._topdir
+            )
         reply_text = result.decode(errors='replace')
         if reply_text == editor_text:
             self.notify('No changes made')

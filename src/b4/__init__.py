@@ -6176,9 +6176,16 @@ def edit_in_editor(
     bdata: bytes,
     filehint: str = 'COMMIT_EDITMSG',
     *,
+    topdir: Optional[str] = None,
     guard_branch: bool = False,
 ) -> bytes:
     """Open the user's editor on bdata and return what they saved.
+
+    topdir is the working tree the edit belongs to: the scratch file is
+    created there, and it is the tree HEAD is read from.  It defaults to the
+    working tree of the current directory, which is only right for callers
+    that operate on the process cwd -- anything driving a specific worktree
+    (the TUIs) must pass it explicitly.
 
     guard_branch opts into a collision check, and only callers that store
     the result into whatever branch HEAD happens to point at may set it
@@ -6191,12 +6198,16 @@ def edit_in_editor(
     where their data lands, so refusing the edit would throw away the user's
     work to prevent a collision that cannot happen.
     """
-    # Read before the edit and compare after, so this can never end up
-    # comparing two different points in time.  A detached HEAD reads as None
-    # and still guards: None is not a branch we started on, so checking one
-    # out mid-edit is caught like any other switch.
-    read_branch = git_get_current_branch() if guard_branch else None
-    corecfg = get_config_from_git(r'core\..*')
+    if topdir is None:
+        topdir = git_get_toplevel()
+    # Read before the edit and compare after, both in topdir, so this can
+    # never end up comparing two different repositories' HEADs.  A detached
+    # HEAD reads as None and still guards: None is not a branch we started
+    # on, so checking one out mid-edit is caught like any other switch.
+    read_branch = git_get_current_branch(topdir) if guard_branch else None
+    # core.editor comes from the same tree as everything else here, so a
+    # repository-local setting is the one belonging to the edited branch.
+    corecfg = get_config_from_git(r'core\..*', gitdir=topdir)
     editor = (
         os.environ.get('GIT_EDITOR')
         or corecfg.get('editor')
@@ -6206,7 +6217,6 @@ def edit_in_editor(
     )
     logger.debug('editor=%s', editor)
 
-    topdir = git_get_toplevel()
     if topdir is not None:
         p = Path(topdir)
     else:
@@ -6233,7 +6243,7 @@ def edit_in_editor(
     bdata = bdata.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
 
     if guard_branch:
-        write_branch = git_get_current_branch()
+        write_branch = git_get_current_branch(topdir)
         if write_branch != read_branch:
             with tempfile.NamedTemporaryFile(
                 mode='wb',
