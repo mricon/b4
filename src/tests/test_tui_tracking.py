@@ -15,6 +15,7 @@ import datetime
 import email.message
 import os
 import pathlib
+import sqlite3
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
@@ -5470,3 +5471,54 @@ class TestTrackingEntryBranchRestore:
             _entry.run_tracking_tui('test-entry-syncfail')
 
         assert b4.git_get_current_branch(gitdir) == 'work'
+
+    def test_a_failed_status_sync_closes_the_database(self, gitdir: str) -> None:
+        """The connection is opened inside the guard that swallows the
+        failure, so a write that raises used to skip the close and leave it
+        open for the rest of the session."""
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-dbclose-1'
+        runs = {'n': 0}
+        closed: List[bool] = []
+
+        class _Conn:
+            def close(self) -> None:
+                closed.append(True)
+
+        class _ReviewsThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                runs['n'] += 1
+                if runs['n'] > 1:
+                    return None
+                return review_branch
+
+        def _boom(*args: Any, **kwargs: Any) -> None:
+            raise sqlite3.OperationalError('database is locked')
+
+        with (
+            patch.object(_entry, 'TrackingApp', _ReviewsThenQuits),
+            patch.object(_entry, 'ReviewApp'),
+            patch.object(
+                b4.review,
+                '_prepare_review_session',
+                return_value={'series': {'revision': 1}},
+            ),
+            patch.object(
+                b4.review,
+                'load_tracking',
+                return_value=('', {'series': {'status': 'replied'}}),
+            ),
+            patch.object(tracking, 'get_db', return_value=_Conn()),
+            patch.object(tracking, 'update_series_status', side_effect=_boom),
+        ):
+            _entry.run_tracking_tui('test-entry-dbclose')
+
+        assert closed == [True]
