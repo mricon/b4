@@ -809,6 +809,8 @@ def archive_series(
 
     Returns (success, detail): detail is the archive tarball path on
     success (empty for a database-only archive), or an error message.
+    Never raises: callers archive *after* a thank-you has gone out, and a
+    failure here must not be mistaken for a failure to deliver it.
     """
     # Imported here: the tarball machinery is only needed when archiving.
     # b4.review.tracking is re-imported alongside b4.ez because a local
@@ -833,36 +835,40 @@ def archive_series(
         if not first_patch:
             return False, 'No patch commits found in tracking data'
 
-        tio = io.BytesIO()
-        mnow = int(time.time())
-        with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
-            # Add cover letter
-            ifh = io.BytesIO()
-            ifh.write(cover_text.encode())
-            b4.ez.write_to_tar(tfh, f'{change_id}/cover.txt', mnow, ifh)
-            ifh.close()
-            # Add tracking metadata
-            ifh = io.BytesIO()
-            ifh.write(make_review_magic_json(tracking).encode())
-            b4.ez.write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
-            ifh.close()
-            # Add patches as mbox
-            patches = b4.git_range_to_patches(
-                topdir, f'{first_patch}~1', f'{review_branch}~1'
-            )
-            if patches:
+        try:
+            tio = io.BytesIO()
+            mnow = int(time.time())
+            with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
+                # Add cover letter
                 ifh = io.BytesIO()
-                b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
-                b4.ez.write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
+                ifh.write(cover_text.encode())
+                b4.ez.write_to_tar(tfh, f'{change_id}/cover.txt', mnow, ifh)
                 ifh.close()
+                # Add tracking metadata
+                ifh = io.BytesIO()
+                ifh.write(make_review_magic_json(tracking).encode())
+                b4.ez.write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
+                ifh.close()
+                # Add patches as mbox
+                patches = b4.git_range_to_patches(
+                    topdir, f'{first_patch}~1', f'{review_branch}~1'
+                )
+                if patches:
+                    ifh = io.BytesIO()
+                    b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
+                    b4.ez.write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
+                    ifh.close()
 
-        # Write archive to data directory
-        datadir = b4.get_data_dir()
-        archpath = os.path.join(datadir, 'review-archived')
-        os.makedirs(archpath, exist_ok=True)
-        tarpath = os.path.join(archpath, f'{change_id}.tar.gz')
-        with open(tarpath, mode='wb') as tout:
-            tout.write(tio.getvalue())
+            # Write archive to data directory
+            datadir = b4.get_data_dir()
+            archpath = os.path.join(datadir, 'review-archived')
+            os.makedirs(archpath, exist_ok=True)
+            tarpath = os.path.join(archpath, f'{change_id}.tar.gz')
+            with open(tarpath, mode='wb') as tout:
+                tout.write(tio.getvalue())
+        except Exception as ex:
+            # The branch is still intact, so this is safe to retry
+            return False, f'Could not write archive for {change_id}: {ex}'
 
         ok, err = delete_review_branch(topdir, review_branch, allow_switch=allow_switch)
         if not ok:
@@ -878,9 +884,15 @@ def archive_series(
     except Exception as ex:
         return False, f'DB error: {ex}'
 
-    # Mark as archived in Patchwork
+    # Mark as archived in Patchwork.  The local archive is already done and
+    # cannot be retried, so a Patchwork hiccup is a warning, not a failure.
     if pw_series_id:
-        pw_update_series_state(pw_series_id, 'accepted', archived=True)
+        try:
+            pw_update_series_state(pw_series_id, 'accepted', archived=True)
+        except Exception as ex:
+            logger.warning(
+                'Could not archive series %s in Patchwork: %s', change_id, ex
+            )
 
     return True, tarpath
 
