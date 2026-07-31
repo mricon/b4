@@ -2674,6 +2674,34 @@ class TestSeriesLifecycle:
         assert all(p.get('taken') for p in patches), 'all patches should be taken'
         assert updated['series']['status'] == 'accepted'
 
+    def test_record_take_metadata_unreadable_tracking(self, gitdir: str) -> None:
+        """The patches are applied by the time this runs, so a tracking commit
+        that cannot be read is a missing record and not a take that never
+        happened.  Saying None for both leaves the caller unable to tell them
+        apart, and 'unrecorded' must not reach the status column either."""
+        change_id = 'take-unrecorded-1'
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier='test-unrecorded', status='reviewing'
+        )
+        app = TrackingApp.__new__(TrackingApp)
+        app._identifier = 'test-unrecorded'
+        app._selected_series = None
+
+        with patch.object(b4.review, 'load_tracking', side_effect=SystemExit(1)):
+            result = app._record_take_metadata(
+                gitdir, branch_name, 'master', ['abc'], accepted=True
+            )
+        assert result == 'unrecorded'
+
+        statuses: List[str] = []
+        with patch.object(
+            tracking,
+            'update_series_status',
+            lambda conn, cid, status, revision=None: statuses.append(status),
+        ):
+            app._finalize_take(gitdir, 'master', change_id, {'revision': 1}, result)
+        assert not statuses
+
     def test_record_take_metadata_branch_tip_is_target_not_head(
         self, gitdir: str
     ) -> None:
@@ -4421,7 +4449,10 @@ class TestTakeThankArchiveChain:
     flow only when the take leaves the series fully accepted."""
 
     def _run_take_final(
-        self, take_status: Optional[str], thank_and_archive: bool
+        self,
+        take_status: Optional[str],
+        thank_and_archive: bool,
+        accept_series: bool = True,
     ) -> Tuple[List[Tuple[Dict[str, Any], bool]], List[str]]:
         """Drive _on_take_final with a mocked take returning *take_status*.
 
@@ -4434,9 +4465,9 @@ class TestTakeThankArchiveChain:
         notices: List[str] = []
         app = TrackingApp.__new__(TrackingApp)
         take_screen: Any = SimpleNamespace(
-            accept_series=True, thank_and_archive=thank_and_archive
+            accept_series=accept_series, thank_and_archive=thank_and_archive
         )
-        confirm_screen: Any = SimpleNamespace(accept_series=True)
+        confirm_screen: Any = SimpleNamespace(accept_series=accept_series)
         series = {'change_id': 'chain-1', 'subject': 'x', 'status': 'reviewing'}
         with (
             patch.object(TrackingApp, 'suspend', lambda self: contextlib.nullcontext()),
@@ -4490,6 +4521,19 @@ class TestTakeThankArchiveChain:
         thanks, notices = self._run_take_final(None, True)
         assert not thanks
         assert any('take did not complete' in n for n in notices)
+
+    def test_unaccepted_take_does_not_chain(self) -> None:
+        thanks, notices = self._run_take_final(None, True, accept_series=False)
+        assert not thanks
+        assert any('not marked accepted' in n for n in notices)
+
+    def test_unrecorded_take_says_so(self) -> None:
+        """The patches went in but the tracking data could not be read, so
+        there is no coverage to chain on -- and 'did not complete' would send
+        the maintainer looking for an apply that did happen."""
+        thanks, notices = self._run_take_final('unrecorded', True)
+        assert not thanks
+        assert any('was not recorded' in n for n in notices)
 
     def test_unchecked_box_never_chains(self) -> None:
         thanks, notices = self._run_take_final('accepted', False)
