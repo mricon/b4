@@ -1267,3 +1267,61 @@ class TestGitBranchCheckedOut:
             assert b4.git_branch_checked_out(gitdir, 'refs/heads/wt-branch') is True
         finally:
             b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wtpath])
+
+
+class TestSendemailLocalcmd:
+    """Tests for get_sendemail_localcmd() and the local-command path of get_smtp()."""
+
+    def test_sendmailcmd_takes_precedence(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """sendmailCmd wins over smtpServer, matching git behavior."""
+        monkeypatch.setattr(
+            b4,
+            'SENDEMAIL_CONFIG',
+            {'sendmailcmd': 'msmtp', 'smtpserver': 'smtp.example.org'},
+        )
+        assert b4.get_sendemail_localcmd() == 'msmtp'
+
+    def test_pathlike_smtpserver(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The historical spelling: a path as the smtpServer value."""
+        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', {'smtpserver': '/usr/bin/msmtp'})
+        assert b4.get_sendemail_localcmd() == '/usr/bin/msmtp'
+
+    def test_smtp_host_is_not_localcmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', {'smtpserver': 'smtp.example.org'})
+        assert b4.get_sendemail_localcmd() is None
+
+    def test_no_transport_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', dict())
+        assert b4.get_sendemail_localcmd() is None
+
+    def test_get_smtp_uses_sendmailcmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A bare command without slashes must work, like git's sendmailCmd."""
+        monkeypatch.setattr(
+            b4,
+            'SENDEMAIL_CONFIG',
+            {
+                'sendmailcmd': 'msmtp --account=work',
+                'from': 'Alice Developer <alice@example.org>',
+                'envelopesender': 'auto',
+            },
+        )
+        smtp, fromaddr = b4.get_smtp()
+        assert smtp == ['msmtp', '--account=work', '-i', '-f', 'alice@example.org']
+        assert fromaddr == 'Alice Developer <alice@example.org>'
+
+    def test_get_smtp_pathlike_smtpserver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            b4,
+            'SENDEMAIL_CONFIG',
+            {
+                'smtpserver': '/usr/bin/msmtp',
+                'from': 'Alice Developer <alice@example.org>',
+            },
+        )
+        smtp, fromaddr = b4.get_smtp()
+        assert smtp == ['/usr/bin/msmtp', '-i']
+        assert fromaddr == 'Alice Developer <alice@example.org>'

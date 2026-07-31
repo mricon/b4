@@ -4940,6 +4940,21 @@ def get_sendemail_config() -> Dict[str, Optional[Union[str, List[str]]]]:
     return SENDEMAIL_CONFIG
 
 
+def get_sendemail_localcmd() -> Optional[str]:
+    # Returns the local sendmail-compliant command to use for mail
+    # submission, if one is configured. Like git itself, we give
+    # sendemail.sendmailCmd precedence over smtpserver; a path-like
+    # smtpserver value is the older way of spelling the same thing.
+    sconfig = get_sendemail_config()
+    sendmailcmd = sconfig.get('sendmailcmd')
+    if sendmailcmd:
+        return str(sendmailcmd)
+    server = str(sconfig.get('smtpserver', ''))
+    if '/' in server:
+        return server
+    return None
+
+
 def get_smtp(
     dryrun: bool = False,
 ) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], str]:
@@ -4953,17 +4968,9 @@ def get_smtp(
         usercfg = get_user_config()
         fromaddr = str(usercfg['email'])
 
-    server = str(sconfig.get('smtpserver', 'localhost'))
-    try:
-        port = int(str(sconfig.get('smtpserverport', '0')))
-    except ValueError as exc:
-        raise smtplib.SMTPException(
-            'Invalid smtpport entry in config: %s' % sconfig.get('smtpserverport')
-        ) from exc
-
-    # If server contains slashes, then it's a local command
-    if '/' in server:
-        server = os.path.expanduser(os.path.expandvars(server))
+    localcmd = get_sendemail_localcmd()
+    if localcmd:
+        server = os.path.expanduser(os.path.expandvars(localcmd))
         sp = shlex.shlex(server, posix=True)
         sp.whitespace_split = True
         smcmd = list(sp)
@@ -4983,6 +4990,14 @@ def get_smtp(
             smcmd += server_option
         logger.debug('sendmail command: %s', ' '.join(smcmd))
         return smcmd, fromaddr
+
+    server = str(sconfig.get('smtpserver', 'localhost'))
+    try:
+        port = int(str(sconfig.get('smtpserverport', '0')))
+    except ValueError as exc:
+        raise smtplib.SMTPException(
+            'Invalid smtpport entry in config: %s' % sconfig.get('smtpserverport')
+        ) from exc
 
     encryption = sconfig.get('smtpencryption')
     if dryrun:

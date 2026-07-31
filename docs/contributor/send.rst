@@ -154,9 +154,18 @@ settings::
        smtpUser = alice.developer@example.org
        smtpPass = [omitted]
 
-You can also set up ``msmtp`` or a similar tool and specify the path to
-the ``sendmail``-compliant binary as the value for ``smtpServer``. To
-force B4 to use the web endpoint even when a ``sendemail`` option is
+You can also set up ``msmtp`` or a similar tool and specify the
+``sendmail``-compliant command via ``sendmailCmd``::
+
+    [sendemail]
+       sendmailCmd = msmtp
+
+Just like with git itself, ``sendmailCmd`` takes precedence over
+``smtpServer`` when both are set. For historical reasons, b4 also
+accepts a path to the ``sendmail``-compliant binary as the value for
+``smtpServer``.
+
+To force B4 to use the web endpoint even when a ``sendemail`` option is
 present, use the ``--use-web-endpoint`` switch.
 
 Sending your patches

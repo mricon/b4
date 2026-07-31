@@ -159,7 +159,7 @@ def get_auth_configs() -> Tuple[str, str, str, str, str, str]:
         topdir = b4.git_get_toplevel()
         if topdir and os.path.exists(os.path.join(topdir, 'Kconfig')):
             logger.debug(
-                'No sendemail configs found, will use the default web endpoint'
+                'No web endpoint configured, will use the default web endpoint'
             )
             endpoint = DEFAULT_ENDPOINT
         else:
@@ -2924,7 +2924,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     sconfig = b4.get_sendemail_config()
     endpoint = None
-    if not sconfig.get('smtpserver') or cmdargs.send_web:
+    if (
+        not (sconfig.get('smtpserver') or sconfig.get('sendmailcmd'))
+        or cmdargs.send_web
+    ):
         endpoint = str(config.get('send-endpoint-web', ''))
         if not re.search(r'^https?://', endpoint):
             logger.debug('Endpoint does not start with https, ignoring: %s', endpoint)
@@ -2934,7 +2937,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             topdir = b4.git_get_toplevel()
             if topdir and os.path.exists(os.path.join(topdir, 'Kconfig')):
                 logger.debug(
-                    'No sendemail configs found, will use the default web endpoint'
+                    'No mail transport configured, will use the default web endpoint'
                 )
                 endpoint = DEFAULT_ENDPOINT
 
@@ -3062,16 +3065,13 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 logger.info('  - send the above messages to actual listed recipients')
             logger.info('  - with envelope-from: %s', fromaddr)
 
-            smtpserver = str(sconfig.get('smtpserver', 'localhost'))
-            if '/' in smtpserver:
-                logger.info('  - via local command %s', smtpserver)
-                if (
-                    cmdargs.reflect
-                    and sconfig.get('b4-really-reflect-via') != smtpserver
-                ):
+            localcmd = b4.get_sendemail_localcmd()
+            if localcmd:
+                logger.info('  - via local command %s', localcmd)
+                if cmdargs.reflect and sconfig.get('b4-really-reflect-via') != localcmd:
                     logger.critical('---')
                     logger.critical(
-                        'CRITICAL: Cowardly refusing to reflect via %s.', smtpserver
+                        'CRITICAL: Cowardly refusing to reflect via %s.', localcmd
                     )
                     logger.critical(
                         '          There is no guarantee that this command will do the right thing'
@@ -3084,11 +3084,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         'If you are ABSOLUTELY SURE that this command will do the right thing,'
                     )
                     logger.critical('add the following to the [sendemail] section:')
-                    logger.critical('b4-really-reflect-via = %s', smtpserver)
+                    logger.critical('b4-really-reflect-via = %s', localcmd)
                     sys.exit(1)
 
             else:
-                logger.info('  - via SMTP server %s', smtpserver)
+                logger.info(
+                    '  - via SMTP server %s',
+                    str(sconfig.get('smtpserver', 'localhost')),
+                )
 
         if not (cmdargs.reflect or cmdargs.resend or cmdargs.preview_to):
             logger.info('  - tag and reroll the series to the next revision')
