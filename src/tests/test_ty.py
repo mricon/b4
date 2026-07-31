@@ -364,6 +364,34 @@ def test_commit_reachable_branch_filter(
     assert b4.ty.commit_reachable_on_remote(c2, pub, branch='gone') is True
 
 
+def test_commit_reachable_uses_the_gitdir_it_is_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Ancestry is computed in the named repository, not the process cwd.
+
+    'b4 review cron' sweeps several projects from whatever directory the
+    scheduler happened to start it in, so the cwd is nobody's repository."""
+    local = str(tmp_path / 'local')
+    pub = str(tmp_path / 'pub')
+    elsewhere = str(tmp_path / 'elsewhere')
+    _init_repo(local)
+    _init_repo(elsewhere)
+    ecode, out = b4.git_run_command(None, ['init', '--bare', pub])
+    assert ecode == 0, out
+    monkeypatch.chdir(local)
+    c1 = _commit_empty('c1')
+    ecode, out = b4.git_run_command(None, ['push', pub, 'HEAD:refs/heads/master'])
+    assert ecode == 0, out
+
+    # An unrelated cwd knows none of the advertised tips, so on its own it
+    # cannot see the commit -- the objects live in 'local'.
+    monkeypatch.chdir(elsewhere)
+    assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is not True
+    assert (
+        b4.ty.commit_reachable_on_remote(c1, pub, branch='master', gitdir=local) is True
+    )
+
+
 def test_get_check_repo_for_branch_priority(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
