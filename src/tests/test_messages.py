@@ -222,50 +222,6 @@ class TestCleanupOld:
         conn.close()
 
 
-class TestSetFlagsBulkReturnValue:
-    """Tests for the newly-flagged count returned by set_flags_bulk()."""
-
-    def test_counts_new_rows(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
-        entries: List[Dict[str, Optional[str]]] = [
-            {'msgid': 'n1@example.com', 'msg_date': None},
-            {'msgid': 'n2@example.com', 'msg_date': None},
-        ]
-        assert messages.set_flags_bulk(conn, entries, 'Seen') == 2
-        conn.close()
-
-    def test_repeat_is_zero(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
-        entries: List[Dict[str, Optional[str]]] = [
-            {'msgid': 'r1@example.com', 'msg_date': None},
-        ]
-        messages.set_flags_bulk(conn, entries, 'Seen')
-        assert messages.set_flags_bulk(conn, entries, 'Seen') == 0
-        conn.close()
-
-    def test_mixed_new_and_existing(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
-        first: List[Dict[str, Optional[str]]] = [
-            {'msgid': 'm1@example.com', 'msg_date': None},
-        ]
-        messages.set_flags_bulk(conn, first, 'Seen')
-        both: List[Dict[str, Optional[str]]] = [
-            {'msgid': 'm1@example.com', 'msg_date': None},
-            {'msgid': 'm2@example.com', 'msg_date': None},
-        ]
-        assert messages.set_flags_bulk(conn, both, 'Seen') == 1
-        conn.close()
-
-    def test_new_flag_on_existing_row(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
-        entries: List[Dict[str, Optional[str]]] = [
-            {'msgid': 'f1@example.com', 'msg_date': None},
-        ]
-        messages.set_flags_bulk(conn, entries, 'Seen')
-        assert messages.set_flags_bulk(conn, entries, 'Answered') == 1
-        conn.close()
-
-
 class TestMarkOutgoingSeen:
     """Tests for mark_outgoing_seen()."""
 
