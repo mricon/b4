@@ -74,6 +74,28 @@ def run_tracking_tui(
     original_branch = b4.git_get_current_branch(topdir)
     original_head = b4.git_head_restore_args(topdir)
 
+    def restore_original_head() -> None:
+        """Put HEAD back where we found it on the user's behalf.
+
+        Only a review branch is ours to undo, since that is the only kind
+        either app checks out.  Anything else means the user moved HEAD
+        themselves -- possibly hours ago, from another terminal sharing this
+        worktree -- and the position recorded when we started is stale, not
+        something to check back out.
+        """
+        if not original_head or not topdir:
+            return
+        current = b4.git_get_current_branch(topdir)
+        if (
+            current
+            and current != original_branch
+            and current.startswith(b4.review.REVIEW_BRANCH_PREFIX)
+        ):
+            logger.info('Checking out %s...', original_head[-1])
+            ecode, _out = b4.git_run_command(topdir, original_head, logstderr=True)
+            if ecode != 0:
+                logger.warning('Could not restore %s', original_head[-1])
+
     # Check if we're already on a review branch
     if original_branch and original_branch.startswith(b4.review.REVIEW_BRANCH_PREFIX):
         # Go directly to ReviewApp and exit when done
@@ -103,93 +125,81 @@ def run_tracking_tui(
             )
         return
 
-    # Normal tracking mode - loop between TrackingApp and ReviewApp
+    # Normal tracking mode - loop between TrackingApp and ReviewApp.
+    # The restore runs in a finally: the tracking list has actions of its own
+    # that leave HEAD on a review branch -- upgrading a series to a newer
+    # revision is one -- and quitting from there must not strand the user on
+    # it.  Restoring only after a ReviewApp pass misses every such path.
     focus_change_id: Optional[str] = None
-    while True:
-        app = TrackingApp(
-            identifier,
-            original_branch,
-            focus_change_id=focus_change_id,
-            email_dryrun=email_dryrun,
-            patatt_sign=patatt_sign,
-        )
-        focus_change_id = None
-        branch_name = app.run(mouse=use_mouse)
-
-        if not branch_name:
-            # User quit - exit the loop
-            break
-
-        if branch_name == TrackingApp.PATCHWORK_SENTINEL:
-            # User pressed [p]atchwork — run PwApp and loop back
-            config = b4.get_main_config()
-            pwkey = str(config.get('pw-key', ''))
-            pwurl = str(config.get('pw-url', ''))
-            pwproj = str(config.get('pw-project', ''))
-            if pwkey and pwurl and pwproj:
-                run_pw_tui(
-                    pwkey,
-                    pwurl,
-                    pwproj,
-                    email_dryrun=email_dryrun,
-                    patatt_sign=patatt_sign,
-                )
-            continue
-
-        # User selected a branch to review - prepare session and run ReviewApp
-        cmdargs = argparse.Namespace(branch=branch_name)
-        try:
-            session = b4.review._prepare_review_session(cmdargs)
-        except SystemExit:
-            # Session prep failed (e.g., branch doesn't exist)
-            logger.warning(
-                'Could not prepare review session for branch: %s', branch_name
+    try:
+        while True:
+            app = TrackingApp(
+                identifier,
+                original_branch,
+                focus_change_id=focus_change_id,
+                email_dryrun=email_dryrun,
+                patatt_sign=patatt_sign,
             )
-            continue
+            focus_change_id = None
+            branch_name = app.run(mouse=use_mouse)
 
-        session['email_dryrun'] = email_dryrun
-        session['patatt_sign'] = patatt_sign
-        review_app = ReviewApp(session)
-        review_app.run(mouse=use_mouse)
+            if not branch_name:
+                # User quit - exit the loop
+                break
 
-        # Remember which series was just reviewed so the tracking list
-        # can position the cursor on it.
-        focus_change_id = branch_name.removeprefix(b4.review.REVIEW_BRANCH_PREFIX)
+            if branch_name == TrackingApp.PATCHWORK_SENTINEL:
+                # User pressed [p]atchwork — run PwApp and loop back
+                config = b4.get_main_config()
+                pwkey = str(config.get('pw-key', ''))
+                pwurl = str(config.get('pw-url', ''))
+                pwproj = str(config.get('pw-project', ''))
+                if pwkey and pwurl and pwproj:
+                    run_pw_tui(
+                        pwkey,
+                        pwurl,
+                        pwproj,
+                        email_dryrun=email_dryrun,
+                        patatt_sign=patatt_sign,
+                    )
+                continue
 
-        # Sync status from tracking commit to DB.  The ReviewApp writes
-        # status changes (e.g. 'replied') into the tracking commit JSON,
-        # so we read it back here and propagate to the SQLite database.
-        try:
-            _cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
-            tracking_status = tracking.get('series', {}).get('status')
-            revision = session['series'].get('revision')
-            if tracking_status and focus_change_id:
-                conn = b4.review.tracking.get_db(identifier)
-                b4.review.tracking.update_series_status(
-                    conn, focus_change_id, tracking_status, revision=revision
+            # User selected a branch to review - prepare session and run ReviewApp
+            cmdargs = argparse.Namespace(branch=branch_name)
+            try:
+                session = b4.review._prepare_review_session(cmdargs)
+            except SystemExit:
+                # Session prep failed (e.g., branch doesn't exist)
+                logger.warning(
+                    'Could not prepare review session for branch: %s', branch_name
                 )
-                conn.close()
-        except Exception as ex:
-            logger.warning('Could not sync tracking status: %s', ex)
+                continue
 
-        # Restore original branch if we're no longer on it.
-        # This covers two cases:
-        # - ReviewApp checked out the review branch (shell suspend/agent)
-        # - TrackingApp checked out a new series via create_review_branch
-        # Both land on a review branch, and that is the only case we may undo.
-        # Anything else means the user moved HEAD themselves -- possibly hours
-        # ago, from another terminal sharing this worktree -- and the branch
-        # recorded when we started is stale, not something to check back out.
-        if original_head:
-            current = b4.git_get_current_branch(topdir)
-            if (
-                current
-                and current != original_branch
-                and current.startswith(b4.review.REVIEW_BRANCH_PREFIX)
-            ):
-                logger.info(
-                    'Checking out %s and starting tracking UI...', original_head[-1]
-                )
-                ecode, _out = b4.git_run_command(topdir, original_head, logstderr=True)
-                if ecode != 0:
-                    logger.warning('Could not restore %s', original_head[-1])
+            session['email_dryrun'] = email_dryrun
+            session['patatt_sign'] = patatt_sign
+            review_app = ReviewApp(session)
+            review_app.run(mouse=use_mouse)
+
+            # Remember which series was just reviewed so the tracking list
+            # can position the cursor on it.
+            focus_change_id = branch_name.removeprefix(b4.review.REVIEW_BRANCH_PREFIX)
+
+            # Sync status from tracking commit to DB.  The ReviewApp writes
+            # status changes (e.g. 'replied') into the tracking commit JSON,
+            # so we read it back here and propagate to the SQLite database.
+            try:
+                _cover_text, tracking = b4.review.load_tracking(topdir, branch_name)
+                tracking_status = tracking.get('series', {}).get('status')
+                revision = session['series'].get('revision')
+                if tracking_status and focus_change_id:
+                    conn = b4.review.tracking.get_db(identifier)
+                    b4.review.tracking.update_series_status(
+                        conn, focus_change_id, tracking_status, revision=revision
+                    )
+                    conn.close()
+            except Exception as ex:
+                logger.warning('Could not sync tracking status: %s', ex)
+
+            # Put the user back before the tracking list comes up again.
+            restore_original_head()
+    finally:
+        restore_original_head()
