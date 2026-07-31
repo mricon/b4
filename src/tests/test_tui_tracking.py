@@ -4484,10 +4484,12 @@ class TestTakeThankArchiveChain:
         assert not thanks
         assert any('partially applied' in n for n in notices)
 
-    def test_incomplete_take_does_not_chain(self) -> None:
+    def test_aborted_take_says_so(self) -> None:
+        """A take that never finished is reported as such, not as a series
+        the maintainer declined to accept."""
         thanks, notices = self._run_take_final(None, True)
         assert not thanks
-        assert any('not marked accepted' in n for n in notices)
+        assert any('take did not complete' in n for n in notices)
 
     def test_unchecked_box_never_chains(self) -> None:
         thanks, notices = self._run_take_final('accepted', False)

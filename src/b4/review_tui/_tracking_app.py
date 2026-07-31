@@ -2645,9 +2645,23 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     'Thank & archive skipped: series only partially applied',
                     severity='warning',
                 )
-            else:
+            elif new_status == 'unrecorded':
+                self.notify(
+                    'Thank & archive skipped: the take was not recorded',
+                    severity='warning',
+                )
+            elif not take_screen.accept_series:
                 self.notify(
                     'Thank & archive skipped: series not marked accepted',
+                    severity='warning',
+                )
+            else:
+                # _do_take_* returns None both for "accept was unchecked" and
+                # for "the take never finished"; only the latter is left here,
+                # and claiming a status the series never reached would send the
+                # maintainer looking for a take that did not happen.
+                self.notify(
+                    'Thank & archive skipped: take did not complete',
                     severity='warning',
                 )
 
@@ -2664,7 +2678,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         Computes patch coverage and returns the resulting series status:
         'accepted' if all patches are now taken, 'partial' if some remain,
-        or None if *accepted* is False (no status change requested).
+        'unrecorded' if the patches went in but the tracking data could not
+        be read, or None if *accepted* is False (no status change requested).
 
         Args:
             topdir: Repository top-level directory.
@@ -2677,8 +2692,10 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         try:
             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
         except SystemExit:
-            logger.warning('Could not load tracking data for recording take metadata')
-            return None
+            # The patches are applied; only the record of it is missing, which
+            # is a different thing from a take that never got this far.
+            logger.critical('Could not load tracking data for recording the take')
+            return 'unrecorded'
 
         series = tracking.get('series', {})
         take_info = {
@@ -2993,14 +3010,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> None:
         """Common post-take steps: record branch, update DB, update Patchwork.
 
-        *new_status* is the status computed by _record_take_metadata: 'accepted',
-        'partial', or None (when the user did not request a status change).
+        *new_status* is the status computed by _record_take_metadata:
+        'accepted', 'partial', 'unrecorded' (nothing was written to the
+        tracking commit, so there is no coverage to propagate), or None (when
+        the user did not request a status change).
         """
         common_dir = b4.git_get_common_dir(topdir)
         if common_dir:
             b4.review.tracking.record_take_branch(common_dir, target_branch)
 
-        if new_status and self._identifier and change_id:
+        if new_status in ('accepted', 'partial') and self._identifier and change_id:
             revision = series.get('revision')
             existing_target = None
             try:
