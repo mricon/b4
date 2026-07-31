@@ -27,6 +27,7 @@ from textual.widgets import Input, ListView, Static
 import b4
 import b4.review
 import b4.review.tracking as tracking
+import b4.review_tui._entry as _entry
 from b4 import (
     _abort_worktree_op,
     _worktree_has_unmerged,
@@ -5363,3 +5364,109 @@ class TestTestApplySubmoduleRecurse:
         screen = TakeConfirmScreen('linear', 'master', branch)
         ok, detail = screen._test_take()
         assert ok, f'take test-apply recursed: {detail}'
+
+
+class TestTrackingEntryBranchRestore:
+    """run_tracking_tui() puts the worktree back on the way out."""
+
+    def test_quitting_after_an_upgrade_restores_the_branch(self, gitdir: str) -> None:
+        """The tracking list has actions of its own that move HEAD.
+
+        Upgrading a series to a newer revision checks out an upgrade branch
+        and renames it onto the review branch.  Quitting from the list then
+        went straight out of the loop, past a restore that only ran after a
+        review pass, and left the worktree on the review branch.
+        """
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-restore-1'
+
+        class _MovesHeadThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                b4.git_run_command(gitdir, ['checkout', '-q', '-b', review_branch])
+                return None
+
+        with patch.object(_entry, 'TrackingApp', _MovesHeadThenQuits):
+            _entry.run_tracking_tui('test-entry-restore')
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
+
+    def test_quitting_after_an_upgrade_restores_a_detached_head(
+        self, gitdir: str
+    ) -> None:
+        """A session that started detached has a commit to go back to, and
+        putting the user on a branch instead is not restoring anything."""
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        start_sha = out.strip()
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-restore-detached'
+
+        class _MovesHeadThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                b4.git_run_command(gitdir, ['checkout', '-q', '-b', review_branch])
+                return None
+
+        with patch.object(_entry, 'TrackingApp', _MovesHeadThenQuits):
+            _entry.run_tracking_tui('test-entry-restore-detached')
+
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+
+    def test_a_failed_tracking_load_still_restores_the_branch(
+        self, gitdir: str
+    ) -> None:
+        """load_tracking() exits rather than raising on a branch carrying no
+        tracking commit, and SystemExit is not an Exception, so it sailed past
+        the status sync's guard and out of run_tracking_tui() -- taking the
+        branch restore with it."""
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-syncfail-1'
+        runs = {'n': 0}
+
+        class _ReviewsThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                runs['n'] += 1
+                if runs['n'] > 1:
+                    return None
+                b4.git_run_command(gitdir, ['checkout', '-q', '-b', review_branch])
+                return review_branch
+
+        with (
+            patch.object(_entry, 'TrackingApp', _ReviewsThenQuits),
+            patch.object(_entry, 'ReviewApp'),
+            patch.object(
+                b4.review,
+                '_prepare_review_session',
+                return_value={'series': {'revision': 1}},
+            ),
+            patch.object(b4.review, 'load_tracking', side_effect=SystemExit(1)),
+        ):
+            _entry.run_tracking_tui('test-entry-syncfail')
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
