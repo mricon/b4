@@ -4495,6 +4495,87 @@ class TestTakeThankArchiveChain:
         assert not notices
 
 
+class TestSendThankMessage:
+    """Everything after a successful send is bookkeeping, and bookkeeping
+    must not be able to claim the send failed."""
+
+    def _send(
+        self, archive_raises: bool, dryrun: bool = False
+    ) -> Tuple[List[Tuple[str, str]], List[List[Any]]]:
+        """Drive _send_thank_message with a send that succeeds.
+
+        Returns (notifications as (message, severity), mark_outgoing_seen
+        calls).
+        """
+        import contextlib
+
+        notices: List[Tuple[str, str]] = []
+        seen_calls: List[List[Any]] = []
+        archived: List[str] = []
+        app = TrackingApp.__new__(TrackingApp)
+        app._email_dryrun = dryrun
+        app._patatt_sign = False
+        app._identifier = ''
+        msg = email.message.EmailMessage()
+        msg['Message-Id'] = '<thanks@example.com>'
+        series = {'change_id': 'send-1', 'revision': 1}
+
+        def _archive(self: Any, _series: Dict[str, Any]) -> None:
+            archived.append(str(_series.get('change_id', '')))
+            if archive_raises:
+                raise OSError(28, 'No space left on device')
+
+        with (
+            patch.object(TrackingApp, 'suspend', lambda self: contextlib.nullcontext()),
+            patch.object(TrackingApp, '_invalidate_caches', lambda self, cid: None),
+            patch.object(TrackingApp, '_load_series', lambda self: None),
+            patch.object(TrackingApp, '_archive_after_thanks', _archive),
+            patch.object(
+                TrackingApp,
+                'notify',
+                lambda self, message, severity='information', **k: notices.append(
+                    (str(message), severity)
+                ),
+            ),
+            patch('b4.get_smtp', return_value=(None, 'me@example.com')),
+            patch('b4.send_mail', return_value=0 if dryrun else 1),
+            patch(
+                'b4.review_tui._tracking_app.mark_outgoing_seen',
+                lambda msgs, dryrun=False: seen_calls.append(list(msgs)),
+            ),
+        ):
+            app._send_thank_message(msg, series, archive_after=True)
+        self.archived = archived
+        return notices, seen_calls
+
+    def test_marks_the_sent_message_seen(self) -> None:
+        """The thank-you is a reply into the series thread, so it comes back
+        from the list; recording it at send time keeps the badge dark."""
+        _notices, seen_calls = self._send(archive_raises=False)
+        assert len(seen_calls) == 1
+        assert seen_calls[0][0]['Message-Id'] == '<thanks@example.com>'
+
+    def test_failed_archive_is_not_a_send_failure(self) -> None:
+        """A broken archive must never read as 'Send failed': that tells the
+        maintainer to re-send a note that is already on the list."""
+        notices, _seen = self._send(archive_raises=True)
+        texts = [n for n, _sev in notices]
+        assert 'Thank-you message sent' in texts
+        assert not any('Send failed' in n for n in texts)
+        assert any('No space left on device' in n for n in texts)
+
+    def test_a_dry_run_is_not_recorded_as_thanked(self) -> None:
+        """--email-dry-run logs the note and stops there.  Marking the series
+        thanked -- and archiving it, which deletes the review branch -- would
+        spend a real series on a rehearsal."""
+        notices, seen = self._send(archive_raises=False, dryrun=True)
+        texts = [n for n, _sev in notices]
+        assert any('Dry-run' in n for n in texts)
+        assert not any('Thank-you message sent' in n for n in texts)
+        assert not seen
+        assert not self.archived
+
+
 # ---------------------------------------------------------------------------
 # take->merge conflict resolution (must never drop a non-empty commit)
 # ---------------------------------------------------------------------------
