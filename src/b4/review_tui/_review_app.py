@@ -48,10 +48,12 @@ from b4.review_tui._common import (
     _write_followup_trailers,
     get_thread_msgs,
     logger,
+    mark_outgoing_seen,
     notify_quit_hint,
     resolve_styles,
     reviewer_colours,
     run_lore_worker,
+    suspend_and_edit,
     worker_cancelled,
 )
 from b4.review_tui._modals import (
@@ -290,6 +292,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         self._patatt_sign: bool = session.get('patatt_sign', True)
         self._branch: str = session['branch']
         self._original_branch: Optional[str] = session.get('original_branch')
+        self._original_head: List[str] = session.get('original_head') or (
+            ['checkout', self._original_branch] if self._original_branch else []
+        )
         self.branch_checked_out: bool = False
         self._has_cover: bool = NO_COVER_NOTE not in self._cover_text
         self._selected_idx: int = (
@@ -1326,11 +1331,14 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     '', all_reviews, my_email, commit_msg=self._cover_text
                 )
 
-        with self.suspend():
-            result = b4.edit_in_editor(
-                editor_text.encode(), filehint='reply.b4-review.eml'
-            )
-
+        result = suspend_and_edit(
+            self,
+            editor_text.encode(),
+            'reply.b4-review.eml',
+            topdir=self._topdir,
+        )
+        if result is None:
+            return
         if not result:
             self.notify('Editor returned no content')
             return
@@ -1447,9 +1455,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     def _edit_note_in_editor(self, target: Dict[str, Any], existing: str) -> None:
         """Launch $EDITOR for the maintainer's note on *target*."""
         editor_text = existing + self._NOTE_FOOTER
-        with self.suspend():
-            result = b4.edit_in_editor(editor_text.encode(), filehint='note.txt')
-
+        result = suspend_and_edit(
+            self, editor_text.encode(), 'note.txt', topdir=self._topdir
+        )
+        if result is None:
+            return
         if not result:
             self.notify('Editor returned no content')
             return
@@ -1647,27 +1657,48 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                         output_dir=None,
                         reflect=False,
                     )
-                if sent is None:
-                    self.notify('Failed to send review emails.', severity='error')
-                else:
-                    self._reply_sent = True
-                    self._tracking['series']['status'] = 'replied'
-                    # Stamp sent-revision on every non-skip review so that
-                    # if this series is later upgraded to a newer revision,
-                    # the upgrade step can detect which reviews were already
-                    # sent and auto-skip the unchanged patches.
-                    my_email = str(self._usercfg.get('email', 'unknown@example.com'))
-                    current_rev = int(self._series.get('revision', 1))
-                    for target in [self._series] + list(self._patches):
-                        review = target.get('reviews', {}).get(my_email, {})
-                        if review and review.get('patch-state') != 'skip':
-                            review['sent-revision'] = current_rev
-                    self._save_tracking()
-                    self._mark_patches_answered(msgs)
-                    self._mark_outgoing_seen(msgs)
-                    self.notify(f'Sent {sent} review email(s).')
             except Exception as ex:
                 self.notify(f'Send failed: {ex}', severity='error')
+                return
+            if sent is None:
+                self.notify('Failed to send review emails.', severity='error')
+                return
+            if self._email_dryrun:
+                # Nothing went out, so there is nothing to record. Stamping
+                # sent-revision here would make the next real session treat
+                # these reviews as already sent and offer none of them.
+                self.notify(f'Dry-run: {len(msgs)} review email(s) logged, not sent')
+                return
+            self.notify(f'Sent {sent} review email(s).')
+
+            # The mail is out; everything below only records that. It gets its
+            # own handler so a bookkeeping failure is never reported as a send
+            # failure, and never escapes this screen callback.
+            try:
+                self._reply_sent = True
+                self._tracking['series']['status'] = 'replied'
+                # Stamp sent-revision on every non-skip review so that
+                # if this series is later upgraded to a newer revision,
+                # the upgrade step can detect which reviews were already
+                # sent and auto-skip the unchanged patches.
+                my_email = str(self._usercfg.get('email', 'unknown@example.com'))
+                current_rev = int(self._series.get('revision', 1))
+                for target in [self._series] + list(self._patches):
+                    review = target.get('reviews', {}).get(my_email, {})
+                    if review and review.get('patch-state') != 'skip':
+                        review['sent-revision'] = current_rev
+                if not self._save_tracking():
+                    # Silence here means the next session offers these reviews
+                    # as unsent and the maintainer sends them twice.
+                    self.notify(
+                        f'Sent, but could not record it on {self._branch}',
+                        severity='warning',
+                    )
+                self._mark_patches_answered(msgs)
+                mark_outgoing_seen(msgs)
+            except Exception as ex:
+                logger.debug('Post-send bookkeeping failed: %s', ex, exc_info=True)
+                self.notify(f'Sent, but recording it failed: {ex}', severity='warning')
 
         self.push_screen(SendScreen(msgs), _on_send_confirmed)
 
@@ -1711,8 +1742,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             quoted = '\n'.join(f'> {line}' for line in body.splitlines())
             editor_text = f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
 
-        with self.suspend():
-            result = b4.edit_in_editor(editor_text.encode(), filehint='reply.eml')
+        result = suspend_and_edit(
+            self, editor_text.encode(), 'reply.eml', topdir=self._topdir
+        )
+        if result is None:
+            return
         reply_text = result.decode(errors='replace')
         if reply_text == editor_text:
             self.notify('No changes made')
@@ -1741,15 +1775,16 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     output_dir=None,
                     reflect=False,
                 )
-            if sent is None:
-                self.notify('Failed to send reply.', severity='error')
-            elif self._email_dryrun:
-                self.notify(f'Dry-run: reply to {entry["fromemail"]} logged, not sent')
-            else:
-                self._mark_outgoing_seen([msg])
-                self.notify(f'Reply sent to {entry["fromemail"]}')
         except Exception as ex:
             self.notify(f'Send failed: {ex}', severity='error')
+            return
+        if sent is None:
+            self.notify('Failed to send reply.', severity='error')
+        elif self._email_dryrun:
+            self.notify(f'Dry-run: reply to {entry["fromemail"]} logged, not sent')
+        else:
+            mark_outgoing_seen([msg])
+            self.notify(f'Reply sent to {entry["fromemail"]}')
 
     def _load_followup_msgs(self, msgs: List[Any]) -> None:
         """Parse msgs into follow-up comments and refresh the display."""
@@ -2063,17 +2098,6 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         except Exception:
             pass
 
-    def _mark_outgoing_seen(self, msgs: List[Any]) -> None:
-        """Mark just-sent messages as Seen so they never show up as unread."""
-        if self._email_dryrun:
-            return
-        try:
-            from b4.review import messages
-
-            messages.mark_outgoing_seen(msgs)
-        except Exception:
-            pass
-
     def _mark_patches_answered(self, msgs: List[Any]) -> None:
         """Mark the original patches as Answered based on In-Reply-To."""
         entries = []
@@ -2162,11 +2186,18 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         return True
 
     def _restore_original_branch(self) -> None:
-        """Switch back to the original branch after shell/agent use."""
-        if not self.branch_checked_out or not self._original_branch:
+        """Put HEAD back where the session found it after shell/agent use."""
+        if not self.branch_checked_out or not self._original_head:
+            return
+        # Only undo our own checkout. If HEAD is no longer on the review
+        # branch we left it on, something else moved it -- the shell we just
+        # suspended into, or another terminal in the same worktree -- and it
+        # is not ours to move back.
+        if b4.git_get_current_branch(self._topdir) != self._branch:
+            self.branch_checked_out = False
             return
         ecode, _out = b4.git_run_command(
-            self._topdir, ['checkout', self._original_branch], logstderr=True
+            self._topdir, self._original_head, logstderr=True
         )
         if ecode == 0:
             self.branch_checked_out = False
@@ -2234,9 +2265,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self.notify('Agent review data loaded')
         self._restore_original_branch()
 
-    def _save_tracking(self) -> None:
-        """Save tracking data to the review branch."""
-        b4.review.save_tracking_ref(
+    def _save_tracking(self) -> bool:
+        """Save tracking data to the review branch.  True if it landed."""
+        return b4.review.save_tracking_ref(
             self._topdir, self._branch, self._cover_text, self._tracking
         )
 

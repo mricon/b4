@@ -1325,3 +1325,151 @@ class TestSendemailLocalcmd:
         smtp, fromaddr = b4.get_smtp()
         assert smtp == ['/usr/bin/msmtp', '-i']
         assert fromaddr == 'Alice Developer <alice@example.org>'
+
+
+def _fake_editor(tmp_path: pathlib.Path, body: str) -> str:
+    """A stand-in $EDITOR that runs *body* and leaves the buffer alone."""
+    script = tmp_path / 'fake-editor.sh'
+    script.write_text(f'#!/bin/sh\n{body}\n')
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_edit_in_editor_without_guard_survives_branch_switch(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Callers that write to an explicit ref get their text back even if HEAD
+    moved while the editor was open.
+
+    The review TUI stores replies on the review branch and reads the patch it
+    is replying to by SHA, so a branch switch -- its own, or the user's in
+    another terminal sharing the worktree -- is none of its business."""
+    monkeypatch.setenv(
+        'GIT_EDITOR', _fake_editor(tmp_path, f'git -C "{gitdir}" checkout -q -b side')
+    )
+    assert b4.edit_in_editor(b'my reply\n', filehint='reply.eml') == b'my reply\n'
+    assert b4.git_get_current_branch(gitdir) == 'side'
+
+
+def test_edit_in_editor_guard_refuses_branch_switch(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller that opts in is refused when HEAD has moved on, and its text
+    is preserved in a temporary file."""
+    monkeypatch.setenv(
+        'GIT_EDITOR', _fake_editor(tmp_path, f'git -C "{gitdir}" checkout -q -b side')
+    )
+    with pytest.raises(RuntimeError, match='Branch changed during file editing') as ex:
+        b4.edit_in_editor(b'my cover\n', guard_branch=True)
+
+    saved = pathlib.Path(str(ex.value).split(' saved at ')[-1])
+    try:
+        assert saved.read_bytes() == b'my cover\n'
+    finally:
+        saved.unlink()
+
+
+def test_edit_in_editor_guard_covers_a_detached_head(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Starting detached is still a starting point worth guarding.
+
+    'b4 trailers -u' does not require a prep branch, so it can run with HEAD
+    detached and rewrite whatever branch is current when it applies."""
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    monkeypatch.setenv(
+        'GIT_EDITOR', _fake_editor(tmp_path, f'git -C "{gitdir}" checkout -q -b side')
+    )
+    with pytest.raises(RuntimeError, match='Branch changed during file editing') as ex:
+        b4.edit_in_editor(b'my trailers\n', guard_branch=True)
+
+    saved = pathlib.Path(str(ex.value).split(' saved at ')[-1])
+    try:
+        assert saved.read_bytes() == b'my trailers\n'
+    finally:
+        saved.unlink()
+
+
+def test_edit_in_editor_follows_the_topdir_it_is_given(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """topdir, not the process cwd, decides where the scratch file lands and
+    which HEAD the guard reads.
+
+    The TUIs may be driven from a different worktree than the one holding the
+    branch they operate on, so cwd is the wrong repository to ask."""
+    linked = str(tmp_path / 'linked')
+    ecode, out = b4.git_run_command(
+        gitdir, ['worktree', 'add', '-b', 'elsewhere', linked], logstderr=True
+    )
+    assert ecode == 0, out
+    seen = tmp_path / 'editor-argv1'
+    # Move the *cwd* repository's HEAD while the editor is open. The guard is
+    # on, so if it were reading cwd rather than topdir this would refuse.
+    monkeypatch.setenv(
+        'GIT_EDITOR',
+        _fake_editor(
+            tmp_path, f'printf %s "$1" > {seen}; git -C "{gitdir}" checkout -q -b side'
+        ),
+    )
+
+    # cwd is still on master; only the linked worktree is on 'elsewhere'.
+    assert b4.git_get_current_branch(gitdir) == 'master'
+    edited = b4.edit_in_editor(
+        b'note\n', filehint='note.txt', topdir=linked, guard_branch=True
+    )
+    assert edited == b'note\n'
+    assert seen.read_text().startswith(linked + os.sep)
+    assert b4.git_get_current_branch(gitdir) == 'side'
+    assert b4.git_get_current_branch(linked) == 'elsewhere'
+
+
+def test_edit_in_editor_reads_core_editor_from_topdir(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """core.editor is read from the named tree too, so a repository-local
+    setting is the one belonging to the branch being edited."""
+    other = str(tmp_path / 'other')
+    ecode, out = b4.git_run_command(None, ['init', '-b', 'master', other])
+    assert ecode == 0, out
+    seen = tmp_path / 'which-editor'
+    b4.git_set_config(
+        other, 'core.editor', _fake_editor(tmp_path, f'printf topdir > {seen}')
+    )
+    b4.git_set_config(gitdir, 'core.editor', 'false')
+    for var in ('GIT_EDITOR', 'VISUAL', 'EDITOR'):
+        monkeypatch.delenv(var, raising=False)
+
+    assert b4.edit_in_editor(b'note\n', filehint='note.txt', topdir=other) == b'note\n'
+    assert seen.read_text() == 'topdir'
+
+
+def test_git_head_restore_args_names_the_branch(gitdir: str) -> None:
+    assert b4.git_head_restore_args(gitdir) == ['checkout', 'master']
+
+
+def test_git_head_restore_args_names_the_commit_when_detached(gitdir: str) -> None:
+    """A detached HEAD is a starting point too, and the only thing that can
+    be named for it is the commit."""
+    ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    assert ecode == 0, out
+    sha = out.strip()
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    assert b4.git_head_restore_args(gitdir) == ['checkout', '--detach', sha]
+
+
+def test_git_head_restore_args_round_trip(gitdir: str) -> None:
+    """Running what it returns puts HEAD back exactly where it was read."""
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    restore = b4.git_head_restore_args(gitdir)
+
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'elsewhere'])
+    assert ecode == 0, out
+    ecode, out = b4.git_run_command(gitdir, restore)
+    assert ecode == 0, out
+
+    assert b4.git_get_current_branch(gitdir) is None
+    assert b4.git_head_restore_args(gitdir) == restore

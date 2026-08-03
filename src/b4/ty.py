@@ -582,7 +582,9 @@ def interactive_ty_review(
         sections.append((str(jsondata['subject']), details))
 
     buf = render_ty_review(sections)
-    edited = b4.edit_in_editor(buf, filehint='b4-ty-review.COMMIT_EDITMSG')
+    edited = b4.edit_in_editor(
+        buf, filehint='b4-ty-review.COMMIT_EDITMSG', topdir=gitdir
+    )
     try:
         skipped = parse_ty_review(edited, sections)
     except ValueError as ex:
@@ -1050,7 +1052,7 @@ def get_check_repo_for_branch(
 
 
 def commit_reachable_on_remote(
-    commit: str, repo_url: str, branch: str = ''
+    commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
 ) -> Optional[bool]:
     """Check if a commit is reachable from a branch advertised by repo_url.
 
@@ -1066,8 +1068,15 @@ def commit_reachable_on_remote(
     deleted), any advertised branch is accepted as before.
 
     Ancestry is computed locally against the advertised tips, so tips we
-    do not have objects for are ignored. Returns True/False, or None if
-    the state could not be determined (e.g. the remote is unreachable).
+    do not have objects for are ignored.  That happens in *gitdir* — the
+    repository the commit was applied in.  It defaults to the process
+    cwd, which is only right for callers that operate on it; a queue
+    sweep covering several projects must name the tree each message
+    belongs to.
+
+    Returns True/False, or None if the state could not be determined
+    (e.g. the remote is unreachable, or none of the advertised tips are
+    in the local repository).
     """
     gitargs = [
         '-c',
@@ -1078,7 +1087,7 @@ def commit_reachable_on_remote(
         '--heads',
         repo_url,
     ]
-    ecode, out = b4.git_run_command(None, gitargs)
+    ecode, out = b4.git_run_command(gitdir, gitargs)
     if ecode > 0:
         logger.debug('ls-remote failed for %s (exit code %s)', repo_url, ecode)
         return None
@@ -1104,7 +1113,7 @@ def commit_reachable_on_remote(
     # for them, so treat them as not containing the commit
     stdin = ('\n'.join(sorted(tips)) + '\n').encode()
     _ecode, out = b4.git_run_command(
-        None, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], stdin=stdin
+        gitdir, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], stdin=stdin
     )
     known: List[str] = []
     for line in out.splitlines():
@@ -1112,11 +1121,22 @@ def commit_reachable_on_remote(
         if len(chunks) == 2 and chunks[1] == 'commit':
             known.append(chunks[0])
     if not known:
-        logger.debug('No advertised heads of %s exist locally', repo_url)
-        return False
+        # Undetermined, not unpublished: without the objects we cannot
+        # say anything about the commit, and reporting "not yet visible"
+        # would hide a stale (or simply wrong) local repository behind
+        # what looks like normal waiting.  Warn rather than debug: a cron
+        # sweep silences narration but keeps warnings, and this one is a
+        # standing misconfiguration that would otherwise wait forever.
+        logger.warning(
+            'None of the heads advertised by %s exist in %s; cannot tell '
+            'whether the commit is published',
+            repo_url,
+            gitdir or os.getcwd(),
+        )
+        return None
     # Empty output means every commit reachable from ours is also
     # reachable from one of the known tips, i.e. ours is published
-    ecode, out = b4.git_run_command(None, ['rev-list', '-1', commit, '--not', *known])
+    ecode, out = b4.git_run_command(gitdir, ['rev-list', '-1', commit, '--not', *known])
     if ecode > 0:
         logger.debug('rev-list failed for %s (exit code %s)', commit, ecode)
         return None
@@ -1124,7 +1144,11 @@ def commit_reachable_on_remote(
 
 
 def _check_published(
-    checkurl: str, checkcommit: str, checkrepo: str, checkbranch: str = ''
+    checkurl: str,
+    checkcommit: str,
+    checkrepo: str,
+    checkbranch: str = '',
+    gitdir: Optional[str] = None,
 ) -> Optional[bool]:
     """Tri-state publish check for a queued thanks message.
 
@@ -1140,7 +1164,9 @@ def _check_published(
     if checkurl and not checkrepo:
         checkrepo = _get_check_repo(checkurl) or ''
     if checkcommit and checkrepo:
-        return commit_reachable_on_remote(checkcommit, checkrepo, branch=checkbranch)
+        return commit_reachable_on_remote(
+            checkcommit, checkrepo, branch=checkbranch, gitdir=gitdir
+        )
     if not checkurl:
         return True
     try:
@@ -1467,7 +1493,9 @@ def _process_queue_locked(
 
         # Check if the commit is publicly visible
         if not dryrun and (checkurl or (checkcommit and checkrepo)):
-            published = _check_published(checkurl, checkcommit, checkrepo, checkbranch)
+            published = _check_published(
+                checkurl, checkcommit, checkrepo, checkbranch, gitdir=topdir
+            )
             if published is None:
                 still_pending += 1
                 if progress_cb:

@@ -283,11 +283,16 @@ def create_review_branch(
         logger.critical('Branch %s already exists', branch_name)
         sys.exit(1)
 
-    # Save current branch for potential restore on error
-    current_branch: Optional[str] = None
-    ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
-    if ecode == 0:
-        current_branch = out.strip()
+    # Save the current position for potential restore on error: everything
+    # past the checkout below runs on the new branch, and git refuses to
+    # delete the branch HEAD is sitting on.
+    restore_head = b4.git_head_restore_args(topdir)
+
+    def drop_half_built_branch() -> None:
+        """Put the caller back and take the unfinished branch with us."""
+        if restore_head:
+            b4.git_run_command(topdir, restore_head, logstderr=True)
+        b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
 
     # Resolve base_commit to a concrete hash before checkout changes HEAD
     ecode, out = b4.git_run_command(
@@ -316,10 +321,7 @@ def create_review_branch(
         logger.critical(out.strip())
         # Abort the cherry-pick if in progress
         b4.git_run_command(topdir, ['cherry-pick', '--abort'], logstderr=True)
-        # Restore previous branch
-        if current_branch:
-            b4.git_run_command(topdir, ['checkout', current_branch], logstderr=True)
-        b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
+        drop_half_built_branch()
         sys.exit(1)
 
     # Record the first patch commit (the one right after base)
@@ -328,6 +330,9 @@ def create_review_branch(
     )
     if ecode > 0 or not out.strip():
         logger.critical('Unable to determine first patch commit')
+        # HEAD is on a branch that was never finished, as in the other two
+        # post-checkout failures around this one.
+        drop_half_built_branch()
         sys.exit(1)
     all_commits = out.strip().splitlines()
     prereq_commits = all_commits[:num_prereqs]
@@ -420,10 +425,7 @@ def create_review_branch(
     if ecode > 0:
         logger.critical('Unable to create tracking commit')
         logger.critical(out.strip())
-        # Restore previous branch
-        if current_branch:
-            b4.git_run_command(topdir, ['checkout', current_branch], logstderr=True)
-        b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
+        drop_half_built_branch()
         sys.exit(1)
 
     # Mark cover + patch messages as Seen in the messages DB
@@ -811,6 +813,8 @@ def archive_series(
 
     Returns (success, detail): detail is the archive tarball path on
     success (empty for a database-only archive), or an error message.
+    Never raises: callers archive *after* a thank-you has gone out, and a
+    failure here must not be mistaken for a failure to deliver it.
     """
     # Imported here: the tarball machinery is only needed when archiving.
     # b4.review.tracking is re-imported alongside b4.ez because a local
@@ -835,54 +839,67 @@ def archive_series(
         if not first_patch:
             return False, 'No patch commits found in tracking data'
 
-        tio = io.BytesIO()
-        mnow = int(time.time())
-        with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
-            # Add cover letter
-            ifh = io.BytesIO()
-            ifh.write(cover_text.encode())
-            b4.ez.write_to_tar(tfh, f'{change_id}/cover.txt', mnow, ifh)
-            ifh.close()
-            # Add tracking metadata
-            ifh = io.BytesIO()
-            ifh.write(make_review_magic_json(tracking).encode())
-            b4.ez.write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
-            ifh.close()
-            # Add patches as mbox
-            patches = b4.git_range_to_patches(
-                topdir, f'{first_patch}~1', f'{review_branch}~1'
-            )
-            if patches:
+        try:
+            tio = io.BytesIO()
+            mnow = int(time.time())
+            with tarfile.open(fileobj=tio, mode='w:gz') as tfh:
+                # Add cover letter
                 ifh = io.BytesIO()
-                b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
-                b4.ez.write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
+                ifh.write(cover_text.encode())
+                b4.ez.write_to_tar(tfh, f'{change_id}/cover.txt', mnow, ifh)
                 ifh.close()
+                # Add tracking metadata
+                ifh = io.BytesIO()
+                ifh.write(make_review_magic_json(tracking).encode())
+                b4.ez.write_to_tar(tfh, f'{change_id}/tracking.js', mnow, ifh)
+                ifh.close()
+                # Add patches as mbox
+                patches = b4.git_range_to_patches(
+                    topdir, f'{first_patch}~1', f'{review_branch}~1'
+                )
+                if patches:
+                    ifh = io.BytesIO()
+                    b4.save_git_am_mbox([patch[1] for patch in patches], ifh)
+                    b4.ez.write_to_tar(tfh, f'{change_id}/patches.mbx', mnow, ifh)
+                    ifh.close()
 
-        # Write archive to data directory
-        datadir = b4.get_data_dir()
-        archpath = os.path.join(datadir, 'review-archived')
-        os.makedirs(archpath, exist_ok=True)
-        tarpath = os.path.join(archpath, f'{change_id}.tar.gz')
-        with open(tarpath, mode='wb') as tout:
-            tout.write(tio.getvalue())
+            # Write archive to data directory
+            datadir = b4.get_data_dir()
+            archpath = os.path.join(datadir, 'review-archived')
+            os.makedirs(archpath, exist_ok=True)
+            tarpath = os.path.join(archpath, f'{change_id}.tar.gz')
+            with open(tarpath, mode='wb') as tout:
+                tout.write(tio.getvalue())
+        except Exception as ex:
+            # The branch is still intact, so this is safe to retry
+            return False, f'Could not write archive for {change_id}: {ex}'
 
         ok, err = delete_review_branch(topdir, review_branch, allow_switch=allow_switch)
         if not ok:
             return False, err
 
     # Update tracking database
+    conn = None
     try:
         conn = b4.review.tracking.get_db(identifier)
         b4.review.tracking.update_series_status(
             conn, change_id, 'archived', revision=revision
         )
-        conn.close()
     except Exception as ex:
         return False, f'DB error: {ex}'
+    finally:
+        if conn is not None:
+            conn.close()
 
-    # Mark as archived in Patchwork
+    # Mark as archived in Patchwork.  The local archive is already done and
+    # cannot be retried, so a Patchwork hiccup is a warning, not a failure.
     if pw_series_id:
-        pw_update_series_state(pw_series_id, 'accepted', archived=True)
+        try:
+            pw_update_series_state(pw_series_id, 'accepted', archived=True)
+        except Exception as ex:
+            logger.warning(
+                'Could not archive series %s in Patchwork: %s', change_id, ex
+            )
 
     return True, tarpath
 
@@ -2614,6 +2631,7 @@ def update_series_tracking(
     # so the unread badge below never lights up for them.
     seen_bump = 0
     if thread_msgs and change_id:
+        mconn = None
         try:
             from b4.review import messages
 
@@ -2637,9 +2655,11 @@ def update_series_tracking(
                         for mid in new_msgids
                         if 'Seen' in flags_map.get(mid, '').split()
                     )
-            mconn.close()
         except Exception as ex:
             logger.debug('Could not auto-mark own messages as read: %s', ex)
+        finally:
+            if mconn is not None:
+                mconn.close()
 
     # Update message count and thread blob from the already-fetched
     # thread messages.  No status filtering here: the thread is already
@@ -3163,8 +3183,9 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
             topdir, change_id, series, patches
         )
 
-    # Record current branch so ReviewApp can restore it if it checks
-    # out the review branch for shell/agent operations.
+    # Record where HEAD is so ReviewApp can put it back if it checks out the
+    # review branch for shell/agent operations.  A detached HEAD is a starting
+    # point too, so remember the commit alongside the branch name.
     ecode, out = b4.git_run_command(topdir, ['symbolic-ref', '--short', 'HEAD'])
     current_branch = out.strip() if ecode == 0 else None
 
@@ -3172,6 +3193,7 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
         'topdir': topdir,
         'branch': branch,
         'original_branch': current_branch,
+        'original_head': b4.git_head_restore_args(topdir),
         'cover_text': cover_text,
         'tracking': tracking,
         'series': series,

@@ -260,7 +260,7 @@ class TestReplyVerbatim:
         )
         seen: List[str] = []
 
-        def fake_editor(data: bytes, filehint: str = '') -> bytes:
+        def fake_editor(data: bytes, filehint: str = '', **kwargs: Any) -> bytes:
             seen.append(data.decode())
             return buffer.encode()
 
@@ -589,3 +589,239 @@ class TestRenderDetailLines:
         assert 'ERROR: trailing whitespace' in out
         # Only the finding line itself, no indented context underneath.
         assert '\n    ' not in out
+
+
+class TestEditorFailure:
+    """A broken editor is reported, never fatal."""
+
+    @pytest.mark.asyncio
+    async def test_editor_error_does_not_tear_down_the_app(self, gitdir: str) -> None:
+        """An exception from the editor used to unwind out of the key handler
+        and kill the app, taking the rest of the session's unsaved review
+        state with it."""
+        import contextlib
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'editor-error', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        app = ReviewApp(session)
+        my_email = str(session['usercfg']['email'])
+
+        def boom(*args: Any, **kwargs: Any) -> bytes:
+            raise RuntimeError('editor exploded')
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_idx = 1
+            with (
+                mock.patch('b4.edit_in_editor', side_effect=boom),
+                mock.patch.object(app, 'suspend', lambda: contextlib.nullcontext()),
+                mock.patch.object(app, 'notify') as notified,
+            ):
+                app.action_edit_reply()
+                await pilot.pause()
+
+            assert app.is_running
+            assert notified.call_args.kwargs.get('severity') == 'error'
+            reviews = app._patches[0].get('reviews', {})
+            assert not reviews.get(my_email, {}).get('reply')
+
+
+class TestBranchRestore:
+    """b4 only puts back a branch it moved itself."""
+
+    def test_restore_skips_a_checkout_b4_did_not_make(self, gitdir: str) -> None:
+        """The worktree the TUI runs in is shared with the user's other
+        terminals; a branch they switched to there is not ours to undo."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'restore-foreign', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['original_branch'] = 'master'
+        app = ReviewApp(session)
+        app.branch_checked_out = True
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'mine'])
+        assert ecode == 0
+
+        app._restore_original_branch()
+        assert b4.git_get_current_branch(gitdir) == 'mine'
+        assert app.branch_checked_out is False
+
+    def test_restore_undoes_b4s_own_checkout(self, gitdir: str) -> None:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'restore-own', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['original_branch'] = 'master'
+        app = ReviewApp(session)
+        assert app._ensure_branch_checked_out()
+        assert b4.git_get_current_branch(gitdir) == branch
+
+        app._restore_original_branch()
+        assert b4.git_get_current_branch(gitdir) == 'master'
+        assert app.branch_checked_out is False
+
+    def test_restore_lands_back_on_a_detached_head(self, gitdir: str) -> None:
+        """A session that started detached has a commit to go back to, and a
+        branch name is not it -- so nothing used to put the user back."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'restore-detached', ['patch 1']
+        )
+        ecode, _out = b4.git_run_command(
+            gitdir, ['checkout', '-q', '--detach', 'master']
+        )
+        assert ecode == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        start_sha = out.strip()
+
+        session = _build_session(gitdir, branch)
+        session['original_head'] = ['checkout', '--detach', start_sha]
+        app = ReviewApp(session)
+        assert app._ensure_branch_checked_out()
+        assert b4.git_get_current_branch(gitdir) == branch
+
+        app._restore_original_branch()
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+        assert app.branch_checked_out is False
+
+
+class TestSendBookkeeping:
+    """Everything after the SMTP handoff is bookkeeping, and bookkeeping must
+    never be able to claim the send failed."""
+
+    async def _send(
+        self, gitdir: str, change_id: str, dryrun: bool = False, **patches: Any
+    ) -> Tuple[List[str], bool]:
+        """Drive action_send with a staged review and a send that succeeds.
+
+        *patches* are extra mock.patch.object() keyword targets on the app.
+        Returns (notification texts, app still running).
+        """
+        import contextlib
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, change_id, ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['email_dryrun'] = dryrun
+        app = ReviewApp(session)
+        my_email = str(session['usercfg']['email'])
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._patches[0]['reviews'] = {
+                my_email: {
+                    'reply': 'Looks good.',
+                    'trailers': ['Reviewed-by: Me <me@example.com>'],
+                    'patch-state': 'done',
+                }
+            }
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(app, 'suspend', lambda: contextlib.nullcontext())
+                )
+
+                # SendScreen is a confirmation dialog; answer yes for it.
+                def _confirm(screen: Any, callback: Any = None) -> None:
+                    assert callback is not None
+                    callback(True)
+
+                stack.enter_context(mock.patch.object(app, 'push_screen', _confirm))
+                stack.enter_context(mock.patch('b4.get_smtp', return_value=(None, 'm')))
+                stack.enter_context(
+                    mock.patch('b4.send_mail', return_value=0 if dryrun else 1)
+                )
+                stack.enter_context(
+                    mock.patch('b4.review_tui._review_app.mark_outgoing_seen')
+                )
+                stack.enter_context(mock.patch.object(app, '_mark_patches_answered'))
+                for name, kwargs in patches.items():
+                    stack.enter_context(mock.patch.object(app, name, **kwargs))
+                notified = stack.enter_context(mock.patch.object(app, 'notify'))
+                app.action_send()
+                await pilot.pause()
+            texts = [str(call.args[0]) for call in notified.call_args_list]
+            return texts, app.is_running
+
+    @pytest.mark.asyncio
+    async def test_unwritable_tracking_is_reported_but_not_as_a_send_failure(
+        self, gitdir: str
+    ) -> None:
+        """save_tracking_ref() returns False rather than raising, so this used
+        to pass unnoticed -- and the next session would offer the same reviews
+        as unsent, inviting the maintainer to send them twice."""
+        texts, running = await self._send(
+            gitdir, 'send-notracking', _save_tracking={'return_value': False}
+        )
+        assert running
+        assert any('Sent 1 review email' in t for t in texts)
+        assert not any('Send failed' in t for t in texts)
+        assert any('could not record it' in t for t in texts)
+
+    @pytest.mark.asyncio
+    async def test_raising_bookkeeping_is_not_a_send_failure(self, gitdir: str) -> None:
+        """The mail is on the list by then; reporting 'Send failed' would tell
+        the maintainer to send it again."""
+        texts, running = await self._send(
+            gitdir,
+            'send-bookkeeping-boom',
+            _mark_patches_answered={
+                'side_effect': OSError(28, 'No space left on device')
+            },
+        )
+        assert running
+        assert any('Sent 1 review email' in t for t in texts)
+        assert not any('Send failed' in t for t in texts)
+        assert any('No space left on device' in t for t in texts)
+
+    @pytest.mark.asyncio
+    async def test_a_dry_run_is_not_recorded_as_sent(self, gitdir: str) -> None:
+        """--email-dry-run logs the mail and stops there.  Stamping
+        sent-revision on it would make the next real session treat these
+        reviews as already sent and offer none of them."""
+        texts, running = await self._send(gitdir, 'send-dryrun', dryrun=True)
+        assert running
+        assert any('Dry-run' in t for t in texts)
+        assert not any('Sent 0 review email' in t for t in texts)
+
+
+class TestSessionRestorePoint:
+    """_prepare_review_session() records where HEAD has to go back to."""
+
+    def test_records_the_branch(self, gitdir: str) -> None:
+        import argparse
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'session-head-branch', ['patch 1']
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', 'master'])
+        assert ecode == 0
+        session = b4.review._prepare_review_session(argparse.Namespace(branch=branch))
+        assert session['original_branch'] == 'master'
+        assert session['original_head'] == ['checkout', 'master']
+
+    def test_records_a_detached_head(self, gitdir: str) -> None:
+        """Without the commit there is no name for where the user was, so the
+        review app has nothing to put them back on."""
+        import argparse
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'session-head-detached', ['patch 1']
+        )
+        ecode, _out = b4.git_run_command(
+            gitdir, ['checkout', '-q', '--detach', 'master']
+        )
+        assert ecode == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0, out
+        sha = out.strip()
+
+        session = b4.review._prepare_review_session(argparse.Namespace(branch=branch))
+        assert session['original_branch'] is None
+        assert session['original_head'] == ['checkout', '--detach', sha]

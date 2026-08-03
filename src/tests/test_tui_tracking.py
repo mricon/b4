@@ -15,6 +15,7 @@ import datetime
 import email.message
 import os
 import pathlib
+import sqlite3
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
@@ -27,6 +28,7 @@ from textual.widgets import Input, ListView, Static
 import b4
 import b4.review
 import b4.review.tracking as tracking
+import b4.review_tui._entry as _entry
 from b4 import (
     _abort_worktree_op,
     _worktree_has_unmerged,
@@ -1647,6 +1649,142 @@ class TestTrackingAbandon:
             assert cursor.fetchone() is None
             conn.close()
 
+    @pytest.mark.asyncio
+    async def test_abandon_from_the_branch_lands_on_a_branch(self, gitdir: str) -> None:
+        """Deleting the branch HEAD is on detaches it to the parent commit
+        first, because that is all delete_review_branch() can name.  Left
+        that way the session ends on a commit with no branch on it, and the
+        restore in run_tracking_tui() reads a detached HEAD as no branch of
+        ours and declines to help."""
+        identifier = 'test-abandon-onbranch'
+        change_id = 'abandon-onbranch-1'
+        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] abandon from the branch',
+                    'status': 'reviewing',
+                    'message_id': 'abo@ex.com',
+                }
+            ],
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch_name])
+        assert ecode == 0
+
+        app = TrackingApp(identifier, 'master')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_abandon_confirmed(True, change_id, branch_name, True)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) == 'master'
+
+    @pytest.mark.asyncio
+    async def test_archive_from_the_branch_lands_on_a_branch(self, gitdir: str) -> None:
+        """Archiving deletes the branch at the end, so it detaches HEAD the
+        same way abandoning does."""
+        identifier = 'test-archive-onbranch'
+        change_id = 'archive-onbranch-1'
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier=identifier, with_patch=True
+        )
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] archive from the branch',
+                    'status': 'accepted',
+                    'message_id': 'aro@ex.com',
+                }
+            ],
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch_name])
+        assert ecode == 0
+
+        app = TrackingApp(identifier, 'master')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert app._archive_branch(change_id, 1, branch_name)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) == 'master'
+
+    @pytest.mark.asyncio
+    async def test_abandon_lands_back_on_a_detached_head(self, gitdir: str) -> None:
+        """A session that started detached came from a commit, not a branch.
+
+        delete_review_branch() can only name the deleted branch's parent, so
+        without the session's own starting point the user is left parked on
+        whatever that happens to be."""
+        identifier = 'test-abandon-detached'
+        change_id = 'abandon-detached-1'
+        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] abandon detached',
+                    'status': 'reviewing',
+                    'message_id': 'abd@ex.com',
+                }
+            ],
+        )
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'master'])
+        assert ecode == 0
+        start_sha = out.strip()
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', branch_name])
+        assert ecode == 0
+
+        app = TrackingApp(
+            identifier, None, original_head=['checkout', '--detach', start_sha]
+        )
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_abandon_confirmed(True, change_id, branch_name, True)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+
+    @pytest.mark.asyncio
+    async def test_abandon_from_elsewhere_leaves_head_alone(self, gitdir: str) -> None:
+        """HEAD was never on the deleted branch, so nothing moved it and
+        nothing should move it back."""
+        identifier = 'test-abandon-elsewhere'
+        change_id = 'abandon-elsewhere-1'
+        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] abandon from elsewhere',
+                    'status': 'reviewing',
+                    'message_id': 'abe@ex.com',
+                }
+            ],
+        )
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'mine'])
+        assert ecode == 0
+
+        app = TrackingApp(identifier, 'master')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_abandon_confirmed(True, change_id, branch_name, True)
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, branch_name)
+        assert b4.git_get_current_branch(gitdir) == 'mine'
+
 
 class TestTrackingWaiting:
     """Tests for the 'mark as waiting' workflow."""
@@ -2673,6 +2811,34 @@ class TestSeriesLifecycle:
         patches = updated.get('patches', [])
         assert all(p.get('taken') for p in patches), 'all patches should be taken'
         assert updated['series']['status'] == 'accepted'
+
+    def test_record_take_metadata_unreadable_tracking(self, gitdir: str) -> None:
+        """The patches are applied by the time this runs, so a tracking commit
+        that cannot be read is a missing record and not a take that never
+        happened.  Saying None for both leaves the caller unable to tell them
+        apart, and 'unrecorded' must not reach the status column either."""
+        change_id = 'take-unrecorded-1'
+        branch_name = _create_review_branch(
+            gitdir, change_id, identifier='test-unrecorded', status='reviewing'
+        )
+        app = TrackingApp.__new__(TrackingApp)
+        app._identifier = 'test-unrecorded'
+        app._selected_series = None
+
+        with patch.object(b4.review, 'load_tracking', side_effect=SystemExit(1)):
+            result = app._record_take_metadata(
+                gitdir, branch_name, 'master', ['abc'], accepted=True
+            )
+        assert result == 'unrecorded'
+
+        statuses: List[str] = []
+        with patch.object(
+            tracking,
+            'update_series_status',
+            lambda conn, cid, status, revision=None: statuses.append(status),
+        ):
+            app._finalize_take(gitdir, 'master', change_id, {'revision': 1}, result)
+        assert not statuses
 
     def test_record_take_metadata_branch_tip_is_target_not_head(
         self, gitdir: str
@@ -4047,6 +4213,276 @@ class TestUpdateRevisionWorkflow:
             assert app.is_running
 
     @pytest.mark.asyncio
+    async def test_successful_upgrade_restores_original_branch(
+        self, gitdir: str
+    ) -> None:
+        """A finished upgrade puts the worktree back where it found it.
+
+        create_review_branch() checks HEAD out onto the upgrade branch and the
+        swap renames that onto the review branch, so HEAD is left sitting on
+        the review branch.  The tracking list comes back up when this returns,
+        and quitting from there stranded the user on the review branch.
+        """
+        identifier = 'test-update-restore'
+        change_id = 'update-restore-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+
+        lser = _make_mock_lser()
+
+        def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
+            """Create the branch and check it out, as the real one does."""
+            _create_review_branch(
+                topdir,
+                branch.removeprefix('b4/review/'),
+                identifier=identifier,
+                revision=2,
+                status='reviewing',
+            )
+            ecode, _o = b4.git_run_command(topdir, ['checkout', '-q', branch])
+            assert ecode == 0
+
+        def _mock_archive(
+            self_app: TrackingApp,
+            cid: str,
+            rev: Optional[int],
+            rbranch: str,
+            pw_series_id: Optional[int] = None,
+            notify: bool = True,
+        ) -> bool:
+            b4.git_run_command(gitdir, ['branch', '-D', rbranch])
+            aconn = tracking.get_db(self_app._identifier)
+            tracking.update_series_status(aconn, cid, 'archived', revision=rev)
+            aconn.close()
+            return True
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+                patch('b4.review.get_review_branch_patch_ids', return_value=[]),
+                patch(
+                    'b4.review.load_tracking',
+                    return_value=('', {'series': {}, 'patches': []}),
+                ),
+                patch('b4.review.reanchor_patch_comments'),
+                patch('b4.review.save_tracking_ref'),
+                patch.object(TrackingApp, '_archive_branch', _mock_archive),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    '[PATCH v2] update test',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        # The upgrade landed, and the worktree is back on the user's branch.
+        assert b4.git_branch_exists(gitdir, review_branch)
+        assert b4.git_get_current_branch(gitdir) == 'work'
+
+    @pytest.mark.asyncio
+    async def test_upgrade_from_a_detached_head_puts_it_back(self, gitdir: str) -> None:
+        """A detached HEAD is where the user was too.
+
+        The upgrade renames the temporary branch onto the review branch and
+        HEAD follows, so a session that started detached ends up parked on a
+        branch it never asked for, with its own commit only in the reflog.
+        """
+        identifier = 'test-update-detached'
+        change_id = 'update-detached-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+        assert ecode == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        start_sha = out.strip()
+
+        lser = _make_mock_lser()
+
+        def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
+            _create_review_branch(
+                topdir,
+                branch.removeprefix('b4/review/'),
+                identifier=identifier,
+                revision=2,
+                status='reviewing',
+            )
+            ecode, _o = b4.git_run_command(topdir, ['checkout', '-q', branch])
+            assert ecode == 0
+
+        def _mock_archive(
+            self_app: TrackingApp,
+            cid: str,
+            rev: Optional[int],
+            rbranch: str,
+            pw_series_id: Optional[int] = None,
+            notify: bool = True,
+        ) -> bool:
+            b4.git_run_command(gitdir, ['branch', '-D', rbranch])
+            aconn = tracking.get_db(self_app._identifier)
+            tracking.update_series_status(aconn, cid, 'archived', revision=rev)
+            aconn.close()
+            return True
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+                patch('b4.review.get_review_branch_patch_ids', return_value=[]),
+                patch(
+                    'b4.review.load_tracking',
+                    return_value=('', {'series': {}, 'patches': []}),
+                ),
+                patch('b4.review.reanchor_patch_comments'),
+                patch('b4.review.save_tracking_ref'),
+                patch.object(TrackingApp, '_archive_branch', _mock_archive),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    '[PATCH v2] update test',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        assert b4.git_branch_exists(gitdir, review_branch)
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+
+    @pytest.mark.asyncio
+    async def test_apply_failure_restores_original_branch(self, gitdir: str) -> None:
+        """A create that moves HEAD and then fails leaves nothing behind.
+
+        create_review_branch() reports failure by exiting rather than raising,
+        and SystemExit is not an Exception, so the handler has to catch it too
+        or the cleanup is skipped and the user is left standing on a half-built
+        upgrade branch.
+        """
+        identifier = 'test-update-failrestore'
+        change_id = 'update-failrestore-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
+
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+
+        lser = _make_mock_lser()
+
+        def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
+            """Move HEAD onto the new branch, then die the way the real one does."""
+            ecode, _o = b4.git_run_command(topdir, ['checkout', '-q', '-b', branch])
+            assert ecode == 0
+            raise SystemExit(1)
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch('b4.review.create_review_branch', side_effect=_fake_create),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    lser,
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
+        assert not b4.git_branch_exists(gitdir, upgrade_branch)
+        assert b4.git_branch_exists(gitdir, review_branch)
+
+    @pytest.mark.asyncio
+    async def test_abandoned_conflict_clears_a_leftover_branch(
+        self, gitdir: str
+    ) -> None:
+        """The upgrade branch name is derived from the series, so every
+        attempt at the same upgrade reuses it.  Backing out of the conflict
+        shell has to take an earlier attempt's leftover with it, or the next
+        attempt walks into create_review_branch() refusing the name."""
+        identifier = 'test-update-leftover'
+        change_id = 'update-leftover-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        upgrade_branch = f'b4/review/_tmp-{change_id}-v2-upgrade'
+
+        # An earlier attempt that ended somewhere without cleanup.
+        ecode, _out = b4.git_run_command(gitdir, ['branch', upgrade_branch])
+        assert ecode == 0
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch(
+                    'b4.git_fetch_am_into_repo',
+                    side_effect=b4.AmConflictError('/tmp/wt', 'conflict'),
+                ),
+                patch('b4.resolve_am_conflict_in_shell', return_value=False),
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    _make_mock_lser(),
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        assert not b4.git_branch_exists(gitdir, upgrade_branch)
+        # Backing out costs the upgrade, never the series being upgraded.
+        assert b4.git_branch_exists(gitdir, review_branch)
+
+    @pytest.mark.asyncio
     async def test_archive_failure_leaves_both_branches(self, gitdir: str) -> None:
         """If archiving fails, both branches are left for manual recovery."""
         identifier = 'test-update-archfail'
@@ -4103,6 +4539,110 @@ class TestUpdateRevisionWorkflow:
         # Both branches should exist — user can recover manually
         assert b4.git_branch_exists(gitdir, review_branch)
         assert b4.git_branch_exists(gitdir, upgrade_branch)
+
+
+class TestCheckoutFailure:
+    """A series that will not apply costs the series, not the session."""
+
+    @staticmethod
+    def _checkout(app: TrackingApp, dies: Any) -> None:
+        """Run _do_checkout with a create_review_branch that raises *dies*."""
+        series = {'change_id': 'checkout-fail', 'revision': 1, 'message_id': 'm@ex.com'}
+        with (
+            patch.object(
+                app, 'suspend', return_value=__import__('contextlib').nullcontext()
+            ),
+            patch('b4.review_tui._tracking_app._wait_for_enter'),
+            patch('b4.git_fetch_am_into_repo'),
+            patch('b4.review.create_review_branch', side_effect=dies),
+        ):
+            app._do_checkout(_make_mock_lser(revision=1), series, 'HEAD', b'mbox')
+
+    @pytest.mark.asyncio
+    async def test_the_exit_a_failed_create_reports_with_is_caught(
+        self, gitdir: str
+    ) -> None:
+        """create_review_branch() exits rather than raising, and SystemExit is
+        not an Exception, so it used to unwind through the suspend and out of
+        the key handler -- taking the session down over one series."""
+        app = TrackingApp('test-checkout-fail')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            self._checkout(app, SystemExit(1))
+            await pilot.pause()
+            assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_a_create_after_a_resolved_conflict_is_caught_too(
+        self, gitdir: str
+    ) -> None:
+        """The branch used to be created a second time from inside the
+        conflict handler, where the handler beside it cannot reach: an except
+        block is not covered by its own siblings."""
+        app = TrackingApp('test-checkout-conflict')
+        created: List[str] = []
+
+        def _die(topdir: str, branch: str, *a: Any, **kw: Any) -> None:
+            created.append(branch)
+            raise SystemExit(1)
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch(
+                    'b4.git_fetch_am_into_repo',
+                    side_effect=b4.AmConflictError('/tmp/wt', 'conflict'),
+                ),
+                patch('b4.resolve_am_conflict_in_shell', return_value=True),
+                patch('b4.review.create_review_branch', side_effect=_die),
+            ):
+                app._do_checkout(
+                    _make_mock_lser(revision=1),
+                    {'change_id': 'checkout-conflict', 'revision': 1},
+                    'HEAD',
+                    b'mbox',
+                )
+            await pilot.pause()
+            assert app.is_running
+        # The resolve leads into the one create, not a second copy of it.
+        assert created == ['b4/review/checkout-conflict']
+
+    @pytest.mark.asyncio
+    async def test_an_abandoned_conflict_creates_nothing(self, gitdir: str) -> None:
+        """Backing out of the conflict shell leaves the series untouched."""
+        app = TrackingApp('test-checkout-abandon')
+        created: List[str] = []
+
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(
+                    app, 'suspend', return_value=__import__('contextlib').nullcontext()
+                ),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch(
+                    'b4.git_fetch_am_into_repo',
+                    side_effect=b4.AmConflictError('/tmp/wt', 'conflict'),
+                ),
+                patch('b4.resolve_am_conflict_in_shell', return_value=False),
+                patch(
+                    'b4.review.create_review_branch',
+                    side_effect=lambda _t, b, *a, **k: created.append(b),
+                ),
+            ):
+                app._do_checkout(
+                    _make_mock_lser(revision=1),
+                    {'change_id': 'checkout-abandon', 'revision': 1},
+                    'HEAD',
+                    b'mbox',
+                )
+            await pilot.pause()
+            assert app.is_running
+        assert not created
 
 
 class TestLoadSeriesCaching:
@@ -4421,7 +4961,10 @@ class TestTakeThankArchiveChain:
     flow only when the take leaves the series fully accepted."""
 
     def _run_take_final(
-        self, take_status: Optional[str], thank_and_archive: bool
+        self,
+        take_status: Optional[str],
+        thank_and_archive: bool,
+        accept_series: bool = True,
     ) -> Tuple[List[Tuple[Dict[str, Any], bool]], List[str]]:
         """Drive _on_take_final with a mocked take returning *take_status*.
 
@@ -4434,9 +4977,9 @@ class TestTakeThankArchiveChain:
         notices: List[str] = []
         app = TrackingApp.__new__(TrackingApp)
         take_screen: Any = SimpleNamespace(
-            accept_series=True, thank_and_archive=thank_and_archive
+            accept_series=accept_series, thank_and_archive=thank_and_archive
         )
-        confirm_screen: Any = SimpleNamespace(accept_series=True)
+        confirm_screen: Any = SimpleNamespace(accept_series=accept_series)
         series = {'change_id': 'chain-1', 'subject': 'x', 'status': 'reviewing'}
         with (
             patch.object(TrackingApp, 'suspend', lambda self: contextlib.nullcontext()),
@@ -4484,15 +5027,111 @@ class TestTakeThankArchiveChain:
         assert not thanks
         assert any('partially applied' in n for n in notices)
 
-    def test_incomplete_take_does_not_chain(self) -> None:
+    def test_aborted_take_says_so(self) -> None:
+        """A take that never finished is reported as such, not as a series
+        the maintainer declined to accept."""
         thanks, notices = self._run_take_final(None, True)
         assert not thanks
+        assert any('take did not complete' in n for n in notices)
+
+    def test_unaccepted_take_does_not_chain(self) -> None:
+        thanks, notices = self._run_take_final(None, True, accept_series=False)
+        assert not thanks
         assert any('not marked accepted' in n for n in notices)
+
+    def test_unrecorded_take_says_so(self) -> None:
+        """The patches went in but the tracking data could not be read, so
+        there is no coverage to chain on -- and 'did not complete' would send
+        the maintainer looking for an apply that did happen."""
+        thanks, notices = self._run_take_final('unrecorded', True)
+        assert not thanks
+        assert any('was not recorded' in n for n in notices)
 
     def test_unchecked_box_never_chains(self) -> None:
         thanks, notices = self._run_take_final('accepted', False)
         assert not thanks
         assert not notices
+
+
+class TestSendThankMessage:
+    """Everything after a successful send is bookkeeping, and bookkeeping
+    must not be able to claim the send failed."""
+
+    def _send(
+        self, archive_raises: bool, dryrun: bool = False
+    ) -> Tuple[List[Tuple[str, str]], List[List[Any]]]:
+        """Drive _send_thank_message with a send that succeeds.
+
+        Returns (notifications as (message, severity), mark_outgoing_seen
+        calls).
+        """
+        import contextlib
+
+        notices: List[Tuple[str, str]] = []
+        seen_calls: List[List[Any]] = []
+        archived: List[str] = []
+        app = TrackingApp.__new__(TrackingApp)
+        app._email_dryrun = dryrun
+        app._patatt_sign = False
+        app._identifier = ''
+        msg = email.message.EmailMessage()
+        msg['Message-Id'] = '<thanks@example.com>'
+        series = {'change_id': 'send-1', 'revision': 1}
+
+        def _archive(self: Any, _series: Dict[str, Any]) -> None:
+            archived.append(str(_series.get('change_id', '')))
+            if archive_raises:
+                raise OSError(28, 'No space left on device')
+
+        with (
+            patch.object(TrackingApp, 'suspend', lambda self: contextlib.nullcontext()),
+            patch.object(TrackingApp, '_invalidate_caches', lambda self, cid: None),
+            patch.object(TrackingApp, '_load_series', lambda self: None),
+            patch.object(TrackingApp, '_archive_after_thanks', _archive),
+            patch.object(
+                TrackingApp,
+                'notify',
+                lambda self, message, severity='information', **k: notices.append(
+                    (str(message), severity)
+                ),
+            ),
+            patch('b4.get_smtp', return_value=(None, 'me@example.com')),
+            patch('b4.send_mail', return_value=0 if dryrun else 1),
+            patch(
+                'b4.review_tui._tracking_app.mark_outgoing_seen',
+                lambda msgs, dryrun=False: seen_calls.append(list(msgs)),
+            ),
+        ):
+            app._send_thank_message(msg, series, archive_after=True)
+        self.archived = archived
+        return notices, seen_calls
+
+    def test_marks_the_sent_message_seen(self) -> None:
+        """The thank-you is a reply into the series thread, so it comes back
+        from the list; recording it at send time keeps the badge dark."""
+        _notices, seen_calls = self._send(archive_raises=False)
+        assert len(seen_calls) == 1
+        assert seen_calls[0][0]['Message-Id'] == '<thanks@example.com>'
+
+    def test_failed_archive_is_not_a_send_failure(self) -> None:
+        """A broken archive must never read as 'Send failed': that tells the
+        maintainer to re-send a note that is already on the list."""
+        notices, _seen = self._send(archive_raises=True)
+        texts = [n for n, _sev in notices]
+        assert 'Thank-you message sent' in texts
+        assert not any('Send failed' in n for n in texts)
+        assert any('No space left on device' in n for n in texts)
+
+    def test_a_dry_run_is_not_recorded_as_thanked(self) -> None:
+        """--email-dry-run logs the note and stops there.  Marking the series
+        thanked -- and archiving it, which deletes the review branch -- would
+        spend a real series on a rehearsal."""
+        notices, seen = self._send(archive_raises=False, dryrun=True)
+        texts = [n for n, _sev in notices]
+        assert any('Dry-run' in n for n in texts)
+        assert not any('Thank-you message sent' in n for n in texts)
+        assert not seen
+        assert not self.archived
 
 
 # ---------------------------------------------------------------------------
@@ -4966,3 +5605,160 @@ class TestTestApplySubmoduleRecurse:
         screen = TakeConfirmScreen('linear', 'master', branch)
         ok, detail = screen._test_take()
         assert ok, f'take test-apply recursed: {detail}'
+
+
+class TestTrackingEntryBranchRestore:
+    """run_tracking_tui() puts the worktree back on the way out."""
+
+    def test_quitting_after_an_upgrade_restores_the_branch(self, gitdir: str) -> None:
+        """The tracking list has actions of its own that move HEAD.
+
+        Upgrading a series to a newer revision checks out an upgrade branch
+        and renames it onto the review branch.  Quitting from the list then
+        went straight out of the loop, past a restore that only ran after a
+        review pass, and left the worktree on the review branch.
+        """
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-restore-1'
+
+        class _MovesHeadThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                b4.git_run_command(gitdir, ['checkout', '-q', '-b', review_branch])
+                return None
+
+        with patch.object(_entry, 'TrackingApp', _MovesHeadThenQuits):
+            _entry.run_tracking_tui('test-entry-restore')
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
+
+    def test_quitting_after_an_upgrade_restores_a_detached_head(
+        self, gitdir: str
+    ) -> None:
+        """A session that started detached has a commit to go back to, and
+        putting the user on a branch instead is not restoring anything."""
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        start_sha = out.strip()
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-restore-detached'
+
+        class _MovesHeadThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                b4.git_run_command(gitdir, ['checkout', '-q', '-b', review_branch])
+                return None
+
+        with patch.object(_entry, 'TrackingApp', _MovesHeadThenQuits):
+            _entry.run_tracking_tui('test-entry-restore-detached')
+
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert out.strip() == start_sha
+
+    def test_a_failed_tracking_load_still_restores_the_branch(
+        self, gitdir: str
+    ) -> None:
+        """load_tracking() exits rather than raising on a branch carrying no
+        tracking commit, and SystemExit is not an Exception, so it sailed past
+        the status sync's guard and out of run_tracking_tui() -- taking the
+        branch restore with it."""
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-syncfail-1'
+        runs = {'n': 0}
+
+        class _ReviewsThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                runs['n'] += 1
+                if runs['n'] > 1:
+                    return None
+                b4.git_run_command(gitdir, ['checkout', '-q', '-b', review_branch])
+                return review_branch
+
+        with (
+            patch.object(_entry, 'TrackingApp', _ReviewsThenQuits),
+            patch.object(_entry, 'ReviewApp'),
+            patch.object(
+                b4.review,
+                '_prepare_review_session',
+                return_value={'series': {'revision': 1}},
+            ),
+            patch.object(b4.review, 'load_tracking', side_effect=SystemExit(1)),
+        ):
+            _entry.run_tracking_tui('test-entry-syncfail')
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
+
+    def test_a_failed_status_sync_closes_the_database(self, gitdir: str) -> None:
+        """The connection is opened inside the guard that swallows the
+        failure, so a write that raises used to skip the close and leave it
+        open for the rest of the session."""
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        review_branch = 'b4/review/entry-dbclose-1'
+        runs = {'n': 0}
+        closed: List[bool] = []
+
+        class _Conn:
+            def close(self) -> None:
+                closed.append(True)
+
+        class _ReviewsThenQuits:
+            PATCHWORK_SENTINEL = TrackingApp.PATCHWORK_SENTINEL
+
+            def __init__(
+                self, identifier: str, original_branch: Optional[str], **kw: Any
+            ) -> None:
+                pass
+
+            def run(self, mouse: bool = True) -> Optional[str]:
+                runs['n'] += 1
+                if runs['n'] > 1:
+                    return None
+                return review_branch
+
+        def _boom(*args: Any, **kwargs: Any) -> None:
+            raise sqlite3.OperationalError('database is locked')
+
+        with (
+            patch.object(_entry, 'TrackingApp', _ReviewsThenQuits),
+            patch.object(_entry, 'ReviewApp'),
+            patch.object(
+                b4.review,
+                '_prepare_review_session',
+                return_value={'series': {'revision': 1}},
+            ),
+            patch.object(
+                b4.review,
+                'load_tracking',
+                return_value=('', {'series': {'status': 'replied'}}),
+            ),
+            patch.object(tracking, 'get_db', return_value=_Conn()),
+            patch.object(tracking, 'update_series_status', side_effect=_boom),
+        ):
+            _entry.run_tracking_tui('test-entry-dbclose')
+
+        assert closed == [True]

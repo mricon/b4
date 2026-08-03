@@ -1,7 +1,7 @@
 import os
 import pathlib
 from email.message import EmailMessage
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from unittest import mock
 
 import pytest
@@ -124,7 +124,9 @@ def test_interactive_ty_review_drops_skipped(monkeypatch: pytest.MonkeyPatch) ->
         },
     ]
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         # Maintainer skips the pull request, keeps the patch series.
         text = bdata.decode('utf-8').replace('+ [GIT PULL]', 'x [GIT PULL]')
         return text.encode('utf-8')
@@ -158,13 +160,50 @@ def test_interactive_ty_review_keeps_all_when_pristine(
         },
     ]
 
-    def fake_edit(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
+    def fake_edit(
+        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
+    ) -> bytes:
         return bdata
 
     monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
 
     kept = b4.ty.interactive_ty_review(applied, None)
     assert kept == applied
+
+
+def test_interactive_ty_review_edits_in_the_named_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'b4 ty -g' names the tree the thank-yous belong to, so the editor runs
+    there: a repository-local core.editor is the one that applies, and the
+    scratch file lands inside that tree rather than wherever the process was
+    started from."""
+    applied: List[b4.ty.JsonDictT] = [
+        {
+            'subject': '[PATCH] Add frobnicator support',
+            'fromname': 'Foo Bar',
+            'fromemail': 'foo@example.com',
+            'sentdate': 'Mon, 1 Jan 2026 00:00:00 +0000',
+            'msgid': 'patch-1@example.com',
+            'trackfile': 'aaa.am',
+        },
+    ]
+    seen: List[Optional[str]] = []
+
+    def fake_edit(
+        bdata: bytes,
+        filehint: str = 'COMMIT_EDITMSG',
+        *,
+        topdir: Optional[str] = None,
+        guard_branch: bool = False,
+    ) -> bytes:
+        seen.append(topdir)
+        return bdata
+
+    monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
+
+    b4.ty.interactive_ty_review(applied, '/some/other/tree')
+    assert seen == ['/some/other/tree']
 
 
 def test_get_applied_info_picks_latest_and_lists_commits(
@@ -312,12 +351,16 @@ def test_commit_reachable_unknown_tips(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     """Advertised tips we have no objects for cannot prove anything, so
-    the check stays conservative (pending) until the next fetch."""
+    the answer is 'don't know' -- which keeps the message queued, but
+    reports a failed check rather than normal waiting."""
     local = str(tmp_path / 'local')
     pub = str(tmp_path / 'pub')
     other = str(tmp_path / 'other')
     _init_repo(local)
-    ecode, out = b4.git_run_command(None, ['init', '--bare', pub])
+    # -b master: the clone below takes its HEAD from this repository, and an
+    # init.defaultBranch of 'main' would leave it on an unborn branch, with
+    # the "advance the remote" commit landing as an unrelated root commit.
+    ecode, out = b4.git_run_command(None, ['init', '--bare', '-b', 'master', pub])
     assert ecode == 0, out
     monkeypatch.chdir(local)
     c1 = _commit_empty('c1')
@@ -334,7 +377,7 @@ def test_commit_reachable_unknown_tips(
     assert ecode == 0, out
     monkeypatch.chdir(local)
     # c1 is actually published, but the only advertised tip is unknown here
-    assert b4.ty.commit_reachable_on_remote(c1, pub) is False
+    assert b4.ty.commit_reachable_on_remote(c1, pub) is None
 
 
 def test_commit_reachable_branch_filter(
@@ -363,6 +406,34 @@ def test_commit_reachable_branch_filter(
     assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is True
     # Unadvertised branch (renamed/deleted): any head counts again
     assert b4.ty.commit_reachable_on_remote(c2, pub, branch='gone') is True
+
+
+def test_commit_reachable_uses_the_gitdir_it_is_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Ancestry is computed in the named repository, not the process cwd.
+
+    'b4 review cron' sweeps several projects from whatever directory the
+    scheduler happened to start it in, so the cwd is nobody's repository."""
+    local = str(tmp_path / 'local')
+    pub = str(tmp_path / 'pub')
+    elsewhere = str(tmp_path / 'elsewhere')
+    _init_repo(local)
+    _init_repo(elsewhere)
+    ecode, out = b4.git_run_command(None, ['init', '--bare', pub])
+    assert ecode == 0, out
+    monkeypatch.chdir(local)
+    c1 = _commit_empty('c1')
+    ecode, out = b4.git_run_command(None, ['push', pub, 'HEAD:refs/heads/master'])
+    assert ecode == 0, out
+
+    # An unrelated cwd knows none of the advertised tips, so on its own it
+    # cannot answer -- the objects live in 'local'.
+    monkeypatch.chdir(elsewhere)
+    assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is None
+    assert (
+        b4.ty.commit_reachable_on_remote(c1, pub, branch='master', gitdir=local) is True
+    )
 
 
 def test_get_check_repo_for_branch_priority(
@@ -504,7 +575,9 @@ def test_process_queue_passes_branch(
 
     calls: List[Tuple[str, str, str]] = []
 
-    def fake_reachable(commit: str, repo_url: str, branch: str = '') -> Optional[bool]:
+    def fake_reachable(
+        commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
+    ) -> Optional[bool]:
         calls.append((commit, repo_url, branch))
         return False
 
@@ -531,7 +604,9 @@ def test_process_queue_holds_unpublished(
 
     calls: List[Tuple[str, str]] = []
 
-    def fake_reachable(commit: str, repo_url: str, branch: str = '') -> Optional[bool]:
+    def fake_reachable(
+        commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
+    ) -> Optional[bool]:
         calls.append((commit, repo_url))
         return False
 
@@ -581,7 +656,9 @@ def test_process_queue_lock_held(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': False
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: False,
     )
     with b4.lockfile_nb(b4.ty._get_queue_lock_path()):
         with pytest.raises(b4.LockHeldError):
@@ -600,7 +677,9 @@ def test_process_queue_check_only(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
 
     def _no_send(dryrun: bool = False) -> Tuple[None, str]:
@@ -628,7 +707,9 @@ def test_process_queue_explicit_topdir(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
     outside = tmp_path / 'elsewhere'
     outside.mkdir()
@@ -666,7 +747,9 @@ def test_process_queue_finalizes_thanked(
 
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
     monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
     monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)
@@ -739,7 +822,9 @@ def _series_status(identifier: str, change_id: str = 'test-change-id') -> str:
 
 def _mock_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        b4.ty, 'commit_reachable_on_remote', lambda commit, repo_url, branch='': True
+        b4.ty,
+        'commit_reachable_on_remote',
+        lambda commit, repo_url, branch='', gitdir=None: True,
     )
     monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
     monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)

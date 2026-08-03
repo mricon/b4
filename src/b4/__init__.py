@@ -5283,6 +5283,23 @@ def git_get_current_branch(
     return mybranch
 
 
+def git_head_restore_args(gitdir: Optional[str] = None) -> List[str]:
+    """git-checkout args that put HEAD back where it is standing right now.
+
+    The branch name when HEAD is on one, the bare commit when it is not, so
+    that a caller which moves HEAD can undo that from a detached start too --
+    a branch name is not the only starting point worth going back to.  Empty
+    when HEAD cannot be read at all, e.g. on an unborn branch.
+    """
+    ecode, out = git_run_command(gitdir, ['symbolic-ref', '--short', 'HEAD'])
+    if ecode == 0:
+        return ['checkout', out.strip()]
+    ecode, out = git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    if ecode == 0:
+        return ['checkout', '--detach', out.strip()]
+    return []
+
+
 def get_excluded_addrs() -> Set[str]:
     config = get_main_config()
     excludes = set()
@@ -6209,12 +6226,42 @@ def _suspend_to_shell(
         subprocess.run([shell], env=env, cwd=cwd)
 
 
-def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
-    # To avoid losing the cover letter, ensure that we are still on the same
-    # branch as when the cover-letter was originally opened.
-    read_branch = git_get_current_branch()
+def edit_in_editor(
+    bdata: bytes,
+    filehint: str = 'COMMIT_EDITMSG',
+    *,
+    topdir: Optional[str] = None,
+    guard_branch: bool = False,
+) -> bytes:
+    """Open the user's editor on bdata and return what they saved.
 
-    corecfg = get_config_from_git(r'core\..*')
+    topdir is the working tree the edit belongs to: the scratch file is
+    created there, and it is the tree HEAD is read from.  It defaults to the
+    working tree of the current directory, which is only right for callers
+    that operate on the process cwd -- anything driving a specific worktree
+    (the TUIs) must pass it explicitly.
+
+    guard_branch opts into a collision check, and only callers that store
+    the result into whatever branch HEAD happens to point at may set it
+    (b4 prep keeps the cover letter in the current branch's tracking commit,
+    so a branch switch mid-edit would clobber an unrelated series).  HEAD is
+    read before and after the editor runs; if it moved, the text is saved to
+    a temporary file and RuntimeError is raised.
+
+    Callers that write to an explicit ref must leave it unset: HEAD is not
+    where their data lands, so refusing the edit would throw away the user's
+    work to prevent a collision that cannot happen.
+    """
+    if topdir is None:
+        topdir = git_get_toplevel()
+    # Read before the edit and compare after, both in topdir, so this can
+    # never end up comparing two different repositories' HEADs.  A detached
+    # HEAD reads as None and still guards: None is not a branch we started
+    # on, so checking one out mid-edit is caught like any other switch.
+    read_branch = git_get_current_branch(topdir) if guard_branch else None
+    # core.editor comes from the same tree as everything else here, so a
+    # repository-local setting is the one belonging to the edited branch.
+    corecfg = get_config_from_git(r'core\..*', gitdir=topdir)
     editor = (
         os.environ.get('GIT_EDITOR')
         or corecfg.get('editor')
@@ -6224,7 +6271,6 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
     )
     logger.debug('editor=%s', editor)
 
-    topdir = git_get_toplevel()
     if topdir is not None:
         p = Path(topdir)
     else:
@@ -6250,23 +6296,26 @@ def edit_in_editor(bdata: bytes, filehint: str = 'COMMIT_EDITMSG') -> bytes:
     # of the edited text expects unix endings, so canonicalize here.
     bdata = bdata.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
 
-    write_branch = git_get_current_branch()
-    if write_branch != read_branch:
-        with tempfile.NamedTemporaryFile(
-            mode='wb', prefix=f'old-{read_branch}'.replace('/', '-'), delete=False
-        ) as save_file:
-            save_file.write(bdata)
-            logger.critical(
-                'Editing started on branch %s, but current branch is %s.',
-                read_branch,
-                write_branch,
+    if guard_branch:
+        write_branch = git_get_current_branch(topdir)
+        if write_branch != read_branch:
+            with tempfile.NamedTemporaryFile(
+                mode='wb',
+                prefix=f'old-{read_branch}'.replace('/', '-'),
+                delete=False,
+            ) as save_file:
+                save_file.write(bdata)
+                logger.critical(
+                    'Editing started on branch %s, but current branch is %s.',
+                    read_branch,
+                    write_branch,
+                )
+                logger.critical(
+                    'To avoid a collision, your text was saved in %s', save_file.name
+                )
+            raise RuntimeError(
+                f'Branch changed during file editing, the temporary file was saved at {save_file.name}'
             )
-            logger.critical(
-                'To avoid a collision, your text was saved in %s', save_file.name
-            )
-        raise RuntimeError(
-            f'Branch changed during file editing, the temporary file was saved at {save_file.name}'
-        )
     return bdata
 
 

@@ -3,6 +3,7 @@ import email.message
 import importlib.util
 import json
 import logging
+import os
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from unittest import mock
 
@@ -4742,3 +4743,115 @@ class TestArchiveSeries:
         assert ok, detail
         assert not b4.git_branch_exists(repo, branch)
         assert self._db_status() == 'archived'
+
+    def test_unwritable_archive_is_reported_not_raised(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Archiving happens after a thank-you has gone out, so an I/O
+        failure must come back as (False, detail).  Raising here would be
+        caught upstream and shown as a send failure, telling the maintainer
+        to send a note that is already on the list."""
+        repo = self._make_repo(tmp_path)
+        branch = f'b4/review/{self.CHANGE_ID}'
+
+        def boom(*args: Any, **kwargs: Any) -> None:
+            raise OSError(28, 'No space left on device')
+
+        monkeypatch.setattr('b4.ez.write_to_tar', boom)
+        ok, detail = review.archive_series(repo, self.IDENTIFIER, self.CHANGE_ID, 1)
+        assert not ok
+        assert 'No space left on device' in detail
+        # Nothing was destroyed, so the maintainer can simply retry
+        assert b4.git_branch_exists(repo, branch)
+        assert self._db_status() == 'accepted'
+
+
+class TestCreateReviewBranchCleanup:
+    """A branch that cannot be finished is not left checked out."""
+
+    @staticmethod
+    def _seed_fetch_head(gitdir: str) -> Tuple[str, str]:
+        """Leave a commit for the cherry-pick to land, as FETCH_HEAD.
+
+        Returns (base, tip): the commit to build the review branch on, and
+        the one waiting in FETCH_HEAD.
+        """
+        ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        base = base.strip()
+
+        with open(os.path.join(gitdir, 'file1.txt'), 'a') as fh:
+            fh.write('review branch cleanup\n')
+        b4.git_run_command(gitdir, ['add', 'file1.txt'])
+        ecode, _out = b4.git_run_command(gitdir, ['commit', '-m', 'cleanup test'])
+        assert ecode == 0
+        ecode, tip = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        tip = tip.strip()
+        with open(os.path.join(gitdir, '.git', 'FETCH_HEAD'), 'w') as fh:
+            fh.write(f'{tip}\t\tbranch\n')
+        ecode, _out = b4.git_run_command(gitdir, ['reset', '--hard', base])
+        assert ecode == 0
+        return base, tip
+
+    @staticmethod
+    def _create_with_unreadable_range(gitdir: str, branch: str, base: str) -> None:
+        """Run create_review_branch() with the patch range failing to read."""
+        real_run = b4.git_run_command
+
+        def _fail_revlist(
+            topdir: Any, args: List[str], *a: Any, **kw: Any
+        ) -> Tuple[int, Union[str, bytes]]:
+            if args[:2] == ['rev-list', '--reverse']:
+                return 1, ''
+            return real_run(topdir, args, *a, **kw)
+
+        with mock.patch.object(b4, 'git_run_command', side_effect=_fail_revlist):
+            with pytest.raises(SystemExit):
+                review.create_review_branch(
+                    gitdir,
+                    branch,
+                    base,
+                    b4.LoreSeries(1, 1),
+                    'https://example.com/x',
+                    'https://example.com/%s',
+                )
+
+    def test_cleans_up_when_the_patch_range_cannot_be_read(self, gitdir: str) -> None:
+        """Everything between the checkout and the tracking commit runs with
+        HEAD already on the new branch.  Bailing out there without restoring
+        leaves the caller standing on a branch that was never finished, which
+        the two neighbouring failures below it already knew to avoid."""
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        base, _tip = self._seed_fetch_head(gitdir)
+
+        branch = 'b4/review/cleanup-test'
+        self._create_with_unreadable_range(gitdir, branch, base)
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
+        assert not b4.git_branch_exists(gitdir, branch)
+
+    def test_cleans_up_from_a_detached_head(self, gitdir: str) -> None:
+        """A detached HEAD has no branch name to go back to, and skipping the
+        restore on that account costs both halves of the cleanup: git refuses
+        to delete the branch HEAD is standing on, so the caller keeps the
+        stranding *and* the leftover.  The name comes from the change-id, so
+        the next attempt at that series then walks into 'already exists'.
+
+        Detached at the FETCH_HEAD tip rather than at the base, so restoring
+        to the base the branch was created at does not pass for remembering
+        where HEAD actually was.
+        """
+        base, tip = self._seed_fetch_head(gitdir)
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach', tip])
+        assert ecode == 0
+
+        branch = 'b4/review/cleanup-detached'
+        self._create_with_unreadable_range(gitdir, branch, base)
+
+        assert b4.git_get_current_branch(gitdir) is None
+        ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert head.strip() == tip
+        assert not b4.git_branch_exists(gitdir, branch)

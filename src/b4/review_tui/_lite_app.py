@@ -26,9 +26,11 @@ from b4.review_tui._common import (
     _quiet_worker,
     _write_diff_line,
     display_width,
+    mark_outgoing_seen,
     pad_display,
     resolve_styles,
     run_lore_worker,
+    suspend_and_edit,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
 
@@ -770,8 +772,9 @@ class LiteThreadScreen(ModalScreen[None]):
             quoted = '\n'.join(f'> {line}' for line in body.splitlines())
             editor_text = f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
 
-        with self.app.suspend():
-            result = b4.edit_in_editor(editor_text.encode(), filehint='reply.eml')
+        result = suspend_and_edit(self.app, editor_text.encode(), 'reply.eml')
+        if result is None:
+            return
         reply_text = result.decode(errors='replace')
         if reply_text == editor_text:
             self.app.notify('No changes made')
@@ -810,16 +813,18 @@ class LiteThreadScreen(ModalScreen[None]):
                     output_dir=None,
                     reflect=False,
                 )
-            if sent is None:
-                self.app.notify('Failed to send reply.', severity='error')
-            elif self._email_dryrun:
-                self.app.notify(f'Dry-run: reply to {lmsg.fromemail} logged, not sent')
-                self._mark_answered(node)
-            else:
-                self.app.notify(f'Reply sent to {lmsg.fromemail}')
-                self._mark_answered(node)
         except Exception as ex:
             self.app.notify(f'Send failed: {ex}', severity='error')
+            return
+        if sent is None:
+            self.app.notify('Failed to send reply.', severity='error')
+            return
+        if self._email_dryrun:
+            self.app.notify(f'Dry-run: reply to {lmsg.fromemail} logged, not sent')
+        else:
+            mark_outgoing_seen([msg])
+            self.app.notify(f'Reply sent to {lmsg.fromemail}')
+        self._mark_answered(node)
 
     def action_back(self) -> None:
         if self._thread_nodes:

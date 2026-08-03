@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         pad_display,
         resolve_styles,
         reviewer_colours,
+        suspend_and_edit,
     )
     from b4.tui._modals import (
         ActionItem,
@@ -68,6 +69,7 @@ __all__ = [
     'pad_display',
     'resolve_styles',
     'reviewer_colours',
+    'suspend_and_edit',
 ]
 
 _LAZY_ATTRS: dict[str, str] = {
@@ -91,6 +93,7 @@ _LAZY_ATTRS: dict[str, str] = {
     'pad_display': '_common',
     'resolve_styles': '_common',
     'reviewer_colours': '_common',
+    'suspend_and_edit': '_common',
     'ActionItem': '_modals',
     'ActionScreen': '_modals',
     'ConfirmScreen': '_modals',

@@ -58,10 +58,12 @@ from b4.review_tui._common import (
     _wait_for_enter,
     display_width,
     logger,
+    mark_outgoing_seen,
     notify_quit_hint,
     pad_display,
     resolve_styles,
     run_lore_worker,
+    suspend_and_edit,
 )
 from b4.review_tui._modals import (
     QUEUE_BUSY,
@@ -315,6 +317,59 @@ class _TakeWorktree:
     def keep(self) -> None:
         """Leave a throwaway worktree in place on exit (e.g. unfinished am)."""
         self._keep = True
+
+
+@contextlib.contextmanager
+def _keep_current_branch(topdir: str) -> Generator[Callable[[], None], None, None]:
+    """Put HEAD back where it was when the block started.
+
+    Tracking-list actions run with the UI suspended, and some of them check
+    out a branch of their own to get their work done. The list comes back up
+    when they return, so the branch they moved to must not outlive them: the
+    worktree is the user's, shared with their other terminals, and they never
+    asked to be moved. Restores however the block ends, including when the
+    action bails out early or something under it raises.
+
+    Yields the restore itself, for the callers that need to be off the branch
+    before the block ends -- deleting it, say, which git refuses while it is
+    checked out. Calling it early is safe: the one on the way out then has
+    nothing left to do.
+    """
+    start_head = b4.git_head_restore_args(topdir)
+
+    def restore() -> None:
+        if start_head and b4.git_head_restore_args(topdir) != start_head:
+            b4.git_run_command(topdir, start_head, logstderr=True)
+
+    try:
+        yield restore
+    finally:
+        restore()
+
+
+@contextlib.contextmanager
+def _land_off_deleted_branch(
+    topdir: str, branch: str, fallback: List[str]
+) -> Generator[None, None, None]:
+    """Land HEAD back on *fallback* if *branch* is deleted out from under it.
+
+    Deleting the branch HEAD is on means getting off it first, and git can
+    only be pointed at the parent commit: it does not know where the user
+    was before they came here. We do, so put them back where the session
+    started rather than leave the worktree detached at a commit for them to
+    find later.  *fallback* is git-checkout args, so a session that started
+    on a detached HEAD lands back on its own commit and not on this one.
+
+    Does nothing unless HEAD was on *branch* going in and is detached
+    coming out, which only the deletion can have done -- nothing in
+    between suspends the UI, so the user cannot have moved it themselves.
+    """
+    on_branch = b4.git_get_current_branch(topdir) == branch
+    try:
+        yield
+    finally:
+        if on_branch and fallback and b4.git_get_current_branch(topdir) is None:
+            b4.git_run_command(topdir, fallback, logstderr=True)
 
 
 @contextlib.contextmanager
@@ -891,10 +946,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         focus_change_id: Optional[str] = None,
         email_dryrun: bool = False,
         patatt_sign: bool = True,
+        original_head: Optional[List[str]] = None,
     ) -> None:
         super().__init__()
         self._identifier = identifier
         self._original_branch = original_branch
+        # Where to put HEAD back when an action detaches it.  A caller that
+        # only named a branch gets that branch back.
+        self._original_head: List[str] = original_head or (
+            ['checkout', original_branch] if original_branch else []
+        )
         self._focus_change_id = focus_change_id
         self._email_dryrun = email_dryrun
         self._patatt_sign = patatt_sign
@@ -1888,16 +1949,29 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                         )
 
             _is_rt = bool(series.get('is_rethreaded'))
+            # create_review_branch() reports failure by exiting rather than
+            # raising, and SystemExit is not an Exception, so catch it too --
+            # letting it out of here unwinds straight through the suspend and
+            # takes the session down over one series that would not apply.
             try:
                 logger.info('Base: %s', base_commit)
-                b4.git_fetch_am_into_repo(
-                    topdir,
-                    ambytes=ambytes,
-                    at_base=base_commit,
-                    origin=linkurl,
-                    am_flags=['-3'],
-                    resolve=True,
-                )
+                # Only the am can conflict, and it runs before anything is
+                # created, so the resolve belongs around it rather than around
+                # the whole block: creating the branch is then written once and
+                # covered by the handler below on both routes to it.
+                try:
+                    b4.git_fetch_am_into_repo(
+                        topdir,
+                        ambytes=ambytes,
+                        at_base=base_commit,
+                        origin=linkurl,
+                        am_flags=['-3'],
+                        resolve=True,
+                    )
+                except b4.AmConflictError as cex:
+                    if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
+                        _wait_for_enter()
+                        return
 
                 # Create the review branch
                 b4.review.create_review_branch(
@@ -1914,27 +1988,11 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 )
                 logger.info('Review branch created: %s', branch_name)
                 checkout_success = True
-            except b4.AmConflictError as cex:
-                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
-                    _wait_for_enter()
-                    return
-                # Create the review branch from resolved result
-                b4.review.create_review_branch(
-                    topdir,
-                    branch_name,
-                    base_commit,
-                    lser,
-                    linkurl,
-                    linkmask,
-                    num_prereqs=0,
-                    identifier=self._identifier,
-                    status='reviewing',
-                    is_rethreaded=_is_rt,
-                )
-                logger.info('Review branch created: %s', branch_name)
-                checkout_success = True
-            except Exception as ex:
-                logger.critical('Error creating review branch: %s', ex)
+            except (Exception, SystemExit) as ex:
+                # SystemExit only carries the exit code; create_review_branch()
+                # has already said why on its way out.
+                reason = 'see above' if isinstance(ex, SystemExit) else str(ex)
+                logger.critical('Error creating review branch: %s', reason)
                 _wait_for_enter()
 
         if not checkout_success:
@@ -2647,9 +2705,23 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     'Thank & archive skipped: series only partially applied',
                     severity='warning',
                 )
-            else:
+            elif new_status == 'unrecorded':
+                self.notify(
+                    'Thank & archive skipped: the take was not recorded',
+                    severity='warning',
+                )
+            elif not take_screen.accept_series:
                 self.notify(
                     'Thank & archive skipped: series not marked accepted',
+                    severity='warning',
+                )
+            else:
+                # _do_take_* returns None both for "accept was unchecked" and
+                # for "the take never finished"; only the latter is left here,
+                # and claiming a status the series never reached would send the
+                # maintainer looking for a take that did not happen.
+                self.notify(
+                    'Thank & archive skipped: take did not complete',
                     severity='warning',
                 )
 
@@ -2666,7 +2738,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         Computes patch coverage and returns the resulting series status:
         'accepted' if all patches are now taken, 'partial' if some remain,
-        or None if *accepted* is False (no status change requested).
+        'unrecorded' if the patches went in but the tracking data could not
+        be read, or None if *accepted* is False (no status change requested).
 
         Args:
             topdir: Repository top-level directory.
@@ -2679,8 +2752,10 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         try:
             cover_text, tracking = b4.review.load_tracking(topdir, review_branch)
         except SystemExit:
-            logger.warning('Could not load tracking data for recording take metadata')
-            return None
+            # The patches are applied; only the record of it is missing, which
+            # is a different thing from a take that never got this far.
+            logger.critical('Could not load tracking data for recording the take')
+            return 'unrecorded'
 
         series = tracking.get('series', {})
         take_info = {
@@ -2995,14 +3070,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> None:
         """Common post-take steps: record branch, update DB, update Patchwork.
 
-        *new_status* is the status computed by _record_take_metadata: 'accepted',
-        'partial', or None (when the user did not request a status change).
+        *new_status* is the status computed by _record_take_metadata:
+        'accepted', 'partial', 'unrecorded' (nothing was written to the
+        tracking commit, so there is no coverage to propagate), or None (when
+        the user did not request a status change).
         """
         common_dir = b4.git_get_common_dir(topdir)
         if common_dir:
             b4.review.tracking.record_take_branch(common_dir, target_branch)
 
-        if new_status and self._identifier and change_id:
+        if new_status in ('accepted', 'partial') and self._identifier and change_id:
             revision = series.get('revision')
             existing_target = None
             try:
@@ -3774,36 +3851,20 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> bool:
         """Delete a review branch, switching away if currently on it.
 
+        Thin TUI wrapper around b4.review.delete_review_branch() that turns
+        its error string into a notification.  Interactive, so detaching HEAD
+        to get off the branch is fine here -- as long as we do not leave it
+        that way.
+
         Returns True on success, False on failure.
         """
-        if b4.git_get_current_branch(topdir) == review_branch:
-            ecode, out = b4.git_run_command(
-                topdir, ['rev-parse', f'{review_branch}~1'], logstderr=True
+        with _land_off_deleted_branch(topdir, review_branch, self._original_head):
+            ok, err = b4.review.delete_review_branch(
+                topdir, review_branch, allow_switch=True
             )
-            if ecode > 0:
-                if notify:
-                    self.notify('Could not determine parent commit', severity='error')
-                return False
-            parent = out.strip()
-            ecode, out = b4.git_run_command(
-                topdir, ['checkout', parent], logstderr=True
-            )
-            if ecode > 0:
-                if notify:
-                    self.notify(
-                        f'Could not switch away from {review_branch}', severity='error'
-                    )
-                return False
-        ecode, out = b4.git_run_command(
-            topdir, ['branch', '-D', review_branch], logstderr=True
-        )
-        if ecode > 0:
-            if notify:
-                self.notify(
-                    f'Failed to delete branch {review_branch}', severity='error'
-                )
-            return False
-        return True
+        if not ok and notify:
+            self.notify(err, severity='error')
+        return ok
 
     def action_abandon(self) -> None:
         """Abandon the selected series."""
@@ -4256,13 +4317,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         upgrade_branch = f'b4/review/_tmp-{change_id}-v{target_rev}-upgrade'
 
-        with self.suspend():
-            topdir = b4.git_get_toplevel()
-            if not topdir:
-                logger.critical('Not in a git repository')
-                _wait_for_enter()
-                return
+        topdir = b4.git_get_toplevel()
+        if not topdir:
+            self.notify('Not in a git repository', severity='error')
+            return
 
+        # The apply below checks out the upgrade branch and renames it onto the
+        # review branch, so HEAD ends up there whether the upgrade succeeds or
+        # not. The tracking list comes back up when this returns; leaving the
+        # worktree moved strands the user on the review branch when they quit.
+        with self.suspend(), _keep_current_branch(topdir) as restore_branch:
             # --- 1. Save maintainer review data keyed by patch-id ---
             logger.info('Saving review data from v%d...', current_rev)
             patch_ids = b4.review.get_review_branch_patch_ids(topdir, review_branch)
@@ -4348,16 +4412,33 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             # Use the target revision's own rethread state, not the currently
             # tracked revision's — they can differ across an upgrade.
             _is_rt = bool(target_is_rethreaded)
+            # create_review_branch() reports failure by exiting rather than
+            # raising, and SystemExit is not an Exception, so catch it too --
+            # letting it out of here skips the cleanup below and unwinds
+            # straight through the suspend and into the UI.
             try:
                 logger.info('Base: %s', base_sha)
-                b4.git_fetch_am_into_repo(
-                    topdir,
-                    ambytes=ambytes,
-                    at_base=base_sha,
-                    origin=linkurl,
-                    am_flags=['-3'],
-                    resolve=True,
-                )
+                try:
+                    b4.git_fetch_am_into_repo(
+                        topdir,
+                        ambytes=ambytes,
+                        at_base=base_sha,
+                        origin=linkurl,
+                        am_flags=['-3'],
+                        resolve=True,
+                    )
+                except b4.AmConflictError as cex:
+                    if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
+                        # User aborted.  Nothing this run made is left -- the
+                        # upgrade branch is not created until the am lands --
+                        # but the name is derived from the change-id and the
+                        # revision, so an earlier attempt that ended somewhere
+                        # without cleanup left one sitting on it.  Take it with
+                        # us rather than let it fail the next attempt.
+                        if b4.git_branch_exists(topdir, upgrade_branch):
+                            b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
+                        _wait_for_enter()
+                        return
                 b4.review.create_review_branch(
                     topdir,
                     upgrade_branch,
@@ -4371,29 +4452,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     is_rethreaded=_is_rt,
                 )
                 logger.info('Upgrade branch created: %s', upgrade_branch)
-            except b4.AmConflictError as cex:
-                if not b4.resolve_am_conflict_in_shell(topdir, cex, origin=linkurl):
-                    # User aborted — clean up upgrade branch if it was
-                    # partially created before the conflict
-                    if b4.git_branch_exists(topdir, upgrade_branch):
-                        b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
-                    _wait_for_enter()
-                    return
-                b4.review.create_review_branch(
-                    topdir,
-                    upgrade_branch,
-                    base_sha,
-                    lser,
-                    linkurl,
-                    linkmask,
-                    num_prereqs=0,
-                    identifier=self._identifier,
-                    status='reviewing',
-                    is_rethreaded=_is_rt,
-                )
-                logger.info('Upgrade branch created: %s', upgrade_branch)
-            except Exception as ex:
-                logger.critical('Error creating review branch: %s', ex)
+            except (Exception, SystemExit) as ex:
+                # SystemExit only carries the exit code; create_review_branch()
+                # has already said why on its way out.
+                reason = 'see above' if isinstance(ex, SystemExit) else str(ex)
+                logger.critical('Error creating review branch: %s', reason)
+                # Off the half-built branch before dropping it: git refuses to
+                # delete the branch it has checked out.
+                restore_branch()
                 if b4.git_branch_exists(topdir, upgrade_branch):
                     b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])
                 _wait_for_enter()
@@ -4714,14 +4780,17 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 self.notify('Not in a git repository', severity='error')
             return False
 
-        ok, detail = b4.review.archive_series(
-            topdir,
-            self._identifier,
-            change_id,
-            revision=revision,
-            pw_series_id=pw_series_id,
-            allow_switch=True,
-        )
+        # Archiving deletes the branch, so it detaches HEAD to get off it the
+        # same way an outright delete does.
+        with _land_off_deleted_branch(topdir, review_branch, self._original_head):
+            ok, detail = b4.review.archive_series(
+                topdir,
+                self._identifier,
+                change_id,
+                revision=revision,
+                pw_series_id=pw_series_id,
+                allow_switch=True,
+            )
         if not ok:
             if notify:
                 self.notify(detail, severity='error')
@@ -4931,11 +5000,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> None:
         """Open the thank-you message in $EDITOR and re-show preview."""
         msg_bytes = msg.as_bytes(policy=b4.emlpolicy)
-        try:
-            with self.suspend():
-                edited = b4.edit_in_editor(msg_bytes, filehint='thanks.eml')
-        except Exception as ex:
-            self.notify(f'Editor error: {ex}', severity='error')
+        edited = suspend_and_edit(self, msg_bytes, 'thanks.eml')
+        if edited is None:
             return
         new_msg = email.parser.BytesParser(policy=b4.emlpolicy).parsebytes(edited)
         self._show_thank_preview(
@@ -5002,10 +5068,27 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     output_dir=None,
                     reflect=False,
                 )
-            if sent is None:
-                self.notify('Failed to send thank-you message', severity='error')
-                return
-            # Update status to thanked
+        except Exception as ex:
+            self.notify(f'Send failed: {ex}', severity='error')
+            return
+        if sent is None:
+            self.notify('Failed to send thank-you message', severity='error')
+            return
+        if self._email_dryrun:
+            # Nothing went out, so there is nothing to record.  Marking the
+            # series thanked here -- and archiving it, which deletes the
+            # review branch -- would spend a real series on a rehearsal.
+            self.notify('Dry-run: thank-you logged, not sent')
+            return
+        self.notify('Thank-you message sent')
+
+        # The message is out, so what follows is bookkeeping and gets its own
+        # handler.  Reporting a failed archive as 'Send failed' would tell the
+        # maintainer to send a note that is already on the list, and letting
+        # it escape would unwind out of the screen callback and take the rest
+        # of the session down over an already-successful send.
+        try:
+            mark_outgoing_seen([msg])
             change_id = series.get('change_id', '')
             revision = series.get('revision')
             if self._identifier and change_id:
@@ -5021,14 +5104,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 if topdir:
                     review_branch = f'b4/review/{change_id}'
                     b4.review.update_tracking_status(topdir, review_branch, 'thanked')
-            self.notify('Thank-you message sent')
             if archive_after:
                 self._archive_after_thanks(series)
             self._focus_change_id = change_id
             self._invalidate_caches(change_id)
             self._load_series()
         except Exception as ex:
-            self.notify(f'Send failed: {ex}', severity='error')
+            logger.debug('Post-send bookkeeping failed: %s', ex, exc_info=True)
+            self.notify(f'Sent, but recording it failed: {ex}', severity='warning')
 
     def _archive_after_thanks(self, series: Dict[str, Any]) -> None:
         """Archive a just-thanked series, unless a newer revision is known."""

@@ -44,8 +44,9 @@ def get_db() -> sqlite3.Connection:
     is_new = not os.path.exists(db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    # Both the TUI and 'b4 review cron' may write concurrently
-    conn.execute('PRAGMA busy_timeout = 5000')
+    # Both the TUI and 'b4 review cron' may write concurrently; same
+    # generous timeout the tracking database uses, for the same reason
+    conn.execute('PRAGMA busy_timeout = 15000')
     if is_new:
         conn.executescript(SCHEMA_SQL)
         conn.execute(
@@ -101,13 +102,11 @@ def set_flag(
 
 def set_flags_bulk(
     conn: sqlite3.Connection, entries: List[Dict[str, Optional[str]]], flag: str
-) -> int:
+) -> None:
     """Add *flag* to multiple messages in one transaction.
 
     Each entry in *entries* is ``{'msgid': ..., 'msg_date': ...}``.
-    Returns the number of messages that did not have *flag* before.
     """
-    newly_flagged = 0
     for entry in entries:
         msgid = entry.get('msgid', '')
         msg_date = entry.get('msg_date')
@@ -120,7 +119,7 @@ def set_flags_bulk(
             (msgid, msg_date, flag),
         )
         if cursor.rowcount > 0:
-            newly_flagged += 1
+            # Row created carrying exactly this flag; nothing to merge
             continue
         row = conn.execute(
             'SELECT flags FROM messages WHERE msgid = ?', (msgid,)
@@ -129,13 +128,11 @@ def set_flags_bulk(
             existing = set(row[0].split())
             if flag not in existing:
                 existing.add(flag)
-                newly_flagged += 1
                 conn.execute(
                     'UPDATE messages SET flags = ? WHERE msgid = ?',
                     (' '.join(sorted(existing)), msgid),
                 )
     conn.commit()
-    return newly_flagged
 
 
 def remove_flag(conn: sqlite3.Connection, msgid: str, flag: str) -> None:
