@@ -1190,13 +1190,14 @@ def fetch_fake_am_range(
             return None
 
         logger.info('Fetching v%d from lore...', rev)
-        msgs = b4.get_pi_thread_by_msgid(msgid)
-        if not msgs:
-            logger.critical('Could not retrieve thread for v%d', rev)
-            return None
+        with lore_request():
+            msgs = b4.get_pi_thread_by_msgid(msgid)
+            if not msgs:
+                logger.critical('Could not retrieve thread for v%d', rev)
+                return None
 
-        msgs = b4.mbox.get_extra_series(msgs, direction=1, wantvers=[rev])
-        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=[rev])
+            msgs = b4.mbox.get_extra_series(msgs, direction=1, wantvers=[rev])
+            msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=[rev])
 
     lmbx = b4.LoreMailbox()
     for msg in msgs:

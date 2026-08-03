@@ -912,3 +912,29 @@ class TestFilterRangeDiffForCommit:
             '    @@ Commit message\n'
             '    +more\n'
         )
+
+
+def test_fetch_fake_am_range_clears_stale_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared lore node's cancel flag is sticky; a fetch that does not
+    go through lore_request() inherits a stale cancel from a previously
+    aborted operation and dies with OperationCancelledError."""
+    from b4.review_tui._common import fetch_fake_am_range
+
+    events: List[str] = []
+    fake_node = mock.Mock()
+    fake_node.reset_cancel.side_effect = lambda: events.append('reset')
+    monkeypatch.setattr(b4, 'get_lore_node', lambda: fake_node)
+
+    def fake_fetch(msgid: str, **kw: Any) -> None:
+        events.append('fetch')
+        return None
+
+    monkeypatch.setattr(b4, 'get_pi_thread_by_msgid', fake_fetch)
+
+    revisions: List[Dict[str, Any]] = [
+        {'revision': 1, 'message_id': 'x@example.com', 'thread_blob': None}
+    ]
+    assert fetch_fake_am_range('/nonexistent', revisions, 1) is None
+    assert events == ['reset', 'fetch']
