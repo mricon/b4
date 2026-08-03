@@ -1013,6 +1013,12 @@ def _run_shazam_merge(
     with open(mmf, 'w') as mmh:
         mmh.write(body)
 
+    if not no_interactive and not sys.stdin.isatty():
+        # E.g. the mbox arrived via "-m -", so there is nobody to answer the
+        # confirmation prompt and no terminal for the editor
+        logger.debug('stdin is not a tty, not asking for confirmation')
+        no_interactive = True
+
     sp = shlex.shlex(merge_flags, posix=True)
     sp.whitespace_split = True
     if no_interactive:
@@ -1027,7 +1033,7 @@ def _run_shazam_merge(
             logger.info('Will exec: %s', ' '.join(mergecmd))
             try:
                 input('Press Enter to continue or Ctrl-C to abort')
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, EOFError):
                 logger.info('')
                 sys.exit(130)
         else:
