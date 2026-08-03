@@ -315,6 +315,24 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         self._reply_sent: bool = False
         self._hide_skipped: bool = False
         self._check_loading: Optional[CheckLoadingScreen] = None
+        self._has_other_revisions: bool = self._check_other_revisions()
+
+    def _check_other_revisions(self) -> bool:
+        """True when tracking knows revisions of this series besides ours."""
+        change_id = self._series.get('change-id', '')
+        if not change_id:
+            return False
+        identifier = b4.review.tracking.get_repo_identifier(self._topdir)
+        if not identifier or not b4.review.tracking.db_exists(identifier):
+            return False
+        try:
+            conn = b4.review.tracking.get_db(identifier)
+            revisions = b4.review.tracking.get_revisions(conn, change_id)
+            conn.close()
+        except Exception:
+            return False
+        current_rev = int(self._series.get('revision', 1))
+        return any(r['revision'] != current_rev for r in revisions)
 
     def _get_check_context(self) -> Optional[Tuple[str, str, str]]:
         message_id = self._series.get('header-info', {}).get('msgid', '')
@@ -1120,6 +1138,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             return not self._preview_mode
         if action == 'prior_review':
             if not self._series.get('prior-review-context'):
+                return False
+            return not self._preview_mode
+        if action == 'range_diff':
+            if not self._has_other_revisions:
                 return False
             return not self._preview_mode
         if action == 'check':

@@ -19,6 +19,7 @@ pytest.importorskip('textual')
 
 import b4
 import b4.review
+import b4.review.tracking
 from b4.review_tui._review_app import ReviewApp
 
 # ---------------------------------------------------------------------------
@@ -938,3 +939,59 @@ def test_fetch_fake_am_range_clears_stale_cancel(
     ]
     assert fetch_fake_am_range('/nonexistent', revisions, 1) is None
     assert events == ['reset', 'fetch']
+
+
+class TestRangeDiffBindingGate:
+    """The D binding only shows when other revisions are known."""
+
+    def _patch_tracking(
+        self, monkeypatch: pytest.MonkeyPatch, revisions: List[Dict[str, Any]]
+    ) -> None:
+        monkeypatch.setattr(
+            b4.review.tracking, 'get_repo_identifier', lambda topdir: 'test-project'
+        )
+        monkeypatch.setattr(b4.review.tracking, 'db_exists', lambda identifier: True)
+        monkeypatch.setattr(
+            b4.review.tracking, 'get_db', lambda identifier: mock.Mock()
+        )
+        monkeypatch.setattr(
+            b4.review.tracking,
+            'get_revisions',
+            lambda conn, change_id: revisions,
+        )
+
+    def test_hidden_without_tracking_db(self, gitdir: str) -> None:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'rdgate-nodb', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        app = ReviewApp(session)
+        assert app._has_other_revisions is False
+        assert app.check_action('range_diff', ()) is False
+
+    def test_hidden_when_only_own_revision_known(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'rdgate-solo', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        self._patch_tracking(monkeypatch, [{'revision': 1}])
+        app = ReviewApp(session)
+        assert app._has_other_revisions is False
+        assert app.check_action('range_diff', ()) is False
+
+    def test_shown_with_other_revision(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'rdgate-multi', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        self._patch_tracking(monkeypatch, [{'revision': 1}, {'revision': 2}])
+        app = ReviewApp(session)
+        assert app._has_other_revisions is True
+        assert app.check_action('range_diff', ()) is True
+        # Range-diff is a review-mode action; email mode hides it
+        app._preview_mode = True
+        assert app.check_action('range_diff', ()) is False
