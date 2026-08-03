@@ -63,6 +63,10 @@ v0.17
 		: correction when the consumer mis-groups — reuse absorb_series_as_revision()
 	[_] Versioned fingerprint scheme (e.g. "v1:sha256...") so patch-id normalization changes across b4 releases don't make old postings look new to a long-lived consumer
 	[_] `b4 review consume` — read one RFC822 message from stdin and ingest it (the korgalore pipe-target command); cursor/incremental fetch is korgalore's job, not b4's
+[_] `b4 prep` "file" cover letter strategy
+	: Chuck Lever, https://msgid.link/20260324152805.88424-1-cel@kernel.org
+	: Cover/changelog/recipients as plain files under .git/b4-prep/<change-id>/
+	: Patch exists but needs review and a rebase against current master
 
 v0.16
 -----
