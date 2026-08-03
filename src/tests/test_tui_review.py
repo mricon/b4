@@ -825,3 +825,90 @@ class TestSessionRestorePoint:
         session = b4.review._prepare_review_session(argparse.Namespace(branch=branch))
         assert session['original_branch'] is None
         assert session['original_head'] == ['checkout', '--detach', sha]
+
+
+# ---------------------------------------------------------------------------
+# filter_range_diff_for_commit
+# ---------------------------------------------------------------------------
+
+_RANGE_DIFF_SAMPLE = (
+    '1:  aaaa1111 = 1:  bbbb1111 first patch\n'
+    '2:  aaaa2222 ! 2:  bbbb2222 second patch\n'
+    '    @@ Commit message\n'
+    '    -old text\n'
+    '    +new text\n'
+    '3:  aaaa3333 < -:  -------- third patch (dropped)\n'
+    '-:  -------- > 3:  bbbb4444 fourth patch (added)\n'
+)
+
+
+class TestFilterRangeDiffForCommit:
+    def test_matches_right_side_block(self) -> None:
+        """Reviewing the newest revision: the current commit is on the right
+        side of the range-diff, and only its block should be returned."""
+        from b4.review_tui._common import filter_range_diff_for_commit
+
+        block = filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, 'bbbb2222' + 'f' * 32)
+        assert block == (
+            '2:  aaaa2222 ! 2:  bbbb2222 second patch\n'
+            '    @@ Commit message\n'
+            '    -old text\n'
+            '    +new text\n'
+        )
+
+    def test_matches_left_side_block(self) -> None:
+        """Comparing against a newer revision puts the current commit on the
+        left side; the block must still be found."""
+        from b4.review_tui._common import filter_range_diff_for_commit
+
+        block = filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, 'aaaa3333' + '0' * 32)
+        assert block == '3:  aaaa3333 < -:  -------- third patch (dropped)\n'
+
+    def test_dashes_never_match(self) -> None:
+        """Placeholder dashes on either side must not be treated as commits."""
+        from b4.review_tui._common import filter_range_diff_for_commit
+
+        assert filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, '--------') is None
+
+    def test_no_match_returns_none(self) -> None:
+        from b4.review_tui._common import filter_range_diff_for_commit
+
+        assert filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, 'cccc9999') is None
+
+    def test_ansi_colours_ignored_for_matching_but_preserved(self) -> None:
+        """git range-diff --color wraps the headers in ANSI sequences; they
+        must not confuse matching, and the block keeps its colours."""
+        from b4.review_tui._common import filter_range_diff_for_commit
+
+        coloured = (
+            '\x1b[33m1:  aaaa1111 = 1:  bbbb1111\x1b[m first patch\n'
+            '\x1b[33m2:  aaaa2222 ! 2:  bbbb2222\x1b[m second patch\n'
+            '    \x1b[36m@@ Commit message\x1b[m\n'
+            '    \x1b[31m-old text\x1b[m\n'
+            '    \x1b[32m+new text\x1b[m\n'
+        )
+        block = filter_range_diff_for_commit(coloured, 'bbbb2222' + 'f' * 32)
+        assert block == (
+            '\x1b[33m2:  aaaa2222 ! 2:  bbbb2222\x1b[m second patch\n'
+            '    \x1b[36m@@ Commit message\x1b[m\n'
+            '    \x1b[31m-old text\x1b[m\n'
+            '    \x1b[32m+new text\x1b[m\n'
+        )
+
+    def test_wide_series_padding(self) -> None:
+        """Counters are right-aligned in series with 10+ patches; padded
+        headers must still be recognized as block boundaries."""
+        from b4.review_tui._common import filter_range_diff_for_commit
+
+        output = (
+            ' 9:  aaaa9999 =  9:  bbbb9999 ninth patch\n'
+            '10:  aaaa0000 ! 10:  bbbb0000 tenth patch\n'
+            '    @@ Commit message\n'
+            '    +more\n'
+        )
+        block = filter_range_diff_for_commit(output, 'bbbb0000' + '0' * 32)
+        assert block == (
+            '10:  aaaa0000 ! 10:  bbbb0000 tenth patch\n'
+            '    @@ Commit message\n'
+            '    +more\n'
+        )

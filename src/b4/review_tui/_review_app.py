@@ -46,6 +46,8 @@ from b4.review_tui._common import (
     _write_comments,
     _write_followup_comments,
     _write_followup_trailers,
+    compute_range_diff,
+    filter_range_diff_for_commit,
     get_thread_msgs,
     logger,
     mark_outgoing_seen,
@@ -62,6 +64,7 @@ from b4.review_tui._modals import (
     HelpScreen,
     NoteScreen,
     PriorReviewScreen,
+    RangeDiffScreen,
     SendScreen,
     ToCcScreen,
     TrailerScreen,
@@ -243,6 +246,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         Binding('x', 'patch_skip', 'skip'),
         Binding('H', 'hide_skipped', 'hide skipped', key_display='H', show=False),
         Binding('P', 'prior_review', 'prior', key_display='P'),
+        Binding('D', 'range_diff', 'range-diff', key_display='D'),
         Binding('c', 'check', 'checks'),
         Binding('full_stop', 'next_comment', 'Next comment', show=False),
         Binding('comma', 'prev_comment', 'Prev comment', show=False),
@@ -1392,6 +1396,80 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self.notify('No prior review context available', severity='information')
             return
         self.push_screen(PriorReviewScreen(context))
+
+    def action_range_diff(self) -> None:
+        """Show range-diff for the current patch against another revision."""
+        change_id = self._series.get('change-id', '')
+        if not change_id:
+            self.notify('No change-id known for this series', severity='warning')
+            return
+        current_rev = int(self._series.get('revision', 1))
+
+        identifier = b4.review.tracking.get_repo_identifier(self._topdir)
+        if not identifier or not b4.review.tracking.db_exists(identifier):
+            self.notify('No tracking data for this repository', severity='warning')
+            return
+
+        try:
+            conn = b4.review.tracking.get_db(identifier)
+            revisions = b4.review.tracking.get_revisions(conn, change_id)
+            conn.close()
+        except Exception as ex:
+            self.notify(f'Could not load revisions: {ex}', severity='error')
+            return
+
+        others = [r for r in revisions if r['revision'] != current_rev]
+        if not others:
+            self.notify('No other known revisions of this series', severity='warning')
+            return
+
+        self.push_screen(
+            RangeDiffScreen(current_rev, revisions),
+            callback=lambda chosen: self._on_range_diff_selected(
+                chosen, identifier, change_id, current_rev
+            ),
+        )
+
+    def _on_range_diff_selected(
+        self,
+        chosen: Optional[int],
+        identifier: str,
+        change_id: str,
+        current_rev: int,
+    ) -> None:
+        """Compute the range-diff and page the current patch's slice of it."""
+        if chosen is None:
+            return
+        # Focus on the selected patch; the cover letter gets the full series
+        sha = ''
+        patch_idx = self._selected_idx - 1
+        if patch_idx >= 0 and patch_idx < len(self._commit_shas):
+            sha = self._commit_shas[patch_idx]
+
+        with self.suspend():
+            out = compute_range_diff(
+                self._topdir, identifier, change_id, current_rev, chosen
+            )
+            if out is None:
+                _wait_for_enter()
+                return
+            if not out:
+                logger.info(
+                    'No differences found between v%d and v%d',
+                    min(chosen, current_rev),
+                    max(chosen, current_rev),
+                )
+                _wait_for_enter()
+                return
+            if sha:
+                block = filter_range_diff_for_commit(out, sha)
+                if block is None:
+                    logger.info(
+                        'Current patch not found in range-diff, showing all patches'
+                    )
+                else:
+                    out = block
+            b4.view_in_pager(out.encode(), filehint='range-diff.txt')
 
     def action_edit_note(self) -> None:
         """View notes or jump straight to editor if none exist."""

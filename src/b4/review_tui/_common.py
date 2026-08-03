@@ -8,6 +8,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import email.message
 import json
 import os
+import re
 import tempfile
 from contextlib import contextmanager
 from typing import (
@@ -36,6 +37,7 @@ from textual.widgets import RichLog
 from textual.worker import Worker
 
 import b4
+import b4.mbox
 import b4.review
 import b4.review.tracking
 
@@ -1148,3 +1150,181 @@ def gather_attestation_info(lser: b4.LoreSeries) -> Dict[str, Any]:
         'apply_checked': apply_checked,
         'apply_mismatches': apply_mismatches,
     }
+
+
+def fetch_fake_am_range(
+    topdir: str,
+    revisions: List[Dict[str, Any]],
+    rev: int,
+) -> Optional[Tuple[str, str]]:
+    """Fetch a revision and create a fake-am commit range.
+
+    Tries the cached thread blob from the revisions table first,
+    falling back to a lore fetch if the blob is absent or GC'd.
+
+    Returns (range_start, range_end) on success, or None on failure.
+    """
+    msgs = None
+    msgid = ''
+
+    # Locate this revision's record
+    rev_record: Dict[str, Any] = {}
+    for r in revisions:
+        if r['revision'] == rev:
+            rev_record = r
+            break
+
+    # Try cached thread blob first (may be absent or GC'd — tolerate both)
+    blob_sha = rev_record.get('thread_blob') or ''
+    if blob_sha:
+        mbox_bytes = b4.review.tracking.get_thread_mbox(topdir, blob_sha)
+        if mbox_bytes:
+            logger.info('Using cached thread blob for v%d', rev)
+            msgs = b4.split_and_dedupe_pi_results(mbox_bytes)
+
+    # Fall back to lore fetch
+    if not msgs:
+        msgid = rev_record.get('message_id', '')
+        if not msgid:
+            logger.critical('No message-id recorded for v%d', rev)
+            return None
+
+        logger.info('Fetching v%d from lore...', rev)
+        msgs = b4.get_pi_thread_by_msgid(msgid)
+        if not msgs:
+            logger.critical('Could not retrieve thread for v%d', rev)
+            return None
+
+        msgs = b4.mbox.get_extra_series(msgs, direction=1, wantvers=[rev])
+        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=[rev])
+
+    lmbx = b4.LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+
+    lser = lmbx.get_series(rev, sloppytrailers=False, codereview_trailers=False)
+    if lser is None:
+        logger.critical('Could not find series v%d in retrieved messages', rev)
+        return None
+
+    logger.info('Preparing fake-am range for v%d...', rev)
+    start, end = lser.make_fake_am_range(gitdir=topdir)
+    if start is None or end is None:
+        logger.critical('Could not create fake-am range for v%d', rev)
+        return None
+
+    return start, end
+
+
+def compute_range_diff(
+    topdir: str,
+    identifier: str,
+    change_id: str,
+    current_rev: int,
+    other_rev: int,
+) -> Optional[str]:
+    """Compute range-diff output between two revisions of a series.
+
+    The current revision's range comes from the local review branch when
+    one exists, otherwise from a fake-am reconstruction; the other side
+    always comes from a fake-am reconstruction.
+
+    Returns the colourized range-diff output, an empty string when the
+    revisions do not differ, or None on failure (details already logged).
+    """
+    try:
+        conn = b4.review.tracking.get_db(identifier)
+        revisions = b4.review.tracking.get_revisions(conn, change_id)
+        conn.close()
+    except Exception as ex:
+        logger.critical('Could not load revisions: %s', ex)
+        return None
+
+    # --- Resolve the current revision range ---
+    # Use local review branch if available, otherwise fetch from lore
+    branch = f'b4/review/{change_id}'
+    cur_start: Optional[str] = None
+    cur_end: Optional[str] = None
+    if b4.git_branch_exists(topdir, branch):
+        try:
+            _cover_text, tracking = b4.review.load_tracking(topdir, branch)
+            t_series = tracking.get('series', {})
+            first_patch = t_series.get('first-patch-commit', '')
+            if first_patch:
+                cur_start = f'{first_patch}~1'
+            else:
+                cur_start = t_series.get('base-commit', '')
+            cur_end = f'{branch}~1'
+        except SystemExit:
+            pass
+
+    if not cur_start or not cur_end:
+        # No local branch — fetch from lore
+        result = fetch_fake_am_range(topdir, revisions, current_rev)
+        if result is None:
+            return None
+        cur_start, cur_end = result
+
+    # --- Fetch the other version (blob SHA comes from the revisions table) ---
+    result = fetch_fake_am_range(topdir, revisions, other_rev)
+    if result is None:
+        return None
+    other_start, other_end = result
+
+    # --- Order sides: older on left, newer on right ---
+    if other_rev < current_rev:
+        left_start, left_end = other_start, other_end
+        right_start, right_end = cur_start, cur_end
+    else:
+        left_start, left_end = cur_start, cur_end
+        right_start, right_end = other_start, other_end
+
+    logger.info('Running range-diff...')
+    gitargs = [
+        'range-diff',
+        '--color',
+        f'{left_start}..{left_end}',
+        f'{right_start}..{right_end}',
+    ]
+    ecode, out = b4.git_run_command(topdir, gitargs)
+    if ecode != 0:
+        logger.critical('git range-diff failed (exit %d)', ecode)
+        if out.strip():
+            logger.critical(out.strip())
+        return None
+
+    return out if out.strip() else ''
+
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+_RANGE_DIFF_PAIR_RE = re.compile(
+    r'^\s{0,4}(?:\d+|-):\s+(\S+)\s+([=!<>])\s+(?:\d+|-):\s+(\S+)'
+)
+
+
+def filter_range_diff_for_commit(output: str, commit_sha: str) -> Optional[str]:
+    """Extract the range-diff block mentioning commit_sha on either side.
+
+    A block is a commit-pair header line plus its indented diff-of-diff
+    lines. ANSI colour sequences are ignored for matching but preserved
+    in the returned block. Returns None when no block matches.
+    """
+    block: List[str] = []
+    found = False
+    for line in output.splitlines(keepends=True):
+        plain = _ANSI_RE.sub('', line)
+        m = _RANGE_DIFF_PAIR_RE.match(plain)
+        if m:
+            if found:
+                break
+            for sha in (m.group(1), m.group(3)):
+                if not sha.startswith('-') and commit_sha.startswith(sha):
+                    found = True
+                    block.append(line)
+                    break
+            continue
+        if found:
+            block.append(line)
+    if not found:
+        return None
+    return ''.join(block)
