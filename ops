@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":5,"timestamp":1785784548,"nonce":"hFqvMjvDsgqGlHtSBmxiSRMyjCQ=","added":["b4/shazam","rcadone","lifecycle:confirmed"],"removed":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1785785215,"nonce":"pmZdBnfaf83TIe+qUSmc7S1cBz0=","message":"Fixed on master by a68abea (\"shazam: fall back to non-interactive merge when stdin is not a tty\"), with regression coverage in b46ff38.","files":null}]}
