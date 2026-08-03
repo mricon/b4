@@ -1,4 +1,6 @@
+import io
 import os
+import sys
 from email.message import EmailMessage
 from typing import Any, Dict, List
 from unittest.mock import patch as mock_patch
@@ -80,6 +82,33 @@ def test_shazam(
         b4.mbox.main(cmdargs)
         assert e.value.code == 0
     out, logstr = b4.git_run_command(None, compareargs)
+    assert out == 0
+    with open(cfile, 'r') as fh:
+        cstr = fh.read()
+    assert logstr == cstr
+
+
+def test_shazam_merge_stdin_at_eof(
+    sampledir: str, gitdir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # bug bdb9c9b: with the mbox piped in, stdin is at EOF (and not a tty)
+    # by the time the -M merge confirmation prompt runs; shazam must fall
+    # back to non-interactive behaviour instead of dying with EOFError
+    mfile = os.path.join(sampledir, 'shazam-git1-just-series.mbox')
+    cfile = os.path.join(sampledir, 'shazam-git1-just-series-merged.verify')
+    assert os.path.exists(mfile)
+    assert os.path.exists(cfile)
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        ['--no-stdin', '--offline-mode', 'shazam', '-m', mfile, '-M']
+    )
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(''))
+    with pytest.raises(SystemExit) as e:
+        b4.mbox.main(cmdargs)
+    assert e.value.code == 0
+    out, logstr = b4.git_run_command(
+        None, ['log', '--format=%ae%n%ce%n%s%n%b---', 'HEAD^..']
+    )
     assert out == 0
     with open(cfile, 'r') as fh:
         cstr = fh.read()
