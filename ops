@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":4,"timestamp":1785785215,"nonce":"vA3mxWbuGjIEnITXoZbEbG2qnd4=","status":2}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":2,"timestamp":1785785223,"nonce":"vcihnV5kYJY4VhNbd5q9uDcDpj8=","title":"b4 shazam: -M merge prompt crashes with EOFError when mbox comes from stdin","was":"From: Matthias Beyer \u003cmail@beyermatthias.de\u003e"}]}
