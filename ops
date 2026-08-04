@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1785878329,"nonce":"h2IRWL9Nj2EsH5zpZa6J0UJANn4=","message":"Closing as working for 0.16: fix has been on master since 2026-07-27 with no further reports from the reporter. Please re-open if it resurfaces.","files":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":4,"timestamp":1785878329,"nonce":"KQWs0z5K96NfHsIWPgPpLFMbVqg=","status":2}]}
