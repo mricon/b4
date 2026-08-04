@@ -1,1 +1,1 @@
-{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":3,"timestamp":1785878329,"nonce":"DkTZzOcqgHpN9E39aY2PXMzdzDE=","message":"Closing as working for 0.16: fix (5ef3baa) has been on master since 2026-07-27 with no further reports from the reporter. Please re-open if it resurfaces.","files":null}]}
+{"author":{"id":"1e0a6ff3e01313072cf7b3803c158c22d01a37717237fe198e814e781752b172"},"ops":[{"type":4,"timestamp":1785878329,"nonce":"gBnbf2J1e3fHVGVOmMxKvZDOFt4=","status":2}]}
