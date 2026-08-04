@@ -22,6 +22,10 @@ v0.17
 		[_] Conflict policy selectable per workbook (skip-and-continue with auto-eject, or stop-at-first)
 		[_] Batch trailer selection applied across a workbook
 			: Louis Chauvet, https://msgid.link/24351d92-3f8c-412b-807d-ed7ee0b1ebf6@bootlin.com
+	[_] Custom analysis methodology for the review agent
+		: Juri Lelli, https://msgid.link/20260323-methodology-hook-v1-1-5c669c0c564f@redhat.com
+		: Separate maintainer-owned methodology from the b4-owned output contract
+		: Prefer a config knob over the RFC's .git/review-methodology.md probe
 	[_] Arbitrary labels on tracked review series
 		: Tag tracked review series with free-form labels to organize the tracking list
 		: New series_labels table keyed by change_id (survives revision upgrades)
