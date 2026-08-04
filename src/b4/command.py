@@ -1011,6 +1011,13 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Archive and remove prep-tracked branches and all associated sent/ tags',
     )
     spp_g.add_argument(
+        '--cleanup-older-than',
+        metavar='DAYS',
+        type=int,
+        default=None,
+        help='Archive and remove prep-tracked branches older than DAYS days',
+    )
+    spp_g.add_argument(
         '--claim',
         metavar='BRANCH',
         nargs='?',

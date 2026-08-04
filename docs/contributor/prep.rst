@@ -354,6 +354,16 @@ patches, cover letters, and tracking information from your series.
 Afterwards, b4 deletes the branch(es) and all related tags from your local
 repository.
 
+If prep-managed branches have piled up over time, you can select them by
+age instead of by name::
+
+    b4 prep --cleanup-older-than 180
+
+This finds every prep-managed branch whose latest commit is older than the
+given number of days, skipping the one you currently have checked out. Each
+matching branch is then archived and deleted through the same confirmation
+prompt as above, so nothing goes away without your say-so.
+
 .. _prep_flags:
 
 Prep command flags
@@ -521,6 +531,14 @@ modifying defaults for some of these flags.
   that series from the local repository.
 
   .. versionadded:: v0.13
+
+``--cleanup-older-than DAYS``
+  Same as ``--cleanup``, but picks the branches by age rather than by
+  name: every prep-managed branch whose latest commit is older than
+  DAYS days is archived and deleted, one confirmation prompt at a time.
+  The currently checked out branch is always left alone.
+
+  .. versionadded:: v0.16
 
 ``--claim [BRANCH]``
   Re-stamps the cover letter and every patch on a prep branch under

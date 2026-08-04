@@ -3625,6 +3625,46 @@ def _cleanup_branch(branch: str) -> None:
     logger.info('Wrote: %s', tarpath)
 
 
+def _get_branch_latest_commit_age_days(branch: str) -> Optional[float]:
+    """Return the age in days of the latest commit on *branch*, or None on error."""
+    lines = b4.git_get_command_lines(None, ['log', '-1', '--format=%ct', branch])
+    if not lines:
+        return None
+    try:
+        commit_ts = int(lines[0])
+    except ValueError:
+        return None
+    return (time.time() - commit_ts) / 86400
+
+
+def cleanup_older_than(older_than_days: int) -> None:
+    """Find prep-tracked branches whose latest commit exceeds *older_than_days* and clean them up.
+
+    The currently checked-out branch is always skipped.  Each matching
+    branch is passed to ``_cleanup_branch``, which prompts the user for
+    confirmation before archiving and deleting it.
+    """
+    mybranches = get_prep_managed_branches(None)
+    if not mybranches:
+        logger.info('No b4-tracked branches found')
+        sys.exit(0)
+
+    curbranch = b4.git_get_current_branch()
+    old_branches = []
+    for branch in mybranches:
+        if branch == curbranch:
+            logger.debug('Skipping currently checked out branch: %s', branch)
+            continue
+        age = _get_branch_latest_commit_age_days(branch)
+        if age is not None and age > older_than_days:
+            old_branches.append(branch)
+    if not old_branches:
+        logger.info('No branches older than %d days found', older_than_days)
+        return
+    for branch in old_branches:
+        _cleanup_branch(branch)
+
+
 def cleanup(branches: List[str]) -> None:
     if not branches:
         # Show all b4-tracked branches
@@ -4075,6 +4115,9 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
 
     if cmdargs.show_info:
         return show_info(cmdargs.show_info)
+
+    if cmdargs.cleanup_older_than is not None:
+        return cleanup_older_than(cmdargs.cleanup_older_than)
 
     if cmdargs.cleanup is not None:
         return cleanup(cmdargs.cleanup)
