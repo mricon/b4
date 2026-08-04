@@ -280,6 +280,10 @@ class TestMarkOutgoingSeen:
 class TestMarkOutgoingSeenHelper:
     """The TUI wrapper every send path funnels through."""
 
+    @pytest.fixture(autouse=True)
+    def _requires_tui(self) -> None:
+        pytest.importorskip('textual')
+
     @staticmethod
     def _make_msg(msgid: str) -> 'email.message.EmailMessage':
         msg = email.message.EmailMessage()
