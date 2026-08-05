@@ -1,10 +1,10 @@
 Release notes
 =============
 
-.. _release-unreleased:
+.. _release-0.16:
 
-Unreleased
-----------
+v0.16
+-----
 
 ``b4 bugs`` — bug tracking with git-bug (technology preview)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

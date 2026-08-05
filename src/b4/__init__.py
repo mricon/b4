@@ -76,7 +76,7 @@ qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 # global setting allowing us to turn off networking
 can_network: bool = True
 
-__VERSION__: str = '0.16-dev'
+__VERSION__: str = '0.16.0'
 PW_REST_API_VERSION = '1.2'
 
 
