@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+# >=77 is needed for the SPDX license expression and license-files (PEP 639)
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +9,8 @@ version = "0.16.0"
 description = "A tool to work with public-inbox and patch archives"
 readme = "README.rst"
 keywords = ["git", "public-inbox", "lore.kernel.org", "patch", "email", "workflow"]
-license = {file = "COPYING"}
+license = "GPL-2.0-or-later"
+license-files = ["COPYING"]
 authors = [
     {name = "Konstantin Ryabitsev", email="konstantin@linuxfoundation.org"},
 ]
@@ -17,7 +19,6 @@ classifiers = [
     "Environment :: Console",
     "Operating System :: POSIX :: Linux",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
     "Topic :: Communications :: Email",
     "Topic :: Software Development",
     "Topic :: Utilities",
