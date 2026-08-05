@@ -3901,9 +3901,11 @@ def get_config_from_git(
             chunks = key.split('.')
             cfgkey = chunks[-1].lower()
             if cfgkey in multivals:
-                if gitconfig.get(cfgkey) is None:
-                    gitconfig[cfgkey] = list()
-                gitconfig[cfgkey].append(value)
+                mval = gitconfig.get(cfgkey)
+                if not isinstance(mval, list):
+                    mval = list()
+                    gitconfig[cfgkey] = mval
+                mval.append(value)
             else:
                 gitconfig[cfgkey] = value
         except ValueError:

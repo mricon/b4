@@ -100,7 +100,12 @@ files = [
 extend-exclude = ["ezgb", "liblore", "patatt"]
 
 [tool.ruff.lint]
-extend-select = [
+# Explicit select (not extend-select): ruff 0.16 expanded the default rule
+# set, and we don't want upstream default changes to alter what we enforce.
+select = [
+    "E4",      # https://docs.astral.sh/ruff/rules/#error-e (imports)
+    "E7",      # https://docs.astral.sh/ruff/rules/#error-e (statements)
+    "E9",      # https://docs.astral.sh/ruff/rules/#error-e (runtime)
     "F",       # https://docs.astral.sh/ruff/rules/#pyflakes-f
     "B007",    # https://docs.astral.sh/ruff/rules/unused-loop-control-variable/
     "B904",    # https://docs.astral.sh/ruff/rules/raise-without-from-err/

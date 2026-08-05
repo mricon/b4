@@ -2879,19 +2879,21 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         if cmdargs.not_me_too or conf_me_too in {'no', 'n', 'false', '0'}:
             excludes.add(myemail)
 
-    tos = set()
-    ccs = set()
+    tos: Set[str] = set()
+    ccs: Set[str] = set()
     if cmdargs.preview_to:
         tos.update(cmdargs.preview_to)
     else:
         if cmdargs.to:
             tos.update(cmdargs.to)
-        if config.get('send-series-to'):
-            tos.add(config.get('send-series-to'))
+        sto = config.get('send-series-to')
+        if isinstance(sto, str) and sto:
+            tos.add(sto)
         if cmdargs.cc:
             ccs.update(cmdargs.cc)
-        if config.get('send-series-cc'):
-            ccs.add(config.get('send-series-cc'))
+        scc = config.get('send-series-cc')
+        if isinstance(scc, str) and scc:
+            ccs.add(scc)
     if ccs:
         for pair in email.utils.getaddresses(list(ccs)):
             if pair[1] in seen:
