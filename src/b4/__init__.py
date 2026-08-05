@@ -1531,6 +1531,7 @@ class LoreTrailer:
         'change-id',
         'base-commit',
         'based-on',
+        'supersedes',
     }
 
     def __init__(
@@ -1855,6 +1856,8 @@ class LoreMessage:
                     'subscribe',
                     'unsubscribe',
                     'base-commit',
+                    'based-on',
+                    'supersedes',
                     'change-id',
                     'message-id',
                 }
