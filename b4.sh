@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# PYTHON_ARGCOMPLETE_OK
 #
 # Run b4 from a git checkout.
 #

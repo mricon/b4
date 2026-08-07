@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2020 by the Linux Foundation
@@ -1331,6 +1332,12 @@ def setup_parser() -> argparse.ArgumentParser:
 
 def cmd() -> None:
     parser = setup_parser()
+    try:
+        import argcomplete
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
+
     cmdargs = parser.parse_args()
     logger.setLevel(logging.DEBUG)
 
