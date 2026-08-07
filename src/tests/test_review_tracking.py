@@ -4205,18 +4205,62 @@ class TestRetrieveSeriesMessagesRethreadSeam:
         }
 
         reassembled = [mock.Mock(), mock.Mock(), mock.Mock()]
+        forwarded_callback: list[Any] = []
+
+        def _fetch_rethread_messages(
+            msgids: list[str], nocache: bool = False, progress_cb: Any = None
+        ) -> tuple[list[str], list[Any]]:
+            assert nocache is True
+            forwarded_callback.append(progress_cb)
+            return msgids, reassembled
+
+        progress_cb = mock.Mock()
         with (
             mock.patch(
                 'b4.fetch_rethread_messages',
-                return_value=(['p1@q', 'p2@q', 'p3@q'], reassembled),
+                side_effect=_fetch_rethread_messages,
             ),
             mock.patch(
                 'b4.LoreSeries.rethread_series',
                 return_value=('p1@q', reassembled),
             ),
         ):
-            out = b4.review.retrieve_series_messages(series, 'rt-up-seam')
+            out = b4.review.retrieve_series_messages(
+                series, 'rt-up-seam', progress_cb=progress_cb
+            )
         assert out == reassembled
+        assert forwarded_callback == [progress_cb]
+
+    def test_normal_fetch_reports_single_step_progress(self) -> None:
+        """A normal single-thread fetch reports its start and completion."""
+        series = {
+            'change_id': 'cid',
+            'revision': 6,
+            'message_id': 'v6-root@example.com',
+            'is_rethreaded': False,
+        }
+        msgs = [mock.Mock()]
+        events: list[Any] = []
+
+        def _retrieve(message_id: str) -> list[Any]:
+            events.append(('fetch', message_id))
+            return msgs
+
+        with mock.patch('b4.review._review._retrieve_messages', side_effect=_retrieve):
+            out = b4.review.retrieve_series_messages(
+                series,
+                'rt-up-seam-normal',
+                progress_cb=lambda completed, total: events.append(
+                    ('progress', completed, total)
+                ),
+            )
+
+        assert out == msgs
+        assert events == [
+            ('progress', 0, 1),
+            ('fetch', 'v6-root@example.com'),
+            ('progress', 1, 1),
+        ]
 
 
 class TestRethreadFlagCarriedOnLink:

@@ -3806,6 +3806,98 @@ class TestUpdateRevisionWorkflow:
                 ).WorkerScreen,
             )
 
+    def test_fetch_worker_reports_progress(self, tmp_path: pathlib.Path) -> None:
+        """Fetching an upgrade should describe each potentially slow step."""
+        identifier = 'test-update-progress'
+        change_id = 'update-progress-1'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH v1] progress test',
+                    'status': 'reviewing',
+                    'message_id': 'v1@ex.com',
+                }
+            ],
+        )
+        conn = tracking.get_db(identifier)
+        tracking.add_revision(
+            conn,
+            change_id,
+            2,
+            'v2@ex.com',
+            subject='[PATCH v2] progress test',
+            is_rethreaded=True,
+        )
+        conn.close()
+
+        captured: Dict[str, Any] = {}
+        statuses: List[str] = []
+
+        def _retrieve(
+            series: Dict[str, Any],
+            project: str,
+            progress_cb: Optional[Callable[[int, int], None]] = None,
+        ) -> List[email.message.EmailMessage]:
+            captured['series'] = series
+            captured['project'] = project
+            captured['progress_cb'] = progress_cb
+            assert progress_cb is not None
+            progress_cb(0, 3)
+            progress_cb(1, 3)
+            progress_cb(3, 3)
+            return [email.message.EmailMessage()]
+
+        lser = _make_mock_lser(expected=3)
+        mock_patch = lser.patches[0]
+        assert mock_patch is not None
+        lser.patches = [None, mock_patch, mock_patch, mock_patch]
+        am_msgs = [email.message.EmailMessage() for _ in range(3)]
+
+        app = TrackingApp(identifier)
+        with (
+            patch.object(app, 'push_screen') as push_screen,
+            patch.object(
+                app,
+                'call_from_thread',
+                side_effect=lambda _update, status: statuses.append(status),
+            ),
+            patch(
+                'b4.review.retrieve_series_messages',
+                side_effect=_retrieve,
+            ),
+            patch('b4.review._get_lore_series', return_value=lser),
+            patch.object(lser, 'get_am_ready', return_value=am_msgs),
+            patch(
+                'b4.save_git_am_mbox',
+                side_effect=lambda _msgs, dest: dest.write(b'mbox'),
+            ),
+            patch('b4.git_get_toplevel', return_value='/repo'),
+            patch(
+                'b4.review_tui._tracking_app._detect_initial_base',
+                return_value=('base-sha', 'base hint'),
+            ),
+        ):
+            app._do_update_revision(change_id, 1, 2)
+            worker_screen = push_screen.call_args.args[0]
+
+            assert worker_screen._status == 'Fetching v2 from lore…'
+            result = worker_screen._fn()
+
+        assert captured['project'] == identifier
+        assert captured['series']['revision'] == 2
+        assert captured['series']['is_rethreaded'] is True
+        assert callable(captured['progress_cb'])
+        assert statuses == [
+            'Fetching patch threads 0/3…',
+            'Fetching patch threads 1/3…',
+            'Fetching patch threads 3/3…',
+            'Preparing 3 patches…',
+            'Finding base commit…',
+        ]
+        assert result[-1] == 3
+
     # --- Phase 2: _on_update_prepared (base selection screen) ------------
 
     @pytest.mark.asyncio

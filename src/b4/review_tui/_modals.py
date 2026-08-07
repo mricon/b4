@@ -1575,7 +1575,8 @@ class WorkerScreen(ModalScreen[Any]):
     """Generic modal that runs a callable in a worker thread.
 
     Shows a loading indicator while the callable runs.  Dismisses with
-    the return value on success or None on error/cancel.
+    the return value on success or None on error/cancel.  Pass *status* to
+    add a progress line that callers can refresh with :meth:`update_status`.
 
     Usage::
 
@@ -1609,17 +1610,28 @@ class WorkerScreen(ModalScreen[Any]):
         text-style: bold;
         margin-bottom: 1;
     }
+    #ws-status {
+        margin-bottom: 1;
+    }
     """
 
-    def __init__(self, title: str, fn: Any) -> None:
+    def __init__(self, title: str, fn: Any, status: str = '') -> None:
         super().__init__()
         self._title = title
         self._fn = fn
+        self._status = status
 
     def compose(self) -> ComposeResult:
         with Vertical(id='ws-dialog'):
             yield Static(self._title, id='ws-title', markup=False)
+            if self._status:
+                yield Static(self._status, id='ws-status', markup=False)
             yield LoadingIndicator()
+
+    def update_status(self, text: str) -> None:
+        """Update the optional progress text from the UI thread."""
+        if self.is_attached:
+            self.query_one('#ws-status', Static).update(text)
 
     def on_mount(self) -> None:
         # run_lore_worker() sheds any stale cancel flag before the fetch and

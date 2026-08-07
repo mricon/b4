@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import (
     Any,
     BinaryIO,
+    Callable,
     Dict,
     Generator,
     Iterator,
@@ -5545,28 +5546,38 @@ def discover_rethread_series(msgid: str, nocache: bool = False) -> List[str]:
 
 
 def fetch_rethread_messages(
-    msgids: List[str], nocache: bool = False
+    msgids: List[str],
+    nocache: bool = False,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> Tuple[List[str], List[EmailMessage]]:
     """Fetch messages for multiple msgids, deduplicating across threads.
 
     Returns (msgids, all_msgs) where msgids is the input list (for
     pipeline use) and all_msgs contains all fetched messages with
-    duplicates removed.
+    duplicates removed.  *progress_cb*, when provided, is called as
+    ``progress_cb(completed, total)`` before the first request and after
+    every message-id has been attempted.
     """
     all_msgs: List[EmailMessage] = []
     seen: Set[str] = set()
+    total = len(msgids)
 
-    for msgid in msgids:
+    if progress_cb is not None:
+        progress_cb(0, total)
+
+    for completed, msgid in enumerate(msgids, 1):
         logger.info('Retrieving series: %s', msgid)
         thread_msgs = get_pi_thread_by_msgid(msgid, nocache=nocache)
         if not thread_msgs:
             logger.warning('Could not retrieve %s, skipping', msgid)
-            continue
-        for msg in thread_msgs:
-            c_msgid = LoreMessage.get_clean_msgid(msg)
-            if c_msgid and c_msgid not in seen:
-                all_msgs.append(msg)
-                seen.add(c_msgid)
+        else:
+            for msg in thread_msgs:
+                c_msgid = LoreMessage.get_clean_msgid(msg)
+                if c_msgid and c_msgid not in seen:
+                    all_msgs.append(msg)
+                    seen.add(c_msgid)
+        if progress_cb is not None:
+            progress_cb(completed, total)
 
     if not all_msgs:
         raise LookupError('Could not retrieve any of the specified messages')

@@ -184,13 +184,17 @@ def _retrieve_messages(message_id: str) -> List[email.message.EmailMessage]:
 
 
 def retrieve_series_messages(
-    series: Dict[str, Any], identifier: str
+    series: Dict[str, Any],
+    identifier: str,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> List[email.message.EmailMessage]:
     """Fetch messages for a tracked series, using stored patch info when available.
 
     For rethreaded series, reads the series_patches table to fetch each
     patch individually and runs the rethread pipeline. For normal series,
-    falls back to the standard single-msgid retrieval.
+    falls back to the standard single-msgid retrieval.  *progress_cb*, when
+    provided, reports completed and total thread fetches; the normal path is
+    a single request, while rethreaded series can report each patch thread.
     """
     change_id = series.get('change_id', '')
     revision = series.get('revision')
@@ -205,7 +209,9 @@ def retrieve_series_messages(
         if patches:
             msgids = [p['message_id'] for p in patches if p['position'] > 0]
             if len(msgids) >= 2:
-                _msgids, all_msgs = b4.fetch_rethread_messages(msgids, nocache=True)
+                _msgids, all_msgs = b4.fetch_rethread_messages(
+                    msgids, nocache=True, progress_cb=progress_cb
+                )
                 _cover_msgid, msgs = b4.LoreSeries.rethread_series(msgids, all_msgs)
                 if not msgs:
                     raise LookupError(
@@ -215,7 +221,12 @@ def retrieve_series_messages(
 
     if not message_id:
         raise LookupError('No message-id for this series')
-    return _retrieve_messages(message_id)
+    if progress_cb is not None:
+        progress_cb(0, 1)
+    msgs = _retrieve_messages(message_id)
+    if progress_cb is not None:
+        progress_cb(1, 1)
+    return msgs
 
 
 def _get_lore_series(
