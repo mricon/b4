@@ -1263,6 +1263,23 @@ class TestWorkerScreen:
     """
 
     @pytest.mark.asyncio
+    async def test_status_line_can_be_updated(self) -> None:
+        """The optional status line is visible and can be refreshed."""
+        app = ModalTestApp()
+        screen = WorkerScreen('Working…', lambda: 'done', status='Fetching 0/2…')
+        with mock.patch('b4.review_tui._modals.run_lore_worker'):
+            async with app.run_test() as pilot:
+                app.push_screen(screen)
+                await pilot.pause()
+
+                status = screen.query_one('#ws-status', Static)
+                assert _static_text(status) == 'Fetching 0/2…'
+
+                screen.update_status('Fetching 1/2…')
+                await pilot.pause()
+                assert _static_text(status) == 'Fetching 1/2…'
+
+    @pytest.mark.asyncio
     async def test_on_mount_resets_cancel_flag(self) -> None:
         """A fetch must clear any stale cancel flag before it runs."""
         app = ModalTestApp()

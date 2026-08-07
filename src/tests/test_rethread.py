@@ -571,6 +571,41 @@ class TestDiscoverRethreadSeries:
 
 
 # ===========================================================================
+# fetch_rethread_messages progress tests
+# ===========================================================================
+class TestFetchRethreadMessagesProgress:
+    def test_reports_every_attempted_thread(self) -> None:
+        """Progress includes the initial state and failed thread fetches."""
+        p1 = _make_msg('p1@x', '[PATCH 1/2] First fix')
+        p3 = _make_msg('p3@x', '[PATCH 2/2] Second fix')
+        threads = {
+            'p1@x': [p1],
+            'missing@x': [],
+            'p3@x': [p3],
+        }
+        progress: List[Tuple[int, int]] = []
+
+        with mock.patch(
+            'b4.get_pi_thread_by_msgid',
+            side_effect=lambda msgid, **_kwargs: threads[msgid],
+        ):
+            returned_ids, msgs = b4.fetch_rethread_messages(
+                list(threads),
+                nocache=True,
+                progress_cb=lambda completed, total: progress.append(
+                    (completed, total)
+                ),
+            )
+
+        assert returned_ids == ['p1@x', 'missing@x', 'p3@x']
+        assert [b4.LoreMessage.get_clean_msgid(msg) for msg in msgs] == [
+            'p1@x',
+            'p3@x',
+        ]
+        assert progress == [(0, 3), (1, 3), (2, 3), (3, 3)]
+
+
+# ===========================================================================
 # Prefer a properly-threaded resend over stitched patches
 # (feature/rethread-upgrade-compose)
 #

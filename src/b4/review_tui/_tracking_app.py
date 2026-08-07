@@ -4069,6 +4069,17 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return
 
         # Phase 1: fetch series and compute base in a worker thread
+        worker_screen: WorkerScreen
+
+        def _set_fetch_status(status: str) -> None:
+            self.call_from_thread(worker_screen.update_status, status)
+
+        def _fetch_progress(completed: int, total: int) -> None:
+            if total > 1:
+                _set_fetch_status(
+                    f'Fetching patch threads {completed}/{total}\N{HORIZONTAL ELLIPSIS}'
+                )
+
         def _fetch_update() -> Tuple[b4.LoreSeries, bytes, str, str, int]:
             with _quiet_worker():
                 target_series = dict(self._selected_series or {})
@@ -4076,9 +4087,17 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 target_series['revision'] = target_rev
                 target_series['is_rethreaded'] = target_is_rethreaded
                 msgs = b4.review.retrieve_series_messages(
-                    target_series, self._identifier
+                    target_series,
+                    self._identifier,
+                    progress_cb=_fetch_progress,
                 )
                 lser = b4.review._get_lore_series(msgs)
+
+                patch_count = sum(patch is not None for patch in lser.patches[1:])
+                patch_label = 'patch' if patch_count == 1 else 'patches'
+                _set_fetch_status(
+                    f'Preparing {patch_count} {patch_label}\N{HORIZONTAL ELLIPSIS}'
+                )
 
                 am_msgs = lser.get_am_ready(
                     noaddtrailers=True,
@@ -4097,13 +4116,19 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 ambytes = ifh.getvalue()
 
                 # Determine best base: configured, series-specified or guessed
+                _set_fetch_status('Finding base commit\N{HORIZONTAL ELLIPSIS}')
                 topdir = b4.git_get_toplevel()
                 initial_base, base_hint = _detect_initial_base(lser, topdir)
 
                 return lser, ambytes, initial_base, base_hint, len(am_msgs)
 
+        worker_screen = WorkerScreen(
+            'Fetching new revision\u2026',
+            _fetch_update,
+            status=f'Fetching v{target_rev} from lore\u2026',
+        )
         self.push_screen(
-            WorkerScreen('Fetching new revision\u2026', _fetch_update),
+            worker_screen,
             callback=lambda result: self._on_update_prepared(
                 result,
                 change_id,
