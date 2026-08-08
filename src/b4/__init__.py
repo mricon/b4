@@ -2055,6 +2055,7 @@ class LoreMessage:
                     'base-commit',
                     'change-id',
                     'message-id',
+                    'signed-off-by',
                 }
                 if trailer.lname not in badtrailers:
                     trailer.lmsg = self
