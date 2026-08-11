@@ -614,6 +614,7 @@ class TestCmdTrack:
         fromname: str = 'Test Author',
         fromemail: str = 'author@example.com',
         subject: str = 'Test series',
+        all_patches_present: bool = False,
     ) -> mock.Mock:
         """Create a mock LoreSeries."""
         lser = mock.Mock()
@@ -629,7 +630,16 @@ class TestCmdTrack:
         # Set up patches list
         cover = self._make_mock_lore_message(cover_msgid) if has_cover else None
         patch1 = self._make_mock_lore_message(first_patch_msgid)
-        lser.patches = [cover, patch1, None, None]  # Cover + 3 patches (2 missing)
+        if all_patches_present:
+            lser.patches = [cover, patch1] + [
+                self._make_mock_lore_message(f'patch{at}@example.com')
+                for at in range(2, expected + 1)
+            ]
+        else:
+            lser.patches = [cover, patch1, None, None]  # Cover + 3 patches (2 missing)
+        # Mirror what LoreSeries.add_patch() derives, so callers that check
+        # completeness see something truthful instead of a truthy Mock.
+        lser.complete = None not in lser.patches[1:]
 
         return lser
 
@@ -707,6 +717,77 @@ class TestCmdTrack:
         assert change_id.startswith('20240115-')
         assert 'test-series' in change_id
         conn.close()
+
+    @mock.patch('b4.retrieve_messages')
+    @mock.patch('b4.LoreMailbox')
+    def test_track_warns_when_thread_incomplete(
+        self,
+        mock_mailbox_class: mock.Mock,
+        mock_retrieve: mock.Mock,
+        gitdir: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Verify a partial import is called out instead of looking successful."""
+        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='partial-test')
+        review_tracking.cmd_enroll(cmdargs_enroll)
+
+        mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
+
+        # Default mock series claims 3 patches but only carries patch 1.
+        mock_lser = self._make_mock_lore_series()
+        mock_mailbox = mock.Mock()
+        mock_mailbox.series = {1: mock_lser}
+        mock_mailbox.get_series.return_value = mock_lser
+        mock_mailbox_class.return_value = mock_mailbox
+
+        cmdargs = argparse.Namespace(
+            series_id='test-msgid@example.com',
+            identifier='partial-test',
+            msgid=None,
+            noparent=False,
+            wantname=None,
+            wantver=None,
+        )
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            review_tracking.cmd_track(cmdargs)
+
+        assert 'Thread incomplete' in caplog.text
+        assert 'missing 2 of 3 patches' in caplog.text
+        assert '2, 3' in caplog.text
+
+    @mock.patch('b4.retrieve_messages')
+    @mock.patch('b4.LoreMailbox')
+    def test_track_no_warning_when_thread_complete(
+        self,
+        mock_mailbox_class: mock.Mock,
+        mock_retrieve: mock.Mock,
+        gitdir: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Verify a full import stays quiet about completeness."""
+        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='full-test')
+        review_tracking.cmd_enroll(cmdargs_enroll)
+
+        mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
+
+        mock_lser = self._make_mock_lore_series(all_patches_present=True)
+        mock_mailbox = mock.Mock()
+        mock_mailbox.series = {1: mock_lser}
+        mock_mailbox.get_series.return_value = mock_lser
+        mock_mailbox_class.return_value = mock_mailbox
+
+        cmdargs = argparse.Namespace(
+            series_id='test-msgid@example.com',
+            identifier='full-test',
+            msgid=None,
+            noparent=False,
+            wantname=None,
+            wantver=None,
+        )
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            review_tracking.cmd_track(cmdargs)
+
+        assert 'Thread incomplete' not in caplog.text
 
     @mock.patch('b4.retrieve_messages')
     @mock.patch('b4.LoreMailbox')
