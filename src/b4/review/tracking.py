@@ -757,6 +757,20 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     if len(lmbx.series) > 1:
         versions = ', '.join(f'v{v}' for v in sorted(lmbx.series.keys()))
         logger.info('  Known revisions: %s', versions)
+    # The count above is what the series says it should contain, so say so
+    # loudly when we actually got less than that -- a silent partial import
+    # looks identical to a successful one.
+    if not lser.complete:
+        missing = [
+            str(at) for at, patch in enumerate(lser.patches) if at > 0 and patch is None
+        ]
+        logger.critical('---')
+        logger.critical(
+            'WARNING: Thread incomplete, missing %d of %d patches: %s',
+            len(missing),
+            num_patches,
+            ', '.join(missing),
+        )
 
 
 def cmd_forget(cmdargs: argparse.Namespace) -> None:
