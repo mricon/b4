@@ -6,7 +6,9 @@ import email.utils
 import io
 import os
 import pathlib
+import smtplib
 import socket
+import sys
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 import pytest
@@ -1346,6 +1348,177 @@ class TestSendemailLocalcmd:
         smtp, fromaddr = b4.get_smtp()
         assert smtp == ['/usr/bin/msmtp', '-i']
         assert fromaddr == 'Alice Developer <alice@example.org>'
+
+
+def _plain_msg(subject: str) -> email.message.EmailMessage:
+    msg = email.message.EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = 'alice@example.org'
+    msg['To'] = 'bob@example.org'
+    msg.set_content('body')
+    return msg
+
+
+class _FakeSMTP:
+    """Just enough of smtplib.SMTP to satisfy send_mail()."""
+
+    def __init__(self, log: List[str]) -> None:
+        self._log = log
+
+    def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
+        self._log.append('send')
+
+
+class TestSignBeforeConnect:
+    """Signing must finish before we open the SMTP connection.
+
+    patatt shells out to gpg for PGP keys, which can block indefinitely on a
+    pinentry passphrase prompt.  Connecting first holds an idle socket open for
+    the duration and makes a stuck signature look like a stuck network.
+    """
+
+    def test_get_smtp_does_not_connect(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """get_smtp() hands back a connector without touching the network."""
+        monkeypatch.setattr(
+            b4,
+            'SENDEMAIL_CONFIG',
+            {
+                'smtpserver': 'smtp.example.org',
+                'smtpserverport': '465',
+                'smtpencryption': 'ssl',
+                'smtpauth': 'none',
+                'from': 'alice@example.org',
+            },
+        )
+
+        monkeypatch.setattr(b4, 'get_main_config', dict)
+
+        def _boom(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError('get_smtp() must not connect')
+
+        monkeypatch.setattr(smtplib, 'SMTP_SSL', _boom)
+        monkeypatch.setattr(smtplib, 'SMTP', _boom)
+
+        smtp, fromaddr = b4.get_smtp()
+        assert isinstance(smtp, b4.SMTPConnector)
+        assert fromaddr == 'alice@example.org'
+
+    def test_signing_happens_before_connect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: List[str] = list()
+
+        class _FakePatatt:
+            NoKeyError = type('NoKeyError', (Exception,), {})
+            SigningError = type('SigningError', (Exception,), {})
+
+            @staticmethod
+            def rfc2822_sign(bdata: bytes) -> bytes:
+                calls.append('sign')
+                return bdata
+
+        monkeypatch.setitem(sys.modules, 'patatt', _FakePatatt)
+
+        def _connect() -> Any:
+            calls.append('connect')
+            return _FakeSMTP(calls)
+
+        conn = b4.SMTPConnector(_connect)
+        sent = b4.send_mail(
+            conn,
+            [_plain_msg('one'), _plain_msg('two')],
+            fromaddr='alice@example.org',
+            patatt_sign=True,
+        )
+        assert sent == 2
+        # Both signatures land before the connection is made
+        assert calls == ['sign', 'sign', 'connect', 'send', 'send']
+
+    def test_connector_is_reused(self) -> None:
+        """b4 ty sends one message per send_mail() call, in a loop."""
+        calls: List[str] = list()
+
+        def _connect() -> Any:
+            calls.append('connect')
+            return _FakeSMTP(calls)
+
+        conn = b4.SMTPConnector(_connect)
+        for num in range(3):
+            b4.send_mail(conn, [_plain_msg(f'msg {num}')], fromaddr='alice@example.org')
+        assert calls.count('connect') == 1
+        assert calls.count('send') == 3
+
+    def test_connect_failure_is_runtimeerror(self) -> None:
+        """Callers catch RuntimeError to report a broken smtp setup."""
+
+        def _connect() -> Any:
+            raise smtplib.SMTPException('server unreachable')
+
+        conn = b4.SMTPConnector(_connect)
+        with pytest.raises(RuntimeError, match='server unreachable'):
+            b4.send_mail(conn, [_plain_msg('one')], fromaddr='alice@example.org')
+
+    def _capture_timeout(
+        self, monkeypatch: pytest.MonkeyPatch, timeout_cfg: Optional[str]
+    ) -> Any:
+        """Connect through get_smtp() and report the timeout it asked for."""
+        sendemail: Dict[str, Any] = {
+            'smtpserver': 'smtp.example.org',
+            'smtpserverport': '465',
+            'smtpencryption': 'ssl',
+            'smtpauth': 'none',
+            'from': 'alice@example.org',
+        }
+        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', sendemail)
+        main: Dict[str, Any] = dict()
+        if timeout_cfg is not None:
+            main['smtp-timeout'] = timeout_cfg
+        monkeypatch.setattr(b4, 'get_main_config', lambda: main)
+
+        seen: Dict[str, Any] = dict()
+
+        def _fake_ssl(host: str, port: int, timeout: Any = None) -> Any:
+            seen['timeout'] = timeout
+            return _FakeSMTP(list())
+
+        monkeypatch.setattr(smtplib, 'SMTP_SSL', _fake_ssl)
+        smtp, _fromaddr = b4.get_smtp()
+        assert isinstance(smtp, b4.SMTPConnector)
+        smtp()
+        return seen['timeout']
+
+    def test_default_timeout_matches_git(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """git-send-email gets 120s from Net::SMTP; b4 should not wait forever."""
+        assert self._capture_timeout(monkeypatch, None) == 120.0
+
+    def test_timeout_is_configurable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert self._capture_timeout(monkeypatch, '30') == 30.0
+
+    def test_zero_timeout_means_wait_forever(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """0 must omit the argument, not pass a non-blocking zero through."""
+        assert self._capture_timeout(monkeypatch, '0') is None
+
+    def test_bad_timeout_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            b4,
+            'SENDEMAIL_CONFIG',
+            {'smtpserver': 'smtp.example.org', 'from': 'alice@example.org'},
+        )
+        monkeypatch.setattr(b4, 'get_main_config', lambda: {'smtp-timeout': 'soon'})
+        with pytest.raises(smtplib.SMTPException, match='smtp-timeout'):
+            b4.get_smtp()
+
+    def test_dryrun_never_connects(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            b4,
+            'SENDEMAIL_CONFIG',
+            {'smtpserver': 'smtp.example.org', 'from': 'alice@example.org'},
+        )
+        monkeypatch.setattr(b4, 'get_main_config', dict)
+        smtp, _fromaddr = b4.get_smtp(dryrun=True)
+        assert smtp is None
 
 
 def _fake_editor(tmp_path: pathlib.Path, body: str) -> str:
