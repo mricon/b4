@@ -1,0 +1,62 @@
+From foo@z Thu Jan  1 00:00:00 1970
+From: Francis Laniel <laniel_francis@privacyrequired.com>
+Subject: [PATCH] rust: pwm: replace core::mem::zeroed with pin_init::zeroed
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <orig-message@example.com>
+
+Suggested-by: Benno Lossin <lossin@kernel.org>
+Link: https://github.com/Rust-for-Linux/linux/issues/1189
+Reviewed-by: Alexandre Courbot <acourbot@nvidia.com>
+Acked-by: Michal Wilczynski <m.wilczynski@samsung.com>
+Signed-off-by: Francis Laniel <laniel_francis@privacyrequired.com>
+---
+
+diff --git a/b4/junk.py b/b4/junk.py
+index 12345678..23456789 100644
+--- a/b4/junk.py
++++ b/b4/junk.py
+@@@ -1,1 +1,1 @@ def junk():
+
+
+-junk1
++junk2
+
+
+--
+2.wong.fu
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Miguel Ojeda <miguel.ojeda.sandonis@gmail.com>
+Subject: Re: [PATCH] rust: pwm: replace core::mem::zeroed with pin_init::zeroed
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <fwup-message-1@example.com>
+In-Reply-To: <orig-message@example.com>
+References: <orig-message@example.com>
+
+I would suggest this ordering:
+
+    Suggested-by: Benno Lossin <lossin@kernel.org>
+    Link: https://github.com/Rust-for-Linux/linux/issues/1189
+    Reviewed-by: Alexandre Courbot <acourbot@nvidia.com>
+    Acked-by: Michal Wilczynski <m.wilczynski@samsung.com>
+    Signed-off-by: Francis Laniel <laniel_francis@privacyrequired.com>
+
+Cheers,
+Miguel
+
+--
+My sig
+
+From foo@z Thu Jan  1 00:00:00 1970
+From: Mismatched Reviewer <mismatched-reviewer1@example.net>
+Subject: Re: [PATCH] rust: pwm: replace core::mem::zeroed with pin_init::zeroed
+Date: Tue, 30 Aug 2022 11:19:07 -0400
+Message-Id: <fwup-message-2@example.com>
+In-Reply-To: <orig-message@example.com>
+References: <orig-message@example.com>
+
+Tested-by: Someone Else <someone-else@example.com>
+
+--
+My sig
+

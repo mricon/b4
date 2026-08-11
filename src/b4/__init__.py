@@ -495,7 +495,15 @@ class LoreMailbox:
                 continue
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
+            own_trailers: List[LoreTrailer] = list()
+            if pmsg.has_diff:
+                _, _, own_trailers, _, _ = LoreMessage.get_body_parts(pmsg.body)
             for ltr in mismatches:
+                if ltr in own_trailers:
+                    # Already on the patch itself, so it's not new
+                    # information from fmsg -- not a real mismatch.
+                    logger.debug('  mismatch already exists on the patch, ignoring')
+                    continue
                 lser.trailer_mismatches.add(
                     (ltr.name, ltr.value, fmsg.fromname, fmsg.fromemail)
                 )
@@ -544,6 +552,7 @@ class LoreMailbox:
             logger.debug(
                 '  matching patch_id %s from: %s', lmsg.git_patch_id, lmsg.full_subject
             )
+            _, _, own_trailers, _, _ = LoreMessage.get_body_parts(lmsg.body)
             for fmsg in self.trailer_map.get(lmsg.git_patch_id, ()):
                 logger.debug('  matched: %s', fmsg.msgid)
                 fltrs, fmis = fmsg.get_trailers(sloppy=sloppytrailers)
@@ -563,6 +572,9 @@ class LoreMailbox:
                         logger.debug('      via: %s', fltr.lmsg.msgid)
                     lmsg.followup_trailers.append(fltr)
                 for fltr in fmis:
+                    if fltr in own_trailers:
+                        logger.debug('  mismatch already exists on the patch, ignoring')
+                        continue
                     lser.trailer_mismatches.add(
                         (fltr.name, fltr.value, fmsg.fromname, fmsg.fromemail)
                     )

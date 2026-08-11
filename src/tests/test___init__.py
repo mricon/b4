@@ -249,6 +249,27 @@ def test_fixes_trailer_format_validation(
     assert fixes == expected_fixes_values
 
 
+def test_mismatched_trailer_already_on_patch_is_not_flagged(
+    sampledir: str,
+) -> None:
+    # A follow-up message can restate a trailer the patch already carries
+    # (e.g. while quoting it for context, or suggesting a different order).
+    # Since it's already on the patch, restating it isn't new information
+    # from the replier, so it must not be flagged as a from/email mismatch
+    # just because the replier isn't the trailer's original author.  A
+    # genuinely new trailer from an unrelated address (the Mismatched
+    # Reviewer message) must still be flagged.
+    lmbx = b4.LoreMailbox()
+    for msg in b4.get_msgs_from_mailbox_or_maildir(
+        f'{sampledir}/trailers-followup-already-present.mbox'
+    ):
+        lmbx.add_message(msg)
+    lser = lmbx.get_series()
+    assert lser is not None
+    mismatched_names = {tname for tname, _, _, _ in lser.trailer_mismatches}
+    assert mismatched_names == {'Tested-by'}
+
+
 @pytest.mark.parametrize(
     'name,value,exp_type,exp_addr,exp_value',
     [
