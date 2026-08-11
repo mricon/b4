@@ -710,7 +710,14 @@ def send_messages(
             logger.info(
                 '  Sending: %s', b4.LoreMessage.clean_header(msg.get('subject'))
             )
-            b4.send_mail(smtp, [msg], fromaddr, dryrun=cmdargs.dryrun)
+            try:
+                b4.send_mail(smtp, [msg], fromaddr, dryrun=cmdargs.dryrun)
+            except RuntimeError as ex:
+                # The connection is now made here rather than in get_smtp(),
+                # so this is where a broken smtp setup shows up.
+                logger.critical('Failed to send the thank-you message:')
+                logger.critical(ex)
+                sys.exit(1)
         else:
             assert isinstance(jsondata['fromemail'], str), 'fromname must be a string'
             assert isinstance(jsondata['subject'], str), 'subject must be a string'

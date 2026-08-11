@@ -225,6 +225,10 @@ DEFAULT_CONFIG: ConfigDictT = {
     'gpgbin': None,
     # When sending mail, use this sendemail identity configuration
     'sendemail-identity': None,
+    # How long to wait, in seconds, on an unresponsive SMTP server. Python's
+    # smtplib blocks forever by default; 120 is what git-send-email ends up
+    # with, since Net::SMTP applies that when git doesn't ask for anything.
+    'smtp-timeout': '120',
     # Default target branch for review take flow
     'review-target-branch': None,
     # Default base commit pre-filled in the review take dialog
@@ -4970,9 +4974,35 @@ def get_sendemail_localcmd() -> Optional[str]:
     return None
 
 
+class SMTPConnector:
+    """A connection to an SMTP server that hasn't been made yet.
+
+    get_smtp() hands one of these to send_mail(), which only dials out once
+    every message has been signed.  Signing can block for a long time and may
+    even need the user: patatt shells out to gpg, which can sit on a pinentry
+    passphrase prompt.  Connecting first means holding an idle socket open for
+    all of that, and it makes a stuck signature look like a stuck network
+    connection, because "Connecting to ..." is the last thing printed.
+
+    The connection is made at most once and reused afterwards, so callers that
+    send messages one at a time in a loop still get a single session.
+    """
+
+    def __init__(
+        self, connect: Callable[[], Union[smtplib.SMTP, smtplib.SMTP_SSL]]
+    ) -> None:
+        self._connect = connect
+        self._smtp: Optional[Union[smtplib.SMTP, smtplib.SMTP_SSL]] = None
+
+    def __call__(self) -> Union[smtplib.SMTP, smtplib.SMTP_SSL]:
+        if self._smtp is None:
+            self._smtp = self._connect()
+        return self._smtp
+
+
 def get_smtp(
     dryrun: bool = False,
-) -> Tuple[Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None], str]:
+) -> Tuple[Union[SMTPConnector, List[str], None], str]:
     sconfig = get_sendemail_config()
     # Limited support for smtp settings to begin with, but should cover the vast majority of cases
     fromaddr = sconfig.get('from')
@@ -5014,65 +5044,87 @@ def get_smtp(
             'Invalid smtpport entry in config: %s' % sconfig.get('smtpserverport')
         ) from exc
 
+    # Validate this eagerly, alongside the port, so a typo is reported before
+    # we go off and sign anything.
+    mconfig = get_main_config()
+    _rawtimeout = str(mconfig.get('smtp-timeout', '120'))
+    try:
+        timeout = float(_rawtimeout)
+    except ValueError as exc:
+        raise smtplib.SMTPException(
+            'Invalid smtp-timeout entry in config: %s' % _rawtimeout
+        ) from exc
+    # Omitting the argument entirely is how you ask smtplib to block forever,
+    # which is what smtp-timeout=0 means. Passing 0 through would put the
+    # socket in non-blocking mode, which is never what anyone means here.
+    smtpargs: Dict[str, Any] = dict()
+    if timeout > 0:
+        smtpargs['timeout'] = timeout
+
     encryption = sconfig.get('smtpencryption')
     if dryrun:
         return None, fromaddr
 
-    logger.info('Connecting to %s:%s', server, port)
-    # We only authenticate if we have encryption
-    if encryption:
-        if encryption in ('tls', 'starttls'):
-            # We do startssl
-            smtp = smtplib.SMTP(server, port)
-            # Introduce ourselves
-            smtp.ehlo()
-            # Start encryption
-            smtp.starttls()
-            # Introduce ourselves again to get new criteria
-            smtp.ehlo()
-        elif encryption in ('ssl', 'smtps'):
-            # We do TLS from the get-go
-            smtp = smtplib.SMTP_SSL(server, port)
-        else:
-            raise smtplib.SMTPException(
-                'Unclear what to do with smtpencryption=%s' % encryption
-            )
-
-        # If we got to this point, we should do authentication,
-        # unless smtpauth is set to a special "none" value
-        smtpauth = str(sconfig.get('smtpauth', '')).lower()
-        if smtpauth == 'none':
-            return smtp, fromaddr
-
-        auser = str(sconfig.get('smtpuser', ''))
-        apass = str(sconfig.get('smtppass', ''))
-        if auser and not apass:
-            # Try with git-credential-helper
-            if port:
-                gchost = f'{server}:{port}'
+    def _connect() -> Union[smtplib.SMTP, smtplib.SMTP_SSL]:
+        logger.info('Connecting to %s:%s', server, port)
+        # We only authenticate if we have encryption
+        if encryption:
+            if encryption in ('tls', 'starttls'):
+                # We do startssl
+                smtp = smtplib.SMTP(server, port, **smtpargs)
+                # Introduce ourselves
+                smtp.ehlo()
+                # Start encryption
+                smtp.starttls()
+                # Introduce ourselves again to get new criteria
+                smtp.ehlo()
+            elif encryption in ('ssl', 'smtps'):
+                # We do TLS from the get-go
+                smtp = smtplib.SMTP_SSL(server, port, **smtpargs)
             else:
-                gchost = server
-            gc_pass = git_credential_fill(
-                None, protocol='smtp', host=gchost, username=auser
-            )
-            if gc_pass:
-                apass = gc_pass
-            if not apass:
                 raise smtplib.SMTPException(
-                    'No password specified for connecting to %s', server
+                    'Unclear what to do with smtpencryption=%s' % encryption
                 )
-        if auser and apass:
-            # Let any exceptions bubble up
-            if smtpauth in ('oauth', 'oauth2', 'xoauth2'):
-                auth_str = f'user={auser}\x01auth=Bearer {apass}\x01\x01'
-                smtp.auth('XOAUTH2', lambda x=None: auth_str if x is None else '')
-            else:
-                smtp.login(auser, apass)
-    else:
-        # We assume you know what you're doing if you don't need encryption
-        smtp = smtplib.SMTP(server, port)
 
-    return smtp, fromaddr
+            # If we got to this point, we should do authentication,
+            # unless smtpauth is set to a special "none" value
+            smtpauth = str(sconfig.get('smtpauth', '')).lower()
+            if smtpauth == 'none':
+                return smtp
+
+            auser = str(sconfig.get('smtpuser', ''))
+            apass = str(sconfig.get('smtppass', ''))
+            if auser and not apass:
+                # Try with git-credential-helper
+                if port:
+                    gchost = f'{server}:{port}'
+                else:
+                    gchost = server
+                gc_pass = git_credential_fill(
+                    None, protocol='smtp', host=gchost, username=auser
+                )
+                if gc_pass:
+                    apass = gc_pass
+                if not apass:
+                    raise smtplib.SMTPException(
+                        'No password specified for connecting to %s', server
+                    )
+            if auser and apass:
+                # Let any exceptions bubble up
+                if smtpauth in ('oauth', 'oauth2', 'xoauth2'):
+                    auth_str = f'user={auser}\x01auth=Bearer {apass}\x01\x01'
+                    smtp.auth('XOAUTH2', lambda x=None: auth_str if x is None else '')
+                else:
+                    smtp.login(auser, apass)
+        else:
+            # We assume you know what you're doing if you don't need encryption
+            smtp = smtplib.SMTP(server, port, **smtpargs)
+
+        return smtp
+
+    # Nothing has been dialled yet; send_mail() connects once the messages
+    # are signed and ready to go out.
+    return SMTPConnector(_connect), fromaddr
 
 
 def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str]:
@@ -5140,7 +5192,7 @@ def patchwork_set_state(msgids: List[str], state: str) -> None:
 
 
 def send_mail(
-    smtp: Union[smtplib.SMTP, smtplib.SMTP_SSL, List[str], None],
+    smtp: Union[SMTPConnector, smtplib.SMTP, smtplib.SMTP_SSL, List[str], None],
     msgs: Sequence[EmailMessage],
     fromaddr: Optional[str],
     destaddrs: Optional[Union[Set[str], List[str]]] = None,
@@ -5153,6 +5205,12 @@ def send_mail(
     tosend: List[Tuple[Set[str], bytes, LoreSubject]] = list()
     if output_dir is not None:
         dryrun = True
+
+    if patatt_sign:
+        # Signing is the one step here that can block indefinitely: with a PGP
+        # key patatt shells out to gpg, which may be waiting on a pinentry
+        # passphrase prompt the user cannot see.  Say so before we go quiet.
+        logger.info('Signing %s messages with patatt', len(msgs))
 
     for msg in msgs:
         if not msg.get('X-Mailer'):
@@ -5271,14 +5329,26 @@ def send_mail(
             sent += 1
 
     elif smtp:
+        if isinstance(smtp, SMTPConnector):
+            # Everything is signed and ready to go, so it's time to dial out.
+            # Callers report this as a configuration failure, same as they did
+            # when get_smtp() connected eagerly.
+            try:
+                conn = smtp()
+            except Exception as ex:
+                raise RuntimeError(
+                    'Failed to connect to the smtp server: %s' % ex
+                ) from ex
+        else:
+            conn = smtp
         for destaddrs, bdata, lsubject in tosend:
             # Force compliant eols
             bdata = re.sub(rb'\r\n|\n|\r(?!\n)', b'\r\n', bdata)
             logger.info('  %s', lsubject.full_subject)
             if reflect:
-                smtp.sendmail(fromaddr, [envpair[1]], bdata)
+                conn.sendmail(fromaddr, [envpair[1]], bdata)
             else:
-                smtp.sendmail(fromaddr, list(destaddrs), bdata)
+                conn.sendmail(fromaddr, list(destaddrs), bdata)
             sent += 1
 
     return sent

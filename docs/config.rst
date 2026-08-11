@@ -415,6 +415,22 @@ Attestation settings
 
      Default: ``None``
 
+   :term:`b4.smtp-timeout`
+     How long to wait, in seconds, on an SMTP server that has stopped
+     responding. This applies both to opening the connection and to
+     waiting for replies once it is open.
+
+     Python's ``smtplib`` waits forever by default, which makes a dead or
+     firewalled mail server look like a hung b4. The default here matches
+     what ``git send-email`` effectively uses, since Perl's ``Net::SMTP``
+     applies a 120-second timeout of its own when git does not ask for one.
+
+     Set it to ``0`` to wait forever.
+
+     Default: ``120``
+
+     .. versionadded:: v0.17
+
    :term:`b4.thanks-am-template`
      Full paths to the templates to use when generating thank-you messages
      for contributors. Take the following as example content for this file:
