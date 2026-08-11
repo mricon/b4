@@ -1334,6 +1334,7 @@ def cmd() -> None:
     parser = setup_parser()
     try:
         import argcomplete
+
         argcomplete.autocomplete(parser)
     except ImportError:
         pass
