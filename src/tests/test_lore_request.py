@@ -21,7 +21,7 @@ pytest.importorskip('textual')
 
 import b4
 import liblore
-from b4.review_tui._common import lore_request, run_lore_worker
+from b4.tui._common import lore_request, run_lore_worker
 
 # ---------------------------------------------------------------------------
 # Helpers

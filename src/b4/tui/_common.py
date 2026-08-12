@@ -10,7 +10,18 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import email.utils
 import unicodedata
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
+from contextlib import contextmanager
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    TypeVar,
+)
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -18,7 +29,7 @@ from textual.css.query import NoMatches
 from textual.dom import DOMNode
 from textual.widgets import Footer, ListItem, ListView
 from textual.widgets._footer import FooterKey
-from textual.worker import NoActiveWorker, get_current_worker
+from textual.worker import NoActiveWorker, Worker, get_current_worker
 
 import b4
 
@@ -94,6 +105,104 @@ def worker_cancelled() -> bool:
         return get_current_worker().is_cancelled
     except NoActiveWorker:
         return False
+
+
+_WorkerResult = TypeVar('_WorkerResult')
+
+
+class _WorkerHost(Protocol):
+    """Anything (App or Screen) able to launch a Textual worker."""
+
+    def run_worker(
+        self,
+        work: Callable[[], _WorkerResult],
+        name: Optional[str] = ...,
+        group: str = ...,
+        description: str = ...,
+        exit_on_error: bool = ...,
+        start: bool = ...,
+        exclusive: bool = ...,
+        thread: bool = ...,
+    ) -> Worker[_WorkerResult]: ...
+
+
+@contextmanager
+def lore_request() -> Generator[None, None, None]:
+    """Clear the shared lore node's sticky cancel flag before a fetch.
+
+    ``b4.get_lore_node()`` returns a process-wide singleton whose cancel
+    flag is *sticky*: once ``.cancel()`` runs -- ``UpdateAllSeriesScreen``
+    Esc, app shutdown via :class:`LoreNodeShutdownMixin`, a sibling app
+    switching away, or SIGINT -- every subsequent request raises
+    ``OperationCancelledError`` until ``.reset_cancel()`` is called.
+
+    Wrap any lore fetch in this context manager.  It is the one sanctioned
+    way to begin a fetch, so a new fetch site cannot inherit a stale cancel
+    left behind by a prior aborted operation.  Use it directly around a
+    synchronous fetch, or via :func:`run_lore_worker` for a threaded one.
+    """
+    b4.get_lore_node().reset_cancel()
+    yield
+
+
+def run_lore_worker(
+    host: _WorkerHost,
+    work: Callable[[], _WorkerResult],
+    *,
+    name: str,
+    exit_on_error: bool = False,
+    **kwargs: Any,
+) -> Worker[_WorkerResult]:
+    """Reset the sticky cancel flag, then launch a threaded lore fetch.
+
+    The single sanctioned way to start a lore fetch in a worker thread.  It
+    bundles the three things every such fetch needs, so a new site cannot
+    forget any of them:
+
+    * clears the sticky cancel flag (via :func:`lore_request`) on the
+      *calling* thread, before the worker starts -- preserving the existing
+      ordering, since resetting inside the worker could race with
+      :meth:`LoreNodeShutdownMixin.on_unmount` cancelling the node on
+      shutdown and re-enable a fetch the app is trying to abort;
+    * runs the work in a thread (``thread=True``);
+    * keeps a fetch failure from tearing down the whole TUI via
+      ``WorkerFailed`` (``exit_on_error=False``), so it surfaces through the
+      host's ``on_worker_state_changed`` handler instead.
+    """
+    with lore_request():
+        return host.run_worker(
+            work, name=name, thread=True, exit_on_error=exit_on_error, **kwargs
+        )
+
+
+class LoreNodeShutdownMixin:
+    """App mixin that cancels in-flight lore fetches on shutdown.
+
+    A worker blocked inside a single liblore network fetch cannot be
+    stopped by polling :func:`worker_cancelled` -- there is no loop to
+    poll, just one long-running request.  When the app quits, Textual
+    flips the worker's cancellation flag but the fetch keeps blocking, so
+    the interpreter stalls at shutdown joining the worker thread until the
+    request returns on its own.
+
+    Textual dispatches an ``Unmount`` event to the app itself during
+    shutdown (on every exit path: ``q``, Ctrl-C, programmatic exit, or an
+    error), and that runs on the main thread while the worker is still
+    parked in its fetch.  Cancelling the shared lore node here makes the
+    in-flight request raise ``OperationCancelledError`` promptly, so the
+    worker unwinds and the app exits without waiting on the network.
+
+    This complements :func:`worker_cancelled`, which already covers the
+    workers that loop over many smaller fetches.
+    """
+
+    def on_unmount(self) -> None:
+        # Textual's internal teardown uses _on_unmount(), so overriding the
+        # public on_unmount() hook does not skip any framework cleanup.
+        try:
+            b4.get_lore_node().cancel()
+        except Exception:
+            logger.debug('lore node cancel on shutdown failed', exc_info=True)
 
 
 def display_width(s: str) -> int:
