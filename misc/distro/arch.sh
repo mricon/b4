@@ -7,7 +7,7 @@
 
 set -eu
 
-pacman -Sy --noconfirm --needed \
+pacman -Syu --noconfirm --needed \
     git python python-pip \
     python-textual python-pygit2 python-dkim python-requests python-shtab \
     python-pytest python-pytest-asyncio \
