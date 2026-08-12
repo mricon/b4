@@ -56,7 +56,7 @@ misc = [
 [project.optional-dependencies]
 completion = [
     "shtab>=1.8",
-    "argcomplete",
+    "argcomplete>=3.0",
 ]
 tui = [
     "textual[syntax]>=1.0",
