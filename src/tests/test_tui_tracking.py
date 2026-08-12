@@ -1958,12 +1958,24 @@ class TestTrackingDetailPanel:
             assert panel.styles.height is not None
             assert app._selected_series is not None
             assert 'charlie' in app._selected_series.get('subject', '')
+            subject_widget = app.query_one('#detail-subject', Static)
+            from_widget = app.query_one('#detail-from', Static)
+            assert (
+                _static_text(subject_widget)
+                == '[bpf,v2,0/7] charlie: verifier refactor'
+            )
+            assert _static_text(from_widget) == 'Charlie Coder <charlie@example.com>'
 
             # Navigating to a different series updates the panel
             await pilot.press('j')
             await pilot.pause()
             assert app._selected_series is not None
             assert 'bravo' in app._selected_series.get('subject', '')
+            assert (
+                _static_text(subject_widget)
+                == '[drm,v1,0/1] bravo: fix cursor rendering'
+            )
+            assert _static_text(from_widget) == 'Bob Builder <bob@example.com>'
 
             await pilot.press('j')
             await pilot.pause()
