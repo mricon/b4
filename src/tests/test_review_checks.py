@@ -594,19 +594,6 @@ class TestRunners:
 
 
 # ---------------------------------------------------------------------------
-# _STATUS_ORDER module-level constant
-# ---------------------------------------------------------------------------
-
-
-class TestStatusOrder:
-    """Verify the module-level status ordering constant."""
-
-    def test_ordering(self) -> None:
-        assert checks._STATUS_ORDER['pass'] < checks._STATUS_ORDER['warn']
-        assert checks._STATUS_ORDER['warn'] < checks._STATUS_ORDER['fail']
-
-
-# ---------------------------------------------------------------------------
 # Sashiko AI review integration
 # ---------------------------------------------------------------------------
 

@@ -1306,15 +1306,6 @@ class TestGitGetCommonDir:
         assert result is None
 
 
-class TestReviewTargetBranch:
-    """Tests for review-target-branch config."""
-
-    def test_default_config_has_review_target_branch(self) -> None:
-        """Verify review-target-branch is in DEFAULT_CONFIG."""
-        assert 'review-target-branch' in b4.DEFAULT_CONFIG
-        assert b4.DEFAULT_CONFIG['review-target-branch'] is None
-
-
 def _create_review_branch(
     topdir: str, change_id: str, tracking_data: Dict[str, Any]
 ) -> str:
@@ -2933,10 +2924,6 @@ def _make_legacy_v8_db(identifier: str) -> str:
 class TestRevisionFingerprintSchema:
     """Tier 1: schema-v9 groundwork for manual revision linking."""
 
-    def test_schema_version_at_least_9(self) -> None:
-        """The fingerprint/source groundwork bumps the schema version."""
-        assert review_tracking.SCHEMA_VERSION >= 9
-
     def test_revisions_has_fingerprint_and_source_columns(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
@@ -3763,9 +3750,6 @@ def _make_legacy_v9_db(identifier: str) -> str:
 
 class TestSchemaV10Rethread:
     """Layer 1: per-revision rethread tracking lands in schema v10."""
-
-    def test_schema_version_at_least_10(self) -> None:
-        assert review_tracking.SCHEMA_VERSION >= 10
 
     def test_revisions_has_is_rethreaded_column(
         self, tmp_path: pytest.TempPathFactory

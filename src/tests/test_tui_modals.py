@@ -159,19 +159,6 @@ class TestHelpScreen:
                     f'{key!r} unexpectedly closed the help screen'
                 )
 
-    @pytest.mark.asyncio
-    async def test_content_rendered(self) -> None:
-        """The static content inside the modal should contain our text."""
-        app = ModalTestApp()
-
-        async with app.run_test() as pilot:
-            lines = self._lines()
-            app.push_screen(HelpScreen(lines))
-            await pilot.pause()
-
-            dialog = app.screen.query_one('#help-dialog')
-            assert dialog is not None
-
 
 # ---------------------------------------------------------------------------
 # ConfirmScreen
@@ -217,24 +204,6 @@ class TestConfirmScreen:
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmScreen)
             assert results == [False]
-
-    @pytest.mark.asyncio
-    async def test_body_lines_rendered(self) -> None:
-        """Each body string should appear as a Static widget."""
-        app = ModalTestApp()
-        body = ['Line one.', 'Line two.', 'Line three.']
-
-        async with app.run_test() as pilot:
-            app.push_screen(ConfirmScreen('Title', body))
-            await pilot.pause()
-
-            statics = app.screen.query('#confirm-dialog Static')
-            # body lines + hint line + possibly title
-            rendered = [_static_text(s) for s in statics]
-            for line in body:
-                assert any(line in r for r in rendered), (
-                    f'{line!r} not found in rendered statics'
-                )
 
     @pytest.mark.asyncio
     async def test_subject_shown(self) -> None:

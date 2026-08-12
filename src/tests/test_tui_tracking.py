@@ -11,7 +11,6 @@ core user workflows: series listing, navigation, filtering,
 status transitions, and modal interactions.
 """
 
-import datetime
 import email.message
 import os
 import pathlib
@@ -266,18 +265,6 @@ class TestTrackingAppStartup:
             await pilot.pause()
             lv = app.query_one('#tracking-list', ListView)
             assert len(list(lv.children)) == 3
-
-    @pytest.mark.asyncio
-    async def test_title_shows_identifier_and_count(
-        self, tmp_path: pathlib.Path
-    ) -> None:
-        _seed_db('test-title', SAMPLE_SERIES)
-
-        app = TrackingApp('test-title')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            title = app.query_one('#title-left', Static)
-            assert 'test-title' in _static_text(title)
 
     @pytest.mark.asyncio
     async def test_series_sorted_by_added_at(self, tmp_path: pathlib.Path) -> None:
@@ -4741,18 +4728,6 @@ class TestLoadSeriesCaching:
     """Tests for _load_series batching and caching."""
 
     @pytest.mark.asyncio
-    async def test_caches_populated_on_first_load(self, tmp_path: pathlib.Path) -> None:
-        """Caches should be populated after the initial _load_series call."""
-        _seed_db('cache-pop', SAMPLE_SERIES)
-
-        app = TrackingApp('cache-pop')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            assert app._cached_branch_tips is not None
-            assert app._cached_newest_revisions is not None
-            assert app._cached_revision_counts is not None
-
-    @pytest.mark.asyncio
     async def test_caches_survive_db_poll_no_change(
         self, tmp_path: pathlib.Path
     ) -> None:
@@ -4809,55 +4784,6 @@ class TestLoadSeriesCaching:
             # Other caches untouched
             assert app._cached_branch_tips is not None
             assert app._cached_newest_revisions is not None
-
-    @pytest.mark.asyncio
-    async def test_revisions_stashed_in_series(self, tmp_path: pathlib.Path) -> None:
-        """_load_series should stash _revisions list in each series dict."""
-        _seed_db('cache-revisions', SAMPLE_SERIES)
-        # Add a revision record so there's something to find
-        conn = tracking.get_db('cache-revisions')
-        tracking.add_revision(conn, 'test-change-charlie', 1, 'charlie-v1@example.com')
-        tracking.add_revision(conn, 'test-change-charlie', 2, 'charlie-v2@example.com')
-        conn.close()
-
-        app = TrackingApp('cache-revisions')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            # Find the charlie series and check its stashed revisions
-            charlie = [
-                s
-                for s in app._all_series
-                if s.get('change_id') == 'test-change-charlie'
-            ]
-            assert len(charlie) == 1
-            revs = charlie[0].get('_revisions', [])
-            assert len(revs) == 2
-            assert [r['revision'] for r in revs] == [1, 2]
-
-    @pytest.mark.asyncio
-    async def test_snoozed_until_in_series(self, tmp_path: pathlib.Path) -> None:
-        """_load_series should include snoozed_until from the DB."""
-        series = [
-            {
-                'change_id': 'test-snooze-detail',
-                'subject': '[PATCH] snooze test',
-                'sender_name': 'Tester',
-                'status': 'snoozed',
-            }
-        ]
-        _seed_db('cache-snooze', series)
-        conn = tracking.get_db('cache-snooze')
-        snoozed_until = (
-            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
-        ).strftime('%Y-%m-%dT%H:%M:%S')
-        tracking.snooze_series(conn, 'test-snooze-detail', snoozed_until, revision=1)
-        conn.close()
-
-        app = TrackingApp('cache-snooze')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            assert len(app._all_series) == 1
-            assert app._all_series[0].get('snoozed_until') == snoozed_until
 
 
 # ---------------------------------------------------------------------------

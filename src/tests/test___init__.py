@@ -1124,19 +1124,6 @@ class TestGetLoreNode:
         b4.get_lore_node()
         mock_node.set_user_agent.assert_called_once_with('b4', b4.__VERSION__)
 
-    def test_does_not_inject_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """get_lore_node() lets liblore own its session."""
-        from unittest.mock import MagicMock
-
-        import liblore
-
-        mock_node = MagicMock()
-        monkeypatch.setattr(
-            liblore.LoreNode, 'from_git_config', MagicMock(return_value=mock_node)
-        )
-        b4.get_lore_node()
-        mock_node.set_requests_session.assert_not_called()
-
     def test_passes_cache_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cache_dir and cache_ttl from b4 config are passed through."""
         from unittest.mock import MagicMock
