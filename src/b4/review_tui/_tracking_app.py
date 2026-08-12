@@ -1292,6 +1292,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         scroll_y = ReplacementListView.capture_scroll(self, '#tracking-list')
 
+        try:
+            footer: Optional[Footer] = self.query_one(Footer)
+        except NoMatches:
+            # Mid-transition (startup or teardown under load) the Footer
+            # may not be mounted yet.  It is docked to the bottom edge,
+            # so DOM order does not affect layout — appending the new
+            # widgets works just as well as inserting before it.
+            footer = None
+
         # Suppress rendering while we swap old widgets for new ones.
         # Without this, the remove-then-mount sequence can produce a
         # single intermediate frame showing only the title bar before
@@ -1308,7 +1317,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     'No tracked series. Use "b4 review track" to add series.',
                     id='tracking-empty',
                 )
-                await self.mount(empty, before=self.query_one(Footer))
+                await self.mount(empty, before=footer)
                 return
 
             header_text = f'{"Submitter":<20s}{"A":>1s} {"A·R·T":>7s}  {"Msgs":>6s}  {"S":<4s}{"Subject"}'
@@ -1316,8 +1325,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
             lv = ReplacementListView(*list_items, id='tracking-list', scroll_y=scroll_y)
-            await self.mount(header, before=self.query_one(Footer))
-            await self.mount(lv, before=self.query_one(Footer))
+            await self.mount(header, before=footer)
+            await self.mount(lv, before=footer)
 
         new_index = 0
         if self._focus_change_id:
