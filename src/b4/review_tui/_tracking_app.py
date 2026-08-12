@@ -58,8 +58,10 @@ from b4.review_tui._common import (
     _wait_for_enter,
     compute_range_diff,
     display_width,
+    limit_substring_matcher,
     logger,
     mark_outgoing_seen,
+    matches_limit,
     notify_quit_hint,
     pad_display,
     resolve_styles,
@@ -1245,28 +1247,22 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         bare tokens by subject or sender name.  All tokens must match
         (AND logic).
         """
-        for token in pattern.lower().split():
-            if token.startswith('s:'):
-                needle = token[2:]
-                if needle not in (series.get('status', '') or '').lower():
-                    return False
-            elif token.startswith('t:'):
-                needle = token[2:]
-                if needle not in (series.get('target_branch', '') or '').lower():
-                    return False
-            elif token.startswith('up:'):
-                # Boolean filter on has_newer: `up:` / `up:1` / `up:yes` keep
-                # only upgradable series; `up:no` / `up:0` / `up:false` invert.
-                want = token[3:] not in ('no', '0', 'false')
-                if bool(series.get('has_newer')) != want:
-                    return False
-            else:
-                if (
-                    token not in (series.get('subject', '') or '').lower()
-                    and token not in (series.get('sender_name', '') or '').lower()
-                ):
-                    return False
-        return True
+
+        def _up_matches(s: Dict[str, Any], needle: str) -> bool:
+            # Boolean filter on has_newer: `up:` / `up:1` / `up:yes` keep
+            # only upgradable series; `up:no` / `up:0` / `up:false` invert.
+            return bool(s.get('has_newer')) == (needle not in ('no', '0', 'false'))
+
+        return matches_limit(
+            series,
+            pattern,
+            {
+                's:': limit_substring_matcher('status'),
+                't:': limit_substring_matcher('target_branch'),
+                'up:': _up_matches,
+            },
+            limit_substring_matcher('subject', 'sender_name'),
+        )
 
     async def _refresh_list(self) -> None:
         display_series = self._all_series

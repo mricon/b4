@@ -28,7 +28,9 @@ from b4.review_tui._common import (
     SeparatedFooter,
     _fix_ansi_theme,
     ci_styles,
+    limit_substring_matcher,
     logger,
+    matches_limit,
     notify_quit_hint,
     pad_display,
     resolve_styles,
@@ -578,22 +580,15 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         - ``d:<substring>`` matches against the delegate field
         - bare text matches against name or submitter
         """
-        for token in pattern.lower().split():
-            if token.startswith('s:'):
-                needle = token[2:]
-                if needle not in (series.get('state', '') or '').lower():
-                    return False
-            elif token.startswith('d:'):
-                needle = token[2:]
-                if needle not in (series.get('delegate', '') or '').lower():
-                    return False
-            else:
-                if (
-                    token not in (series.get('name', '') or '').lower()
-                    and token not in (series.get('submitter', '') or '').lower()
-                ):
-                    return False
-        return True
+        return matches_limit(
+            series,
+            pattern,
+            {
+                's:': limit_substring_matcher('state'),
+                'd:': limit_substring_matcher('delegate'),
+            },
+            limit_substring_matcher('name', 'submitter'),
+        )
 
     def action_limit(self) -> None:
         delegates = {s.get('delegate', '') or '' for s in self._all_series}
