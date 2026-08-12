@@ -508,15 +508,15 @@ class TestReconcileAfterShell:
 
 
 class TestLoreNodeShutdown:
-    """The app cancels the shared lore node when it quits.
+    """The app shuts the shared lore node down when it quits.
 
     Single-shot network workers block inside one fetch and cannot poll a
-    cancellation flag, so the app cancels the lore node on shutdown to
+    cancellation flag, so the app shuts the lore node down on exit to
     unblock any in-flight request instead of stalling on exit.
     """
 
     @pytest.mark.asyncio
-    async def test_quit_cancels_lore_node(self, gitdir: str) -> None:
+    async def test_quit_shuts_down_lore_node(self, gitdir: str) -> None:
         branch, _patch_shas = _create_review_branch_with_patches(
             gitdir, 'shutdown-cancel', ['patch 1']
         )
@@ -524,7 +524,7 @@ class TestLoreNodeShutdown:
 
         node = mock.Mock()
         app = ReviewApp(session)
-        # Patch the singleton accessor so we observe the shutdown cancel
+        # Patch the singleton accessor so we observe the shutdown
         # without touching real lore state.
         with mock.patch('b4.get_lore_node', return_value=node):
             async with app.run_test(size=(120, 30)) as pilot:
@@ -532,8 +532,8 @@ class TestLoreNodeShutdown:
                 await pilot.press('Q')
                 await pilot.pause()
 
-        # on_unmount fired during shutdown and cancelled the node.
-        assert node.cancel.called
+        # on_unmount fired during app teardown and shut the node down.
+        assert node.shutdown.called
 
 
 class TestQuitKeys:
@@ -915,18 +915,14 @@ class TestFilterRangeDiffForCommit:
         )
 
 
-def test_fetch_fake_am_range_clears_stale_cancel(
+def test_fetch_fake_am_range_falls_back_to_lore(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The shared lore node's cancel flag is sticky; a fetch that does not
-    go through lore_request() inherits a stale cancel from a previously
-    aborted operation and dies with OperationCancelledError."""
+    """With no usable thread blob the range-diff fetches from lore, and an
+    empty fetch result is reported as None rather than raising."""
     from b4.review_tui._common import fetch_fake_am_range
 
     events: List[str] = []
-    fake_node = mock.Mock()
-    fake_node.reset_cancel.side_effect = lambda: events.append('reset')
-    monkeypatch.setattr(b4, 'get_lore_node', lambda: fake_node)
 
     def fake_fetch(msgid: str, **kw: Any) -> None:
         events.append('fetch')
@@ -938,7 +934,7 @@ def test_fetch_fake_am_range_clears_stale_cancel(
         {'revision': 1, 'message_id': 'x@example.com', 'thread_blob': None}
     ]
     assert fetch_fake_am_range('/nonexistent', revisions, 1) is None
-    assert events == ['reset', 'fetch']
+    assert events == ['fetch']
 
 
 class TestRangeDiffBindingGate:

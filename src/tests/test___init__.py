@@ -1146,12 +1146,41 @@ class TestGetLoreNode:
         import liblore
 
         mock_node = MagicMock()
+        mock_node.is_shutdown = False
         mock_from_gc = MagicMock(return_value=mock_node)
         monkeypatch.setattr(liblore.LoreNode, 'from_git_config', mock_from_gc)
         n1 = b4.get_lore_node()
         n2 = b4.get_lore_node()
         assert n1 is n2
         assert mock_from_gc.call_count == 1
+
+    def test_rebuilds_after_shutdown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A shut-down node is replaced, not handed out again.
+
+        LoreNodeShutdownMixin calls shutdown() whenever a TUI app exits,
+        and shutdown() is terminal for the node.  When the process keeps
+        going (a sibling app is starting), get_lore_node() must build a
+        fresh node instead of returning one that refuses every request.
+        """
+        from unittest.mock import MagicMock
+
+        import liblore
+
+        dead_node = MagicMock()
+        dead_node.is_shutdown = True
+        fresh_node = MagicMock()
+        fresh_node.is_shutdown = False
+        mock_from_gc = MagicMock(side_effect=[dead_node, fresh_node])
+        monkeypatch.setattr(liblore.LoreNode, 'from_git_config', mock_from_gc)
+
+        n1 = b4.get_lore_node()
+        assert n1 is dead_node
+        n2 = b4.get_lore_node()
+        assert n2 is fresh_node
+        assert mock_from_gc.call_count == 2
+        # The fresh node stays the singleton from here on.
+        assert b4.get_lore_node() is fresh_node
+        assert mock_from_gc.call_count == 2
 
 
 @pytest.mark.parametrize(

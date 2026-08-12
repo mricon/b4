@@ -4163,6 +4163,11 @@ def get_requests_session() -> requests.Session:
 def get_lore_node() -> liblore.LoreNode:
     """Return a LoreNode configured from git config with b4's URL and cache."""
     global LORENODE
+    if LORENODE is not None and LORENODE.is_shutdown:
+        # shutdown() is terminal for a node, and LoreNodeShutdownMixin
+        # calls it whenever a TUI app exits. When the process keeps going
+        # (a sibling app is starting), replace the dead node.
+        LORENODE = None
     if LORENODE is None:
         config = get_main_config()
         # Extract base URL from midmask (e.g. 'https://lore.kernel.org/all/%s' -> 'https://lore.kernel.org/all')

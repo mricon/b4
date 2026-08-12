@@ -964,10 +964,10 @@ class TestUpdateAllScreenCancellation:
     # ------------------------------------------------------------------
 
     def test_action_cancel_sets_flag_and_cancels_node(self) -> None:
-        """action_cancel() flips _cancelled and cancels the lore node.
+        """action_cancel() flips _cancelled and cancels the in-flight fetch.
 
         Both actions must happen together: setting _cancelled guards the Python
-        loop, while cancel() closes the session so a blocked socket read
+        loop, while cancel_active() closes the session so a blocked socket read
         raises immediately in the worker thread.
         """
         screen = UpdateAllScreen(
@@ -975,14 +975,13 @@ class TestUpdateAllScreenCancellation:
             'test-id',
             'https://example.com/%s',
         )
-        node = b4.get_lore_node()
+        node = mock.Mock()
 
-        screen.action_cancel()
+        with mock.patch.object(b4, 'get_lore_node', return_value=node):
+            screen.action_cancel()
 
         assert screen._cancelled, '_cancelled must be True after action_cancel'
-        assert node._cancel_event.is_set(), (
-            'cancel event must be set after action_cancel'
-        )
+        node.cancel_active.assert_called_once_with()
 
     # ------------------------------------------------------------------
     # Async TUI test — exercises _do_updates loop-break path
@@ -1127,10 +1126,12 @@ class TestLinkRevisionConfirmScreen:
 class TestWorkerScreen:
     """Tests for the generic worker modal.
 
-    Regression coverage for the crash reported when opening a series right
-    after another network request was cancelled: the lore node's cancel flag
-    stayed set, so the fresh fetch raised OperationCancelledError immediately
-    (msgid 21fe13c1-5c9a-4a47-b97b-251da4748aea@sirena.org.uk).
+    Historic regression coverage for the crash reported when opening a
+    series right after another network request was cancelled (msgid
+    21fe13c1-5c9a-4a47-b97b-251da4748aea@sirena.org.uk): liblore 0.8's
+    sticky cancel flag made the fresh fetch raise OperationCancelledError
+    immediately.  liblore 0.9 scopes cancellation to in-flight operations,
+    so the modal only needs to route results and errors correctly.
     """
 
     @pytest.mark.asyncio
@@ -1151,66 +1152,59 @@ class TestWorkerScreen:
                 assert _static_text(status) == 'Fetching 1/2…'
 
     @pytest.mark.asyncio
-    async def test_on_mount_resets_cancel_flag(self) -> None:
-        """A fetch must clear any stale cancel flag before it runs."""
+    async def test_successful_fetch_dismisses_with_result(self) -> None:
+        """A successful fetch dismisses the modal with the worker's result."""
         app = ModalTestApp()
-        node = mock.Mock()
         dismissed: List[Any] = []
 
         def _work() -> str:
             return 'done'
 
-        with mock.patch.object(b4, 'get_lore_node', return_value=node):
-            async with app.run_test() as pilot:
-                app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
-                await pilot.pause()
-                await app.workers.wait_for_complete()
-                await pilot.pause()
+        async with app.run_test() as pilot:
+            app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
 
-        node.reset_cancel.assert_called_once()
         assert dismissed == ['done']
 
     @pytest.mark.asyncio
     async def test_worker_error_notifies_without_crashing(self) -> None:
         """A fetch failure surfaces as a notification, not a TUI crash."""
         app = ModalTestApp()
-        node = mock.Mock()
         dismissed: List[Any] = []
 
         def _work() -> str:
             raise ValueError('boom')
 
-        with mock.patch.object(b4, 'get_lore_node', return_value=node):
-            async with app.run_test() as pilot:
-                with mock.patch.object(app, 'notify') as notify:
-                    app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
-                    await pilot.pause()
-                    await app.workers.wait_for_complete()
-                    await pilot.pause()
-                    # The app is still alive and the modal was dismissed.
-                    assert dismissed == [None]
-                    notify.assert_called_once()
-                    assert notify.call_args.kwargs.get('severity') == 'error'
+        async with app.run_test() as pilot:
+            with mock.patch.object(app, 'notify') as notify:
+                app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                # The app is still alive and the modal was dismissed.
+                assert dismissed == [None]
+                notify.assert_called_once()
+                assert notify.call_args.kwargs.get('severity') == 'error'
 
     @pytest.mark.asyncio
     async def test_cancellation_dismisses_silently(self) -> None:
         """A genuine cancellation dismisses without an error popup."""
         app = ModalTestApp()
-        node = mock.Mock()
         dismissed: List[Any] = []
 
         def _work() -> str:
             raise liblore.OperationCancelledError('Request cancelled')
 
-        with mock.patch.object(b4, 'get_lore_node', return_value=node):
-            async with app.run_test() as pilot:
-                with mock.patch.object(app, 'notify') as notify:
-                    app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
-                    await pilot.pause()
-                    await app.workers.wait_for_complete()
-                    await pilot.pause()
-                    assert dismissed == [None]
-                    notify.assert_not_called()
+        async with app.run_test() as pilot:
+            with mock.patch.object(app, 'notify') as notify:
+                app.push_screen(WorkerScreen('Working…', _work), dismissed.append)
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert dismissed == [None]
+                notify.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1233,45 +1227,40 @@ class _RaisingViewer(_FetchViewerScreen):
 
 
 class TestFetchViewerScreen:
-    """The series/CI fetch viewer shares the sticky-cancel-flag contract.
+    """The series/CI fetch viewer shares the crash-safe worker contract.
 
-    It runs through run_lore_worker() (reset + exit_on_error=False), so a
-    fetch failure surfaces in the viewer and a genuine cancellation dismisses
+    It runs through run_lore_worker() (exit_on_error=False), so a fetch
+    failure surfaces in the viewer and a genuine cancellation dismisses
     quietly instead of printing "Request cancelled".
     """
 
     @pytest.mark.asyncio
-    async def test_on_mount_resets_cancel_flag(self) -> None:
+    async def test_fetch_error_stays_on_screen(self) -> None:
         app = ModalTestApp()
-        node = mock.Mock()
 
-        with mock.patch.object(b4, 'get_lore_node', return_value=node):
-            async with app.run_test() as pilot:
-                app.push_screen(_RaisingViewer(ValueError('boom')))
-                await pilot.pause()
-                await app.workers.wait_for_complete()
-                await pilot.pause()
-                # The screen stays up showing the error rather than crashing.
-                node.reset_cancel.assert_called_once()
-                assert isinstance(app.screen, _FetchViewerScreen)
+        async with app.run_test() as pilot:
+            app.push_screen(_RaisingViewer(ValueError('boom')))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # The screen stays up showing the error rather than crashing.
+            assert isinstance(app.screen, _FetchViewerScreen)
 
     @pytest.mark.asyncio
     async def test_cancellation_dismisses_quietly(self) -> None:
         """A cancelled fetch dismisses the viewer without an error screen."""
         app = ModalTestApp()
-        node = mock.Mock()
         dismissed: List[Any] = []
         err = liblore.OperationCancelledError('Request cancelled')
 
-        with mock.patch.object(b4, 'get_lore_node', return_value=node):
-            async with app.run_test() as pilot:
-                app.push_screen(_RaisingViewer(err), dismissed.append)
-                await pilot.pause()
-                await app.workers.wait_for_complete()
-                await pilot.pause()
-                # Dismissed back to the host screen, no error left on display.
-                assert dismissed == [None]
-                assert not isinstance(app.screen, _FetchViewerScreen)
+        async with app.run_test() as pilot:
+            app.push_screen(_RaisingViewer(err), dismissed.append)
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # Dismissed back to the host screen, no error left on display.
+            assert dismissed == [None]
+            assert not isinstance(app.screen, _FetchViewerScreen)
 
 
 # ---------------------------------------------------------------------------

@@ -1634,10 +1634,9 @@ class WorkerScreen(ModalScreen[Any]):
             self.query_one('#ws-status', Static).update(text)
 
     def on_mount(self) -> None:
-        # run_lore_worker() sheds any stale cancel flag before the fetch and
-        # runs with exit_on_error=False, so a fetch failure surfaces through
-        # the ERROR branch below (notify + dismiss) instead of crashing the
-        # whole TUI.
+        # run_lore_worker() runs with exit_on_error=False, so a fetch
+        # failure surfaces through the ERROR branch below (notify + dismiss)
+        # instead of crashing the whole TUI.
         run_lore_worker(self, self._fn, name='_ws_work')
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
@@ -2450,7 +2449,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         self.dismiss('')
 
     def action_cancel(self) -> None:
-        b4.get_lore_node().cancel()
+        b4.get_lore_node().cancel_active()
         self.dismiss(None)
 
 
@@ -2860,7 +2859,7 @@ class UpdateAllScreen(ModalScreen[Dict[str, Any]]):
 
     def action_cancel(self) -> None:
         self._cancelled = True
-        b4.get_lore_node().cancel()
+        b4.get_lore_node().cancel_active()
 
     def _do_updates(self) -> Dict[str, Any]:
         def _on_progress(completed: int, total: int, subject: str) -> None:

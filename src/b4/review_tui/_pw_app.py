@@ -461,7 +461,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             elif event.state == WorkerState.ERROR:
                 self._track_ctx = None
                 err = event.worker.error
-                # A sticky-cancel left by a sibling app dismisses quietly.
+                # A cancelled fetch (Esc, app shutdown) dismisses quietly.
                 if isinstance(err, liblore.OperationCancelledError):
                     return
                 self.notify(f'Error retrieving series: {err}', severity='error')

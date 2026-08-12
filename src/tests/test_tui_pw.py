@@ -33,20 +33,21 @@ from b4.review_tui._pw_app import PwApp, PwFetchProgress
 
 
 class _FakeLoreNode:
-    """Stand-in for the shared lore node with a real sticky cancel flag.
+    """Stand-in for the shared lore node with liblore 0.9 scoped semantics.
 
-    Mirrors the contract that matters here: once cancelled, the node stays
-    cancelled (and callers raise OperationCancelledError) until reset_cancel().
+    cancel_active() only affects operations already in flight, so it leaves
+    no state behind; shutdown() is terminal and makes every later fetch
+    raise OperationCancelledError.
     """
 
-    def __init__(self, cancelled: bool = False) -> None:
-        self.cancelled = cancelled
+    def __init__(self) -> None:
+        self.is_shutdown = False
 
-    def cancel(self) -> None:
-        self.cancelled = True
+    def cancel_active(self) -> None:
+        pass
 
-    def reset_cancel(self) -> None:
-        self.cancelled = False
+    def shutdown(self) -> None:
+        self.is_shutdown = True
 
 
 def _make_lore_series() -> Any:
@@ -74,15 +75,16 @@ def _make_lore_series() -> Any:
 class TestPwTrackSeries:
     """Tracking a Patchwork series fetches the thread from lore.
 
-    Regression coverage for the bug where starting to track a series in the
-    Patchwork app aborted immediately with "Request cancelled": another app
-    (e.g. TrackingApp) cancels the shared lore node on exit, leaving its
-    sticky cancel flag set, and action_track_series fetched without first
-    calling reset_cancel().
+    Historic regression coverage: under liblore 0.8 the shared node kept a
+    sticky cancel flag, so starting to track a series right after another
+    app (e.g. TrackingApp) cancelled the node aborted immediately with
+    "Request cancelled".  liblore 0.9 scopes cancellation to in-flight
+    operations, so a cancel that landed before the fetch started must not
+    affect it.
     """
 
     @pytest.mark.asyncio
-    async def test_track_series_resets_stale_cancel_flag(
+    async def test_track_series_unaffected_by_earlier_cancel(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         identifier = 'pw-test-project'
@@ -105,14 +107,16 @@ class TestPwTrackSeries:
         # Resolve the tracking identifier from the patchwork project name.
         monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
 
-        # A previous app left the shared node cancelled.
-        node = _FakeLoreNode(cancelled=True)
+        # A previous app cancelled the shared node before this fetch started.
+        node = _FakeLoreNode()
+        node.cancel_active()
         monkeypatch.setattr(b4, 'get_lore_node', lambda: node)
 
         def _fake_retrieve(msgid: str) -> List[Any]:
-            # Honour the sticky flag exactly like liblore does.
-            if node.cancelled:
-                raise liblore.OperationCancelledError('Request cancelled')
+            # Honour the scoped semantics exactly like liblore does: only a
+            # shut-down node refuses new fetches.
+            if node.is_shutdown:
+                raise liblore.OperationCancelledError('Node is shut down')
             return [object()]
 
         lser, ref_msg = _make_lore_series()
@@ -134,11 +138,11 @@ class TestPwTrackSeries:
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            # The stale flag was cleared before the fetch, so the retrieve
-            # succeeded and the series is now tracked both in memory and in the
-            # database.  (Asserted inside the context: on_unmount cancels the
-            # node again on app shutdown.)
-            assert node.cancelled is False
+            # The earlier cancel only applied to operations in flight at the
+            # time, so the retrieve succeeded and the series is now tracked
+            # both in memory and in the database.  (Asserted inside the
+            # context: on_unmount shuts the node down on app exit.)
+            assert not node.is_shutdown
             assert 42 in app._tracked_ids
             assert 42 in tracking.get_tracked_pw_series_ids(identifier)
 

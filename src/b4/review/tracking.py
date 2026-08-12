@@ -544,7 +544,7 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
 
     # Retrieve the series — cancellable via Ctrl-C
     def _sigint_cancel(sig: int, frame: Optional[types.FrameType]) -> None:
-        b4.get_lore_node().cancel()
+        b4.get_lore_node().cancel_active()
         raise KeyboardInterrupt()
 
     _old_sigint = signal.signal(signal.SIGINT, _sigint_cancel)

@@ -95,9 +95,6 @@ from b4.tui._common import (
     limit_substring_matcher as limit_substring_matcher,
 )
 from b4.tui._common import (
-    lore_request as lore_request,
-)
-from b4.tui._common import (
     matches_limit as matches_limit,
 )
 from b4.tui._common import (
@@ -295,9 +292,8 @@ class CheckRunnerMixin:
 
         self._check_loading = CheckLoadingScreen()
         self.push_screen(self._check_loading)
-        # run_lore_worker() clears the sticky cancel flag before the fetch
-        # (else get_thread_msgs() aborts immediately) and runs with
-        # exit_on_error=False so a fetch failure doesn't tear down the app.
+        # run_lore_worker() runs with exit_on_error=False so a fetch
+        # failure doesn't tear down the app.
         self._check_worker = run_lore_worker(
             self,
             lambda: self._fetch_and_check(
@@ -1108,14 +1104,13 @@ def fetch_fake_am_range(
             return None
 
         logger.info('Fetching v%d from lore...', rev)
-        with lore_request():
-            msgs = b4.get_pi_thread_by_msgid(msgid)
-            if not msgs:
-                logger.critical('Could not retrieve thread for v%d', rev)
-                return None
+        msgs = b4.get_pi_thread_by_msgid(msgid)
+        if not msgs:
+            logger.critical('Could not retrieve thread for v%d', rev)
+            return None
 
-            msgs = b4.mbox.get_extra_series(msgs, direction=1, wantvers=[rev])
-            msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=[rev])
+        msgs = b4.mbox.get_extra_series(msgs, direction=1, wantvers=[rev])
+        msgs = b4.mbox.get_extra_series(msgs, direction=-1, wantvers=[rev])
 
     lmbx = b4.LoreMailbox()
     for msg in msgs:

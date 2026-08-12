@@ -609,62 +609,41 @@ class TestRefreshScrollPreservation:
 class TestLoreChokepoint:
     """Every bugs-TUI lore fetch must route through run_lore_worker().
 
-    The shared lore node keeps a sticky cancel flag: a fetch launched
-    without clearing it inherits a stale cancel left by app shutdown or a
-    sibling app switching away and fails instantly.  Each test calls a
-    launching method with a mock host and asserts the chokepoint contract:
-    flag reset before the worker starts, thread=True, exit_on_error=False.
+    The chokepoint launches with thread=True so the blocking fetch stays
+    off the UI thread, and exit_on_error=False so a fetch failure surfaces
+    as a toast instead of tearing down the whole app.  Each test calls a
+    launching method with a mock host and asserts those worker options.
     """
 
-    def _fresh_host(self) -> tuple[mock.Mock, mock.Mock, mock.Mock]:
-        node = mock.Mock()
-        host = mock.Mock()
-        manager = mock.Mock()
-        manager.attach_mock(node.reset_cancel, 'reset_cancel')
-        manager.attach_mock(host.run_worker, 'run_worker')
-        return node, host, manager
-
-    def _assert_chokepoint(
-        self,
-        node: mock.Mock,
-        host: mock.Mock,
-        manager: mock.Mock,
-        name: str,
-    ) -> None:
-        node.reset_cancel.assert_called_once_with()
-        ordered = [call_name for call_name, _a, _k in manager.mock_calls]
-        assert ordered.index('reset_cancel') < ordered.index('run_worker')
+    def _assert_worker_contract(self, host: mock.Mock, name: str) -> None:
         kwargs = host.run_worker.call_args.kwargs
         assert kwargs.get('thread') is True
         assert kwargs.get('exit_on_error') is False
         assert kwargs.get('name') == name
 
-    def test_app_cancels_lore_node_on_shutdown(self) -> None:
+    def test_app_shuts_down_lore_node_on_exit(self) -> None:
         from b4.tui import LoreNodeShutdownMixin
 
         assert issubclass(BugListApp, LoreNodeShutdownMixin)
 
     def test_import_fetch_goes_through_chokepoint(self) -> None:
-        node, host, manager = self._fresh_host()
+        host = mock.Mock()
         event = mock.Mock(value='<x@y.z>')
-        with mock.patch('b4.get_lore_node', return_value=node):
-            cast(Any, ImportScreen).on_input_submitted(host, event)
-        self._assert_chokepoint(node, host, manager, 'import')
+        cast(Any, ImportScreen).on_input_submitted(host, event)
+        self._assert_worker_contract(host, 'import')
 
     def test_reply_fetch_goes_through_chokepoint(self) -> None:
-        node, host, manager = self._fresh_host()
+        host = mock.Mock()
         host._get_selected_comment.return_value = mock.Mock(
             text='Message-ID: <x@y.z>\n\nbody'
         )
-        with mock.patch('b4.get_lore_node', return_value=node):
-            cast(Any, BugDetailScreen).action_reply(host)
-        self._assert_chokepoint(node, host, manager, 'reply_fetch')
+        cast(Any, BugDetailScreen).action_reply(host)
+        self._assert_worker_contract(host, 'reply_fetch')
 
     def test_update_all_goes_through_chokepoint(self) -> None:
-        node, host, manager = self._fresh_host()
-        with mock.patch('b4.get_lore_node', return_value=node):
-            cast(Any, UpdateBugsScreen).on_mount(host)
-        self._assert_chokepoint(node, host, manager, '_do_updates')
+        host = mock.Mock()
+        cast(Any, UpdateBugsScreen).on_mount(host)
+        self._assert_worker_contract(host, '_do_updates')
 
     @pytest.mark.asyncio
     async def test_reply_fetch_failure_notifies_instead_of_crashing(self) -> None:

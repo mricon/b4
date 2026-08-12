@@ -283,7 +283,7 @@ requires-dist = [
     { name = "argcomplete", marker = "extra == 'completion'", specifier = ">=3.0" },
     { name = "dkimpy", specifier = ">=1.0,<2.0" },
     { name = "ezgb", specifier = ">=0.2.0" },
-    { name = "liblore", specifier = ">=0.8" },
+    { name = "liblore", specifier = ">=0.9" },
     { name = "patatt", specifier = ">=0.6,<2.0" },
     { name = "pygit2", specifier = ">=1.14,<2.0" },
     { name = "requests", specifier = ">=2.24,<3.0" },
@@ -975,14 +975,14 @@ wheels = [
 
 [[package]]
 name = "liblore"
-version = "0.8.2"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e6/6d/3bcda6ff0659d27a76a303a750ea514c9a54887be1086ca5312e2680c237/liblore-0.8.2.tar.gz", hash = "sha256:1f0d1804bf35baea66df246c2cc478128383d4c77b0057bd4190b0516d6b5446", size = 63975, upload-time = "2026-08-12T14:47:42.051Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/2e/f279d5202b6cdbc0548adc627b89e04e4d40739bc209a9fb3c0795851c38/liblore-0.9.0.tar.gz", hash = "sha256:0d9c57376a0787f57ee579c50b8ef2b2e434e4e03dd40ec253a00daf1d38c1f4", size = 67818, upload-time = "2026-08-12T19:59:54.261Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/3b/9cccfa9fc7e9af94a2f603b7e6f745564b69bb30418b3e81f14db687cdc5/liblore-0.8.2-py3-none-any.whl", hash = "sha256:11d426be3d17340b49e898cc6a60622e2bbec2164f3c4d473077af8cc549ad21", size = 35193, upload-time = "2026-08-12T14:47:41.07Z" },
+    { url = "https://files.pythonhosted.org/packages/84/eb/e8c0a309363c96b17c3e4bcdc51cb72cc97527c00e22434ef9e11d64ce7e/liblore-0.9.0-py3-none-any.whl", hash = "sha256:116d7d7fcbdcae36de7117b6e73e8d41c3631e50e5252cf54403e541070dbfcc", size = 37342, upload-time = "2026-08-12T19:59:53.311Z" },
 ]
 
 [[package]]

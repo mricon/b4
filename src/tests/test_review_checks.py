@@ -1529,9 +1529,9 @@ class TestWorkerCancelledHelper:
 
 @requires_textual
 class TestLoreNodeShutdownMixin:
-    """The mixin cancels the shared lore node from its on_unmount hook."""
+    """The mixin shuts the shared lore node down from its on_unmount hook."""
 
-    def test_on_unmount_cancels_lore_node(self) -> None:
+    def test_on_unmount_shuts_down_lore_node(self) -> None:
         from b4.review_tui._common import LoreNodeShutdownMixin
 
         class _App(LoreNodeShutdownMixin):
@@ -1540,11 +1540,11 @@ class TestLoreNodeShutdownMixin:
         node = mock.Mock()
         with mock.patch('b4.get_lore_node', return_value=node):
             _App().on_unmount()
-        node.cancel.assert_called_once_with()
+        node.shutdown.assert_called_once_with()
 
     def test_on_unmount_swallows_errors(self) -> None:
         # Shutdown must never raise out of on_unmount, even if the lore
-        # node is unavailable or cancel() blows up.
+        # node is unavailable or shutdown() blows up.
         from b4.review_tui._common import LoreNodeShutdownMixin
 
         class _App(LoreNodeShutdownMixin):
@@ -1555,37 +1555,28 @@ class TestLoreNodeShutdownMixin:
 
 
 @requires_textual
-class TestCheckRunnerStaleCancel:
-    """Running checks must not inherit a stale lore-node cancel flag.
+class TestCheckRunnerWorkerContract:
+    """Running checks launches the fetch through run_lore_worker().
 
-    Regression coverage for the TUI crash when running checks right after a
-    cancelled lore request: the shared node keeps a sticky cancel flag, so the
-    thread fetch raised OperationCancelledError immediately.  Without a reset
-    in _run_checks (and exit_on_error=False on the worker) that uncaught error
-    tore down the whole app via WorkerFailed.
+    Regression coverage for the TUI crash when a check-time fetch failed:
+    without exit_on_error=False on the worker, an uncaught fetch error tore
+    down the whole app via WorkerFailed.
     """
 
-    def test_run_checks_resets_flag_before_launching_worker(self) -> None:
+    def test_run_checks_launches_crash_safe_worker(self) -> None:
         from b4.review_tui._common import CheckRunnerMixin
 
-        node = mock.Mock()
         host = mock.Mock()
         host._get_check_context.return_value = ('cover@example.com', 'a series', '')
 
-        # Track call order: the flag must be cleared before the worker starts.
-        manager = mock.Mock()
-        manager.attach_mock(node.reset_cancel, 'reset_cancel')
-        manager.attach_mock(host.run_worker, 'run_worker')
+        cast(Any, CheckRunnerMixin)._run_checks(host, force=False)
 
-        with mock.patch('b4.get_lore_node', return_value=node):
-            cast(Any, CheckRunnerMixin)._run_checks(host, force=False)
-
-        node.reset_cancel.assert_called_once_with()
-        ordered = [name for name, _a, _k in manager.mock_calls]
-        assert ordered.index('reset_cancel') < ordered.index('run_worker')
-
-        # The worker must not crash the app on a fetch failure.
-        assert host.run_worker.call_args.kwargs.get('exit_on_error') is False
+        host.run_worker.assert_called_once()
+        kwargs = host.run_worker.call_args.kwargs
+        # In a thread, so the blocking fetch stays off the UI thread; and
+        # the worker must not crash the app on a fetch failure.
+        assert kwargs.get('thread') is True
+        assert kwargs.get('exit_on_error') is False
 
     def test_fetch_cancellation_dismisses_overlay_quietly(self) -> None:
         from b4.review_tui._common import CheckRunnerMixin
