@@ -7,7 +7,7 @@ import pathlib
 import re
 import sqlite3
 from email.message import EmailMessage
-from typing import Any, Dict
+from typing import Any, Dict, List
 from unittest import mock
 
 import pytest
@@ -243,13 +243,6 @@ class TestDbOperations:
         ids = review_tracking.get_tracked_pw_series_ids('pw-ids-test')
         assert ids == {100, 200}
 
-    def test_get_tracked_pw_series_ids_nonexistent_db(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """Verify get_tracked_pw_series_ids returns empty set for missing db."""
-        ids = review_tracking.get_tracked_pw_series_ids('nonexistent-project')
-        assert ids == set()
-
     def test_is_pw_series_tracked(self, tmp_path: pytest.TempPathFactory) -> None:
         """Verify is_pw_series_tracked works correctly."""
         conn = review_tracking.init_db('is-tracked-test')
@@ -269,12 +262,6 @@ class TestDbOperations:
 
         assert review_tracking.is_pw_series_tracked('is-tracked-test', 12345) is True
         assert review_tracking.is_pw_series_tracked('is-tracked-test', 99999) is False
-
-    def test_is_pw_series_tracked_nonexistent_db(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """Verify is_pw_series_tracked returns False for missing db."""
-        assert review_tracking.is_pw_series_tracked('nonexistent', 12345) is False
 
     def test_get_all_tracked_series(self, tmp_path: pytest.TempPathFactory) -> None:
         """Verify get_all_tracked_series returns all series with correct fields."""
@@ -313,12 +300,14 @@ class TestDbOperations:
         assert result[1]['subject'] == 'First series'
         assert result[1]['revision'] == 1
 
-    def test_get_all_tracked_series_nonexistent_db(
+    def test_queries_against_nonexistent_db(
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
-        """Verify get_all_tracked_series returns empty list for missing db."""
-        result = review_tracking.get_all_tracked_series('nonexistent-project')
-        assert result == []
+        """Verify read queries return empty results for a missing db."""
+        project = 'nonexistent-project'
+        assert review_tracking.get_tracked_pw_series_ids(project) == set()
+        assert review_tracking.is_pw_series_tracked(project, 12345) is False
+        assert review_tracking.get_all_tracked_series(project) == []
 
 
 class TestRepoMetadata:
@@ -442,23 +431,18 @@ class TestCmdEnroll:
         finally:
             os.chdir(oldcwd)
 
-    def test_enroll_fails_for_nonexistent_path(
-        self, tmp_path: pytest.TempPathFactory
+    @pytest.mark.parametrize(
+        'create_dir', [False, True], ids=['nonexistent', 'non-git-dir']
+    )
+    def test_enroll_fails_for_bad_repo_path(
+        self, tmp_path: pytest.TempPathFactory, create_dir: bool
     ) -> None:
-        """Verify enroll fails for non-existent paths."""
-        cmdargs = argparse.Namespace(repo_path='/nonexistent/path', identifier='test')
-        with pytest.raises(SystemExit) as exc_info:
-            review_tracking.cmd_enroll(cmdargs)
-        assert exc_info.value.code == 1
+        """Verify enroll fails for paths that are not git repositories."""
+        bad_path = os.path.join(str(tmp_path), 'not-a-repo')
+        if create_dir:
+            os.makedirs(bad_path)
 
-    def test_enroll_fails_for_non_git_directory(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """Verify enroll fails for non-git directories."""
-        non_git_dir = os.path.join(str(tmp_path), 'not-a-repo')
-        os.makedirs(non_git_dir)
-
-        cmdargs = argparse.Namespace(repo_path=non_git_dir, identifier='test')
+        cmdargs = argparse.Namespace(repo_path=bad_path, identifier='test')
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs)
         assert exc_info.value.code == 1
@@ -1124,10 +1108,13 @@ class TestRevisions:
         assert review_tracking.get_newest_revision(conn, 'change-abc') == 3
         conn.close()
 
-    def test_get_newest_revision_empty(self, tmp_path: pytest.TempPathFactory) -> None:
-        """Verify get_newest_revision returns None when no revisions exist."""
+    def test_revision_queries_empty_db(self, tmp_path: pytest.TempPathFactory) -> None:
+        """Verify revision queries return empty results when no revisions exist."""
         conn = review_tracking.init_db('rev-empty-test')
         assert review_tracking.get_newest_revision(conn, 'nonexistent') is None
+        assert review_tracking.get_all_newest_revisions(conn) == {}
+        assert review_tracking.get_all_revision_counts(conn) == {}
+        assert review_tracking.get_all_revisions_grouped(conn) == {}
         conn.close()
 
     def test_get_all_newest_revisions(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -1138,14 +1125,6 @@ class TestRevisions:
         review_tracking.add_revision(conn, 'change-b', 2, 'b-v2@example.com')
         result = review_tracking.get_all_newest_revisions(conn)
         assert result == {'change-a': 3, 'change-b': 2}
-        conn.close()
-
-    def test_get_all_newest_revisions_empty(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """Verify bulk newest-revision query returns empty dict with no data."""
-        conn = review_tracking.init_db('rev-bulk-newest-empty-test')
-        assert review_tracking.get_all_newest_revisions(conn) == {}
         conn.close()
 
     def test_get_all_revision_counts(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -1176,14 +1155,6 @@ class TestRevisions:
         # change-a should be sorted ascending
         assert [r['revision'] for r in result['change-a']] == [1, 2]
         assert len(result['change-b']) == 1
-        conn.close()
-
-    def test_get_all_revisions_grouped_empty(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """Verify bulk grouped revisions returns empty dict with no data."""
-        conn = review_tracking.init_db('rev-bulk-grouped-empty-test')
-        assert review_tracking.get_all_revisions_grouped(conn) == {}
         conn.close()
 
     def test_delete_series(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -2242,9 +2213,17 @@ class TestBuildReplyFromComments:
 class TestFormatSnoozeUntil:
     """Tests for the _format_snooze_until() display helper."""
 
-    def test_date_only_string(self) -> None:
-        """Date-only values get an 'until' prefix for backward compat."""
-        assert _format_snooze_until('2026-04-01') == 'until 2026-04-01'
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            pytest.param('2026-04-01', 'until 2026-04-01', id='date-only'),
+            pytest.param('tag:v6.15-rc3', 'until tag v6.15-rc3', id='tag'),
+            pytest.param('NOT_A_DATE', 'NOT_A_DATE', id='invalid-datetime'),
+        ],
+    )
+    def test_literal_values(self, value: str, expected: str) -> None:
+        """Non-datetime values are formatted without computing a countdown."""
+        assert _format_snooze_until(value) == expected
 
     def test_expired_datetime(self) -> None:
         """A datetime in the past returns 'expired'."""
@@ -2253,50 +2232,38 @@ class TestFormatSnoozeUntil:
         ).isoformat()
         assert _format_snooze_until(past) == 'expired'
 
-    def test_future_days_hours_minutes(self) -> None:
-        """A datetime ~1d 2h 30m in the future shows all three components."""
-        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-            days=1, hours=2, minutes=30, seconds=30
-        )
+    @pytest.mark.parametrize(
+        'delta,expected_prefix',
+        [
+            pytest.param(
+                datetime.timedelta(days=1, hours=2, minutes=30, seconds=30),
+                'wakes in 1d 2h 30m',
+                id='days-hours-minutes',
+            ),
+            pytest.param(
+                datetime.timedelta(hours=3, seconds=30),
+                'wakes in 3h',
+                id='hours-only',
+            ),
+            pytest.param(
+                datetime.timedelta(minutes=45, seconds=30),
+                'wakes in 45m',
+                id='minutes-only',
+            ),
+            pytest.param(
+                datetime.timedelta(seconds=20),
+                'wakes in <1m',
+                id='under-a-minute',
+            ),
+        ],
+    )
+    def test_future_countdown(
+        self, delta: datetime.timedelta, expected_prefix: str
+    ) -> None:
+        """Future datetimes show only the leading nonzero countdown components."""
+        target = datetime.datetime.now(datetime.timezone.utc) + delta
         result = _format_snooze_until(target.isoformat())
-        assert result.startswith('wakes in 1d 2h 30m')
-        assert '(' in result  # contains the local date/time
-
-    def test_future_hours_only(self) -> None:
-        """A datetime exactly 3h in the future shows hours (and maybe minutes)."""
-        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-            hours=3, seconds=30
-        )
-        result = _format_snooze_until(target.isoformat())
-        assert 'wakes in' in result
-        assert '3h' in result
-        assert re.search(r'\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)', result)
-
-    def test_future_minutes_only(self) -> None:
-        """A datetime 45m in the future shows only minutes."""
-        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-            minutes=45, seconds=30
-        )
-        result = _format_snooze_until(target.isoformat())
-        assert 'wakes in 45m' in result
-        assert 'd' not in result.split('(')[0]
-        assert 'h' not in result.split('(')[0]
-
-    def test_future_less_than_one_minute(self) -> None:
-        """A datetime <1m away shows '<1m'."""
-        target = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-            seconds=20
-        )
-        result = _format_snooze_until(target.isoformat())
-        assert 'wakes in <1m' in result
-
-    def test_tag_value(self) -> None:
-        """A tag: prefixed value shows 'until tag <tagname>'."""
-        assert _format_snooze_until('tag:v6.15-rc3') == 'until tag v6.15-rc3'
-
-    def test_invalid_datetime_with_T(self) -> None:
-        """A string containing T that isn't a valid datetime returns as-is."""
-        assert _format_snooze_until('NOT_A_DATE') == 'NOT_A_DATE'
+        assert result.startswith(expected_prefix)
 
     def test_local_time_shown(self) -> None:
         """The parenthesised local time uses YYYY-MM-DD HH:MM format."""
@@ -2307,6 +2274,7 @@ class TestFormatSnoozeUntil:
         local_dt = target.astimezone()
         expected_str = local_dt.strftime('%Y-%m-%d %H:%M')
         assert expected_str in result
+        assert re.search(r'\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)', result)
 
 
 class TestSnoozeDurationRegex:
@@ -2646,43 +2614,52 @@ class TestAttestationDb:
 class TestFormatAttestation:
     """Tests for the _format_attestation() display helper."""
 
-    def test_pending_returns_none(self) -> None:
-        """'pending' produces no display text."""
-        assert _format_attestation('pending') is None
+    @pytest.mark.parametrize('status', ['pending', 'none', ''])
+    def test_no_display_text(self, status: str) -> None:
+        """Pending, no-signature and empty statuses produce no display text."""
+        assert _format_attestation(status) is None
 
-    def test_none_string_returns_none(self) -> None:
-        """'none' (no signatures) produces no display text."""
-        assert _format_attestation('none') is None
-
-    def test_empty_string_returns_none(self) -> None:
-        """Empty string produces no display text."""
-        assert _format_attestation('') is None
-
-    def test_signed_dkim(self) -> None:
-        """A signed DKIM entry shows a checkmark and identity."""
-        text = _format_attestation('signed:DKIM/kernel.org')
+    @pytest.mark.parametrize(
+        'value,fragments',
+        [
+            pytest.param(
+                'signed:DKIM/kernel.org',
+                ['\u2714', 'DKIM/kernel.org'],  # ✔
+                id='signed',
+            ),
+            pytest.param(
+                'nokey:ed25519/user@example.com',
+                ['?', 'ed25519/user@example.com', '(no key)'],
+                id='nokey',
+            ),
+            pytest.param(
+                'badsig:ed25519/user@example.com',
+                ['\u2718', 'ed25519/user@example.com', '(signature failed)'],  # ✘
+                id='badsig',
+            ),
+        ],
+    )
+    def test_entry_shows_mark_identity_and_hint(
+        self, value: str, fragments: List[str]
+    ) -> None:
+        """Each attestation status renders its mark, identity and hint."""
+        text = _format_attestation(value)
         assert text is not None
-        plain = text.plain
-        assert '\u2714' in plain  # ✔
-        assert 'DKIM/kernel.org' in plain
+        for fragment in fragments:
+            assert fragment in text.plain
 
-    def test_nokey_shows_question_mark(self) -> None:
-        """A nokey entry shows a question mark, identity and '(no key)' hint."""
-        text = _format_attestation('nokey:ed25519/user@example.com')
+    @pytest.mark.parametrize(
+        'value',
+        [
+            pytest.param('mystery:foo/bar', id='unknown-status'),
+            pytest.param('weirdvalue', id='no-colon'),
+        ],
+    )
+    def test_unrecognised_entry_shown_verbatim(self, value: str) -> None:
+        """Unknown statuses and colon-less entries are shown verbatim."""
+        text = _format_attestation(value)
         assert text is not None
-        plain = text.plain
-        assert '?' in plain
-        assert 'ed25519/user@example.com' in plain
-        assert '(no key)' in plain
-
-    def test_badsig_shows_cross(self) -> None:
-        """A badsig entry shows a cross mark, identity and failure hint."""
-        text = _format_attestation('badsig:ed25519/user@example.com')
-        assert text is not None
-        plain = text.plain
-        assert '\u2718' in plain  # ✘
-        assert 'ed25519/user@example.com' in plain
-        assert '(signature failed)' in plain
+        assert value in text.plain
 
     def test_multiple_attestors_comma_separated(self) -> None:
         """Multiple attestors are comma-separated in the output."""
@@ -2694,18 +2671,6 @@ class TestFormatAttestation:
         assert ', ' in plain
         assert 'DKIM/kernel.org' in plain
         assert 'ed25519/dev@example.com' in plain
-
-    def test_unknown_status_shown_as_is(self) -> None:
-        """An unrecognised status entry is shown verbatim."""
-        text = _format_attestation('mystery:foo/bar')
-        assert text is not None
-        assert 'mystery:foo/bar' in text.plain
-
-    def test_entry_without_colon_shown_as_is(self) -> None:
-        """An entry with no colon separator is shown verbatim."""
-        text = _format_attestation('weirdvalue')
-        assert text is not None
-        assert 'weirdvalue' in text.plain
 
 
 # ---------------------------------------------------------------------------
