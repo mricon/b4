@@ -87,7 +87,8 @@ class TestHelpScreen:
         ]
 
     @pytest.mark.asyncio
-    async def test_escape_dismisses(self) -> None:
+    @pytest.mark.parametrize('key', ['escape', 'question_mark', 'q'])
+    async def test_dismiss_keys(self, key: str) -> None:
         app = ModalTestApp()
         dismissed: List[Any] = []
 
@@ -97,41 +98,13 @@ class TestHelpScreen:
             # The help screen should now be on top
             assert isinstance(app.screen, HelpScreen)
 
-            await pilot.press('escape')
+            await pilot.press(key)
             await pilot.pause()
             # Should be back on the host screen
             assert not isinstance(app.screen, HelpScreen)
             # https://github.com/python/mypy/issues/9457:
             # app.screen is stale-narrowed across await.
             assert dismissed == [None]  # type: ignore[unreachable]
-
-    @pytest.mark.asyncio
-    async def test_question_mark_dismisses(self) -> None:
-        app = ModalTestApp()
-        dismissed: List[Any] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(HelpScreen(self._lines()), dismissed.append)
-            await pilot.pause()
-
-            await pilot.press('question_mark')
-            await pilot.pause()
-            assert not isinstance(app.screen, HelpScreen)
-            assert dismissed == [None]
-
-    @pytest.mark.asyncio
-    async def test_q_dismisses(self) -> None:
-        app = ModalTestApp()
-        dismissed: List[Any] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(HelpScreen(self._lines()), dismissed.append)
-            await pilot.pause()
-
-            await pilot.press('q')
-            await pilot.pause()
-            assert not isinstance(app.screen, HelpScreen)
-            assert dismissed == [None]
 
     @pytest.mark.asyncio
     async def test_scroll_bindings_do_not_dismiss(self) -> None:
@@ -388,7 +361,15 @@ class TestNoteScreen:
         ]
 
     @pytest.mark.asyncio
-    async def test_escape_returns_none(self) -> None:
+    @pytest.mark.parametrize(
+        'key,expected',
+        [
+            pytest.param('escape', None, id='escape-cancels'),
+            pytest.param('e', '__EDIT__', id='e-edits'),
+            pytest.param('d', '__DELETE__', id='d-deletes'),
+        ],
+    )
+    async def test_dismiss_keys(self, key: str, expected: Optional[str]) -> None:
         app = ModalTestApp()
         results: List[Optional[str]] = []
 
@@ -397,35 +378,9 @@ class TestNoteScreen:
             await pilot.pause()
             assert isinstance(app.screen, NoteScreen)
 
-            await pilot.press('escape')
+            await pilot.press(key)
             await pilot.pause()
-            assert results == [None]
-
-    @pytest.mark.asyncio
-    async def test_e_returns_edit(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[str]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(NoteScreen(self._entries()), results.append)
-            await pilot.pause()
-
-            await pilot.press('e')
-            await pilot.pause()
-            assert results == ['__EDIT__']
-
-    @pytest.mark.asyncio
-    async def test_d_returns_delete(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[str]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(NoteScreen(self._entries()), results.append)
-            await pilot.pause()
-
-            await pilot.press('d')
-            await pilot.pause()
-            assert results == ['__DELETE__']
+            assert results == [expected]
 
     @pytest.mark.asyncio
     async def test_empty_notes(self) -> None:
@@ -486,7 +441,15 @@ class TestRevisionChoiceScreen:
     """Tests for the RevisionChoiceScreen modal."""
 
     @pytest.mark.asyncio
-    async def test_n_returns_newest(self) -> None:
+    @pytest.mark.parametrize(
+        'key,expected',
+        [
+            pytest.param('n', 5, id='n-newest'),
+            pytest.param('o', 2, id='o-current'),
+            pytest.param('escape', None, id='escape-cancels'),
+        ],
+    )
+    async def test_dismiss_keys(self, key: str, expected: Optional[int]) -> None:
         app = ModalTestApp()
         results: List[Optional[int]] = []
 
@@ -498,41 +461,9 @@ class TestRevisionChoiceScreen:
             await pilot.pause()
             assert isinstance(app.screen, RevisionChoiceScreen)
 
-            await pilot.press('n')
+            await pilot.press(key)
             await pilot.pause()
-            assert results == [5]
-
-    @pytest.mark.asyncio
-    async def test_o_returns_current(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[int]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                RevisionChoiceScreen(current_rev=2, newest_rev=5),
-                results.append,
-            )
-            await pilot.pause()
-
-            await pilot.press('o')
-            await pilot.pause()
-            assert results == [2]
-
-    @pytest.mark.asyncio
-    async def test_escape_returns_none(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[int]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                RevisionChoiceScreen(current_rev=1, newest_rev=3),
-                results.append,
-            )
-            await pilot.pause()
-
-            await pilot.press('escape')
-            await pilot.pause()
-            assert results == [None]
+            assert results == [expected]
 
 
 # ---------------------------------------------------------------------------
@@ -893,7 +824,15 @@ class TestActionScreen:
             assert results == ['snooze']
 
     @pytest.mark.asyncio
-    async def test_shortcut_key_selects_directly(self) -> None:
+    @pytest.mark.parametrize(
+        'key,expected',
+        [
+            pytest.param('r', 'review', id='r-review'),
+            pytest.param('T', 'take', id='T-take'),
+            pytest.param('x', 'archive', id='x-archive'),
+        ],
+    )
+    async def test_shortcut_key_selects_directly(self, key: str, expected: str) -> None:
         """Pressing the shortcut char should immediately dismiss."""
         app = ModalTestApp()
         results: List[Optional[str]] = []
@@ -904,40 +843,9 @@ class TestActionScreen:
             )
             await pilot.pause()
 
-            # 'T' is the shortcut for 'take'
-            await pilot.press('T')
+            await pilot.press(key)
             await pilot.pause()
-            assert results == ['take']
-
-    @pytest.mark.asyncio
-    async def test_shortcut_r_for_review(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[str]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append
-            )
-            await pilot.pause()
-
-            await pilot.press('r')
-            await pilot.pause()
-            assert results == ['review']
-
-    @pytest.mark.asyncio
-    async def test_shortcut_x_for_archive(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[str]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                ActionScreen(self._actions(), shortcuts=self._SHORTCUTS), results.append
-            )
-            await pilot.pause()
-
-            await pilot.press('x')
-            await pilot.pause()
-            assert results == ['archive']
+            assert results == [expected]
 
 
 # ---------------------------------------------------------------------------
@@ -1178,7 +1086,14 @@ class TestLinkRevisionConfirmScreen:
     """Tests for the LinkRevisionConfirmScreen confirmation modal."""
 
     @pytest.mark.asyncio
-    async def test_confirm_returns_true(self) -> None:
+    @pytest.mark.parametrize(
+        'key,expected',
+        [
+            pytest.param('enter', True, id='enter-confirms'),
+            pytest.param('escape', False, id='escape-cancels'),
+        ],
+    )
+    async def test_dismiss_keys(self, key: str, expected: bool) -> None:
         app = ModalTestApp()
         results: List[Optional[bool]] = []
         async with app.run_test() as pilot:
@@ -1186,22 +1101,9 @@ class TestLinkRevisionConfirmScreen:
                 LinkRevisionConfirmScreen('Sub', 4, 8, 'Srinivas'), results.append
             )
             await pilot.pause()
-            await pilot.press('enter')
+            await pilot.press(key)
             await pilot.pause()
-            assert results == [True]
-
-    @pytest.mark.asyncio
-    async def test_escape_returns_false(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[bool]] = []
-        async with app.run_test() as pilot:
-            app.push_screen(
-                LinkRevisionConfirmScreen('Sub', 4, 8, 'Srinivas'), results.append
-            )
-            await pilot.pause()
-            await pilot.press('escape')
-            await pilot.pause()
-            assert results == [False]
+            assert results == [expected]
 
     @pytest.mark.asyncio
     async def test_warning_is_shown(self) -> None:
@@ -1381,61 +1283,47 @@ class TestTakeScreen:
     """Tests for the TakeScreen default take-method selection."""
 
     @pytest.mark.asyncio
-    async def test_multipatch_with_cover_defaults_to_merge(self) -> None:
+    @pytest.mark.parametrize(
+        'num_patches,has_cover,default_method,expected_method,expect_hint',
+        [
+            pytest.param(3, True, None, 'merge', False, id='multipatch-with-cover'),
+            pytest.param(3, False, None, 'linear', True, id='multipatch-no-cover'),
+            pytest.param(1, True, None, 'linear', False, id='single-patch'),
+            # A configured default method wins over the no-cover
+            # heuristic, but the missing cover is still surfaced.
+            pytest.param(3, False, 'merge', 'merge', True, id='explicit-default'),
+        ],
+    )
+    async def test_default_method(
+        self,
+        num_patches: int,
+        has_cover: bool,
+        default_method: Optional[str],
+        expected_method: str,
+        expect_hint: bool,
+    ) -> None:
         app = ModalTestApp()
 
         async with app.run_test() as pilot:
-            app.push_screen(
-                TakeScreen('main', 'b4/review/test', num_patches=3, has_cover=True)
-            )
-            await pilot.pause()
-            assert app.screen.query_one('#take-method', Select).value == 'merge'
-            assert not app.screen.query('#take-nocover')
-
-    @pytest.mark.asyncio
-    async def test_multipatch_without_cover_defaults_to_linear(self) -> None:
-        app = ModalTestApp()
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                TakeScreen('main', 'b4/review/test', num_patches=3, has_cover=False)
-            )
-            await pilot.pause()
-            assert app.screen.query_one('#take-method', Select).value == 'linear'
-            hint = app.screen.query_one('#take-nocover', Static)
-            assert 'No cover letter' in _static_text(hint)
-
-    @pytest.mark.asyncio
-    async def test_single_patch_defaults_to_linear(self) -> None:
-        app = ModalTestApp()
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                TakeScreen('main', 'b4/review/test', num_patches=1, has_cover=True)
-            )
-            await pilot.pause()
-            assert app.screen.query_one('#take-method', Select).value == 'linear'
-
-    @pytest.mark.asyncio
-    async def test_explicit_default_overrides_no_cover(self) -> None:
-        """A configured default method wins over the no-cover heuristic."""
-        app = ModalTestApp()
-
-        async with app.run_test() as pilot:
+            kwargs: Dict[str, Any] = {}
+            if default_method is not None:
+                kwargs['default_method'] = default_method
             app.push_screen(
                 TakeScreen(
                     'main',
                     'b4/review/test',
-                    num_patches=3,
-                    default_method='merge',
-                    has_cover=False,
+                    num_patches=num_patches,
+                    has_cover=has_cover,
+                    **kwargs,
                 )
             )
             await pilot.pause()
-            assert app.screen.query_one('#take-method', Select).value == 'merge'
-            # The missing cover is still surfaced even when the default is
-            # overridden.
-            assert app.screen.query('#take-nocover')
+            assert app.screen.query_one('#take-method', Select).value == expected_method
+            if expect_hint:
+                hint = app.screen.query_one('#take-nocover', Static)
+                assert 'No cover letter' in _static_text(hint)
+            else:
+                assert not app.screen.query('#take-nocover')
 
     @pytest.mark.asyncio
     async def test_thank_and_archive_defaults_off(self) -> None:
