@@ -256,22 +256,11 @@ class TestTrackingAppStartup:
             assert len(empty) > 0
 
     @pytest.mark.asyncio
-    async def test_series_listed(self, tmp_path: pathlib.Path) -> None:
-        """App should display all seeded series."""
+    async def test_series_listed_newest_first(self, tmp_path: pathlib.Path) -> None:
+        """App should display all seeded series, newest-tracked-first."""
         _seed_db('test-listing', SAMPLE_SERIES)
 
         app = TrackingApp('test-listing')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            lv = app.query_one('#tracking-list', ListView)
-            assert len(list(lv.children)) == 3
-
-    @pytest.mark.asyncio
-    async def test_series_sorted_by_added_at(self, tmp_path: pathlib.Path) -> None:
-        """Series should appear newest-tracked-first (by added_at)."""
-        _seed_db('test-sort', SAMPLE_SERIES)
-
-        app = TrackingApp('test-sort')
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             lv = app.query_one('#tracking-list', ListView)
@@ -279,6 +268,7 @@ class TestTrackingAppStartup:
             # All are 'new' (actionable); sorted by added_at desc — last
             # inserted (charlie) appears first, first inserted (alpha) last.
             subjects = [i.series['subject'] for i in items]
+            assert len(subjects) == 3
             assert 'charlie' in subjects[0]
             assert 'bravo' in subjects[1]
             assert 'alpha' in subjects[2]
@@ -382,112 +372,49 @@ class TestTrackingNavigation:
 class TestTrackingLimit:
     """Tests for the limit/filter functionality."""
 
+    @staticmethod
+    async def _apply_limit(pilot: Any, app: TrackingApp, value: str) -> None:
+        """Open the limit dialog, enter value, and apply it."""
+        await pilot.press('l')
+        await pilot.pause()
+        assert isinstance(app.screen, LimitScreen)
+        inp = app.screen.query_one('#limit-input', Input)
+        inp.value = value
+        await pilot.press('enter')
+        await pilot.pause()
+
+    @staticmethod
+    def _items(app: TrackingApp) -> List[TrackedSeriesItem]:
+        lv = app.query_one('#tracking-list', ListView)
+        return [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
+
     @pytest.mark.asyncio
-    async def test_limit_filters_by_subject(self, tmp_path: pathlib.Path) -> None:
+    async def test_limit_apply_and_clear(self, tmp_path: pathlib.Path) -> None:
+        """Limits filter by subject and sender, show in the title, and clear."""
         _seed_db('test-limit', SAMPLE_SERIES)
 
         app = TrackingApp('test-limit')
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            lv = app.query_one('#tracking-list', ListView)
-            assert len(list(lv.children)) == 3
+            assert len(self._items(app)) == 3
 
-            # Open limit dialog and filter for 'drm'
-            await pilot.press('l')
-            await pilot.pause()
-            assert isinstance(app.screen, LimitScreen)
-
-            from textual.widgets import Input
-
-            inp = app.screen.query_one('#limit-input', Input)
-            inp.value = 'drm'
-            await pilot.press('enter')
-            await pilot.pause()
-
-            # Should now show only the 'bravo' series
-            lv = app.query_one('#tracking-list', ListView)
-            items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
+            # Filter by subject substring; the active limit shows in the title
+            await self._apply_limit(pilot, app, 'drm')
+            items = self._items(app)
             assert len(items) == 1
             assert 'bravo' in items[0].series['subject']
+            title = app.query_one('#title-left', Static)
+            assert 'drm' in _static_text(title)
 
-    @pytest.mark.asyncio
-    async def test_limit_filters_by_sender(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-limit-sender', SAMPLE_SERIES)
-
-        app = TrackingApp('test-limit-sender')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-
-            await pilot.press('l')
-            await pilot.pause()
-
-            from textual.widgets import Input
-
-            inp = app.screen.query_one('#limit-input', Input)
-            inp.value = 'Charlie'
-            await pilot.press('enter')
-            await pilot.pause()
-
-            lv = app.query_one('#tracking-list', ListView)
-            items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
+            # Filter by sender name
+            await self._apply_limit(pilot, app, 'Charlie')
+            items = self._items(app)
             assert len(items) == 1
             assert 'charlie' in items[0].series['subject']
 
-    @pytest.mark.asyncio
-    async def test_clear_limit(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-limit-clear', SAMPLE_SERIES)
-
-        app = TrackingApp('test-limit-clear')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-
-            # Apply a filter
-            await pilot.press('l')
-            await pilot.pause()
-            from textual.widgets import Input
-
-            inp = app.screen.query_one('#limit-input', Input)
-            inp.value = 'alpha'
-            await pilot.press('enter')
-            await pilot.pause()
-
-            lv = app.query_one('#tracking-list', ListView)
-            assert (
-                len([c for c in lv.children if isinstance(c, TrackedSeriesItem)]) == 1
-            )
-
-            # Clear the filter
-            await pilot.press('l')
-            await pilot.pause()
-            inp = app.screen.query_one('#limit-input', Input)
-            inp.value = ''
-            await pilot.press('enter')
-            await pilot.pause()
-
-            lv = app.query_one('#tracking-list', ListView)
-            assert (
-                len([c for c in lv.children if isinstance(c, TrackedSeriesItem)]) == 3
-            )
-
-    @pytest.mark.asyncio
-    async def test_limit_title_shows_count(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-limit-title', SAMPLE_SERIES)
-
-        app = TrackingApp('test-limit-title')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-
-            await pilot.press('l')
-            await pilot.pause()
-            from textual.widgets import Input
-
-            inp = app.screen.query_one('#limit-input', Input)
-            inp.value = 'alpha'
-            await pilot.press('enter')
-            await pilot.pause()
-
-            title = app.query_one('#title-left', Static)
-            assert 'alpha' in _static_text(title)
+            # Clearing the limit restores the full list
+            await self._apply_limit(pilot, app, '')
+            assert len(self._items(app)) == 3
 
 
 class TestTrackingLimitPrefixes:
@@ -530,89 +457,118 @@ class TestTrackingLimitPrefixes:
             assert len(items) == 1
             assert items[0].series['status'] == 'snoozed'
 
-    def test_matches_limit_status_substring(self) -> None:
-        """s:re should match both reviewing and replied."""
-        m = TrackingApp._matches_limit
-        assert m({'status': 'reviewing'}, 's:re')
-        assert m({'status': 'replied'}, 's:re')
-        assert not m({'status': 'new'}, 's:re')
-        assert not m({'status': 'snoozed'}, 's:re')
-
-    def test_matches_limit_target_branch(self) -> None:
-        """t:next should match series with target_branch containing 'next'."""
-        m = TrackingApp._matches_limit
-        assert m({'target_branch': 'net-next'}, 't:next')
-        assert m({'target_branch': 'bpf-next'}, 't:next')
-        assert not m({'target_branch': 'bpf'}, 't:next')
-        assert not m({'target_branch': None}, 't:next')
-        assert not m({}, 't:next')
-
-    def test_matches_limit_combined(self) -> None:
-        """s:new bpf should match new series with 'bpf' in subject."""
-        m = TrackingApp._matches_limit
-        series_new_bpf = {'status': 'new', 'subject': '[PATCH bpf] fix verifier'}
-        series_new_net = {'status': 'new', 'subject': '[PATCH net] fix routing'}
-        series_snoozed_bpf = {'status': 'snoozed', 'subject': '[PATCH bpf] old'}
-        assert m(series_new_bpf, 's:new bpf')
-        assert not m(series_new_net, 's:new bpf')
-        assert not m(series_snoozed_bpf, 's:new bpf')
-
-    def test_matches_limit_upgradable(self) -> None:
-        """up: should keep only series with a newer revision available."""
-        m = TrackingApp._matches_limit
-        assert m({'has_newer': True}, 'up:')
-        assert not m({'has_newer': False}, 'up:')
-        assert not m({}, 'up:')
-        # Truthy variants behave the same as a bare `up:`.
-        assert m({'has_newer': True}, 'up:yes')
-        assert m({'has_newer': True}, 'up:1')
-
-    def test_matches_limit_upgradable_negated(self) -> None:
-        """up:no should invert, hiding upgradable series."""
-        m = TrackingApp._matches_limit
-        assert not m({'has_newer': True}, 'up:no')
-        assert m({'has_newer': False}, 'up:no')
-        assert m({}, 'up:0')
-
-    def test_matches_limit_upgradable_combined(self) -> None:
-        """up: composes with other tokens under AND logic."""
-        m = TrackingApp._matches_limit
-        waiting_up = {'status': 'waiting', 'has_newer': True}
-        waiting_no = {'status': 'waiting', 'has_newer': False}
-        reviewing_up = {'status': 'reviewing', 'has_newer': True}
-        assert m(waiting_up, 's:waiting up:')
-        assert not m(waiting_no, 's:waiting up:')
-        assert not m(reviewing_up, 's:waiting up:')
+    @pytest.mark.parametrize(
+        'series,limit,expected',
+        [
+            # s: matches on status substring (s:re → reviewing, replied)
+            pytest.param({'status': 'reviewing'}, 's:re', True, id='s-reviewing'),
+            pytest.param({'status': 'replied'}, 's:re', True, id='s-replied'),
+            pytest.param({'status': 'new'}, 's:re', False, id='s-new'),
+            pytest.param({'status': 'snoozed'}, 's:re', False, id='s-snoozed'),
+            # t: matches on target_branch substring
+            pytest.param(
+                {'target_branch': 'net-next'}, 't:next', True, id='t-net-next'
+            ),
+            pytest.param(
+                {'target_branch': 'bpf-next'}, 't:next', True, id='t-bpf-next'
+            ),
+            pytest.param({'target_branch': 'bpf'}, 't:next', False, id='t-bpf'),
+            pytest.param({'target_branch': None}, 't:next', False, id='t-none'),
+            pytest.param({}, 't:next', False, id='t-unset'),
+            # s: composes with bare tokens (subject) under AND logic
+            pytest.param(
+                {'status': 'new', 'subject': '[PATCH bpf] fix verifier'},
+                's:new bpf',
+                True,
+                id='and-both-match',
+            ),
+            pytest.param(
+                {'status': 'new', 'subject': '[PATCH net] fix routing'},
+                's:new bpf',
+                False,
+                id='and-subject-differs',
+            ),
+            pytest.param(
+                {'status': 'snoozed', 'subject': '[PATCH bpf] old'},
+                's:new bpf',
+                False,
+                id='and-status-differs',
+            ),
+            # up: keeps only series with a newer revision available;
+            # truthy variants behave the same as a bare `up:`
+            pytest.param({'has_newer': True}, 'up:', True, id='up-has-newer'),
+            pytest.param({'has_newer': False}, 'up:', False, id='up-no-newer'),
+            pytest.param({}, 'up:', False, id='up-unset'),
+            pytest.param({'has_newer': True}, 'up:yes', True, id='up-yes'),
+            pytest.param({'has_newer': True}, 'up:1', True, id='up-1'),
+            # up:no / up:0 invert, hiding upgradable series
+            pytest.param({'has_newer': True}, 'up:no', False, id='up-no-inverts'),
+            pytest.param({'has_newer': False}, 'up:no', True, id='up-no-keeps'),
+            pytest.param({}, 'up:0', True, id='up-0-unset'),
+            # up: composes with other tokens under AND logic
+            pytest.param(
+                {'status': 'waiting', 'has_newer': True},
+                's:waiting up:',
+                True,
+                id='up-and-status-match',
+            ),
+            pytest.param(
+                {'status': 'waiting', 'has_newer': False},
+                's:waiting up:',
+                False,
+                id='up-and-no-newer',
+            ),
+            pytest.param(
+                {'status': 'reviewing', 'has_newer': True},
+                's:waiting up:',
+                False,
+                id='up-and-status-differs',
+            ),
+        ],
+    )
+    def test_matches_limit(
+        self, series: Dict[str, Any], limit: str, expected: bool
+    ) -> None:
+        assert bool(TrackingApp._matches_limit(series, limit)) is expected
 
 
 class TestEffectiveTier:
     """Tests for _effective_tier — waiting series wake into the actionable tier."""
 
-    def test_plain_statuses_match_status_tier(self) -> None:
-        assert _effective_tier({'status': 'new'}) == 0
-        assert _effective_tier({'status': 'reviewing'}) == 0
-        assert _effective_tier({'status': 'partial'}) == 0
-        assert _effective_tier({'status': 'replied'}) == 1
-        assert _effective_tier({'status': 'accepted'}) == 1
-        assert _effective_tier({'status': 'snoozed'}) == 2
-        assert _effective_tier({'status': 'gone'}) == 2
-
-    def test_waiting_without_newer_stays_inactive(self) -> None:
-        assert _effective_tier({'status': 'waiting'}) == 2
-        assert _effective_tier({'status': 'waiting', 'has_newer': False}) == 2
-
-    def test_waiting_with_newer_becomes_actionable(self) -> None:
-        """The awaited revision arrived — the series rejoins tier 0."""
-        assert _effective_tier({'status': 'waiting', 'has_newer': True}) == 0
-
-    def test_has_newer_does_not_promote_other_statuses(self) -> None:
-        """Only waiting is woken; a newer revision alone doesn't reorder others."""
-        assert _effective_tier({'status': 'snoozed', 'has_newer': True}) == 2
-        assert _effective_tier({'status': 'accepted', 'has_newer': True}) == 1
-
-    def test_queued_takes_precedence(self) -> None:
-        """A queued (accepted) series keeps its queued tier regardless."""
-        assert _effective_tier({'status': 'accepted', 'queued': True}) == 2
+    @pytest.mark.parametrize(
+        'series,tier',
+        [
+            # Plain statuses match their status tier
+            pytest.param({'status': 'new'}, 0, id='new'),
+            pytest.param({'status': 'reviewing'}, 0, id='reviewing'),
+            pytest.param({'status': 'partial'}, 0, id='partial'),
+            pytest.param({'status': 'replied'}, 1, id='replied'),
+            pytest.param({'status': 'accepted'}, 1, id='accepted'),
+            pytest.param({'status': 'snoozed'}, 2, id='snoozed'),
+            pytest.param({'status': 'gone'}, 2, id='gone'),
+            # Waiting stays inactive until the awaited revision arrives,
+            # then rejoins tier 0
+            pytest.param({'status': 'waiting'}, 2, id='waiting'),
+            pytest.param(
+                {'status': 'waiting', 'has_newer': False}, 2, id='waiting-no-newer'
+            ),
+            pytest.param(
+                {'status': 'waiting', 'has_newer': True}, 0, id='waiting-woken'
+            ),
+            # Only waiting is woken; a newer revision alone doesn't
+            # reorder other statuses
+            pytest.param(
+                {'status': 'snoozed', 'has_newer': True}, 2, id='snoozed-has-newer'
+            ),
+            pytest.param(
+                {'status': 'accepted', 'has_newer': True}, 1, id='accepted-has-newer'
+            ),
+            # A queued (accepted) series keeps its queued tier regardless
+            pytest.param({'status': 'accepted', 'queued': True}, 2, id='queued'),
+        ],
+    )
+    def test_effective_tier(self, series: Dict[str, Any], tier: int) -> None:
+        assert _effective_tier(series) == tier
 
 
 class TestTrackingStatusGroups:
@@ -774,7 +730,7 @@ class TestTrackingQuit:
     """Tests for quitting the app."""
 
     @pytest.mark.asyncio
-    async def test_q_warns_instead_of_quitting(self, tmp_path: pathlib.Path) -> None:
+    async def test_q_warns_and_capital_q_exits(self, tmp_path: pathlib.Path) -> None:
         _seed_db('test-quit', SAMPLE_SERIES)
 
         app = TrackingApp('test-quit')
@@ -787,13 +743,6 @@ class TestTrackingQuit:
             messages = [n.message for n in app._notifications]
             assert any("'Q'" in m for m in messages)
 
-    @pytest.mark.asyncio
-    async def test_capital_q_exits(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-quit-cap', SAMPLE_SERIES)
-
-        app = TrackingApp('test-quit-cap')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
             await pilot.press('Q')
             await pilot.pause()
             assert app._exit is True
@@ -1966,9 +1915,8 @@ class TestTrackingDetailPanel:
     """Tests for the detail panel shown on series highlight."""
 
     @pytest.mark.asyncio
-    async def test_detail_panel_shows_on_highlight(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    async def test_detail_panel_lifecycle(self, tmp_path: pathlib.Path) -> None:
+        """The panel auto-shows, follows navigation, and hides on escape."""
         _seed_db('test-detail', SAMPLE_SERIES)
 
         app = TrackingApp('test-detail')
@@ -1977,41 +1925,14 @@ class TestTrackingDetailPanel:
 
             from textual.containers import Vertical
 
-            panel = app.query_one('#details-panel', Vertical)
-            # Panel should have non-zero height (auto-shown on first highlight)
-            assert panel.styles.height is not None
-
-    @pytest.mark.asyncio
-    async def test_detail_panel_hides_on_escape(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-detail-hide', SAMPLE_SERIES)
-
-        app = TrackingApp('test-detail-hide')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-
-            await pilot.press('escape')
-            await pilot.pause()
-
-            from textual.containers import Vertical
-
+            # Panel should have non-zero height (auto-shown on first
+            # highlight), showing charlie (last inserted, added_at desc)
             panel = app.query_one('#details-panel', Vertical)
             assert panel.styles.height is not None
-            assert panel.styles.height.value == 0
-
-    @pytest.mark.asyncio
-    async def test_detail_panel_updates_on_navigation(
-        self, tmp_path: pathlib.Path
-    ) -> None:
-        """Navigating to a different series should update the detail panel."""
-        _seed_db('test-detail-nav', SAMPLE_SERIES)
-
-        app = TrackingApp('test-detail-nav')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            # Should be showing charlie details (last inserted, added_at desc)
             assert app._selected_series is not None
             assert 'charlie' in app._selected_series.get('subject', '')
 
+            # Navigating to a different series updates the panel
             await pilot.press('j')
             await pilot.pause()
             assert app._selected_series is not None
@@ -2021,6 +1942,12 @@ class TestTrackingDetailPanel:
             await pilot.pause()
             assert app._selected_series is not None
             assert 'alpha' in app._selected_series.get('subject', '')
+
+            # Escape hides the panel
+            await pilot.press('escape')
+            await pilot.pause()
+            assert panel.styles.height is not None
+            assert panel.styles.height.value == 0
 
 
 class TestTrackingMultipleSeries:
