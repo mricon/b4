@@ -47,6 +47,7 @@ from b4.tui import (
     _quiet_worker,
     _wait_for_enter,
     display_width,
+    matches_limit,
     notify_quit_hint,
     pad_display,
     resolve_styles,
@@ -1964,20 +1965,22 @@ class BugListApp(JKListNavMixin, App[None]):
         that takes precedence over the show-closed toggle. The caller
         handles the default open-only filtering separately.
         """
-        for token in pattern.lower().split():
-            if token.startswith('s:'):
-                needle = token[2:]
-                status_str = 'open' if bug.status == Status.OPEN else 'closed'
-                if needle not in status_str:
-                    return False
-            elif token.startswith('l:'):
-                needle = token[2:]
-                if not any(needle in lb.lower() for lb in bug.labels):
-                    return False
-            else:
-                if token not in bug.title.lower():
-                    return False
-        return True
+
+        def _status_matches(b: BugLike, needle: str) -> bool:
+            return needle in ('open' if b.status == Status.OPEN else 'closed')
+
+        def _label_matches(b: BugLike, needle: str) -> bool:
+            return any(needle in lb.lower() for lb in b.labels)
+
+        def _title_matches(b: BugLike, needle: str) -> bool:
+            return needle in b.title.lower()
+
+        return matches_limit(
+            bug,
+            pattern,
+            {'s:': _status_matches, 'l:': _label_matches},
+            _title_matches,
+        )
 
     @staticmethod
     def _has_status_token(pattern: str) -> bool:

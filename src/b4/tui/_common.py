@@ -10,7 +10,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import email.utils
 import unicodedata
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -121,6 +121,46 @@ def pad_display(s: str, width: int) -> str:
     if dw < width:
         return s + ' ' * (width - dw)
     return s
+
+
+def limit_substring_matcher(*fields: str) -> Callable[[Dict[str, Any], str], bool]:
+    """Return a limit-token matcher over dict *fields*.
+
+    The returned matcher reports whether the needle is a case-insensitive
+    substring of any of the named fields (missing or None fields count as
+    empty).  For use with :func:`matches_limit`.
+    """
+
+    def _match(item: Dict[str, Any], needle: str) -> bool:
+        return any(needle in (item.get(f, '') or '').lower() for f in fields)
+
+    return _match
+
+
+def matches_limit(
+    item: Any,
+    pattern: str,
+    prefixed: Mapping[str, Callable[[Any, str], bool]],
+    bare: Callable[[Any, str], bool],
+) -> bool:
+    """Test whether *item* matches the limit *pattern*.
+
+    The pattern is lowercased and split on whitespace; every token must
+    match (AND logic).  A token starting with a key of *prefixed* is
+    handled by that key's matcher, called with the token minus the
+    prefix; any other token is handled by the *bare* matcher.  Each app
+    supplies its own field semantics through the matchers.
+    """
+    for token in pattern.lower().split():
+        for prefix, matcher in prefixed.items():
+            if token.startswith(prefix):
+                if not matcher(item, token[len(prefix) :]):
+                    return False
+                break
+        else:
+            if not bare(item, token):
+                return False
+    return True
 
 
 def _fix_ansi_theme(app: Any) -> None:

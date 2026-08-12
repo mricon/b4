@@ -91,6 +91,12 @@ from b4.tui._common import (
     display_width as display_width,
 )
 from b4.tui._common import (
+    limit_substring_matcher as limit_substring_matcher,
+)
+from b4.tui._common import (
+    matches_limit as matches_limit,
+)
+from b4.tui._common import (
     notify_quit_hint as notify_quit_hint,
 )
 from b4.tui._common import (
