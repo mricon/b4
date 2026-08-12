@@ -1260,90 +1260,6 @@ class TestAddrsRoundTrip:
         assert review_tui._lines_to_header(review_tui._addrs_to_lines('')) == ''
 
 
-class TestBuildReviewEmailBcc:
-    """Tests for Bcc header support in _build_review_email()."""
-
-    @staticmethod
-    def _make_series(**header_overrides: str) -> Dict[str, Any]:
-        header_info: Dict[str, str] = {
-            'msgid': 'test-msgid@example.com',
-            'to': 'maintainer@example.com',
-            'cc': '',
-            'references': '',
-            'sentdate': 'Mon, 01 Jan 2024 00:00:00 +0000',
-        }
-        header_info.update(header_overrides)
-        return {
-            'subject': 'Test patch',
-            'fromname': 'Author',
-            'fromemail': 'author@example.com',
-            'header-info': header_info,
-        }
-
-    @staticmethod
-    def _make_review() -> Dict[str, Any]:
-        return {'trailers': ['Reviewed-by: Test <test@example.com>']}
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_bcc_set_when_present(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        series = self._make_series(bcc='secret@example.com')
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
-        assert msg is not None
-        assert msg['Bcc'] == 'secret@example.com'
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_no_bcc_when_absent(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        series = self._make_series()
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
-        assert msg is not None
-        assert msg['Bcc'] is None
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_no_bcc_when_empty(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        series = self._make_series(bcc='')
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
-        assert msg is not None
-        assert msg['Bcc'] is None
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_cc_still_works(self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock) -> None:
-        series = self._make_series(cc='other@example.com')
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
-        assert msg is not None
-        assert 'other@example.com' in msg['Cc']
-        assert 'maintainer@example.com' in msg['Cc']
-
-
 # -- Tests for make_review_magic_json() --------------------------------------
 
 
@@ -1585,11 +1501,23 @@ class TestEnsureTrailersInBody:
         assert result.count('test@example.com') == 1
 
 
-# -- Tests for _build_review_email() (expanded) ------------------------------
+# -- Tests for _build_review_email() ------------------------------------------
 
 
-class TestBuildReviewEmailHeaders:
-    """Expanded tests for _build_review_email() header and body construction."""
+class TestBuildReviewEmail:
+    """Tests for _build_review_email() header and body construction."""
+
+    @pytest.fixture(autouse=True)
+    def _reviewer_env(self) -> Iterator[None]:
+        """Every test runs as the same reviewer with a stub signature."""
+        with (
+            mock.patch('b4.get_email_signature', return_value='sig'),
+            mock.patch(
+                'b4.get_user_config',
+                return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+            ),
+        ):
+            yield
 
     @staticmethod
     def _make_series(**header_overrides: str) -> Dict[str, Any]:
@@ -1614,298 +1542,143 @@ class TestBuildReviewEmailHeaders:
         base.update(overrides)
         return base
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_returns_none_when_empty_review(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        msg = review._build_review_email(
-            self._make_series(),
-            None,
-            {'trailers': [], 'reply': '', 'comments': []},
-            'cover',
-            '',
-            None,
-        )
+    def _build(
+        self,
+        series: Optional[Dict[str, Any]] = None,
+        review_data: Optional[Dict[str, Any]] = None,
+    ) -> Optional[email.message.EmailMessage]:
+        if series is None:
+            series = self._make_series()
+        if review_data is None:
+            review_data = self._make_review()
+        return review._build_review_email(series, None, review_data, 'cover', '', None)
+
+    def test_returns_none_when_empty_review(self) -> None:
+        msg = self._build(review_data={'trailers': [], 'reply': '', 'comments': []})
         assert msg is None
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_returns_none_when_no_msgid(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        series = self._make_series()
-        series['header-info']['msgid'] = ''
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+    def test_returns_none_when_no_msgid(self) -> None:
+        msg = self._build(self._make_series(msgid=''))
         assert msg is None
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    @pytest.mark.parametrize(
+        'subject,expected',
+        [
+            ('Test patch', 'Re: Test patch'),
+            ('Re: Already prefixed', 'Re: Already prefixed'),
+        ],
     )
-    def test_subject_gets_re_prefix(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None
-        )
-        assert msg is not None
-        assert msg['Subject'] == 'Re: Test patch'
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_re_prefix_not_doubled(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_subject_gets_single_re_prefix(self, subject: str, expected: str) -> None:
         series = self._make_series()
-        series['subject'] = 'Re: Already prefixed'
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+        series['subject'] = subject
+        msg = self._build(series)
         assert msg is not None
-        assert msg['Subject'] == 'Re: Already prefixed'
+        assert msg['Subject'] == expected
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_reply_to_used_as_to(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_reply_to_used_as_to(self) -> None:
         series = self._make_series(**{'reply-to': 'list@lists.example.com'})
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build(series)
         assert msg is not None
         assert 'list@lists.example.com' in msg['To']
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_from_is_series_author_when_no_reply_to(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None
-        )
-        assert msg is not None
-        assert 'author@example.com' in msg['To']
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_references_without_existing(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None
-        )
+    def test_references_without_existing(self) -> None:
+        msg = self._build()
         assert msg is not None
         assert msg['References'] == '<test-msgid@example.com>'
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_references_with_existing(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_references_appended_to_existing(self) -> None:
         series = self._make_series(references='<prev@example.com>')
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build(series)
         assert msg is not None
         assert '<prev@example.com>' in msg['References']
         assert '<test-msgid@example.com>' in msg['References']
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_body_contains_trailers(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover text', '', None
-        )
+    def test_in_reply_to_set(self) -> None:
+        msg = self._build()
+        assert msg is not None
+        assert msg['In-Reply-To'] == '<test-msgid@example.com>'
+
+    def test_from_header_is_reviewer(self) -> None:
+        msg = self._build()
+        assert msg is not None
+        assert 'reviewer@example.com' in msg['From']
+        assert 'Reviewer' in msg['From']
+
+    def test_body_contains_trailers(self) -> None:
+        msg = self._build()
         assert msg is not None
         payload = msg.get_payload(decode=True)
         assert isinstance(payload, bytes)
         assert 'Reviewed-by: Test <test@example.com>' in payload.decode()
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_explicit_reply_text_used(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_explicit_reply_text_used(self) -> None:
         rev = self._make_review(reply='This is my explicit reply.')
-        msg = review._build_review_email(
-            self._make_series(), None, rev, 'cover', '', None
-        )
+        msg = self._build(review_data=rev)
         assert msg is not None
         payload = msg.get_payload(decode=True)
         assert isinstance(payload, bytes)
         assert 'This is my explicit reply.' in payload.decode()
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
+    @pytest.mark.parametrize(
+        'series_kwargs,expected_bcc',
+        [
+            pytest.param(
+                {'bcc': 'secret@example.com'}, 'secret@example.com', id='present'
+            ),
+            pytest.param({}, None, id='absent'),
+            pytest.param({'bcc': ''}, None, id='empty'),
+        ],
     )
-    def test_in_reply_to_set(self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock) -> None:
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None
-        )
-        assert msg is not None
-        assert msg['In-Reply-To'] == '<test-msgid@example.com>'
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_from_header_is_reviewer(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
+    def test_bcc_header(
+        self, series_kwargs: Dict[str, str], expected_bcc: Optional[str]
     ) -> None:
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build(self._make_series(**series_kwargs))
         assert msg is not None
-        assert 'reviewer@example.com' in msg['From']
-        assert 'Reviewer' in msg['From']
+        assert msg['Bcc'] == expected_bcc
 
+    def test_cc_keeps_original_recipients(self) -> None:
+        msg = self._build(self._make_series(cc='other@example.com'))
+        assert msg is not None
+        assert 'other@example.com' in msg['Cc']
+        assert 'maintainer@example.com' in msg['Cc']
 
-# -- Tests for _build_review_email() user-edited To/Cc -----------------------
-
-
-class TestBuildReviewEmailToCcEdited:
-    """Tests for user-edited To/Cc handling in _build_review_email()."""
-
-    @staticmethod
-    def _make_series(**header_overrides: str) -> Dict[str, Any]:
-        header_info: Dict[str, str] = {
-            'msgid': 'test-msgid@example.com',
-            'to': 'maintainer@example.com',
-            'cc': '',
-            'references': '',
-            'sentdate': 'Mon, 01 Jan 2024 00:00:00 +0000',
-        }
-        header_info.update(header_overrides)
-        return {
-            'subject': 'Test patch',
-            'fromname': 'Author',
-            'fromemail': 'author@example.com',
-            'header-info': header_info,
-        }
-
-    @staticmethod
-    def _make_review() -> Dict[str, Any]:
-        return {'trailers': ['Reviewed-by: Test <test@example.com>']}
-
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_default_to_is_author(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_default_to_is_author(self) -> None:
         """Without tocc-edited, To should be the original author."""
-        msg = review._build_review_email(
-            self._make_series(), None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build()
         assert msg is not None
         assert 'author@example.com' in msg['To']
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_default_demotes_to_header_to_cc(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_default_demotes_to_header_to_cc(self) -> None:
         """Without tocc-edited, original To gets folded into Cc."""
         series = self._make_series(to='list@lists.example.com')
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build(series)
         assert msg is not None
         assert 'author@example.com' in msg['To']
         assert 'list@lists.example.com' in msg['Cc']
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_edited_to_is_honoured(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_edited_to_is_honoured(self) -> None:
         """With tocc-edited, user's To choice should be used as-is."""
         series = self._make_series(to='custom@example.com')
         series['header-info']['tocc-edited'] = True
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build(series)
         assert msg is not None
         assert 'custom@example.com' in msg['To']
         assert 'author@example.com' not in (msg['To'] or '')
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_edited_cc_is_honoured(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_edited_cc_is_honoured(self) -> None:
         """With tocc-edited, user's Cc choice should be used as-is."""
         series = self._make_series(to='custom@example.com', cc='other@example.com')
         series['header-info']['tocc-edited'] = True
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build(series)
         assert msg is not None
         assert msg['To'] == 'custom@example.com'
         assert msg['Cc'] == 'other@example.com'
 
-    @mock.patch('b4.get_email_signature', return_value='sig')
-    @mock.patch(
-        'b4.get_user_config',
-        return_value={'name': 'Reviewer', 'email': 'reviewer@example.com'},
-    )
-    def test_edited_empty_cc_omitted(
-        self, _mock_cfg: mock.Mock, _mock_sig: mock.Mock
-    ) -> None:
+    def test_edited_empty_cc_omitted(self) -> None:
         """With tocc-edited, empty Cc should not produce a Cc header."""
         series = self._make_series(to='custom@example.com', cc='')
         series['header-info']['tocc-edited'] = True
-        msg = review._build_review_email(
-            series, None, self._make_review(), 'cover', '', None
-        )
+        msg = self._build(series)
         assert msg is not None
         assert msg['Cc'] is None
 
