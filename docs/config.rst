@@ -429,7 +429,7 @@ Attestation settings
 
      Default: ``120``
 
-     .. versionadded:: v0.17
+     .. versionadded:: v0.16.1
 
    :term:`b4.thanks-am-template`
      Full paths to the templates to use when generating thank-you messages
