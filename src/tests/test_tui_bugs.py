@@ -12,7 +12,7 @@ no git-bug or network).
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Set, cast
+from typing import Any, Set, cast
 from unittest import mock
 
 import pytest
@@ -27,7 +27,10 @@ from b4.bugs._import import (
     parse_comment_msgid,
 )
 from b4.bugs._tui import (
+    BugDetailScreen,
     BugListApp,
+    ImportScreen,
+    UpdateBugsScreen,
     _bug_last_activity,
     _bug_lifecycle,
     _bug_tier,
@@ -596,3 +599,94 @@ class TestRefreshScrollPreservation:
             selected = app._get_selected_bug()
             assert selected is not None
             assert selected.id == bug_id
+
+
+# ---------------------------------------------------------------------------
+# Lore-fetch chokepoint wiring
+# ---------------------------------------------------------------------------
+
+
+class TestLoreChokepoint:
+    """Every bugs-TUI lore fetch must route through run_lore_worker().
+
+    The shared lore node keeps a sticky cancel flag: a fetch launched
+    without clearing it inherits a stale cancel left by app shutdown or a
+    sibling app switching away and fails instantly.  Each test calls a
+    launching method with a mock host and asserts the chokepoint contract:
+    flag reset before the worker starts, thread=True, exit_on_error=False.
+    """
+
+    def _fresh_host(self) -> tuple[mock.Mock, mock.Mock, mock.Mock]:
+        node = mock.Mock()
+        host = mock.Mock()
+        manager = mock.Mock()
+        manager.attach_mock(node.reset_cancel, 'reset_cancel')
+        manager.attach_mock(host.run_worker, 'run_worker')
+        return node, host, manager
+
+    def _assert_chokepoint(
+        self,
+        node: mock.Mock,
+        host: mock.Mock,
+        manager: mock.Mock,
+        name: str,
+    ) -> None:
+        node.reset_cancel.assert_called_once_with()
+        ordered = [call_name for call_name, _a, _k in manager.mock_calls]
+        assert ordered.index('reset_cancel') < ordered.index('run_worker')
+        kwargs = host.run_worker.call_args.kwargs
+        assert kwargs.get('thread') is True
+        assert kwargs.get('exit_on_error') is False
+        assert kwargs.get('name') == name
+
+    def test_app_cancels_lore_node_on_shutdown(self) -> None:
+        from b4.tui import LoreNodeShutdownMixin
+
+        assert issubclass(BugListApp, LoreNodeShutdownMixin)
+
+    def test_import_fetch_goes_through_chokepoint(self) -> None:
+        node, host, manager = self._fresh_host()
+        event = mock.Mock(value='<x@y.z>')
+        with mock.patch('b4.get_lore_node', return_value=node):
+            cast(Any, ImportScreen).on_input_submitted(host, event)
+        self._assert_chokepoint(node, host, manager, 'import')
+
+    def test_reply_fetch_goes_through_chokepoint(self) -> None:
+        node, host, manager = self._fresh_host()
+        host._get_selected_comment.return_value = mock.Mock(
+            text='Message-ID: <x@y.z>\n\nbody'
+        )
+        with mock.patch('b4.get_lore_node', return_value=node):
+            cast(Any, BugDetailScreen).action_reply(host)
+        self._assert_chokepoint(node, host, manager, 'reply_fetch')
+
+    def test_update_all_goes_through_chokepoint(self) -> None:
+        node, host, manager = self._fresh_host()
+        with mock.patch('b4.get_lore_node', return_value=node):
+            cast(Any, UpdateBugsScreen).on_mount(host)
+        self._assert_chokepoint(node, host, manager, '_do_updates')
+
+    @pytest.mark.asyncio
+    async def test_reply_fetch_failure_notifies_instead_of_crashing(self) -> None:
+        """With exit_on_error=False the error must surface as a toast."""
+        from textual.worker import WorkerState
+
+        host = mock.Mock()
+        event = mock.Mock()
+        event.worker.name = 'reply_fetch'
+        event.worker.error = RuntimeError('boom')
+        event.state = WorkerState.ERROR
+        await cast(Any, BugDetailScreen).on_worker_state_changed(host, event)
+        host.notify.assert_called_once()
+        assert host.notify.call_args.kwargs.get('severity') == 'error'
+
+    @pytest.mark.asyncio
+    async def test_other_worker_states_are_ignored(self) -> None:
+        from textual.worker import WorkerState
+
+        host = mock.Mock()
+        event = mock.Mock()
+        event.worker.name = 'reply_fetch'
+        event.state = WorkerState.SUCCESS
+        await cast(Any, BugDetailScreen).on_worker_state_changed(host, event)
+        host.notify.assert_not_called()

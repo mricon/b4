@@ -42,6 +42,7 @@ from b4.tui import (
     ConfirmScreen,
     JKListNavMixin,
     LimitScreen,
+    LoreNodeShutdownMixin,
     ReplacementListView,
     SeparatedFooter,
     _quiet_worker,
@@ -52,6 +53,7 @@ from b4.tui import (
     pad_display,
     resolve_styles,
     reviewer_colours,
+    run_lore_worker,
     suspend_and_edit,
 )
 from ezgb import Bug, BugSummary, Comment, GitBugRepo, Status
@@ -341,11 +343,10 @@ class ImportScreen(ModalScreen[Optional[str]]):
             return
         noparent = self.query_one('#import-noparent', Checkbox).value
         status.update('Importing...')
-        self.run_worker(
+        run_lore_worker(
+            self,
             lambda: self._do_import(msgid, noparent),
             name='import',
-            thread=True,
-            exit_on_error=False,
         )
 
     def _do_import(self, msgid: str, noparent: bool) -> str:
@@ -870,7 +871,16 @@ class BugDetailScreen(ModalScreen[None]):
         def _fetch_and_reply() -> None:
             self._do_reply(comment, msgid.strip('<>'))
 
-        self.run_worker(_fetch_and_reply, name='reply_fetch', thread=True)
+        run_lore_worker(self, _fetch_and_reply, name='reply_fetch')
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name != 'reply_fetch':
+            return
+        if event.state == WorkerState.ERROR:
+            self.notify(
+                f'Could not fetch message from lore: {event.worker.error}',
+                severity='error',
+            )
 
     def _do_reply(self, comment: Comment, msgid: str) -> None:
         """Fetch the original message and compose a reply."""
@@ -1619,10 +1629,10 @@ class UpdateBugsScreen(ModalScreen[Optional[dict[str, int]]]):
             )
 
     def on_mount(self) -> None:
-        self.run_worker(
+        run_lore_worker(
+            self,
             self._do_updates,
             name='_do_updates',
-            thread=True,
         )
 
     def _update_progress(self, completed: int, title: str) -> None:
@@ -1791,7 +1801,7 @@ class EditTitleScreen(ModalScreen[Optional[str]]):
 # -- Main app ----------------------------------------------------------------
 
 
-class BugListApp(JKListNavMixin, App[None]):
+class BugListApp(LoreNodeShutdownMixin, JKListNavMixin, App[None]):
     """Bug management TUI backed by git-bug via ezgb."""
 
     TITLE = 'b4 bugs'
