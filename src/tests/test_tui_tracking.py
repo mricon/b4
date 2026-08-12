@@ -22,7 +22,7 @@ import pytest
 
 pytest.importorskip('textual')
 
-from textual.widgets import Input, ListView, Static
+from textual.widgets import Footer, Input, ListView, Static
 
 import b4
 import b4.review
@@ -367,6 +367,33 @@ class TestTrackingNavigation:
             await pilot.press('q')
             await pilot.pause()
             assert not isinstance(app.screen, HelpScreen)
+
+
+class TestRefreshListWithoutFooter:
+    """Regression test for the Footer mount race (flaky NoMatches).
+
+    Under load, a queued _refresh_list callback can run while the
+    Footer is not (yet, or no longer) mounted; _refresh_list must
+    rebuild the list rather than crash with NoMatches.
+    """
+
+    @pytest.mark.asyncio
+    async def test_refresh_survives_missing_footer(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        _seed_db('test-nofooter', SAMPLE_SERIES)
+
+        app = TrackingApp('test-nofooter')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+
+            await app.query_one(Footer).remove()
+            await app._refresh_list()
+            await pilot.pause()
+
+            lv = app.query_one('#tracking-list', ListView)
+            items = [c for c in lv.children if isinstance(c, TrackedSeriesItem)]
+            assert len(items) == 3
 
 
 class TestTrackingLimit:
