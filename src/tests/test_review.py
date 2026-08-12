@@ -549,15 +549,21 @@ class TestBuildReplyFromComments:
             {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check return value.'},
         ]
         result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
-        # The comment should be present
-        assert 'Check return value.' in result
-        # The +kzalloc line (line 12) should be quoted
-        assert 'kzalloc' in result
-        # The +ptr->field line (line 13) comes after the comment and
-        # has no comment of its own, so it should be truncated
-        assert 'ptr->field' not in result
-        # The trailing context "return 0" should also be absent
-        assert 'return 0' not in result
+        # Everything up to the commented +kzalloc line (line 12) is quoted;
+        # the uncommented +ptr->field line (13) and the trailing "return 0"
+        # context are truncated.
+        assert result == (
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> index abc1234..def5678 100644\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '> \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            'Check return value.\n'
+        )
 
     def test_lines_before_comment_preserved(self) -> None:
         """Diff lines before the comment are preserved as quoted context."""
@@ -565,11 +571,21 @@ class TestBuildReplyFromComments:
             {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Check field assignment.'},
         ]
         result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
-        # The kzalloc line (line 12) precedes the comment target
-        assert 'kzalloc' in result
-        # The ptr->field line (line 13) is the commented line
-        assert 'ptr->field' in result
-        assert 'Check field assignment.' in result
+        # The uncommented +kzalloc line (12) is kept as context above the
+        # commented +ptr->field line (13); only "return 0" is truncated.
+        assert result == (
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> index abc1234..def5678 100644\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '> \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '> +\tptr->field = value;\n'
+            '\n'
+            'Check field assignment.\n'
+        )
 
     def test_two_comments_middle_lines_preserved(self) -> None:
         """Lines between two comments are kept, trailing lines dropped."""
@@ -578,12 +594,24 @@ class TestBuildReplyFromComments:
             {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Second.'},
         ]
         result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
-        assert 'First.' in result
-        assert 'Second.' in result
-        assert 'kzalloc' in result
-        assert 'ptr->field' in result
-        # "return 0" is after the last comment — should be truncated
-        assert 'return 0' not in result
+        # Each comment lands directly under its quoted line; the trailing
+        # "return 0" after the last comment is truncated.
+        assert result == (
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> index abc1234..def5678 100644\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '> \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            'First.\n'
+            '\n'
+            '> +\tptr->field = value;\n'
+            '\n'
+            'Second.\n'
+        )
 
     def test_no_truncation_when_comment_on_last_line(self) -> None:
         """When the comment is on the last diff line, nothing is lost."""

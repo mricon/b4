@@ -696,10 +696,9 @@ class TestCmdTrack:
         conn = review_tracking.get_db('noid-test')
         cursor = conn.execute('SELECT change_id FROM series')
         row = cursor.fetchone()
-        # Format: YYYYMMDD-slug-fingerprint[:12]
-        change_id = row['change_id']
-        assert change_id.startswith('20240115-')
-        assert 'test-series' in change_id
+        # Format: YYYYMMDD-slug-fingerprint[:12], fully determined by the
+        # mock message date, subject slug, and series fingerprint.
+        assert row['change_id'] == '20240115-test-series-mock-fingerp'
         conn.close()
 
     @mock.patch('b4.retrieve_messages')
@@ -3569,7 +3568,12 @@ class TestLinkRevisionWrapper:
         conn = review_tracking.get_db('mrl-wrap-miss-test')
         revs = review_tracking.get_revisions(conn, 'series-A')
         conn.close()
-        assert result['status'] == 'not-found'
+        assert result == {
+            'status': 'not-found',
+            'revision': None,
+            'absorbed': False,
+            'promoted': False,
+        }
         assert [r['revision'] for r in revs] == [1]
 
     @mock.patch('b4.retrieve_messages')
@@ -3611,6 +3615,25 @@ class TestFetchSeriesForLink:
     def test_returns_none_on_empty_fetch(self, mock_retrieve: mock.Mock) -> None:
         mock_retrieve.return_value = ('x', [])
         assert review_tracking.fetch_series_for_link('bogus@msgid') is None
+
+    @mock.patch('b4.retrieve_messages')
+    def test_returns_none_on_fetch_error(self, mock_retrieve: mock.Mock) -> None:
+        """A fetch that raises is swallowed and reported as None."""
+        mock_retrieve.side_effect = RuntimeError('lore unreachable')
+        assert review_tracking.fetch_series_for_link('x@example.com') is None
+
+    @mock.patch('b4.retrieve_messages')
+    def test_returns_none_for_non_patch_messages(
+        self, mock_retrieve: mock.Mock
+    ) -> None:
+        """Messages that don't form a parseable series yield None."""
+        msg = EmailMessage()
+        msg['From'] = _AUTHOR
+        msg['Subject'] = 'Re: some discussion'
+        msg['Message-Id'] = '<x@example.com>'
+        msg.set_content('just words, no patch')
+        mock_retrieve.return_value = ('x', [msg])
+        assert review_tracking.fetch_series_for_link('x@example.com') is None
 
 
 # ---------------------------------------------------------------------------
@@ -3844,45 +3867,51 @@ class TestRecordDiscoveredCoverSubject:
         r6 = next(r for r in revs if r['revision'] == 6)
         assert r6['message_id'] == 'thing-v6-p1@example.com'
 
-    def test_cover_subject_heals_first_patch_row(
-        self, tmp_path: pytest.TempPathFactory
+    @pytest.mark.parametrize(
+        'source, expected_subject',
+        [
+            pytest.param(
+                'heuristic',
+                '[PATCH v6 0/3] thing: do things better',
+                id='heuristic-row-healed',
+            ),
+            pytest.param(
+                'manual',
+                '[PATCH v6 1/3] thing: part 1',
+                id='manual-link-preserved',
+            ),
+        ],
+    )
+    def test_cover_subject_heal_respects_provenance(
+        self,
+        source: str,
+        expected_subject: str,
+        tmp_path: pytest.TempPathFactory,
     ) -> None:
-        """Re-recording with a cover fixes a row recorded before the fix."""
-        conn = review_tracking.init_db('rdr-heal')
+        """Re-recording with a cover heals a heuristic row, never a manual one.
+
+        Both rows start from the same stale first-patch subject and differ
+        only in provenance, so the diverging outcomes prove the distinction —
+        a manual link is preserved even when its subject looks like the
+        pre-fix fallback.
+        """
+        conn = review_tracking.init_db(f'rdr-heal-{source}')
         review_tracking.add_revision(
             conn,
             'cid-H',
             6,
             'thing-v6-p1@example.com',
             subject='[PATCH v6 1/3] thing: part 1',
+            source=source,
         )
         lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
         review_tracking._record_discovered_revisions(conn, 'cid-H', lmbx, '')
         revs = review_tracking.get_revisions(conn, 'cid-H')
         conn.close()
         r6 = next(r for r in revs if r['revision'] == 6)
-        assert r6['subject'] == '[PATCH v6 0/3] thing: do things better'
+        assert r6['subject'] == expected_subject
         # Other core fields keep first-wins semantics.
         assert r6['message_id'] == 'thing-v6-p1@example.com'
-
-    def test_cover_subject_never_overrides_manual_link(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        conn = review_tracking.init_db('rdr-manual')
-        review_tracking.add_revision(
-            conn,
-            'cid-M',
-            6,
-            'thing-v6-p1@example.com',
-            subject='Manually linked subject',
-            source='manual',
-        )
-        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
-        review_tracking._record_discovered_revisions(conn, 'cid-M', lmbx, '')
-        revs = review_tracking.get_revisions(conn, 'cid-M')
-        conn.close()
-        r6 = next(r for r in revs if r['revision'] == 6)
-        assert r6['subject'] == 'Manually linked subject'
 
 
 class TestUpdateSeriesTrackingCoverSubject:
