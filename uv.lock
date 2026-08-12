@@ -964,14 +964,14 @@ wheels = [
 
 [[package]]
 name = "liblore"
-version = "0.8.1"
+version = "0.8.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fa/1c/977577255b58e57e0c11667e069f943a0cac1b8d74c65bc501e0649032bf/liblore-0.8.1.tar.gz", hash = "sha256:0499dc2f29973d3612d8c49855d891d24f69ef1c8899ad514e730f59cd33c513", size = 63305, upload-time = "2026-07-22T14:14:07.011Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/6d/3bcda6ff0659d27a76a303a750ea514c9a54887be1086ca5312e2680c237/liblore-0.8.2.tar.gz", hash = "sha256:1f0d1804bf35baea66df246c2cc478128383d4c77b0057bd4190b0516d6b5446", size = 63975, upload-time = "2026-08-12T14:47:42.051Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/22/1b313a5d91c4b1ab072b751b3585dfb367380d9b49c35db18dd43e49d825/liblore-0.8.1-py3-none-any.whl", hash = "sha256:1f45e928f5fb7e660e96907ad792780e99748b418bf5b5b6eb4eb8d13965e540", size = 35072, upload-time = "2026-07-22T14:14:05.92Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/3b/9cccfa9fc7e9af94a2f603b7e6f745564b69bb30418b3e81f14db687cdc5/liblore-0.8.2-py3-none-any.whl", hash = "sha256:11d426be3d17340b49e898cc6a60622e2bbec2164f3c4d473077af8cc549ad21", size = 35193, upload-time = "2026-08-12T14:47:41.07Z" },
 ]
 
 [[package]]
