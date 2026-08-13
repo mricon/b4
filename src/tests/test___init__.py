@@ -1654,3 +1654,87 @@ def test_git_head_restore_args_round_trip(gitdir: str) -> None:
 
     assert b4.git_get_current_branch(gitdir) is None
     assert b4.git_head_restore_args(gitdir) == restore
+
+
+class TestUnicodeControlChars:
+    """The Cf-character guard in get_am_message() must raise BadCharsError
+    instead of calling sys.exit(), so that interactive front-ends (the
+    review TUI) can report it without tearing down the whole process.
+    """
+
+    ZWNJ = '\u200c'  # ZERO WIDTH NON-JOINER, category Cf
+
+    @staticmethod
+    def _make_msg(body: str) -> email.message.EmailMessage:
+        raw = (
+            'From: Test Author <test@example.com>\n'
+            'Subject: [PATCH] Add widget support\n'
+            'Date: Mon, 1 Jan 2024 00:00:00 +0000\n'
+            'Message-Id: <20240101-widget-v1-1-abc123@example.com>\n'
+            'MIME-Version: 1.0\n'
+            'Content-Type: text/plain; charset="utf-8"\n'
+            'Content-Transfer-Encoding: 8bit\n'
+            '\n'
+            f'{body}\n'
+            'Signed-off-by: Test Author <test@example.com>\n'
+            '---\n'
+            ' file1.txt | 1 +\n'
+            ' 1 file changed, 1 insertion(+)\n'
+            '\n'
+            'diff --git a/file1.txt b/file1.txt\n'
+            'index b352682..6713e9f 100644\n'
+            '--- a/file1.txt\n'
+            '+++ b/file1.txt\n'
+            '@@ -1 +1,2 @@\n'
+            ' hello\n'
+            '+widget\n'
+        )
+        # Parse from bytes like b4 does when reading an mbox: parsing from
+        # str runs non-ascii through raw-unicode-escape and would turn the
+        # very characters under test into literal backslash sequences.
+        return email.message_from_bytes(
+            raw.encode(), policy=email.policy.EmailPolicy(utf8=True)
+        )
+
+    def _get_lmsg(self, body: str) -> b4.LoreMessage:
+        lmbx = b4.LoreMailbox()
+        lmbx.add_message(self._make_msg(body))
+        lser = lmbx.get_series()
+        assert lser is not None
+        lmsg = lser.patches[1]
+        assert lmsg is not None
+        return lmsg
+
+    def test_zwnj_raises_badchars(self) -> None:
+        """A zero-width non-joiner is Cf with no Lo chars on the line."""
+        lmsg = self._get_lmsg(f'This adds a {self.ZWNJ}fancy widget.')
+        with pytest.raises(b4.BadCharsError) as excinfo:
+            lmsg.get_am_message(add_trailers=False)
+
+        ex = excinfo.value
+        assert ex.char == self.ZWNJ
+        assert ex.charname == 'ZERO WIDTH NON-JOINER'
+        assert ex.at == len('This adds a ')
+        assert 'ZERO WIDTH NON-JOINER' in str(ex)
+        # The caret must line up under the offending character.
+        details = ex.details()
+        line_row = next(x for x in details if x.lstrip().startswith('Line: '))
+        caret_row = next(x for x in details if x.lstrip().startswith('---'))
+        assert line_row.index(self.ZWNJ) == caret_row.index('^')
+
+    def test_allowbadchars_lets_it_through(self) -> None:
+        lmsg = self._get_lmsg(f'This adds a {self.ZWNJ}fancy widget.')
+        am_msg = lmsg.get_am_message(add_trailers=False, allowbadchars=True)
+        payload = am_msg.get_payload(decode=True)
+        assert isinstance(payload, bytes)
+        assert self.ZWNJ in payload.decode()
+
+    def test_non_latin_body_is_not_flagged(self) -> None:
+        """Cf chars alongside Lo chars are legitimate (e.g. Arabic, Indic),
+        so a body with letters from a non-latin script must pass."""
+        lmsg = self._get_lmsg(f'\u0627\u0644\u0648\u064a\u062c{self.ZWNJ}\u062a')
+        lmsg.get_am_message(add_trailers=False)
+
+    def test_plain_ascii_body_is_not_flagged(self) -> None:
+        lmsg = self._get_lmsg('This adds a fancy widget.')
+        lmsg.get_am_message(add_trailers=False)

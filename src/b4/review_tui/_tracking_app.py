@@ -3237,14 +3237,21 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                         patch.followup_trailers.append(fltr)
 
         # Get am-ready messages
-        am_msgs = lser.get_am_ready(
-            noaddtrailers=False,
-            addmysob=take_screen.add_signoff,
-            addlink=take_screen.add_link,
-            cherrypick=cherrypick,
-            copyccs=False,
-            allowbadchars=False,
-        )
+        try:
+            am_msgs = lser.get_am_ready(
+                noaddtrailers=False,
+                addmysob=take_screen.add_signoff,
+                addlink=take_screen.add_link,
+                cherrypick=cherrypick,
+                copyccs=False,
+                allowbadchars=False,
+            )
+        except b4.BadCharsError as ex:
+            logger.critical('---')
+            for dline in ex.details():
+                logger.critical('%s', dline)
+            _wait_for_enter()
+            return None
         if not am_msgs:
             logger.critical('No patches ready for applying')
             _wait_for_enter()

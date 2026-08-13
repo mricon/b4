@@ -93,6 +93,38 @@ class LockHeldError(RuntimeError):
     """Raised when a non-blocking lock file is already held elsewhere."""
 
 
+class BadCharsError(RuntimeError):
+    """Raised when a message body contains suspicious unicode control chars.
+
+    Callers decide how to react: command-line tools print :meth:`details`
+    and exit, while interactive front-ends can show the same information
+    and offer to continue.
+    """
+
+    def __init__(self, subject: str, line: str, at: int, char: str) -> None:
+        self.subject = subject
+        self.line = line
+        self.at = at
+        self.char = char
+        import unicodedata
+
+        self.charname = unicodedata.name(char, 'UNNAMED CHARACTER')
+        super().__init__(
+            'Suspicious unicode control character in "%s": %s (%s)'
+            % (subject, self.charname, hex(ord(char)))
+        )
+
+    def details(self) -> List[str]:
+        """Return the finding as a list of display lines."""
+        return [
+            'WARNING: Message contains suspicious unicode control characters!',
+            '         Subject: %s' % self.subject,
+            '            Line: %s' % self.line,
+            '            ------%s^' % ('-' * self.at),
+            '            Char: %s (%s)' % (self.charname, hex(ord(self.char))),
+        ]
+
+
 @contextmanager
 def lockfile_nb(path: str) -> Generator[None, None, None]:
     """Hold an exclusive flock on *path* for the duration of the context.
@@ -3288,22 +3320,9 @@ class LoreMessage:
                     # find the offending char
                     for at, c in enumerate(line.rstrip('\r')):
                         if unicodedata.category(c) == 'Cf':
-                            logger.critical('---')
-                            logger.critical(
-                                'WARNING: Message contains suspicious unicode control characters!'
+                            raise BadCharsError(
+                                self.full_subject, line.rstrip('\r'), at, c
                             )
-                            logger.critical('         Subject: %s', self.full_subject)
-                            logger.critical('            Line: %s', line.rstrip('\r'))
-                            logger.critical('            ------%s^', '-' * at)
-                            logger.critical(
-                                '            Char: %s (%s)',
-                                unicodedata.name(c),
-                                hex(ord(c)),
-                            )
-                            logger.critical(
-                                '         If you are sure about this, rerun with the right flag to allow.'
-                            )
-                            sys.exit(1)
 
         # Remove anything cut off by scissors
         mi_msg = EmailMessage()
