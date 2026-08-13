@@ -309,7 +309,9 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         else:
             _checked, mismatches = lser.check_applies_clean(gitdir=topdir)
             if mismatches:
-                rstart, rend = lser.make_fake_am_range(gitdir=None)
+                rstart, rend = lser.make_fake_am_range(
+                    gitdir=None, allowbadchars=cmdargs.allowbadchars
+                )
                 if rstart and rend:
                     logger.info(
                         'Prepared fake commit range for 3-way merge (%.12s..%.12s)',

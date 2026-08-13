@@ -53,6 +53,7 @@ from b4.review_tui._common import (
     LoreNodeShutdownMixin,
     ReplacementListView,
     SeparatedFooter,
+    _confirm_badchars_tty,
     _fix_ansi_theme,
     _quiet_worker,
     _suspend_to_shell,
@@ -375,19 +376,6 @@ def _land_off_deleted_branch(
     finally:
         if on_branch and fallback and b4.git_get_current_branch(topdir) is None:
             b4.git_run_command(topdir, fallback, logstderr=True)
-
-
-def _confirm_badchars_tty() -> bool:
-    """Ask on the terminal whether to accept unicode control characters.
-
-    Used by the flows that run with the TUI suspended, where the modal
-    equivalent (:class:`BadCharsScreen`) cannot be shown.  Defaults to no.
-    """
-    try:
-        answer = input('         Proceed anyway? [y/N] ')
-    except (KeyboardInterrupt, EOFError):
-        return False
-    return answer.strip().lower() in {'y', 'yes'}
 
 
 @contextlib.contextmanager
@@ -1998,7 +1986,21 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if lser.complete:
                 _checked, mismatches = lser.check_applies_clean(gitdir=topdir)
                 if mismatches:
-                    rstart, rend = lser.make_fake_am_range(gitdir=topdir)
+                    allowbadchars = False
+                    while True:
+                        try:
+                            rstart, rend = lser.make_fake_am_range(
+                                gitdir=topdir, allowbadchars=allowbadchars
+                            )
+                        except b4.BadCharsError as ex:
+                            for line in ex.details():
+                                logger.critical(line)
+                            if not _confirm_badchars_tty():
+                                rstart = rend = None
+                                break
+                            allowbadchars = True
+                            continue
+                        break
                     if rstart and rend:
                         logger.info(
                             'Prepared fake commit range for 3-way merge (%.12s..%.12s)',
@@ -4392,7 +4394,21 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if lser.complete:
                 _checked, mismatches = lser.check_applies_clean(gitdir=topdir)
                 if mismatches:
-                    rstart, rend = lser.make_fake_am_range(gitdir=topdir)
+                    allowbadchars = False
+                    while True:
+                        try:
+                            rstart, rend = lser.make_fake_am_range(
+                                gitdir=topdir, allowbadchars=allowbadchars
+                            )
+                        except b4.BadCharsError as ex:
+                            for line in ex.details():
+                                logger.critical(line)
+                            if not _confirm_badchars_tty():
+                                rstart = rend = None
+                                break
+                            allowbadchars = True
+                            continue
+                        break
                     if rstart and rend:
                         logger.info(
                             'Prepared fake commit range for 3-way merge (%.12s..%.12s)',

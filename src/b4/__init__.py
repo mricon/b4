@@ -1399,7 +1399,10 @@ class LoreSeries:
         raise IndexError('Could not describe commit %s' % best)
 
     def make_fake_am_range(
-        self, gitdir: Optional[str], at_base: Optional[str] = None
+        self,
+        gitdir: Optional[str],
+        at_base: Optional[str] = None,
+        allowbadchars: bool = False,
     ) -> Tuple[Optional[str], Optional[str]]:
         start_commit = end_commit = None
         # Use the msgid of the first non-None patch in the series
@@ -1513,7 +1516,9 @@ class LoreSeries:
                         )
                         return None, None
 
-                msgs.append(lmsg.get_am_message(add_trailers=False))
+                msgs.append(
+                    lmsg.get_am_message(add_trailers=False, allowbadchars=allowbadchars)
+                )
 
             ecode, out = git_run_command(dfn, ['write-tree'])
             if ecode > 0:

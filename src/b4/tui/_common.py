@@ -386,6 +386,19 @@ def _wait_for_enter() -> None:
         pass
 
 
+def _confirm_badchars_tty() -> bool:
+    """Ask on the terminal whether to accept unicode control characters.
+
+    Used by flows that run with the TUI suspended, where the modal
+    equivalent (:class:`BadCharsScreen`) cannot be shown.  Defaults to no.
+    """
+    try:
+        answer = input('         Proceed anyway? [y/N] ')
+    except (KeyboardInterrupt, EOFError):
+        return False
+    return answer.strip().lower() in {'y', 'yes'}
+
+
 def _addrs_to_lines(header_str: str) -> str:
     """Parse a comma-separated address header into one-per-line display."""
     if not header_str:
