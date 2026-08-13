@@ -55,6 +55,44 @@ def _build_one_patch_series(gitdir: str) -> tuple[b4.LoreSeries, str]:
     return lser, base
 
 
+def _build_one_patch_series_with_badchars(gitdir: str) -> tuple[b4.LoreSeries, str]:
+    """Like ``_build_one_patch_series``, but the commit message carries a
+    ZERO WIDTH NON-JOINER (Cf, no Lo chars on the line) -- the same class of
+    character that crashed Mark Brown's ``b4 review`` a second time, this
+    time inside ``make_fake_am_range``'s own ``get_am_message()`` call.
+    """
+    zwnj = '‌'
+    _ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    base = base.strip()
+
+    b4.git_run_command(gitdir, ['checkout', '-b', 'cwd-fakeam-badchars'])
+    with open(os.path.join(gitdir, 'file1.txt'), 'a') as fh:
+        fh.write('Tweaked by cwd-safety fake-am badchars test.\n')
+    b4.git_run_command(gitdir, ['add', 'file1.txt'])
+    _ecode, _out = b4.git_run_command(
+        gitdir,
+        [
+            'commit',
+            '-m',
+            'cwd-safety: tweak file1',
+            '-m',
+            f'This tweak{zwnj} adds a line to file1.',
+        ],
+    )
+
+    _ecode, mbox = b4.git_run_command(gitdir, ['format-patch', '-1', '--stdout'])
+
+    b4.git_run_command(gitdir, ['checkout', 'master'])
+    b4.git_run_command(gitdir, ['branch', '-D', 'cwd-fakeam-badchars'])
+
+    msgs = b4.mailsplit_bytes(mbox.encode())
+    for idx, msg in enumerate(msgs):
+        if not msg['Message-Id']:
+            msg['Message-Id'] = f'<cwd-fakeam-badchars-{idx}@test.local>'
+    lser = review._get_lore_series(msgs)
+    return lser, base
+
+
 class TestWorktreeCwdRace:
     """The process cwd must stay put while a worker uses a temp worktree."""
 
@@ -169,3 +207,35 @@ class TestMakeFakeAmRangeNoChdir:
         # ...without ever moving the process cwd.
         assert chdir_calls == []
         assert os.path.realpath(os.getcwd()) == os.path.realpath(start_cwd)
+
+
+class TestMakeFakeAmRangeBadChars:
+    """``make_fake_am_range`` must surface ``BadCharsError`` instead of
+    crashing, and must accept ``allowbadchars=True`` to retry past it.
+
+    Regression test for Mark Brown's follow-up report: the first fix taught
+    ``get_am_message()`` to raise instead of ``sys.exit()``, but
+    ``make_fake_am_range`` called it with no ``allowbadchars`` plumbing and no
+    exception handling at all, so the same series still crashed the TUI a
+    second time once it reached the fake-am 3-way fallback.
+    """
+
+    def test_raises_badchars_by_default(self, gitdir: str) -> None:
+        lser, base = _build_one_patch_series_with_badchars(gitdir)
+
+        with pytest.raises(b4.BadCharsError) as excinfo:
+            lser.make_fake_am_range(gitdir=gitdir, at_base=base)
+
+        assert excinfo.value.charname == 'ZERO WIDTH NON-JOINER'
+
+    def test_allowbadchars_succeeds(self, gitdir: str) -> None:
+        lser, base = _build_one_patch_series_with_badchars(gitdir)
+
+        start, end = lser.make_fake_am_range(
+            gitdir=gitdir, at_base=base, allowbadchars=True
+        )
+
+        assert start, 'make_fake_am_range produced no start commit'
+        assert end, 'make_fake_am_range produced no end commit'
+        assert b4.git_commit_exists(gitdir, start)
+        assert b4.git_commit_exists(gitdir, end)

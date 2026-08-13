@@ -59,6 +59,9 @@ from b4.tui._common import (
     _addrs_to_lines as _addrs_to_lines,
 )
 from b4.tui._common import (
+    _confirm_badchars_tty as _confirm_badchars_tty,
+)
+from b4.tui._common import (
     _fix_ansi_theme as _fix_ansi_theme,
 )
 from b4.tui._common import (
@@ -1127,7 +1130,21 @@ def fetch_fake_am_range(
         return None
 
     logger.info('Preparing fake-am range for v%d...', rev)
-    start, end = lser.make_fake_am_range(gitdir=topdir)
+    allowbadchars = False
+    start = end = None
+    while True:
+        try:
+            start, end = lser.make_fake_am_range(
+                gitdir=topdir, allowbadchars=allowbadchars
+            )
+        except b4.BadCharsError as ex:
+            for line in ex.details():
+                logger.critical(line)
+            if not _confirm_badchars_tty():
+                return None
+            allowbadchars = True
+            continue
+        break
     if start is None or end is None:
         logger.critical('Could not create fake-am range for v%d', rev)
         return None
