@@ -2146,7 +2146,12 @@ class RebaseScreen(ModalScreen[bool]):
                 if self._check_branch:
                     self._run_test_apply(self._check_branch)
             elif event.state == WorkerState.ERROR:
-                self._update_status('Could not prepare series data', 'fail')
+                if isinstance(event.worker.error, b4.BadCharsError):
+                    # Be specific: a generic failure message would send the
+                    # reviewer hunting for a network or apply problem.
+                    self._update_status(str(event.worker.error), 'fail')
+                else:
+                    self._update_status('Could not prepare series data', 'fail')
         elif event.worker.name == '_test_apply':
             if event.state == WorkerState.SUCCESS and event.worker.result:
                 ok, detail = event.worker.result
@@ -2422,7 +2427,12 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
                 if self._check_branch:
                     self._check_applicability(self._check_branch)
             elif event.state == WorkerState.ERROR:
-                self._update_status('Could not prepare series data', 'fail')
+                if isinstance(event.worker.error, b4.BadCharsError):
+                    # Be specific: a generic failure message would send the
+                    # reviewer hunting for a network or apply problem.
+                    self._update_status(str(event.worker.error), 'fail')
+                else:
+                    self._update_status('Could not prepare series data', 'fail')
         elif event.worker.name == '_test_apply':
             if event.state == WorkerState.SUCCESS and event.worker.result:
                 ok, detail = event.worker.result

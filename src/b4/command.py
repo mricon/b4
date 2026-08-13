@@ -1365,7 +1365,22 @@ def cmd() -> None:
         logger.info('Running in OFFLINE mode')
         b4.can_network = False
 
-    cmdargs.func(cmdargs)
+    try:
+        cmdargs.func(cmdargs)
+    except b4.BadCharsError as ex:
+        logger.critical('---')
+        for dline in ex.details():
+            logger.critical('%s', dline)
+        if 'allowbadchars' in cmdargs:
+            logger.critical(
+                '         If you are sure about this, rerun with '
+                '--allow-unicode-control-chars.'
+            )
+        else:
+            logger.critical(
+                '         If you are sure about this, rerun with the right flag to allow.'
+            )
+        sys.exit(1)
 
 
 if __name__ == '__main__':
