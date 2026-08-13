@@ -37,6 +37,7 @@ from b4 import (
 from b4.review_tui._modals import (
     ActionItem,
     ActionScreen,
+    BadCharsScreen,
     BaseSelectionScreen,
     CherryPickScreen,
     ConfirmScreen,
@@ -5746,3 +5747,177 @@ class TestTrackingEntryBranchRestore:
             _entry.run_tracking_tui('test-entry-dbclose')
 
         assert closed == [True]
+
+
+class TestBadCharsGuard:
+    """The unicode control-character guard must not crash the TUI, and must
+    let the reviewer look at the finding and continue if they judge it safe.
+    """
+
+    ZWNJ = '\u200c'  # ZERO WIDTH NON-JOINER
+
+    def _make_error(self) -> b4.BadCharsError:
+        line = 'This adds a fancy widget.'
+        at = line.index('fancy')
+        return b4.BadCharsError(
+            '[PATCH] Add widget support',
+            line[:at] + self.ZWNJ + line[at:],
+            at,
+            self.ZWNJ,
+        )
+
+    @pytest.mark.asyncio
+    async def test_modal_shows_finding_and_confirms(self, gitdir: str) -> None:
+        """'y' proceeds, and the dialog spells out what was found."""
+        identifier = 'test-badchars-modal'
+        _seed_db(identifier, [])
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            result: List[Any] = []
+            app.push_screen(BadCharsScreen(self._make_error()), callback=result.append)
+            await pilot.pause()
+            assert isinstance(app.screen, BadCharsScreen)
+            text = _static_text(app.screen.query_one('#badchars-context', Static))
+            assert 'ZERO WIDTH NON-JOINER' in text
+            assert '0x200c' in text
+            # Caret must sit under the offending character.
+            line_row, caret_row = text.split('\n')[:2]
+            assert line_row.index(self.ZWNJ) == caret_row.index('^')
+
+            await pilot.press('y')
+            await pilot.pause()
+            assert result == [True]
+
+    @pytest.mark.asyncio
+    async def test_modal_defaults_to_cancel(self, gitdir: str) -> None:
+        """Enter must not be a way to accidentally accept hidden characters."""
+        identifier = 'test-badchars-cancel'
+        _seed_db(identifier, [])
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            result: List[Any] = []
+            app.push_screen(BadCharsScreen(self._make_error()), callback=result.append)
+            await pilot.pause()
+            await pilot.press('enter')
+            await pilot.pause()
+            assert result == [False]
+
+    @pytest.mark.asyncio
+    async def test_confirm_retries_and_remembers(self, gitdir: str) -> None:
+        """Accepting whitelists the message-id and re-runs the action."""
+        identifier = 'test-badchars-retry'
+        _seed_db(identifier, [])
+        app = TrackingApp(identifier)
+        series = {'message_id': 'badchars@example.com'}
+        retried: List[bool] = []
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._confirm_badchars(
+                self._make_error(), series, lambda: retried.append(True)
+            )
+            await pilot.pause()
+            assert isinstance(app.screen, BadCharsScreen)
+            await pilot.press('y')
+            await pilot.pause()
+            assert retried == [True]
+            assert 'badchars@example.com' in app._badchars_ok
+
+    @pytest.mark.asyncio
+    async def test_cancel_does_not_retry(self, gitdir: str) -> None:
+        identifier = 'test-badchars-noretry'
+        _seed_db(identifier, [])
+        app = TrackingApp(identifier)
+        series = {'message_id': 'badchars@example.com'}
+        retried: List[bool] = []
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._confirm_badchars(
+                self._make_error(), series, lambda: retried.append(True)
+            )
+            await pilot.pause()
+            await pilot.press('escape')
+            await pilot.pause()
+            assert retried == []
+            assert app._badchars_ok == set()
+
+    def test_checkout_worker_returns_error(self, gitdir: str) -> None:
+        """The checkout worker must hand the guard error back rather than
+        letting it escape the thread (which is how the TUI used to die)."""
+        identifier = 'test-badchars-worker'
+        change_id = 'badchars-worker-1'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] badchars',
+                    'status': 'new',
+                    'message_id': 'bc@example.com',
+                }
+            ],
+        )
+        err = self._make_error()
+        lser = _make_mock_lser()
+        app = TrackingApp(identifier)
+        app._selected_series = {
+            'change_id': change_id,
+            'message_id': 'bc@example.com',
+            'revision': 1,
+        }
+        with (
+            patch.object(app, 'push_screen') as push_screen,
+            patch('b4.review.retrieve_series_messages', return_value=[]),
+            patch('b4.review._get_lore_series', return_value=lser),
+            patch.object(lser, 'get_am_ready', side_effect=err),
+        ):
+            app._checkout_new_series()
+            worker_screen = push_screen.call_args[0][0]
+            assert worker_screen._fn() is err
+
+    def test_checkout_worker_honours_prior_acceptance(self, gitdir: str) -> None:
+        """A whitelisted message-id passes allowbadchars=True downstream."""
+        identifier = 'test-badchars-honour'
+        change_id = 'badchars-honour-1'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] badchars',
+                    'status': 'new',
+                    'message_id': 'bc@example.com',
+                }
+            ],
+        )
+        lser = _make_mock_lser()
+        app = TrackingApp(identifier)
+        app._selected_series = {
+            'change_id': change_id,
+            'message_id': 'bc@example.com',
+            'revision': 1,
+        }
+        app._badchars_ok.add('bc@example.com')
+        with (
+            patch.object(app, 'push_screen') as push_screen,
+            patch('b4.review.retrieve_series_messages', return_value=[]),
+            patch('b4.review._get_lore_series', return_value=lser),
+            patch.object(
+                lser, 'get_am_ready', return_value=[email.message.EmailMessage()]
+            ) as get_am_ready,
+            patch(
+                'b4.save_git_am_mbox',
+                side_effect=lambda _msgs, dest: dest.write(b'mbox'),
+            ),
+            patch('b4.git_get_toplevel', return_value=gitdir),
+            patch(
+                'b4.review_tui._tracking_app._detect_initial_base',
+                return_value=('HEAD', ''),
+            ),
+            patch('b4.review.check_series_attestation', return_value=None),
+        ):
+            app._checkout_new_series()
+            worker_screen = push_screen.call_args[0][0]
+            worker_screen._fn()
+            assert get_am_ready.call_args.kwargs['allowbadchars'] is True

@@ -28,6 +28,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Set,
     Tuple,
     Union,
 )
@@ -74,6 +75,7 @@ from b4.review_tui._modals import (
     AbandonConfirmScreen,
     ActionScreen,
     ArchiveConfirmScreen,
+    BadCharsScreen,
     BaseSelectionScreen,
     CheckLoadingScreen,
     CherryPickScreen,
@@ -373,6 +375,19 @@ def _land_off_deleted_branch(
     finally:
         if on_branch and fallback and b4.git_get_current_branch(topdir) is None:
             b4.git_run_command(topdir, fallback, logstderr=True)
+
+
+def _confirm_badchars_tty() -> bool:
+    """Ask on the terminal whether to accept unicode control characters.
+
+    Used by the flows that run with the TUI suspended, where the modal
+    equivalent (:class:`BadCharsScreen`) cannot be shown.  Defaults to no.
+    """
+    try:
+        answer = input('         Proceed anyway? [y/N] ')
+    except (KeyboardInterrupt, EOFError):
+        return False
+    return answer.strip().lower() in {'y', 'yes'}
 
 
 @contextlib.contextmanager
@@ -964,6 +979,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._patatt_sign = patatt_sign
         self._all_series: List[Dict[str, Any]] = []
         self._selected_series: Optional[Dict[str, Any]] = None
+        # Message-IDs the reviewer has explicitly cleared through the
+        # unicode control-character guard, for this session only.
+        self._badchars_ok: Set[str] = set()
         self._limit_pattern: str = ''
         self._db_mtime: float = 0.0
         # Detect patchwork configuration
@@ -1733,7 +1751,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             self.notify('No message-id available for this series', severity='error')
             return
 
-        def _fetch_and_prepare() -> Tuple[b4.LoreSeries, bytes, str, str]:
+        def _fetch_and_prepare() -> Union[
+            Tuple[b4.LoreSeries, bytes, str, str], b4.BadCharsError
+        ]:
             with _quiet_worker():
                 msgs = b4.review.retrieve_series_messages(series, self._identifier)
                 self._refresh_msg_count(series, len(msgs))
@@ -1754,15 +1774,20 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     else:
                         raise
 
-                am_msgs = lser.get_am_ready(
-                    noaddtrailers=True,
-                    addmysob=False,
-                    addlink=False,
-                    cherrypick=None,
-                    copyccs=False,
-                    allowbadchars=False,
-                    showchecks=False,
-                )
+                try:
+                    am_msgs = lser.get_am_ready(
+                        noaddtrailers=True,
+                        addmysob=False,
+                        addlink=False,
+                        cherrypick=None,
+                        copyccs=False,
+                        allowbadchars=message_id in self._badchars_ok,
+                        showchecks=False,
+                    )
+                except b4.BadCharsError as ex:
+                    # Returned rather than raised: the caller offers the
+                    # reviewer a chance to look at it and continue.
+                    return ex
                 if not am_msgs:
                     raise LookupError('No patches ready for applying')
 
@@ -1791,9 +1816,36 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             callback=lambda result: self._on_series_fetched(result, series),
         )
 
+    def _confirm_badchars(
+        self,
+        error: b4.BadCharsError,
+        series: Dict[str, Any],
+        retry: Callable[[], None],
+    ) -> None:
+        """Show the control-character finding and retry if the user accepts.
+
+        Acceptance is remembered per message-id for the rest of the session,
+        so the reviewer is not asked again for the same series.
+        """
+        message_id = series.get('message_id', '')
+
+        def _on_choice(proceed: Optional[bool]) -> None:
+            if not proceed:
+                self.notify('Checkout cancelled', severity='information')
+                return
+            if message_id:
+                self._badchars_ok.add(message_id)
+            retry()
+
+        self.push_screen(BadCharsScreen(error), callback=_on_choice)
+
     def _on_series_fetched(self, result: Any, series: Dict[str, Any]) -> None:
         """Handle the result from the series fetch worker."""
         if result is None:
+            return
+
+        if isinstance(result, b4.BadCharsError):
+            self._confirm_badchars(result, series, self._checkout_new_series)
             return
 
         lser, ambytes, initial_base, base_hint = result
@@ -2264,6 +2316,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 message_id=series.get('message_id', ''),
                 revision=series.get('revision'),
                 review_branch=review_branch,
+                allow_badchars=series.get('message_id', '') in self._badchars_ok,
             ),
             callback=self._on_target_branch_set,
         )
@@ -3236,7 +3289,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     if fltr not in patch.followup_trailers:
                         patch.followup_trailers.append(fltr)
 
-        # Get am-ready messages
+        # Get am-ready messages.  This runs with the TUI suspended, so the
+        # control-character prompt is a terminal one rather than a modal.
+        message_id = series.get('message_id', '')
         try:
             am_msgs = lser.get_am_ready(
                 noaddtrailers=False,
@@ -3244,14 +3299,24 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 addlink=take_screen.add_link,
                 cherrypick=cherrypick,
                 copyccs=False,
-                allowbadchars=False,
+                allowbadchars=message_id in self._badchars_ok,
             )
         except b4.BadCharsError as ex:
             logger.critical('---')
             for dline in ex.details():
                 logger.critical('%s', dline)
-            _wait_for_enter()
-            return None
+            if not _confirm_badchars_tty():
+                return None
+            if message_id:
+                self._badchars_ok.add(message_id)
+            am_msgs = lser.get_am_ready(
+                noaddtrailers=False,
+                addmysob=take_screen.add_signoff,
+                addlink=take_screen.add_link,
+                cherrypick=cherrypick,
+                copyccs=False,
+                allowbadchars=True,
+            )
         if not am_msgs:
             logger.critical('No patches ready for applying')
             _wait_for_enter()
@@ -4092,7 +4157,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     f'Fetching patch threads {completed}/{total}\N{HORIZONTAL ELLIPSIS}'
                 )
 
-        def _fetch_update() -> Tuple[b4.LoreSeries, bytes, str, str, int]:
+        def _fetch_update() -> Union[
+            Tuple[b4.LoreSeries, bytes, str, str, int], b4.BadCharsError
+        ]:
             with _quiet_worker():
                 target_series = dict(self._selected_series or {})
                 target_series['message_id'] = target_msgid
@@ -4111,15 +4178,18 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                     f'Preparing {patch_count} {patch_label}\N{HORIZONTAL ELLIPSIS}'
                 )
 
-                am_msgs = lser.get_am_ready(
-                    noaddtrailers=True,
-                    addmysob=False,
-                    addlink=False,
-                    cherrypick=None,
-                    copyccs=False,
-                    allowbadchars=False,
-                    showchecks=False,
-                )
+                try:
+                    am_msgs = lser.get_am_ready(
+                        noaddtrailers=True,
+                        addmysob=False,
+                        addlink=False,
+                        cherrypick=None,
+                        copyccs=False,
+                        allowbadchars=target_msgid in self._badchars_ok,
+                        showchecks=False,
+                    )
+                except b4.BadCharsError as ex:
+                    return ex
                 if not am_msgs:
                     raise LookupError('No patches ready for applying')
 
@@ -4166,6 +4236,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> None:
         """Phase 2: show BaseSelectionScreen after fetching the new series."""
         if result is None:
+            return
+
+        if isinstance(result, b4.BadCharsError):
+            self._confirm_badchars(
+                result,
+                {'message_id': target_msgid},
+                lambda: self._do_update_revision(change_id, current_rev, target_rev),
+            )
             return
 
         lser, ambytes, initial_base, base_hint, num_am = result
