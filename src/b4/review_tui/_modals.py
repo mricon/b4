@@ -2242,6 +2242,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         message_id: str = '',
         revision: Optional[int] = None,
         review_branch: Optional[str] = None,
+        allow_badchars: bool = False,
     ) -> None:
         super().__init__()
         self._current_target = current_target
@@ -2250,6 +2251,9 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
         self._message_id = message_id
         self._revision = revision
         self._review_branch = review_branch
+        # Carried over from the app when the reviewer already cleared this
+        # series through the unicode control-character guard.
+        self._allow_badchars = allow_badchars
         self._lser: Optional[Any] = None
         self._ambytes: Optional[bytes] = None
         self._check_branch: Optional[str] = None
@@ -2346,7 +2350,7 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
                 addlink=False,
                 cherrypick=None,
                 copyccs=False,
-                allowbadchars=False,
+                allowbadchars=self._allow_badchars,
                 showchecks=False,
             )
             if not am_msgs:
@@ -3748,6 +3752,77 @@ class LinkRevisionConfirmScreen(ModalScreen[bool]):
             if self._warning:
                 yield Static(self._warning, id='link-confirm-warning', markup=False)
             yield Static('Enter/y link  |  Escape cancel', id='link-confirm-hint')
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+class BadCharsScreen(ModalScreen[bool]):
+    """Warn about suspicious unicode control characters and offer to continue.
+
+    Shown when :class:`b4.BadCharsError` interrupts preparing a series.
+    Displays the offending line with a caret under the character, so the
+    reviewer can judge it rather than being told only that something is
+    wrong.  Returns True to proceed anyway, False to cancel.
+    """
+
+    BINDINGS = [
+        Binding('enter', 'cancel', 'Cancel'),
+        Binding('escape', 'cancel', 'Cancel', show=False),
+        Binding('n', 'cancel', 'Cancel', show=False),
+        Binding('q', 'cancel', 'Cancel', show=False),
+        Binding('y', 'confirm', 'Proceed anyway', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    BadCharsScreen {
+        align: center middle;
+    }
+    #badchars-dialog {
+        width: 80;
+        height: auto;
+        border: solid $error;
+        background: $surface;
+        padding: 1 2;
+    }
+    #badchars-subject {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #badchars-context {
+        color: $warning;
+    }
+    #badchars-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, error: 'b4.BadCharsError') -> None:
+        super().__init__()
+        self._error = error
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='badchars-dialog') as dialog:
+            dialog.border_title = 'Suspicious unicode control characters'
+            yield Static(self._error.subject, id='badchars-subject', markup=False)
+            # Line and caret must share a container to stay aligned.
+            context = '%s\n%s^\n\n%s (%s)' % (
+                self._error.line,
+                ' ' * self._error.at,
+                self._error.charname,
+                hex(ord(self._error.char)),
+            )
+            yield Static(context, id='badchars-context', markup=False)
+            yield Static(
+                'These are rarely legitimate and can hide malicious content.',
+                id='badchars-warning',
+                markup=False,
+            )
+            yield Static('y proceed anyway  |  Enter/Escape cancel', id='badchars-hint')
 
     def action_confirm(self) -> None:
         self.dismiss(True)
