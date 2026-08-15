@@ -3148,7 +3148,9 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                     if pair[1] not in seen:
                         extracc.append(pair)
                 if extracc:
-                    b4.print_pretty_addrs(extracc, '    +Cc')
+                    extracc = b4.cleanup_email_addrs(extracc, excludes, None)
+                    if extracc:
+                        b4.print_pretty_addrs(extracc, '    +Cc')
 
         logger.info('---')
         usercfg = b4.get_user_config()
