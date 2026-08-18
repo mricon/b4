@@ -94,6 +94,15 @@ if [ -n "$FLOOR_PY" ]; then
     elif ! "$floorenv/bin/python" -m pytest --durations=20; then
         failed="$failed floors(pytest)"
     fi
+
+    # Report what the floors actually resolved to. A green lane says the
+    # declared minimums install and pass; this says which versions that was,
+    # so a bound that has drifted above what PyPI still offers is visible.
+    # Anchored to the start of the line so we match package names in the
+    # `uv pip list` table and not substrings of other packages' names.
+    printf '\n--- resolved floors ---\n'
+    uv pip list --python "$floorenv" 2>/dev/null | grep -Ei \
+        '^(argcomplete|dkimpy|ezgb|liblore|patatt|pygit2|requests|rich|shtab|textual)' || true
 fi
 
 # Prerelease lane: try the newest CPython not yet in PYTHONS, such as a beta
