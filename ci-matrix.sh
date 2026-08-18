@@ -22,15 +22,27 @@ set -eu
 # It runs on the lowest supported interpreter, where the old dependency
 # releases are likeliest to still publish wheels. Override or skip it:
 # FLOOR_PY=3.12 ./ci-matrix.sh  (or FLOOR_PY= ./ci-matrix.sh to skip)
+#
+# After the floor lane it runs one advisory "prerelease" lane, on the newest
+# CPython not yet in PYTHONS (a beta ahead of its final release, say), so we
+# get an early signal without waiting on a relock. It resolves fresh against
+# PyPI instead of uv.lock, and never fails the run -- see the lane itself for
+# why. Override or skip it: PRERELEASE_PY=3.16 ./ci-matrix.sh (or
+# PRERELEASE_PY= ./ci-matrix.sh to skip)
 
-PYTHONS="${PYTHONS:-3.11 3.12 3.13 3.14}"
+# ${VAR-default} rather than ${VAR:-default}: the latter also substitutes for
+# an explicitly empty value, which would make "PYTHONS= ./ci-matrix.sh" run
+# the full sweep instead of skipping it.
+PYTHONS="${PYTHONS-3.11 3.12 3.13 3.14}"
 
 # Install any requested interpreters that are missing. This is an explicit
 # step because a dev may have set UV_PYTHON_DOWNLOADS=manual globally to
 # prevent `uv sync` from reaching out to the network mid-workflow; running
 # it once up front scopes the network access to this script.
-# shellcheck disable=SC2086
-uv python install $PYTHONS
+if [ -n "$PYTHONS" ]; then
+    # shellcheck disable=SC2086
+    uv python install $PYTHONS
+fi
 
 # Collect failures so the run reports a complete matrix instead of bailing on
 # the first broken interpreter.
@@ -62,7 +74,7 @@ done
 # them to unbuildable ancient releases; installing just the project with
 # `uv pip install` keeps the flooring to b4's own runtime dependencies, and a
 # current test runner is layered on afterwards.
-FLOOR_PY="${FLOOR_PY:-3.11}"
+FLOOR_PY="${FLOOR_PY-3.11}"
 if [ -n "$FLOOR_PY" ]; then
     printf '\n=== Floors (lowest-direct) on Python %s ===\n' "$FLOOR_PY"
     # --python targets the venv explicitly, so the loop's UV_PROJECT_ENVIRONMENT
@@ -84,12 +96,58 @@ if [ -n "$FLOOR_PY" ]; then
     fi
 fi
 
+# Prerelease lane: try the newest CPython not yet in PYTHONS, such as a beta
+# ahead of its final release. This resolves fresh against PyPI instead of
+# the committed uv.lock, which only targets our declared requires-python
+# range and would otherwise need relocking (and could fail to resolve at
+# all) just to humor an interpreter we don't support yet.
+#
+# Ecosystem wheels typically lag a new CPython release by weeks to months,
+# and our compiled dependencies are the ones that bite: with no cp315 wheel
+# for pygit2, uv falls back to its sdist and the build wants libgit2 headers
+# that are not installed. So failures here are expected and this lane is
+# advisory: it never fails the run, only reports what broke, so it does not
+# block CI while giving a heads-up for when to move the interpreter into
+# PYTHONS for real.
+# Override or skip: PRERELEASE_PY=3.16 ./ci-matrix.sh (or PRERELEASE_PY= to skip)
+PRERELEASE_PY="${PRERELEASE_PY-3.15}"
+if [ -n "$PRERELEASE_PY" ]; then
+    printf '\n=== Prerelease (advisory) on Python %s ===\n' "$PRERELEASE_PY"
+    unset UV_PROJECT_ENVIRONMENT
+    prereleaseenv='.venv-prerelease'
+    rm -rf "$prereleaseenv"
+    prerelease_failed=""
+    if ! uv python install "$PRERELEASE_PY"; then
+        prerelease_failed="install"
+    elif ! uv venv "$prereleaseenv" --python "$PRERELEASE_PY"; then
+        prerelease_failed="venv"
+    elif ! uv pip install --python "$prereleaseenv" '.[tui,completion]'; then
+        prerelease_failed="install-project"
+    elif ! uv pip install --python "$prereleaseenv" pytest pytest-asyncio; then
+        prerelease_failed="pytest-install"
+    elif ! "$prereleaseenv/bin/python" -c 'import b4, sys; print("import b4 OK on", sys.version.split()[0])'; then
+        prerelease_failed="import"
+    elif ! "$prereleaseenv/bin/b4" --version; then
+        prerelease_failed="cli"
+    elif ! "$prereleaseenv/bin/python" -m pytest --durations=20; then
+        prerelease_failed="pytest"
+    fi
+
+    if [ -n "$prerelease_failed" ]; then
+        printf '\nPrerelease lane failed (advisory, not fatal): %s\n' "$prerelease_failed"
+    else
+        printf '\nPrerelease lane passed on Python %s\n' "$PRERELEASE_PY"
+    fi
+fi
+
 if [ -n "$failed" ]; then
     printf '\nFAILURES:%s\n' "$failed"
     exit 1
 fi
 
-printf '\nAll interpreters passed: %s\n' "$PYTHONS"
+if [ -n "$PYTHONS" ]; then
+    printf '\nAll interpreters passed: %s\n' "$PYTHONS"
+fi
 if [ -n "$FLOOR_PY" ]; then
     printf 'Floor lane passed on Python %s\n' "$FLOOR_PY"
 fi
