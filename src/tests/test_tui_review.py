@@ -20,7 +20,7 @@ pytest.importorskip('textual')
 import b4
 import b4.review
 import b4.review.tracking
-from b4.review_tui._review_app import ReviewApp
+from b4.review_tui._review_app import PatchListItem, ReviewApp
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -991,3 +991,48 @@ class TestRangeDiffBindingGate:
         # Range-diff is a review-mode action; email mode hides it
         app._preview_mode = True
         assert app.check_action('range_diff', ()) is False
+
+
+# ---------------------------------------------------------------------------
+# PatchListItem pre-mount styling (github #80)
+# ---------------------------------------------------------------------------
+
+
+class TestPatchListItemPreMountStyling:
+    """A PatchListItem must be styleable before its children have mounted.
+
+    Textual < 7.0 runs a widget's on_mount() *before* its composed children
+    are mounted, so the original query_one(Label) there raised NoMatches and
+    crashed the whole review TUI on the Textual versions distros ship
+    (github #80). The fix holds a direct reference to the Label instead.
+
+    These tests provoke the same condition on any Textual version by styling
+    an item that was never mounted, so they do not need an old Textual to
+    regress -- a reintroduced query_one() fails here on current Textual too.
+    """
+
+    @pytest.mark.parametrize(
+        'state,expected',
+        [
+            ('skip', 'dim'),
+            ('unchanged', 'dim'),
+            ('done', 'bold'),
+        ],
+    )
+    def test_styles_apply_before_mount(self, state: str, expected: str) -> None:
+        item = PatchListItem('a patch', 3, state)
+        # Never mounted, so compose() has not run and there is no child to
+        # query. This is exactly what old Textual did at on_mount() time.
+        item._apply_state_style()
+        assert str(item._label.styles.text_style) == expected
+
+    def test_plain_state_leaves_style_unset(self) -> None:
+        item = PatchListItem('a patch', 0)
+        item._apply_state_style()
+        # Textual stringifies an unset text_style as 'none', not ''.
+        assert str(item._label.styles.text_style) == 'none'
+
+    def test_label_is_composed(self) -> None:
+        """The held reference must be what compose() yields, not a copy."""
+        item = PatchListItem('a patch', 1, 'done')
+        assert list(item.compose()) == [item._label]

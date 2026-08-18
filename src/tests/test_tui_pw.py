@@ -331,6 +331,34 @@ class TestPwBacklogNotice:
             assert _backlog_toasts(app) == []
 
     @pytest.mark.asyncio
+    async def test_project_name_markup_is_escaped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The project name is the one user-controlled field in the toast.
+
+        It used to be neutralised with notify(markup=False), but that kwarg
+        only exists in newer Textual and raised TypeError on the 2.x Debian
+        ships (github #80). It is escaped instead, so markup in the project
+        name must survive as literal text on every Textual version.
+        """
+        monkeypatch.setattr(
+            b4.review,
+            'pw_fetch_series',
+            lambda *a, **k: PwFetchResult([_backlog_series()], 28180, 30),
+        )
+        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+        app = PwApp('fakekey', 'https://pw.example.org', '[bold red]evil[/]')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            toasts = _backlog_toasts(app)
+            assert len(toasts) == 1
+            # Escaped, so Rich renders the brackets rather than acting on them.
+            assert r'\[bold red]evil\[/]' in toasts[0].message
+
+    @pytest.mark.asyncio
     async def test_notifies_once_across_refresh(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

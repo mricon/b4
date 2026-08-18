@@ -15,10 +15,15 @@ set -eu
 #
 # After the interpreter sweep it runs one "floor" lane: the project plus its
 # runtime extras resolved to the *minimum* versions our metadata allows
-# (uv --resolution lowest-direct), then the suite. This is what catches a
-# dependency floor that is declared but does not actually work -- e.g. textual
-# was pinned >=1.0 while the review TUI needed >=7.0.1 (github #80), invisible
-# to every other lane because they all resolve the newest compatible version.
+# (uv --resolution lowest-direct), then the suite. Every other lane resolves
+# the newest compatible release, so our declared lower bounds -- textual
+# `>=1.0`, pygit2 `>=1.14` -- are otherwise untested claims about what we
+# support; this lane is the only thing that installs them.
+#
+# It is not a substitute for distro-matrix.sh: this lane only proves the
+# declared minimums install and pass our suite, while the distro lanes run
+# against what distros actually ship and catch behaviour our tests do not
+# reach (that is what found github #80, not this lane).
 # It runs on the lowest supported interpreter, where the old dependency
 # releases are likeliest to still publish wheels. Override or skip it:
 # FLOOR_PY=3.12 ./ci-matrix.sh  (or FLOOR_PY= ./ci-matrix.sh to skip)

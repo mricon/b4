@@ -7,8 +7,10 @@ set -eu
 # catches "the distro ships an older dependency than we pin" bugs that the
 # interpreter-only ci-matrix.sh cannot see: every uv-resolved lane there
 # always gets the newest compatible dependency, whereas distros lag.
-# (The motivating case: textual is declared `>=1.0`, but the review TUI
-# needs `>=7.0.1`, and Debian stable ships 2.1.2 -- see github #80.)
+# (The motivating case: the review TUI crashed on mount on every textual
+# older than 7.0, while we declare `>=1.0` and Debian stable ships 2.1.2 --
+# github #80. The TUI was fixed to work on the declared range rather than the
+# bound being raised, so these lanes are what keep it that way.)
 #
 # This is a heavy, network-dependent, pre-release check -- it pulls OS
 # images and hits distro mirrors -- so it is deliberately separate from

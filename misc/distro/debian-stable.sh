@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Debian stable lane: full TUI. This is the primary old-textual guardian --
-# trixie ships textual 2.1.2, which reproduces github #80. dkimpy is packaged
-# as python3-dkim; rich arrives as a dependency of python3-textual.
+# trixie ships textual 2.1.2, which is where github #80 reproduced. dkimpy is
+# packaged as python3-dkim; rich arrives as a dependency of python3-textual.
 
 set -eu
 
