@@ -2100,12 +2100,29 @@ def _render_quoted_diff_with_comments(
     return '\n'.join(result) + '\n'
 
 
+def _strip_instruction_header(buffer: str) -> List[str]:
+    """Drop b4's ``#`` instruction header from an editor buffer.
+
+    The header is the contiguous run of ``#`` lines b4 prepends when it opens
+    the buffer, and it ends at the first line that does not start with ``#``.
+    Only that leading run is removed: everything below it is the maintainer's
+    own text, where a ``#`` is just a character -- a C preprocessor
+    directive, a shell comment, a markdown heading.  Returns the remaining
+    lines.
+    """
+    lines = buffer.splitlines()
+    start = 0
+    while start < len(lines) and lines[start].startswith('#'):
+        start += 1
+    return lines[start:]
+
+
 def _extract_editor_comments(
     edited_text: str, diff_text: str = '', message_text: str = ''
 ) -> List[Dict[str, Any]]:
     """Extract comments from the quoted-diff editor format.
 
-    Strips instruction lines (``#`` prefix) and external reviewer
+    Strips the leading ``#`` instruction header and external reviewer
     comments (``|`` prefix), then delegates to
     :func:`_extract_comments_from_quoted_reply` which handles the
     ``> ``-quoted diff with unquoted comment format.
@@ -2117,10 +2134,7 @@ def _extract_editor_comments(
     ``:message`` comments after editor re-wrapping of the quoted body.
     """
     filtered: List[str] = []
-    for line in edited_text.splitlines():
-        # Strip editor instruction lines
-        if line.startswith('#'):
-            continue
+    for line in _strip_instruction_header(edited_text):
         # Strip external reviewer comment blocks (| prefix)
         if line.startswith('|'):
             continue
@@ -3361,14 +3375,17 @@ def _trim_quoted_reply(buffer: str) -> str:
     """Prepare a hand-edited reply buffer for sending.
 
     The maintainer's text is sent as written.  The only changes are to strip
-    b4's own scaffolding — the ``#`` instruction header and ``| `` read-only
-    external-reviewer lines — and to drop the run of quoted diff at the very
+    b4's own scaffolding — the leading ``#`` instruction header (see
+    :func:`_strip_instruction_header`) and ``| `` read-only external-reviewer
+    lines — and to drop the run of quoted diff at the very
     bottom of the message that has no comment after it, the usual courtesy of
     trimming quoted material below your last reply.  Quoted context the
     maintainer left in place anywhere above their final comment is kept
     exactly as written; nothing is collapsed, reordered, or relocated.
     """
-    lines = [line for line in buffer.splitlines() if not line.startswith(('#', '|'))]
+    lines = [
+        line for line in _strip_instruction_header(buffer) if not line.startswith('|')
+    ]
     # Drop the trailing quoted/blank run below the maintainer's last comment.
     end = len(lines)
     while end > 0 and (lines[end - 1].startswith('>') or not lines[end - 1].strip()):

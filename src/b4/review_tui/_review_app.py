@@ -123,6 +123,20 @@ class FollowupItem(ListItem):
         yield st
 
 
+def _strip_note_footer(raw_text: str) -> str:
+    """Strip the trailing ``#`` instruction block from an edited note.
+
+    The note editor appends its instructions at the bottom of the buffer, so
+    only the trailing run of ``#`` lines is scaffolding.  A ``#`` anywhere
+    above it is the maintainer's own text -- a C preprocessor directive, a
+    shell comment -- and is kept.
+    """
+    lines = raw_text.splitlines()
+    while lines and lines[-1].startswith('#'):
+        lines.pop()
+    return '\n'.join(lines).strip()
+
+
 class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     """Textual app for b4 review TUI."""
 
@@ -1549,7 +1563,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         '# email reply, but it will be stored in the tracking commit and\n'
         '# viewable by anyone if you push this branch to any remote.\n'
         '#\n'
-        '# Lines starting with # will be removed.\n'
+        '# This trailing block of # lines will be removed. Any # you write\n'
+        '# above it is kept as part of your note.\n'
     )
 
     def _edit_note_in_editor(self, target: Dict[str, Any], existing: str) -> None:
@@ -1564,9 +1579,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self.notify('Editor returned no content')
             return
         raw_text = result.decode(errors='replace')
-        note_text = '\n'.join(
-            ln for ln in raw_text.splitlines() if not ln.startswith('#')
-        ).strip()
+        note_text = _strip_note_footer(raw_text)
         if note_text == existing.strip():
             self.notify('No changes made')
             return

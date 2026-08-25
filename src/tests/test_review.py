@@ -277,6 +277,32 @@ class TestExtractEditorComments:
         assert comments[0]['line'] == 12
         assert comments[0]['text'] == 'Check NULL return.'
 
+    def test_hash_line_in_comment_is_kept(self) -> None:
+        """A # line the maintainer wrote is content, not scaffolding."""
+        edited = (
+            '# Review patch for: test\n'
+            '#\n'
+            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+            '> --- a/lib/helpers.c\n'
+            '> +++ b/lib/helpers.c\n'
+            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
+            '>  \tint ret;\n'
+            '>  \n'
+            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+            '\n'
+            'I had written\n'
+            '\n'
+            '#define arm_smmu_kdump_is_attach_deferred NULL\n'
+            '\n'
+            '> +\tptr->field = value;\n'
+            '>  \treturn 0;\n'
+        )
+        comments = review._extract_editor_comments(edited)
+        assert len(comments) == 1
+        assert '#define arm_smmu_kdump_is_attach_deferred NULL' in comments[0]['text']
+        # The leading header is still gone.
+        assert '# Review patch for' not in comments[0]['text']
+
     def test_instruction_lines_stripped(self) -> None:
         """Lines starting with # are ignored."""
         edited = (
@@ -759,6 +785,33 @@ class TestTrimQuotedReply:
         assert 'Other <o@x.com>' not in out
         assert 'their note' not in out
         assert 'My comment.' in out
+
+    def test_keeps_hash_lines_the_maintainer_wrote(self) -> None:
+        # Only the leading instruction header is scaffolding.  A # further
+        # down is the maintainer's own text and must be sent verbatim.
+        buf = (
+            '# instructions\n'
+            '# more instructions\n'
+            '\n'
+            'I had written\n'
+            '\n'
+            '#define arm_smmu_kdump_is_attach_deferred NULL\n'
+            '\n'
+            'and it went missing.\n'
+        )
+        out = review._trim_quoted_reply(buf)
+        assert '# instructions' not in out
+        assert '# more instructions' not in out
+        assert '#define arm_smmu_kdump_is_attach_deferred NULL' in out
+        assert out.rstrip().endswith('and it went missing.')
+
+    def test_hash_header_only_stripped_when_leading(self) -> None:
+        # With no header at the top, a # first line is the maintainer's own
+        # -- but a run below any other text is never treated as a header.
+        buf = 'Some prose.\n#define FOO 1\n#define BAR 2\n'
+        out = review._trim_quoted_reply(buf)
+        assert '#define FOO 1' in out
+        assert '#define BAR 2' in out
 
     def test_drops_trailing_quoted_below_last_comment(self) -> None:
         buf = (
@@ -2093,18 +2146,13 @@ class TestParseArtFromMessage:
 
 
 class TestNoteCommentStripping:
-    """Tests for the # comment stripping logic used in note editing."""
+    """Tests for _strip_note_footer(), used when saving an edited note."""
 
     @staticmethod
     def _strip_comments(raw_text: str) -> str:
-        """Replicate the stripping logic from _edit_note_in_editor."""
-        return '\n'.join(
-            ln for ln in raw_text.splitlines() if not ln.startswith('#')
-        ).strip()
+        from b4.review_tui._review_app import _strip_note_footer
 
-    def test_strips_comment_lines(self) -> None:
-        raw = 'This is my note\n# This is a comment\nSecond line'
-        assert self._strip_comments(raw) == 'This is my note\nSecond line'
+        return _strip_note_footer(raw_text)
 
     def test_strips_footer(self) -> None:
         raw = (
@@ -2114,9 +2162,21 @@ class TestNoteCommentStripping:
             '# email reply, but it will be stored in the tracking commit and\n'
             '# viewable by anyone if you push this branch to any remote.\n'
             '#\n'
-            '# Lines starting with # will be removed.\n'
+            '# This trailing block of # lines will be removed. Any # you write\n'
+            '# above it is kept as part of your note.\n'
         )
         assert self._strip_comments(raw) == 'My note here'
+
+    def test_keeps_hash_lines_above_the_footer(self) -> None:
+        raw = (
+            'I had written\n'
+            '#define arm_smmu_kdump_is_attach_deferred NULL\n'
+            '\n'
+            '# Lines starting with # will be removed.\n'
+        )
+        assert self._strip_comments(raw) == (
+            'I had written\n#define arm_smmu_kdump_is_attach_deferred NULL'
+        )
 
     def test_preserves_non_comment_lines(self) -> None:
         raw = 'Line one\nLine two\nLine three'
@@ -2128,7 +2188,7 @@ class TestNoteCommentStripping:
 
     def test_mixed_content(self) -> None:
         raw = '# TODO: revisit\nNeed to check NULL path\n# end'
-        assert self._strip_comments(raw) == 'Need to check NULL path'
+        assert self._strip_comments(raw) == '# TODO: revisit\nNeed to check NULL path'
 
 
 # -- Helpers for attestation tests -------------------------------------------
