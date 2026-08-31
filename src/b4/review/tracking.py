@@ -873,6 +873,84 @@ def cmd_forget(cmdargs: argparse.Namespace) -> None:
     logger.info('Forgot series: %s', change_id)
 
 
+def cmd_cleanup(cmdargs: argparse.Namespace) -> None:
+    """Abandon every tracked series whose status is ``gone``.
+
+    A Gone series has no review branch left to remove, so cleanup only erases
+    its tracking records.  As with the TUI's abandon action, all records for a
+    change-id are removed together, including known revisions and patches.
+    """
+    topdir = b4.git_get_toplevel()
+    identifier = resolve_identifier(cmdargs, topdir)
+    if not identifier:
+        logger.critical('Could not determine project identifier.')
+        logger.critical('Run from an enrolled repository or specify -i identifier')
+        sys.exit(1)
+
+    if not db_exists(identifier):
+        logger.critical('Project not enrolled: %s', identifier)
+        logger.critical('Run "b4 review enroll" first')
+        sys.exit(1)
+
+    dryrun = bool(getattr(cmdargs, 'dryrun', False))
+    conn = get_db(identifier)
+    gone_series: Dict[str, Tuple[int, str]] = {}
+    try:
+        # Keep the candidate snapshot and all deletions in one write
+        # transaction so nothing else can revive something between us
+        # listing the branches and deleting them.
+        if not dryrun:
+            conn.execute('BEGIN IMMEDIATE')
+        rows = conn.execute("""
+            SELECT current.change_id, current.revision, current.subject
+              FROM series AS current
+             WHERE current.status = 'gone'
+               AND NOT EXISTS (
+                   SELECT 1 FROM series AS newer
+                    WHERE newer.change_id = current.change_id
+                      AND newer.revision > current.revision
+               )
+             ORDER BY current.change_id
+        """).fetchall()
+
+        # A legacy database can contain more than one series row for the same
+        # change-id.  Only the newest row represents the logical series'
+        # current state: an older Gone revision must not cause a newer active
+        # one to be abandoned.  Deleting a current Gone series still removes
+        # the whole change-id.
+        for change_id, revision, subject in rows:
+            if change_id not in gone_series:
+                gone_series[str(change_id)] = (
+                    int(revision),
+                    subject or '(no subject)',
+                )
+
+        if not gone_series:
+            logger.info('No Gone series to clean up.')
+            return
+
+        if dryrun:
+            logger.info('Gone series that would be abandoned:')
+        else:
+            logger.info('Abandoning Gone series:')
+        for change_id, (revision, subject) in gone_series.items():
+            logger.info('  %s (v%d): %s', change_id, revision, subject)
+
+        if dryrun:
+            logger.info('Dry run: %d Gone series would be abandoned.', len(gone_series))
+            return
+
+        for change_id in gone_series:
+            delete_series(conn, change_id, commit=False)
+        conn.commit()
+    finally:
+        if conn.in_transaction:
+            conn.rollback()
+        conn.close()
+
+    logger.info('Abandoned %d Gone series.', len(gone_series))
+
+
 def get_tracked_pw_series_ids(identifier: str) -> set[int]:
     """Get the set of Patchwork series IDs that are tracked for a project."""
     if not db_exists(identifier):
@@ -2949,13 +3027,18 @@ def rescan_branches(
 
 
 def delete_series(
-    conn: sqlite3.Connection, change_id: str, revision: Optional[int] = None
+    conn: sqlite3.Connection,
+    change_id: str,
+    revision: Optional[int] = None,
+    *,
+    commit: bool = True,
 ) -> None:
     """Delete a series from the database.
 
     When *revision* is given only that specific revision is removed;
     otherwise all revisions sharing the *change_id* are removed (legacy
-    behaviour kept for backwards compatibility).
+    behaviour kept for backwards compatibility).  Set *commit* to False when
+    the deletion is part of a larger caller-managed transaction.
     """
     if revision is not None:
         conn.execute(
@@ -2974,4 +3057,5 @@ def delete_series(
         conn.execute('DELETE FROM revisions WHERE change_id = ?', (change_id,))
         conn.execute('DELETE FROM series WHERE change_id = ?', (change_id,))
         conn.execute('DELETE FROM series_patches WHERE change_id = ?', (change_id,))
-    conn.commit()
+    if commit:
+        conn.commit()

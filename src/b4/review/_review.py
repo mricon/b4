@@ -483,6 +483,8 @@ def main(cmdargs: argparse.Namespace) -> None:
         b4.review.tracking.cmd_track(cmdargs)
     elif cmdargs.review_subcmd == 'forget':
         b4.review.tracking.cmd_forget(cmdargs)
+    elif cmdargs.review_subcmd == 'cleanup':
+        b4.review.tracking.cmd_cleanup(cmdargs)
     elif cmdargs.review_subcmd == 'show-info':
         cmd_show_info(cmdargs)
     elif cmdargs.review_subcmd == 'cron':

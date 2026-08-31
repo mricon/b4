@@ -594,6 +594,25 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Project identifier (required if not in an enrolled repository)',
     )
 
+    # b4 review cleanup
+    sp_rev_cleanup = rev_subparsers.add_parser(
+        'cleanup', help='Abandon all tracked series in the gone state'
+    )
+    sp_rev_cleanup.add_argument(
+        '-i',
+        '--identifier',
+        dest='identifier',
+        default=None,
+        help='Project identifier (required if not in an enrolled repository)',
+    )
+    sp_rev_cleanup.add_argument(
+        '--dry-run',
+        dest='dryrun',
+        action='store_true',
+        default=False,
+        help='List the gone series that would be abandoned without deleting any records',
+    )
+
     # b4 review show-info
     sp_rev_showinfo = rev_subparsers.add_parser(
         'show-info', help='Show review branch info in a format suitable for scripting'

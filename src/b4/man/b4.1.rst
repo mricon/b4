@@ -316,6 +316,11 @@ For options and their descriptions, see ``b4 review --help`` and
   any tracked series regardless of status, including archived ones the
   TUI no longer shows.
 
+``b4 review cleanup [--dry-run]``
+  Abandon every tracked series in the ``gone`` state. With ``--dry-run``,
+  list the series that would be cleaned up without changing the tracking
+  database.
+
 ``b4 review tui``
   Launch the review TUI.
 

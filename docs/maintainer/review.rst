@@ -1092,6 +1092,13 @@ completed series (creates a ``.tar.gz`` in
 ``$XDG_DATA_HOME/b4/review-archived/``). Select **Abandon** to delete
 the series and review branch entirely.
 
+To abandon all tracked series already in the ``gone`` state, run::
+
+    b4 review cleanup
+
+Use ``b4 review cleanup --dry-run`` to list the affected series without
+deleting any tracking records.
+
 .. _snooze_details:
 
 Snoozing a series
@@ -1328,6 +1335,15 @@ Optional flags
 
 ``-i IDENTIFIER, --identifier IDENTIFIER``
   Project identifier (required if not in an enrolled repository).
+
+``b4 review cleanup``
+~~~~~~~~~~~~~~~~~~~~~
+``-i IDENTIFIER, --identifier IDENTIFIER``
+  Project identifier (required if not in an enrolled repository).
+
+``--dry-run``
+  List the ``gone`` series that would be abandoned without changing the
+  tracking database.
 
 ``b4 review tui``
 ~~~~~~~~~~~~~~~~~
