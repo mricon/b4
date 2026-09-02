@@ -1872,6 +1872,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
     def _send_followup_reply(self, entry: Dict[str, Any], text: str) -> None:
         """Build and immediately send a quick reply to a follow-up message."""
+        text = b4.append_email_signature(text)
         msg = entry['lmsg'].make_reply(text)
         try:
             with self.suspend():
