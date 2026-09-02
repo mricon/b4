@@ -3579,9 +3579,7 @@ def _build_review_email(
     body = _apply_reply_template(body, series, header_info, orig_subject)
 
     # Append signature if not already present
-    if '\n-- \n' not in body:
-        signature = b4.get_email_signature()
-        body = body.rstrip('\n') + '\n\n-- \n' + signature
+    body = b4.append_email_signature(body)
 
     # Construct the EmailMessage
     user_name, user_email = b4.get_mailfrom()

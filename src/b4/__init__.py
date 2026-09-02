@@ -5536,6 +5536,18 @@ def get_email_signature() -> str:
     return signature
 
 
+def append_email_signature(body: str) -> str:
+    """Appends the user's email signature to the end of body.
+
+    Does nothing if body already contains a "-- " delimiter, so a signature
+    inherited from an editor buffer or a quoted reply is not duplicated.
+    """
+    if '\n-- \n' in body:
+        return body
+
+    return body.rstrip('\n') + '\n\n-- \n' + get_email_signature()
+
+
 def discover_rethread_series(msgid: str, nocache: bool = False) -> List[str]:
     """Auto-discover sibling patches for a single msgid by querying lore.
 
