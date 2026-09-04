@@ -941,7 +941,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
             if has_content:
                 text.append('\n')
-            if self.app.ansi_color:
+            if getattr(self.app, 'native_ansi_color', self.app.ansi_color):
                 text.append(f' {header} ', style=f'bold reverse {colour}')
             else:
                 text.append(f' {header} ', style=f'bold {ts["surface"]} on {colour}')
