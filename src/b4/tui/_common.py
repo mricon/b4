@@ -278,9 +278,20 @@ def _to_rich_color(textual_color: str) -> str:
     variable system.  Rich expects ``green``, ``bright_blue``, etc.
     Non-ansi values (hex codes, named CSS colours) pass through unchanged.
     ``ansi_default`` maps to ``default``.
+
+    Textual's ansi themes resolve ``$panel``/``$surface`` to the CSS
+    keyword ``transparent`` and can append an alpha percentage
+    (``default 50%``). Rich understands neither, and feeding one into a
+    style string raises ``MissingStyle``, so both are reduced to the
+    terminal default colour.
     """
+    parts = textual_color.rsplit(' ', 1)
+    if len(parts) == 2 and parts[1].endswith('%'):
+        textual_color = parts[0]  # drop the alpha suffix
     if textual_color.startswith('ansi_'):
         return textual_color[5:]  # strip 'ansi_' prefix
+    if textual_color == 'transparent':
+        return 'default'
     return textual_color
 
 
