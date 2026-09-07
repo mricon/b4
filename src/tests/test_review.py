@@ -909,6 +909,40 @@ class TestReplyTrailerEditing:
         # No blank line inserted between the two trailers.
         assert 'Reviewed-by: Me <me@x.com>\nTested-by: Me <me@x.com>' in out
 
+    def test_insert_before_trailing_quote(self) -> None:
+        buf = 'Please fix this.\n\n> context left below my message\n> +old code\n'
+        trailer = 'Reviewed-by: Me <me@x.com>'
+        out = review._insert_trailer_in_reply(buf, trailer)
+        assert out == (
+            'Please fix this.\n\n'
+            'Reviewed-by: Me <me@x.com>\n'
+            '\n'
+            '> context left below my message\n'
+            '> +old code\n'
+        )
+        assert review._trim_quoted_reply(out) == 'Please fix this.\n\n' + trailer
+
+    def test_insert_before_trailing_quote_with_external_review(self) -> None:
+        buf = (
+            'Please fix this.\n'
+            '\n'
+            '> context before external feedback\n'
+            '\n'
+            '| Bot <bot@example.com>:\n'
+            '|\n'
+            '| An external finding.\n'
+            '\n'
+            '> context after external feedback\n'
+        )
+        trailer = 'Reviewed-by: Me <me@x.com>'
+
+        out = review._insert_trailer_in_reply(buf, trailer)
+
+        # The external-review block is scaffolding inside one trailing quoted
+        # run.  Adding a trailer must not split that run and make the quoted
+        # context before the external finding survive send-time trimming.
+        assert review._trim_quoted_reply(out) == 'Please fix this.\n\n' + trailer
+
     def test_remove_drops_matching_bare_line(self) -> None:
         buf = 'Thanks!\n\nReviewed-by: Me <me@x.com>\nAcked-by: Me <me@x.com>'
         out = review._remove_trailer_from_reply(buf, 'reviewed-by')

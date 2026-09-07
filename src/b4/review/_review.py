@@ -3297,13 +3297,25 @@ def _insert_trailer_in_reply(reply_text: str, trailer: str) -> str:
     """Append *trailer* as its own bare line in the reply buffer.
 
     The line is added at the end of the maintainer's content, before any
-    trailing ``-- `` signature, grouped with any trailers already there.  The
-    maintainer can move it afterwards — placement is just a sensible default.
+    trailing quoted context or ``-- `` signature, grouped with any trailers
+    already there.  Keeping a trailing quote below the trailer lets the
+    ordinary send-time trimming discard it.  The maintainer can move the
+    trailer afterwards — placement is just a sensible default.
     """
     lines = _normalize_line_endings(reply_text).split('\n')
     sig_idx = next((i for i, ln in enumerate(lines) if ln == '-- '), len(lines))
     head = lines[:sig_idx]
     tail = lines[sig_idx:]
+    quoted_tail: List[str] = []
+    quote_start = len(head)
+    while quote_start and (
+        head[quote_start - 1].startswith(('>', '|'))
+        or not head[quote_start - 1].strip()
+    ):
+        quote_start -= 1
+    if any(line.startswith('>') for line in head[quote_start:]):
+        quoted_tail = head[quote_start:]
+        head = head[:quote_start]
     while head and not head[-1].strip():
         head.pop()
     # Separate from non-trailer content with a blank line so the trailers
@@ -3311,7 +3323,7 @@ def _insert_trailer_in_reply(reply_text: str, trailer: str) -> str:
     if head and not _BARE_TRAILER_RE.match(head[-1]):
         head.append('')
     head.append(trailer)
-    return '\n'.join(head + tail)
+    return '\n'.join(head + quoted_tail + tail)
 
 
 def _remove_trailer_from_reply(reply_text: str, name: str) -> str:
