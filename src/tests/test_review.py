@@ -861,6 +861,32 @@ class TestTrimQuotedReply:
     def test_empty_buffer(self) -> None:
         assert review._trim_quoted_reply('') == ''
 
+    def test_removes_external_gaps_inside_quoted_diff(self) -> None:
+        buffer = (
+            '> first quoted line\n'
+            '\n'
+            '| sashiko.dev <sashiko@sashiko.dev>:\n'
+            '|\n'
+            '| An external finding.\n'
+            '|\n'
+            '| via: https://sashiko.dev/#/message/example\n'
+            '\n'
+            '> second quoted line\n'
+            '\n'
+            '| another reviewer <reviewer@example.com>:\n'
+            '|\n'
+            '| Another external finding.\n'
+            '\n'
+            '> third quoted line\n'
+            'My maintainer comment.\n'
+        )
+        assert review._trim_quoted_reply(buffer) == (
+            '> first quoted line\n'
+            '> second quoted line\n'
+            '> third quoted line\n'
+            'My maintainer comment.'
+        )
+
 
 class TestParseReplyTrailers:
     """Tests for _parse_reply_trailers() — derived trailer display index."""

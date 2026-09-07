@@ -3383,6 +3383,54 @@ def _sync_reply_trailers(reply_text: str, selected: List[str], identity: str) ->
     return reply_text
 
 
+def _strip_external_reviewer_lines(lines: List[str]) -> List[str]:
+    """Remove read-only external-review blocks without leaving quote gaps.
+
+    Rendering puts bare blank separators around ``|``-prefixed external
+    comments.  When both sides of a separator are quoted diff, it belongs to
+    that presentation block and must leave with the comment.  A separator
+    after maintainer text is retained exactly, since it is part of their reply
+    layout rather than the external review's quote padding.
+    """
+    result: List[str] = []
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith('|'):
+            result.append(lines[index])
+            index += 1
+            continue
+
+        # A leading separator belongs to an external block only when it
+        # separates that block from quoted diff.  Do not alter the same blank
+        # after the maintainer's own text.
+        previous = len(result) - 1
+        while previous >= 0 and not result[previous].strip():
+            previous -= 1
+        if previous >= 0 and result[previous].startswith('>'):
+            del result[previous + 1 :]
+
+        # Treat adjacent external blocks as one block.  Their intervening
+        # blanks are presentation padding too.
+        while index < len(lines) and lines[index].startswith('|'):
+            index += 1
+            blank_end = index
+            while blank_end < len(lines) and not lines[blank_end].strip():
+                blank_end += 1
+            if blank_end < len(lines) and lines[blank_end].startswith('|'):
+                index = blank_end
+                continue
+            if blank_end < len(lines) and lines[blank_end].startswith('>'):
+                # The following quoted context is already separated by its
+                # quote prefix; do not leave the external block's gap behind.
+                index = blank_end
+            else:
+                result.extend(lines[index:blank_end])
+                index = blank_end
+            break
+
+    return result
+
+
 def _trim_quoted_reply(buffer: str) -> str:
     """Prepare a hand-edited reply buffer for sending.
 
@@ -3395,9 +3443,7 @@ def _trim_quoted_reply(buffer: str) -> str:
     maintainer left in place anywhere above their final comment is kept
     exactly as written; nothing is collapsed, reordered, or relocated.
     """
-    lines = [
-        line for line in _strip_instruction_header(buffer) if not line.startswith('|')
-    ]
+    lines = _strip_external_reviewer_lines(_strip_instruction_header(buffer))
     # Drop the trailing quoted/blank run below the maintainer's last comment.
     end = len(lines)
     while end > 0 and (lines[end - 1].startswith('>') or not lines[end - 1].strip()):
