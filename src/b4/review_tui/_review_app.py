@@ -1850,7 +1850,12 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             orig_author = entry.get('fromname', '') or entry.get('fromemail', '')
             body = entry.get('body', '')
             quoted = '\n'.join(f'> {line}' for line in body.splitlines())
-            editor_text = f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
+            editor_text = (
+                '# Put ">--cut--" alone on a line to discard quoted context above it\n'
+                '# back to your last note; b4 resolves it when you send.\n'
+                '#\n'
+                f'On {orig_date}, {orig_author} wrote:\n{quoted}\n\n'
+            )
 
         result = suspend_and_edit(
             self, editor_text.encode(), 'reply.eml', topdir=self._topdir
@@ -1872,7 +1877,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
     def _send_followup_reply(self, entry: Dict[str, Any], text: str) -> None:
         """Build and immediately send a quick reply to a follow-up message."""
-        msg = entry['lmsg'].make_reply(text)
+        reply_text = b4.review._trim_quoted_reply(text)
+        msg = entry['lmsg'].make_reply(reply_text)
         try:
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)

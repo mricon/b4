@@ -136,6 +136,12 @@ class TestRenderQuotedDiffWithComments:
         )
         assert 'My comment' in result
         assert '| Ext comment' in result
+        lines = result.splitlines()
+        own_index = lines.index('My comment')
+        external_index = lines.index('| Ext <ext@example.com>:')
+        # _insert() terminates the own comment with one blank line, which is
+        # already enough to separate it from the external review.
+        assert lines[own_index + 1 : external_index] == ['']
 
     def test_cross_file_comments(self) -> None:
         """Comments in different files render correctly."""
@@ -886,6 +892,257 @@ class TestTrimQuotedReply:
             '> third quoted line\n'
             'My maintainer comment.'
         )
+
+
+class TestSnipMarker:
+    """Tests for resolving hand-typed quoted-context snip markers."""
+
+    def test_discards_quote_run_above_and_keeps_quote_below(self) -> None:
+        lines = [
+            'My first note.',
+            '> first quoted line',
+            '> second quoted line',
+            '',
+            '>--cut--',
+            '> quoted context below the marker',
+            'My second note.',
+        ]
+        assert _review._apply_snip_markers(lines) == [
+            'My first note.',
+            '> [ ... 2 lines skipped ... ]',
+            '> quoted context below the marker',
+            'My second note.',
+        ]
+
+    def test_snip_removes_external_comment_separators(self) -> None:
+        buffer = (
+            'My first note.\n'
+            '\n'
+            '> quoted context before the external review\n'
+            '\n'
+            '| sashiko.dev <sashiko@sashiko.dev>:\n'
+            '|\n'
+            '| An external finding.\n'
+            '|\n'
+            '| via: https://sashiko.dev/#/message/example\n'
+            '\n'
+            '> quoted context after the external review\n'
+            '>--cut--\n'
+            '> quoted context below the marker\n'
+            'My second note.\n'
+        )
+        assert review._trim_quoted_reply(buffer) == (
+            'My first note.\n'
+            '\n'
+            '> [ ... 2 lines skipped ... ]\n'
+            '> quoted context below the marker\n'
+            'My second note.'
+        )
+
+    def test_snip_keeps_spacing_before_external_review(self) -> None:
+        buffer = (
+            'My maintainer comment.\n'
+            '\n'
+            '| sashiko.dev <sashiko@sashiko.dev>:\n'
+            '|\n'
+            '| An external finding.\n'
+            '|\n'
+            '| via: https://sashiko.dev/#/message/example\n'
+            '\n'
+            '> quoted context after the external review\n'
+            '>--cut--\n'
+            '> quoted context below the marker\n'
+            'My second note.\n'
+        )
+        assert review._trim_quoted_reply(buffer) == (
+            'My maintainer comment.\n'
+            '\n'
+            '> [ ... 1 lines skipped ... ]\n'
+            '> quoted context below the marker\n'
+            'My second note.'
+        )
+
+    def test_snip_keeps_maintainer_spacing_before_first_quote(self) -> None:
+        lines = [
+            'My first paragraph.',
+            'My second paragraph.',
+            '',
+            '> first quoted line',
+            '',
+            '> second quoted line',
+            '>--cut--',
+            '> quoted context below the marker',
+            'My later note.',
+        ]
+        assert _review._apply_snip_markers(lines) == [
+            'My first paragraph.',
+            'My second paragraph.',
+            '',
+            '> [ ... 2 lines skipped ... ]',
+            '> quoted context below the marker',
+            'My later note.',
+        ]
+
+    @pytest.mark.parametrize(
+        ('lines', 'expected'),
+        [
+            (['', '>--cut--', 'My note.'], ['', 'My note.']),
+            (
+                ['My note.', '', '>--cut--', '> quote below', 'Another note.'],
+                ['My note.', '', '> quote below', 'Another note.'],
+            ),
+        ],
+    )
+    def test_marker_with_nothing_to_discard(
+        self, lines: List[str], expected: List[str]
+    ) -> None:
+        assert _review._apply_snip_markers(lines) == expected
+
+    def test_coalesces_existing_breadcrumb_count(self) -> None:
+        lines = [
+            'My note.',
+            '> one more quoted line',
+            '> [ ... 42 lines skipped ... ]',
+            '>--cut--',
+            '> kept below',
+            'Later note.',
+        ]
+        assert _review._apply_snip_markers(lines) == [
+            'My note.',
+            '> [ ... 43 lines skipped ... ]',
+            '> kept below',
+            'Later note.',
+        ]
+
+    def test_multiple_markers_never_cross_comment_boundaries(self) -> None:
+        lines = [
+            'First comment.',
+            '> first run',
+            '>--cut--',
+            '> kept after first marker',
+            'Adopted reviewer comment.',
+            '> second run one',
+            '> second run two',
+            '> >--cut--',
+            '> kept after second marker',
+            'Final comment.',
+        ]
+        assert _review._apply_snip_markers(lines) == [
+            'First comment.',
+            '> [ ... 1 lines skipped ... ]',
+            '> kept after first marker',
+            'Adopted reviewer comment.',
+            '> [ ... 2 lines skipped ... ]',
+            '> kept after second marker',
+            'Final comment.',
+        ]
+
+    @pytest.mark.parametrize('marker', ['>--cut--', '> >--cut--'])
+    def test_accepted_spellings_resolve_identically(self, marker: str) -> None:
+        lines = ['My note.', '> one', '> two', marker, '> kept', 'Later note.']
+        assert _review._apply_snip_markers(lines) == [
+            'My note.',
+            '> [ ... 2 lines skipped ... ]',
+            '> kept',
+            'Later note.',
+        ]
+
+    def test_marker_substring_is_not_a_directive(self) -> None:
+        lines = ['My note.', '> quoted', 'Do not treat >--cut-- here as a marker.']
+        assert _review._apply_snip_markers(lines) == lines
+
+    def test_trim_composes_scaffolding_snip_and_trailing_quote(self) -> None:
+        buffer = (
+            '# instructions\n'
+            '| External reviewer note\n'
+            'My first note.\n'
+            '> old context one\n'
+            '> old context two\n'
+            '>--cut--\n'
+            '> context kept below the marker\n'
+            'My second note.\n'
+            '> trailing untouched quote\n'
+        )
+        assert review._trim_quoted_reply(buffer) == (
+            'My first note.\n'
+            '> [ ... 2 lines skipped ... ]\n'
+            '> context kept below the marker\n'
+            'My second note.'
+        )
+
+    def test_diff_comment_after_marker_resolves_against_real_diff(self) -> None:
+        edited = (
+            '# instructions\n'
+            'On today, Author wrote:\n'
+            '> diff --git a/f.c b/f.c\n'
+            '> index 1111111..2222222 100644\n'
+            '> --- a/f.c\n'
+            '> +++ b/f.c\n'
+            '> @@ -1,2 +1,2 @@\n'
+            '> -old first\n'
+            '> +new first\n'
+            '>  keep first\n'
+            '>--cut--\n'
+            '> @@ -10,2 +10,2 @@\n'
+            '> -old target\n'
+            '> +new target\n'
+            '\n'
+            'Fix the target.\n'
+            '>  keep target\n'
+        )
+        real_diff = (
+            'diff --git a/f.c b/f.c\n'
+            'index 1111111..2222222 100644\n'
+            '--- a/f.c\n'
+            '+++ b/f.c\n'
+            '@@ -1,2 +1,2 @@\n'
+            '-old first\n'
+            '+new first\n'
+            ' keep first\n'
+            '@@ -10,2 +10,2 @@\n'
+            '-old target\n'
+            '+new target\n'
+            ' keep target\n'
+        )
+        comments = review._extract_editor_comments(edited, diff_text=real_diff)
+        assert comments == [
+            {
+                'path': 'b/f.c',
+                'line': 10,
+                'text': 'Fix the target.',
+                'content': '+new target',
+            }
+        ]
+
+    def test_message_comment_after_marker_resolves_against_real_text(self) -> None:
+        edited = (
+            '# instructions\n'
+            'On today, Author wrote:\n'
+            '> First body line.\n'
+            '> Second body line.\n'
+            '>--cut--\n'
+            '> Target body line.\n'
+            '\n'
+            'Comment on the target.\n'
+            '> Last body line.\n'
+        )
+        message = (
+            'Subject\n'
+            '\n'
+            'First body line.\n'
+            'Second body line.\n'
+            'Target body line.\n'
+            'Last body line.\n'
+        )
+        comments = review._extract_editor_comments(edited, message_text=message)
+        assert comments == [
+            {
+                'path': review.COMMIT_MESSAGE_PATH,
+                'line': 3,
+                'text': 'Comment on the target.',
+                'content': 'Target body line.',
+            }
+        ]
 
 
 class TestParseReplyTrailers:

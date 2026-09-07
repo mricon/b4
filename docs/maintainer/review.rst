@@ -584,6 +584,30 @@ cyan, external ``|`` comments visually bracketed, and your own comments
 in the default foreground. Spell checking is limited to your own
 comment lines.
 
+**Trimming quoted context (any editor)**
+
+No editor plugin is required to prune a run of quoted context. Put the
+following marker alone on a line after the quoted lines you want to discard::
+
+    >--cut--
+
+When the reply is sent, b4 removes the contiguous run of quoted lines above
+the marker, stopping at your last unquoted note, and replaces it with the
+same breadcrumb used by the Vim and Emacs trimming commands::
+
+    > [ ... 42 lines skipped ... ]
+
+Quoted context below the marker is left untouched. Only ``>``-quoted lines
+contribute to the count, so your own notes are always boundaries and can
+never be discarded. If you type the marker while the cursor is still in the
+quoted flow, ``> >--cut--`` is accepted as an equivalent spelling.
+
+Hand-typed markers and the Vim/Emacs commands produce identical output and
+coalesce with each other. If a plugin-generated breadcrumb is immediately
+above ``>--cut--``, its recorded count is absorbed into the new breadcrumb instead
+of leaving two markers. This works in both the main review reply editor and
+the follow-up quick-reply editor.
+
 *Vim*
 
 Copy or symlink the files into your Vim configuration::
