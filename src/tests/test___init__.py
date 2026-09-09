@@ -328,6 +328,16 @@ def test_fixes_trailer_format_validation(
     assert fixes == expected_fixes_values
 
 
+@pytest.mark.parametrize('wrap', ['\n', ' \n', ' \n    ', '\t\n\t'])
+def test_wrapped_fixes_trailer_matches_original(wrap: str) -> None:
+    original = 'Fixes: 239b7c5705a4 ("vfio/pci: close display console during unrealize, not finalize")'
+    wrapped = original.replace('unrealize, ', 'unrealize,' + wrap)
+    trailers, _ = b4.LoreMessage.find_trailers(original)
+    followup, _ = b4.LoreMessage.find_trailers(wrapped, followup=True)
+    assert len(trailers) == len(followup) == 1
+    assert followup == trailers
+
+
 def test_mismatched_trailer_already_on_patch_is_not_flagged(
     sampledir: str,
 ) -> None:

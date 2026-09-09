@@ -3235,7 +3235,10 @@ class LoreMessage:
         # Fixes: abcd0123 (foo bar
         # baz quux)
         body = re.sub(
-            r'^(\S+:\s+[\da-f]+\s+\([^)]+)\n([^\n]+\))', r'\1 \2', body, flags=re.M
+            r'^(\S+:\s+[\da-f]+\s+\([^)]+)\n([^\n]+\))',
+            lambda m: f'{m[1].rstrip()} {m[2].lstrip()}',
+            body,
+            flags=re.M,
         )
         # Signed-off-by: Long Name
         # <email.here@example.com>
