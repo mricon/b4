@@ -4195,7 +4195,7 @@ def get_lore_node() -> liblore.LoreNode:
     if LORENODE is None:
         config = get_main_config()
         # Extract base URL from midmask (e.g. 'https://lore.kernel.org/all/%s' -> 'https://lore.kernel.org/all')
-        midmask = config.get('midmask', LOREADDR + '/all/%s')
+        midmask = config.get('midmask', DEFAULT_CONFIG['midmask'])
         assert isinstance(midmask, str), 'b4.midmask must be a string'
         base_url = midmask.replace('/%s', '').rstrip('/')
         # If midmask had no list path (e.g. 'https://lore.kernel.org/%s'), the base_url
@@ -4207,9 +4207,9 @@ def get_lore_node() -> liblore.LoreNode:
             base_url += '/all'
         cache_dir = str(pathlib.Path(get_cache_dir()) / 'lore')
         try:
-            cache_expire = int(str(config.get('cache-expire', '10')))
-        except ValueError:
-            cache_expire = 10
+            cache_expire = int(str(config['cache-expire']))
+        except (ValueError, KeyError):
+            cache_expire = int(str(DEFAULT_CONFIG['cache-expire']))
         LORENODE = liblore.LoreNode.from_git_config(
             base_url,
             cache_dir=cache_dir,
