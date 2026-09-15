@@ -800,6 +800,7 @@ class LiteThreadScreen(ModalScreen[None]):
     def _send_reply(self, node: ThreadNode, text: str) -> None:
         """Build and send a reply to the given thread node."""
         lmsg = node.lmsg
+        text = b4.append_email_signature(text)
         msg = lmsg.make_reply(text)
         try:
             with self.app.suspend():

@@ -1907,7 +1907,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     def _send_followup_reply(self, entry: Dict[str, Any], text: str) -> None:
         """Build and immediately send a quick reply to a follow-up message."""
         reply_text = b4.review._trim_quoted_reply(text)
-        msg = entry['lmsg'].make_reply(reply_text)
+        reply_text_with_sig = b4.append_email_signature(reply_text)
+        msg = entry['lmsg'].make_reply(reply_text_with_sig)
         try:
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)

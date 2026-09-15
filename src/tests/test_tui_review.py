@@ -427,6 +427,7 @@ class TestFollowupSnipMarker:
             '> [ ... 2 lines skipped ... ]\n'
             '> context kept below the marker\n'
             'My reply.'
+            '\n\n-- \n' + b4.get_email_signature()
         )
         assert send_mail.call_args.args[1] == [outgoing]
 

@@ -580,10 +580,7 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
             )
 
     def on_mount(self) -> None:
-        body = self._reply_text
-        if '\n-- \n' not in body:
-            sig = b4.get_email_signature()
-            body = body.rstrip('\n') + '\n\n-- \n' + sig
+        body = b4.append_email_signature(self._reply_text)
         msg = self._entry['lmsg'].make_reply(body)
         viewer = self.query_one('#followup-preview-viewer', RichLog)
         _render_email_to_viewer(viewer, msg, ts=resolve_styles(self.app))
