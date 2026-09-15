@@ -71,6 +71,29 @@ v0.17
 	: Chuck Lever, https://msgid.link/20260324152805.88424-1-cel@kernel.org
 	: Cover/changelog/recipients as plain files under .git/b4-prep/<change-id>/
 	: Patch exists but needs review and a rebase against current master
+[_] URL config overhaul — piurl in, midmask out, failover in .b4-config
+	: b4.piurl becomes the host knob; projects ship their own mirror list
+	: b4.searchmask deprecated in favour of liblore failover (wontfix, 5d74b87)
+	: Invariant to document: a *mask takes %s and renders text, a *url is a fetch base
+	[_] Multi-valued b4.piurl — ordered base URLs, no %s, first entry is primary
+		: Add to multivals + wtglobs; pass as fallback_urls= to LoreNode.from_git_config()
+		: Explicit kwarg suppresses the user’s [liblore "<origin>"] fallback entries,
+		: so merge instead of override — user entries first, then project, deduped
+		: Catch LibloreError on bad entries; one typo must not brick every networked command
+		: get_lore_node() stops deriving a base from midmask (/%s stripping, /all appending)
+		: parse_msgid() URL override must retarget the piurl primary, not rewrite midmask
+	[_] Deprecate b4.midmask entirely
+		: Fetching moves to piurl; rendering moves to linkmask
+		: midmask’s only rendering use is the trailer "via:" line (ez.py:1714, ez.py:2079)
+		: Compat: piurl unset -> derive from midmask; linkmask unset -> render from midmask
+		: linkmask has a default, so "unset" means the user never set it — compare DEFAULT_CONFIG
+		: via: always renders from linkmask, never from piurl — piurl may be a local
+		: mirror (localhost:8888) whose URLs mean nothing to anyone reading the output
+	[_] Trust gate before honouring fetch origins from a worktree config
+		: .b4-config from an applied series must not redirect fetches (4c18c1c)
+	[_] Subpath mirror bases need liblore 0.10 (fallbacks are origin-only today)
+		: e.g. https://private.local:8888/lore/ or http://<onion>/lore.kernel.org/
+	[_] docs/config.rst — add b4.piurl, deprecate midmask + searchmask, rework failover section
 [X] Non-interactive cover/deps editing in `b4 prep`
 	: --show-cover/--cover-from-file and --show-deps/--deps-from-file, for
 	: scripts and agents that have no editor ("-" reads stdin)
