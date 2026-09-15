@@ -214,7 +214,6 @@ SCRATCH_GIT_OPTS: List[str] = [
 
 DEFAULT_CONFIG: ConfigDictT = {
     'midmask': LOREADDR + '/all/%s',
-    'searchmask': LOREADDR + '/all/?x=m&q=%s',
     'linkmask': LINKADDR + '/%s',
     # You can override the format for the Link: trailer, e.g.
     # if you would rather use the Message-Id trailer. It takes the
@@ -275,6 +274,15 @@ DEFAULT_CONFIG: ConfigDictT = {
     # (review replies, follow-up replies, and thank-you notes). Series patches sent
     # with "b4 prep/send" keep their templated message-ids and are not affected.
     'custom-msgid-cmd': None,
+}
+
+# Settings b4 no longer honours, mapped to what to do instead. Keys here must
+# not appear in DEFAULT_CONFIG, or every run would warn about them.
+DEPRECATED_CONFIG: Dict[str, str] = {
+    'searchmask': (
+        'searches now go to the configured public-inbox server directly, '
+        'with automatic failover to its mirrors'
+    ),
 }
 
 # This is where we store actual config
@@ -4033,7 +4041,22 @@ def _setup_main_config(
     if cmdargs:
         _cmdline_config_override(cmdargs, config, 'b4')
 
+    _warn_deprecated_config(topdir)
+
     MAIN_CONFIG = config
+
+
+def _warn_deprecated_config(gitdir: Optional[str] = None) -> None:
+    """Tell the user about their own settings that b4 no longer honours."""
+    for key, advice in DEPRECATED_CONFIG.items():
+        # Read git-config directly instead of looking at the merged config:
+        # most deprecated settings match one of the wtglobs above, so they can
+        # arrive from a series' own .b4-config, and nagging someone about a
+        # setting they never wrote is just noise they cannot act on.
+        if not get_config_from_git(rf'b4\.{key}', gitdir=gitdir):
+            continue
+        logger.warning('WARNING: b4.%s is deprecated and ignored', key)
+        logger.warning('         %s', advice)
 
 
 def get_main_config() -> ConfigDictT:
