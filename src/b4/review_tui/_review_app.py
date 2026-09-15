@@ -26,7 +26,7 @@ import b4.mbox
 import b4.review
 import b4.review.tracking
 import liblore
-from b4.review._review import COMMIT_MESSAGE_PATH, NO_COVER_NOTE
+from b4.review._review import BASEMENT_PATH, COMMIT_MESSAGE_PATH, NO_COVER_NOTE
 from b4.review_tui._common import (
     PATCH_STATE_MARKERS,
     QUIT_BINDINGS,
@@ -534,11 +534,14 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         self,
         target: Dict[str, Any],
         ts: Dict[str, str],
+        path: str = COMMIT_MESSAGE_PATH,
     ) -> Dict[int, List[Tuple[str, str, str]]]:
-        """Build a comment map for COMMIT_MESSAGE_PATH comments.
+        """Build a comment map for comments anchored at *path*.
 
         Returns a dict mapping line number to list of
         ``(author, colour, text)`` tuples for the current user's comments.
+        Defaults to :data:`COMMIT_MESSAGE_PATH`; pass
+        :data:`BASEMENT_PATH` for basement comments.
         """
         all_reviews = target.get('reviews', {})
         my_email = str(self._usercfg.get('email', ''))
@@ -546,7 +549,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         my_review = all_reviews.get(my_email, {})
         colour = self._reviewer_colour(my_email, target, ts)
         for c in my_review.get('comments', []):
-            if c['path'] == COMMIT_MESSAGE_PATH:
+            if c['path'] == path:
                 result.setdefault(c['line'], []).append(('You', colour, c['text']))
         return result
 
@@ -684,14 +687,28 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 _write_followup_trailers(viewer, all_followups, existing, ts=ts)
                 if all_followups:
                     has_content = True
-                # Show basement (content below ---) from the original email
+                # Show basement (content below ---) from the original email,
+                # with any of the maintainer's own reply comments on it
                 email_basement = patch_meta.get('basement', '')
                 if email_basement.strip():
                     if has_content:
                         viewer.write(Text(''))
                     viewer.write(Text('---', style='dim'))
-                    for bline in email_basement.strip('\n').splitlines():
+                    bas_comment_map = self._build_msg_comment_map(
+                        patch_target_cm, ts, path=BASEMENT_PATH
+                    )
+                    preamble_bas = bas_comment_map.pop(0, [])
+                    if preamble_bas:
+                        self._comment_positions.append(len(viewer.lines))
+                        _write_comments(viewer, preamble_bas, ts=ts)
+                    for bas_lineno, bline in enumerate(
+                        email_basement.strip('\n').splitlines(), start=1
+                    ):
                         viewer.write(Text(bline, style='dim'))
+                        entries = bas_comment_map.pop(bas_lineno, [])
+                        if entries:
+                            self._comment_positions.append(len(viewer.lines))
+                            _write_comments(viewer, entries, ts=ts)
                     has_content = True
 
                 if has_content:
@@ -1348,17 +1365,26 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 self.notify('Could not get commit message', severity='error')
                 return
             message_text = commit_msg.strip()
+            patch_meta = (
+                self._patches[patch_idx] if patch_idx < len(self._patches) else {}
+            )
+            basement_text = patch_meta.get('basement', '')
             if existing_reply:
                 editor_text = existing_reply
             else:
                 all_reviews = target.get('reviews', {})
                 my_email = str(self._usercfg.get('email', ''))
                 editor_text = b4.review._render_quoted_diff_with_comments(
-                    real_diff, all_reviews, my_email, commit_msg=message_text
+                    real_diff,
+                    all_reviews,
+                    my_email,
+                    commit_msg=message_text,
+                    basement=basement_text,
                 )
         else:
             real_diff = ''
             message_text = self._cover_text
+            basement_text = ''
             if existing_reply:
                 editor_text = existing_reply
             else:
@@ -1401,7 +1427,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         # _extract_editor_comments strips | lines (unadopted external
         # comments) before parsing, so only adopted ones are kept.
         new_comments = b4.review._extract_editor_comments(
-            reply_text, diff_text=real_diff, message_text=message_text
+            reply_text,
+            diff_text=real_diff,
+            message_text=message_text,
+            basement_text=basement_text,
         )
         if new_comments:
             review['comments'] = new_comments

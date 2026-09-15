@@ -251,6 +251,47 @@ class TestRenderQuotedDiffWithComments:
         body_idx = next(i for i, line in enumerate(lines) if 'First body line' in line)
         assert note_idx < body_idx
 
+    def test_basement_quoted_after_message_before_diff(self) -> None:
+        """Basement text is quoted behind its own '---' after the message."""
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF,
+            {},
+            'me@example.com',
+            commit_msg='Subject\n\nFirst body line.',
+            basement='Changelog:\nv2: fixed the thing',
+        )
+        lines = result.splitlines()
+        assert '> ---' in lines
+        assert '> Changelog:' in lines
+        assert '> v2: fixed the thing' in lines
+        body_idx = lines.index('> First body line.')
+        cut_idx = lines.index('> ---')
+        changelog_idx = lines.index('> Changelog:')
+        diff_idx = next(i for i, line in enumerate(lines) if 'diff --git' in line)
+        assert body_idx < cut_idx < changelog_idx < diff_idx
+
+    def test_basement_own_comment_is_unquoted(self) -> None:
+        """Own comments on basement lines render unquoted."""
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {
+                'name': 'Me',
+                'comments': [
+                    {'path': _review.BASEMENT_PATH, 'line': 1, 'text': 'About that'},
+                ],
+            },
+        }
+        result = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            basement='Rationale for this approach.',
+        )
+        assert 'About that' in result
+        for line in result.splitlines():
+            if 'About that' in line:
+                assert not line.startswith('> ')
+                assert not line.startswith('| ')
+
 
 class TestExtractEditorComments:
     """Tests for _extract_editor_comments()."""
@@ -564,6 +605,70 @@ class TestQuotedEditorRoundTrip:
         assert msg_c[0]['text'] == 'Msg comment'
         assert len(diff_c) == 1
         assert diff_c[0]['text'] == 'Diff comment'
+
+    def test_basement_comment_round_trip(self) -> None:
+        """Comments on basement lines survive render → extract."""
+        comments = [{'path': _review.BASEMENT_PATH, 'line': 2, 'text': 'Re: v2 note'}]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            basement='Changelog:\nv2: fixed the thing',
+        )
+        extracted = review._extract_editor_comments(rendered)
+        bas_comments = [c for c in extracted if c['path'] == _review.BASEMENT_PATH]
+        assert len(bas_comments) == 1
+        assert bas_comments[0]['text'] == 'Re: v2 note'
+        assert bas_comments[0]['line'] == 2
+
+    def test_basement_preamble_comment_round_trip(self) -> None:
+        """Preamble comments (line 0) on the basement survive round-trip."""
+        comments = [{'path': _review.BASEMENT_PATH, 'line': 0, 'text': 'Overall note'}]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            basement='Some rationale here.',
+        )
+        extracted = review._extract_editor_comments(rendered)
+        preamble = [
+            c
+            for c in extracted
+            if c['path'] == _review.BASEMENT_PATH and c['line'] == 0
+        ]
+        assert len(preamble) == 1
+        assert preamble[0]['text'] == 'Overall note'
+
+    def test_message_and_basement_and_diff_round_trip(self) -> None:
+        """Commit message, basement and diff comments all survive together."""
+        comments = [
+            {'path': ':message', 'line': 1, 'text': 'Msg comment'},
+            {'path': _review.BASEMENT_PATH, 'line': 1, 'text': 'Basement comment'},
+            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Diff comment'},
+        ]
+        all_reviews: Dict[str, Any] = {
+            'me@example.com': {'name': 'Me', 'comments': comments},
+        }
+        rendered = review._render_quoted_diff_with_comments(
+            SIMPLE_DIFF,
+            all_reviews,
+            'me@example.com',
+            commit_msg='Subject\n\nFirst body line.',
+            basement='Rationale for this approach.',
+        )
+        extracted = review._extract_editor_comments(rendered)
+        msg_c = [c for c in extracted if c['path'] == ':message']
+        bas_c = [c for c in extracted if c['path'] == _review.BASEMENT_PATH]
+        diff_c = [c for c in extracted if c['path'] == 'b/lib/helpers.c']
+        assert len(msg_c) == 1 and msg_c[0]['text'] == 'Msg comment'
+        assert len(bas_c) == 1 and bas_c[0]['text'] == 'Basement comment'
+        assert len(diff_c) == 1 and diff_c[0]['text'] == 'Diff comment'
 
 
 class TestBuildReplyFromComments:
