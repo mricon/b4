@@ -670,6 +670,31 @@ class TestQuotedEditorRoundTrip:
         assert len(bas_c) == 1 and bas_c[0]['text'] == 'Basement comment'
         assert len(diff_c) == 1 and diff_c[0]['text'] == 'Diff comment'
 
+    def test_basement_comment_survives_trimmed_divider(self) -> None:
+        """A basement comment is still tagged :basement if the maintainer
+        trims away the quoted "> ---" divider (and everything before it)
+        that would otherwise mark the message/basement boundary.
+
+        The editor instructions explicitly invite trimming ("Trim
+        freely"), so nothing stops a maintainer from deleting the leading
+        commit-message quote along with the "> ---" cut line, leaving only
+        the basement paragraph they are actually commenting on.
+        """
+        commit_msg = (
+            'Subject\n\nFirst body line.\n\nSigned-off-by: Someone <s@example.com>'
+        )
+        basement = 'Rationale for this approach.\n\nMore basement detail.'
+        edited_text = '> More basement detail.\n\nComment on the trimmed basement.\n'
+        extracted = review._extract_editor_comments(
+            edited_text, message_text=commit_msg, basement_text=basement
+        )
+        bas_c = [c for c in extracted if c['path'] == _review.BASEMENT_PATH]
+        msg_c = [c for c in extracted if c['path'] == ':message']
+        assert len(bas_c) == 1
+        assert bas_c[0]['text'] == 'Comment on the trimmed basement.'
+        assert bas_c[0]['line'] == 3
+        assert not msg_c
+
 
 class TestBuildReplyFromComments:
     """Tests for _build_reply_from_comments()."""
