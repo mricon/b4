@@ -62,6 +62,11 @@ def _strip_subject(text: str) -> List[str]:
     return lines
 
 
+def _normalize_ws(text: str) -> str:
+    """Collapse all whitespace runs to single spaces, for content matching."""
+    return ' '.join(text.split())
+
+
 def make_review_magic_json(data: Dict[str, Any]) -> str:
     mj = (
         f'{REVIEW_MAGIC_MARKER}\n'
@@ -2202,6 +2207,17 @@ def _extract_editor_comments(
     message), runs :func:`_resolve_message_positions` to re-anchor
     ``:message`` comments after editor re-wrapping of the quoted body.
     When *basement_text* is provided, does the same for basement comments.
+
+    The initial routing in :func:`_extract_comments_from_quoted_reply` tells
+    the commit message and the basement apart by spotting a literal quoted
+    ``> ---`` cut-marker line.  The maintainer is free to trim quoted
+    context (the editor instructions say so explicitly), and trimming away
+    that one line -- along with everything it separates -- leaves a
+    basement comment mis-routed as a commit-message one.  When both texts
+    are available, comments tagged :data:`COMMIT_MESSAGE_PATH` are checked
+    against both: if their anchor content is not actually in the commit
+    message but is found in the basement, they are re-tagged before
+    resolving positions.
     """
     filtered: List[str] = []
     for line in _strip_instruction_header(edited_text):
@@ -2213,6 +2229,18 @@ def _extract_editor_comments(
         '\n'.join(filtered), capture_preamble=True
     )
     if comments:
+        if message_text and basement_text:
+            msg_norm = _normalize_ws('\n'.join(_strip_subject(message_text)))
+            bas_norm = _normalize_ws(basement_text)
+            for c in comments:
+                if c.get('path') != COMMIT_MESSAGE_PATH:
+                    continue
+                content = c.get('content', '')
+                if not content:
+                    continue
+                cnorm = _normalize_ws(content)
+                if cnorm not in msg_norm and cnorm in bas_norm:
+                    c['path'] = BASEMENT_PATH
         if diff_text:
             _resolve_comment_positions(diff_text, comments)
         if message_text:
