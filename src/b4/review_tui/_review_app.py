@@ -52,6 +52,7 @@ from b4.review_tui._common import (
     logger,
     mark_outgoing_seen,
     notify_quit_hint,
+    prepare_followup_reply_body,
     resolve_styles,
     reviewer_colours,
     run_lore_worker,
@@ -1906,9 +1907,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
     def _send_followup_reply(self, entry: Dict[str, Any], text: str) -> None:
         """Build and immediately send a quick reply to a follow-up message."""
-        reply_text = b4.review._trim_quoted_reply(text)
-        reply_text_with_sig = b4.append_email_signature(reply_text)
-        msg = entry['lmsg'].make_reply(reply_text_with_sig)
+        reply_text = prepare_followup_reply_body(text)
+        msg = entry['lmsg'].make_reply(reply_text)
         try:
             with self.suspend():
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)

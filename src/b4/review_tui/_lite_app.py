@@ -28,6 +28,7 @@ from b4.review_tui._common import (
     display_width,
     mark_outgoing_seen,
     pad_display,
+    prepare_followup_reply_body,
     resolve_styles,
     run_lore_worker,
     suspend_and_edit,
@@ -800,7 +801,7 @@ class LiteThreadScreen(ModalScreen[None]):
     def _send_reply(self, node: ThreadNode, text: str) -> None:
         """Build and send a reply to the given thread node."""
         lmsg = node.lmsg
-        text = b4.append_email_signature(text)
+        text = prepare_followup_reply_body(text)
         msg = lmsg.make_reply(text)
         try:
             with self.app.suspend():

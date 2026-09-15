@@ -873,6 +873,17 @@ def _write_diff_line(
         viewer.write(Text(line))
 
 
+def prepare_followup_reply_body(text: str) -> str:
+    """Turn a hand-edited followup reply buffer into the body that gets sent.
+
+    Strips b4's own scaffolding via
+    :func:`b4.review._trim_quoted_reply` and appends the user's signature.
+    Both the preview screen and the send paths run this, so that what the
+    preview shows is what actually goes out on the list.
+    """
+    return b4.append_email_signature(b4.review._trim_quoted_reply(text))
+
+
 def _render_email_to_viewer(
     viewer: 'RichLog',
     msg: email.message.EmailMessage,

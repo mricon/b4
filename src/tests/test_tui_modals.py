@@ -10,6 +10,7 @@ tests run without a real terminal.  Only lightweight, self-contained
 modals are exercised here — no database, network, or git needed.
 """
 
+import email.message
 import importlib
 from typing import Any, Dict, Generator, List, Optional, Tuple
 from unittest import mock
@@ -27,6 +28,7 @@ from b4.review_tui._modals import (
     TRACKING_HELP_LINES,
     ActionScreen,
     ConfirmScreen,
+    FollowupReplyPreviewScreen,
     HelpScreen,
     LimitScreen,
     LinkRevisionConfirmScreen,
@@ -1370,3 +1372,44 @@ class TestSendKeybindings:
         assert set(bindings) == {'ctrl+y', 'S'}
         assert bindings['ctrl+y'].show
         assert not bindings['S'].show
+
+
+class TestFollowupReplyPreviewTrim:
+    """The followup reply preview must show the body that will be sent."""
+
+    BUFFER = (
+        '# Put ">--cut--" alone on a line to trim quoted context.\n'
+        'On today, Reviewer wrote:\n'
+        '> old context one\n'
+        '> old context two\n'
+        '>--cut--\n'
+        '> context kept below the marker\n'
+        'My reply.\n'
+        '> trailing untouched quote\n'
+    )
+    TRIMMED = (
+        'On today, Reviewer wrote:\n'
+        '> [ ... 2 lines skipped ... ]\n'
+        '> context kept below the marker\n'
+        'My reply.'
+    )
+
+    async def test_preview_renders_trimmed_body(self) -> None:
+        """The instruction header, the >--cut-- marker and the trailing
+        quote are resolved before the preview is rendered."""
+        app = ModalTestApp()
+        lmsg = mock.Mock()
+        lmsg.make_reply.return_value = email.message.EmailMessage()
+        entry = {'lmsg': lmsg, 'fromemail': 'reviewer@example.com'}
+
+        async with app.run_test() as pilot:
+            app.push_screen(FollowupReplyPreviewScreen(entry, self.BUFFER))
+            await pilot.pause()
+
+        body = lmsg.make_reply.call_args.args[0]
+        assert body.startswith(self.TRIMMED)
+        assert '# Put ">--cut--"' not in body
+        assert '>--cut--\n' not in body
+        assert '> old context one' not in body
+        assert '> trailing untouched quote' not in body
+        assert body.endswith('\n\n-- \n' + b4.get_email_signature())

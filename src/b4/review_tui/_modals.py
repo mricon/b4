@@ -46,6 +46,7 @@ from b4.review_tui._common import (
     _render_email_to_viewer,
     _write_diff_line,
     ci_check_styles,
+    prepare_followup_reply_body,
     resolve_styles,
     run_lore_worker,
     worker_cancelled,
@@ -580,7 +581,7 @@ class FollowupReplyPreviewScreen(ModalScreen[Optional[str]]):
             )
 
     def on_mount(self) -> None:
-        body = b4.append_email_signature(self._reply_text)
+        body = prepare_followup_reply_body(self._reply_text)
         msg = self._entry['lmsg'].make_reply(body)
         viewer = self.query_one('#followup-preview-viewer', RichLog)
         _render_email_to_viewer(viewer, msg, ts=resolve_styles(self.app))
