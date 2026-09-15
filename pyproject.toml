@@ -30,7 +30,6 @@ dependencies = [
     "pygit2>=1.14,<2.0",
     "dkimpy>=1.0,<2.0",
     "patatt>=0.6,<2.0",
-    "ezgb>=0.2.0",
     "liblore>=0.9",
 ]
 
@@ -57,6 +56,12 @@ misc = [
 completion = [
     "shtab>=1.8",
     "argcomplete>=3.0",
+]
+# Bug tracking (b4 bugs) is an experimental feature built on git-bug.  It is
+# optional so that packagers can ship b4 without pulling in git-bug, which is
+# a Go binary that ezgb drives and that pip cannot install for you.
+bugs = [
+    "ezgb>=0.2.0",
 ]
 tui = [
     "textual[syntax]>=1.0",

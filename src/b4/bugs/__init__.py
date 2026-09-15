@@ -5,17 +5,48 @@
 """b4 bugs: manage bug reports from mailing list threads."""
 
 import argparse
+import importlib
 import json
 import logging
 import shutil
 import sys
-
-from ezgb._git import git_bug_cli
+from typing import TYPE_CHECKING
 
 import b4
-from ezgb import BugNotFoundError, GitBugRepo, Status
+
+if TYPE_CHECKING:
+    from ezgb import GitBugRepo
 
 logger = logging.getLogger('b4')
+
+
+def has_ezgb() -> bool:
+    """Report whether bug-tracking support is available.
+
+    Bug tracking is an optional feature, so ``ezgb`` is an optional
+    dependency.  Everything under ``b4.bugs`` imports it lazily, which keeps
+    ``b4`` usable (and its public modules importable) without it.
+
+    Probes for a real attribute rather than just importing: run from a b4
+    checkout, the ``ezgb`` submodule directory shadows the real package as an
+    empty namespace package, and a bare import of that succeeds.
+    """
+    try:
+        getattr(importlib.import_module('ezgb'), 'GitBugRepo')
+    except (ImportError, AttributeError):
+        return False
+    return True
+
+
+def _require_ezgb() -> None:
+    """Exit with an install hint unless bug tracking is available."""
+    if not has_ezgb():
+        logger.critical('Bug tracking requires the ezgb library.')
+        logger.critical('Install it with: pip install b4[bugs]')
+        logger.critical(
+            'It also needs the git-bug binary: https://github.com/git-bug/git-bug'
+        )
+        sys.exit(1)
 
 
 def _ensure_identity(topdir: str) -> bool:
@@ -25,6 +56,8 @@ def _ensure_identity(topdir: str) -> bool:
     git user.name and user.email config. Returns True if an
     identity is available, False otherwise.
     """
+    from ezgb._git import git_bug_cli
+
     # Check if already adopted
     ecode, out = b4.git_run_command(topdir, ['config', '--get', 'git-bug.identity'])
     if ecode == 0 and out.strip():
@@ -110,8 +143,10 @@ def _ensure_identity(topdir: str) -> bool:
     return True
 
 
-def _get_repo() -> GitBugRepo:
+def _get_repo() -> 'GitBugRepo':
     """Create a GitBugRepo for the current working tree."""
+    from ezgb import GitBugRepo
+
     topdir = b4.git_get_toplevel()
     if not topdir:
         logger.critical('Not in a git repository')
@@ -142,6 +177,7 @@ def cmd_import(cmdargs: argparse.Namespace) -> None:
 def cmd_refresh(cmdargs: argparse.Namespace) -> None:
     """Refresh bugs with new thread messages from lore."""
     from b4.bugs._import import refresh_bug
+    from ezgb import BugNotFoundError, Status
 
     repo = _get_repo()
     if cmdargs.bugid:
@@ -165,6 +201,8 @@ def cmd_refresh(cmdargs: argparse.Namespace) -> None:
 
 def cmd_list(cmdargs: argparse.Namespace) -> None:
     """List tracked bugs."""
+    from ezgb import Status
+
     repo = _get_repo()
     status = None
     if cmdargs.status == 'open':
@@ -185,6 +223,8 @@ def cmd_list(cmdargs: argparse.Namespace) -> None:
 
 def cmd_delete(cmdargs: argparse.Namespace) -> None:
     """Permanently delete a bug."""
+    from ezgb import BugNotFoundError
+
     repo = _get_repo()
     try:
         bid = repo.resolve_bug_id(cmdargs.bugid)
@@ -216,6 +256,7 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
 
 def main(cmdargs: argparse.Namespace) -> None:
     """Dispatch b4 bugs subcommands."""
+    _require_ezgb()
     subcmd = getattr(cmdargs, 'bugs_subcmd', None)
     if subcmd is None or subcmd == 'tui':
         cmd_tui(cmdargs)

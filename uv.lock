@@ -242,7 +242,6 @@ version = "0.17.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "dkimpy" },
-    { name = "ezgb" },
     { name = "liblore" },
     { name = "patatt" },
     { name = "pygit2" },
@@ -250,6 +249,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bugs = [
+    { name = "ezgb" },
+]
 completion = [
     { name = "argcomplete" },
     { name = "shtab" },
@@ -282,7 +284,7 @@ misc = [
 requires-dist = [
     { name = "argcomplete", marker = "extra == 'completion'", specifier = ">=3.0" },
     { name = "dkimpy", specifier = ">=1.0,<2.0" },
-    { name = "ezgb", specifier = ">=0.2.0" },
+    { name = "ezgb", marker = "extra == 'bugs'", specifier = ">=0.2.0" },
     { name = "liblore", specifier = ">=0.9" },
     { name = "patatt", specifier = ">=0.6,<2.0" },
     { name = "pygit2", specifier = ">=1.14,<2.0" },
@@ -291,7 +293,7 @@ requires-dist = [
     { name = "shtab", marker = "extra == 'completion'", specifier = ">=1.8" },
     { name = "textual", extras = ["syntax"], marker = "extra == 'tui'", specifier = ">=1.0" },
 ]
-provides-extras = ["completion", "tui"]
+provides-extras = ["completion", "bugs", "tui"]
 
 [package.metadata.requires-dev]
 dev = [

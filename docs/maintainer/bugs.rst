@@ -16,7 +16,14 @@ via ``git push``/``git pull`` without any external service.
 
 Prerequisites
 -------------
-Install `git-bug`_ v0.10.1 or later. b4 will automatically create and
+Bug tracking is an optional feature, so install b4 with the ``bugs``
+extra to pull in the ``ezgb`` library that drives git-bug::
+
+    pipx install b4[bugs]
+
+Then install `git-bug`_ v0.10.1 or later. It is a Go binary rather than a
+Python package, so it cannot come from PyPI and has to be installed
+separately (most distributions package it). b4 will automatically create and
 adopt a git-bug identity the first time you run ``b4 bugs`` in a
 repository, using your ``user.name`` and ``user.email`` from git config.
 

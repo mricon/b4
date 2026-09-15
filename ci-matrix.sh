@@ -90,7 +90,7 @@ if [ -n "$FLOOR_PY" ]; then
     rm -rf "$floorenv"
     if ! uv venv "$floorenv" --python "$FLOOR_PY"; then
         failed="$failed floors(venv)"
-    elif ! uv pip install --python "$floorenv" --resolution lowest-direct '.[tui,completion]'; then
+    elif ! uv pip install --python "$floorenv" --resolution lowest-direct '.[tui,completion,bugs]'; then
         failed="$failed floors(install)"
     elif ! uv pip install --python "$floorenv" pytest pytest-asyncio; then
         failed="$failed floors(pytest-install)"

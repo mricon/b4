@@ -21,9 +21,20 @@ installs CLI tools into isolated environments::
 
     pipx install b4
 
-To also install the TUI dependencies needed for ``b4 review tui``::
+Some features live behind optional extras, so that you only pull in the
+dependencies for the parts of b4 you actually use:
+
+``tui``
+    The TUI dependencies needed for ``b4 review tui``.
+
+``bugs``
+    Bug tracking with ``b4 bugs``. This also needs the `git-bug`_ binary,
+    which is not installable from PyPI -- see :doc:`maintainer/bugs`.
+
+Install them by naming them in brackets, separated by commas::
 
     pipx install b4[tui]
+    pipx install b4[tui,bugs]
 
 If you do not have pipx, it is available in most distribution
 repositories (``dnf install pipx``, ``apt install pipx``).
@@ -43,6 +54,7 @@ Using uv
 
 .. _`pipx`: https://pipx.pypa.io/
 .. _`uv`: https://docs.astral.sh/uv/
+.. _`git-bug`: https://github.com/git-bug/git-bug
 
 Installing from a git checkout
 ------------------------------
@@ -54,9 +66,9 @@ install it from a local git clone using pipx::
     git submodule update --init
     pipx install .
 
-Or with TUI support::
+Or with the optional extras::
 
-    pipx install .[tui]
+    pipx install .[tui,bugs]
 
 After pulling new changes, reinstall to pick them up::
 

@@ -23,6 +23,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Checkbox, Input, Label, ListView, Select, Static
 
 import b4
+import b4.bugs
 import liblore
 from b4.review_tui._modals import (
     TRACKING_HELP_LINES,
@@ -1362,7 +1363,13 @@ class TestSendKeybindings:
             'b4.review_tui._modals.ThankScreen',
             'b4.review_tui._modals.FollowupReplyPreviewScreen',
             'b4.review_tui._review_app.ReviewApp',
-            'b4.bugs._tui.ReplyPreviewScreen',
+            pytest.param(
+                'b4.bugs._tui.ReplyPreviewScreen',
+                marks=pytest.mark.skipif(
+                    not b4.bugs.has_ezgb(),
+                    reason='needs the optional [bugs] extra',
+                ),
+            ),
         ],
     )
     def test_ctrl_y_official_s_legacy(self, screen_path: str) -> None:

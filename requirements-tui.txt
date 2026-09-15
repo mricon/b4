@@ -210,17 +210,13 @@ dnspython==2.8.0 \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
     --hash=sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f
     # via dkimpy
-ezgb==0.2.0 \
-    --hash=sha256:45b9a54c1d76f2f4538374b5a071c8faaad179f7aee53f18bf588b740dccd4c4 \
-    --hash=sha256:f758d883ad63efead5afe5a1b311d6adc9ddc22eb67c901d474cced32d66e2f5
-    # via b4 (pyproject.toml)
 idna==3.18 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
     # via requests
-liblore==0.8.1 \
-    --hash=sha256:0499dc2f29973d3612d8c49855d891d24f69ef1c8899ad514e730f59cd33c513 \
-    --hash=sha256:1f45e928f5fb7e660e96907ad792780e99748b418bf5b5b6eb4eb8d13965e540
+liblore==0.9.0 \
+    --hash=sha256:0d9c57376a0787f57ee579c50b8ef2b2e434e4e03dd40ec253a00daf1d38c1f4 \
+    --hash=sha256:116d7d7fcbdcae36de7117b6e73e8d41c3631e50e5252cf54403e541070dbfcc
     # via b4 (pyproject.toml)
 linkify-it-py==2.1.0 \
     --hash=sha256:0d252c1594ecba2ecedc444053db5d3a9b7ec1b0dd929c8f1d74dce89f86c05e \
@@ -310,9 +306,7 @@ pygit2==1.19.3 \
     --hash=sha256:eb9f46b561ee53f22cb479e7fdefd7b8ae478d12656436a48166c2ad81a3c021 \
     --hash=sha256:eec2b1d50bf52d2139d3d478d6d5f5ee56103da4a6dbd786344e8a85254dd07b \
     --hash=sha256:ef2790c9ff7e7673d7262e9e059c5af86c09197037073fd004d22a63e4151291
-    # via
-    #   b4 (pyproject.toml)
-    #   ezgb
+    # via b4 (pyproject.toml)
 pygments==2.20.0 \
     --hash=sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f \
     --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176

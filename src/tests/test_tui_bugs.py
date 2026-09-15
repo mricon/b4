@@ -17,7 +17,15 @@ from unittest import mock
 
 import pytest
 
+import b4.bugs
+
 pytest.importorskip('textual')
+
+# Not importorskip('ezgb'): the ezgb submodule directory in a b4 checkout
+# shadows the real package as an empty namespace package, so a bare import
+# succeeds even when the optional [bugs] extra is not installed.
+if not b4.bugs.has_ezgb():
+    pytest.skip('needs the optional [bugs] extra', allow_module_level=True)
 
 from b4.bugs._import import (
     format_comment,
