@@ -4,6 +4,7 @@ import email.parser
 import email.policy
 import email.utils
 import io
+import logging
 import os
 import pathlib
 import smtplib
@@ -1181,6 +1182,46 @@ class TestGetLoreNode:
         # The fresh node stays the singleton from here on.
         assert b4.get_lore_node() is fresh_node
         assert mock_from_gc.call_count == 2
+
+
+class TestDeprecatedConfig:
+    """Tests for the b4.searchmask deprecation notice."""
+
+    def test_warns_when_set_in_git_config(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Someone who still has the setting in git-config gets told."""
+        b4.git_set_config(gitdir, 'b4.searchmask', 'https://example.com/?q=%s')
+        with caplog.at_level(logging.WARNING, logger='b4'):
+            b4._setup_main_config(topdir=gitdir)
+        assert 'b4.searchmask is deprecated' in caplog.text
+
+    def test_silent_when_unset(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No setting, no nagging."""
+        with caplog.at_level(logging.WARNING, logger='b4'):
+            b4._setup_main_config(topdir=gitdir)
+        assert 'searchmask' not in caplog.text
+
+    def test_silent_when_only_in_worktree_config(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A series' own .b4-config must not nag about someone else's config.
+
+        Deprecated *mask settings match one of the wtglobs, so they are
+        loaded from a project's .b4-config, too. The warning is advice for
+        the person running b4, and they cannot act on a setting that arrived
+        with a series they just applied.
+        """
+        wtcfg = pathlib.Path(gitdir) / '.b4-config'
+        wtcfg.write_text('[b4]\n\tsearchmask = https://example.com/?q=%s\n')
+        with caplog.at_level(logging.WARNING, logger='b4'):
+            b4._setup_main_config(topdir=gitdir)
+        # Sanity: the value really did make it into the merged config, so
+        # checking git-config is what keeps this quiet.
+        assert b4.MAIN_CONFIG.get('searchmask') == 'https://example.com/?q=%s'
+        assert 'searchmask' not in caplog.text
 
 
 @pytest.mark.parametrize(

@@ -129,11 +129,13 @@ These options control many of the core features of b4.
      Default: ``no``
 
    :term:`b4.searchmask`
-     B4 uses this setting to query and retrieve threads matching specific
-     search terms. For example, it can retrieve trailer updates using the
-     series ``change-id`` identifier.
-
-     Default: ``https://lore.kernel.org/all/?x=m&t=1&q=%s``
+     .. deprecated:: v0.16
+        This setting is no longer used and is ignored if set. Searches now go
+        to the configured public-inbox server directly, together with
+        automatic failover to any of its mirrors, so there is no longer a
+        single URL template that b4 can fill in. Point b4 at a different
+        server with :term:`b4.midmask` instead, and see
+        :ref:`lore_settings` for the mirror list.
 
    :term:`b4.trailer-order`
      This lets you control the order of trailers that get added to your own
