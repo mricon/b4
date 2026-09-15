@@ -4043,7 +4043,7 @@ def auto_to_cc() -> None:
             continue
 
         logger.debug('Collecting from: %s', msg.get('subject'))
-        msgbytes = msg.as_bytes()
+        msgbytes = msg.as_bytes(unixfrom=True)
         for tname, pairs in (
             ('To', get_addresses_from_cmd(tocmd, msgbytes)),
             ('Cc', get_addresses_from_cmd(cccmd, msgbytes)),
