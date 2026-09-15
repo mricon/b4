@@ -34,6 +34,12 @@ logger = b4.logger
 REVIEW_MAGIC_MARKER = '--- b4-review-tracking ---'
 REVIEW_BRANCH_PREFIX = 'b4/review/'
 COMMIT_MESSAGE_PATH = ':message'
+# Anchor path for comments on the "basement" -- the patch notes/changelog
+# a submitter puts after the commit message and before the diffstat, below
+# the "---" cut.  Captured by create_review_branch() into
+# patch_meta['basement'], quoted into the reply editor the same way the
+# commit message is.
+BASEMENT_PATH = ':basement'
 # Synthesized into the cover text when the author sent no cover letter;
 # consumers check for it to detect cover-letter absence.
 NO_COVER_NOTE = 'NOTE: No cover letter provided by the author.'
@@ -1189,6 +1195,8 @@ def _resolve_comment_positions(
 def _resolve_message_positions(
     message_text: str,
     comments: List[Dict[str, Any]],
+    path: str = COMMIT_MESSAGE_PATH,
+    strip_subject: bool = True,
 ) -> None:
     """Re-anchor ``:message`` comments by content against the real body.
 
@@ -1216,18 +1224,26 @@ def _resolve_message_positions(
     Comments without a usable ``content`` anchor, or whose anchor is not
     found in the body, keep their counted position (graceful fallback,
     same contract as :func:`_resolve_comment_positions`).
+
+    *path* selects which anchor to re-resolve -- :data:`COMMIT_MESSAGE_PATH`
+    by default, or :data:`BASEMENT_PATH` to re-anchor basement comments
+    against the basement text instead.  *strip_subject* controls whether
+    *message_text* has a leading subject line to drop (true for a commit
+    message, false for basement text, which has no subject).
     """
     to_resolve = [
         c
         for c in comments
-        if c.get('path') == COMMIT_MESSAGE_PATH
-        and c.get('line', 0) > 0
-        and c.get('content')
+        if c.get('path') == path and c.get('line', 0) > 0 and c.get('content')
     ]
     if not to_resolve:
         return
 
-    body_lines = _strip_subject(message_text)
+    body_lines = (
+        _strip_subject(message_text)
+        if strip_subject
+        else message_text.strip('\n').splitlines()
+    )
     if not body_lines:
         return
 
@@ -1569,8 +1585,10 @@ def _extract_comments_from_quoted_reply(
     in_diff = False
     in_hunk = False
     in_commit_msg = False
+    in_basement = False
     seen_quoted = False
     msg_lineno = 0
+    basement_lineno = 0
     current_a_file = ''
     current_b_file = ''
     a_line = 0
@@ -1615,7 +1633,7 @@ def _extract_comments_from_quoted_reply(
         if not line.startswith('>'):
             if line.strip() == '[ ... ]':
                 continue
-            if in_diff or in_commit_msg:
+            if in_diff or in_commit_msg or in_basement:
                 # Accumulate as comment text (including blank lines
                 # between paragraphs — they stay part of the comment)
                 pending_comment_lines.append(line)
@@ -1648,6 +1666,7 @@ def _extract_comments_from_quoted_reply(
             if m:
                 in_diff = True
                 in_commit_msg = False
+                in_basement = False
                 in_hunk = False
                 current_a_file = m.group(1)
                 current_b_file = m.group(2)
@@ -1656,11 +1675,13 @@ def _extract_comments_from_quoted_reply(
             if raw.startswith(('--- a/', '--- /dev/null')):
                 in_diff = True
                 in_commit_msg = False
+                in_basement = False
                 current_a_file = raw[4:]
                 continue
             if raw.startswith(('+++ b/', '+++ /dev/null')):
                 in_diff = True
                 in_commit_msg = False
+                in_basement = False
                 current_b_file = raw[4:]
                 continue
             hm = hunk_re.match(raw)
@@ -1668,10 +1689,34 @@ def _extract_comments_from_quoted_reply(
                 in_diff = True
                 in_hunk = True
                 in_commit_msg = False
+                in_basement = False
                 a_line = int(hm.group(1))
                 b_line = int(hm.group(2))
                 continue
-            # Quoted lines before the diff are commit message
+            # A bare "---" is the same cut marker that splits the commit
+            # message from the basement in the original patch (see
+            # b4.LoreMessage.get_body_parts).  The renderer emits it as
+            # its own quoted line right before the basement text, so
+            # seeing it here is what switches us from quoting the commit
+            # message to quoting the basement.
+            if raw == '---' and not in_basement:
+                in_basement = True
+                # Seed the anchor so a comment placed immediately after
+                # this divider (before any basement content line) attaches
+                # to (BASEMENT_PATH, 0) instead of whatever region preceded
+                # it (or nothing, if there was no commit message).
+                last_diff_path = BASEMENT_PATH
+                last_diff_line = 0
+                last_diff_content = ''
+                continue
+            if in_basement:
+                basement_lineno += 1
+                last_diff_path = BASEMENT_PATH
+                last_diff_line = basement_lineno
+                last_diff_content = raw
+                continue
+            # Quoted lines before the diff (and before any "---") are
+            # commit message
             in_commit_msg = True
             msg_lineno += 1
             last_diff_path = COMMIT_MESSAGE_PATH
@@ -1982,6 +2027,7 @@ def _render_quoted_diff_with_comments(
     all_reviews: Dict[str, Dict[str, Any]],
     my_email: str,
     commit_msg: str = '',
+    basement: str = '',
 ) -> str:
     """Render a diff as ``> ``-quoted text with comments for the editor.
 
@@ -1992,6 +2038,11 @@ def _render_quoted_diff_with_comments(
     If *commit_msg* is provided, the commit message body (after the
     subject line) is quoted before the diff content with comments
     interleaved.
+
+    If *basement* is provided (the patch notes/changelog a submitter put
+    after the commit message and before the diffstat, below the ``---``
+    cut), it is quoted after the commit message, behind its own quoted
+    ``---`` line, with comments interleaved the same way.
 
     This format is unambiguous: ``> `` lines are diff, ``| `` lines
     are external comments, and bare lines are the maintainer's own
@@ -2069,7 +2120,22 @@ def _render_quoted_diff_with_comments(
         remaining_msg = [k for k in comment_map if k[0] == COMMIT_MESSAGE_PATH]
         for key in sorted(remaining_msg):
             _insert(key)
-        if msg_lines and diff_lines:
+        if msg_lines and diff_lines and not basement:
+            result.append('>')
+
+    # Quote the basement (patch notes below the "---" cut) with
+    # interleaved comments, anchored separately from the commit message.
+    if basement:
+        basement_lines = basement.strip('\n').splitlines()
+        result.append('> ---')
+        _insert((BASEMENT_PATH, 0))
+        for bas_lineno, bline in enumerate(basement_lines, start=1):
+            result.append(f'> {bline}')
+            _insert((BASEMENT_PATH, bas_lineno))
+        remaining_bas = [k for k in comment_map if k[0] == BASEMENT_PATH]
+        for key in sorted(remaining_bas):
+            _insert(key)
+        if diff_lines:
             result.append('>')
 
     for line in diff_lines:
@@ -2118,7 +2184,10 @@ def _strip_instruction_header(buffer: str) -> List[str]:
 
 
 def _extract_editor_comments(
-    edited_text: str, diff_text: str = '', message_text: str = ''
+    edited_text: str,
+    diff_text: str = '',
+    message_text: str = '',
+    basement_text: str = '',
 ) -> List[Dict[str, Any]]:
     """Extract comments from the quoted-diff editor format.
 
@@ -2132,6 +2201,7 @@ def _extract_editor_comments(
     content.  When *message_text* is provided (the cover letter or commit
     message), runs :func:`_resolve_message_positions` to re-anchor
     ``:message`` comments after editor re-wrapping of the quoted body.
+    When *basement_text* is provided, does the same for basement comments.
     """
     filtered: List[str] = []
     for line in _strip_instruction_header(edited_text):
@@ -2147,6 +2217,10 @@ def _extract_editor_comments(
             _resolve_comment_positions(diff_text, comments)
         if message_text:
             _resolve_message_positions(message_text, comments)
+        if basement_text:
+            _resolve_message_positions(
+                basement_text, comments, path=BASEMENT_PATH, strip_subject=False
+            )
     return comments
 
 
