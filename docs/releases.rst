@@ -40,6 +40,14 @@ the full reference.
 Several notable improvements to the ``b4 review`` workflow shipped this
 cycle, building on the v0.15 foundation.
 
+**Inline snip markers in review replies**
+
+In any editor, put ``>--cut--`` alone on a line to discard the run of quoted
+context above it back to your last note. B4 replaces the run with the same
+``> [ ... NN lines skipped ... ]`` breadcrumb produced by the Vim and Emacs
+review helpers. The marker also works in follow-up quick replies, and existing
+breadcrumbs coalesce into its skipped-line count.
+
 **Manual revision linking**
 
 When automatic revision discovery fails — for example, a submitter sent
@@ -628,4 +636,3 @@ reviewing patches, testing, and contributing code:
 - Rob Herring
 - Tamir Duberstein
 - Toke Høiland-Jørgensen
-

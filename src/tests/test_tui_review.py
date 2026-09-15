@@ -9,6 +9,7 @@ Tests the shell-return reconciliation logic that detects and handles
 cosmetic commit edits (e.g. reworded subjects via git rebase -i).
 """
 
+import email.message
 import json
 from typing import Any, Dict, List, Tuple
 from unittest import mock
@@ -360,6 +361,74 @@ class TestReplyVerbatim:
             assert review['reply'] == (
                 f'Thanks, looks good!\n\nReviewed-by: {app._default_identity}'
             )
+
+
+class TestFollowupSnipMarker:
+    """Quick follow-up replies expose and resolve the snip marker."""
+
+    def test_compose_includes_marker_instructions(self, gitdir: str) -> None:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'followup-snip-instructions', ['patch 1']
+        )
+        app = ReviewApp(_build_session(gitdir, branch))
+        entry = {
+            'date': 'Thu, 1 Jan 2026 12:00:00 +0000',
+            'fromname': 'Reviewer',
+            'fromemail': 'reviewer@example.com',
+            'body': 'First line.\nSecond line.',
+        }
+
+        with mock.patch(
+            'b4.review_tui._review_app.suspend_and_edit', return_value=None
+        ) as edit:
+            app._compose_followup_reply(entry)
+
+        editor_text = edit.call_args.args[1].decode()
+        assert editor_text.startswith('# Put ">--cut--" alone on a line')
+        assert '# back to your last note; b4 resolves it when you send.' in editor_text
+        assert '> First line.\n> Second line.' in editor_text
+
+    def test_send_resolves_marker_and_drops_trailing_quote(self, gitdir: str) -> None:
+        import contextlib
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'followup-snip-send', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['email_dryrun'] = True
+        app = ReviewApp(session)
+        lmsg = mock.Mock()
+        outgoing = email.message.EmailMessage()
+        lmsg.make_reply.return_value = outgoing
+        entry = {'lmsg': lmsg, 'fromemail': 'reviewer@example.com'}
+        buffer = (
+            '# Put ">--cut--" alone on a line to trim quoted context.\n'
+            'On today, Reviewer wrote:\n'
+            '> old context one\n'
+            '> old context two\n'
+            '>--cut--\n'
+            '> context kept below the marker\n'
+            'My reply.\n'
+            '> trailing untouched quote\n'
+        )
+
+        with (
+            mock.patch.object(
+                app, 'suspend', side_effect=lambda: contextlib.nullcontext()
+            ),
+            mock.patch.object(app, 'notify'),
+            mock.patch('b4.get_smtp', return_value=(None, 'me@example.com')),
+            mock.patch('b4.send_mail', return_value=0) as send_mail,
+        ):
+            app._send_followup_reply(entry, buffer)
+
+        lmsg.make_reply.assert_called_once_with(
+            'On today, Reviewer wrote:\n'
+            '> [ ... 2 lines skipped ... ]\n'
+            '> context kept below the marker\n'
+            'My reply.'
+        )
+        assert send_mail.call_args.args[1] == [outgoing]
 
 
 class TestReconcileAfterShell:

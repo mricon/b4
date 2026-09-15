@@ -111,6 +111,11 @@ whole-line deletion worth a breadcrumb.")
   "Face for instruction lines (# ...)."
   :group 'b4-review)
 
+(defface b4-review-cut-marker
+  '((t :foreground "yellow" :weight bold))
+  "Face for a \">--cut--\" snip marker line."
+  :group 'b4-review)
+
 (defface b4-review-quote-background
   '((t :inherit default :extend t))
   "Background face for prefixed lines (`> ' quotes, `| ' external comments,
@@ -123,6 +128,17 @@ on every line — without it, the fill stops at the last character."
 (defface b4-review-own-background
   '((t :inherit default :extend t))
   "Background face for the reviewer's own, unprefixed comment lines."
+  :group 'b4-review)
+
+(defface b4-review-cut-background
+  '((t :inherit default :extend t))
+  "Background face for a \">--cut--\" snip marker line.
+Applied the same way as `b4-review-quote-background' /
+`b4-review-own-background' so the marker line can be set off with its own
+background, e.g.:
+
+  (custom-set-faces
+   \\='(b4-review-cut-background ((t :background \"dark red\"))))"
   :group 'b4-review)
 
 (defvar b4-review-font-lock-keywords
@@ -153,6 +169,10 @@ on every line — without it, the fill stops at the last character."
      (2 'b4-review-diff-file)
      (3 'b4-review-diff-file))
 
+    ;; Snip marker, quoted or bare — checked before the plain-quoted catch-all
+    ;; below so it isn't swallowed by that more general rule.
+    ("^\\(?:> \\)?>--cut--[ \t]*$" (0 'b4-review-cut-marker))
+
     ;; Plain quoted lines (catch-all for > lines not matched above)
     ("^\\(> \\)\\(.*\\)$"
      (1 'b4-review-quote-prefix)
@@ -173,6 +193,9 @@ on every line — without it, the fill stops at the last character."
     ;; itself, and `:extend t' on these two faces (see their defface above)
     ;; is what makes the display fill the rest of the line's width with that
     ;; face's background instead of stopping at the last glyph.
+    ;; Checked ahead of the general quote-background rule below so its
+    ;; :background wins over `b4-review-quote-background' on the marker line.
+    ("^\\(?:> \\)?>--cut--[ \t]*\n?" (0 'b4-review-cut-background append))
     ("^>.*\n?" (0 'b4-review-quote-background append))
     ("^|.*\n?" (0 'b4-review-quote-background append))
     ("^#.*\n?" (0 'b4-review-quote-background append))
@@ -419,11 +442,20 @@ the comment text in place under the same diff line, ready to edit."
       (when lines
         (insert (mapconcat #'identity lines "\n") "\n")))))
 
+(defun b4-review-add-cut ()
+  "Insert a cut marker that will remove itself and everything
+before until the previous user comment. The current line is
+placed in the removed area before the cut marker."
+  (interactive)
+  (end-of-line)
+  (insert "\n>--cut--"))
+
 (defvar b4-review-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-k") #'b4-review-delete-hunk)
     (define-key map (kbd "C-c C-b") #'b4-review-delete-hunks-before)
     (define-key map (kbd "C-c C-a") #'b4-review-adopt-comment)
+    (define-key map (kbd "C-c C-x") #'b4-review-add-cut)
     map)
   "Keymap for `b4-review-mode'.")
 

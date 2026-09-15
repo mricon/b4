@@ -2084,6 +2084,9 @@ def _render_quoted_diff_with_comments(
         '# trailer (Reviewed-by:, etc.) you place inline. The only change made',
         '# on send is to drop quoted diff left below your last comment; quoted',
         '# context you keep above a comment is sent as-is. Trim freely.',
+        '# To discard a run of quoted context without deleting it by hand, put',
+        '# ">--cut--" alone on a line -- everything quoted above it back to your last',
+        '# note is dropped when you send.',
         '#',
     ]
     current_a_file = ''
@@ -2094,7 +2097,7 @@ def _render_quoted_diff_with_comments(
 
     def _insert(key: Tuple[str, int]) -> None:
         for text, attr, prov in comment_map.pop(key, []):
-            if result:
+            if result and result[-1]:
                 result.append('')
             if attr:
                 # External reviewer comment — render with | prefix
@@ -2196,10 +2199,10 @@ def _extract_editor_comments(
 ) -> List[Dict[str, Any]]:
     """Extract comments from the quoted-diff editor format.
 
-    Strips the leading ``#`` instruction header and external reviewer
-    comments (``|`` prefix), then delegates to
-    :func:`_extract_comments_from_quoted_reply` which handles the
-    ``> ``-quoted diff with unquoted comment format.
+    Strips the leading ``#`` instruction header, resolves snip markers, and
+    then removes external reviewer comments (``|`` prefix) before delegating
+    to :func:`_extract_comments_from_quoted_reply`, which handles the ``> ``-
+    quoted diff with unquoted comment format.
 
     When *diff_text* is provided, runs :func:`_resolve_comment_positions`
     to correct diff comment positions when the user has trimmed quoted
@@ -2219,12 +2222,9 @@ def _extract_editor_comments(
     message but is found in the basement, they are re-tagged before
     resolving positions.
     """
-    filtered: List[str] = []
-    for line in _strip_instruction_header(edited_text):
-        # Strip external reviewer comment blocks (| prefix)
-        if line.startswith('|'):
-            continue
-        filtered.append(line)
+    filtered = _strip_instruction_header(edited_text)
+    filtered = _apply_snip_markers(filtered)
+    filtered = _strip_external_reviewer_lines(filtered)
     comments = _extract_comments_from_quoted_reply(
         '\n'.join(filtered), capture_preamble=True
     )
@@ -3387,6 +3387,8 @@ def _parse_reply_trailers(buffer: str) -> List[str]:
     return [lt.as_string() for lt in found]
 
 
+_SNIP_MARKER_RE = re.compile(r'^\s*(?:> )?>--cut--\s*$')
+_SKIP_BREADCRUMB_RE = re.compile(r'^> \[ \.\.\. (\d+) lines skipped \.\.\. \]$')
 _BARE_TRAILER_RE = re.compile(r'^\s*([\w-]+):\s')
 
 # The trailer names the TUI trailer menu offers.  The menu (and
@@ -3399,13 +3401,25 @@ def _insert_trailer_in_reply(reply_text: str, trailer: str) -> str:
     """Append *trailer* as its own bare line in the reply buffer.
 
     The line is added at the end of the maintainer's content, before any
-    trailing ``-- `` signature, grouped with any trailers already there.  The
-    maintainer can move it afterwards — placement is just a sensible default.
+    trailing quoted context or ``-- `` signature, grouped with any trailers
+    already there.  Keeping a trailing quote below the trailer lets the
+    ordinary send-time trimming discard it.  The maintainer can move the
+    trailer afterwards — placement is just a sensible default.
     """
     lines = _normalize_line_endings(reply_text).split('\n')
     sig_idx = next((i for i, ln in enumerate(lines) if ln == '-- '), len(lines))
     head = lines[:sig_idx]
     tail = lines[sig_idx:]
+    quoted_tail: List[str] = []
+    quote_start = len(head)
+    while quote_start and (
+        head[quote_start - 1].startswith(('>', '|'))
+        or not head[quote_start - 1].strip()
+    ):
+        quote_start -= 1
+    if any(line.startswith('>') for line in head[quote_start:]):
+        quoted_tail = head[quote_start:]
+        head = head[:quote_start]
     while head and not head[-1].strip():
         head.pop()
     # Separate from non-trailer content with a blank line so the trailers
@@ -3413,7 +3427,7 @@ def _insert_trailer_in_reply(reply_text: str, trailer: str) -> str:
     if head and not _BARE_TRAILER_RE.match(head[-1]):
         head.append('')
     head.append(trailer)
-    return '\n'.join(head + tail)
+    return '\n'.join(head + quoted_tail + tail)
 
 
 def _remove_trailer_from_reply(reply_text: str, name: str) -> str:
@@ -3473,21 +3487,113 @@ def _sync_reply_trailers(reply_text: str, selected: List[str], identity: str) ->
     return reply_text
 
 
+def _strip_external_reviewer_lines(lines: List[str]) -> List[str]:
+    """Remove read-only external-review blocks without leaving quote gaps.
+
+    Rendering puts bare blank separators around ``|``-prefixed external
+    comments.  When both sides of a separator are quoted diff, it belongs to
+    that presentation block and must leave with the comment.  A separator
+    after maintainer text is retained exactly, since it is part of their reply
+    layout rather than the external review's quote padding.
+    """
+    result: List[str] = []
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith('|'):
+            result.append(lines[index])
+            index += 1
+            continue
+
+        # A leading separator belongs to an external block only when it
+        # separates that block from quoted diff.  Do not alter the same blank
+        # after the maintainer's own text.
+        previous = len(result) - 1
+        while previous >= 0 and not result[previous].strip():
+            previous -= 1
+        if previous >= 0 and result[previous].startswith('>'):
+            del result[previous + 1 :]
+
+        # Treat adjacent external blocks as one block.  Their intervening
+        # blanks are presentation padding too.
+        while index < len(lines) and lines[index].startswith('|'):
+            index += 1
+            blank_end = index
+            while blank_end < len(lines) and not lines[blank_end].strip():
+                blank_end += 1
+            if blank_end < len(lines) and lines[blank_end].startswith('|'):
+                index = blank_end
+                continue
+            if blank_end < len(lines) and lines[blank_end].startswith('>'):
+                # The following quoted context is already separated by its
+                # quote prefix; do not leave the external block's gap behind.
+                index = blank_end
+            else:
+                result.extend(lines[index:blank_end])
+                index = blank_end
+            break
+
+    return result
+
+
+def _apply_snip_markers(lines: List[str]) -> List[str]:
+    """Resolve standalone ``>--cut--`` directives in a filtered reply buffer.
+
+    Each marker replaces the contiguous quoted/external-review/blank run
+    immediately above it with the same breadcrumb emitted by the Vim and
+    Emacs review helpers.  The external-review blocks are snippable so their
+    surrounding separators can be removed without touching maintainer
+    spacing.  Unquoted lines are hard boundaries, so maintainer comments can
+    never be consumed.  Existing breadcrumbs contribute their recorded count,
+    allowing editor-generated and hand-typed trims to coalesce.
+    """
+    result: List[str] = []
+    for line in lines:
+        if not _SNIP_MARKER_RE.fullmatch(line):
+            result.append(line)
+            continue
+
+        boundary = len(result) - 1
+        while boundary >= 0 and (
+            not result[boundary].strip() or result[boundary].startswith(('>', '|'))
+        ):
+            boundary -= 1
+
+        snipped = result[boundary + 1 :]
+        skipped = 0
+        for quoted in snipped:
+            if not quoted.startswith('>'):
+                continue
+            breadcrumb = _SKIP_BREADCRUMB_RE.fullmatch(quoted)
+            skipped += int(breadcrumb.group(1)) if breadcrumb else 1
+
+        if skipped:
+            del result[boundary + 1 :]
+            first_snippable = next(
+                index
+                for index, snipped_line in enumerate(snipped)
+                if snipped_line.startswith(('>', '|'))
+            )
+            result.extend(snipped[:first_snippable])
+            result.append(f'> [ ... {skipped} lines skipped ... ]')
+
+    return result
+
+
 def _trim_quoted_reply(buffer: str) -> str:
     """Prepare a hand-edited reply buffer for sending.
 
     The maintainer's text is sent as written.  The only changes are to strip
     b4's own scaffolding — the leading ``#`` instruction header (see
     :func:`_strip_instruction_header`) and ``| `` read-only external-reviewer
-    lines — and to drop the run of quoted diff at the very
-    bottom of the message that has no comment after it, the usual courtesy of
-    trimming quoted material below your last reply.  Quoted context the
-    maintainer left in place anywhere above their final comment is kept
-    exactly as written; nothing is collapsed, reordered, or relocated.
+    lines — resolve any standalone ``>--cut--`` snip markers — and drop the run
+    of quoted diff at the very bottom of the message that has no comment after
+    it, the usual courtesy of trimming quoted material below your last reply.
+    Other quoted context the maintainer left in place anywhere above their
+    final comment is kept exactly as written; nothing is collapsed, reordered,
+    or relocated.
     """
-    lines = [
-        line for line in _strip_instruction_header(buffer) if not line.startswith('|')
-    ]
+    lines = _apply_snip_markers(_strip_instruction_header(buffer))
+    lines = _strip_external_reviewer_lines(lines)
     # Drop the trailing quoted/blank run below the maintainer's last comment.
     end = len(lines)
     while end > 0 and (lines[end - 1].startswith('>') or not lines[end - 1].strip()):
