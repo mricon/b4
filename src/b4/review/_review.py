@@ -2171,6 +2171,20 @@ def _render_quoted_diff_with_comments(
     return '\n'.join(result) + '\n'
 
 
+def _strip_note_footer(raw_text: str) -> str:
+    """Strip the trailing ``#`` instruction block from an edited note.
+
+    The note editor appends its instructions at the bottom of the buffer, so
+    only the trailing run of ``#`` lines is scaffolding.  A ``#`` anywhere
+    above it is the maintainer's own text -- a C preprocessor directive, a
+    shell comment -- and is kept.
+    """
+    lines = raw_text.splitlines()
+    while lines and lines[-1].startswith('#'):
+        lines.pop()
+    return '\n'.join(lines).strip()
+
+
 def _strip_instruction_header(buffer: str) -> List[str]:
     """Drop b4's ``#`` instruction header from an editor buffer.
 
