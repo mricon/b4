@@ -2597,7 +2597,7 @@ class TestNoteCommentStripping:
 
     @staticmethod
     def _strip_comments(raw_text: str) -> str:
-        from b4.review_tui._review_app import _strip_note_footer
+        from b4.review import _strip_note_footer
 
         return _strip_note_footer(raw_text)
 

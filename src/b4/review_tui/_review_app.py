@@ -124,20 +124,6 @@ class FollowupItem(ListItem):
         yield st
 
 
-def _strip_note_footer(raw_text: str) -> str:
-    """Strip the trailing ``#`` instruction block from an edited note.
-
-    The note editor appends its instructions at the bottom of the buffer, so
-    only the trailing run of ``#`` lines is scaffolding.  A ``#`` anywhere
-    above it is the maintainer's own text -- a C preprocessor directive, a
-    shell comment -- and is kept.
-    """
-    lines = raw_text.splitlines()
-    while lines and lines[-1].startswith('#'):
-        lines.pop()
-    return '\n'.join(lines).strip()
-
-
 class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     """Textual app for b4 review TUI."""
 
@@ -1606,7 +1592,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self.notify('Editor returned no content')
             return
         raw_text = result.decode(errors='replace')
-        note_text = _strip_note_footer(raw_text)
+        note_text = b4.review._strip_note_footer(raw_text)
         if note_text == existing.strip():
             self.notify('No changes made')
             return
