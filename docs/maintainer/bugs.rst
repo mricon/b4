@@ -195,3 +195,39 @@ To build an exclusion set for every bug you are already tracking:
     b4 bugs list -j \
         | jq -r '.root_msgid, .comment_msgids[] | select(. != null)' \
         | sort -u > known-bugs.txt
+
+Running unattended
+------------------
+``b4 bugs`` needs two things before it can do anything: a git repository
+to store the bugs in, and an adopted git-bug identity to attribute
+changes to. If no identity exists it normally offers to create one from
+your ``user.name`` and ``user.email`` -- which means a prompt, and a
+prompt means a hang when nothing is there to answer it.
+
+Pass the global ``-n`` (``--no-interactive``) flag and no prompt is ever
+issued; the command fails instead. Being a global flag, it goes *before*
+the subcommand:
+
+.. code-block:: shell
+
+    b4 -n bugs list -j      # correct
+    b4 bugs list -n -j      # error: unrecognized arguments: -n
+
+Combined with ``-j`` the failure is reported as a JSON object on stdout
+rather than as log lines, so a caller always has something to parse:
+
+.. code-block:: none
+
+    {
+      "error": "no-identity",
+      "message": "No usable git-bug identity"
+    }
+
+The ``error`` slug is stable and is one of ``no-repo`` (not in a git
+repository), ``no-identity`` (no git-bug identity could be adopted), or
+``no-git-bug`` (the optional ``[bugs]`` extra or the ``git-bug`` binary
+is not installed). The exit code is 1 in every case.
+
+``b4 review list`` reports its own precondition failures the same way, so
+a caller driving both commands only has to know one error shape; see
+:ref:`review_list_json`.

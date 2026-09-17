@@ -1214,7 +1214,7 @@ disables the filter::
     b4 review list --status all
 
 An unknown status is rejected outright rather than quietly matching
-nothing -- this listing is meant to be subtracted from a set of
+nothing — this listing is meant to be subtracted from a set of
 candidates, so a typo that yielded an empty result would silently
 re-propose everything.
 
@@ -1259,6 +1259,21 @@ elsewhere; the message-id is the token both halves share, and
 ``b4 review track`` accepts one directly::
 
     b4 review track <message-id>
+
+The two things that can go wrong before any listing happens — a project
+identifier with no tracking database, and no tracking database at all —
+are reported on stdout as a JSON object when ``-j`` is in effect, with
+the exit code set to 1::
+
+    {
+      "error": "no-project",
+      "message": "No tracking database for identifier: nosuchproject"
+    }
+
+The slugs are ``no-project`` and ``no-tracking-db``, and ``b4 bugs list``
+uses the same shape for its own preconditions, so stdout is never
+silently empty on failure — which is what would otherwise make a failure
+indistinguishable from "nothing is tracked".
 
 .. _review_cron:
 

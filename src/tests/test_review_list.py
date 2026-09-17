@@ -374,6 +374,43 @@ class TestStatusVocabulary:
 class TestResolveProjects:
     """Tests for the shared identifier resolution."""
 
+    def test_unknown_identifier_reports_a_slug_in_json_mode(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exc:
+            review_tracking.resolve_projects(
+                ['no-such-project'], cmdargs=_args(json_output=True)
+            )
+        assert exc.value.code == 1
+        assert json.loads(capsys.readouterr().out)['error'] == 'no-project'
+
+    def test_no_databases_reports_a_slug_in_json_mode(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as exc:
+            review_tracking.resolve_projects(
+                force_all=True, cmdargs=_args(json_output=True)
+            )
+        assert exc.value.code == 1
+        assert json.loads(capsys.readouterr().out)['error'] == 'no-tracking-db'
+
+    def test_failures_stay_on_the_log_without_json(
+        self, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level('CRITICAL', logger='b4'):
+            with pytest.raises(SystemExit):
+                review_tracking.resolve_projects(['nope'], cmdargs=_args())
+        assert capsys.readouterr().out == ''
+        assert 'No tracking database for identifier: nope' in caplog.text
+
+    def test_cmd_list_hands_its_cmdargs_down(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The whole point of threading cmdargs through collect_tracked_series.
+        with pytest.raises(SystemExit):
+            review_tracking.cmd_list(_args(identifier=['nope'], json_output=True))
+        assert json.loads(capsys.readouterr().out)['error'] == 'no-project'
+
     def test_named_identifiers_keep_order(self) -> None:
         _seed('proj-a', 'cid-a')
         _seed('proj-b', 'cid-b')

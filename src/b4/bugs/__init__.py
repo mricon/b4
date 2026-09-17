@@ -42,18 +42,19 @@ def has_ezgb() -> bool:
     return True
 
 
-def _require_ezgb() -> None:
+def _require_ezgb(cmdargs: Optional[argparse.Namespace] = None) -> None:
     """Exit with an install hint unless bug tracking is available."""
     if not has_ezgb():
-        logger.critical('Bug tracking requires the ezgb library.')
-        logger.critical('Install it with: pip install b4[bugs]')
-        logger.critical(
-            'It also needs the git-bug binary: https://github.com/git-bug/git-bug'
+        b4.fail_precondition(
+            cmdargs,
+            'no-git-bug',
+            'Bug tracking requires the ezgb library.',
+            'Install it with: pip install b4[bugs]',
+            'It also needs the git-bug binary: https://github.com/git-bug/git-bug',
         )
-        sys.exit(1)
 
 
-def _ensure_identity(topdir: str) -> bool:
+def _ensure_identity(topdir: str, no_interactive: bool = False) -> bool:
     """Ensure a git-bug identity exists and is adopted.
 
     If no identity is adopted, try to auto-create one from the
@@ -114,6 +115,12 @@ def _ensure_identity(topdir: str) -> bool:
 
     logger.info('No git-bug identity found for this repository.')
     logger.info('Will create and adopt: %s <%s>', git_name, git_email)
+    if no_interactive:
+        # Creating an identity writes to the repository, so never do it
+        # behind the caller's back when there is nobody to ask.
+        logger.critical('Refusing to create a git-bug identity non-interactively')
+        logger.critical('Run "b4 bugs list" interactively once to set one up')
+        return False
     try:
         answer = input('Proceed? [Y/n] ').strip().lower()
     except (KeyboardInterrupt, EOFError):
@@ -147,16 +154,21 @@ def _ensure_identity(topdir: str) -> bool:
     return True
 
 
-def _get_repo() -> 'GitBugRepo':
-    """Create a GitBugRepo for the current working tree."""
+def _get_repo(cmdargs: Optional[argparse.Namespace] = None) -> 'GitBugRepo':
+    """Create a GitBugRepo for the current working tree.
+
+    Passing *cmdargs* lets the unmet-precondition errors come out in the
+    shape the caller asked for, and honours the global ``-n`` so that we
+    never block on a prompt nobody is there to answer.
+    """
     from ezgb import GitBugRepo
 
+    no_interactive = cmdargs is not None and getattr(cmdargs, 'no_interactive', False)
     topdir = b4.git_get_toplevel()
     if not topdir:
-        logger.critical('Not in a git repository')
-        sys.exit(1)
-    if not _ensure_identity(topdir):
-        sys.exit(1)
+        b4.fail_precondition(cmdargs, 'no-repo', 'Not in a git repository')
+    if not _ensure_identity(topdir, no_interactive=no_interactive):
+        b4.fail_precondition(cmdargs, 'no-identity', 'No usable git-bug identity')
     return GitBugRepo(topdir)
 
 
@@ -164,7 +176,7 @@ def cmd_import(cmdargs: argparse.Namespace) -> None:
     """Import a lore thread as a new bug."""
     from b4.bugs._import import import_thread
 
-    repo = _get_repo()
+    repo = _get_repo(cmdargs)
     msgid = cmdargs.msgid.strip().strip('<>')
     logger.info('Importing thread %s...', msgid)
     noparent = getattr(cmdargs, 'noparent', False)
@@ -183,7 +195,7 @@ def cmd_refresh(cmdargs: argparse.Namespace) -> None:
     from b4.bugs._import import refresh_bug
     from ezgb import BugNotFoundError, Status
 
-    repo = _get_repo()
+    repo = _get_repo(cmdargs)
     if cmdargs.bugid:
         try:
             bid = repo.resolve_bug_id(cmdargs.bugid)
@@ -256,7 +268,7 @@ def cmd_list(cmdargs: argparse.Namespace) -> None:
     """List tracked bugs."""
     from ezgb import Status
 
-    repo = _get_repo()
+    repo = _get_repo(cmdargs)
     status = None
     if cmdargs.status == 'open':
         status = Status.OPEN
@@ -284,7 +296,7 @@ def cmd_delete(cmdargs: argparse.Namespace) -> None:
     """Permanently delete a bug."""
     from ezgb import BugNotFoundError
 
-    repo = _get_repo()
+    repo = _get_repo(cmdargs)
     try:
         bid = repo.resolve_bug_id(cmdargs.bugid)
     except BugNotFoundError as exc:
@@ -305,7 +317,7 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
         logger.critical('Install it with: pip install b4[tui]')
         sys.exit(1)
 
-    repo = _get_repo()
+    repo = _get_repo(cmdargs)
     no_mouse = getattr(cmdargs, 'no_mouse', False)
     email_dryrun = getattr(cmdargs, 'email_dryrun', False)
     no_sign = getattr(cmdargs, 'no_sign', False)
@@ -315,7 +327,7 @@ def cmd_tui(cmdargs: argparse.Namespace) -> None:
 
 def main(cmdargs: argparse.Namespace) -> None:
     """Dispatch b4 bugs subcommands."""
-    _require_ezgb()
+    _require_ezgb(cmdargs)
     subcmd = getattr(cmdargs, 'bugs_subcmd', None)
     if subcmd is None or subcmd == 'tui':
         cmd_tui(cmdargs)

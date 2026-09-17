@@ -3119,7 +3119,7 @@ def cmd_cron(cmdargs: argparse.Namespace) -> None:
     # process that has no access to agents or passphrase-protected keys
     patatt_sign = bool(cmdargs.sign)
 
-    projects = b4.review.tracking.resolve_projects(cmdargs.identifier)
+    projects = b4.review.tracking.resolve_projects(cmdargs.identifier, cmdargs=cmdargs)
 
     for one_id, one_topdir in projects:
         logger.debug(

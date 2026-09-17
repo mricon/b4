@@ -330,6 +330,7 @@ def get_known_projects() -> List[Tuple[str, Optional[str]]]:
 def resolve_projects(
     requested: Optional[List[str]] = None,
     force_all: bool = False,
+    cmdargs: Optional[argparse.Namespace] = None,
 ) -> List[Tuple[str, Optional[str]]]:
     """Resolve requested project identifiers to (identifier, topdir) pairs.
 
@@ -340,7 +341,10 @@ def resolve_projects(
     project when not inside one.
 
     Exits with an error when a named identifier has no tracking database,
-    or when no tracking database exists at all.
+    or when no tracking database exists at all.  Passing *cmdargs* lets
+    that failure come out in the shape the caller asked for (see
+    :func:`b4.fail_precondition`), which for a JSON caller is the
+    difference between a parseable error and an empty stdout.
     """
     cwd_topdir = b4.git_get_toplevel()
     cwd_id = get_repo_identifier(cwd_topdir) if cwd_topdir else None
@@ -357,15 +361,19 @@ def resolve_projects(
     if force_all or not requested or '__all__' in requested:
         projects = get_known_projects()
         if not projects:
-            logger.critical('No tracking databases found.')
-            sys.exit(1)
+            b4.fail_precondition(
+                cmdargs, 'no-tracking-db', 'No tracking databases found.'
+            )
         return projects
 
     projects = []
     for one_id in requested:
         if not db_exists(one_id):
-            logger.critical('No tracking database for identifier: %s', one_id)
-            sys.exit(1)
+            b4.fail_precondition(
+                cmdargs,
+                'no-project',
+                'No tracking database for identifier: %s' % one_id,
+            )
         if one_id == cwd_id:
             projects.append((one_id, cwd_topdir))
         else:
@@ -950,6 +958,7 @@ def collect_tracked_series(
     identifiers: Optional[List[str]] = None,
     all_projects: bool = False,
     statuses: Optional[List[str]] = None,
+    cmdargs: Optional[argparse.Namespace] = None,
 ) -> List[Dict[str, Any]]:
     """Collect tracked series across one or more projects.
 
@@ -969,9 +978,12 @@ def collect_tracked_series(
     out: a listing of "what is on my plate" should not be dominated by
     everything ever finished.
 
-    Every name in *statuses* must be in :data:`b4.REVIEW_STATUS_CHOICES`;
-    the CLI leaves that to argparse, so an unknown one here is a
-    programming error rather than user input.
+    Every name in *statuses* must be in :data:`b4.REVIEW_STATUS_CHOICES`; the CLI
+    leaves that to argparse, so an unknown one here is a programming
+    error rather than user input.
+
+    *cmdargs* is only passed through to :func:`resolve_projects`, to
+    shape its precondition failures.
     """
     wanted = {s.lower() for s in (statuses or [])}
     unknown = wanted.difference(b4.REVIEW_STATUS_CHOICES)
@@ -981,7 +993,9 @@ def collect_tracked_series(
     wanted.discard('all')
 
     entries: List[Dict[str, Any]] = []
-    for identifier, _topdir in resolve_projects(identifiers, force_all=all_projects):
+    for identifier, _topdir in resolve_projects(
+        identifiers, force_all=all_projects, cmdargs=cmdargs
+    ):
         msgids = get_all_series_message_ids(identifier)
         for series in get_all_tracked_series(identifier):
             status = series['status']
@@ -1031,6 +1045,7 @@ def cmd_list(cmdargs: argparse.Namespace) -> None:
         identifiers=cmdargs.identifier,
         all_projects=bool(cmdargs.all_projects),
         statuses=cmdargs.status,
+        cmdargs=cmdargs,
     )
     if cmdargs.json_output:
         print(json.dumps(entries, indent=2))

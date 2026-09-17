@@ -210,3 +210,77 @@ class TestCmdListJson:
             _run(monkeypatch, [_bug(comments=[_comment('one@x')])])
         assert capsys.readouterr().out == ''
         assert 'Something is broken' in caplog.text
+
+
+class TestNonInteractive:
+    def test_no_repo_fails_with_a_reason(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda *a, **kw: None)
+        with pytest.raises(SystemExit) as exc:
+            b4.bugs._get_repo(_args(json_output=True, no_interactive=True))
+        assert exc.value.code == 1
+        assert json.loads(capsys.readouterr().out)['error'] == 'no-repo'
+
+    def test_no_identity_fails_with_a_reason(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda *a, **kw: '/nope')
+        monkeypatch.setattr(
+            b4.bugs, '_ensure_identity', lambda topdir, no_interactive=False: False
+        )
+        with pytest.raises(SystemExit) as exc:
+            b4.bugs._get_repo(_args(json_output=True, no_interactive=True))
+        assert exc.value.code == 1
+        assert json.loads(capsys.readouterr().out)['error'] == 'no-identity'
+
+    def test_no_interactive_is_handed_to_ensure_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: List[bool] = []
+
+        def _fake(topdir: str, no_interactive: bool = False) -> bool:
+            seen.append(no_interactive)
+            return False
+
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda *a, **kw: '/nope')
+        monkeypatch.setattr(b4.bugs, '_ensure_identity', _fake)
+        with pytest.raises(SystemExit):
+            b4.bugs._get_repo(_args(no_interactive=True))
+        assert seen == [True]
+
+    def test_ensure_identity_never_prompts(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        # Reaching input() at all would hang an agent forever, so make any
+        # read from stdin an outright failure rather than a timeout.
+        def _boom(*_args: Any, **_kwargs: Any) -> str:
+            raise AssertionError('input() must not be reached')
+
+        def _git(_topdir: str, args: List[str], **_kwargs: Any) -> Any:
+            if 'git-bug.identity' in args:
+                return 0, ''
+            if 'user.name' in args:
+                return 0, 'Test User'
+            return 0, 'test@test.com'
+
+        monkeypatch.setattr('builtins.input', _boom)
+        monkeypatch.setattr(b4, 'git_run_command', _git)
+        monkeypatch.setattr('shutil.which', lambda _name: '/usr/bin/git-bug')
+        # No existing identities to adopt, so the only way forward would be
+        # to create one -- which is what must not happen unattended.
+        monkeypatch.setattr('ezgb._git.git_bug_cli', lambda *a, **kw: (0, '', ''))
+        assert b4.bugs._ensure_identity(str(tmp_path), no_interactive=True) is False
+
+    def test_errors_stay_on_the_log_without_json(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(b4, 'git_get_toplevel', lambda *a, **kw: None)
+        with caplog.at_level('CRITICAL', logger='b4'):
+            with pytest.raises(SystemExit):
+                b4.bugs._get_repo(_args())
+        assert capsys.readouterr().out == ''
+        assert 'Not in a git repository' in caplog.text

@@ -43,6 +43,7 @@ from typing import (
     Iterator,
     List,
     Literal,
+    NoReturn,
     Optional,
     Sequence,
     Set,
@@ -164,6 +165,30 @@ dkimlogger = logger.getChild('dkim')
 dkimlogger.addFilter(_dkim_log_filter)
 # Route liblore logging through b4's logger so debug mode covers it
 logging.getLogger('liblore').parent = logger
+
+
+def fail_precondition(
+    cmdargs: Optional[argparse.Namespace], reason: str, *details: str
+) -> NoReturn:
+    """Report an unmet precondition and exit non-zero.
+
+    *reason* is a stable machine-readable slug, *details* are the
+    human-readable lines.  In JSON mode the caller is a script, so emit the
+    same information as a JSON object on stdout instead of log lines --
+    otherwise the script sees an empty stdout and cannot tell a failure
+    apart from "nothing matched".
+
+    Shared between the machine-facing commands on purpose: a caller that
+    drives more than one of them should not have to parse each one's
+    failures differently.
+    """
+    if cmdargs is not None and getattr(cmdargs, 'json_output', False):
+        print(json.dumps({'error': reason, 'message': ' '.join(details)}, indent=2))
+    else:
+        for line in details:
+            logger.critical('%s', line)
+    sys.exit(1)
+
 
 HUNK_RE = re.compile(r'^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@')
 FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
