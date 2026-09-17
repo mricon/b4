@@ -27,6 +27,7 @@ pytest.importorskip('textual')
 if not b4.bugs.has_ezgb():
     pytest.skip('needs the optional [bugs] extra', allow_module_level=True)
 
+from b4.bugs import bug_last_activity
 from b4.bugs._import import (
     format_comment,
     is_comment_removed,
@@ -39,7 +40,6 @@ from b4.bugs._tui import (
     BugListApp,
     ImportScreen,
     UpdateBugsScreen,
-    _bug_last_activity,
     _bug_lifecycle,
     _bug_tier,
     _relative_time,
@@ -346,12 +346,12 @@ class TestBugLastActivity:
             created_at=created_time,
             comments=[make_comment(comment_time)],
         )
-        assert _bug_last_activity(bug) == comment_time
+        assert bug_last_activity(bug) == comment_time
 
     def test_fallback_to_created_at(self) -> None:
         created_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
         bug = make_bug(created_at=created_time, comments=[])
-        assert _bug_last_activity(bug) == created_time
+        assert bug_last_activity(bug) == created_time
 
     def test_summary_uses_edited_at(self) -> None:
         from ezgb import BugSummary, Status
@@ -367,7 +367,7 @@ class TestBugLastActivity:
             comment_count=1,
             edited_at=edited_time,
         )
-        assert _bug_last_activity(s) == edited_time
+        assert bug_last_activity(s) == edited_time
 
 
 class TestRelativeTime:

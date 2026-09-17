@@ -1408,6 +1408,14 @@ def setup_parser() -> argparse.ArgumentParser:
         '--status', choices=['open', 'closed'], default=None, help='Filter by status'
     )
     sp_bugs_list.add_argument('--label', default=None, help='Filter by label')
+    sp_bugs_list.add_argument(
+        '-j',
+        '--json',
+        dest='json_output',
+        action='store_true',
+        default=False,
+        help='Output as JSON (includes thread message-ids)',
+    )
 
     return parser
 

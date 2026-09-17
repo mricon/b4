@@ -35,6 +35,7 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 import b4
+from b4.bugs import bug_last_activity
 from b4.bugs._import import is_comment_removed, make_tombstone, parse_comment_header
 from b4.tui import (
     QUIT_BINDINGS,
@@ -149,15 +150,6 @@ def _bug_tier(bug: BugLike) -> int:
             state = lb[len('lifecycle:') :]
             return _LIFECYCLE_TIER.get(state, 0)
     return 0
-
-
-def _bug_last_activity(bug: BugLike) -> datetime:
-    """Return the last activity date."""
-    if isinstance(bug, BugSummary):
-        return bug.edited_at
-    if bug.comments:
-        return bug.comments[-1].created_at
-    return bug.created_at
 
 
 def _bug_lifecycle(bug: BugLike) -> str:
@@ -2028,7 +2020,7 @@ class BugListApp(LoreNodeShutdownMixin, JKListNavMixin, App[None]):
         # Sort: by last activity (newest first) within each tier,
         # then by tier (active → waiting → resolved).
         display_bugs.sort(
-            key=_bug_last_activity,
+            key=bug_last_activity,
             reverse=True,
         )
         display_bugs.sort(key=_bug_tier)

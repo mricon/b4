@@ -153,5 +153,45 @@ For scripting and non-interactive use:
     b4 bugs list                   List all bugs
     b4 bugs list --status open     List only open bugs
     b4 bugs list --label <label>   Filter by label
+    b4 bugs list -j                Same, as JSON (see below)
     b4 bugs refresh [bug-id]       Fetch new messages from lore
     b4 bugs delete <bug-id>        Permanently delete a bug
+
+.. _bugs_list_json:
+
+Machine-readable listings
+-------------------------
+``b4 bugs list`` normally prints a short human-readable line per bug.
+Add ``-j`` (``--json``) and it prints an array of objects on stdout
+instead, one per bug:
+
+.. code-block:: none
+
+    id              The full bug id (the short form is just its prefix)
+    title           The bug title
+    status          Either "open" or "closed"
+    labels          The bug's labels, sorted
+    root_msgid      Message-ID of the thread the bug was imported from
+    comment_msgids  Message-IDs of every later message captured as a comment
+    last_activity   ISO 8601 timestamp of the most recent activity
+
+The two message-id fields are what make the listing useful to a tool
+that searches the archives for new reports. ``root_msgid`` is the same
+dedup key ``b4 bugs import`` checks against, so a candidate whose
+message-id appears there is a bug you already filed. ``comment_msgids``
+covers the rest of the thread, so a follow-up that was already pulled in
+by ``b4 bugs refresh`` does not come back as a fresh report either.
+Both are bare message-ids, without the angle brackets.
+
+``root_msgid`` is ``null`` for a bug that was filed by hand rather than
+imported from a thread. Tombstoned comments keep their Message-ID, so
+they still appear in ``comment_msgids`` -- the message was captured, even
+though its content has since been removed.
+
+To build an exclusion set for every bug you are already tracking:
+
+.. code-block:: shell
+
+    b4 bugs list -j \
+        | jq -r '.root_msgid, .comment_msgids[] | select(. != null)' \
+        | sort -u > known-bugs.txt

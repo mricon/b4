@@ -10,12 +10,16 @@ import json
 import logging
 import shutil
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import b4
 
 if TYPE_CHECKING:
-    from ezgb import GitBugRepo
+    from datetime import datetime
+
+    from ezgb import Bug, BugSummary, GitBugRepo
+
+    BugLike = Union[Bug, BugSummary]
 
 logger = logging.getLogger('b4')
 
@@ -199,6 +203,55 @@ def cmd_refresh(cmdargs: argparse.Namespace) -> None:
         logger.info('Refreshed %d bug(s), %d new comment(s) total', len(bugs), total)
 
 
+def bug_last_activity(bug: 'BugLike') -> 'datetime':
+    """Return the time of the most recent activity on *bug*.
+
+    A :class:`~ezgb.BugSummary` carries this directly as *edited_at*,
+    which also accounts for label and status changes.  A full
+    :class:`~ezgb.Bug` does not, so fall back to its newest comment.
+    """
+    from ezgb import BugSummary
+
+    if isinstance(bug, BugSummary):
+        return bug.edited_at
+    if bug.comments:
+        return bug.comments[-1].created_at
+    return bug.created_at
+
+
+def bug_message_ids(bug: 'Bug') -> Tuple[Optional[str], List[str]]:
+    """Return (root message-id, follow-up message-ids) for *bug*.
+
+    Every imported message is stored as a comment whose body starts with
+    an RFC 2822 header block, so the thread's message-ids are recoverable
+    from the comments.  The *root* one -- the message the thread was
+    imported from -- is the dedup key ``import_thread()`` itself checks
+    against, and is ``None`` for a bug that was not created by an import.
+    """
+    from b4.bugs._import import parse_comment_msgid
+
+    msgids = [parse_comment_msgid(comment.text) for comment in bug.comments]
+    if not msgids:
+        return None, []
+    return msgids[0], [msgid for msgid in msgids[1:] if msgid]
+
+
+def bug_to_dict(bug: 'Bug') -> Dict[str, Any]:
+    """Render *bug* as a JSON-serialisable dict."""
+    from ezgb import Status
+
+    root_msgid, comment_msgids = bug_message_ids(bug)
+    return {
+        'id': bug.id,
+        'title': bug.title,
+        'status': 'open' if bug.status == Status.OPEN else 'closed',
+        'labels': sorted(bug.labels),
+        'root_msgid': root_msgid,
+        'comment_msgids': comment_msgids,
+        'last_activity': bug_last_activity(bug).isoformat(),
+    }
+
+
 def cmd_list(cmdargs: argparse.Namespace) -> None:
     """List tracked bugs."""
     from ezgb import Status
@@ -211,6 +264,12 @@ def cmd_list(cmdargs: argparse.Namespace) -> None:
         status = Status.CLOSED
 
     bugs = repo.list_bugs(status=status, label=cmdargs.label)
+    if getattr(cmdargs, 'json_output', False):
+        # An empty result is still valid JSON, so a script never has to
+        # special-case "no bugs" the way the human listing does.
+        print(json.dumps([bug_to_dict(bug) for bug in bugs], indent=2))
+        return
+
     if not bugs:
         logger.info('No bugs found')
         return
