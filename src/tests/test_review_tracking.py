@@ -17,6 +17,8 @@ pytest.importorskip('textual')
 import b4
 import b4.review
 import liblore
+from b4.review import checks as review_checks
+from b4.review import messages as review_messages
 from b4.review import tracking as review_tracking
 from b4.review_tui._modals import SnoozeScreen
 from b4.review_tui._tracking_app import _format_attestation, _format_snooze_until
@@ -4483,6 +4485,25 @@ class TestKnownProjects:
         conn = review_tracking.init_db('bare')
         conn.close()
         assert review_tracking.get_known_projects() == [('bare', None)]
+
+    def test_sibling_caches_are_not_projects(self, tmp_path: pathlib.Path) -> None:
+        """The message-flag and CI caches share the directory but are not projects."""
+        conn = review_tracking.init_db('real-project')
+        conn.close()
+        # Create the real sibling caches the way their own modules do
+        review_messages.get_db().close()
+        review_checks.get_db().close()
+        reviewdir = review_tracking.get_review_data_dir()
+        assert os.path.exists(os.path.join(reviewdir, 'messages.sqlite3'))
+        assert os.path.exists(os.path.join(reviewdir, 'ci.sqlite3'))
+        assert review_tracking.get_known_projects() == [('real-project', None)]
+
+    def test_unreadable_file_is_skipped(self, tmp_path: pathlib.Path) -> None:
+        """A file that is not a database at all must not become a project."""
+        reviewdir = review_tracking.get_review_data_dir()
+        with open(os.path.join(reviewdir, 'garbage.sqlite3'), 'w') as fh:
+            fh.write('not a database\n')
+        assert review_tracking.get_known_projects() == []
 
 
 class TestAutoWakeSnoozed:

@@ -284,16 +284,42 @@ def get_repo_path(identifier: str) -> Optional[str]:
     return None
 
 
+def is_tracking_db(path: str) -> bool:
+    """Report whether *path* is a per-project review tracking database.
+
+    The review data directory also holds sibling caches that are not
+    tracking databases -- ``messages.sqlite3`` for per-message flags and
+    ``ci.sqlite3`` for check results -- so a bare ``*.sqlite3`` glob is not
+    enough to enumerate projects.  Probing for the ``series`` table
+    recognises a real tracking database without having to know the names of
+    its current (or future) neighbours.
+    """
+    try:
+        conn = sqlite3.connect(path)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='series'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
 def get_known_projects() -> List[Tuple[str, Optional[str]]]:
     """Return (identifier, topdir) for every known tracking database.
 
     *topdir* is the recorded repository toplevel, or None (see
-    get_repo_path).
+    get_repo_path).  Sibling caches sharing the review data directory are
+    skipped (see :func:`is_tracking_db`).
     """
     reviewdir = get_review_data_dir()
     projects: List[Tuple[str, Optional[str]]] = []
     for fname in sorted(os.listdir(reviewdir)):
         if not fname.endswith('.sqlite3'):
+            continue
+        if not is_tracking_db(os.path.join(reviewdir, fname)):
             continue
         identifier = fname[: -len('.sqlite3')]
         projects.append((identifier, get_repo_path(identifier)))
