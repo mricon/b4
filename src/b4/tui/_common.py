@@ -8,7 +8,6 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.utils
-import unicodedata
 from collections import defaultdict
 from typing import (
     Any,
@@ -35,6 +34,11 @@ import b4
 # conflict flow can reuse it). Re-export it so this stays the import home for the
 # TUI callers (and b4.review_tui._common's re-export of it).
 from b4 import _suspend_to_shell as _suspend_to_shell
+
+# Likewise, the column arithmetic lives in b4._textwidth (textual-free, so the
+# plain CLI listings can align their columns too).
+from b4._textwidth import display_width as display_width
+from b4._textwidth import pad_display as pad_display
 
 logger = b4.logger
 
@@ -189,33 +193,6 @@ class LoreNodeShutdownMixin:
             b4.get_lore_node().shutdown()
         except Exception:
             logger.debug('lore node shutdown failed', exc_info=True)
-
-
-def display_width(s: str) -> int:
-    """Return the terminal display width of *s*, accounting for full-width chars."""
-    w = 0
-    for ch in s:
-        w += 2 if unicodedata.east_asian_width(ch) in ('F', 'W') else 1
-    return w
-
-
-def pad_display(s: str, width: int) -> str:
-    """Pad or truncate *s* to *width* terminal columns, accounting for full-width chars."""
-    dw = display_width(s)
-    if dw > width:
-        # Truncate with ellipsis
-        truncated: List[str] = []
-        tw = 0
-        for ch in s:
-            cw = 2 if unicodedata.east_asian_width(ch) in ('F', 'W') else 1
-            if tw + cw > width - 1:
-                break
-            truncated.append(ch)
-            tw += cw
-        return ''.join(truncated) + '\u2026' + ' ' * (width - tw - 1)
-    if dw < width:
-        return s + ' ' * (width - dw)
-    return s
 
 
 def limit_substring_matcher(*fields: str) -> Callable[[Dict[str, Any], str], bool]:
