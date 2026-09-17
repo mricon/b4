@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import b4
 import b4.mbox
 import liblore
+from b4._textwidth import pad_display
 
 logger = b4.logger
 
@@ -323,6 +324,52 @@ def get_known_projects() -> List[Tuple[str, Optional[str]]]:
             continue
         identifier = fname[: -len('.sqlite3')]
         projects.append((identifier, get_repo_path(identifier)))
+    return projects
+
+
+def resolve_projects(
+    requested: Optional[List[str]] = None,
+    force_all: bool = False,
+) -> List[Tuple[str, Optional[str]]]:
+    """Resolve requested project identifiers to (identifier, topdir) pairs.
+
+    *requested* holds the identifiers given on the command line (a
+    repeatable ``-i``).  The special value ``__all__``, like *force_all*,
+    selects every known project.  With neither, the enrolled repository
+    containing the current directory is used, falling back to every known
+    project when not inside one.
+
+    Exits with an error when a named identifier has no tracking database,
+    or when no tracking database exists at all.
+    """
+    cwd_topdir = b4.git_get_toplevel()
+    cwd_id = get_repo_identifier(cwd_topdir) if cwd_topdir else None
+    if cwd_id and not db_exists(cwd_id):
+        cwd_id = None
+    if cwd_topdir and cwd_id:
+        # Keep the identifier→repository mapping fresh whenever we run
+        # from within an enrolled repository
+        record_repo_path(cwd_id, cwd_topdir)
+
+    if not requested and cwd_id and not force_all:
+        # Inside an enrolled repository, the bare command runs on that project
+        requested = [cwd_id]
+    if force_all or not requested or '__all__' in requested:
+        projects = get_known_projects()
+        if not projects:
+            logger.critical('No tracking databases found.')
+            sys.exit(1)
+        return projects
+
+    projects = []
+    for one_id in requested:
+        if not db_exists(one_id):
+            logger.critical('No tracking database for identifier: %s', one_id)
+            sys.exit(1)
+        if one_id == cwd_id:
+            projects.append((one_id, cwd_topdir))
+        else:
+            projects.append((one_id, get_repo_path(one_id)))
     return projects
 
 
@@ -899,6 +946,98 @@ def cmd_forget(cmdargs: argparse.Namespace) -> None:
     logger.info('Forgot series: %s', change_id)
 
 
+def collect_tracked_series(
+    identifiers: Optional[List[str]] = None,
+    all_projects: bool = False,
+    statuses: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Collect tracked series across one or more projects.
+
+    Returns the :func:`get_all_tracked_series` records -- one per tracked
+    (change-id, revision) row -- each with two fields added:
+
+    ``identifier``
+        the project the series belongs to, so output stays attributable
+        when several projects are listed at once.
+    ``message_ids``
+        every message-id known for the series (see
+        :func:`get_all_series_message_ids`), so a caller can build an
+        exclusion set from one field without knowing b4's schema.
+
+    *statuses* filters on the series status; the special value ``all``
+    disables the filter.  With no *statuses*, archived series are left
+    out: a listing of "what is on my plate" should not be dominated by
+    everything ever finished.
+
+    Every name in *statuses* must be in :data:`b4.REVIEW_STATUS_CHOICES`;
+    the CLI leaves that to argparse, so an unknown one here is a
+    programming error rather than user input.
+    """
+    wanted = {s.lower() for s in (statuses or [])}
+    unknown = wanted.difference(b4.REVIEW_STATUS_CHOICES)
+    if unknown:
+        raise ValueError('Unknown series status: %s' % ', '.join(sorted(unknown)))
+    show_all = 'all' in wanted
+    wanted.discard('all')
+
+    entries: List[Dict[str, Any]] = []
+    for identifier, _topdir in resolve_projects(identifiers, force_all=all_projects):
+        msgids = get_all_series_message_ids(identifier)
+        for series in get_all_tracked_series(identifier):
+            status = series['status']
+            if wanted:
+                if status not in wanted:
+                    continue
+            elif not show_all and status == 'archived':
+                continue
+            series['identifier'] = identifier
+            series['message_ids'] = msgids.get(series['change_id'], [])
+            entries.append(series)
+    return entries
+
+
+def _print_tracked_series(entries: List[Dict[str, Any]]) -> None:
+    """Print tracked series as a human-readable table, grouped by project."""
+    if not entries:
+        logger.info('No tracked series found.')
+        return
+
+    by_project: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in entries:
+        by_project.setdefault(entry['identifier'], []).append(entry)
+
+    for idx, (identifier, series_list) in enumerate(by_project.items()):
+        if idx > 0:
+            logger.info('')
+        logger.info('%s (%d series)', identifier, len(series_list))
+        for series in series_list:
+            # Only the sender name can hold full-width characters, so it is
+            # the one column that needs display-width padding rather than
+            # ljust; the subject goes last and needs no padding at all.
+            logger.info(
+                '  %s %s %s  %s  %s',
+                series['status'].ljust(9),
+                f'v{series["revision"]}'.ljust(4),
+                f'{series["num_patches"]}p'.rjust(4),
+                pad_display(series['sender_name'], 20),
+                series['subject'],
+            )
+            logger.info('    %s', series['change_id'])
+
+
+def cmd_list(cmdargs: argparse.Namespace) -> None:
+    """List tracked series, optionally across every known project."""
+    entries = collect_tracked_series(
+        identifiers=cmdargs.identifier,
+        all_projects=bool(cmdargs.all_projects),
+        statuses=cmdargs.status,
+    )
+    if cmdargs.json_output:
+        print(json.dumps(entries, indent=2))
+        return
+    _print_tracked_series(entries)
+
+
 def cmd_cleanup(cmdargs: argparse.Namespace) -> None:
     """Abandon every tracked series whose status is ``gone``.
 
@@ -1057,6 +1196,56 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
         return result
     except Exception:
         return []
+
+
+def get_all_series_message_ids(identifier: str) -> Dict[str, List[str]]:
+    """Map every tracked change-id to all message-ids known for it.
+
+    A series is reachable by far more than its ``series.message_id``: each
+    known revision has its own cover (or first-patch) message-id, and every
+    individual patch of every revision has one too.  A caller that wants to
+    ask "is this message-id already on my plate?" -- an agent subtracting
+    what is tracked from a fresh archive search, say -- has to consult the
+    union of all three, or a hit on ``[PATCH 3/7]`` of a series tracked last
+    week looks like something new.
+
+    Ordering within each list is stable: the series message-id first, then
+    revisions oldest-first, then each revision's patches in position order.
+    Duplicates are collapsed.  Runs three queries regardless of how many
+    series are tracked.
+    """
+    if not db_exists(identifier):
+        return {}
+    result: Dict[str, List[str]] = {}
+
+    def _add(change_id: Any, msgid: Any) -> None:
+        if not change_id or not msgid:
+            return
+        ids = result.setdefault(str(change_id), [])
+        if msgid not in ids:
+            ids.append(str(msgid))
+
+    try:
+        conn = get_db(identifier)
+        try:
+            for change_id, msgid in conn.execute(
+                'SELECT change_id, message_id FROM series ORDER BY revision'
+            ):
+                _add(change_id, msgid)
+            for change_id, msgid in conn.execute(
+                'SELECT change_id, message_id FROM revisions ORDER BY revision'
+            ):
+                _add(change_id, msgid)
+            for change_id, msgid in conn.execute(
+                'SELECT change_id, message_id FROM series_patches'
+                ' ORDER BY revision, position'
+            ):
+                _add(change_id, msgid)
+        finally:
+            conn.close()
+    except Exception:
+        return result
+    return result
 
 
 # Provenance ranking for a revision's `source`.  A higher rank wins: a manual

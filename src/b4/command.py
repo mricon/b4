@@ -594,6 +594,47 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Project identifier (required if not in an enrolled repository)',
     )
 
+    # b4 review list
+    sp_rev_list = rev_subparsers.add_parser(
+        'list', help='List tracked series in a format suitable for scripting'
+    )
+    sp_rev_list.add_argument(
+        '-i',
+        '--identifier',
+        dest='identifier',
+        action='append',
+        default=None,
+        help='Limit the listing to this project identifier; may be given '
+        'multiple times (default: the enrolled repository containing the '
+        'current directory, or all known projects when not inside one)',
+    )
+    sp_rev_list.add_argument(
+        '--all-projects',
+        dest='all_projects',
+        action='store_true',
+        default=False,
+        help='List tracked series from every known project',
+    )
+    sp_rev_list.add_argument(
+        '--status',
+        dest='status',
+        metavar='STATUS',
+        action='append',
+        default=None,
+        choices=b4.REVIEW_STATUS_CHOICES,
+        help='Only list series with this status; may be given multiple times. '
+        'One of: %s. Default: everything except archived.'
+        % ', '.join(b4.REVIEW_STATUS_CHOICES),
+    )
+    sp_rev_list.add_argument(
+        '-j',
+        '--json',
+        dest='json_output',
+        action='store_true',
+        default=False,
+        help='Output in JSON format',
+    )
+
     # b4 review cleanup
     sp_rev_cleanup = rev_subparsers.add_parser(
         'cleanup', help='Abandon all tracked series in the gone state'

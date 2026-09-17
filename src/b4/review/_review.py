@@ -483,6 +483,8 @@ def main(cmdargs: argparse.Namespace) -> None:
         b4.review.tracking.cmd_track(cmdargs)
     elif cmdargs.review_subcmd == 'forget':
         b4.review.tracking.cmd_forget(cmdargs)
+    elif cmdargs.review_subcmd == 'list':
+        b4.review.tracking.cmd_list(cmdargs)
     elif cmdargs.review_subcmd == 'cleanup':
         b4.review.tracking.cmd_cleanup(cmdargs)
     elif cmdargs.review_subcmd == 'show-info':
@@ -3117,36 +3119,7 @@ def cmd_cron(cmdargs: argparse.Namespace) -> None:
     # process that has no access to agents or passphrase-protected keys
     patatt_sign = bool(cmdargs.sign)
 
-    cwd_topdir = b4.git_get_toplevel()
-    cwd_id = b4.review.tracking.get_repo_identifier(cwd_topdir) if cwd_topdir else None
-    if cwd_id and not b4.review.tracking.db_exists(cwd_id):
-        cwd_id = None
-    if cwd_topdir and cwd_id:
-        # Keep the identifier→repository mapping fresh whenever cron
-        # runs from within an enrolled repository
-        b4.review.tracking.record_repo_path(cwd_id, cwd_topdir)
-
-    requested = cmdargs.identifier
-    if not requested and cwd_id:
-        # Inside an enrolled repository, bare cron runs on that project
-        requested = [cwd_id]
-    projects: List[Tuple[str, Optional[str]]]
-    if not requested or '__all__' in requested:
-        projects = b4.review.tracking.get_known_projects()
-        if not projects:
-            logger.critical('No tracking databases found.')
-            sys.exit(1)
-    else:
-        projects = []
-        for one_id in requested:
-            if not b4.review.tracking.db_exists(one_id):
-                logger.critical('No tracking database for identifier: %s', one_id)
-                sys.exit(1)
-            if one_id == cwd_id:
-                one_topdir = cwd_topdir
-            else:
-                one_topdir = b4.review.tracking.get_repo_path(one_id)
-            projects.append((one_id, one_topdir))
+    projects = b4.review.tracking.resolve_projects(cmdargs.identifier)
 
     for one_id, one_topdir in projects:
         logger.debug(

@@ -172,6 +172,29 @@ DIFF_RE = re.compile(
 )
 DIFFSTAT_RE = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 
+# Every status a tracked series can hold.  The first ten are the ones the
+# tracking TUI draws a symbol for; 'archived' is set when a series is filed
+# away and has no symbol because it is never shown.  ('taken' is absent on
+# purpose -- schema v3 migrated it to 'accepted'.)
+REVIEW_SERIES_STATUSES: Tuple[str, ...] = (
+    'new',
+    'reviewing',
+    'replied',
+    'waiting',
+    'accepted',
+    'partial',
+    'queued',
+    'snoozed',
+    'thanked',
+    'gone',
+    'archived',
+)
+
+# What --status accepts.  Validating against this matters more than it looks:
+# the listing is meant to be subtracted from a set of candidates, so a typo
+# that quietly yielded an empty result would re-propose everything.
+REVIEW_STATUS_CHOICES: Tuple[str, ...] = REVIEW_SERIES_STATUSES + ('all',)
+
 ATT_PASS_SIMPLE = 'v'
 ATT_FAIL_SIMPLE = 'x'
 ATT_PASS_FANCY = '\033[32m\u2713\033[0m'

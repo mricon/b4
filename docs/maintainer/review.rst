@@ -1189,6 +1189,77 @@ state::
    actually changed are re-read, so the background rescan adds no
    perceptible delay even in large repositories.
 
+.. _review_list:
+
+Listing what is already tracked (b4 review list)
+------------------------------------------------
+``b4 review list`` prints the series b4 is already tracking::
+
+    b4 review list
+
+Run from within an enrolled repository it lists that project; run from
+anywhere else it lists every known project. ``-i`` (repeatable) picks
+specific projects regardless of the current directory, and
+``--all-projects`` forces the full sweep even from inside a repository::
+
+    b4 review list -i linux-subsystemA -i linux-subsystemB
+    b4 review list --all-projects
+
+Archived series are left out by default, since a listing of what is on
+your plate should not be buried under everything you ever finished.
+``--status`` (repeatable) filters explicitly, and ``--status all``
+disables the filter::
+
+    b4 review list --status new --status waiting
+    b4 review list --status all
+
+An unknown status is rejected outright rather than quietly matching
+nothing -- this listing is meant to be subtracted from a set of
+candidates, so a typo that yielded an empty result would silently
+re-propose everything.
+
+.. _review_list_json:
+
+Building an exclusion set
+~~~~~~~~~~~~~~~~~~~~~~~~~
+``-j/--json`` turns the command into a scripting surface, emitting an
+array of objects — one per tracked (change-id, revision) — with the
+same fields the TUI listing uses, plus two more:
+
+``identifier``
+  the project the series belongs to, so output stays attributable when
+  several projects are listed at once.
+
+``message_ids``
+  **every** message-id known for the series: the cover letter of each
+  known revision *and* each individual patch.
+
+That second field is the one that matters for automation. The obvious
+approach — dedup on the series' own ``message_id`` — misses far more
+than it catches, because a search hit can land on any message in a
+series. On this project's own tracking database, the series cover
+letters account for 46 message-ids while the member patches account for
+156; excluding on the cover alone would re-propose a series the moment
+a hit landed on ``[PATCH 3/7]``.
+
+So a script that wants to show only what is *not* already being handled
+subtracts the union::
+
+    b4 review list --all-projects --status all -j \
+        | jq -r '.[].message_ids[]' | sort -u > tracked.txt
+
+and filters its candidates against that. Note the ``--status all``: the
+default filter omits archived series, which is right for a human asking
+"what is on my plate" but exactly wrong here, since archived is the state
+that means *done, stop showing me this*. Without it the exclusion set is
+missing everything ever finished, and every archived series gets
+re-proposed. This is the local half of a
+workflow whose other half — finding candidates in the archives — runs
+elsewhere; the message-id is the token both halves share, and
+``b4 review track`` accepts one directly::
+
+    b4 review track <message-id>
+
 .. _review_cron:
 
 Non-interactive maintenance (b4 review cron)
@@ -1335,6 +1406,27 @@ Optional flags
 
 ``-i IDENTIFIER, --identifier IDENTIFIER``
   Project identifier (required if not in an enrolled repository).
+
+``b4 review list``
+~~~~~~~~~~~~~~~~~~
+``-i IDENTIFIER, --identifier IDENTIFIER``
+  Limit the listing to this project identifier; may be given multiple
+  times (default: the enrolled repository containing the current
+  directory, or all known projects when not inside one).
+
+``--all-projects``
+  List tracked series from every known project, even when run from
+  inside an enrolled repository.
+
+``--status STATUS``
+  Only list series with this status; may be given multiple times. One of
+  ``new``, ``reviewing``, ``replied``, ``waiting``, ``accepted``,
+  ``partial``, ``queued``, ``snoozed``, ``thanked``, ``gone``,
+  ``archived``, or ``all``. Defaults to everything except ``archived``.
+
+``-j, --json``
+  Output a JSON array instead of the human-readable listing. See
+  :ref:`review_list_json`.
 
 ``b4 review cleanup``
 ~~~~~~~~~~~~~~~~~~~~~

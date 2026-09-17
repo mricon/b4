@@ -316,6 +316,13 @@ For options and their descriptions, see ``b4 review --help`` and
   any tracked series regardless of status, including archived ones the
   TUI no longer shows.
 
+``b4 review list [--all-projects] [--status STATUS] [-j]``
+  List the tracked series, with ``-j`` emitting JSON suitable for
+  scripting. Archived series are omitted unless asked for by
+  ``--status``. The JSON form includes every message-id known for each
+  series, so a script can tell whether a message it found in the
+  archives belongs to a series that is already being handled.
+
 ``b4 review cleanup [--dry-run]``
   Abandon every tracked series in the ``gone`` state. With ``--dry-run``,
   list the series that would be cleaned up without changing the tracking
