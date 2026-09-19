@@ -335,8 +335,7 @@ endif
 " the rest of the line as the command to bind -- without the wrapper it would
 " eat the following bar-separated clauses (turning the clear into an illegal
 " "define for all events", E1155) and leave the commands and maps undeleted.
-let b:undo_ftplugin = get(b:, 'undo_ftplugin', '')
-      \ . '| setlocal textwidth< formatoptions<'
+let s:undo = 'setlocal textwidth< formatoptions<'
       \ . "| execute 'silent! autocmd! b4review_wrap * <buffer>'"
       \ . '| silent! delcommand B4DelHunk'
       \ . '| silent! delcommand B4DelHunksBefore'
@@ -344,3 +343,17 @@ let b:undo_ftplugin = get(b:, 'undo_ftplugin', '')
       \ . '| silent! nunmap <buffer> <Plug>(B4DeleteHunk)'
       \ . '| silent! nunmap <buffer> <Plug>(B4DeleteHunksBefore)'
       \ . '| silent! nunmap <buffer> <Plug>(B4AdoptComment)'
+
+" Join onto any existing undo string, but only with a separator when there is
+" something to separate.  A leading bar would make the first Ex command in the
+" string empty, and an empty Ex command prints the current line -- two of those
+" during startup is enough to trigger vim's "Press ENTER" prompt before the
+" buffer is even visible.  ftplugin.vim unlets b:undo_ftplugin right after
+" running it, so the variable is usually absent here and the bar was usually
+" leading.
+if empty(get(b:, 'undo_ftplugin', ''))
+  let b:undo_ftplugin = s:undo
+else
+  let b:undo_ftplugin = b:undo_ftplugin . '|' . s:undo
+endif
+unlet s:undo
