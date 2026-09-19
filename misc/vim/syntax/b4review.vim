@@ -22,6 +22,12 @@ syn match b4DiffMeta      /^> \(index \|new file\|deleted file\|old mode\|new mo
 syn match b4DiffFileA     /^> --- .*/ contains=b4QuotePrefix,@NoSpell
 syn match b4DiffFileB     /^> +++ .*/ contains=b4QuotePrefix,@NoSpell
 
+" The ">--cut--" snip marker, bare or quoted.  Defined after the quoted rules
+" above so it wins over them: when two items match the same text, vim gives
+" priority to the one defined last.  The pattern mirrors the one b4 itself
+" parses, leading whitespace and the "> " prefix included.
+syn match b4CutMarker     /^\s*\(> \)\?>--cut--\s*$/ contains=@NoSpell
+
 " External reviewer comments (| prefix)
 syn match b4ExtComment    /^| .*/ contains=@NoSpell
 syn match b4ExtEmpty      /^|$/
@@ -47,5 +53,6 @@ hi def b4ExtComment    ctermfg=darkcyan  guifg=#6272a4
 hi def b4ExtEmpty      ctermfg=darkcyan  guifg=#6272a4
 hi def b4ExtVia        ctermfg=yellow    guifg=#f1fa8c  cterm=italic gui=italic
 hi def b4Instruction   ctermfg=darkgray  guifg=#6272a4  cterm=italic gui=italic
+hi def b4CutMarker     ctermfg=yellow    guifg=#f1fa8c  cterm=bold gui=bold
 
 let b:current_syntax = 'b4review'

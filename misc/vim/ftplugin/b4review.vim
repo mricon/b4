@@ -331,6 +331,33 @@ if empty(maparg('<LocalLeader>a', 'n'))
   nmap <buffer> <nowait> <LocalLeader>a <Plug>(B4AdoptComment)
 endif
 
+" ---------------------------------------------------------------------------
+" Discarding a run of quoted context with a snip marker.
+"
+" ">--cut--" alone on a line is b4's editor-independent way of saying "drop the
+" quoted run above this, back to my last note".  b4 resolves it on send and
+" leaves the same "[ ... NN lines skipped ... ]" breadcrumb the trims above do,
+" so this is the lazy way to prune: park the cursor at the bottom of a boring
+" run instead of hunting for hunk boundaries.
+"
+"   <LocalLeader>c   insert a cut marker below the current line
+"
+" Also available as :B4Cut and <Plug>(B4AddCut).
+
+function! s:B4AddCut() abort
+  " Below the cursor, so the current line falls inside the discarded run --
+  " same placement as the Emacs b4-review-add-cut command.
+  call append(line('.'), '>--cut--')
+  call cursor(line('.') + 1, 1)
+  let b:b4_lc = line('$')
+endfunction
+
+nnoremap <silent> <buffer> <Plug>(B4AddCut) :call <SID>B4AddCut()<CR>
+command! -buffer B4Cut call <SID>B4AddCut()
+if empty(maparg('<LocalLeader>c', 'n'))
+  nmap <buffer> <nowait> <LocalLeader>c <Plug>(B4AddCut)
+endif
+
 " The autocmd! clause is wrapped in execute '...' because :autocmd swallows
 " the rest of the line as the command to bind -- without the wrapper it would
 " eat the following bar-separated clauses (turning the clear into an illegal
@@ -343,6 +370,8 @@ let s:undo = 'setlocal textwidth< formatoptions<'
       \ . '| silent! nunmap <buffer> <Plug>(B4DeleteHunk)'
       \ . '| silent! nunmap <buffer> <Plug>(B4DeleteHunksBefore)'
       \ . '| silent! nunmap <buffer> <Plug>(B4AdoptComment)'
+      \ . '| silent! delcommand B4Cut'
+      \ . '| silent! nunmap <buffer> <Plug>(B4AddCut)'
 
 " Join onto any existing undo string, but only with a separator when there is
 " something to separate.  A leading bar would make the first Ex command in the

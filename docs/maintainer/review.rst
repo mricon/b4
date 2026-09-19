@@ -648,6 +648,17 @@ The same actions are available as the ``:B4DelHunk`` and
 Press ``u`` to undo. What you leave in the buffer is exactly what gets
 sent.
 
+For the lazier variant, ``<LocalLeader>c`` (or ``:B4Cut``, or
+``<Plug>(B4AddCut)``) drops a ``>--cut--`` marker on the line below the
+cursor, so the line you are sitting on falls inside the discarded run. Nothing
+is removed in the buffer; b4 resolves the marker on send, exactly as it does
+for one you typed by hand, and leaves the same breadcrumb. Park the cursor at
+the bottom of a boring run rather than hunting for hunk boundaries. The marker
+is highlighted so it is easy to spot, in both its bare and ``> >--cut--``
+spellings. Unlike the mappings above, this one is not affected by
+``g:b4review_skipped_marker`` — the marker is b4's own, editor-independent
+feature and the mapping only saves you the typing.
+
 By default only the mappings above leave a marker. If you would like the
 same breadcrumb whenever you delete quoted lines with ordinary editing
 commands — ``dd``, ``5dd``, ``dap``, a visual-mode ``d``, ``:d`` and so
@@ -662,8 +673,9 @@ edit can be surprising. Two global variables tune the feature:
 
 ``g:b4review_skipped_marker``
     Master switch, ``1`` by default. Set it to ``0`` to disable the whole
-    skip-marker feature — the mappings, the commands and the auto-marker
-    — leaving only the syntax highlighting and the comment adoption
+    skip-marker feature — the ``<LocalLeader>h`` / ``<LocalLeader>H``
+    mappings, their commands and the auto-marker — leaving only the syntax
+    highlighting, the ``<LocalLeader>c`` cut marker and the comment adoption
     described below.
 
 ``g:b4review_auto_marker``
@@ -691,18 +703,19 @@ Add this to your ``~/.emacs.d/init.el`` or ``~/.emacs``::
 The mode is automatically activated for ``*.b4-review.eml`` files. It
 provides the same trimming and adopting helpers as the Vim ftplugin:
 
-===========  ====================================
+===========  ========================================
 Key          Action
-===========  ====================================
+===========  ========================================
 ``C-c C-k``  Delete the hunk under point
 ``C-c C-b``  Delete the uncommented hunks above
 ``C-c C-a``  Adopt the ``|`` comment as your own
-===========  ====================================
+``C-c C-x``  Insert a ``>--cut--`` marker below point
+===========  ========================================
 
-These run the ``b4-review-delete-hunk``, ``b4-review-delete-hunks-before``
-and ``b4-review-adopt-comment`` commands respectively. The trimming
-commands leave a ``[ ... NN lines skipped ... ]`` marker where context was
-removed; ``undo`` restores it.
+These run the ``b4-review-delete-hunk``, ``b4-review-delete-hunks-before``,
+``b4-review-adopt-comment`` and ``b4-review-add-cut`` commands
+respectively. The trimming commands leave a ``[ ... NN lines skipped ... ]``
+marker where context was removed; ``undo`` restores it.
 
 As in Vim, only the trimming commands leave a marker by default. The same
 two settings tune the feature, customizable with ``M-x customize-group
