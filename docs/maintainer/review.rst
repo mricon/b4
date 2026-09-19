@@ -1733,8 +1733,14 @@ set both :term:`b4.review-agent-command` and
 to use Claude Code with access to the repository::
 
     [b4]
-      review-agent-command = claude --add-dir .git --allowedTools 'Bash(git:*) Read Glob Grep Write(.git/b4-review/**) Edit(.git/b4-review/**)' --
+      review-agent-command = claude --add-dir .git --allowedTools 'Bash(git:*) Bash(mkdir:*) Read Glob Grep Edit(.git/b4-review/**)' --
       review-agent-prompt-path = .git/agent-reviewer.md
+
+``Edit(...)`` is deliberate and covers file creation too: Claude Code
+matches path rules for every file-editing tool against the ``Edit`` rule,
+so a ``Write(...)`` rule never matches anything and is reported as such
+on startup. ``Bash(mkdir:*)`` is needed because the sample prompt creates
+the per-revision directory before writing into it.
 
 To use Gemini CLI instead::
 
