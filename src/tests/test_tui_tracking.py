@@ -28,6 +28,7 @@ import b4
 import b4.review
 import b4.review.tracking as tracking
 import b4.review_tui._entry as _entry
+import b4.review_tui._tracking_app as _tracking_app
 from b4 import (
     _abort_worktree_op,
     _worktree_has_unmerged,
@@ -5921,3 +5922,207 @@ class TestBadCharsGuard:
             worker_screen = push_screen.call_args[0][0]
             worker_screen._fn()
             assert get_am_ready.call_args.kwargs['allowbadchars'] is True
+
+
+class TestMsgsCell:
+    """Unit tests for the Msgs column split (total / unseen badge / accent)."""
+
+    def test_no_count_yet(self) -> None:
+        assert _tracking_app.msgs_cell({}) == ('-', '', False)
+
+    def test_empty_thread(self) -> None:
+        assert _tracking_app.msgs_cell({'message_count': 0}) == ('0', '', False)
+
+    def test_all_seen(self) -> None:
+        series = {'message_count': 21, 'seen_message_count': 21}
+        assert _tracking_app.msgs_cell(series) == ('21', '', False)
+
+    def test_all_unseen_accents_the_total(self) -> None:
+        """Nothing seen yet: accent the total instead of repeating it."""
+        series = {'message_count': 6, 'seen_message_count': 0}
+        assert _tracking_app.msgs_cell(series) == ('6', '', True)
+
+    def test_mixed_gets_a_badge(self) -> None:
+        series = {'message_count': 71, 'seen_message_count': 58}
+        assert _tracking_app.msgs_cell(series) == ('71', '(13)', False)
+
+    def test_seen_count_ahead_of_total(self) -> None:
+        """A stale seen count must not produce a negative badge."""
+        series = {'message_count': 4, 'seen_message_count': 9}
+        assert _tracking_app.msgs_cell(series) == ('4', '', False)
+
+
+class TestMsgsWidths:
+    """The Msgs column is sized from the whole visible list, not per row."""
+
+    def test_minimum_is_the_header_width(self) -> None:
+        series = [{'message_count': 3, 'seen_message_count': 3}]
+        assert _tracking_app.msgs_widths(series) == (len('Msgs'), 0)
+
+    def test_widest_badge_wins(self) -> None:
+        """Lorenzo's 71(13) must reserve room for a two-digit badge."""
+        series = [
+            {'message_count': 43, 'seen_message_count': 42},  # (1)
+            {'message_count': 71, 'seen_message_count': 58},  # (13)
+            {'message_count': 1, 'seen_message_count': 1},
+        ]
+        assert _tracking_app.msgs_widths(series) == (4, 4)
+
+    def test_four_digit_thread(self) -> None:
+        series = [{'message_count': 1234, 'seen_message_count': 1234}]
+        assert _tracking_app.msgs_widths(series) == (4, 0)
+        series.append({'message_count': 12345, 'seen_message_count': 12345})
+        assert _tracking_app.msgs_widths(series) == (5, 0)
+
+    def test_empty_list(self) -> None:
+        assert _tracking_app.msgs_widths([]) == (4, 0)
+
+
+class TestVersionToken:
+    """The subject-prefix version token doubles as the upgrade indicator."""
+
+    def test_plain_version(self) -> None:
+        assert _tracking_app.version_token({'revision': 3}) == ('v3', False)
+
+    def test_upgrade_available(self) -> None:
+        series = {'revision': 3, 'newest_revision': 6, 'has_newer': True}
+        assert _tracking_app.version_token(series) == ('v3→v6', True)
+
+    def test_newest_not_actually_newer(self) -> None:
+        """A stale has_newer with no newer revision stays plain."""
+        series = {'revision': 6, 'newest_revision': 6, 'has_newer': True}
+        assert _tracking_app.version_token(series) == ('v6', False)
+
+    def test_newest_without_has_newer(self) -> None:
+        series = {'revision': 2, 'newest_revision': 5}
+        assert _tracking_app.version_token(series) == ('v2', False)
+
+
+def _rendered_rows(app: TrackingApp) -> List[str]:
+    """Plain text of every rendered list row, header first."""
+    header = app.query_one('#tracking-header', Static)
+    lv = app.query_one('#tracking-list', ListView)
+    rows = [str(_static_text(header))]
+    for item in lv.children:
+        if isinstance(item, TrackedSeriesItem):
+            rows.append(item.render_label().plain)
+    return rows
+
+
+class TestListAlignment:
+    """Rendering tests for column alignment and the upgrade indicator."""
+
+    ALIGN_SERIES = [
+        {
+            'change_id': 'short-thread',
+            'subject': '[PATCH] docs: add debugging index',
+            'num_patches': 1,
+            'message_count': 1,
+            'seen_message_count': 1,
+            'sent_at': '2026-03-01T09:00:00+00:00',
+        },
+        {
+            'change_id': 'one-unseen',
+            'subject': '[PATCH 0/18] PCI/P2PDMA: Route peer-to-peer DMA',
+            'num_patches': 18,
+            'message_count': 43,
+            'seen_message_count': 42,
+            'sent_at': '2026-03-02T09:00:00+00:00',
+        },
+        {
+            'change_id': 'lorenzo',
+            'subject': '[PATCH 0/20] kbuild: speed up kernel builds',
+            'num_patches': 20,
+            'message_count': 71,
+            'seen_message_count': 58,
+            'sent_at': '2026-03-03T09:00:00+00:00',
+        },
+    ]
+
+    @pytest.mark.asyncio
+    async def test_columns_stay_aligned_with_a_wide_badge(self) -> None:
+        """A 71(13) row must not shove the S/Subject columns rightwards."""
+        _seed_db('test-align', self.ALIGN_SERIES)
+
+        app = TrackingApp('test-align')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            rows = _rendered_rows(app)
+
+        assert len(rows) == 4
+        # Every row (and the header) must start its subject prefix at the
+        # same column.  '[' only ever appears in the subject prefix.
+        subject_cols = {row.index('[') for row in rows[1:]}
+        assert len(subject_cols) == 1
+        # The header's 'S' column sits just left of the subject column.
+        assert rows[0].index('Subject') == subject_cols.pop()
+
+    @pytest.mark.asyncio
+    async def test_msgs_header_sits_over_the_totals(self) -> None:
+        _seed_db('test-align-hdr', self.ALIGN_SERIES)
+
+        app = TrackingApp('test-align-hdr')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            rows = _rendered_rows(app)
+
+        # 'Msgs' is right-aligned over the totals field, so its last column
+        # lines up with the last digit of every right-justified total.
+        # Rows are newest-tracked-first: lorenzo, one-unseen, short-thread.
+        end = rows[0].index('Msgs') + len('Msgs')
+        assert [row[end - 2 : end] for row in rows[1:]] == ['71', '43', ' 1']
+        # ...and the badges follow immediately after, left-justified.
+        assert rows[1][end : end + 4] == '(13)'
+        assert rows[2][end : end + 4] == '(1) '
+        assert rows[3][end : end + 4] == '    '
+
+    @pytest.mark.asyncio
+    async def test_upgrade_shows_in_the_version_token(self) -> None:
+        """has_newer renders as v1→v3 in the prefix, not a status suffix."""
+        identifier = 'test-upgrade-token'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'upgradable',
+                    'subject': '[PATCH 0/18] PCI/P2PDMA: Route peer-to-peer DMA',
+                    'num_patches': 18,
+                    'sent_at': '2026-03-02T09:00:00+00:00',
+                },
+            ],
+        )
+        conn = tracking.get_db(identifier)
+        tracking.add_revision(
+            conn, 'upgradable', 3, 'up-v3@ex.com', subject='[PATCH v3 0/18] PCI'
+        )
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            rows = _rendered_rows(app)
+            lv = app.query_one('#tracking-list', ListView)
+            item = next(c for c in lv.children if isinstance(c, TrackedSeriesItem))
+            assert item.series['has_newer'] is True
+            assert item.series['newest_revision'] == 3
+            # The version token carries the accent style, and only it.
+            text = item.render_label()
+            styled = [text.plain[s.start : s.end] for s in text.spans if s.style]
+
+        assert '[v1→3,00/18]' not in rows[1]
+        assert '[v1→v3,00/18]' in rows[1]
+        # No stray '↑' suffix left in the status column
+        assert '↑' not in rows[1]
+        assert 'v1→v3' in styled
+
+    @pytest.mark.asyncio
+    async def test_no_upgrade_renders_plain_version(self) -> None:
+        _seed_db('test-noupgrade', self.ALIGN_SERIES[:1])
+
+        app = TrackingApp('test-noupgrade')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            rows = _rendered_rows(app)
+
+        assert '[v1,0/1]' in rows[1]
+        assert '→' not in rows[1]

@@ -28,6 +28,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
@@ -161,6 +162,64 @@ def _effective_tier(series: Dict[str, Any]) -> int:
     if status == 'waiting' and series.get('has_newer'):
         return 0
     return _STATUS_TIER.get(status, 2)
+
+
+def msgs_cell(series: Dict[str, Any]) -> Tuple[str, str, bool]:
+    """Split the Msgs column of *series* into (total, badge, accent).
+
+    ``total`` is the thread message count, ``badge`` is the ``(N)`` unseen
+    count (empty when there is nothing unseen or when *everything* is
+    unseen), and ``accent`` says whether ``total`` itself should be
+    highlighted because every message in the thread is new.
+
+    Both strings are returned unpadded: the caller pads them to a width
+    computed across the whole visible list, so a 3-digit thread with a
+    2-digit unseen badge cannot shove the columns to its right out of
+    alignment (bug: Lorenzo's 71(13) series).
+    """
+    total = series.get('message_count')
+    seen = series.get('seen_message_count')
+    if total is None:
+        return '-', '', False
+    if total == 0:
+        return '0', '', False
+    unseen = (total - seen) if (seen is not None and total > seen) else 0
+    if unseen == total:
+        # Everything is new: accent the total instead of repeating it
+        return str(total), '', True
+    if unseen > 0:
+        return str(total), f'({unseen})', False
+    return str(total), '', False
+
+
+def msgs_widths(all_series: Sequence[Dict[str, Any]]) -> Tuple[int, int]:
+    """Column widths for the Msgs total and badge fields across *all_series*.
+
+    The total field is at least as wide as the ``Msgs`` header so the header
+    sits directly above the numbers.
+    """
+    total_w = len('Msgs')
+    badge_w = 0
+    for series in all_series:
+        total, badge, _ = msgs_cell(series)
+        total_w = max(total_w, len(total))
+        badge_w = max(badge_w, len(badge))
+    return total_w, badge_w
+
+
+def version_token(series: Dict[str, Any]) -> Tuple[str, bool]:
+    """Subject-prefix version token for *series*, plus whether to accent it.
+
+    A series with a newer revision waiting renders as ``v3\u2192v6`` in the
+    accent colour, which both flags the upgrade and says which revision is
+    waiting.  This replaces the old ``\u2191`` suffix in the status column,
+    which crowded the status glyph and read poorly next to \u2605 and \u270e.
+    """
+    current = series.get('revision', 1)
+    newest = series.get('newest_revision')
+    if series.get('has_newer') and newest and newest > current:
+        return f'v{current}\u2192v{newest}', True
+    return f'v{current}', False
 
 
 # Statuses where the maintainer can take action right now.
@@ -713,9 +772,16 @@ class TrackedSeriesItem(ListItem):
     }
     """
 
-    def __init__(self, series: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        series: Dict[str, Any],
+        msgs_total_w: int = 4,
+        msgs_badge_w: int = 0,
+    ) -> None:
         super().__init__()
         self.series = series
+        self.msgs_total_w = msgs_total_w
+        self.msgs_badge_w = msgs_badge_w
         status = series.get('status', 'new')
         if _effective_tier(series) >= 2:
             self.add_class('non-actionable')
@@ -723,64 +789,41 @@ class TrackedSeriesItem(ListItem):
             self.add_class('gone')
 
     def compose(self) -> ComposeResult:
+        yield Label(self.render_label(), markup=False)
+
+    def render_label(self) -> RichText:
+        """Build the styled one-line rendering of this series.
+
+        Kept separate from :meth:`compose` so tests can inspect the text and
+        its style spans without reaching into Textual's widget internals,
+        which name the renderable differently across versions.
+        """
         subject = self.series.get('subject', '(no subject)')
         submitter = self.series.get('sender_name', 'Unknown')
-        revision = self.series.get('revision', 1)
         num_patches = self.series.get('num_patches', 0)
         status = self.series.get('status', 'new')
         effective = 'queued' if self.series.get('queued') else status
         symbol = _STATUS_SYMBOLS.get(effective, '?')
-        # The suffix flag is a single slot; needs_update (rev_count == 0) and
-        # has_newer (a known newer revision exists) are mutually exclusive, so
-        # at most one applies.  '*' = fetch revision data; '↑' = upgrade available.
-        if self.series.get('needs_update'):
-            flag = '*'
-        elif self.series.get('has_newer'):
-            flag = '↑'
-        else:
-            flag = ' '
+        # The only suffix left in the status column is '*' (tracking data
+        # needs a refresh).  An available upgrade is shown by the version
+        # token in the subject prefix instead -- see version_token().
+        flag = '*' if self.series.get('needs_update') else ' '
         art = self.series.get('art')
         if art:
             a, r, t = art
             art_str = f'{a}·{r}·{t}'
         else:
             art_str = '-'
-        fc = self.series.get('message_count')
-        sc = self.series.get('seen_message_count')
-        if fc is not None:
-            delta = (fc - sc) if (sc is not None and fc > sc) else 0
-        else:
-            delta = 0
-        # Msgs display: "1" (all seen), "6" accent (all new), "6(3)" mixed
-        if fc is None:
-            fu_base = '-'
-            fu_badge = ''
-            base_accent = False
-        elif fc == 0:
-            fu_base = '0'
-            fu_badge = ''
-            base_accent = False
-        elif delta == fc:
-            # All follow-ups are new
-            fu_base = str(fc)
-            fu_badge = ''
-            base_accent = True
-        elif delta > 0:
-            # Mixed: total + (unseen)
-            fu_base = str(fc)
-            fu_badge = f'({delta})'
-            base_accent = False
-        else:
-            # All seen
-            fu_base = str(fc)
-            fu_badge = ''
-            base_accent = False
-        # Build compact prefix using LoreSubject to extract subsystem/modifier tokens
+        msgs_total, msgs_badge, msgs_accent = msgs_cell(self.series)
+        # Build compact prefix using LoreSubject to extract subsystem/modifier
+        # tokens.  The version token is kept separate so it can carry its own
+        # style when an upgrade is available.
         ls = b4.LoreSubject(subject)
         extras = ls.get_extra_prefixes(exclude=['patch'])
         width = len(str(num_patches)) if num_patches > 0 else 1
-        parts = extras + [f'v{revision}', f'{"0" * width}/{num_patches:0{width}d}']
-        subject_display = f'[{",".join(parts)}] {ls.subject}'
+        ver_token, ver_accent = version_token(self.series)
+        prefix_head = '[' + ''.join(f'{extra},' for extra in extras)
+        prefix_tail = f',{"0" * width}/{num_patches:0{width}d}] '
         if display_width(submitter) > 20:
             while display_width(submitter) > 19:
                 submitter = submitter[:-1]
@@ -788,28 +831,30 @@ class TrackedSeriesItem(ListItem):
         submitter = pad_display(submitter, 20)
         att = self.series.get('attestation') or ''
         att_entries = att.split(';') if att and att not in ('pending', 'none') else []
+        ts = resolve_styles(self.app)
+        accent = f'bold {ts["warning"]}'
         label = RichText(no_wrap=True, overflow='ellipsis')
         label.append(submitter)
         if att_entries and all(e.startswith('signed:') for e in att_entries):
-            ts = resolve_styles(self.app)
-            label.append('\u2714', style=ts['success'])  # ✔
+            label.append('✔', style=ts['success'])  # ✔
         else:
             label.append(' ')
         label.append(' ')
         label.append(art_str.rjust(7))
-        base_style = ''
-        badge_style = ''
-        if base_accent or fu_badge:
-            ts = resolve_styles(self.app)
-            accent = f'bold {ts["warning"]}'
-            if base_accent:
-                base_style = accent
-            if fu_badge:
-                badge_style = accent
-        label.append(f'  {fu_base.rjust(3)}', style=base_style)
-        label.append(f'{fu_badge:<3s}', style=badge_style)
-        label.append(f'  {symbol}{flag}  {subject_display}')
-        yield Label(label, markup=False)
+        label.append(
+            f'  {msgs_total.rjust(self.msgs_total_w)}',
+            style=accent if msgs_accent else '',
+        )
+        label.append(
+            f'{msgs_badge:<{self.msgs_badge_w}s}' if self.msgs_badge_w else '',
+            style=accent if msgs_badge else '',
+        )
+        label.append(f'  {symbol}{flag}  ')
+        label.append(prefix_head)
+        label.append(ver_token, style=accent if ver_accent else '')
+        label.append(prefix_tail)
+        label.append(ls.subject)
+        return label
 
 
 class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
@@ -1173,6 +1218,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             current_rev = series.get('revision', 1)
             newest = newest_revisions.get(change_id)
+            series['newest_revision'] = newest
             if newest is not None and newest > current_rev:
                 series['has_newer'] = True
             rev_count = revision_counts.get(change_id, 0)
@@ -1322,10 +1368,20 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 await self.mount(empty, before=footer)
                 return
 
-            header_text = f'{"Submitter":<20s}{"A":>1s} {"A·R·T":>7s}  {"Msgs":>6s}  {"S":<4s}{"Subject"}'
+            # Size the Msgs column to the widest entry actually on screen, so
+            # a 71(13) thread cannot push the S and Subject columns out of
+            # alignment with every other row.
+            total_w, badge_w = msgs_widths(display_series)
+            msgs_header = f'{"Msgs":>{total_w}s}' + ' ' * badge_w
+            header_text = (
+                f'{"Submitter":<20s}{"A":>1s} {"A·R·T":>7s}'
+                f'  {msgs_header}  {"S":<4s}{"Subject"}'
+            )
             header = Static(header_text, id='tracking-header')
 
-            list_items: List[ListItem] = [TrackedSeriesItem(s) for s in display_series]
+            list_items: List[ListItem] = [
+                TrackedSeriesItem(s, total_w, badge_w) for s in display_series
+            ]
             lv = ReplacementListView(*list_items, id='tracking-list', scroll_y=scroll_y)
             await self.mount(header, before=footer)
             await self.mount(lv, before=footer)
