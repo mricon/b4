@@ -6126,3 +6126,96 @@ class TestListAlignment:
 
         assert '[v1,0/1]' in rows[1]
         assert '→' not in rows[1]
+
+
+class TestAttestationPasses:
+    """The A column ignores unverifiable attestations, not failing ones."""
+
+    def test_no_attestation(self) -> None:
+        assert _tracking_app.attestation_passes(None) is False
+        assert _tracking_app.attestation_passes('') is False
+
+    def test_sentinels(self) -> None:
+        assert _tracking_app.attestation_passes('pending') is False
+        assert _tracking_app.attestation_passes('none') is False
+
+    def test_single_signed(self) -> None:
+        assert _tracking_app.attestation_passes('signed:DKIM/kernel.org') is True
+
+    def test_all_signed(self) -> None:
+        att = 'signed:openpgp/ljs@kernel.org;signed:DKIM/kernel.org'
+        assert _tracking_app.attestation_passes(att) is True
+
+    def test_nokey_alongside_signed(self) -> None:
+        """Lorenzo's case: unimportable PGP key, but DKIM verifies fine."""
+        att = 'nokey:openpgp/ljs@kernel.org;signed:DKIM/kernel.org'
+        assert _tracking_app.attestation_passes(att) is True
+
+    def test_nokey_only(self) -> None:
+        """Nothing could be checked, so nothing is claimed."""
+        att = 'nokey:openpgp/ljs@kernel.org'
+        assert _tracking_app.attestation_passes(att) is False
+
+    def test_badsig_withholds_the_mark(self) -> None:
+        """A real failure is not excused by a passing sibling."""
+        att = 'badsig:openpgp/ljs@kernel.org;signed:DKIM/kernel.org'
+        assert _tracking_app.attestation_passes(att) is False
+
+    def test_badsig_alongside_nokey(self) -> None:
+        att = 'nokey:openpgp/ljs@kernel.org;badsig:DKIM/kernel.org'
+        assert _tracking_app.attestation_passes(att) is False
+
+    def test_unknown_status_withholds_the_mark(self) -> None:
+        att = 'weird:openpgp/ljs@kernel.org;signed:DKIM/kernel.org'
+        assert _tracking_app.attestation_passes(att) is False
+
+
+class TestAttestationColumnRendering:
+    """End-to-end: the checkmark shows up for a nokey+signed series."""
+
+    @pytest.mark.asyncio
+    async def test_nokey_plus_dkim_gets_a_checkmark(self) -> None:
+        identifier = 'test-att-column'
+        _seed_db(
+            identifier,
+            [
+                {
+                    'change_id': 'lorenzo',
+                    'subject': '[PATCH 0/20] kbuild: speed up kernel builds',
+                    'sender_name': 'Lorenzo Stoakes',
+                    'num_patches': 20,
+                    'sent_at': '2026-03-03T09:00:00+00:00',
+                },
+                {
+                    'change_id': 'badsig-series',
+                    'subject': '[PATCH] something suspicious',
+                    'sender_name': 'Someone Else',
+                    'num_patches': 1,
+                    'sent_at': '2026-03-02T09:00:00+00:00',
+                },
+            ],
+        )
+        conn = tracking.get_db(identifier)
+        conn.execute(
+            'UPDATE series SET attestation = ? WHERE change_id = ?',
+            ('nokey:openpgp/ljs@kernel.org;signed:DKIM/kernel.org', 'lorenzo'),
+        )
+        conn.execute(
+            'UPDATE series SET attestation = ? WHERE change_id = ?',
+            ('nokey:openpgp/x@kernel.org;badsig:DKIM/kernel.org', 'badsig-series'),
+        )
+        conn.commit()
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            lv = app.query_one('#tracking-list', ListView)
+            marks = {
+                item.series['change_id']: item.render_label().plain[20]
+                for item in lv.children
+                if isinstance(item, TrackedSeriesItem)
+            }
+
+        assert marks['lorenzo'] == '✔'
+        assert marks['badsig-series'] == ' '

@@ -164,6 +164,31 @@ def _effective_tier(series: Dict[str, Any]) -> int:
     return _STATUS_TIER.get(status, 2)
 
 
+def attestation_passes(att: Optional[str]) -> bool:
+    """Whether the A column should show a checkmark for *att*.
+
+    *att* is the stored attestation string: ``;``-separated entries, each
+    ``<status>:<identity>``, or the sentinels ``pending``/``none``.
+
+    A message can carry more than one attestation -- typically a PGP
+    signature and a DKIM signature.  A ``nokey`` entry means we could not
+    check that one at all, because the submitter's public key is not in
+    the keyring; that is not evidence of anything, so it neither grants
+    nor withholds the checkmark and the verdict comes from the
+    attestations we *could* check.  A ``badsig`` entry is a real failure
+    and always withholds it.
+
+    Ignoring ``nokey`` matters because keyservers are gone: an
+    unimportable PGP key is a permanent state for many submitters, and
+    before this a perfectly good DKIM signature sitting next to one
+    rendered the same as no attestation at all.
+    """
+    if not att or att in ('pending', 'none'):
+        return False
+    checked = [e for e in att.split(';') if e and not e.startswith('nokey:')]
+    return bool(checked) and all(e.startswith('signed:') for e in checked)
+
+
 def msgs_cell(series: Dict[str, Any]) -> Tuple[str, str, bool]:
     """Split the Msgs column of *series* into (total, badge, accent).
 
@@ -830,12 +855,11 @@ class TrackedSeriesItem(ListItem):
             submitter += '…'
         submitter = pad_display(submitter, 20)
         att = self.series.get('attestation') or ''
-        att_entries = att.split(';') if att and att not in ('pending', 'none') else []
         ts = resolve_styles(self.app)
         accent = f'bold {ts["warning"]}'
         label = RichText(no_wrap=True, overflow='ellipsis')
         label.append(submitter)
-        if att_entries and all(e.startswith('signed:') for e in att_entries):
+        if attestation_passes(att):
             label.append('✔', style=ts['success'])  # ✔
         else:
             label.append(' ')
