@@ -6243,6 +6243,102 @@ def resolve_am_conflict_in_shell(
     return _fetch_and_drop_am_worktree(topdir, gwt, origin=origin)
 
 
+AM_DIFF_GIT_RE = re.compile(rb'^diff --git (\S.*)$', flags=re.M)
+AM_DIFF_FILE_RE = re.compile(rb'^(?:---|\+\+\+) (\S.*)$', flags=re.M)
+# Characters that gitignore-style (non-cone) sparse patterns treat as wildcards.
+SPARSE_PATTERN_SPECIALS = str.maketrans({c: '\\' + c for c in '*?[]\\'})
+
+
+def _unprefix_patch_path(path: str) -> Optional[str]:
+    """Turn one ``a/foo/bar`` patch path into the repo-relative ``foo/bar``.
+
+    Returns None for anything we cannot map with confidence: /dev/null (the
+    placeholder for a file being created or deleted, not a real path), a
+    C-quoted name, or a name whose whitespace would not survive a
+    sparse-checkout pattern file.
+    """
+    if path.startswith('"'):
+        # C-style quoted (non-ASCII or unusual bytes); not worth decoding here.
+        return None
+    # git writes a tab before any trailing timestamp on ---/+++ lines.
+    path = path.split('\t', 1)[0]
+    if path == '/dev/null':
+        return None
+    if path != path.strip() or '\n' in path:
+        return None
+    # git-am runs with -p1, so drop the leading a/ or b/ component.
+    parts = path.split('/', 1)
+    if len(parts) != 2 or not parts[1]:
+        return None
+    return parts[1]
+
+
+def _split_diff_git_paths(rest: str) -> Optional[List[str]]:
+    """Split the tail of a ``diff --git`` line into its two prefixed paths."""
+    if rest.startswith('"') or rest.endswith('"'):
+        return None
+    # A name containing a space makes the split ambiguous, so try every space
+    # as the boundary and keep the first one that yields two prefixed paths
+    # naming the same file -- the unambiguous reading.
+    positions = [i for i, ch in enumerate(rest) if ch == ' ']
+    for pos in positions:
+        left, right = rest[:pos], rest[pos + 1 :]
+        if left[1:2] != '/' or right[1:2] != '/':
+            continue
+        if left[2:] == right[2:]:
+            return [left, right]
+    # No same-name split means a rename, where the two halves differ. Fall back
+    # to the default prefixes and take the boundary only if it is unique.
+    candidates = [
+        [rest[:pos], rest[pos + 1 :]]
+        for pos in positions
+        if rest[:pos].startswith('a/') and rest[pos + 1 :].startswith('b/')
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(positions) == 1:
+        return [rest[: positions[0]], rest[positions[0] + 1 :]]
+    return None
+
+
+def _touched_paths_from_am(ambytes: bytes) -> Set[str]:
+    """Collect every repo path the patches in *ambytes* touch.
+
+    git-am's 3-way fallback only ever needs the blobs named in the patch
+    itself, so this set is what the scratch worktree has to materialize. Both
+    sides of every ``diff --git`` are taken, which covers renames as well as
+    plain modifications, and the ``---``/``+++`` lines are read too so that
+    patches from senders who use a bare ``diff -u`` are not missed.
+
+    Neither over- nor under-collecting breaks anything, so the parsing stays
+    deliberately loose: lines are matched without tracking whether we are
+    inside a diff, and anything unmappable is skipped. A stray extra path
+    materializes one more file; a missing one falls back to the full-tree
+    replay, which is exactly what the old empty sparse set did for every path.
+    """
+    paths: Set[str] = set()
+    for regex in (AM_DIFF_GIT_RE, AM_DIFF_FILE_RE):
+        for match in regex.finditer(ambytes):
+            raw = match.group(1).decode('utf-8', errors='replace').rstrip('\r')
+            sides = _split_diff_git_paths(raw) if regex is AM_DIFF_GIT_RE else [raw]
+            for side in sides or []:
+                rel = _unprefix_patch_path(side)
+                if rel is not None:
+                    paths.add(rel)
+    return paths
+
+
+def _sparse_patterns_for_paths(paths: Set[str]) -> bytes:
+    """Render *paths* as non-cone sparse-checkout patterns, one per line."""
+    lines = [
+        '/.gitattributes',
+        '/.gitmodules',
+    ]
+    for path in sorted(paths):
+        lines.append('/' + path.translate(SPARSE_PATTERN_SPECIALS))
+    return ('\n'.join(lines) + '\n').encode()
+
+
 def _replay_am_on_full_worktree(
     gwt: str, ambytes: bytes, amargs: List[str]
 ) -> Tuple[int, str]:
@@ -6257,6 +6353,7 @@ def _replay_am_on_full_worktree(
     a genuine conflict the user resolves; zero means only sparseness had blocked
     it and the series actually applies cleanly.
     """
+    logger.info('Magic: Materializing the full tree to retry the merge')
     git_run_command(gwt, ['am', '--abort'], logstderr=True, rundir=gwt)
     git_run_command(gwt, ['sparse-checkout', 'disable'], logstderr=True, rundir=gwt)
     return git_run_command(gwt, amargs, stdin=ambytes, logstderr=True, rundir=gwt)
@@ -6303,9 +6400,25 @@ def git_fetch_am_into_repo(
     cleanup = True
     try:
         logger.info('Magic: Preparing a sparse worktree')
+        # Materialize only the paths the patches touch. git-apply is
+        # sparse-aware and needs nothing on disk, but git-am's 3-way fallback
+        # refuses to write skip-worktree paths, so an empty sparse set sends
+        # every series that needs a 3-way through the full-tree replay below --
+        # 20+ seconds on a tree the size of the kernel. Naming the touched
+        # paths keeps the checkout small and still lets the 3-way run.
+        touched = _touched_paths_from_am(ambytes)
+        sparse_args = [*SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
+        sparse_stdin: Optional[bytes] = None
+        if touched:
+            # --no-cone so we get the paths themselves instead of their whole
+            # parent directories, and --stdin so a large series does not run
+            # into the argv length limit.
+            sparse_args += ['--no-cone', '--stdin']
+            sparse_stdin = _sparse_patterns_for_paths(touched)
         ecode, out = git_run_command(
             gwt,
-            [*SCRATCH_GIT_OPTS, 'sparse-checkout', 'set'],
+            sparse_args,
+            stdin=sparse_stdin,
             logstderr=True,
             rundir=gwt,
         )

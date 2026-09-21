@@ -255,6 +255,179 @@ class TestGitFetchAmIntoRepo:
         assert not os.path.exists(gwt)
 
 
+def _build_subdir_three_way(gitdir: str) -> Tuple[bytes, str]:
+    """Build a patch that only applies via a 3-way merge, on a subdirectory file.
+
+    The submitter edits one line and the maintainer edits a different line
+    close enough to sit inside the same hunk context, so the patch cannot
+    apply directly but the 3-way merge resolves it without conflict. The file
+    lives in a subdirectory, which is the case the old empty sparse set could
+    not handle: git refuses to write skip-worktree paths during a merge.
+
+    Returns (mbox bytes, base commit sha).
+    """
+    subdir = os.path.join(gitdir, 'drivers')
+    os.makedirs(subdir, exist_ok=True)
+    body = ['line %d' % num for num in range(1, 21)]
+    with open(os.path.join(subdir, 'thing.c'), 'w') as fh:
+        fh.write('\n'.join(body) + '\n')
+    b4.git_run_command(gitdir, ['add', 'drivers/thing.c'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Add drivers/thing.c'])
+    ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+    assert ecode == 0
+    base = base.strip()
+
+    # Submitter side: change line 10.
+    b4.git_run_command(gitdir, ['checkout', '-b', 'submitter'])
+    submitted = list(body)
+    submitted[9] = 'line 10 changed by submitter'
+    with open(os.path.join(subdir, 'thing.c'), 'w') as fh:
+        fh.write('\n'.join(submitted) + '\n')
+    b4.git_run_command(gitdir, ['add', 'drivers/thing.c'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Touch line 10'])
+    ecode, mbox = b4.git_run_command(
+        gitdir, ['format-patch', '-1', '--stdout'], decode=False
+    )
+    assert ecode == 0
+
+    # Maintainer side: change line 12, inside the submitted hunk's context.
+    b4.git_run_command(gitdir, ['checkout', 'master'])
+    b4.git_run_command(gitdir, ['branch', '-D', 'submitter'])
+    maintained = list(body)
+    maintained[11] = 'line 12 changed by maintainer'
+    with open(os.path.join(subdir, 'thing.c'), 'w') as fh:
+        fh.write('\n'.join(maintained) + '\n')
+    b4.git_run_command(gitdir, ['add', 'drivers/thing.c'])
+    b4.git_run_command(gitdir, ['commit', '-m', 'Touch line 12'])
+
+    return mbox, base
+
+
+class TestTouchedPathsFromAm:
+    """Tests for the patch-path scanner that drives the sparse checkout."""
+
+    def test_plain_modification(self) -> None:
+        mbox = (
+            b'diff --git a/drivers/foo.c b/drivers/foo.c\n'
+            b'--- a/drivers/foo.c\n'
+            b'+++ b/drivers/foo.c\n'
+        )
+        assert b4._touched_paths_from_am(mbox) == {'drivers/foo.c'}
+
+    def test_new_file_skips_dev_null(self) -> None:
+        mbox = (
+            b'diff --git a/new.c b/new.c\n'
+            b'new file mode 100644\n'
+            b'--- /dev/null\n'
+            b'+++ b/new.c\n'
+        )
+        assert b4._touched_paths_from_am(mbox) == {'new.c'}
+
+    def test_deletion_skips_dev_null(self) -> None:
+        mbox = (
+            b'diff --git a/gone.c b/gone.c\n'
+            b'deleted file mode 100644\n'
+            b'--- a/gone.c\n'
+            b'+++ /dev/null\n'
+        )
+        assert b4._touched_paths_from_am(mbox) == {'gone.c'}
+
+    def test_rename_collects_both_sides(self) -> None:
+        mbox = b'diff --git a/old/name.c b/new/name.c\nsimilarity index 95%\n'
+        assert b4._touched_paths_from_am(mbox) == {'old/name.c', 'new/name.c'}
+
+    def test_rename_with_spaces_in_names(self) -> None:
+        mbox = b'diff --git a/old name.c b/new name.c\nsimilarity index 95%\n'
+        assert b4._touched_paths_from_am(mbox) == {'old name.c', 'new name.c'}
+
+    def test_binary_patch_has_no_file_lines(self) -> None:
+        mbox = b'diff --git a/img.png b/img.png\nGIT binary patch\n'
+        assert b4._touched_paths_from_am(mbox) == {'img.png'}
+
+    def test_ignores_unmappable_prose(self) -> None:
+        """A commit-message line that looks like a diff header is skipped."""
+        mbox = b'--- v1 to v2 notes\ndiff --git a/real.c b/real.c\n'
+        assert b4._touched_paths_from_am(mbox) == {'real.c'}
+
+    def test_empty_mbox(self) -> None:
+        assert b4._touched_paths_from_am(b'Subject: nothing here\n') == set()
+
+
+class TestSparsePatternsForPaths:
+    """Tests for rendering touched paths as non-cone sparse patterns."""
+
+    def test_paths_are_anchored_and_sorted(self) -> None:
+        out = b4._sparse_patterns_for_paths({'b/two.c', 'a/one.c'})
+        lines = out.decode().splitlines()
+        assert lines == ['/.gitattributes', '/.gitmodules', '/a/one.c', '/b/two.c']
+
+    def test_glob_characters_are_escaped(self) -> None:
+        """Non-cone patterns are gitignore globs, so wildcards need escaping."""
+        out = b4._sparse_patterns_for_paths({'dir/img[1].png', 'dir/a*b.c'})
+        lines = out.decode().splitlines()
+        assert '/dir/img\\[1\\].png' in lines
+        assert '/dir/a\\*b.c' in lines
+
+
+class TestSparseAmAvoidsFullCheckout:
+    """The scratch worktree materializes only the paths the patches touch."""
+
+    def test_three_way_in_subdir_needs_no_full_materialization(
+        self, gitdir: str
+    ) -> None:
+        ambytes, base = _build_subdir_three_way(gitdir)
+
+        calls: list[list[str]] = []
+        real_run = b4.git_run_command
+
+        def recording_run(*args: Any, **kwargs: Any) -> Any:
+            if len(args) > 1 and isinstance(args[1], list):
+                calls.append(args[1])
+            return real_run(*args, **kwargs)
+
+        with patch('b4.git_run_command', side_effect=recording_run):
+            b4.git_fetch_am_into_repo(
+                gitdir, ambytes, at_base=base, am_flags=['-3'], resolve=True
+            )
+
+        # The 3-way ran inside the sparse worktree: no full-tree replay.
+        assert not any(
+            'disable' in call and 'sparse-checkout' in call for call in calls
+        )
+        # And the sparse set was the touched path, not the old empty set.
+        sparse_sets = [
+            call for call in calls if 'sparse-checkout' in call and 'set' in call
+        ]
+        assert len(sparse_sets) == 1
+        assert '--no-cone' in sparse_sets[0]
+
+        fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
+        assert os.path.exists(fh_path)
+
+    def test_result_matches_full_checkout_replay(self, gitdir: str) -> None:
+        """The sparse 3-way produces the same tree the full replay would."""
+        ambytes, base = _build_subdir_three_way(gitdir)
+
+        b4.git_fetch_am_into_repo(
+            gitdir, ambytes, at_base=base, am_flags=['-3'], resolve=True
+        )
+        ecode, sparse_tree = b4.git_run_command(
+            gitdir, ['rev-parse', 'FETCH_HEAD^{tree}']
+        )
+        assert ecode == 0
+
+        # Now force the old behaviour (empty sparse set) and compare.
+        with patch('b4._touched_paths_from_am', return_value=set()):
+            b4.git_fetch_am_into_repo(
+                gitdir, ambytes, at_base=base, am_flags=['-3'], resolve=True
+            )
+        ecode, replay_tree = b4.git_run_command(
+            gitdir, ['rev-parse', 'FETCH_HEAD^{tree}']
+        )
+        assert ecode == 0
+        assert sparse_tree.strip() == replay_tree.strip()
+
+
 class TestSuspendToShellCwd:
     """Test that _suspend_to_shell passes cwd to subprocess.run."""
 
