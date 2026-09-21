@@ -4396,10 +4396,11 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             self.notify('Not in a git repository', severity='error')
             return
 
-        # The apply below checks out the upgrade branch and renames it onto the
-        # review branch, so HEAD ends up there whether the upgrade succeeds or
-        # not. The tracking list comes back up when this returns; leaving the
-        # worktree moved strands the user on the review branch when they quit.
+        # Building the upgrade branch no longer moves HEAD, but resolving an am
+        # conflict drops the user into a shell where they can, and archiving
+        # the old review branch has to get off it if that is where they are.
+        # The tracking list comes back up when this returns; leaving the
+        # worktree moved strands the user somewhere they never asked to be.
         with self.suspend(), _keep_current_branch(topdir) as restore_branch:
             # --- 1. Save maintainer review data keyed by patch-id ---
             logger.info('Saving review data from v%d...', current_rev)
@@ -4545,8 +4546,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 # has already said why on its way out.
                 reason = 'see above' if isinstance(ex, SystemExit) else str(ex)
                 logger.critical('Error creating review branch: %s', reason)
-                # Off the half-built branch before dropping it: git refuses to
-                # delete the branch it has checked out.
+                # Nothing here checks the upgrade branch out, but a conflict
+                # resolved in the shell can leave HEAD anywhere, and git
+                # refuses to delete the branch it has checked out.
                 restore_branch()
                 if b4.git_branch_exists(topdir, upgrade_branch):
                     b4.git_run_command(topdir, ['branch', '-D', upgrade_branch])

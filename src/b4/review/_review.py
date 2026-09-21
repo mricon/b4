@@ -305,18 +305,7 @@ def create_review_branch(
         logger.critical('Branch %s already exists', branch_name)
         sys.exit(1)
 
-    # Save the current position for potential restore on error: everything
-    # past the checkout below runs on the new branch, and git refuses to
-    # delete the branch HEAD is sitting on.
-    restore_head = b4.git_head_restore_args(topdir)
-
-    def drop_half_built_branch() -> None:
-        """Put the caller back and take the unfinished branch with us."""
-        if restore_head:
-            b4.git_run_command(topdir, restore_head, logstderr=True)
-        b4.git_run_command(topdir, ['branch', '-D', branch_name], logstderr=True)
-
-    # Resolve base_commit to a concrete hash before checkout changes HEAD
+    # Resolve base_commit to a concrete hash
     ecode, out = b4.git_run_command(
         topdir, ['rev-parse', f'{base_commit}^{{}}'], logstderr=True
     )
@@ -325,36 +314,43 @@ def create_review_branch(
         sys.exit(1)
     resolved_base = out.strip()
 
-    # Create and check out the review branch
+    # The caller has just am'ed the series onto resolved_base in a scratch
+    # worktree and fetched the result, so FETCH_HEAD already holds exactly the
+    # commits we want, already sitting on exactly the right parent. Checking
+    # out a branch and cherry-picking them would rewrite identical trees into
+    # new commits and drag the user's worktree along for the ride -- on a large
+    # tree that is the bulk of the time it takes to enter a review, and it
+    # leaves HEAD somewhere the user did not ask to be. Point a ref at the
+    # commits instead and never touch the working tree.
     ecode, out = b4.git_run_command(
-        topdir, ['checkout', '-b', branch_name, resolved_base], logstderr=True
+        topdir, ['rev-parse', 'FETCH_HEAD^{}'], logstderr=True
     )
-    if ecode > 0:
-        logger.critical('Unable to create branch %s at %s', branch_name, resolved_base)
-        logger.critical(out.strip())
+    if ecode > 0 or not out.strip():
+        logger.critical('Unable to resolve FETCH_HEAD')
         sys.exit(1)
+    series_tip = out.strip()
 
-    # Cherry-pick the applied patches from FETCH_HEAD
-    ecode, out = b4.git_run_command(
-        topdir, ['cherry-pick', f'{resolved_base}..FETCH_HEAD'], logstderr=True
+    # Guard the assumption above rather than trusting it: a conflict resolved
+    # by hand in the shell could have left FETCH_HEAD somewhere else entirely,
+    # and a ref built on the wrong parent would misreport every patch in the
+    # series.
+    ecode, _out = b4.git_run_command(
+        topdir, ['merge-base', '--is-ancestor', resolved_base, series_tip]
     )
     if ecode > 0:
-        logger.critical('Unable to cherry-pick patches onto review branch')
-        logger.critical(out.strip())
-        # Abort the cherry-pick if in progress
-        b4.git_run_command(topdir, ['cherry-pick', '--abort'], logstderr=True)
-        drop_half_built_branch()
+        logger.critical(
+            'Applied patches do not descend from base commit %s', resolved_base
+        )
         sys.exit(1)
 
     # Record the first patch commit (the one right after base)
     ecode, out = b4.git_run_command(
-        topdir, ['rev-list', '--reverse', f'{resolved_base}..HEAD'], logstderr=True
+        topdir,
+        ['rev-list', '--reverse', f'{resolved_base}..{series_tip}'],
+        logstderr=True,
     )
     if ecode > 0 or not out.strip():
         logger.critical('Unable to determine first patch commit')
-        # HEAD is on a branch that was never finished, as in the other two
-        # post-checkout failures around this one.
-        drop_half_built_branch()
         sys.exit(1)
     all_commits = out.strip().splitlines()
     prereq_commits = all_commits[:num_prereqs]
@@ -440,14 +436,35 @@ def create_review_branch(
 
     ecode, out = b4.git_run_command(
         topdir,
-        ['commit', '--allow-empty', '-F', '-'],
+        ['commit-tree', f'{series_tip}^{{tree}}', '-p', series_tip, '-F', '-'],
         stdin=commit_msg.encode(),
         logstderr=True,
     )
-    if ecode > 0:
+    if ecode > 0 or not out.strip():
         logger.critical('Unable to create tracking commit')
         logger.critical(out.strip())
-        drop_half_built_branch()
+        sys.exit(1)
+    tracking_commit = out.strip()
+
+    # Nothing above this line created anything reachable, so there is no
+    # half-built branch to clean up on the way out of any of those failures.
+    # An empty old value tells update-ref to refuse if the name appeared while
+    # we were working.
+    ecode, out = b4.git_run_command(
+        topdir,
+        [
+            'update-ref',
+            '-m',
+            f'b4: create review branch for {change_id}',
+            f'refs/heads/{branch_name}',
+            tracking_commit,
+            '',
+        ],
+        logstderr=True,
+    )
+    if ecode > 0:
+        logger.critical('Unable to create branch %s', branch_name)
+        logger.critical(out.strip())
         sys.exit(1)
 
     # Mark cover + patch messages as Seen in the messages DB

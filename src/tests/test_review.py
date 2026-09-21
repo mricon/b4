@@ -5075,11 +5075,11 @@ class TestArchiveSeries:
 
 
 class TestCreateReviewBranchCleanup:
-    """A branch that cannot be finished is not left checked out."""
+    """A branch that cannot be finished leaves nothing behind."""
 
     @staticmethod
     def _seed_fetch_head(gitdir: str) -> Tuple[str, str]:
-        """Leave a commit for the cherry-pick to land, as FETCH_HEAD.
+        """Leave the applied series waiting in FETCH_HEAD, as the am would.
 
         Returns (base, tip): the commit to build the review branch on, and
         the one waiting in FETCH_HEAD.
@@ -5126,10 +5126,9 @@ class TestCreateReviewBranchCleanup:
                 )
 
     def test_cleans_up_when_the_patch_range_cannot_be_read(self, gitdir: str) -> None:
-        """Everything between the checkout and the tracking commit runs with
-        HEAD already on the new branch.  Bailing out there without restoring
-        leaves the caller standing on a branch that was never finished, which
-        the two neighbouring failures below it already knew to avoid."""
+        """Bailing out partway through must leave neither a half-built branch
+        nor a moved HEAD.  Nothing reachable is created until the ref is
+        written last, so there is nothing to undo -- this pins that down."""
         ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
         assert ecode == 0
         base, _tip = self._seed_fetch_head(gitdir)
@@ -5141,15 +5140,14 @@ class TestCreateReviewBranchCleanup:
         assert not b4.git_branch_exists(gitdir, branch)
 
     def test_cleans_up_from_a_detached_head(self, gitdir: str) -> None:
-        """A detached HEAD has no branch name to go back to, and skipping the
-        restore on that account costs both halves of the cleanup: git refuses
-        to delete the branch HEAD is standing on, so the caller keeps the
-        stranding *and* the leftover.  The name comes from the change-id, so
-        the next attempt at that series then walks into 'already exists'.
+        """A detached HEAD has no branch name to go back to, so a failure
+        that moved it would have nowhere to put it back.  A leftover branch
+        is just as costly: the name comes from the change-id, so the next
+        attempt at that series walks into 'already exists'.
 
-        Detached at the FETCH_HEAD tip rather than at the base, so restoring
-        to the base the branch was created at does not pass for remembering
-        where HEAD actually was.
+        Detached at the FETCH_HEAD tip rather than at the base, so a HEAD
+        left sitting at the base the branch was built on does not pass for
+        having stayed put.
         """
         base, tip = self._seed_fetch_head(gitdir)
         ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach', tip])
@@ -5162,4 +5160,109 @@ class TestCreateReviewBranchCleanup:
         ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
         assert ecode == 0
         assert head.strip() == tip
+        assert not b4.git_branch_exists(gitdir, branch)
+
+
+class TestCreateReviewBranchNoCheckout:
+    """The review branch is built out of refs, never out of the worktree.
+
+    Entering a review used to check the new branch out and cherry-pick the
+    applied series onto it, which rewrote commits that were already correct
+    and left HEAD on a branch the maintainer had not asked to be on (see
+    Jason Gunthorpe's report, 20260824164031.GQ244917@nvidia.com).
+    """
+
+    @staticmethod
+    def _seed(gitdir: str) -> Tuple[str, str]:
+        """Put an applied one-patch series in FETCH_HEAD, as the am does."""
+        ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        base = base.strip()
+        with open(os.path.join(gitdir, 'file1.txt'), 'a') as fh:
+            fh.write('applied by the series\n')
+        b4.git_run_command(gitdir, ['add', 'file1.txt'])
+        ecode, _out = b4.git_run_command(gitdir, ['commit', '-m', 'Applied patch'])
+        assert ecode == 0
+        ecode, tip = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        tip = tip.strip()
+        with open(os.path.join(gitdir, '.git', 'FETCH_HEAD'), 'w') as fh:
+            fh.write(f'{tip}\t\tbranch\n')
+        ecode, _out = b4.git_run_command(gitdir, ['reset', '--hard', base])
+        assert ecode == 0
+        return base, tip
+
+    @staticmethod
+    def _create(gitdir: str, branch: str, base: str) -> None:
+        review.create_review_branch(
+            gitdir,
+            branch,
+            base,
+            b4.LoreSeries(1, 1),
+            'https://example.com/x',
+            'https://example.com/%s',
+        )
+
+    def test_head_and_worktree_stay_put(self, gitdir: str) -> None:
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '-b', 'work'])
+        assert ecode == 0
+        base, _tip = self._seed(gitdir)
+
+        self._create(gitdir, 'b4/review/no-checkout', base)
+
+        assert b4.git_get_current_branch(gitdir) == 'work'
+        ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        assert head.strip() == base
+        with open(os.path.join(gitdir, 'file1.txt')) as fh:
+            assert 'applied by the series' not in fh.read()
+
+    def test_head_stays_detached(self, gitdir: str) -> None:
+        base, _tip = self._seed(gitdir)
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach', base])
+        assert ecode == 0
+
+        self._create(gitdir, 'b4/review/no-checkout-detached', base)
+
+        assert b4.git_get_current_branch(gitdir) is None
+
+    def test_reuses_the_applied_commits_verbatim(self, gitdir: str) -> None:
+        """The tracking commit sits directly on FETCH_HEAD, unrewritten."""
+        base, tip = self._seed(gitdir)
+        branch = 'b4/review/verbatim'
+
+        self._create(gitdir, branch, base)
+
+        ecode, parent = b4.git_run_command(gitdir, ['rev-parse', f'{branch}~1'])
+        assert ecode == 0
+        assert parent.strip() == tip
+        # An empty tracking commit: the tip carries the series' own tree.
+        ecode, trees = b4.git_run_command(
+            gitdir, ['rev-parse', f'{branch}^{{tree}}', f'{tip}^{{tree}}']
+        )
+        assert ecode == 0
+        assert len(set(trees.split())) == 1
+        _cover, tracking = review.load_tracking(gitdir, branch)
+        assert tracking['series']['base-commit'] == base
+        assert tracking['series']['first-patch-commit'] == tip
+
+    def test_refuses_patches_that_do_not_descend_from_base(self, gitdir: str) -> None:
+        """A conflict resolved by hand can leave FETCH_HEAD anywhere.  Building
+        a ref on the wrong parent would misreport every patch in the series, so
+        say so instead."""
+        base, _tip = self._seed(gitdir)
+        # Point FETCH_HEAD at an unrelated commit that does not contain base.
+        ecode, _out = b4.git_run_command(
+            gitdir, ['commit', '--allow-empty', '-q', '-m', 'sideways']
+        )
+        assert ecode == 0
+        ecode, sideways = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
+        b4.git_run_command(gitdir, ['reset', '--hard', '-q', base])
+        with open(os.path.join(gitdir, '.git', 'FETCH_HEAD'), 'w') as fh:
+            fh.write(f'{base}\t\tbranch\n')
+
+        branch = 'b4/review/wrong-parent'
+        with pytest.raises(SystemExit):
+            self._create(gitdir, branch, sideways.strip())
         assert not b4.git_branch_exists(gitdir, branch)
