@@ -789,7 +789,10 @@ integrate your b4 workflow with patchwork.
 
    :term:`b4.pw-review-state`
      Enabling this option makes ``b4 am`` or ``b4 shazam`` automatically set
-     the review status of the retrieved patches. For example::
+     the review status of the retrieved patches. It also preselects this state
+     in the Patchwork-state chooser shown after sending a reply from
+     ``b4 review``; that chooser defaults to ``under-review`` when this option
+     is unset. For example::
 
          pw-review-state = under-review
 

@@ -34,6 +34,7 @@ from b4.review_tui._common import (
     suspend_and_edit,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
+from b4.review_tui._patchwork import PatchworkStateMixin
 
 
 @dataclass
@@ -188,6 +189,7 @@ class MessageViewScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding('r', 'reply', 'reply'),
+        Binding('s', 'set_patchwork_state', 'set state'),
         Binding('F', 'toggle_flag', 'flag', key_display='F'),
         Binding('S', 'skip_quoted', 'skip quoted'),
         Binding('j', 'next_message', 'next msg'),
@@ -244,7 +246,7 @@ class MessageViewScreen(ModalScreen[None]):
                 auto_scroll=False,
             )
             yield Static(
-                'r reply  |  F flag  |  S skip quoted  |  j/k prev/next msg  |  q back',
+                'r reply  |  s set state  |  F flag  |  S skip quoted  |  j/k prev/next msg  |  q back',
                 id='msg-hint',
             )
 
@@ -387,6 +389,14 @@ class MessageViewScreen(ModalScreen[None]):
     def action_reply(self) -> None:
         self._lite_screen.compose_reply(self._node)
 
+    def action_set_patchwork_state(self) -> None:
+        """Set Patchwork state for the patch currently being viewed."""
+        lmsg = self._node.lmsg
+        if not lmsg.has_diff or not lmsg.msgid:
+            self.app.notify('Selected message is not a patch', severity='warning')
+            return
+        self._lite_screen.begin_patchwork_state([lmsg.msgid], notify_empty=True)
+
     def action_toggle_flag(self) -> None:
         self._lite_screen.toggle_flag(self._node)
         self._update_title()
@@ -456,7 +466,7 @@ class MessageViewScreen(ModalScreen[None]):
         self.query_one('#msg-viewer', RichLog).scroll_end()
 
 
-class LiteThreadScreen(ModalScreen[None]):
+class LiteThreadScreen(PatchworkStateMixin, ModalScreen[None]):
     """Mutt-style lite thread viewer for browsing a mail thread."""
 
     DEFAULT_CSS = """
@@ -565,6 +575,8 @@ class LiteThreadScreen(ModalScreen[None]):
             return build_thread_tree(lmbx)
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if await self.handle_patchwork_worker(event):
+            return
         if event.worker.name != '_fetch_thread':
             return
         if event.state == WorkerState.SUCCESS:
@@ -645,6 +657,26 @@ class LiteThreadScreen(ModalScreen[None]):
             conn.close()
         except Exception:
             pass
+
+    def _patch_msgid_for_node(self, node: ThreadNode) -> Optional[str]:
+        """Return the patch message a reply to *node* belongs to, if known."""
+        node_map = {n.lmsg.msgid: n for n in self._thread_nodes if n.lmsg.msgid}
+        current: Optional[ThreadNode] = node
+        seen = set()
+        while current is not None and current.lmsg.msgid not in seen:
+            lmsg = current.lmsg
+            if lmsg.has_diff and lmsg.msgid:
+                return lmsg.msgid
+            if not lmsg.in_reply_to:
+                break
+            seen.add(lmsg.msgid)
+            current = node_map.get(lmsg.in_reply_to)
+        return None
+
+    @staticmethod
+    def _reply_state_default() -> str:
+        config = b4.get_main_config()
+        return str(config.get('pw-review-state', '') or 'under-review')
 
     def _detect_maintainer_replies(self) -> None:
         """Detect messages sent by the maintainer and infer flags.
@@ -827,6 +859,12 @@ class LiteThreadScreen(ModalScreen[None]):
             mark_outgoing_seen([msg])
             self.app.notify(f'Reply sent to {lmsg.fromemail}')
         self._mark_answered(node)
+        if not self._email_dryrun:
+            patch_msgid = self._patch_msgid_for_node(node)
+            if patch_msgid:
+                self.begin_patchwork_state(
+                    [patch_msgid], default_state=self._reply_state_default()
+                )
 
     def action_back(self) -> None:
         if self._thread_nodes:
