@@ -15,6 +15,7 @@ pytest.importorskip('textual')
 
 import b4
 from b4.review_tui._lite_app import LiteThreadScreen
+from b4.review_tui._patchwork import PatchworkStateMixin
 
 
 class TestLiteSendReply:
@@ -67,3 +68,30 @@ class TestLiteSendReply:
         assert '> trailing untouched quote' not in body
         assert body.endswith('\n\n-- \n' + b4.get_email_signature())
         assert send_mail.call_args.args[1] == [outgoing]
+class TestPatchworkStateFlow:
+    """A screen may have only one Patchwork state update in flight."""
+
+    def test_rejects_overlapping_requests(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Host(PatchworkStateMixin):
+            def __init__(self) -> None:
+                self.app = mock.Mock()
+                self.run_worker = mock.Mock()
+
+        monkeypatch.setattr(
+            b4,
+            'get_main_config',
+            lambda: {
+                'pw-key': 'key',
+                'pw-url': 'https://pw.example.com',
+                'pw-project': 'project',
+            },
+        )
+        host = Host()
+
+        host.begin_patchwork_state(['first@example.com'])
+        host.begin_patchwork_state(['second@example.com'])
+
+        assert host.run_worker.call_count == 1
+        host.app.notify.assert_called_once_with(
+            'Patchwork state update already in progress', severity='warning'
+        )

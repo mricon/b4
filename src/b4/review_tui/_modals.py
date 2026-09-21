@@ -2640,10 +2640,16 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
     }
     """
 
-    def __init__(self, states: List[Dict[str, Any]], current_state: str) -> None:
+    def __init__(
+        self,
+        states: List[Dict[str, Any]],
+        current_state: str,
+        allow_archived: bool = True,
+    ) -> None:
         super().__init__()
         self._states = states
         self._current_state = current_state
+        self._allow_archived = allow_archived
 
     def compose(self) -> ComposeResult:
         with Vertical(id='state-dialog'):
@@ -2655,7 +2661,8 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
                 ],
                 id='state-list',
             )
-            yield Checkbox('Archived', False, id='state-archived')
+            if self._allow_archived:
+                yield Checkbox('Archived', False, id='state-archived')
 
     def on_mount(self) -> None:
         lv = self.query_one('#state-list', ListView)
@@ -2667,6 +2674,8 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
                 break
 
     def action_toggle_archived(self) -> None:
+        if not self._allow_archived:
+            return
         cb = self.query_one('#state-archived', Checkbox)
         cb.value = not cb.value
 
@@ -2686,7 +2695,11 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
         else:
             self.dismiss(None)
             return
-        archived = self.query_one('#state-archived', Checkbox).value
+        archived = (
+            self.query_one('#state-archived', Checkbox).value
+            if self._allow_archived
+            else False
+        )
         self.dismiss((slug, archived))
 
     def action_cancel(self) -> None:
