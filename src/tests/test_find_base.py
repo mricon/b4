@@ -178,3 +178,147 @@ class TestCheckAppliesClean:
         )
         assert lser.check_applies_clean(path, repo['c2']) == (3, [])
         assert len(lser.check_applies_clean(path, 'HEAD')[1]) == 2
+
+
+class TestGitMapBlobsToCommits:
+    """Tests for the single-walk blob lookup behind find_base()."""
+
+    since = '2025-12-25'
+    until = '2026-01-20'
+
+    def _map(self, repo: str, blobs: List[str]) -> Dict[str, List[str]]:
+        return b4.git_map_blobs_to_commits(
+            repo, set(blobs), self.since, self.until, ['--all']
+        )
+
+    def test_finds_the_commit_that_added_the_blob(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        blob = _blob(path, 'HEAD', 'a.txt')
+        assert self._map(path, [blob]) == {blob: [repo['c2']]}
+
+    def test_finds_both_ends_of_the_blob_lifetime(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        # b.txt as it was at c1: added by c1, replaced by c3.
+        blob = _blob(path, repo['c1'], 'b.txt')
+        assert self._map(path, [blob]) == {blob: [repo['c3'], repo['c1']]}
+
+    def test_same_answer_as_find_object(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        blobs = [
+            _blob(path, repo['c1'], 'a.txt'),
+            _blob(path, repo['c1'], 'b.txt'),
+            _blob(path, repo['c1'], 'c.txt'),
+            _blob(path, 'HEAD', 'a.txt'),
+        ]
+        got = self._map(path, blobs)
+        for blob in blobs:
+            want = [
+                line.split()[0]
+                for line in b4.git_get_command_lines(
+                    path,
+                    [
+                        'log',
+                        '--pretty=oneline',
+                        '--since',
+                        self.since,
+                        '--until',
+                        self.until,
+                        '--find-object',
+                        blob,
+                        '--all',
+                    ],
+                )
+            ]
+            assert got.get(blob, []) == want
+
+    def test_a_commit_touching_the_blob_twice_is_listed_once(
+        self, repo: Dict[str, str]
+    ) -> None:
+        path = repo['repo']
+        # One commit that writes the same content to two different files.
+        dup = _commit(
+            path,
+            '2026-01-16T12:00:00+0000',
+            'five',
+            write={'d.txt': 'same\n', 'e.txt': 'same\n'},
+        )
+        blob = _blob(path, 'HEAD', 'd.txt')
+        assert self._map(path, [blob]) == {blob: [dup]}
+
+    def test_respects_the_date_window(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        blob = _blob(path, repo['c1'], 'a.txt')
+        # c1 and c2 are the only commits touching it, and both are older.
+        assert (
+            b4.git_map_blobs_to_commits(
+                path, {blob}, '2026-01-08', self.until, ['--all']
+            )
+            == {}
+        )
+
+    def test_unknown_blob_is_absent(self, repo: Dict[str, str]) -> None:
+        assert self._map(repo['repo'], ['0' * 12]) == {}
+
+    def test_mixed_abbreviation_lengths(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        short = _blob(path, 'HEAD', 'a.txt', length=7)
+        full = _blob(path, 'HEAD', 'b.txt', length=40)
+        assert self._map(path, [short, full]) == {
+            short: [repo['c2']],
+            full: [repo['c3']],
+        }
+
+
+class TestFindBase:
+    """Tests for LoreSeries.find_base()."""
+
+    def test_no_indexes(self, repo: Dict[str, str]) -> None:
+        with pytest.raises(IndexError):
+            _series([]).find_base(repo['repo'])
+
+    def test_head_when_everything_already_matches(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        lser = _series(
+            [
+                ('a.txt', _blob(path, 'HEAD', 'a.txt')),
+                ('b.txt', _blob(path, 'HEAD', 'b.txt')),
+            ]
+        )
+        describe, checked, fewest = lser.find_base(path)
+        assert (checked, fewest) == (2, 0)
+        assert _git(path, 'rev-parse', f'{describe}^{{}}') == repo['c4']
+
+    def test_walks_back_to_the_commit_the_series_was_made_on(
+        self, repo: Dict[str, str]
+    ) -> None:
+        path = repo['repo']
+        lser = _series(
+            [
+                ('a.txt', _blob(path, repo['c2'], 'a.txt')),
+                ('b.txt', _blob(path, repo['c2'], 'b.txt')),
+                ('c.txt', _blob(path, repo['c2'], 'c.txt')),
+            ]
+        )
+        describe, checked, fewest = lser.find_base(path)
+        assert (checked, fewest) == (3, 0)
+        assert _git(path, 'rev-parse', f'{describe}^{{}}') == repo['c2']
+
+    def test_raises_when_nothing_matches(self, repo: Dict[str, str]) -> None:
+        lser = _series([('nosuch.txt', '0' * 12), ('alsonot.txt', '1' * 12)])
+        with pytest.raises(IndexError):
+            lser.find_base(repo['repo'])
+
+    def test_settles_for_the_best_partial_match(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        # a.txt and b.txt as of c2, plus a file that never existed: the best we
+        # can do is c2, with the invented file still outstanding.
+        lser = _series(
+            [
+                ('a.txt', _blob(path, repo['c2'], 'a.txt')),
+                ('b.txt', _blob(path, repo['c2'], 'b.txt')),
+                ('nosuch.txt', '0' * 12),
+            ]
+        )
+        describe, checked, fewest = lser.find_base(path)
+        assert (checked, fewest) == (3, 1)
+        assert _git(path, 'rev-parse', f'{describe}^{{}}') == repo['c2']

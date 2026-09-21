@@ -1415,26 +1415,21 @@ class LoreSeries:
         if fewest > 0:
             since = pdate - datetime.timedelta(days=maxdays)
             gsince = since.strftime('%Y-%m-%d')
-            logger.debug('Starting --find-object from %s to %s', gsince, guntil)
+            logger.debug('Mapping blobs from %s to %s', gsince, guntil)
             best = commit
+            # Walking history once for all the blobs we care about costs about
+            # as much as a single --find-object walk, so we do that instead of
+            # one walk per mismatched blob.
+            blobmap = git_map_blobs_to_commits(
+                gitdir, {bi for _fn, bi in mismatches}, gsince, guntil, where
+            )
             for fn, bi in mismatches:
                 logger.debug('Finding tree matching %s=%s in %s', fn, bi, where)
-                gitargs = [
-                    'log',
-                    '--pretty=oneline',
-                    '--since',
-                    gsince,
-                    '--until',
-                    guntil,
-                    '--find-object',
-                    bi,
-                ] + where
-                lines = git_get_command_lines(gitdir, gitargs)
-                if not lines:
+                commits = blobmap.get(bi)
+                if not commits:
                     logger.debug('Could not find object %s in the tree', bi)
                     continue
-                for line in lines:
-                    commit = line.split()[0]
+                for commit in commits:
                     logger.debug('commit=%s', commit)
                     # We try both that commit and the one preceding it, in case it was a deletion
                     # Keep track of the fewest mismatches
@@ -3881,6 +3876,72 @@ def git_get_command_lines(gitdir: Optional[str], args: List[str]) -> List[str]:
             lines.append(line)
 
     return lines
+
+
+def git_map_blobs_to_commits(
+    gitdir: Optional[str],
+    blobs: Set[str],
+    gsince: str,
+    guntil: str,
+    where: List[str],
+) -> Dict[str, List[str]]:
+    """Find which commits in a date range touch any of *blobs*.
+
+    Returns a dict mapping each blob hash in *blobs* that we found to the
+    commits touching it, newest first -- the same thing you would get by
+    running ``git log --find-object`` once per blob, but from a single walk of
+    the history. The hashes in *blobs* may be abbreviated, as they come
+    straight out of the ``index`` lines of a patch.
+    """
+    # Group the hashes we are looking for by length, so we can compare each
+    # hash git gives us against the right-sized prefix.
+    bylen: Dict[int, Set[str]] = dict()
+    for blob in blobs:
+        bylen.setdefault(len(blob), set()).add(blob)
+    lengths = sorted(bylen.keys())
+
+    gitargs = [
+        'log',
+        '--pretty=format:%H',
+        '--raw',
+        '--no-abbrev',
+        '--since',
+        gsince,
+        '--until',
+        guntil,
+    ] + where
+    _ecode, out = git_run_command(gitdir, gitargs)
+
+    found: Dict[str, List[str]] = dict()
+    commit = None
+    for line in out.splitlines():
+        if not line:
+            continue
+        if line[0] != ':':
+            # --pretty=format:%H, so any non-raw line is the commit we are in
+            commit = line
+            continue
+        if commit is None:
+            continue
+        # :<srcmode> <dstmode> <srcsha> <dstsha> <status>\t<path>
+        chunks = line[1:].split()
+        if len(chunks) < 5:
+            continue
+        for sha in chunks[2:4]:
+            if set(sha) == {'0'}:
+                # The all-zero placeholder for the missing side of an
+                # addition or a deletion, not a blob anyone can ask about.
+                continue
+            for length in lengths:
+                blob = sha[:length]
+                if blob in bylen[length]:
+                    commits = found.setdefault(blob, list())
+                    # A commit can touch the same blob on both sides, or in
+                    # more than one path; we only want to try it once.
+                    if not commits or commits[-1] != commit:
+                        commits.append(commit)
+
+    return found
 
 
 def git_get_repo_status(
