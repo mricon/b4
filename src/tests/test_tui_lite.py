@@ -7,6 +7,7 @@
 
 import contextlib
 import email.message
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -14,7 +15,7 @@ import pytest
 pytest.importorskip('textual')
 
 import b4
-from b4.review_tui._lite_app import LiteThreadScreen
+from b4.review_tui._lite_app import LiteThreadScreen, MessageViewScreen
 from b4.review_tui._patchwork import PatchworkStateMixin
 
 
@@ -68,6 +69,72 @@ class TestLiteSendReply:
         assert '> trailing untouched quote' not in body
         assert body.endswith('\n\n-- \n' + b4.get_email_signature())
         assert send_mail.call_args.args[1] == [outgoing]
+
+
+class TestLitePatchworkState:
+    """The thread message viewer targets Patchwork patches, never a series."""
+
+    def test_s_targets_the_selected_patch_message(self) -> None:
+        lmsg = SimpleNamespace(has_diff=True, msgid='patch@example.com')
+        node = SimpleNamespace(lmsg=lmsg)
+        lite = mock.Mock()
+        view = MessageViewScreen(node, lite)
+
+        view.action_set_patchwork_state()
+
+        lite.begin_patchwork_state.assert_called_once_with(
+            ['patch@example.com'], notify_empty=True
+        )
+
+    def test_reply_to_followup_resolves_ancestor_patch(self) -> None:
+        screen = LiteThreadScreen('thread@example.com')
+        patch = SimpleNamespace(
+            lmsg=SimpleNamespace(
+                msgid='patch@example.com', in_reply_to=None, has_diff=True
+            )
+        )
+        followup = SimpleNamespace(
+            lmsg=SimpleNamespace(
+                msgid='followup@example.com',
+                in_reply_to='patch@example.com',
+                has_diff=False,
+            )
+        )
+        screen._thread_nodes = [patch, followup]
+
+        assert screen._patch_msgid_for_node(followup) == 'patch@example.com'
+
+    def test_sent_reply_offers_configured_patchwork_state(self) -> None:
+        """A real reply, unlike a dry run, starts the post-send state flow."""
+        screen = LiteThreadScreen('thread@example.com')
+        lmsg = mock.Mock()
+        lmsg.msgid = 'patch@example.com'
+        lmsg.in_reply_to = None
+        lmsg.has_diff = True
+        lmsg.fromemail = 'author@example.com'
+        outgoing = email.message.EmailMessage()
+        lmsg.make_reply.return_value = outgoing
+        node = SimpleNamespace(lmsg=lmsg)
+        screen._thread_nodes = [node]
+
+        host = mock.Mock()
+        host.suspend.side_effect = lambda: contextlib.nullcontext()
+        with (
+            mock.patch.object(type(screen), 'app', mock.PropertyMock(return_value=host)),
+            mock.patch.object(screen, '_mark_answered'),
+            mock.patch.object(screen, '_reply_state_default', return_value='reviewing'),
+            mock.patch.object(screen, 'begin_patchwork_state') as begin,
+            mock.patch('b4.get_smtp', return_value=(None, 'me@example.com')),
+            mock.patch('b4.send_mail', return_value=1),
+            mock.patch('b4.review_tui._lite_app.mark_outgoing_seen'),
+        ):
+            screen._send_reply(node, 'Looks good.')
+
+        begin.assert_called_once_with(
+            ['patch@example.com'], default_state='reviewing'
+        )
+
+
 class TestPatchworkStateFlow:
     """A screen may have only one Patchwork state update in flight."""
 

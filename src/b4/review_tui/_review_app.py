@@ -20,6 +20,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.widgets import Label, ListItem, ListView, RichLog, Static
+from textual.worker import Worker
 
 import b4
 import b4.mbox
@@ -71,6 +72,7 @@ from b4.review_tui._modals import (
     TrailerScreen,
     _review_help_lines,
 )
+from b4.review_tui._patchwork import PatchworkStateMixin
 
 
 class PatchListItem(ListItem):
@@ -124,7 +126,7 @@ class FollowupItem(ListItem):
         yield st
 
 
-class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
+class ReviewApp(PatchworkStateMixin, LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     """Textual app for b4 review TUI."""
 
     TITLE = 'b4 review'
@@ -356,6 +358,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 auto_scroll=False,
             )
         yield SeparatedFooter()
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Dispatch Patchwork state lookup workers started after mail send."""
+        await self.handle_patchwork_worker(event)
 
     def on_mount(self) -> None:
         _fix_ansi_theme(self)
@@ -1826,7 +1832,23 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 logger.debug('Post-send bookkeeping failed: %s', ex, exc_info=True)
                 self.notify(f'Sent, but recording it failed: {ex}', severity='warning')
 
+            # Patchwork changes are deliberately post-send: a lookup or REST
+            # failure must never make successfully delivered mail look failed.
+            patch_msgids = []
+            for msg in msgs:
+                msgid = b4.LoreMessage.clean_header(msg.get('In-Reply-To', ''))
+                if msgid:
+                    patch_msgids.append(msgid)
+            self.begin_patchwork_state(
+                patch_msgids, default_state=self._reply_state_default()
+            )
+
         self.push_screen(SendScreen(msgs), _on_send_confirmed)
+
+    @staticmethod
+    def _reply_state_default() -> str:
+        config = b4.get_main_config()
+        return str(config.get('pw-review-state', '') or 'under-review')
 
     def on_click(self, event: Click) -> None:
         """Detect clicks on follow-up headers or hint gutter markers."""
@@ -1917,6 +1939,11 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         else:
             mark_outgoing_seen([msg])
             self.notify(f'Reply sent to {entry["fromemail"]}')
+            patch_msgid = str(entry.get('patch-msgid', ''))
+            if patch_msgid:
+                self.begin_patchwork_state(
+                    [patch_msgid], default_state=self._reply_state_default()
+                )
 
     def _load_followup_msgs(self, msgs: List[Any]) -> None:
         """Parse msgs into follow-up comments and refresh the display."""
@@ -1994,6 +2021,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
                 ),
             }
+            if display_idx > 0 and display_idx <= len(self._patches):
+                entry['patch-msgid'] = self._patches[display_idx - 1].get(
+                    'header-info', {}
+                ).get('msgid', '')
             self._followup_comments.setdefault(display_idx, []).append(entry)
             count += 1
 
