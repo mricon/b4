@@ -545,7 +545,7 @@ def get_review_branch_patch_ids(
     for idx, sha in enumerate(out.strip().splitlines()):
         ecode, bpatch = b4.git_run_command(
             topdir,
-            ['show', '--format=email', '--binary', '--encoding=utf-8', sha],
+            ['show', '--format=email', '--binary', '--encoding=utf-8', sha, '--'],
             decode=False,
         )
         if ecode > 0:
@@ -567,7 +567,7 @@ def load_tracking(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
 
     Returns (cover_text, tracking_dict).
     """
-    ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch])
+    ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch, '--'])
     if ecode > 0:
         logger.critical('Unable to read tracking commit from %s', branch)
         sys.exit(1)
@@ -1355,7 +1355,9 @@ def reanchor_patch_comments(
             if not comments or not any(c.get('content') for c in comments):
                 continue
             if real_diff is None:
-                ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
+                ecode, real_diff = b4.git_run_command(
+                    topdir, ['diff', f'{sha}~1', sha, '--']
+                )
                 if ecode != 0:
                     break
             _resolve_comment_positions(real_diff, comments)
@@ -1511,7 +1513,9 @@ def _integrate_agent_reviews(
         # Resolve comment positions against the real diff
         if comments:
             sha = commit_shas[idx]
-            ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
+            ecode, real_diff = b4.git_run_command(
+                topdir, ['diff', f'{sha}~1', sha, '--']
+            )
             if ecode == 0:
                 _resolve_comment_positions(real_diff, comments)
 
@@ -1934,7 +1938,7 @@ def _integrate_sashiko_reviews(
         # Resolve comment positions against the real diff, then fall back
         # to structured finding locations for any still-unpositioned comments.
         sha = commit_shas[idx]
-        ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
+        ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha, '--'])
         if ecode == 0:
             _resolve_comment_positions(real_diff, comments)
             if locations_by_file:
@@ -2029,7 +2033,9 @@ def _integrate_followup_inline_comments(
 
             # Resolve positions against the real diff
             sha = commit_shas[idx]
-            ecode, real_diff = b4.git_run_command(topdir, ['diff', f'{sha}~1', sha])
+            ecode, real_diff = b4.git_run_command(
+                topdir, ['diff', f'{sha}~1', sha, '--']
+            )
             if ecode == 0:
                 _resolve_comment_positions(real_diff, comments)
 
@@ -3784,13 +3790,13 @@ def _build_review_email(
     elif comments and commit_sha and topdir:
         # Auto-generate reply from inline review comments
         ecode, commit_msg = b4.git_run_command(
-            topdir, ['show', '--format=%B', '--no-patch', commit_sha]
+            topdir, ['show', '--format=%B', '--no-patch', commit_sha, '--']
         )
         if ecode > 0:
             logger.warning('Could not get commit message for %s', commit_sha)
             return None
         ecode, diff_text = b4.git_run_command(
-            topdir, ['diff', f'{commit_sha}~1', commit_sha]
+            topdir, ['diff', f'{commit_sha}~1', commit_sha, '--']
         )
         if ecode > 0:
             logger.warning('Could not get diff for %s', commit_sha)
@@ -3804,7 +3810,7 @@ def _build_review_email(
         # Trailer-only reply: quote the first paragraph of the original
         if patch_meta is not None and commit_sha and topdir:
             ecode, commit_msg = b4.git_run_command(
-                topdir, ['show', '--format=%B', '--no-patch', commit_sha]
+                topdir, ['show', '--format=%B', '--no-patch', commit_sha, '--']
             )
             if ecode == 0 and commit_msg.strip():
                 # Strip the subject line (already in Subject: Re: header)

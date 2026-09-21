@@ -5346,7 +5346,7 @@ def git_range_to_patches(
         logger.debug('showargs=%s', showargs)
         ecode, out = git_run_command(
             gitdir,
-            ['show'] + showargs + [commit],
+            ['show'] + showargs + [commit, '--'],
             decode=False,
         )
         if ecode > 0:

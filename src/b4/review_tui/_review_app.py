@@ -596,7 +596,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
         # Show commit message with subject as a bright heading
         ecode, commit_msg = b4.git_run_command(
-            self._topdir, ['show', '--format=%B', '--no-patch', sha]
+            self._topdir, ['show', '--format=%B', '--no-patch', sha, '--']
         )
         if ecode == 0 and commit_msg.strip():
             all_lines = commit_msg.strip().splitlines()
@@ -703,7 +703,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     viewer.write(Rule(style='dim'))
                     viewer.write(Text(''))
 
-        ecode, diff_out = b4.git_run_command(self._topdir, ['diff', f'{sha}~1', sha])
+        ecode, diff_out = b4.git_run_command(
+            self._topdir, ['diff', f'{sha}~1', sha, '--']
+        )
         if ecode > 0:
             viewer.write(Text('Could not generate diff', style=ts['error']))
             return
@@ -1340,13 +1342,13 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 return
             sha = self._commit_shas[patch_idx]
             ecode, real_diff = b4.git_run_command(
-                self._topdir, ['diff', f'{sha}~1', sha]
+                self._topdir, ['diff', f'{sha}~1', sha, '--']
             )
             if ecode > 0:
                 self.notify('Could not get diff', severity='error')
                 return
             ecode, commit_msg = b4.git_run_command(
-                self._topdir, ['show', '--format=%B', '--no-patch', sha]
+                self._topdir, ['show', '--format=%B', '--no-patch', sha, '--']
             )
             if ecode > 0:
                 self.notify('Could not get commit message', severity='error')
@@ -2076,7 +2078,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
                 sha = self._commit_shas[idx]
                 ecode, real_diff = b4.git_run_command(
-                    self._topdir, ['diff', f'{sha}~1', sha]
+                    self._topdir, ['diff', f'{sha}~1', sha, '--']
                 )
                 if ecode == 0:
                     b4.review._resolve_comment_positions(real_diff, comments)

@@ -62,7 +62,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     # Make sure it has exactly one parent (not a merge)
     ecode, out = b4.git_run_command(
         topdir,
-        ['show', '--no-patch', '--format=%p', commit],
+        ['show', '--no-patch', '--format=%p', commit, '--'],
     )
     if ecode > 0:
         logger.error('Could not get commit info for %s', commit)
@@ -75,7 +75,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     links: Set[str] = set()
     ecode, out = b4.git_run_command(
         topdir,
-        ['show', '--no-patch', '--format=%B', commit],
+        ['show', '--no-patch', '--format=%B', commit, '--'],
     )
     if ecode > 0:
         logger.error('Could not get commit message for %s', commit)
@@ -92,7 +92,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
     # Find commit's author and subject from git
     ecode, out = b4.git_run_command(
         topdir,
-        ['show', '--no-patch', '--format=%as%x00%ae%x00%an%x00%s', commit],
+        ['show', '--no-patch', '--format=%as%x00%ae%x00%an%x00%s', commit, '--'],
     )
     if ecode > 0:
         logger.error('Could not get commit info for %s', commit)
@@ -123,7 +123,7 @@ def dig_commitish(cmdargs: argparse.Namespace) -> None:
         logger.debug('showargs=%s', showargs + [algoarg])
         ecode, bpatch = b4.git_run_command(
             topdir,
-            ['show'] + showargs + [algoarg] + [commit],
+            ['show'] + showargs + [algoarg] + [commit, '--'],
             decode=False,
         )
         if ecode > 0:

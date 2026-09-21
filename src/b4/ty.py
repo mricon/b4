@@ -84,7 +84,7 @@ def git_get_rev_diff(gitdir: Optional[str], rev: str) -> Tuple[int, str]:
 
 
 def git_get_commit_message(gitdir: Optional[str], rev: str) -> Tuple[int, str]:
-    args = ['log', '--format=%B', '-1', rev]
+    args = ['log', '--format=%B', '-1', rev, '--']
     return b4.git_run_command(gitdir, args)
 
 
@@ -169,7 +169,7 @@ def auto_locate_pr(
         return None
 
     # Check that we are the author of the merge commit
-    gitargs = ['show', '--format=%ae', merge_commit_id]
+    gitargs = ['show', '--format=%ae', merge_commit_id, '--']
     out = b4.git_get_command_lines(gitdir, gitargs)
     if not out:
         logger.debug('Could not get merge commit author for %s', pr_commit_id)
@@ -531,7 +531,7 @@ def get_applied_info(
     best_date: Optional[str] = None
     for label, commit_id in entries:
         # %ct picks the latest; %cD is the RFC2822 date; %h the short hash.
-        gitargs = ['show', '-s', '--format=%ct%x00%cD%x00%h', commit_id]
+        gitargs = ['show', '-s', '--format=%ct%x00%cD%x00%h', commit_id, '--']
         out = b4.git_get_command_lines(gitdir, gitargs)
         if not out:
             continue

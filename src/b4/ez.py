@@ -735,7 +735,7 @@ def load_cover(
             cover = ''
             tracking = dict()
         else:
-            gitargs = ['show', '-s', '--format=%B', cover_commit]
+            gitargs = ['show', '-s', '--format=%B', cover_commit, '--']
             ecode, out = b4.git_run_command(None, gitargs)
             if ecode > 0:
                 logger.critical('CRITICAL: unable to load cover letter')
@@ -1028,7 +1028,7 @@ def _claim_range_start(mybranch: str, cover_sha: str) -> str:
     if strategy == 'commit':
         return f'{cover_sha}~1'
     # tip-commit: read base-branch out of the known cover commit and fork off it
-    ecode, out = b4.git_run_command(None, ['show', '-s', '--format=%B', cover_sha])
+    ecode, out = b4.git_run_command(None, ['show', '-s', '--format=%B', cover_sha, '--'])
     if ecode > 0:
         logger.critical('CRITICAL: unable to read cover letter at %s', cover_sha)
         sys.exit(1)

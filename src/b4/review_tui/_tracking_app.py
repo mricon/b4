@@ -745,7 +745,7 @@ def _parse_art_from_message(commit_msg: str) -> Optional[Tuple[int, int, int]]:
 
 def _get_art_counts(topdir: str, branch: str) -> Optional[Tuple[int, int, int]]:
     """Load (Acked, Reviewed, Tested) trailer counts from a review branch."""
-    ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch])
+    ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch, '--'])
     if ecode > 0 or not out:
         return None
     return _parse_art_from_message(out)
