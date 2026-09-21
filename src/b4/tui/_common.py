@@ -257,17 +257,18 @@ def _to_rich_color(textual_color: str) -> str:
     ``ansi_default`` maps to ``default``.
 
     Textual's ansi themes resolve ``$panel``/``$surface`` to the CSS
-    keyword ``transparent`` and can append an alpha percentage
-    (``default 50%``). Rich understands neither, and feeding one into a
-    style string raises ``MissingStyle``, so both are reduced to the
-    terminal default colour.
+    keyword ``transparent``, every theme resolves ``$text-muted`` to
+    ``auto``, and both can carry an alpha percentage (``default 50%``).
+    Rich understands none of these, and feeding one into a style string
+    raises ``MissingStyle``, so they are reduced to the terminal default
+    colour.
     """
     parts = textual_color.rsplit(' ', 1)
     if len(parts) == 2 and parts[1].endswith('%'):
         textual_color = parts[0]  # drop the alpha suffix
     if textual_color.startswith('ansi_'):
         return textual_color[5:]  # strip 'ansi_' prefix
-    if textual_color == 'transparent':
+    if textual_color in ('transparent', 'auto'):
         return 'default'
     return textual_color
 
