@@ -3135,14 +3135,29 @@ class LoreMessage:
         newfile = None
         fmod = None
         for line in diff.split('\n'):
-            if not (line.startswith(('diff ', 'index ', 'new file mode '))):
+            if not (
+                line.startswith(
+                    (
+                        'diff ',
+                        'index ',
+                        'new file mode ',
+                        'deleted file mode ',
+                        'old mode ',
+                    )
+                )
+            ):
                 continue
             matches = re.search(r'^diff\s+--git\s+\w/(.*)\s+\w/(.*)$', line)
             if matches:
                 oldfile = matches.groups()[0]
                 newfile = matches.groups()[1]
+                # mode is per-file state; a value left over from the
+                # previous file must not leak onto this one
+                fmod = None
                 continue
-            matches = re.search(r'^new file mode (\d+)', line)
+            matches = re.search(
+                r'^(?:new file mode|deleted file mode|old mode) (\d+)$', line
+            )
             if matches:
                 fmod = matches.groups()[0]
             matches = re.search(r'^index\s+([\da-f]+)\.\.[\da-f]+.*$', line)
@@ -3154,7 +3169,7 @@ class LoreMessage:
                         fmod = matches.groups()[0]
                 if not fmod:
                     # fall back if we can't figure it out
-                    fmod = '10644'
+                    fmod = '100644'
                 indexes.add((oldfile, ohash, newfile, fmod))
         return indexes
 

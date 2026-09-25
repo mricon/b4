@@ -2590,3 +2590,76 @@ class TestUnicodeControlChars:
     def test_body_is_not_flagged(self, body: str) -> None:
         lmsg = self._get_lmsg(body)
         lmsg.get_am_message(add_trailers=False)
+
+
+class TestGetIndexesPerFileModes:
+    """A mode belongs to the file whose diff header carried it.
+
+    make_fake_am_range() binds every preimage by (hash, mode), so a mode
+    read off the file before it binds a gitlink or a symlink as a regular
+    blob, and the series stops fake-am'ing at all.
+    """
+
+    def test_a_mode_does_not_leak_onto_the_next_file(self) -> None:
+        """A gitlink and a symlink after a regular file keep their own.
+
+        The deleted file states its mode nowhere but on its own
+        "deleted file mode" line, which the index line does not repeat.
+        """
+        diff = (
+            'diff --git a/README b/README\n'
+            'index 1111111..2222222 100644\n'
+            '--- a/README\n'
+            '+++ b/README\n'
+            '@@ -1 +1 @@\n'
+            '-readme\n'
+            '+readme v2\n'
+            'diff --git a/sub b/sub\n'
+            'index 3333333..4444444 160000\n'
+            '--- a/sub\n'
+            '+++ b/sub\n'
+            '@@ -1 +1 @@\n'
+            '-Subproject commit 3333333333333333333333333333333333333333\n'
+            '+Subproject commit 4444444444444444444444444444444444444444\n'
+            'diff --git a/link b/link\n'
+            'index 5555555..6666666 120000\n'
+            '--- a/link\n'
+            '+++ b/link\n'
+            '@@ -1 +1 @@\n'
+            '-README\n'
+            '+sub\n'
+            'diff --git a/gone b/gone\n'
+            'deleted file mode 100755\n'
+            'index 7777777..0000000\n'
+            '--- a/gone\n'
+            '+++ /dev/null\n'
+            '@@ -1 +0,0 @@\n'
+            '-#!/bin/sh\n'
+        )
+        assert b4.LoreMessage.get_indexes(diff) == {
+            ('README', '1111111', 'README', '100644'),
+            ('sub', '3333333', 'sub', '160000'),
+            ('link', '5555555', 'link', '120000'),
+            ('gone', '7777777', 'gone', '100755'),
+        }
+
+    def test_a_mode_change_names_the_preimage_mode(self) -> None:
+        """A chmod alongside an edit: the index line carries no mode.
+
+        get_indexes describes the preimage, so "old mode" is the answer --
+        and nothing anywhere is mode 10644.
+        """
+        diff = (
+            'diff --git a/run.sh b/run.sh\n'
+            'old mode 100644\n'
+            'new mode 100755\n'
+            'index 8888888..9999999\n'
+            '--- a/run.sh\n'
+            '+++ b/run.sh\n'
+            '@@ -1 +1 @@\n'
+            '-echo old\n'
+            '+echo new\n'
+        )
+        assert b4.LoreMessage.get_indexes(diff) == {
+            ('run.sh', '8888888', 'run.sh', '100644')
+        }
