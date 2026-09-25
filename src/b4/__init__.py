@@ -1583,6 +1583,44 @@ class LoreSeries:
                         # renamed file, make sure to not add the new name later on
                         logger.debug('  Renamed file: %s -> %s', ofn, nfn)
                         seenfiles.add(nfn)
+                    if fmod == '160000':
+                        # A gitlink's preimage lives in the submodule's object
+                        # store, not ours; --cacheinfo binds it without the object.
+                        section = re.search(
+                            r'^diff --git \w/'
+                            + re.escape(ofn)
+                            + r'\s.*?(?=^diff --git |\Z)',
+                            lmsg.body,
+                            flags=re.M | re.S,
+                        )
+                        glink = (
+                            re.search(
+                                r'^-Subproject commit ([0-9a-f]{40,64})$',
+                                section.group(0),
+                                flags=re.M,
+                            )
+                            if section
+                            else None
+                        )
+                        if glink:
+                            bound_hash = glink.group(1)
+                            logger.debug('  Gitlink preimage for: %s', ofn)
+                            gitargs = [
+                                'update-index',
+                                '--add',
+                                '--cacheinfo',
+                                f'{fmod},{bound_hash},{ofn}',
+                            ]
+                            ecode, out = git_run_command(dfn, gitargs)
+                            if ecode > 0:
+                                logger.critical(
+                                    '  ERROR: Could not run update-index for %s (%s)',
+                                    ofn,
+                                    bound_hash,
+                                )
+                                return None, None
+                            continue
+                        logger.debug('  No gitlink preimage for %s', ofn)
                     # Try to grab full ref_id of this hash
                     try:
                         bound_hash = git_revparse_obj(ofi, dfn)

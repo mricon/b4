@@ -2663,3 +2663,103 @@ class TestGetIndexesPerFileModes:
         assert b4.LoreMessage.get_indexes(diff) == {
             ('run.sh', '8888888', 'run.sh', '100644')
         }
+
+
+class TestFakeAmGitlinkPreimage:
+    """A series bumping a submodule has to fake-am in either hash format.
+
+    The preimage of a gitlink is a commit in the submodule's object store,
+    which the superproject cannot resolve, so the only copy of it anywhere
+    on this side is the one written out in the diff -- as 64 hex digits in a
+    sha256 repository.
+    """
+
+    @staticmethod
+    def _bump_repo(
+        tmp_path: pathlib.Path, object_format: str
+    ) -> Tuple[str, str, int, b4.LoreSeries]:
+        """Build a repo whose gitlink bump names objects nobody has.
+
+        Returns (repo, base commit, hash length, series).  master keeps no
+        gitlink at all, so the index lookup make_fake_am_range falls back to
+        has nothing to find either -- exactly like a submodule that was never
+        cloned here.  The bump edits README as well, so the gitlink is not
+        the first file in the diff: a mode is per-file state, and one left
+        over from the file before would bind this one as a regular blob.
+        """
+        repo = str(tmp_path / f'gitlink-{object_format}')
+        ecode, out = b4.git_run_command(
+            None, ['init', f'--object-format={object_format}', '-b', 'master', repo]
+        )
+        assert ecode == 0, out
+        assert b4.git_set_config(repo, 'user.name', 'Gitlink Tester') == 0
+        assert b4.git_set_config(repo, 'user.email', 'gitlink@example.com') == 0
+        (pathlib.Path(repo) / 'README').write_text('readme\n')
+        for args in (['add', 'README'], ['commit', '-q', '-m', 'initial']):
+            assert b4.git_run_command(repo, args, rundir=repo)[0] == 0, args
+
+        hexlen = 64 if object_format == 'sha256' else 40
+        old, new = '1' * hexlen, '2' * hexlen
+        parent = 'master'
+        commits = list()
+        for idx, gitlink in enumerate((old, new)):
+            ecode, _out = b4.git_run_command(
+                repo,
+                ['update-index', '--add', '--cacheinfo', f'160000,{gitlink},sub'],
+                rundir=repo,
+            )
+            assert ecode == 0
+            if idx:
+                (pathlib.Path(repo) / 'README').write_text('readme v2\n')
+                assert b4.git_run_command(repo, ['add', 'README'], rundir=repo)[0] == 0
+            ecode, tree = b4.git_run_command(repo, ['write-tree'], rundir=repo)
+            assert ecode == 0
+            ecode, commit = b4.git_run_command(
+                repo,
+                ['commit-tree', tree.strip(), '-p', parent],
+                stdin=f'point sub at {gitlink[:7]}\n'.encode(),
+            )
+            assert ecode == 0
+            parent = commit.strip()
+            commits.append(parent)
+        base, bump = commits
+
+        ecode, mbox = b4.git_run_command(
+            repo, ['format-patch', '-1', '--stdout', bump], decode=False
+        )
+        assert ecode == 0
+        assert f'-Subproject commit {old}'.encode() in mbox
+        assert mbox.index(b'diff --git a/README') < mbox.index(b'diff --git a/sub')
+        # Back to a master that never heard of the submodule.
+        assert (
+            b4.git_run_command(repo, ['reset', '--hard', 'master'], rundir=repo)[0] == 0
+        )
+
+        lmbx = b4.LoreMailbox()
+        for idx, msg in enumerate(b4.mailsplit_bytes(mbox)):
+            if not msg['Message-Id']:
+                msg['Message-Id'] = f'<{object_format}-gitlink-{idx}@test.local>'
+            lmbx.add_message(msg)
+        lser = lmbx.get_series()
+        assert lser is not None
+        return repo, base, hexlen, lser
+
+    @pytest.mark.parametrize('object_format', ['sha1', 'sha256'])
+    def test_gitlink_preimage_is_bound_without_the_object(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        object_format: str,
+    ) -> None:
+        """Both ends of the range carry the gitlink the diff named."""
+        repo, base, hexlen, lser = self._bump_repo(tmp_path, object_format)
+        monkeypatch.chdir(repo)
+
+        start, end = lser.make_fake_am_range(gitdir=repo, at_base=base)
+
+        assert start, 'the gitlink preimage did not make it into a fake-am range'
+        assert end
+        for commit, gitlink in ((start, '1' * hexlen), (end, '2' * hexlen)):
+            ecode, entry = b4.git_run_command(repo, ['ls-tree', commit, 'sub'])
+            assert ecode == 0
+            assert entry.split()[:3] == ['160000', 'commit', gitlink]
