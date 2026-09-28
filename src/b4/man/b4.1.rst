@@ -83,6 +83,10 @@ For options and their descriptions, see ``b4 mbox --help``.
   an mbox file. Useful when a submitter sends patches without proper
   threading.
 
+``b4 mbox -a -n review.mbox [msgid]``
+  Find older and newer revisions and save their discussion threads in
+  revision order to review.mbox.
+
 
 b4 am
 ~~~~~

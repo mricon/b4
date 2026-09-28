@@ -1,7 +1,9 @@
 import io
+import mailbox
 import os
 import sys
 from email.message import EmailMessage
+from pathlib import Path
 from typing import List
 from unittest.mock import patch as mock_patch
 
@@ -115,6 +117,77 @@ def _make_msg(
 ) -> EmailMessage:
     msgid = msgid.strip('<>') or f'{abs(hash(subject + date))}@example.com'
     return make_msg(msgid, subject, from_addr=from_addr, date=date, body=body)
+
+
+def test_mbox_all_revisions_from_middle_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(b4, 'can_network', True)
+    author = 'Author <author@example.com>'
+    v1 = _make_msg(
+        '[PATCH] foo: fix bar',
+        author,
+        'Mon, 21 Sep 2026 10:00:00 +0000',
+        msgid='<v1@example.com>',
+    )
+    v1_reply = _make_msg(
+        'Re: [PATCH] foo: fix bar',
+        author,
+        'Mon, 21 Sep 2026 11:00:00 +0000',
+        msgid='<v1-reply@example.com>',
+    )
+    v2 = _make_msg(
+        '[PATCH v2] foo: fix bar',
+        author,
+        'Tue, 22 Sep 2026 10:00:00 +0000',
+        msgid='<v2@example.com>',
+    )
+    v3 = _make_msg(
+        '[PATCH v3] foo: fix bar',
+        author,
+        'Wed, 23 Sep 2026 10:00:00 +0000',
+        msgid='<v3@example.com>',
+    )
+    v3_reply = _make_msg(
+        'Re: [PATCH v3] foo: fix bar',
+        author,
+        'Wed, 23 Sep 2026 11:00:00 +0000',
+        msgid='<v3-reply@example.com>',
+    )
+
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        [
+            '--no-stdin',
+            'mbox',
+            '-a',
+            '-o',
+            str(tmp_path),
+            '-n',
+            'all.mbox',
+            'v2@example.com',
+        ]
+    )
+    with (
+        mock_patch('b4.retrieve_messages', return_value=('v2@example.com', [v2])),
+        mock_patch(
+            'b4.get_pi_search_results',
+            side_effect=[
+                [v3_reply, v3],
+                [v1_reply, v1],
+            ],
+        ),
+    ):
+        b4.mbox.main(cmdargs)
+
+    output = mailbox.mbox(tmp_path / 'all.mbox')
+    assert [msg['Message-Id'] for msg in output] == [
+        '<v1@example.com>',
+        '<v1-reply@example.com>',
+        '<v2@example.com>',
+        '<v3@example.com>',
+        '<v3-reply@example.com>',
+    ]
 
 
 def test_get_extra_series_rejects_prerequisite_change_id() -> None:

@@ -1056,6 +1056,16 @@ def _run_shazam_merge(
     sys.exit(0)
 
 
+def revision_sort_key(msg: EmailMessage) -> Tuple[int, int, int]:
+    lsub = b4.LoreSubject(msg.get('Subject', ''))
+    parsed_date = email.utils.parsedate_tz(msg.get('Date', ''))
+    if parsed_date is None:
+        timestamp = 0
+    else:
+        timestamp = email.utils.mktime_tz(parsed_date)
+    return lsub.revision, timestamp, lsub.counter
+
+
 def main(cmdargs: argparse.Namespace) -> None:
     # We force some settings
     if cmdargs.subcmd == 'shazam':
@@ -1073,7 +1083,8 @@ def main(cmdargs: argparse.Namespace) -> None:
     else:
         cmdargs.mergebase = False
 
-    if cmdargs.checknewer:
+    all_revisions = cmdargs.subcmd == 'mbox' and cmdargs.all_revisions
+    if cmdargs.checknewer or all_revisions:
         # Force nocache mode
         cmdargs.nocache = True
 
@@ -1089,8 +1100,28 @@ def main(cmdargs: argparse.Namespace) -> None:
     if not msgs or not msgid:
         sys.exit(1)
 
-    if len(msgs) and cmdargs.checknewer and b4.can_network:
+    if (cmdargs.checknewer or all_revisions) and b4.can_network:
         msgs = get_extra_series(msgs, direction=1, nocache=cmdargs.nocache)
+
+    if all_revisions:
+        if b4.can_network:
+            subjects = (b4.LoreSubject(msg.get('Subject', '')) for msg in msgs)
+            latest = max(
+                (
+                    sub.revision
+                    for sub in subjects
+                    if not sub.reply and sub.counter <= 1
+                ),
+                default=1,
+            )
+            if latest > 1:
+                msgs = get_extra_series(
+                    msgs,
+                    direction=-1,
+                    wantvers=list(range(1, latest)),
+                    nocache=cmdargs.nocache,
+                )
+        msgs.sort(key=revision_sort_key)
 
     if cmdargs.subcmd in ('am', 'shazam'):
         make_am(msgs, cmdargs, msgid)

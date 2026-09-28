@@ -356,6 +356,12 @@ def setup_parser() -> argparse.ArgumentParser:
     sp_mbox = subparsers.add_parser('mbox', help='Download a thread as an mbox file')
     cmd_mbox_common_opts(sp_mbox)
     sp_mbox.add_argument(
+        '-a',
+        '--all-revisions',
+        action='store_true',
+        help='Find older and newer revisions and save them in revision order',
+    )
+    sp_mbox.add_argument(
         '-f',
         '--filter-dupes',
         dest='filterdupes',

@@ -101,6 +101,18 @@ Option flags
   later revision is also available and will add these results to the
   retrieved thread.
 
+``-a, --all-revisions``
+  Check for both older and newer revisions of the selected patch series
+  and save the messages grouped by revision, oldest first. Messages
+  within each revision are ordered by date. For example::
+
+      b4 mbox -a -n review.mbox <msgid>
+
+  Revision discovery depends on the available public-inbox archive and
+  may not find revisions whose subject and author changed without a
+  matching ``change-id``. The older-revision search looks back up to
+  12 months from the newest revision.
+
 ``-n WANTNAME, --mbox-name WANTNAME``
   By default, the resulting mailbox file will use the message-id as the
   basis for its filename. This option lets you override this behaviour.
