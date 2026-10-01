@@ -4514,14 +4514,42 @@ def get_pi_search_results(
         t_mbox = node.get_mbox_by_query(
             query, full_threads=full_threads, nocache=nocache
         )
-    except liblore.RemoteError:
-        logger.info('Server returned an error.')
+    except liblore.NotOnMirrorError as ex:
+        logger.info('%s', ex)
+        return None
+    except liblore.RemoteError as ex:
+        # Lore answers a search that matches nothing with a 404.
+        if ex.status_code == 404:
+            logger.info('No messages found for that query')
+        else:
+            logger.info('Could not search %s: %s', node.hostname, ex)
         return None
     if not t_mbox:
         logger.info('No messages found for that query')
         return None
+    _log_lore_source(node, logging.DEBUG)
 
     return split_and_dedupe_pi_results(t_mbox)
+
+
+def _log_lore_source(node: liblore.LoreNode, level: int) -> None:
+    """Say so when a partial mirror's upstream archive answered instead.
+
+    That happens when the mirror didn't have it, or could not be
+    reached.  liblore already warns about an unreachable mirror and
+    about a degraded answer, so this only says where the answer came
+    from.
+    """
+    if node.last_source != liblore.Source.UPSTREAM:
+        return
+    upstream = node.upstream_url
+    upstream_host = urllib.parse.urlsplit(upstream).netloc if upstream else 'upstream'
+    logger.log(
+        level,
+        'Fetched from %s instead of %s',
+        upstream_host,
+        node.hostname,
+    )
 
 
 def split_and_dedupe_pi_results(t_mbox: bytes) -> List[EmailMessage]:
@@ -4615,14 +4643,23 @@ def get_pi_thread_by_msgid(
     node = get_lore_node()
     try:
         t_mbox = node.get_mbox_by_msgid(msgid, nocache=nocache)
+    except liblore.NotOnMirrorError as ex:
+        if not quiet:
+            logger.critical('%s', ex)
+        return None
     except liblore.RemoteError as ex:
         if not quiet:
-            logger.critical('Could not retrieve thread: %s', ex)
+            if ex.status_code == 404:
+                logger.critical('Thread not found on %s: %s', node.hostname, msgid)
+            else:
+                logger.critical('Could not retrieve thread: %s', ex)
         return None
     if not t_mbox:
         if not quiet:
             logger.critical('No messages found for that query')
         return None
+    if not quiet:
+        _log_lore_source(node, logging.INFO)
     msgs = split_and_dedupe_pi_results(t_mbox)
 
     if not msgs:

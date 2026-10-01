@@ -1254,6 +1254,178 @@ class TestGetLoreNode:
         assert crit[-2:] == ['Bad liblore setting', 'Fix it here.']
 
 
+class TestLoreFetchMessages:
+    """What get_pi_thread_by_msgid() and get_pi_search_results() tell the user."""
+
+    MBOX = (
+        b'From mboxrd@z Thu Jan  1 00:00:00 1970\n'
+        b'From: Dev <dev@example.com>\n'
+        b'Subject: [PATCH] thing\n'
+        b'Message-Id: <thing@example.com>\n'
+        b'\n'
+        b'Body.\n'
+    )
+
+    @pytest.fixture
+    def node(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        from unittest.mock import MagicMock
+
+        import liblore
+
+        node = MagicMock()
+        node.is_shutdown = False
+        node.hostname = 'mirror.example.org'
+        node.upstream_url = 'https://lore.kernel.org/all'
+        node.last_source = liblore.Source.LOCAL
+        monkeypatch.setattr(b4, 'LORENODE', node)
+        return node
+
+    @staticmethod
+    def _messages(caplog: pytest.LogCaptureFixture, level: int) -> List[str]:
+        return [r.getMessage() for r in caplog.records if r.levelno == level]
+
+    def test_thread_404_says_not_found(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.side_effect = liblore.RemoteError(
+            'Server returned an error: 404', status_code=404
+        )
+        with caplog.at_level(logging.INFO, logger='b4'):
+            assert b4.get_pi_thread_by_msgid('gone@example.com') is None
+        assert self._messages(caplog, logging.CRITICAL) == [
+            'Thread not found on mirror.example.org: gone@example.com'
+        ]
+
+    def test_thread_server_error_keeps_detail(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.side_effect = liblore.RemoteError(
+            'Server returned an error: 503', status_code=503
+        )
+        with caplog.at_level(logging.INFO, logger='b4'):
+            assert b4.get_pi_thread_by_msgid('x@example.com') is None
+        assert self._messages(caplog, logging.CRITICAL) == [
+            'Could not retrieve thread: Server returned an error: 503'
+        ]
+
+    def test_thread_not_on_mirror_uses_liblore_message(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        # liblore's message already names both the mirror and upstream.
+        msg = 'mirror.example.org does not have it, and lore.kernel.org did not answer'
+        node.get_mbox_by_msgid.side_effect = liblore.NotOnMirrorError(msg)
+        with caplog.at_level(logging.INFO, logger='b4'):
+            assert b4.get_pi_thread_by_msgid('x@example.com') is None
+        assert self._messages(caplog, logging.CRITICAL) == [msg]
+
+    def test_thread_quiet_logs_nothing_on_error(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.side_effect = liblore.RemoteError(
+            'Server returned an error: 404', status_code=404
+        )
+        with caplog.at_level(logging.DEBUG, logger='b4'):
+            assert b4.get_pi_thread_by_msgid('x@example.com', quiet=True) is None
+        assert caplog.records == []
+
+    def test_thread_from_upstream_says_so(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        node.last_source = liblore.Source.UPSTREAM
+        with caplog.at_level(logging.INFO, logger='b4'):
+            msgs = b4.get_pi_thread_by_msgid('thing@example.com')
+        assert msgs is not None and len(msgs) == 1
+        assert (
+            'Fetched from lore.kernel.org instead of mirror.example.org'
+            in self._messages(caplog, logging.INFO)
+        )
+
+    def test_thread_from_mirror_is_silent_about_source(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        with caplog.at_level(logging.DEBUG, logger='b4'):
+            assert b4.get_pi_thread_by_msgid('thing@example.com') is not None
+        assert not any('Fetched from' in r.getMessage() for r in caplog.records)
+
+    def test_thread_from_upstream_quiet(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        node.last_source = liblore.Source.UPSTREAM
+        with caplog.at_level(logging.DEBUG, logger='b4'):
+            assert (
+                b4.get_pi_thread_by_msgid('thing@example.com', quiet=True) is not None
+            )
+        assert not any('Fetched from' in r.getMessage() for r in caplog.records)
+
+    def test_search_404_is_no_results(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_query.side_effect = liblore.RemoteError(
+            'Server returned an error: 404', status_code=404
+        )
+        with caplog.at_level(logging.INFO, logger='b4'):
+            assert b4.get_pi_search_results('s:nothing') is None
+        info = self._messages(caplog, logging.INFO)
+        assert info[-1] == 'No messages found for that query'
+
+    def test_search_server_error_keeps_detail(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_query.side_effect = liblore.RemoteError(
+            'Request failed: connection refused'
+        )
+        with caplog.at_level(logging.INFO, logger='b4'):
+            assert b4.get_pi_search_results('s:thing') is None
+        info = self._messages(caplog, logging.INFO)
+        assert info[-1] == (
+            'Could not search mirror.example.org: Request failed: connection refused'
+        )
+
+    def test_search_not_on_mirror_uses_liblore_message(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        msg = 'No results for the query on mirror.example.org, and lore.kernel.org did not answer'
+        node.get_mbox_by_query.side_effect = liblore.NotOnMirrorError(msg)
+        with caplog.at_level(logging.INFO, logger='b4'):
+            assert b4.get_pi_search_results('s:thing') is None
+        assert self._messages(caplog, logging.INFO)[-1] == msg
+
+    def test_search_from_upstream_is_debug(
+        self, node: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import liblore
+
+        node.get_mbox_by_query.return_value = self.MBOX
+        node.last_source = liblore.Source.UPSTREAM
+        with caplog.at_level(logging.DEBUG, logger='b4'):
+            msgs = b4.get_pi_search_results('s:thing')
+        assert msgs is not None and len(msgs) == 1
+        line = 'Fetched from lore.kernel.org instead of mirror.example.org'
+        assert line in self._messages(caplog, logging.DEBUG)
+        assert line not in self._messages(caplog, logging.INFO)
+
+
 class TestDeprecatedConfig:
     """Tests for the b4.searchmask deprecation notice."""
 
