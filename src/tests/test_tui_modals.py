@@ -694,6 +694,25 @@ class TestSetStateScreen:
             lv = app.screen.query_one('#state-list', ListView)
             assert lv.index == 2  # 'replied' is at index 2
 
+    @pytest.mark.asyncio
+    async def test_patch_state_hides_archive_control(self) -> None:
+        """Single-patch state changes cannot accidentally archive a patch."""
+        app = ModalTestApp()
+        results: List[Optional[Tuple[str, bool]]] = []
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                SetStateScreen(self._states(), 'new', allow_archived=False),
+                results.append,
+            )
+            await pilot.pause()
+            assert list(app.screen.query('#state-archived')) == []
+            await pilot.press('a')
+            await pilot.press('enter')
+            await pilot.pause()
+
+        assert results == [('new', False)]
+
 
 # ---------------------------------------------------------------------------
 # LimitScreen

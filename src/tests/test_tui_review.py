@@ -812,6 +812,10 @@ class TestSendBookkeeping:
                     mock.patch('b4.review_tui._review_app.mark_outgoing_seen')
                 )
                 stack.enter_context(mock.patch.object(app, '_mark_patches_answered'))
+                # Post-send Patchwork state selection is covered separately;
+                # keep bookkeeping tests independent of a developer's global
+                # Patchwork configuration and its network endpoint.
+                stack.enter_context(mock.patch.object(app, 'begin_patchwork_state'))
                 for name, kwargs in patches.items():
                     stack.enter_context(mock.patch.object(app, name, **kwargs))
                 notified = stack.enter_context(mock.patch.object(app, 'notify'))

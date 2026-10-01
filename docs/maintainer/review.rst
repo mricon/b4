@@ -809,6 +809,7 @@ there you can:
 
 * Browse series from your Patchwork project
 * View a series thread (``Enter``)
+* Set the Patchwork state of a patch while viewing its email (``s``)
 * View CI check details for a series (``c``)
 * Track a series directly from the Patchwork list (``t``)
 * Set or change the Patchwork state for a series (``s``)
@@ -823,6 +824,12 @@ Patchwork has check results: green for pass, red for fail or warning,
 and dim for pending. Press ``c`` to open a detailed view of all CI
 checks grouped by patch, showing the check context, description, and a
 link to the full CI results.
+
+When you send a reply from either review interface, b4 offers to update the
+corresponding Patchwork patch state after the mail is delivered. The state
+selector defaults to :term:`b4.pw-review-state`, or ``under-review`` when that
+setting is absent. A multi-patch review send offers a separate choice for each
+patched email.
 
 Taking action
 -------------
