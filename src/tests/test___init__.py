@@ -1183,6 +1183,76 @@ class TestGetLoreNode:
         assert b4.get_lore_node() is fresh_node
         assert mock_from_gc.call_count == 2
 
+    @staticmethod
+    def _set_git_config(monkeypatch: pytest.MonkeyPatch, key: str, value: str) -> None:
+        """Add *key* = *value* to the git config every git command sees."""
+        count = int(os.environ.get('GIT_CONFIG_COUNT', '0'))
+        monkeypatch.setenv('GIT_CONFIG_COUNT', str(count + 1))
+        monkeypatch.setenv(f'GIT_CONFIG_KEY_{count}', key)
+        monkeypatch.setenv(f'GIT_CONFIG_VALUE_{count}', value)
+
+    def test_bad_allowupstream_is_config_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A value liblore rejects gives a LoreConfigError naming the section.
+
+        liblore raises LibloreError for an allowupstream value that is not
+        scheme://host, and without this every command that talks to lore
+        would die with a traceback.
+        """
+        self._set_git_config(
+            monkeypatch, 'liblore.https://lore.kernel.org.allowupstream', 'bogus'
+        )
+        with pytest.raises(b4.LoreConfigError) as exc:
+            b4.get_lore_node()
+        msg = str(exc.value)
+        assert "'bogus'" in msg
+        assert '[liblore "https://lore.kernel.org"] section (or [lore])' in msg
+        # Nothing half-built is kept: the next call tries again.
+        assert b4.LORENODE is None
+
+    def test_config_error_names_mirror_section(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """For a local mirror the message names its own section, not [lore]."""
+        b4.MAIN_CONFIG['midmask'] = 'http://127.0.0.1:11043/lore/all/%s'
+        self._set_git_config(
+            monkeypatch, 'liblore.http://127.0.0.1:11043.fallback', 'bogus'
+        )
+        with pytest.raises(b4.LoreConfigError) as exc:
+            b4.get_lore_node()
+        msg = str(exc.value)
+        assert '[liblore "http://127.0.0.1:11043"] section of' in msg
+        assert '[lore]' not in msg
+
+    def test_cmd_exits_cleanly_on_config_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """b4 prints the config error and exits 1, with no traceback."""
+        import b4.command
+        import b4.mbox
+
+        def needs_node(_cmdargs: object) -> None:
+            raise b4.LoreConfigError('Bad liblore setting\nFix it here.')
+
+        # Stand in for any command that talks to lore, and keep cmd()
+        # from loading the real git config of whoever runs the tests.
+        monkeypatch.setattr(b4.mbox, 'main', needs_node)
+        monkeypatch.setattr(b4, 'setup_config', lambda _cmdargs: None)
+        monkeypatch.setattr(sys, 'argv', ['b4', 'mbox', 'x@example.com'])
+        handlers = list(b4.logger.handlers)
+        try:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as exc:
+                    b4.command.cmd()
+        finally:
+            b4.logger.handlers[:] = handlers
+        assert exc.value.code == 1
+        crit = [r.getMessage() for r in caplog.records if r.levelno == logging.CRITICAL]
+        assert crit[-2:] == ['Bad liblore setting', 'Fix it here.']
+
 
 class TestDeprecatedConfig:
     """Tests for the b4.searchmask deprecation notice."""

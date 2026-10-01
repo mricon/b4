@@ -1471,6 +1471,10 @@ def cmd() -> None:
                 '         If you are sure about this, rerun with the right flag to allow.'
             )
         sys.exit(1)
+    except b4.LoreConfigError as ex:
+        for line in str(ex).splitlines():
+            logger.critical('%s', line)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

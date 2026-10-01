@@ -94,6 +94,15 @@ class LockHeldError(RuntimeError):
     """Raised when a non-blocking lock file is already held elsewhere."""
 
 
+class LoreConfigError(RuntimeError):
+    """Raised when git config has a liblore setting that liblore rejects.
+
+    For example an ``allowupstream`` value that is not ``scheme://host``.
+    Nothing can talk to lore until the user fixes it, so command-line
+    tools print the message and exit.
+    """
+
+
 class BadCharsError(RuntimeError):
     """Raised when a message body contains suspicious unicode control chars.
 
@@ -4352,11 +4361,20 @@ def get_lore_node() -> liblore.LoreNode:
             cache_expire = int(str(config['cache-expire']))
         except (ValueError, KeyError):
             cache_expire = int(str(DEFAULT_CONFIG['cache-expire']))
-        LORENODE = liblore.LoreNode.from_git_config(
-            base_url,
-            cache_dir=cache_dir,
-            cache_ttl=cache_expire * 60,
-        )
+        try:
+            LORENODE = liblore.LoreNode.from_git_config(
+                base_url,
+                cache_dir=cache_dir,
+                cache_ttl=cache_expire * 60,
+            )
+        except liblore.LibloreError as ex:
+            origin = f'{parsed.scheme}://{parsed.netloc}'
+            raise LoreConfigError(
+                f'Bad liblore setting in git config: {ex}\n'
+                f'Fix it in the [liblore "{origin}"] section'
+                + (' (or [lore])' if parsed.netloc == 'lore.kernel.org' else '')
+                + ' of your git config.'
+            ) from ex
         LORENODE.set_user_agent('b4', __VERSION__)
     return LORENODE
 
