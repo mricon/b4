@@ -119,6 +119,9 @@ These options control many of the core features of b4.
      Specifies the server from where to retrieve the messages specified by
      their message-id.
 
+     This can also be a partial mirror, such as one running on your own
+     machine. See :ref:`partial_mirror_settings`.
+
      Default: ``https://lore.kernel.org/all/%s``
 
    :term:`b4.save-maildirs`
@@ -187,6 +190,19 @@ library for all access to public-inbox servers.  Liblore reads its own
 settings from the ``[lore]`` section of git config (not ``[b4]``).  These
 settings are shared by all tools that use liblore, so configuring them
 once benefits b4 and any other liblore-based applications.
+
+The ``[lore]`` section is a shorthand for lore.kernel.org.  To configure
+any server, including lore.kernel.org, use a ``[liblore "<origin>"]``
+section, where ``<origin>`` is the scheme and host of the server (with
+the port, if it has one).  For a server that has such a section, liblore
+reads only that section and ignores ``[lore]``.  For example, with
+:term:`b4.midmask` set to ``http://localhost:11043/lore/all/%s``, the
+settings for that server go here::
+
+    [liblore "http://localhost:11043"]
+        requesttimeout = 2,30
+
+All the keys below work in both kinds of section.
 
 When one or more fallback origins are configured, liblore automatically
 retries a request on the next origin whenever a connection error,
@@ -285,6 +301,112 @@ Example ``~/.gitconfig``::
      Default: ``None``
 
      .. versionadded:: v0.16
+
+.. _partial_mirror_settings:
+
+Using a partial mirror
+~~~~~~~~~~~~~~~~~~~~~~
+A *partial mirror* has only some of an archive, for example a local
+mirror of the lists you follow.  It is fast on a slow connection, and it
+keeps working when lore.kernel.org is down.  But it doesn't have every
+message, so "not found" from it doesn't mean that the message doesn't
+exist.
+
+A partial mirror says that it is partial, and names the full archive it
+mirrors (its *upstream* archive), in the headers of its answers.  B4
+reads them through liblore, so there is nothing to set up besides
+:term:`b4.midmask`::
+
+    [b4]
+        midmask = http://localhost:11043/lore/all/%s
+
+B4 then works like this:
+
+- **The mirror answers first.**  When it doesn't have a thread, b4 gets
+  the thread from the upstream archive and tells you::
+
+      Fetched from lore.kernel.org instead of localhost
+
+- **Searches stay on the mirror.**  B4 asks the upstream archive only
+  when the mirror finds nothing.  This keeps searches fast, but a search
+  can miss messages that the mirror doesn't have.  Set
+  :term:`liblore.<origin>.partialsearch` to ``upstream`` if you want
+  every hit.
+- **Outages.**  When the mirror can't be reached, the upstream archive
+  answers.  When the upstream archive can't be reached, b4 doesn't try it
+  again for :term:`liblore.<origin>.upstreamholdoff` seconds, so you
+  don't wait for a timeout on every message.  If the mirror doesn't have
+  a thread and the upstream archive can't be reached, b4 says so, and
+  names both servers.
+- **Remembered.**  B4 remembers the upstream archive in its cache, so
+  this still works the next time, even when the mirror is stopped.
+
+Servers that don't send these headers, lore.kernel.org included, work
+the same as before.
+
+The settings below go in the section of the **mirror**, not in
+``[lore]``.  For example::
+
+    [liblore "http://localhost:11043"]
+        partialsearch = upstream
+        upstreamholdoff = 60
+
+The upstream archive uses the settings of its own section.  For
+lore.kernel.org, that is ``[lore]`` (or
+``[liblore "https://lore.kernel.org"]``), so your fallback mirrors in
+:ref:`lore_settings` still work when b4 goes upstream.
+
+A value that liblore doesn't understand is ignored, and the default is
+used instead.  The exception is :term:`liblore.<origin>.allowupstream`:
+a bad value there stops b4, with a message that names the setting and
+the section to fix.
+
+.. glossary::
+   :sorted:
+
+   :term:`liblore.<origin>.followupstream`
+     When ``true``, b4 follows a partial mirror to its upstream archive.
+     Set it to ``false`` to use only the mirror, as if it had everything.
+
+     Default: ``true``
+
+     .. versionadded:: v0.17
+
+   :term:`liblore.<origin>.partialsearch`
+     Where a search goes first: ``local`` asks the mirror, and asks the
+     upstream archive only when the mirror finds nothing.  ``upstream``
+     asks the upstream archive first, which finds every hit but is
+     slower.  If the upstream archive can't be reached, the mirror
+     answers, and liblore warns that the results may be incomplete.
+
+     Default: ``local``
+
+     .. versionadded:: v0.17
+
+   :term:`liblore.<origin>.upstreamholdoff`
+     After the upstream archive can't be reached, how many seconds to
+     wait before b4 tries it again.  Set it to ``0`` to try it every
+     time.
+
+     Default: ``300``
+
+     .. versionadded:: v0.17
+
+   :term:`liblore.<origin>.allowupstream`
+     An origin (``scheme://host``) to trust as an upstream archive.  A
+     mirror can name any server as its upstream, and b4 would send your
+     queries there, so only ``https://lore.kernel.org`` is trusted by
+     default.  B4 ignores an upstream that isn't trusted, and warns once.
+     This option can be specified multiple times.
+
+     Example::
+
+         [liblore "http://localhost:11043"]
+             allowupstream = https://lore.example.org
+
+     Default: ``None`` (only ``https://lore.kernel.org`` is trusted)
+
+     .. versionadded:: v0.17
 
 .. _shazam_settings:
 
