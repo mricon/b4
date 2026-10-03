@@ -18,7 +18,7 @@ pytest.importorskip('textual')
 
 from textual.app import App
 from textual.screen import ModalScreen
-from textual.widgets import ListView, Static
+from textual.widgets import ListView, RichLog, Static
 
 import b4
 from b4.review_tui._lite_app import (
@@ -90,10 +90,16 @@ def _static_text(widget: Any) -> str:
 
 
 def _make_lmsg(
-    msgid: str, subject: str, signed: bool, reply_to: Optional[str] = None
+    msgid: str,
+    subject: str,
+    signed: bool,
+    reply_to: Optional[str] = None,
+    sender: str = 'Dev <dev@example.com>',
 ) -> b4.LoreMessage:
     msg = email.message.EmailMessage()
-    msg['From'] = 'Dev <dev@example.com>'
+    msg['From'] = sender
+    msg['To'] = 'Maintainer <maint@example.com>'
+    msg['Cc'] = 'list@example.com, Other <other@example.com>'
     msg['Subject'] = subject
     msg['Date'] = email.utils.formatdate(1_700_000_000 + len(msgid))
     msg['Message-Id'] = f'<{msgid}>'
@@ -113,7 +119,11 @@ def _make_tree() -> List[ThreadNode]:
     )
     lmbx.add_message(
         _make_lmsg(
-            'plain@example.com', 'Re: [PATCH] top', False, 'reply@example.com'
+            'plain@example.com',
+            'Re: [PATCH] top',
+            False,
+            'reply@example.com',
+            sender='Reviewer <reviewer@example.com>',
         ).msg
     )
     return build_thread_tree(lmbx)
@@ -163,23 +173,46 @@ class _LiteHost(App[None]):
         self.push_screen(_CannedThreadScreen(self._thread))
 
 
+async def _open(app: _LiteHost, pilot: Any) -> MessageViewScreen:
+    """Wait for the thread index, then open its first message."""
+    for _ in range(20):
+        await pilot.pause()
+        if app.screen.query(ListView):
+            break
+    await pilot.press('enter')
+    await pilot.pause()
+    assert isinstance(app.screen, MessageViewScreen)
+    return app.screen
+
+
+async def _settle(app: _LiteHost, pilot: Any) -> None:
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+    await pilot.pause()
+
+
+def _attestation_line(screen: MessageViewScreen) -> Static:
+    return screen.query_one('#msg-attestation', Static)
+
+
+@pytest.fixture
+def checks(monkeypatch: pytest.MonkeyPatch) -> _FakeChecks:
+    # conftest turns attestation off for every test
+    monkeypatch.setitem(b4.MAIN_CONFIG, 'attestation-policy', 'softfail')
+    fake = _FakeChecks()
+
+    # A plain function, so it binds as a method and gets the message
+    def _status(
+        lmsg: b4.LoreMessage, attpolicy: str, maxdays: int = 0
+    ) -> Tuple[List[Dict[str, Any]], bool, bool]:
+        return fake(lmsg, attpolicy, maxdays)
+
+    monkeypatch.setattr(b4.LoreMessage, 'get_attestation_status', _status)
+    return fake
+
+
 class TestLazyAttestation:
     """The thread opens without waiting for attestation checks."""
-
-    @pytest.fixture
-    def checks(self, monkeypatch: pytest.MonkeyPatch) -> _FakeChecks:
-        # conftest turns attestation off for every test
-        monkeypatch.setitem(b4.MAIN_CONFIG, 'attestation-policy', 'softfail')
-        fake = _FakeChecks()
-
-        # A plain function, so it binds as a method and gets the message
-        def _status(
-            lmsg: b4.LoreMessage, attpolicy: str, maxdays: int = 0
-        ) -> Tuple[List[Dict[str, Any]], bool, bool]:
-            return fake(lmsg, attpolicy, maxdays)
-
-        monkeypatch.setattr(b4.LoreMessage, 'get_attestation_status', _status)
-        return fake
 
     def test_tree_does_not_check_attestation(self, checks: _FakeChecks) -> None:
         nodes = _make_tree()
@@ -197,40 +230,19 @@ class TestLazyAttestation:
         assert check_attestation(node) == PASSED
         assert node.attestation == PASSED
 
-    @staticmethod
-    async def _open(app: _LiteHost, pilot: Any) -> MessageViewScreen:
-        for _ in range(20):
-            await pilot.pause()
-            if app.screen.query(ListView):
-                break
-        await pilot.press('enter')
-        await pilot.pause()
-        assert isinstance(app.screen, MessageViewScreen)
-        return app.screen
-
-    @staticmethod
-    async def _settle(app: _LiteHost, pilot: Any) -> None:
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        await pilot.pause()
-
-    @staticmethod
-    def _line(screen: MessageViewScreen) -> Static:
-        return screen.query_one('#msg-attestation', Static)
-
     @pytest.mark.asyncio
     async def test_message_shows_checking_then_result(
         self, checks: _FakeChecks
     ) -> None:
         app = _LiteHost(_make_tree())
         async with app.run_test(size=(120, 30)) as pilot:
-            screen = await self._open(app, pilot)
-            line = self._line(screen)
+            screen = await _open(app, pilot)
+            line = _attestation_line(screen)
             assert line.display
             assert _static_text(line) == 'Attestation: checking\u2026'
 
             checks.release('top@example.com')
-            await self._settle(app, pilot)
+            await _settle(app, pilot)
             assert _static_text(line) == 'Attestation: \u2713 DKIM/example.com'
         assert checks.calls == ['top@example.com']
 
@@ -241,11 +253,11 @@ class TestLazyAttestation:
             checks.release(gate)
         app = _LiteHost(nodes)
         async with app.run_test(size=(120, 30)) as pilot:
-            screen = await self._open(app, pilot)
+            screen = await _open(app, pilot)
             await pilot.press('j', 'j')
-            await self._settle(app, pilot)
+            await _settle(app, pilot)
             assert screen.node.lmsg.msgid == 'plain@example.com'
-            assert not self._line(screen).display
+            assert not _attestation_line(screen).display
         assert 'plain@example.com' not in checks.calls
         assert nodes[2].attestation == []
 
@@ -256,11 +268,13 @@ class TestLazyAttestation:
         nodes = _make_tree()
         app = _LiteHost(nodes)
         async with app.run_test(size=(120, 30)) as pilot:
-            screen = await self._open(app, pilot)
+            screen = await _open(app, pilot)
             await pilot.press('j')
             await pilot.pause()
             assert screen.node is nodes[1]
-            assert _static_text(self._line(screen)) == 'Attestation: checking\u2026'
+            assert (
+                _static_text(_attestation_line(screen)) == 'Attestation: checking\u2026'
+            )
 
             # The first message's answer lands while the second is shown
             checks.release('top@example.com')
@@ -270,15 +284,17 @@ class TestLazyAttestation:
                     break
                 await pilot.pause(0.05)
             assert nodes[0].attestation == PASSED
-            assert _static_text(self._line(screen)) == 'Attestation: checking\u2026'
+            assert (
+                _static_text(_attestation_line(screen)) == 'Attestation: checking\u2026'
+            )
 
             await pilot.press('k')
             await pilot.pause()
-            assert _static_text(self._line(screen)) == (
+            assert _static_text(_attestation_line(screen)) == (
                 'Attestation: \u2713 DKIM/example.com'
             )
             checks.release('reply@example.com')
-            await self._settle(app, pilot)
+            await _settle(app, pilot)
         assert sorted(checks.calls) == ['reply@example.com', 'top@example.com']
 
     @pytest.mark.asyncio
@@ -287,13 +303,13 @@ class TestLazyAttestation:
     ) -> None:
         app = _LiteHost(_make_tree())
         async with app.run_test(size=(120, 30)) as pilot:
-            await self._open(app, pilot)
+            await _open(app, pilot)
             await pilot.press('q')
             await pilot.pause()
-            screen = await self._open(app, pilot)
+            screen = await _open(app, pilot)
             checks.release('top@example.com')
-            await self._settle(app, pilot)
-            assert _static_text(self._line(screen)) == (
+            await _settle(app, pilot)
+            assert _static_text(_attestation_line(screen)) == (
                 'Attestation: \u2713 DKIM/example.com'
             )
         assert checks.calls == ['top@example.com']
@@ -304,14 +320,14 @@ class TestLazyAttestation:
         (the reply preview, say) still shows up when it is uncovered."""
         app = _LiteHost(_make_tree())
         async with app.run_test(size=(120, 30)) as pilot:
-            screen = await self._open(app, pilot)
+            screen = await _open(app, pilot)
             await app.push_screen(ModalScreen[None]())
             checks.release('top@example.com')
-            await self._settle(app, pilot)
+            await _settle(app, pilot)
             app.pop_screen()
             await pilot.pause()
             assert app.screen is screen
-            assert _static_text(self._line(screen)) == (
+            assert _static_text(_attestation_line(screen)) == (
                 'Attestation: \u2713 DKIM/example.com'
             )
 
@@ -321,8 +337,143 @@ class TestLazyAttestation:
         checks.release('top@example.com')
         app = _LiteHost(_make_tree())
         async with app.run_test(size=(120, 30)) as pilot:
-            screen = await self._open(app, pilot)
-            await self._settle(app, pilot)
-            assert _static_text(self._line(screen)) == (
+            screen = await _open(app, pilot)
+            await _settle(app, pilot)
+            assert _static_text(_attestation_line(screen)) == (
                 'Attestation: \u2717 check failed: kaboom'
             )
+
+
+class TestFixedHeader:
+    """From, Subject and Attestation stay above the scrolling message."""
+
+    @staticmethod
+    def _viewer_text(screen: MessageViewScreen) -> List[str]:
+        viewer = screen.query_one('#msg-viewer', RichLog)
+        return [line.text for line in viewer.lines]
+
+    @pytest.mark.asyncio
+    async def test_order_and_switching(self, checks: _FakeChecks) -> None:
+        for gate in ('top@example.com', 'reply@example.com'):
+            checks.release(gate)
+        app = _LiteHost(_make_tree())
+        async with app.run_test(size=(120, 30)) as pilot:
+            screen = await _open(app, pilot)
+            await _settle(app, pilot)
+            header = screen.query_one('#msg-header')
+            ids = [w.id for w in header.children if w.display]
+            assert ids == ['msg-from', 'msg-title', 'msg-attestation']
+            # A blank row, not a line, sets the fixed block apart from the body
+            assert header.styles.margin.bottom == 1
+            assert header.styles.border_bottom[0] == ''
+            dialog = screen.query_one('#msg-dialog')
+            assert [w.id for w in dialog.children][:2] == ['msg-header', 'msg-viewer']
+            assert _static_text(screen.query_one('#msg-from', Static)) == (
+                'From: Dev <dev@example.com>'
+            )
+            assert _static_text(screen.query_one('#msg-title', Static)) == (
+                'Subject: [PATCH] top'
+            )
+            # Shown once, in the fixed lines only
+            assert not any(t.startswith('From:') for t in self._viewer_text(screen))
+
+            await pilot.press('j', 'j')
+            await _settle(app, pilot)
+            assert _static_text(screen.query_one('#msg-from', Static)) == (
+                'From: Reviewer <reviewer@example.com>'
+            )
+
+
+# The brief set; Link comes from the default b4.linkmask
+BRIEF = ['Date', 'To', 'Cc', 'Link']
+
+
+class TestHeaderToggle:
+    """h shows the useful headers, H shows them all, and neither by default."""
+
+    @staticmethod
+    def _names(screen: MessageViewScreen) -> List[str]:
+        """Header names at the top of the viewer, up to the blank line."""
+        viewer = screen.query_one('#msg-viewer', RichLog)
+        names = []
+        for line in viewer.lines:
+            text = line.text
+            if not text.strip():
+                break
+            if ': ' not in text or text.startswith(' '):
+                break
+            names.append(text.split(':', 1)[0])
+        return names
+
+    @staticmethod
+    def _first_line(screen: MessageViewScreen) -> str:
+        return screen.query_one('#msg-viewer', RichLog).lines[0].text
+
+    @pytest.mark.asyncio
+    async def test_no_headers_by_default(self) -> None:
+        app = _LiteHost(_make_tree())
+        async with app.run_test(size=(120, 30)) as pilot:
+            screen = await _open(app, pilot)
+            assert self._first_line(screen) == 'Body.'
+
+    @pytest.mark.asyncio
+    async def test_h_toggles_brief_headers(self) -> None:
+        app = _LiteHost(_make_tree())
+        async with app.run_test(size=(120, 30)) as pilot:
+            screen = await _open(app, pilot)
+            await pilot.press('h')
+            await pilot.pause()
+            assert self._names(screen) == BRIEF
+            await pilot.press('h')
+            await pilot.pause()
+            assert self._first_line(screen) == 'Body.'
+
+    @pytest.mark.asyncio
+    async def test_no_link_without_linkmask(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'linkmask', '')
+        app = _LiteHost(_make_tree())
+        async with app.run_test(size=(120, 30)) as pilot:
+            screen = await _open(app, pilot)
+            await pilot.press('h')
+            await pilot.pause()
+            assert self._names(screen) == ['Date', 'To', 'Cc']
+
+    @pytest.mark.asyncio
+    async def test_H_shows_every_header_in_order(self) -> None:
+        app = _LiteHost(_make_tree())
+        async with app.run_test(size=(120, 30)) as pilot:
+            screen = await _open(app, pilot)
+            await pilot.press('H')
+            await pilot.pause()
+            names = self._names(screen)
+            assert names == list(screen.node.lmsg.msg.keys())
+            assert 'Message-Id' in names and 'DKIM-Signature' in names
+
+            # h from the full set goes to the brief one, not to none
+            await pilot.press('h')
+            await pilot.pause()
+            assert self._names(screen) == BRIEF
+            await pilot.press('H')
+            await pilot.pause()
+            assert 'Message-Id' in self._names(screen)
+            await pilot.press('H')
+            await pilot.pause()
+            assert self._first_line(screen) == 'Body.'
+
+    @pytest.mark.asyncio
+    async def test_choice_holds_for_the_thread(self) -> None:
+        app = _LiteHost(_make_tree())
+        async with app.run_test(size=(120, 30)) as pilot:
+            screen = await _open(app, pilot)
+            await pilot.press('h', 'j')
+            await pilot.pause()
+            assert screen.node.lmsg.msgid == 'reply@example.com'
+            assert self._names(screen) == BRIEF
+
+            # Leaving the message and opening another one keeps it too
+            await pilot.press('q')
+            await pilot.pause()
+            screen = await _open(app, pilot)
+            assert self._names(screen) == BRIEF

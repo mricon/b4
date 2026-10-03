@@ -7,7 +7,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.utils
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -34,6 +34,9 @@ from b4.review_tui._common import (
     suspend_and_edit,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
+
+# Headers above a message body: none, the useful few, or all of them
+HeaderMode = Literal['none', 'brief', 'full']
 
 
 @dataclass
@@ -216,6 +219,8 @@ class MessageViewScreen(ModalScreen[None]):
         Binding('r', 'reply', 'reply'),
         Binding('F', 'toggle_flag', 'flag', key_display='F'),
         Binding('S', 'skip_quoted', 'skip quoted'),
+        Binding('h', 'toggle_headers', 'headers'),
+        Binding('H', 'toggle_full_headers', 'full headers', key_display='H'),
         Binding('j', 'next_message', 'next msg'),
         Binding('k', 'prev_message', 'prev msg'),
         Binding('q', 'back', 'back'),
@@ -239,7 +244,11 @@ class MessageViewScreen(ModalScreen[None]):
         background: $surface;
         padding: 1 2;
     }
-    #msg-title {
+    #msg-header {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #msg-from, #msg-title {
         text-style: bold;
     }
     #msg-attestation {
@@ -262,12 +271,19 @@ class MessageViewScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id='msg-dialog'):
-            yield Static(
-                f'Subject: {self._node.lmsg.full_subject}', id='msg-title', markup=False
-            )
-            # A widget of its own, so the result of a slow check can
-            # replace "checking" without redrawing the message
-            yield Static('', id='msg-attestation', markup=False)
+            # From, Subject and Attestation stay put while the rest of
+            # the headers scroll with the body.  A blank row under them
+            # sets them apart from the message.
+            with Vertical(id='msg-header'):
+                yield Static('', id='msg-from', markup=False)
+                yield Static(
+                    f'Subject: {self._node.lmsg.full_subject}',
+                    id='msg-title',
+                    markup=False,
+                )
+                # A widget of its own, so the result of a slow check can
+                # replace "checking" without redrawing the message
+                yield Static('', id='msg-attestation', markup=False)
             yield RichLog(
                 id='msg-viewer',
                 highlight=False,
@@ -276,7 +292,8 @@ class MessageViewScreen(ModalScreen[None]):
                 auto_scroll=False,
             )
             yield Static(
-                'r reply  |  F flag  |  S skip quoted  |  j/k prev/next msg  |  q back',
+                'r reply  |  F flag  |  S skip quoted  |  h/H headers  |  '
+                'j/k prev/next msg  |  q back',
                 id='msg-hint',
             )
 
@@ -310,7 +327,9 @@ class MessageViewScreen(ModalScreen[None]):
             line.display = False
 
     def _update_title(self) -> None:
-        """Update the subject title bar, reflecting flagged state."""
+        """Update the From and Subject lines, reflecting flagged state."""
+        sender = str(self._node.lmsg.msg.get('From', ''))
+        self.query_one('#msg-from', Static).update(f'From: {sender}')
         subject = self._node.lmsg.full_subject
         title = self.query_one('#msg-title', Static)
         if self._node.is_flagged:
@@ -332,10 +351,45 @@ class MessageViewScreen(ModalScreen[None]):
         # Content width: 92% of terminal minus border (2) and padding (4)
         content_width = max(40, int(self.app.size.width * 0.92) - 6)
 
-        # Render headers — dim so the body draws the eye
+        mode = self._lite_screen.header_mode
+        if mode == 'brief':
+            self._write_brief_headers(viewer, content_width)
+        elif mode == 'full':
+            # Every header as sent, in order, unlike the brief set
+            for hdr_name, val in msg.items():
+                hdr_text = Text()
+                hdr_text.append(f'{hdr_name}: ', style='dim bold')
+                hdr_text.append(str(val), style='dim')
+                viewer.write(hdr_text)
+        if mode != 'none':
+            viewer.write('')
+
+        self.show_attestation()
+
+        # Render body
+        body = lmsg.body or ''
+        in_diff = False
+        for line in body.splitlines():
+            if line.startswith('diff --git '):
+                in_diff = True
+            if in_diff:
+                _write_diff_line(viewer, line, ts=ts)
+            elif line.startswith('>'):
+                viewer.write(Text(line, style=f'dim {ts["accent"]}'))
+            elif line.startswith('---'):
+                viewer.write(Text(line, style='dim'))
+            else:
+                viewer.write(Text(line))
+
+    def _write_brief_headers(self, viewer: RichLog, content_width: int) -> None:
+        """Write the headers a reader usually wants, dim so the body draws the eye.
+
+        From is already in the fixed lines above the viewer.
+        """
+        lmsg = self._node.lmsg
         addr_hdrs = {'to', 'cc'}
-        for hdr_name in ('Date', 'From', 'To', 'Cc'):
-            val = msg.get(hdr_name)
+        for hdr_name in ('Date', 'To', 'Cc'):
+            val = lmsg.msg.get(hdr_name)
             if not val:
                 continue
             val = str(val)
@@ -359,24 +413,18 @@ class MessageViewScreen(ModalScreen[None]):
             hdr_text.append(linkurl, style=f'dim link {linkurl}')
             viewer.write(hdr_text)
 
-        self.show_attestation()
+    def _set_header_mode(self, mode: HeaderMode) -> None:
+        """Pick which headers to show; the same key again hides them."""
+        lite = self._lite_screen
+        lite.header_mode = 'none' if lite.header_mode == mode else mode
+        self._render_message()
+        self.query_one('#msg-viewer', RichLog).scroll_home()
 
-        viewer.write('')
+    def action_toggle_headers(self) -> None:
+        self._set_header_mode('brief')
 
-        # Render body
-        body = lmsg.body or ''
-        in_diff = False
-        for line in body.splitlines():
-            if line.startswith('diff --git '):
-                in_diff = True
-            if in_diff:
-                _write_diff_line(viewer, line, ts=ts)
-            elif line.startswith('>'):
-                viewer.write(Text(line, style=f'dim {ts["accent"]}'))
-            elif line.startswith('---'):
-                viewer.write(Text(line, style='dim'))
-            else:
-                viewer.write(Text(line))
+    def action_toggle_full_headers(self) -> None:
+        self._set_header_mode('full')
 
     @staticmethod
     def _write_addr_header(
@@ -533,6 +581,9 @@ class LiteThreadScreen(ModalScreen[None]):
         self._patatt_sign = patatt_sign
         self._tracking_info = tracking_info
         self._thread_nodes: List[ThreadNode] = []
+        # Which headers the message view shows.  It lives here so the
+        # choice holds for the whole thread, not just one message.
+        self.header_mode: HeaderMode = 'none'
         # Attestation checks in flight, and the node each one checks
         self._attest_workers: Dict[Worker[ThreadNode], ThreadNode] = {}
 
