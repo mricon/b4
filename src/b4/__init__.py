@@ -54,6 +54,8 @@ from typing import (
 )
 
 import dkim  # type: ignore[import-untyped]
+import dns.exception
+import dns.resolver
 import liblore.utils
 import requests
 
@@ -354,6 +356,8 @@ REQSESSION: Optional[requests.Session] = None
 LORENODE: Optional[liblore.LoreNode] = None
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
+# DNS answers for the life of the process (see _setup_dns_resolver)
+_DNS_CACHE = dns.resolver.LRUCache()
 # Used to track send-email alias replacements
 ALIAS_INFO: Dict[str, Optional[Tuple[str, str]]] = dict()
 # Used to track mailmap replacements
@@ -4151,20 +4155,7 @@ def _setup_main_config(
         gpgcfg = get_config_from_git(r'gpg\..*', {'program': 'gpg'}, gitdir=topdir)
         config['gpgbin'] = gpgcfg['program']
 
-    # If we specify DNS resolvers, configure them now
-    if config['attestation-dns-resolvers'] is not None:
-        try:
-            resolvers = [
-                x.strip() for x in config['attestation-dns-resolvers'].split(',')
-            ]
-            if resolvers:
-                # Don't force this as an automatically discovered dependency
-                import dns.resolver
-
-                dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-                dns.resolver.default_resolver.nameservers = resolvers
-        except ImportError:
-            logger.debug('Unable to load dns.resolver')
+    _setup_dns_resolver(config)
 
     if cmdargs:
         _cmdline_config_override(cmdargs, config, 'b4')
@@ -4172,6 +4163,36 @@ def _setup_main_config(
     _warn_deprecated_config(topdir)
 
     MAIN_CONFIG = config
+
+
+def _setup_dns_resolver(config: ConfigDictT) -> None:
+    """Use the configured DNS resolvers, and cache what they answer.
+
+    DKIM checks look up the signing key in DNS for every message, and
+    the patches of a series are nearly always signed with the same few
+    keys.  Without a cache, every patch of every series asks the same
+    question again, which is very slow on a bad network.  The cache
+    keeps each answer for its TTL, so it never serves a stale key.
+
+    The cache is kept across calls, because this runs again each time
+    the config is reloaded (for example, once per project in
+    ``b4 review cron``).
+    """
+    servers = config.get('attestation-dns-resolvers')
+    if isinstance(servers, str):
+        resolvers = [x.strip() for x in servers.split(',') if x.strip()]
+        if resolvers:
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = resolvers
+            dns.resolver.default_resolver = resolver
+    try:
+        resolver = dns.resolver.get_default_resolver()
+    except dns.exception.DNSException as ex:
+        # No usable system resolver config. DKIM checks will fail the
+        # same way, and report it there.
+        logger.debug('Unable to set up the DNS resolver: %s', ex)
+        return
+    resolver.cache = _DNS_CACHE
 
 
 def _warn_deprecated_config(gitdir: Optional[str] = None) -> None:

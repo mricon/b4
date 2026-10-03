@@ -242,6 +242,7 @@ version = "0.17.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "dkimpy" },
+    { name = "dnspython" },
     { name = "liblore" },
     { name = "patatt" },
     { name = "pygit2" },
@@ -284,6 +285,7 @@ misc = [
 requires-dist = [
     { name = "argcomplete", marker = "extra == 'completion'", specifier = ">=3.0" },
     { name = "dkimpy", specifier = ">=1.0,<2.0" },
+    { name = "dnspython", specifier = ">=2.0,<3.0" },
     { name = "ezgb", marker = "extra == 'bugs'", specifier = ">=0.2.0" },
     { name = "liblore", specifier = ">=0.10" },
     { name = "patatt", specifier = ">=0.6,<2.0" },

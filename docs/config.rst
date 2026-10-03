@@ -458,6 +458,10 @@ Attestation settings
    :term:`b4.attestation-check-dkim`
      Controls whether to perform DKIM attestation checks.
 
+     Each DKIM check looks up the signing key in DNS. b4 keeps each
+     answer for as long as its DNS record allows (its TTL). So b4 asks
+     DNS for a key once, not once for every patch that the key signed.
+
      Default: ``yes``
 
    :term:`b4.attestation-dns-resolvers`

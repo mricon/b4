@@ -12,6 +12,11 @@ import socket
 import sys
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
+import dkim.dnsplug  # type: ignore[import-untyped]
+import dns.message
+import dns.query
+import dns.resolver
+import dns.rrset
 import pytest
 
 import b4
@@ -1464,6 +1469,114 @@ class TestDeprecatedConfig:
         # checking git-config is what keeps this quiet.
         assert b4.MAIN_CONFIG.get('searchmask') == 'https://example.com/?q=%s'
         assert 'searchmask' not in caplog.text
+
+
+class _FakeClock:
+    """Stands in for the time module inside dns.resolver."""
+
+    def __init__(self) -> None:
+        self.now = 1_000_000.0
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, secs: float) -> None:
+        self.now += secs
+
+
+class TestDnsCache:
+    """DKIM key lookups are cached, so a series doesn't ask DNS per patch."""
+
+    TEST_NS = '192.0.2.53'
+
+    @pytest.fixture(autouse=True)
+    def fake_dns(self, monkeypatch: pytest.MonkeyPatch) -> List[Tuple[str, str]]:
+        """Answer every query with a TXT record, and log each one asked."""
+        monkeypatch.setattr(dns.resolver, 'default_resolver', None)
+        monkeypatch.setattr(b4, '_DNS_CACHE', dns.resolver.LRUCache())
+        self.clock = _FakeClock()
+        monkeypatch.setattr(dns.resolver, 'time', self.clock)
+        self.asked: List[Tuple[str, str]] = []
+
+        def fake_udp(
+            q: dns.message.Message, where: str, *args: Any, **kwargs: Any
+        ) -> dns.message.Message:
+            qname = q.question[0].name
+            self.asked.append((qname.to_text(), where))
+            resp = dns.message.make_response(q)
+            resp.answer.append(
+                dns.rrset.from_text(qname, 300, 'IN', 'TXT', '"v=DKIM1; p=AAAA"')
+            )
+            # Through the wire format, like a real answer: the resolver
+            # only matches the answer to the question (and so only takes
+            # its TTL) in a parsed message.
+            return dns.message.from_wire(resp.to_wire())
+
+        monkeypatch.setattr(dns.query, 'udp', fake_udp)
+        return self.asked
+
+    def _setup(self) -> None:
+        b4._setup_dns_resolver({'attestation-dns-resolvers': self.TEST_NS})
+
+    def test_repeated_lookups_ask_once(self) -> None:
+        """Ten patches signed with one key cost one DNS query."""
+        self._setup()
+        name = b'sel._domainkey.example.org'
+        answers = {dkim.dnsplug.get_txt(name) for _ in range(10)}
+        assert answers == {b'v=DKIM1; p=AAAA'}
+        assert self.asked == [('sel._domainkey.example.org.', self.TEST_NS)]
+
+    def test_different_keys_are_asked_separately(self) -> None:
+        """The cache is per name: other signers still get their own key."""
+        self._setup()
+        for _ in range(3):
+            dkim.dnsplug.get_txt(b'a._domainkey.example.org')
+            dkim.dnsplug.get_txt(b'b._domainkey.example.net')
+        assert sorted(n for n, _ in self.asked) == [
+            'a._domainkey.example.org.',
+            'b._domainkey.example.net.',
+        ]
+
+    def test_expired_answer_is_asked_again(self) -> None:
+        """An answer past its TTL is not used, so a rotated key is seen."""
+        self._setup()
+        name = b'sel._domainkey.example.org'
+        dkim.dnsplug.get_txt(name)
+        self.clock.now += 299
+        dkim.dnsplug.get_txt(name)
+        assert len(self.asked) == 1
+        self.clock.now += 2
+        dkim.dnsplug.get_txt(name)
+        assert len(self.asked) == 2
+
+    def test_cache_survives_config_reload(self) -> None:
+        """Reloading the config (cron does it per project) keeps answers."""
+        self._setup()
+        name = b'sel._domainkey.example.org'
+        dkim.dnsplug.get_txt(name)
+        self._setup()
+        dkim.dnsplug.get_txt(name)
+        assert len(self.asked) == 1
+
+    def test_system_resolver_gets_cache(self) -> None:
+        """Without configured resolvers, the system resolver is cached too."""
+        system = dns.resolver.Resolver(configure=False)
+        system.nameservers = ['198.51.100.53']
+        dns.resolver.default_resolver = system
+        b4._setup_dns_resolver({'attestation-dns-resolvers': None})
+        assert dns.resolver.get_default_resolver() is system
+        dkim.dnsplug.get_txt(b'sel._domainkey.example.org')
+        dkim.dnsplug.get_txt(b'sel._domainkey.example.org')
+        assert self.asked == [('sel._domainkey.example.org.', '198.51.100.53')]
+
+    def test_blank_resolver_list_keeps_system_resolver(self) -> None:
+        """A setting with only commas and spaces names no servers."""
+        system = dns.resolver.Resolver(configure=False)
+        system.nameservers = ['198.51.100.53']
+        dns.resolver.default_resolver = system
+        b4._setup_dns_resolver({'attestation-dns-resolvers': ' , '})
+        assert dns.resolver.get_default_resolver() is system
+        assert system.cache is b4._DNS_CACHE
 
 
 @pytest.mark.parametrize(
