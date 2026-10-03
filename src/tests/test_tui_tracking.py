@@ -6219,3 +6219,53 @@ class TestAttestationColumnRendering:
 
         assert marks['lorenzo'] == '✔'
         assert marks['badsig-series'] == ' '
+
+
+class TestUpdateSummary:
+    """What the U summary says about series the partial mirror lacked."""
+
+    @staticmethod
+    async def _summary(
+        identifier: str, result: Dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> List[str]:
+        from unittest.mock import MagicMock
+
+        node = MagicMock()
+        node.is_shutdown = False
+        node.upstream_url = 'https://lore.kernel.org/all'
+        monkeypatch.setattr(b4, 'LORENODE', node)
+        _seed_db(identifier, SAMPLE_SERIES)
+        app = TrackingApp(identifier)
+        messages: List[str] = []
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with patch.object(
+                app, 'notify', lambda message, *a, **k: messages.append(message)
+            ):
+                app._on_update_complete(result)
+        return messages
+
+    @pytest.mark.asyncio
+    async def test_upstream_series_are_counted(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        messages = await self._summary(
+            'test-upstream-summary',
+            {'series_checked': 5, 'upstream': 2},
+            monkeypatch,
+        )
+        assert messages == [
+            'Checked 5 series',
+            '2 series fetched from lore.kernel.org, not on the local mirror',
+        ]
+
+    @pytest.mark.asyncio
+    async def test_nothing_said_when_all_local(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        messages = await self._summary(
+            'test-local-summary',
+            {'series_checked': 5, 'upstream': 0},
+            monkeypatch,
+        )
+        assert messages == ['Checked 5 series']

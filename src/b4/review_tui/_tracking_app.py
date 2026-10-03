@@ -2532,6 +2532,14 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             'warning' if errors else 'information'
         )
         self.notify(', '.join(parts), severity=severity)
+        upstream = result.get('upstream', 0)
+        if upstream:
+            # A partial mirror sends what it lacks upstream, and each of
+            # those round trips is slow: say so, or U looks stuck
+            host = b4.lore_upstream_host(b4.get_lore_node())
+            self.notify(
+                f'{upstream} series fetched from {host}, not on the local mirror'
+            )
         for submitter, error in error_details:
             logger.warning('Update error (%s): %s', submitter, error)
             self.notify(f'{submitter}: {error}', severity='error')

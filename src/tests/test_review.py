@@ -4824,6 +4824,62 @@ def test_update_all_tracking_skips_snoozed_and_archived(
     assert result['cancelled'] is False
 
 
+def test_update_all_tracking_counts_upstream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A series counts as upstream once if any of its fetches came from
+    the upstream archive of the partial mirror."""
+    from unittest.mock import MagicMock
+
+    import liblore
+
+    node = MagicMock()
+    node.is_shutdown = False
+    node.hostname = '127.0.0.1:11043'
+    node.upstream_url = 'https://lore.kernel.org/all'
+    node.get_mbox_by_msgid.return_value = (
+        b'From mboxrd@z Thu Jan  1 00:00:00 1970\n'
+        b'From: Dev <dev@example.com>\n'
+        b'Subject: [PATCH] thing\n'
+        b'Message-Id: <thing@example.com>\n'
+        b'\n'
+        b'Body.\n'
+    )
+    monkeypatch.setattr(b4, 'LORENODE', node)
+
+    local = liblore.Source.LOCAL
+    upstream = liblore.Source.UPSTREAM
+    # The sources each series' fetches report, in order
+    fetches = {
+        'mirrored': [local, local],
+        'missing': [upstream, upstream],
+        'newer-rev-upstream': [local, upstream],
+        'no-fetch': [],
+    }
+    series = [
+        {'change_id': cid, 'subject': cid, 'status': 'new', 'sender_name': cid}
+        for cid in fetches
+    ]
+
+    def fake_update(
+        one: Dict[str, Any],
+        identifier: str,
+        linkmask: str,
+        topdir: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        for source in fetches[one['change_id']]:
+            node.last_source = source
+            b4.get_pi_thread_by_msgid('thing@example.com', quiet=True)
+        return {'new_revisions': 0, 'new_trailers': 0, 'error': None}
+
+    monkeypatch.setattr(review, 'update_series_tracking', fake_update)
+    result = review.update_all_tracking(
+        'mirrored', 'https://lore.example/r/%s', series_list=series
+    )
+    assert result['series_checked'] == 4
+    assert result['upstream'] == 2
+
+
 class TestOwnMessageEntries:
     """Tests for _own_message_entries() — the exact-From auto-read match."""
 

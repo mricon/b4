@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import urllib.parse
 from collections import defaultdict
@@ -4632,24 +4633,60 @@ def get_pi_search_results(
     return split_and_dedupe_pi_results(t_mbox)
 
 
+_lore_sources = threading.local()
+
+
+@contextmanager
+def track_lore_sources() -> Generator[Set[liblore.Source], None, None]:
+    """Collect where lore answers came from while the block runs.
+
+    Yields a set that fills with the :class:`liblore.Source` of every
+    thread or search fetched in this thread during the block.  Callers
+    use it to tell, for example, that a series was not on the local
+    partial mirror.  A nested block also adds its sources to the outer
+    one.  Failed fetches add nothing, because liblore only reports a
+    source for an answer.
+    """
+    seen: Set[liblore.Source] = set()
+    outer: Optional[Set[liblore.Source]] = getattr(_lore_sources, 'seen', None)
+    _lore_sources.seen = seen
+    try:
+        yield seen
+    finally:
+        _lore_sources.seen = outer
+        if outer is not None:
+            outer.update(seen)
+
+
 def _log_lore_source(node: liblore.LoreNode, level: int) -> None:
     """Say so when a partial mirror's upstream archive answered instead.
 
     That happens when the mirror didn't have it, or could not be
     reached.  liblore already warns about an unreachable mirror and
     about a degraded answer, so this only says where the answer came
-    from.
+    from.  It also records the source for :func:`track_lore_sources`.
     """
+    seen: Optional[Set[liblore.Source]] = getattr(_lore_sources, 'seen', None)
+    if seen is not None and node.last_source is not None:
+        seen.add(node.last_source)
     if node.last_source != liblore.Source.UPSTREAM:
         return
-    upstream = node.upstream_url
-    upstream_host = urllib.parse.urlsplit(upstream).netloc if upstream else 'upstream'
     logger.log(
         level,
         'Fetched from %s instead of %s',
-        upstream_host,
+        lore_upstream_host(node),
         node.hostname,
     )
+
+
+def lore_upstream_host(node: liblore.LoreNode) -> str:
+    """Return the host name of a partial mirror's upstream archive.
+
+    Returns ``'upstream'`` when the node does not say which archive
+    that is.
+    """
+    upstream = node.upstream_url
+    return urllib.parse.urlsplit(upstream).netloc if upstream else 'upstream'
 
 
 def split_and_dedupe_pi_results(t_mbox: bytes) -> List[EmailMessage]:
@@ -4758,8 +4795,7 @@ def get_pi_thread_by_msgid(
         if not quiet:
             logger.critical('No messages found for that query')
         return None
-    if not quiet:
-        _log_lore_source(node, logging.INFO)
+    _log_lore_source(node, logging.DEBUG if quiet else logging.INFO)
     msgs = split_and_dedupe_pi_results(t_mbox)
 
     if not msgs:

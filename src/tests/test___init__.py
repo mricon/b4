@@ -1376,7 +1376,14 @@ class TestLoreFetchMessages:
             assert (
                 b4.get_pi_thread_by_msgid('thing@example.com', quiet=True) is not None
             )
-        assert not any('Fetched from' in r.getMessage() for r in caplog.records)
+        # Quiet keeps it out of the user's way, but --debug still shows it
+        line = 'Fetched from lore.kernel.org instead of mirror.example.org'
+        assert line in self._messages(caplog, logging.DEBUG)
+        assert not any(
+            'Fetched from' in r.getMessage()
+            for r in caplog.records
+            if r.levelno > logging.DEBUG
+        )
 
     def test_search_404_is_no_results(
         self, node: Any, caplog: pytest.LogCaptureFixture
@@ -1430,6 +1437,84 @@ class TestLoreFetchMessages:
         line = 'Fetched from lore.kernel.org instead of mirror.example.org'
         assert line in self._messages(caplog, logging.DEBUG)
         assert line not in self._messages(caplog, logging.INFO)
+
+    def test_tracker_sees_upstream_thread(self, node: Any) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        node.last_source = liblore.Source.UPSTREAM
+        with b4.track_lore_sources() as sources:
+            b4.get_pi_thread_by_msgid('thing@example.com')
+        assert sources == {liblore.Source.UPSTREAM}
+
+    def test_tracker_sees_quiet_thread(self, node: Any) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        node.last_source = liblore.Source.UPSTREAM
+        with b4.track_lore_sources() as sources:
+            b4.get_pi_thread_by_msgid('thing@example.com', quiet=True)
+        assert sources == {liblore.Source.UPSTREAM}
+
+    def test_tracker_sees_every_source(self, node: Any) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        node.get_mbox_by_query.return_value = self.MBOX
+        with b4.track_lore_sources() as sources:
+            b4.get_pi_thread_by_msgid('thing@example.com')
+            node.last_source = liblore.Source.UPSTREAM
+            b4.get_pi_search_results('s:thing')
+        assert sources == {liblore.Source.LOCAL, liblore.Source.UPSTREAM}
+
+    def test_tracker_ignores_failed_fetch(self, node: Any) -> None:
+        import liblore
+
+        node.get_mbox_by_query.side_effect = liblore.RemoteError(
+            'Server returned an error: 404', status_code=404
+        )
+        node.last_source = None
+        with b4.track_lore_sources() as sources:
+            b4.get_pi_search_results('s:nothing')
+        assert sources == set()
+
+    def test_tracker_nested_block_adds_to_outer(self, node: Any) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        with b4.track_lore_sources() as outer:
+            with b4.track_lore_sources() as inner:
+                node.last_source = liblore.Source.UPSTREAM
+                b4.get_pi_thread_by_msgid('thing@example.com')
+            node.last_source = liblore.Source.LOCAL
+            b4.get_pi_thread_by_msgid('thing@example.com')
+        assert inner == {liblore.Source.UPSTREAM}
+        assert outer == {liblore.Source.LOCAL, liblore.Source.UPSTREAM}
+
+    def test_tracker_off_outside_block(self, node: Any) -> None:
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        with b4.track_lore_sources() as sources:
+            pass
+        node.last_source = liblore.Source.UPSTREAM
+        b4.get_pi_thread_by_msgid('thing@example.com')
+        assert sources == set()
+
+    def test_tracker_is_per_thread(self, node: Any) -> None:
+        import threading
+
+        import liblore
+
+        node.get_mbox_by_msgid.return_value = self.MBOX
+        node.last_source = liblore.Source.UPSTREAM
+        with b4.track_lore_sources() as sources:
+            t = threading.Thread(
+                target=b4.get_pi_thread_by_msgid, args=('thing@example.com',)
+            )
+            t.start()
+            t.join()
+        assert sources == set()
 
 
 class TestDeprecatedConfig:

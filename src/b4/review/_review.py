@@ -2879,7 +2879,10 @@ def update_all_tracking(
     sweep.
 
     Returns a summary dict with keys: series_checked, series_updated,
-    errors, gone, followup_updated, error_details, cancelled.
+    errors, gone, followup_updated, checked_out_skipped, upstream,
+    error_details, cancelled.  ``upstream`` counts the series that
+    needed at least one answer from the upstream archive of a partial
+    mirror (b4.midmask), because the mirror did not have them.
     """
     result: Dict[str, Any] = {
         'series_checked': 0,
@@ -2888,6 +2891,7 @@ def update_all_tracking(
         'gone': 0,
         'followup_updated': 0,
         'checked_out_skipped': 0,
+        'upstream': 0,
         'error_details': [],
         'cancelled': False,
     }
@@ -2922,13 +2926,16 @@ def update_all_tracking(
             try:
                 # Called via the package attribute: it is the established
                 # patch seam for tests and TUI callers alike
-                r = b4.review.update_series_tracking(
-                    series, identifier, linkmask, topdir=topdir
-                )
+                with b4.track_lore_sources() as sources:
+                    r = b4.review.update_series_tracking(
+                        series, identifier, linkmask, topdir=topdir
+                    )
             except liblore.OperationCancelledError:
                 result['cancelled'] = True
                 break
             result['series_checked'] += 1
+            if liblore.Source.UPSTREAM in sources:
+                result['upstream'] += 1
             if r.get('new_revisions') or r.get('new_trailers'):
                 result['series_updated'] += 1
             if r.get('error'):
@@ -3036,6 +3043,13 @@ def _cron_update(identifier: str, topdir: Optional[str]) -> None:
         # cron mail.  The branch catches up on a later sweep.
         logger.debug(
             '%s branch(es) checked out, left alone', result['checked_out_skipped']
+        )
+    if result.get('upstream'):
+        # Not an error: the series is simply not on the partial mirror
+        logger.debug(
+            '%s series fetched from %s, not on the local mirror',
+            result['upstream'],
+            b4.lore_upstream_host(b4.get_lore_node()),
         )
     for submitter, error in result['error_details']:
         logger.warning('Update error (%s): %s', submitter, error)
