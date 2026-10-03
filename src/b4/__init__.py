@@ -2060,6 +2060,23 @@ class LoreMessage:
         return self._blob_indexes
 
     @property
+    def has_attestation_headers(self) -> bool:
+        """Tell whether :attr:`attestors` would have anything to check.
+
+        This looks at the headers only and verifies nothing, so it is
+        cheap.  Callers use it to skip a slow check that would find
+        nothing.  It must follow the same rules as :attr:`attestors`.
+        """
+        config = get_main_config()
+        if config['attestation-policy'] == 'off':
+            return False
+        if self.msg.get(DEVSIG_HDR):
+            return True
+        return bool(
+            self.msg.get('dkim-signature') and config['attestation-check-dkim'] == 'yes'
+        )
+
+    @property
     def attestors(self) -> List['LoreAttestor']:
         if self._attestors is not None:
             return self._attestors

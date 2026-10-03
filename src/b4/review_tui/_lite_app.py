@@ -45,8 +45,8 @@ class ThreadNode:
     depth: int = 0
     tree_art: str = ''
     is_patch: bool = False
-    attestation: List[Dict[str, Any]] = field(default_factory=list)
-    att_passing: bool = True
+    # None until the message's attestation has been checked
+    attestation: Optional[List[Dict[str, Any]]] = None
     is_unseen: bool = False
     is_flagged: bool = False
     is_answered: bool = False
@@ -79,30 +79,14 @@ def build_thread_tree(lmbx: b4.LoreMailbox) -> List[ThreadNode]:
     """Build a flat, DFS-ordered thread list from a LoreMailbox.
 
     Creates ThreadNode for every message, links children to parents
-    via in_reply_to, sorts by date, flattens with tree art, and
-    checks attestation status for each message.
+    via in_reply_to, sorts by date, and flattens with tree art.  It
+    does not check attestation: that is slow (DKIM needs DNS lookups)
+    and only the message view shows it, so check_attestation() runs
+    when a message is opened.
     """
-    config = b4.get_main_config()
-    attpolicy = str(config.get('attestation-policy', 'softfail'))
-    try:
-        maxdays = int(str(config.get('attestation-staleness-days', '0')))
-    except ValueError:
-        maxdays = 0
-
     nodes: Dict[str, ThreadNode] = {}
     for msgid, lmsg in lmbx.msgid_map.items():
-        att_list: List[Dict[str, Any]] = []
-        att_passing = True
-        if attpolicy != 'off':
-            att_list, att_passing, _critical = lmsg.get_attestation_status(
-                attpolicy, maxdays
-            )
-        nodes[msgid] = ThreadNode(
-            lmsg=lmsg,
-            is_patch=lmsg.has_diff,
-            attestation=att_list,
-            att_passing=att_passing,
-        )
+        nodes[msgid] = ThreadNode(lmsg=lmsg, is_patch=lmsg.has_diff)
 
     roots: List[ThreadNode] = []
     for node in nodes.values():
@@ -127,6 +111,48 @@ def build_thread_tree(lmbx: b4.LoreMailbox) -> List[ThreadNode]:
     for i, node in enumerate(flat):
         node.depth = i  # store position for reference
     return flat
+
+
+def check_attestation(node: ThreadNode) -> List[Dict[str, Any]]:
+    """Check a message's attestation and remember the result on its node.
+
+    This can be slow: DKIM needs a DNS lookup for every signing domain
+    the resolver has not cached yet.  Run it in a worker thread.
+    """
+    config = b4.get_main_config()
+    attpolicy = str(config.get('attestation-policy', 'softfail'))
+    try:
+        maxdays = int(str(config.get('attestation-staleness-days', '0')))
+    except ValueError:
+        maxdays = 0
+    att_list, _passing, _critical = node.lmsg.get_attestation_status(attpolicy, maxdays)
+    node.attestation = att_list
+    return att_list
+
+
+def _build_attestation_text(
+    attestation: List[Dict[str, Any]], ts: Dict[str, str]
+) -> Text:
+    """Build the Attestation line of the message view."""
+    att_text = Text()
+    att_text.append('Attestation: ', style='dim bold')
+    for i, att in enumerate(attestation):
+        if i > 0:
+            att_text.append(', ', style='dim')
+        status = att.get('status', 'unknown')
+        identity = att.get('identity', 'unknown')
+        if att.get('passing'):
+            att_text.append(f'\u2713 {identity}', style=ts['success'])
+            if 'mismatch' in att:
+                att_text.append(f' (From: {att["mismatch"]})', style=ts['warning'])
+        else:
+            if status == 'badsig':
+                att_text.append(f'\u2717 BADSIG: {identity}', style=ts['error'])
+            elif status == 'nokey':
+                att_text.append(f'\u2717 No key: {identity}', style=ts['warning'])
+            else:
+                att_text.append(f'\u2717 {status}: {identity}', style=ts['error'])
+    return att_text
 
 
 def _build_thread_label(node: ThreadNode, ts: Optional[Dict[str, str]] = None) -> Text:
@@ -216,6 +242,9 @@ class MessageViewScreen(ModalScreen[None]):
     #msg-title {
         text-style: bold;
     }
+    #msg-attestation {
+        display: none;
+    }
     #msg-viewer {
         height: 1fr;
     }
@@ -236,6 +265,9 @@ class MessageViewScreen(ModalScreen[None]):
             yield Static(
                 f'Subject: {self._node.lmsg.full_subject}', id='msg-title', markup=False
             )
+            # A widget of its own, so the result of a slow check can
+            # replace "checking" without redrawing the message
+            yield Static('', id='msg-attestation', markup=False)
             yield RichLog(
                 id='msg-viewer',
                 highlight=False,
@@ -252,6 +284,30 @@ class MessageViewScreen(ModalScreen[None]):
         self._render_message()
         self._update_title()
         self._lite_screen.mark_seen(self._node)
+
+    @property
+    def node(self) -> ThreadNode:
+        """The thread node of the message on screen."""
+        return self._node
+
+    def show_attestation(self) -> None:
+        """Show the attestation line, starting the check if it never ran."""
+        node = self._node
+        line = self.query_one('#msg-attestation', Static)
+        if node.attestation is None and not node.lmsg.has_attestation_headers:
+            # Nothing to check: don't flash "checking" for nothing
+            node.attestation = []
+        if node.attestation is None:
+            line.update(Text('Attestation: checking\u2026', style='dim'))
+            line.display = True
+            self._lite_screen.check_attestation(node)
+        elif node.attestation:
+            line.update(
+                _build_attestation_text(node.attestation, resolve_styles(self.app))
+            )
+            line.display = True
+        else:
+            line.display = False
 
     def _update_title(self) -> None:
         """Update the subject title bar, reflecting flagged state."""
@@ -303,34 +359,7 @@ class MessageViewScreen(ModalScreen[None]):
             hdr_text.append(linkurl, style=f'dim link {linkurl}')
             viewer.write(hdr_text)
 
-        # Attestation status
-        node = self._node
-        if node.attestation:
-            att_text = Text()
-            att_text.append('Attestation: ', style='dim bold')
-            for i, att in enumerate(node.attestation):
-                if i > 0:
-                    att_text.append(', ', style='dim')
-                status = att.get('status', 'unknown')
-                identity = att.get('identity', 'unknown')
-                if att.get('passing'):
-                    att_text.append(f'\u2713 {identity}', style=ts['success'])
-                    if 'mismatch' in att:
-                        att_text.append(
-                            f' (From: {att["mismatch"]})', style=ts['warning']
-                        )
-                else:
-                    if status == 'badsig':
-                        att_text.append(f'\u2717 BADSIG: {identity}', style=ts['error'])
-                    elif status == 'nokey':
-                        att_text.append(
-                            f'\u2717 No key: {identity}', style=ts['warning']
-                        )
-                    else:
-                        att_text.append(
-                            f'\u2717 {status}: {identity}', style=ts['error']
-                        )
-            viewer.write(att_text)
+        self.show_attestation()
 
         viewer.write('')
 
@@ -504,6 +533,8 @@ class LiteThreadScreen(ModalScreen[None]):
         self._patatt_sign = patatt_sign
         self._tracking_info = tracking_info
         self._thread_nodes: List[ThreadNode] = []
+        # Attestation checks in flight, and the node each one checks
+        self._attest_workers: Dict[Worker[ThreadNode], ThreadNode] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id='lite-dialog'):
@@ -564,7 +595,60 @@ class LiteThreadScreen(ModalScreen[None]):
                 lmbx.add_message(msg)
             return build_thread_tree(lmbx)
 
+    def check_attestation(self, node: ThreadNode) -> None:
+        """Check a node's attestation in a worker, unless one already is.
+
+        The worker belongs to this screen rather than to the message
+        view, so a check keeps going when the user moves to another
+        message, and its result is waiting when they come back.
+        """
+        if any(n is node for n in self._attest_workers.values()):
+            return
+
+        def _attest() -> ThreadNode:
+            with _quiet_worker():
+                check_attestation(node)
+            return node
+
+        worker = self.run_worker(
+            _attest,
+            name='_check_attestation',
+            group='attestation',
+            thread=True,
+            exit_on_error=False,
+        )
+        self._attest_workers[worker] = node
+
+    def _on_attestation_done(self, event: Worker.StateChanged) -> None:
+        if event.state not in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        ):
+            return
+        node = self._attest_workers.pop(event.worker, None)
+        if node is None or event.state == WorkerState.CANCELLED:
+            return
+        if event.state == WorkerState.ERROR:
+            # The check itself broke, which says nothing about the
+            # signatures: show the error rather than a pass or a fail
+            node.attestation = [
+                {
+                    'status': 'check failed',
+                    'identity': str(event.worker.error),
+                    'passing': False,
+                }
+            ]
+        # The message view may be under another screen (the reply
+        # preview, say), so look through the whole stack, not just the top
+        for screen in self.app.screen_stack:
+            if isinstance(screen, MessageViewScreen) and screen.node is node:
+                screen.show_attestation()
+
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.name == '_check_attestation':
+            self._on_attestation_done(event)
+            return
         if event.worker.name != '_fetch_thread':
             return
         if event.state == WorkerState.SUCCESS:

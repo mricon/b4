@@ -1517,6 +1517,53 @@ class TestLoreFetchMessages:
         assert sources == set()
 
 
+class TestHasAttestationHeaders:
+    """LoreMessage.has_attestation_headers looks at headers only."""
+
+    @staticmethod
+    def _lmsg(*headers: Tuple[str, str]) -> b4.LoreMessage:
+        msg = email.message.EmailMessage()
+        msg['From'] = 'Dev <dev@example.com>'
+        msg['Subject'] = '[PATCH] thing'
+        msg['Message-Id'] = '<thing@example.com>'
+        for name, value in headers:
+            msg[name] = value
+        msg.set_content('Body.\n')
+        return b4.LoreMessage(msg)
+
+    @pytest.fixture
+    def config(self, monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
+        config = dict(b4.get_main_config())
+        config['attestation-policy'] = 'softfail'
+        config['attestation-check-dkim'] = 'yes'
+        monkeypatch.setattr(b4, 'get_main_config', lambda: config)
+        return config
+
+    def test_unsigned(self, config: Dict[str, Any]) -> None:
+        assert not self._lmsg().has_attestation_headers
+
+    def test_patatt(self, config: Dict[str, Any]) -> None:
+        lmsg = self._lmsg((b4.DEVSIG_HDR, 'v=1; a=ed25519; b=AAAA'))
+        assert lmsg.has_attestation_headers
+
+    def test_dkim(self, config: Dict[str, Any]) -> None:
+        assert self._lmsg(
+            ('DKIM-Signature', 'v=1; d=example.com')
+        ).has_attestation_headers
+
+    def test_dkim_check_off(self, config: Dict[str, Any]) -> None:
+        config['attestation-check-dkim'] = 'no'
+        lmsg = self._lmsg(('DKIM-Signature', 'v=1; d=example.com'))
+        assert not lmsg.has_attestation_headers
+        assert lmsg.attestors == []
+
+    def test_policy_off(self, config: Dict[str, Any]) -> None:
+        config['attestation-policy'] = 'off'
+        lmsg = self._lmsg((b4.DEVSIG_HDR, 'v=1; a=ed25519; b=AAAA'))
+        assert not lmsg.has_attestation_headers
+        assert lmsg.attestors == []
+
+
 class TestDeprecatedConfig:
     """Tests for the b4.searchmask deprecation notice."""
 
