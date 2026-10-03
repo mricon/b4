@@ -462,6 +462,19 @@ Attestation settings
      answer for as long as its DNS record allows (its TTL). So b4 asks
      DNS for a key once, not once for every patch that the key signed.
 
+     When a signature passes, b4 remembers that in
+     ``~/.local/share/b4/dkim-verified.sqlite3`` and does not check
+     that message again. A signature that passed can fail later even
+     though the message did not change: some senders (Gmail, for
+     example) sign with an expiry time only a few days ahead, and
+     domains remove old keys from DNS. b4 remembers the pass only for
+     the exact message bytes, so a changed copy is checked again.
+     Failures are never remembered. A message that passed before also
+     shows its pass when b4 runs without network access.
+
+     .. versionchanged:: v0.17
+        b4 remembers passing DKIM signatures.
+
      Default: ``yes``
 
    :term:`b4.attestation-dns-resolvers`

@@ -23,6 +23,7 @@ import re
 import shlex
 import shutil
 import smtplib
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -2080,9 +2081,6 @@ class LoreMessage:
     def _load_dkim_attestors(self) -> None:
         # This should be always the case, but assert it anyway
         assert isinstance(self._attestors, list)
-        if not can_network:
-            logger.debug('Message has DKIM signatures, but can_network is off')
-            return
 
         # Identify all DKIM-Signature headers and try them in reverse order
         # until we come to a passing one
@@ -2099,7 +2097,7 @@ class LoreMessage:
             # present.
             if '?q?' in hval.lower():
                 hval = str(email.header.make_header(email.header.decode_header(hval)))
-            errors = list()
+            errors: List[str] = list()
             hdata = LoreMessage.get_parts_from_header(hval)
             logger.debug(
                 'Loading DKIM attestation for d=%s, s=%s',
@@ -2125,17 +2123,12 @@ class LoreMessage:
                     signtime = self.date
 
             self.msg._headers.append((hn, hval))  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-            try:
-                res = dkim.verify(
-                    self.msg.as_bytes(policy=emlpolicy), logger=dkimlogger
-                )
-                logger.debug('DKIM verify results: %s=%s', identity, res)
-            except Exception as ex:
-                # Usually, this is due to some DNS resolver failure, which we can't
-                # possibly cleanly try/catch. Just mark it as failed and move on.
-                logger.debug('DKIM attestation failed: %s', ex)
-                errors.append(str(ex))
-                res = False
+            res = _dkim_verify(self.msg.as_bytes(policy=emlpolicy), errors)
+            if res is None:
+                # Offline, and not verified before: nothing to report
+                self.msg._headers.pop(-1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                continue
+            logger.debug('DKIM verify results: %s=%s', identity, res)
 
             attestor = LoreAttestorDKIM(res, identity, signtime, errors)
             if attestor.check_identity(self.fromemail):
@@ -3697,6 +3690,92 @@ class LoreAttestor:
         out.append('have_key: %s' % self.have_key)
         out.append('  errors: %s' % ','.join(self.errors))
         return '\n'.join(out)
+
+
+def _dkim_store_path() -> str:
+    return os.path.join(get_data_dir(), 'dkim-verified.sqlite3')
+
+
+def _dkim_store() -> sqlite3.Connection:
+    conn = sqlite3.connect(_dkim_store_path())
+    try:
+        # The TUI and a cron sweep may both be checking messages
+        conn.execute('PRAGMA busy_timeout = 15000')
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS dkim_passed ('
+            'digest TEXT PRIMARY KEY, verified_at INTEGER NOT NULL)'
+        )
+    except sqlite3.Error:
+        conn.close()
+        raise
+    return conn
+
+
+def _dkim_passed_before(digest: str) -> bool:
+    try:
+        conn = _dkim_store()
+        try:
+            row = conn.execute(
+                'SELECT 1 FROM dkim_passed WHERE digest = ?', (digest,)
+            ).fetchone()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.debug('Unable to read the DKIM store: %s', ex)
+        return False
+    return row is not None
+
+
+def _dkim_remember_pass(digest: str) -> None:
+    try:
+        conn = _dkim_store()
+        try:
+            with conn:
+                conn.execute(
+                    'INSERT OR IGNORE INTO dkim_passed (digest, verified_at) '
+                    'VALUES (?, ?)',
+                    (digest, int(time.time())),
+                )
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.debug('Unable to write the DKIM store: %s', ex)
+
+
+def _dkim_verify(msgbytes: bytes, errors: List[str]) -> Optional[bool]:
+    """Verify a DKIM signature, or recall that it passed before.
+
+    *msgbytes* is the message with only the DKIM-Signature header to
+    check.  A pass is remembered, keyed on the hash of these exact
+    bytes, so any change to the message makes b4 check it again.  This
+    matters because a signature that passes today can fail later
+    without anything wrong with the message: Gmail, for example, signs
+    with an expiry time (``x=``) only a few days ahead, and senders
+    rotate their keys out of DNS.  Failures are not remembered, so a
+    DNS hiccup does not stick.
+
+    Returns ``None`` when the message was not verified before and
+    ``can_network`` is off.  Errors from the check are added to
+    *errors*.
+    """
+    digest = hashlib.sha256(msgbytes).hexdigest()
+    if _dkim_passed_before(digest):
+        logger.debug('DKIM signature passed before, not checking again')
+        return True
+    if not can_network:
+        logger.debug('Message has DKIM signatures, but can_network is off')
+        return None
+    try:
+        res = bool(dkim.verify(msgbytes, logger=dkimlogger))
+    except Exception as ex:
+        # Usually, this is due to some DNS resolver failure, which we can't
+        # possibly cleanly try/catch. Just mark it as failed and move on.
+        logger.debug('DKIM attestation failed: %s', ex)
+        errors.append(str(ex))
+        return False
+    if res:
+        _dkim_remember_pass(digest)
+    return res
 
 
 class LoreAttestorDKIM(LoreAttestor):

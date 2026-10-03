@@ -12,6 +12,7 @@ import socket
 import sys
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
+import dkim  # type: ignore[import-untyped]
 import dkim.dnsplug  # type: ignore[import-untyped]
 import dns.message
 import dns.query
@@ -1577,6 +1578,175 @@ class TestDnsCache:
         b4._setup_dns_resolver({'attestation-dns-resolvers': ' , '})
         assert dns.resolver.get_default_resolver() is system
         assert system.cache is b4._DNS_CACHE
+
+
+class _ExpiringDKIM(dkim.DKIM):  # type: ignore[misc]
+    """Signs with an expiry time (x=), like Gmail does.
+
+    dkimpy can verify x= but has no option to sign with it.
+    """
+
+    def __init__(self, message: bytes, expire: int) -> None:
+        super().__init__(message)
+        self._expire = expire
+
+    def gen_header(
+        self,
+        fields: List[Tuple[bytes, bytes]],
+        include_headers: Any,
+        canon_policy: Any,
+        header_name: bytes,
+        pk: Any,
+        standardize: bool = False,
+    ) -> bytes:
+        # b= must stay last: it is filled in after the rest is signed
+        fields = [f for f in fields if f[0] != b'b']
+        fields += [(b'x', str(self._expire).encode()), (b'b', b'0' * 60)]
+        return bytes(
+            super().gen_header(
+                fields, include_headers, canon_policy, header_name, pk, standardize
+            )
+        )
+
+
+class TestDkimStore:
+    """A DKIM signature that passed once keeps passing."""
+
+    DAY = 86400
+    MSG = (
+        b'From: Dev Eloper <dev@example.org>\r\n'
+        b'To: list@example.com\r\n'
+        b'Subject: [PATCH] foo: fix the bar\r\n'
+        b'Date: Sat, 03 Oct 2026 12:00:00 +0000\r\n'
+        b'Message-ID: <dkim-test@example.org>\r\n'
+        b'\r\n'
+        b'Just a test.\r\n'
+    )
+
+    @pytest.fixture(autouse=True)
+    def fake_dkim_dns(self, monkeypatch: pytest.MonkeyPatch, sampledir: str) -> None:
+        """Serve the test key from fake DNS, on a clock the test controls."""
+        samples = pathlib.Path(sampledir)
+        self.privkey = (samples / 'dkim-test.key').read_bytes()
+        self.pubkey = (samples / 'dkim-test.pub').read_text().strip()
+        monkeypatch.setattr(b4, 'can_network', True)
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'attestation-policy', 'softfail')
+        self.clock = _FakeClock()
+        self.clock.now = 1_790_000_000.0
+        monkeypatch.setattr(dkim, 'time', self.clock)
+        self.lookups = 0
+        self.dns_works = True
+
+        def fake_get_txt(name: str, timeout: int = 5) -> Optional[str]:
+            self.lookups += 1
+            if not self.dns_works or name != 'test._domainkey.example.org.':
+                return None
+            return f'v=DKIM1; k=rsa; p={self.pubkey}'
+
+        monkeypatch.setattr(dkim.dnsplug, '_get_txt', fake_get_txt)
+
+    def _sign(self, expire_in: int = 0, body: bytes = b'') -> bytes:
+        msg = self.MSG + body
+        if expire_in:
+            signer = _ExpiringDKIM(msg, int(self.clock.now) + expire_in)
+        else:
+            signer = dkim.DKIM(msg)
+        sig = signer.sign(
+            b'test',
+            b'example.org',
+            self.privkey,
+            include_headers=[b'from', b'to', b'subject', b'date', b'message-id'],
+        )
+        return bytes(sig) + msg
+
+    @staticmethod
+    def _check(raw: bytes) -> List[Any]:
+        """The DKIM attestors of a freshly parsed copy of *raw*."""
+        msg = email.parser.BytesParser(
+            policy=b4.emlpolicy, _class=email.message.EmailMessage
+        ).parsebytes(raw)
+        return [a for a in b4.LoreMessage(msg).attestors if a.mode == 'DKIM']
+
+    def _passes(self, raw: bytes) -> bool:
+        atts = self._check(raw)
+        assert len(atts) == 1
+        assert atts[0].identity == 'example.org'
+        return bool(atts[0].passing)
+
+    def test_pass_is_not_checked_again(self) -> None:
+        """The second look at a verified message needs no DNS at all."""
+        raw = self._sign()
+        assert self._passes(raw)
+        assert self.lookups == 1
+        assert self._passes(raw)
+        assert self.lookups == 1
+
+    def test_expired_signature_passes_once_verified(self) -> None:
+        """A Gmail-style x= expiry doesn't undo a pass from before it."""
+        raw = self._sign(expire_in=3 * self.DAY)
+        assert self._passes(raw)
+        self.clock.now += 7 * self.DAY
+        assert self._passes(raw)
+
+    def test_expired_signature_fails_if_never_verified(self) -> None:
+        """The store vouches only for what b4 really verified."""
+        raw = self._sign(expire_in=3 * self.DAY)
+        self.clock.now += 7 * self.DAY
+        assert not self._passes(raw)
+
+    def test_removed_key_passes_once_verified(self) -> None:
+        """A key rotated out of DNS doesn't undo an earlier pass."""
+        raw = self._sign()
+        assert self._passes(raw)
+        self.dns_works = False
+        assert self._passes(raw)
+
+    def test_failure_is_not_remembered(self) -> None:
+        """A DNS hiccup is checked again next time, not stored as a fail."""
+        raw = self._sign()
+        self.dns_works = False
+        assert not self._passes(raw)
+        self.dns_works = True
+        assert self._passes(raw)
+        assert self.lookups == 2
+
+    def test_changed_message_is_checked_again(self) -> None:
+        """A pass is for the exact bytes, so an edited copy is not trusted."""
+        raw = self._sign()
+        assert self._passes(raw)
+        tampered = raw.replace(b'Just a test.', b'Just a trap.')
+        assert not self._passes(tampered)
+        assert self.lookups == 2
+
+    def test_offline_uses_remembered_pass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without network, a message verified before still shows its pass."""
+        raw = self._sign()
+        assert self._passes(raw)
+        monkeypatch.setattr(b4, 'can_network', False)
+        assert self._passes(raw)
+        assert self.lookups == 1
+
+    def test_offline_skips_unverified(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without network, a message never verified gets no DKIM result."""
+        monkeypatch.setattr(b4, 'can_network', False)
+        assert self._check(self._sign()) == []
+        assert self.lookups == 0
+
+    def test_unusable_store_still_verifies(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        """If the store can't be opened, b4 checks every time, as before."""
+        blocker = tmp_path / 'not-a-dir'
+        blocker.write_text('')
+        monkeypatch.setattr(
+            b4, '_dkim_store_path', lambda: str(blocker / 'dkim.sqlite3')
+        )
+        raw = self._sign()
+        assert self._passes(raw)
+        assert self._passes(raw)
+        assert self.lookups == 2
 
 
 @pytest.mark.parametrize(
