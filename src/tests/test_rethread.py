@@ -24,63 +24,40 @@ def _make_msg(msgid: str, subject: str, **kwargs: Any) -> email.message.EmailMes
 # ===========================================================================
 # parse_msgid tests
 # ===========================================================================
+MSGID = '20260323041505.2088-1-user@example.com'
+
+
 class TestParseMsgid:
-    def test_bare_msgid(self) -> None:
-        assert (
-            b4.parse_msgid('20260323041505.2088-1-user@example.com')
-            == '20260323041505.2088-1-user@example.com'
-        )
-
-    def test_angle_brackets(self) -> None:
-        assert (
-            b4.parse_msgid('<20260323041505.2088-1-user@example.com>')
-            == '20260323041505.2088-1-user@example.com'
-        )
-
-    def test_lore_url(self) -> None:
-        result = b4.parse_msgid(
-            'https://lore.kernel.org/all/20260323041505.2088-1-user@example.com/'
-        )
-        assert result == '20260323041505.2088-1-user@example.com'
-
-    def test_lore_url_with_r_shorthand(self) -> None:
-        result = b4.parse_msgid(
-            'https://lore.kernel.org/r/20260323041505.2088-1-user@example.com'
-        )
-        assert result == '20260323041505.2088-1-user@example.com'
-
-    def test_lore_url_percent_encoded(self) -> None:
-        result = b4.parse_msgid('https://lore.kernel.org/all/abc%2Bdef@example.com/')
-        assert result == 'abc+def@example.com'
-
-    def test_patchwork_url(self) -> None:
-        result = b4.parse_msgid(
-            'https://patchwork.kernel.org/project/linux-mm/patch/20260323041505.2088-1-user@example.com/'
-        )
-        assert result == '20260323041505.2088-1-user@example.com'
-
-    def test_id_prefix(self) -> None:
-        assert (
-            b4.parse_msgid('id:20260323041505.2088-1-user@example.com')
-            == '20260323041505.2088-1-user@example.com'
-        )
-
-    def test_rfc822msgid_prefix(self) -> None:
-        assert (
-            b4.parse_msgid('rfc822msgid:20260323041505.2088-1-user@example.com')
-            == '20260323041505.2088-1-user@example.com'
-        )
-
-    def test_whitespace_stripped(self) -> None:
-        assert b4.parse_msgid('  <foo@bar.com>  ') == 'foo@bar.com'
-
-    def test_generic_http_url_with_at_sign(self) -> None:
-        result = b4.parse_msgid('https://some.archive.org/msg/20260323.abc@example.com')
-        assert result == '20260323.abc@example.com'
-
-    def test_non_url_passthrough(self) -> None:
-        """A bare msgid without special prefixes passes through unchanged."""
-        assert b4.parse_msgid('simple-msgid@host') == 'simple-msgid@host'
+    @pytest.mark.parametrize(
+        'raw,expected',
+        [
+            pytest.param(MSGID, MSGID, id='bare'),
+            pytest.param(f'<{MSGID}>', MSGID, id='angle-brackets'),
+            pytest.param('  <foo@bar.com>  ', 'foo@bar.com', id='whitespace-stripped'),
+            pytest.param('simple-msgid@host', 'simple-msgid@host', id='no-prefix'),
+            pytest.param(f'id:{MSGID}', MSGID, id='id-prefix'),
+            pytest.param(f'rfc822msgid:{MSGID}', MSGID, id='rfc822msgid-prefix'),
+            pytest.param(f'https://lore.kernel.org/all/{MSGID}/', MSGID, id='lore-url'),
+            pytest.param(f'https://lore.kernel.org/r/{MSGID}', MSGID, id='lore-r-url'),
+            pytest.param(
+                'https://lore.kernel.org/all/abc%2Bdef@example.com/',
+                'abc+def@example.com',
+                id='percent-encoded',
+            ),
+            pytest.param(
+                f'https://patchwork.kernel.org/project/linux-mm/patch/{MSGID}/',
+                MSGID,
+                id='patchwork-url',
+            ),
+            pytest.param(
+                'https://some.archive.org/msg/20260323.abc@example.com',
+                '20260323.abc@example.com',
+                id='generic-url',
+            ),
+        ],
+    )
+    def test_extracts_msgid(self, raw: str, expected: str) -> None:
+        assert b4.parse_msgid(raw) == expected
 
     def test_url_does_not_change_midmask(self) -> None:
         """A URL on another server is remembered, not made the midmask."""
@@ -294,35 +271,59 @@ class TestPastedUrlThread:
 # LoreSeries.rewrite_subject_counter tests
 # ===========================================================================
 class TestRewriteSubjectCounter:
-    def test_basic_rewrite(self) -> None:
-        msg = _make_msg('a@b', '[PATCH 1/1] Fix the frobnicator')
-        b4.LoreSeries.rewrite_subject_counter(msg, 2, 5)
-        assert msg['Subject'] == '[PATCH 2/5] Fix the frobnicator'
-
-    def test_preserves_rfc_prefix(self) -> None:
-        msg = _make_msg('a@b', '[PATCH RFC 1/1] Add new feature')
-        b4.LoreSeries.rewrite_subject_counter(msg, 3, 7)
-        assert msg['Subject'] == '[PATCH RFC 3/7] Add new feature'
-
-    def test_preserves_version(self) -> None:
-        msg = _make_msg('a@b', '[PATCH v3 1/2] Refactor widgets')
-        b4.LoreSeries.rewrite_subject_counter(msg, 1, 4)
-        assert msg['Subject'] == '[PATCH v3 1/4] Refactor widgets'
-
-    def test_zero_pads_counter(self) -> None:
-        msg = _make_msg('a@b', '[PATCH 1/1] Something')
-        b4.LoreSeries.rewrite_subject_counter(msg, 2, 15)
-        assert msg['Subject'] == '[PATCH 02/15] Something'
-
-    def test_cover_letter(self) -> None:
-        msg = _make_msg('a@b', '[PATCH 0/3] Cover letter subject')
-        b4.LoreSeries.rewrite_subject_counter(msg, 0, 5)
-        assert msg['Subject'] == '[PATCH 0/5] Cover letter subject'
-
-    def test_bare_subject_gets_patch_prefix(self) -> None:
-        msg = _make_msg('a@b', 'Fix the thing')
-        b4.LoreSeries.rewrite_subject_counter(msg, 1, 3)
-        assert msg['Subject'] == '[PATCH 1/3] Fix the thing'
+    @pytest.mark.parametrize(
+        'subject,counter,expected,result',
+        [
+            pytest.param(
+                '[PATCH 1/1] Fix the frobnicator',
+                2,
+                5,
+                '[PATCH 2/5] Fix the frobnicator',
+                id='basic',
+            ),
+            pytest.param(
+                '[PATCH RFC 1/1] Add new feature',
+                3,
+                7,
+                '[PATCH RFC 3/7] Add new feature',
+                id='keeps-rfc',
+            ),
+            pytest.param(
+                '[PATCH v3 1/2] Refactor widgets',
+                1,
+                4,
+                '[PATCH v3 1/4] Refactor widgets',
+                id='keeps-version',
+            ),
+            pytest.param(
+                '[PATCH 1/1] Something',
+                2,
+                15,
+                '[PATCH 02/15] Something',
+                id='zero-pads',
+            ),
+            pytest.param(
+                '[PATCH 0/3] Cover letter subject',
+                0,
+                5,
+                '[PATCH 0/5] Cover letter subject',
+                id='cover',
+            ),
+            pytest.param(
+                'Fix the thing',
+                1,
+                3,
+                '[PATCH 1/3] Fix the thing',
+                id='bare-gets-prefix',
+            ),
+        ],
+    )
+    def test_rewrites_counter(
+        self, subject: str, counter: int, expected: int, result: str
+    ) -> None:
+        msg = _make_msg('a@b', subject)
+        b4.LoreSeries.rewrite_subject_counter(msg, counter, expected)
+        assert msg['Subject'] == result
 
 
 # ===========================================================================
@@ -795,13 +796,12 @@ class TestFetchRethreadMessagesProgress:
 
 # ===========================================================================
 # Prefer a properly-threaded resend over stitched patches
-# (feature/rethread-upgrade-compose)
 #
-# Red spec — written test-first.  When an author posts an improperly-threaded
-# series *and* a correctly-threaded resend of the same version, rethreading
-# should detect the resend and use it as-is instead of synthesising a stitch.
-# This exercises b4.find_threaded_copy() and the third "was_rethreaded" return
-# value of b4.retrieve_rethreaded_messages(), neither of which exists yet.
+# When an author posts an improperly-threaded series *and* a correctly-
+# threaded resend of the same version, rethreading detects the resend and
+# uses it as-is instead of synthesising a stitch: b4.find_threaded_copy()
+# and the third "was_rethreaded" return value of
+# b4.retrieve_rethreaded_messages().
 # ===========================================================================
 
 
