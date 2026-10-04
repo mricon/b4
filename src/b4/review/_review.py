@@ -2665,13 +2665,48 @@ def update_series_tracking(
             for msg in msgs:
                 lmbx.add_message(msg)
 
-    # Re-check attestation on every update (key imports, policy changes, etc.)
-    # Try the tracked revision first; fall back to the latest available.
-    lser_att = lmbx.get_series(
-        current_rev, sloppytrailers=False, local_sufficient=local_sufficient
+    # Update follow-up trailers if the series has a review branch.  A
+    # branch that is checked out (in any worktree) is left strictly
+    # alone: the maintainer is working on it right there, possibly
+    # mid-rebase, and rewriting its tip under them risks corrupting
+    # their work.  The database updates below still happen; the
+    # tracking commit catches up on the next sweep after the branch is
+    # no longer checked out.
+    branch = f'b4/review/{change_id}'
+    update_branch = bool(topdir) and status in (
+        'reviewing',
+        'replied',
+        'partial',
+        'waiting',
     )
+    if update_branch and topdir and b4.git_branch_checked_out(topdir, branch):
+        logger.debug('%s is checked out, leaving the branch alone', branch)
+        result['checked_out'] = True
+        update_branch = False
+
+    # Build the tracked revision once, for both the attestation check and
+    # the branch update.  Only the branch update stores follow-up
+    # trailers, so only then is it worth asking for code-review trailers
+    # sent to another revision of a patch with the same patch-id (say, a
+    # late review of v1 after v2 is out).
+    lser = lmbx.get_series(
+        current_rev,
+        sloppytrailers=False,
+        codereview_trailers=update_branch,
+        local_sufficient=local_sufficient,
+    )
+
+    # Check attestation on every update, so a key added or revoked since
+    # shows up.  patatt results are remembered for up to a day, so this
+    # is cheap for messages checked before.  Use the tracked revision,
+    # or the latest one if the tracked revision is not here.
+    lser_att = lser
     if lser_att is None:
-        lser_att = lmbx.get_series(sloppytrailers=False, local_sufficient=local_sufficient)
+        lser_att = lmbx.get_series(
+            sloppytrailers=False,
+            codereview_trailers=False,
+            local_sufficient=local_sufficient,
+        )
     if lser_att is not None:
         att = check_series_attestation(lser_att)
         b4.review.tracking.update_attestation(identifier, change_id, current_rev, att)
@@ -2705,24 +2740,6 @@ def update_series_tracking(
     # explicitly; status is only ever changed by an explicit user action, not
     # as a side effect of updating.  Do not re-add auto-promotion here.
 
-    # Update follow-up trailers if the series has a review branch.  A
-    # branch that is checked out (in any worktree) is left strictly
-    # alone: the maintainer is working on it right there, possibly
-    # mid-rebase, and rewriting its tip under them risks corrupting
-    # their work.  The database updates above have already happened;
-    # the tracking commit catches up on the next sweep after the
-    # branch is no longer checked out.
-    branch = f'b4/review/{change_id}'
-    update_branch = bool(topdir) and status in (
-        'reviewing',
-        'replied',
-        'partial',
-        'waiting',
-    )
-    if update_branch and topdir and b4.git_branch_checked_out(topdir, branch):
-        logger.debug('%s is checked out, leaving the branch alone', branch)
-        result['checked_out'] = True
-        update_branch = False
     if update_branch and topdir:
         wantver = current_rev
 
@@ -2740,12 +2757,6 @@ def update_series_tracking(
         else:
             t_series.pop('newer-versions', None)
 
-        lser = lmbx.get_series(
-            wantver,
-            sloppytrailers=False,
-            codereview_trailers=True,
-            local_sufficient=local_sufficient,
-        )
         if lser is None:
             result['error'] = f'Could not find series v{wantver} in retrieved messages'
             return result

@@ -4087,6 +4087,137 @@ class TestUpdateSeriesTrackingCoverSubject:
         assert row['subject'] == '[PATCH v2 0/3] thing: do things better'
 
 
+class TestUpdateSeriesTrackingCodeReviewSearch:
+    """update_series_tracking() builds the tracked revision only once.
+
+    The same series serves the attestation check and the branch update.
+    The patch-id search for code-review trailers runs only when there is
+    a branch to update, because only the branch update stores them.  It
+    still finds a late review sent to v1 after v2 is out, as long as the
+    patch-id did not change.
+    """
+
+    _LATE_REVIEW = 'Reviewed-by: Late Reviewer <late@example.com>'
+
+    @classmethod
+    def _late_review_of_v1(cls) -> list[EmailMessage]:
+        """Patch 1 of v1, and a review of it sent after v2 came out."""
+        v1_patch = _series_msgs('thing', _AUTHOR, 1, 2, cover=True)[1]
+        reply = EmailMessage()
+        reply['Subject'] = 'Re: [PATCH v1 1/2] thing: part 1'
+        reply['From'] = 'Late Reviewer <late@example.com>'
+        reply['Date'] = 'Mon, 23 Mar 2026 10:00:00 +0530'
+        reply['Message-Id'] = '<late-review@example.com>'
+        reply['In-Reply-To'] = '<thing-v1-p1@example.com>'
+        reply['References'] = '<thing-v1-p1@example.com>'
+        reply.set_payload(f'Looks good.\n\n{cls._LATE_REVIEW}\n')
+        return [v1_patch, reply]
+
+    @staticmethod
+    def _tracking_data(change_id: str) -> Dict[str, Any]:
+        return {
+            'series': {
+                'identifier': 'crs-proj',
+                'status': 'reviewing',
+                'revision': 2,
+                'change-id': change_id,
+                'subject': 'thing: do things better',
+                'fromname': 'Author',
+                'fromemail': 'author@example.com',
+                'expected': 2,
+                'complete': True,
+                'base-commit': 'abc123',
+                'prerequisite-commits': [],
+                'first-patch-commit': 'def456',
+                'header-info': {},
+                'link': '',
+            },
+            'followups': [],
+            'patches': [
+                {'subject': 'thing: part 1', 'message-id': 'thing-v2-p1@example.com'},
+                {'subject': 'thing: part 2', 'message-id': 'thing-v2-p2@example.com'},
+            ],
+        }
+
+    def _update(
+        self, status: str, topdir: str | None = None
+    ) -> tuple[Dict[str, Any], list[str], mock.Mock]:
+        """Run one update of v2; return the result, the code-review
+        searches made, and the attestation check mock."""
+        series: Dict[str, Any] = {
+            'change_id': 'cid-crs',
+            'revision': 2,
+            'status': status,
+            'message_id': 'thing-v2-p0@example.com',
+        }
+        searches: list[str] = []
+        late = self._late_review_of_v1()
+
+        def _search(query: str, **_kw: Any) -> list[EmailMessage]:
+            assert 'patchid:' in query
+            searches.append(query)
+            return late
+
+        check_att = mock.Mock(return_value=None)
+        with (
+            mock.patch('b4.can_network', True),
+            mock.patch(
+                'b4.review._review.retrieve_series_messages',
+                return_value=_series_msgs('thing', _AUTHOR, 2, 2, cover=True),
+            ),
+            mock.patch(
+                'b4.mbox.get_extra_series', side_effect=lambda msgs, **_kw: msgs
+            ),
+            mock.patch('b4.get_pi_search_results', side_effect=_search),
+            mock.patch('b4.review._review.check_series_attestation', check_att),
+        ):
+            result = b4.review.update_series_tracking(
+                series, 'crs-proj', 'https://example.com/%s', topdir=topdir
+            )
+        return result, searches, check_att
+
+    def test_late_review_of_v1_lands_on_v2(self, gitdir: str) -> None:
+        branch = _create_review_branch(
+            gitdir, 'cid-crs', self._tracking_data('cid-crs')
+        )
+
+        result, searches, check_att = self._update('reviewing', topdir=gitdir)
+
+        assert result['error'] is None
+        assert len(searches) == 1
+        check_att.assert_called_once()
+        _cover, trk = b4.review.load_tracking(gitdir, branch)
+        p1_trailers = [
+            t for fu in trk['patches'][0]['followups'] for t in fu['trailers']
+        ]
+        assert p1_trailers == [self._LATE_REVIEW]
+        assert trk['patches'][1]['followups'] == []
+        assert result['new_trailers'] == 1
+
+    def test_series_without_branch_skips_search(self) -> None:
+        result, searches, check_att = self._update('new')
+
+        assert result['error'] is None
+        assert searches == []
+        check_att.assert_called_once()
+
+    def test_checked_out_branch_skips_search(self, gitdir: str) -> None:
+        branch = _create_review_branch(
+            gitdir, 'cid-crs', self._tracking_data('cid-crs')
+        )
+        before = b4.review.load_tracking(gitdir, branch)
+        ecode, _ = b4.git_run_command(gitdir, ['checkout', branch])
+        assert ecode == 0
+
+        result, searches, check_att = self._update('reviewing', topdir=gitdir)
+
+        assert result['error'] is None
+        assert result['checked_out'] is True
+        assert searches == []
+        check_att.assert_called_once()
+        assert b4.review.load_tracking(gitdir, branch) == before
+
+
 class TestRealignSeriesSubject:
     """realign_series_subject() re-titles only from an actual cover letter."""
 
