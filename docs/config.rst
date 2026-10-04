@@ -530,6 +530,14 @@ Attestation settings
          [b4]
            keyringsrc = ~/path/to/pgpkeys/.keyring
 
+     b4 remembers developer signature results in
+     ``~/.local/share/b4/patatt-checked.sqlite3`` for up to 24 hours,
+     so a revoked key stops showing a pass within a day. "No key"
+     results are not remembered, so a key you add is used right away.
+
+     .. versionchanged:: v0.17
+        b4 remembers developer signature checks for up to 24 hours.
+
      Default: ``None``
 
 .. _ty_settings:

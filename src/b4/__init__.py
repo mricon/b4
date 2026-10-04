@@ -19,6 +19,7 @@ import mailbox
 import os
 import pathlib
 import pwd
+import random
 import re
 import shlex
 import shutil
@@ -65,6 +66,11 @@ import liblore
 import patatt
 
 ConfigDictT = Dict[str, Union[str, List[str], None]]
+# One signature as patatt.validate_message() reports it:
+# (result, identity, signtime, keysrc, keyalgo, errors)
+PatattResult = Tuple[
+    int, Optional[str], Optional[str], Optional[str], Optional[str], List[str]
+]
 
 
 charset.add_charset('utf-8', None)
@@ -2191,6 +2197,46 @@ class LoreMessage:
             if len(ibh):
                 self.body = '\n'.join(ibh) + '\n\n' + self.body
 
+    @staticmethod
+    def _validate_patatt(
+        msgbytes: bytes, sources: List[str]
+    ) -> Tuple[bool, List[PatattResult]]:
+        """Run patatt on *msgbytes* and return (trimmed, results).
+
+        *trimmed* is True if a signature passed only on the body cut to
+        its l= length.  The identity of a signature checked with the
+        default GnuPG keyring is replaced with the matching key uid.
+        """
+        trimmed = False
+        attestations = patatt.validate_message(msgbytes, sources)
+        if not any(a[0] == patatt.RES_VALID for a in attestations) and any(
+            a[0] == patatt.RES_BADSIG for a in attestations
+        ):
+            # Content after the l= length breaks the signature, so try
+            # again on the trimmed body. Only a bad signature can turn
+            # good this way: a missing key stays missing.
+            retry = patatt.validate_message(msgbytes, sources, trim_body=True)
+            if any(a[0] == patatt.RES_VALID for a in retry):
+                trimmed = True
+                attestations = retry
+
+        results: List[PatattResult] = list()
+        for result, identity, signtime, keysrc, keyalgo, errors in attestations:
+            if keysrc and keysrc.startswith('(default keyring)/'):
+                fpr = keysrc.split('/', 1)[1]
+                uids = get_gpg_uids(fpr)
+                idmatch = False
+                for uid in uids:
+                    if identity and uid.find(identity) >= 0:
+                        idmatch = True
+                        break
+                if not idmatch:
+                    # Take the first identity in the list and use that instead
+                    parts = email.utils.parseaddr(uids[0])
+                    identity = parts[1]
+            results.append((result, identity, signtime, keysrc, keyalgo, errors))
+        return trimmed, results
+
     def _load_patatt_attestors(self) -> None:
         # This should be always the case, but assert it anyway
         assert isinstance(self._attestors, list)
@@ -2226,42 +2272,25 @@ class LoreMessage:
 
         logger.debug('Loading patatt attestations with sources=%s', str(sources))
 
-        success = False
-        trim_body = False
-        while True:
-            attestations = patatt.validate_message(
-                self.msg.as_bytes(policy=emlpolicy), sources, trim_body=trim_body
-            )
-            # Do we have any successes?
-            for attestation in attestations:
-                if attestation[0] == patatt.RES_VALID:
-                    success = True
-                    break
-            if success:
-                if trim_body:
-                    # If we only succeeded after trimming the body, then we MUST set the body
-                    # to that value, otherwise someone can append arbitrary content after the l= value
-                    # limit message.
-                    self._trim_body()
-                break
-            if not success and trim_body:
-                break
-            trim_body = True
+        msgbytes = self.msg.as_bytes(policy=emlpolicy)
+        digest = _patatt_digest(msgbytes, sources, patatt.GPGBIN)
+        recalled = _patatt_recall(digest)
+        if recalled is not None:
+            trimmed, attestations = recalled
+        else:
+            trimmed, attestations = self._validate_patatt(msgbytes, sources)
+            if attestations and all(
+                a[0] in (patatt.RES_VALID, patatt.RES_BADSIG) for a in attestations
+            ):
+                _patatt_remember(digest, trimmed, attestations)
+
+        if trimmed:
+            # If we only succeeded after trimming the body, then we MUST set the body
+            # to that value, otherwise someone can append arbitrary content after the l= value
+            # limit message.
+            self._trim_body()
 
         for result, identity, signtime, keysrc, keyalgo, errors in attestations:
-            if keysrc and keysrc.startswith('(default keyring)/'):
-                fpr = keysrc.split('/', 1)[1]
-                uids = get_gpg_uids(fpr)
-                idmatch = False
-                for uid in uids:
-                    if identity and uid.find(identity) >= 0:
-                        idmatch = True
-                        break
-                if not idmatch:
-                    # Take the first identity in the list and use that instead
-                    parts = email.utils.parseaddr(uids[0])
-                    identity = parts[1]
-
             if signtime:
                 signdt = LoreAttestor.parse_ts(signtime)
             else:
@@ -3761,6 +3790,98 @@ def _dkim_remember_pass(digest: str) -> None:
             conn.close()
     except (OSError, sqlite3.Error) as ex:
         logger.debug('Unable to write the DKIM store: %s', ex)
+
+
+# How long a patatt result is remembered.  Unlike a DKIM pass, it does
+# expire: the key comes from a keyring the user controls, and a key that
+# was revoked or removed there must stop showing a pass.  Each entry
+# expires at a random point in the last sixth of this window, so the
+# results of one big sweep are not all checked again in the same sweep.
+PATATT_RECHECK_SECS = 86400
+
+
+def _patatt_store_path() -> str:
+    return os.path.join(get_data_dir(), 'patatt-checked.sqlite3')
+
+
+def _patatt_store() -> sqlite3.Connection:
+    conn = sqlite3.connect(_patatt_store_path())
+    try:
+        # The TUI and a cron sweep may both be checking messages
+        conn.execute('PRAGMA busy_timeout = 15000')
+        conn.execute(
+            'CREATE TABLE IF NOT EXISTS patatt_checked ('
+            'digest TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, '
+            'trimmed INTEGER NOT NULL, results TEXT NOT NULL)'
+        )
+    except sqlite3.Error:
+        conn.close()
+        raise
+    return conn
+
+
+def _patatt_digest(msgbytes: bytes, sources: List[str], gpgbin: str) -> str:
+    """Key a patatt result on the message and on where its keys come from.
+
+    A different keyring setting can give a different result for the
+    same message, so it is part of the key.  A ``ref::`` source with no
+    repository uses the repository b4 runs in, so then the working
+    directory is part of the key too.
+    """
+    context: Dict[str, Any] = {'sources': sources, 'gpgbin': gpgbin}
+    if any(src.startswith('ref::') for src in sources):
+        context['cwd'] = os.getcwd()
+    hasher = hashlib.sha256(msgbytes)
+    hasher.update(b'\0')
+    hasher.update(json.dumps(context, sort_keys=True).encode())
+    return hasher.hexdigest()
+
+
+def _patatt_recall(digest: str) -> Optional[Tuple[bool, List[PatattResult]]]:
+    """Return (trimmed, results) remembered for *digest*, if not expired."""
+    try:
+        conn = _patatt_store()
+        try:
+            row = conn.execute(
+                'SELECT trimmed, results FROM patatt_checked '
+                'WHERE digest = ? AND expires_at > ?',
+                (digest, int(time.time())),
+            ).fetchone()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.debug('Unable to read the patatt store: %s', ex)
+        return None
+    if row is None:
+        return None
+    try:
+        results: List[PatattResult] = [
+            (int(r), i, t, k, a, list(e)) for r, i, t, k, a, e in json.loads(row[1])
+        ]
+    except (ValueError, TypeError) as ex:
+        logger.debug('Ignoring a damaged patatt store entry: %s', ex)
+        return None
+    return bool(row[0]), results
+
+
+def _patatt_remember(digest: str, trimmed: bool, results: List[PatattResult]) -> None:
+    """Remember a patatt result, and forget the ones that expired."""
+    now = int(time.time())
+    expires_at = now + random.randint(PATATT_RECHECK_SECS * 5 // 6, PATATT_RECHECK_SECS)
+    try:
+        conn = _patatt_store()
+        try:
+            with conn:
+                conn.execute('DELETE FROM patatt_checked WHERE expires_at <= ?', (now,))
+                conn.execute(
+                    'INSERT OR REPLACE INTO patatt_checked '
+                    '(digest, expires_at, trimmed, results) VALUES (?, ?, ?, ?)',
+                    (digest, expires_at, int(trimmed), json.dumps(results)),
+                )
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.debug('Unable to write the patatt store: %s', ex)
 
 
 def _dkim_verify(msgbytes: bytes, errors: List[str]) -> Optional[bool]:
