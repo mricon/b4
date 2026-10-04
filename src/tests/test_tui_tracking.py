@@ -748,11 +748,16 @@ class TestTrackingFocusChangeId:
     async def test_focus_on_specific_series(self, tmp_path: pathlib.Path) -> None:
         _seed_db('test-focus', SAMPLE_SERIES)
 
-        app = TrackingApp('test-focus', focus_change_id='test-change-charlie')
+        # alpha is listed LAST (charlie, bravo, alpha: added_at desc), so a
+        # focus that lands on index 2 proves focus_change_id was honoured
+        # rather than the default first-row selection.
+        app = TrackingApp('test-focus', focus_change_id='test-change-alpha')
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             lv = app.query_one('#tracking-list', ListView)
-            assert lv.index == 0  # charlie is 1st (last inserted, added_at desc)
+            assert lv.index == 2
+            assert app._selected_series is not None
+            assert app._selected_series['change_id'] == 'test-change-alpha'
 
 
 class TestTrackingQuit:
@@ -3750,16 +3755,16 @@ class TestUpdateRevisionWorkflow:
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            # Call the method directly — worker should not be pushed
-            app._do_update_revision(change_id, 1, 2)
-            await pilot.pause()
-            # Should stay on the main screen, not a WorkerScreen
-            assert not isinstance(
-                app.screen,
-                __import__(
-                    'b4.review_tui._modals', fromlist=['WorkerScreen']
-                ).WorkerScreen,
-            )
+            main_screen = app.screen
+            with patch.object(app, 'notify') as notify:
+                # Call the method directly — worker should not be pushed
+                app._do_update_revision(change_id, 1, 2)
+                await pilot.pause()
+            # Stays on the main screen and tells the user why.
+            assert app.screen is main_screen
+            notify.assert_called_once()
+            assert 'No message-id recorded for v2' in notify.call_args.args[0]
+            assert notify.call_args.kwargs.get('severity') == 'error'
 
     def test_fetch_worker_reports_progress(self, tmp_path: pathlib.Path) -> None:
         """Fetching an upgrade should describe each potentially slow step."""
@@ -3872,14 +3877,19 @@ class TestUpdateRevisionWorkflow:
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            app._on_update_prepared(
-                None, 'noop-1', 1, 2, 'v2@ex.com', 'subj', 'b4/review/noop-1'
-            )
-            await pilot.pause()
-            # No BaseSelectionScreen should be pushed
-            from b4.review_tui._modals import BaseSelectionScreen
-
-            assert not isinstance(app.screen, BaseSelectionScreen)
+            main_screen = app.screen
+            with patch.object(app, 'notify') as notify:
+                app._on_update_prepared(
+                    None, 'noop-1', 1, 2, 'v2@ex.com', 'subj', 'b4/review/noop-1'
+                )
+                await pilot.pause()
+            # Nothing pushed, nothing said, nothing recorded.
+            assert app.screen is main_screen
+            notify.assert_not_called()
+        rows = tracking.get_all_tracked_series(identifier)
+        assert [(r['change_id'], r['revision'], r['status']) for r in rows] == [
+            ('noop-1', 1, 'new')
+        ]
 
     @pytest.mark.asyncio
     async def test_prepared_pushes_base_selection(self, tmp_path: pathlib.Path) -> None:
@@ -4022,21 +4032,32 @@ class TestUpdateRevisionWorkflow:
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
-            app._on_update_base_selected(
-                None,
-                lser,
-                b'mbox',
-                1,
-                'cancel-1',
-                1,
-                2,
-                'v2@ex.com',
-                'subj',
-                'b4/review/cancel-1',
-            )
-            await pilot.pause()
-            # App should still be running — not exited
+            with (
+                patch.object(app, 'notify') as notify,
+                patch.object(app, 'suspend') as suspend,
+            ):
+                app._on_update_base_selected(
+                    None,
+                    lser,
+                    b'mbox',
+                    1,
+                    'cancel-1',
+                    1,
+                    2,
+                    'v2@ex.com',
+                    'subj',
+                    'b4/review/cancel-1',
+                )
+                await pilot.pause()
+            # Cancelled before phase 3: no shell suspend, user told, app alive.
+            suspend.assert_not_called()
+            notify.assert_called_once()
+            assert 'cancelled' in notify.call_args.args[0].lower()
             assert app.is_running
+        rows = tracking.get_all_tracked_series(identifier)
+        assert [(r['change_id'], r['revision'], r['status']) for r in rows] == [
+            ('cancel-1', 1, 'new')
+        ]
 
     @pytest.mark.asyncio
     async def test_apply_failure_preserves_old_branch(self, gitdir: str) -> None:

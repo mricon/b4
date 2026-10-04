@@ -391,11 +391,12 @@ class TestIdentifyCoverLetter:
         assert cover_msgid is None
         assert len(patch_msgs) == 2
 
-    def test_inferred_counter_zero_not_cover(self) -> None:
-        """A message with inferred counter 0 (e.g. just [PATCH]) should not be treated as cover."""
-        # A bare [PATCH] message gets counter=1, expected=1, counters_inferred=True
-        # but a message that somehow parses as counter=0 with inferred counters should not
-        # be treated as a cover letter
+    def test_inferred_counters_never_make_a_cover(self) -> None:
+        """Bare ``[PATCH]`` subjects (inferred counters) never yield a cover.
+
+        Only an *explicit* ``0/N`` counter marks a cover letter; subjects
+        without counters are all patches, however many there are.
+        """
         p1 = _make_msg('p1@x', '[PATCH] Single patch fix')
         p2 = _make_msg('p2@x', '[PATCH] Another fix')
         all_msgs = [p1, p2]

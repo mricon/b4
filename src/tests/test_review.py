@@ -4233,18 +4233,6 @@ class TestFollowupItemPerMessage:
         app._selected_followup_msgid = 'reply@example.com'
         assert app.check_action('edit_reply', ()) is True
 
-    def test_selected_followup_cleared_on_show_content(self) -> None:
-        """_selected_followup_msgid is reset when switching patches."""
-        from b4.review_tui._review_app import ReviewApp
-
-        app = ReviewApp(self._make_session())
-        app._selected_followup_msgid = 'reply@example.com'
-        # Verify it was set
-        assert app._selected_followup_msgid == 'reply@example.com'
-        # The field should be None after init for a fresh app
-        app2 = ReviewApp(self._make_session())
-        assert app2._selected_followup_msgid is None
-
 
 # ---------------------------------------------------------------------------
 # _get_lore_series version-mismatch tests (cc529aa)

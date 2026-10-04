@@ -22,9 +22,10 @@ class TestDisplayWidth:
         # U+FF21 FULLWIDTH LATIN CAPITAL LETTER A
         assert display_width('\uff21') == 2
 
-    def test_emoji(self) -> None:
-        # Most emoji have east_asian_width 'W'
-        assert display_width('\u2605') >= 1  # BLACK STAR
+    def test_ambiguous_width_is_narrow(self) -> None:
+        # BLACK STAR has east_asian_width 'A' (ambiguous); we treat it as 1
+        # column, matching what western terminals render.
+        assert display_width('\u2605') == 1
 
 
 class TestPadDisplay:

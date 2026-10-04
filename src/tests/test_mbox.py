@@ -80,7 +80,7 @@ def test_shazam(
     cmdargs = parser.parse_args(shazamargs)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
-        assert e.value.code == 0
+    assert e.value.code == 0
     out, logstr = b4.git_run_command(None, compareargs)
     assert out == 0
     with open(cfile, 'r') as fh:

@@ -243,11 +243,10 @@ class TestLabelColor:
         assert c1 == c2
 
     def test_different_labels_differ(self) -> None:
-        c1 = label_color('review')
-        c2 = label_color('priority/high')
-        # Not guaranteed but extremely likely with different inputs
-        assert isinstance(c1, str) and c1.startswith('#')
-        assert isinstance(c2, str) and c2.startswith('#')
+        # The palette is small, so not every pair differs -- but this pair
+        # does, and the algorithm is deterministic (SHA-256 of the name), so
+        # a collision here would mean the hashing changed.
+        assert label_color('review') != label_color('priority/high')
 
     def test_returns_hex_color(self) -> None:
         c = label_color('test')

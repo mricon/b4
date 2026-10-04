@@ -168,7 +168,7 @@ def test_trailers(
         cmdargs = parser.parse_args(b4args)
         with pytest.raises(SystemExit) as e:
             b4.mbox.main(cmdargs)
-            assert e.value.code == 0
+        assert e.value.code == 0
 
     cfile = os.path.join(sampledir, f'{compareout}.verify')
     assert os.path.exists(cfile)
@@ -330,7 +330,7 @@ def test_trailers_update_preserves_notes(
     cmdargs = parser.parse_args(b4args)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
-        assert e.value.code == 0
+    assert e.value.code == 0
 
     pre_oids = _series_oids(4)
     expected_notes: Dict[int, str] = {}
@@ -988,7 +988,7 @@ def test_trailers_interactive_reject_persists_across_runs(
     cmdargs = parser.parse_args(b4args)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
-        assert e.value.code == 0
+    assert e.value.code == 0
 
     def fake_edit(
         bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
@@ -1071,7 +1071,7 @@ def test_trailers_fuzzy_composes_with_interactive(
     cmdargs = parser.parse_args(b4args)
     with pytest.raises(SystemExit) as e:
         b4.mbox.main(cmdargs)
-        assert e.value.code == 0
+    assert e.value.code == 0
 
     seen = {'offered': False}
 

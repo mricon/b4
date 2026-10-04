@@ -110,12 +110,18 @@ def test_external_comment_lines_follow_plugin_contract() -> None:
 def test_quoted_and_instruction_prefixes() -> None:
     """Quoted lines are ``"> "`` or bare ``">"``; instructions start with ``#``."""
     buf = _contract_buffer()
-    for ln in buf.splitlines():
+    lines = buf.splitlines()
+    assert any(ln.startswith('#') for ln in lines), 'no instruction lines'
+    for ln in lines:
         if ln.startswith('>'):
             assert ln == '>' or ln.startswith('> '), f'bad quoted line: {ln!r}'
         if ln.startswith('#'):
-            # Instruction lines are a comment to the reader, never "# " only.
-            assert ln.startswith('#')
+            # Instruction lines follow the same shape as quoted ones: a bare
+            # "#" separator, or "# " followed by text.  The plugins key their
+            # highlighting off exactly this prefix.
+            assert ln == '#' or (ln.startswith('# ') and ln.strip('# ')), (
+                f'bad instruction line: {ln!r}'
+            )
 
 
 def test_skip_markers_are_inert_to_parser() -> None:

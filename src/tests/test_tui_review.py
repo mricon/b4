@@ -363,6 +363,26 @@ class TestReplyVerbatim:
             )
 
 
+class TestFollowupSelection:
+    """Per-message follow-up selection is scoped to the patch being shown."""
+
+    @pytest.mark.asyncio
+    async def test_selected_followup_cleared_on_show_content(self, gitdir: str) -> None:
+        """Switching patches forgets the follow-up picked under the old one."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'followup-sel', ['patch 1', 'patch 2']
+        )
+        app = ReviewApp(_build_session(gitdir, branch))
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._selected_followup_msgid = 'reply@example.com'
+            assert app.check_action('edit_reply', ()) is True
+            app._show_content(2)
+            await pilot.pause()
+            assert app._selected_followup_msgid is None
+            assert app._selected_idx == 2
+
+
 class TestFollowupSnipMarker:
     """Quick follow-up replies expose and resolve the snip marker."""
 
