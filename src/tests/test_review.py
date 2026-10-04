@@ -11,6 +11,7 @@ import pytest
 
 import b4
 import b4.review.tracking
+import liblore
 from b4 import review, review_tui
 from b4.review import _review
 from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
@@ -76,29 +77,47 @@ class TestRenderQuotedDiffWithComments:
                 f'Unquoted line: {line!r}'
             )
 
-    def test_own_comment_is_unquoted(self) -> None:
+    @pytest.mark.parametrize(
+        'path,line,text,render_kwargs',
+        [
+            pytest.param(
+                'b/lib/helpers.c', 12, 'Check NULL return', {}, id='diff-line'
+            ),
+            pytest.param(
+                ':message',
+                1,
+                'Body comment',
+                {'commit_msg': 'Subject\n\nFirst body line.'},
+                id='commit-msg-line',
+            ),
+            pytest.param(
+                _review.BASEMENT_PATH,
+                1,
+                'About that',
+                {'basement': 'Rationale for this approach.'},
+                id='basement-line',
+            ),
+        ],
+    )
+    def test_own_comment_is_unquoted(
+        self, path: str, line: int, text: str, render_kwargs: Dict[str, Any]
+    ) -> None:
         """Own comments appear as unquoted text between quoted diff."""
         all_reviews: Dict[str, Any] = {
             'me@example.com': {
                 'name': 'Me',
-                'comments': [
-                    {
-                        'path': 'b/lib/helpers.c',
-                        'line': 12,
-                        'text': 'Check NULL return',
-                    },
-                ],
+                'comments': [{'path': path, 'line': line, 'text': text}],
             },
         }
         result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF, all_reviews, 'me@example.com'
+            SIMPLE_DIFF, all_reviews, 'me@example.com', **render_kwargs
         )
-        assert 'Check NULL return' in result
+        assert text in result
         # Comment should NOT be quoted
-        for line in result.splitlines():
-            if 'Check NULL return' in line:
-                assert not line.startswith('> ')
-                assert not line.startswith('| ')
+        for out_line in result.splitlines():
+            if text in out_line:
+                assert not out_line.startswith('> ')
+                assert not out_line.startswith('| ')
 
     def test_external_comment_uses_pipe_prefix(self) -> None:
         """External comments are prefixed with '| '."""
@@ -194,28 +213,6 @@ class TestRenderQuotedDiffWithComments:
         diff_idx = next(i for i, line in enumerate(lines) if 'diff --git' in line)
         assert body_idx < diff_idx
 
-    def test_commit_msg_own_comment(self) -> None:
-        """Own comments on commit message lines are rendered unquoted."""
-        all_reviews: Dict[str, Any] = {
-            'me@example.com': {
-                'name': 'Me',
-                'comments': [
-                    {'path': ':message', 'line': 1, 'text': 'Body comment'},
-                ],
-            },
-        }
-        result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF,
-            all_reviews,
-            'me@example.com',
-            commit_msg='Subject\n\nFirst body line.',
-        )
-        assert 'Body comment' in result
-        for line in result.splitlines():
-            if 'Body comment' in line:
-                assert not line.startswith('> ')
-                assert not line.startswith('| ')
-
     def test_commit_msg_external_comment(self) -> None:
         """External comments on commit message lines use | prefix."""
         all_reviews: Dict[str, Any] = {
@@ -278,28 +275,6 @@ class TestRenderQuotedDiffWithComments:
         diff_idx = next(i for i, line in enumerate(lines) if 'diff --git' in line)
         assert body_idx < cut_idx < changelog_idx < diff_idx
 
-    def test_basement_own_comment_is_unquoted(self) -> None:
-        """Own comments on basement lines render unquoted."""
-        all_reviews: Dict[str, Any] = {
-            'me@example.com': {
-                'name': 'Me',
-                'comments': [
-                    {'path': _review.BASEMENT_PATH, 'line': 1, 'text': 'About that'},
-                ],
-            },
-        }
-        result = review._render_quoted_diff_with_comments(
-            SIMPLE_DIFF,
-            all_reviews,
-            'me@example.com',
-            basement='Rationale for this approach.',
-        )
-        assert 'About that' in result
-        for line in result.splitlines():
-            if 'About that' in line:
-                assert not line.startswith('> ')
-                assert not line.startswith('| ')
-
 
 class TestExtractEditorComments:
     """Tests for _extract_editor_comments()."""
@@ -325,6 +300,8 @@ class TestExtractEditorComments:
         assert comments[0]['path'] == 'b/lib/helpers.c'
         assert comments[0]['line'] == 12
         assert comments[0]['text'] == 'Check NULL return.'
+        # 'content' comes from the diff line the comment follows
+        assert comments[0]['content'] == '+\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);'
 
     def test_hash_line_in_comment_is_kept(self) -> None:
         """A # line the maintainer wrote is content, not scaffolding."""
@@ -395,26 +372,6 @@ class TestExtractEditorComments:
         comments = review._extract_editor_comments(edited)
         assert len(comments) == 0
 
-    def test_adopt_external_comment(self) -> None:
-        """Removing | prefix adopts an external comment."""
-        edited = (
-            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
-            '> --- a/lib/helpers.c\n'
-            '> +++ b/lib/helpers.c\n'
-            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
-            '>  \tint ret;\n'
-            '>  \n'
-            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
-            '\n'
-            'This is wrong.\n'
-            '\n'
-            '> +\tptr->field = value;\n'
-            '>  \treturn 0;\n'
-        )
-        comments = review._extract_editor_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['text'] == 'This is wrong.'
-
     def test_multiple_comments_correct_positions(self) -> None:
         """Multiple comments with blank lines don't shift positions."""
         edited = (
@@ -449,25 +406,6 @@ class TestExtractEditorComments:
         assert comments[1]['text'] == '2nd comment'
         assert comments[2]['line'] == 9
         assert comments[2]['text'] == '3rd comment'
-
-    def test_content_key_set(self) -> None:
-        """Extracted comments have 'content' key from the diff line."""
-        edited = (
-            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
-            '> --- a/lib/helpers.c\n'
-            '> +++ b/lib/helpers.c\n'
-            '> @@ -10,6 +10,8 @@ void setup(struct ctx *ctx)\n'
-            '>  \tint ret;\n'
-            '>  \n'
-            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
-            '\n'
-            'My comment.\n'
-            '\n'
-            '> +\tptr->field = value;\n'
-        )
-        comments = review._extract_editor_comments(edited)
-        assert len(comments) == 1
-        assert comments[0]['content'] == '+\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);'
 
 
 class TestQuotedEditorRoundTrip:
@@ -707,75 +645,69 @@ class TestQuotedEditorRoundTrip:
 class TestBuildReplyFromComments:
     """Tests for _build_reply_from_comments()."""
 
-    def test_trailing_hunk_lines_truncated(self) -> None:
-        """Diff lines after the last comment in a hunk are omitted."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'Check return value.'},
-        ]
-        result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
-        # Everything up to the commented +kzalloc line (line 12) is quoted;
-        # the uncommented +ptr->field line (13) and the trailing "return 0"
-        # context are truncated.
-        assert result == (
-            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
-            '> index abc1234..def5678 100644\n'
-            '> --- a/lib/helpers.c\n'
-            '> +++ b/lib/helpers.c\n'
-            '> @@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)\n'
-            '>  \tint ret;\n'
-            '> \n'
-            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
-            '\n'
-            'Check return value.\n'
-        )
+    _QUOTED_HEAD = (
+        '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
+        '> index abc1234..def5678 100644\n'
+        '> --- a/lib/helpers.c\n'
+        '> +++ b/lib/helpers.c\n'
+        '> @@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)\n'
+        '>  \tint ret;\n'
+        '> \n'
+        '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
+    )
 
-    def test_lines_before_comment_preserved(self) -> None:
-        """Diff lines before the comment are preserved as quoted context."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Check field assignment.'},
-        ]
+    @pytest.mark.parametrize(
+        'comments,expected',
+        [
+            # Everything up to the commented +kzalloc line (line 12) is
+            # quoted; the uncommented +ptr->field line (13) and the trailing
+            # "return 0" context are truncated.
+            pytest.param(
+                [
+                    {
+                        'path': 'b/lib/helpers.c',
+                        'line': 12,
+                        'text': 'Check return value.',
+                    },
+                ],
+                _QUOTED_HEAD + '\nCheck return value.\n',
+                id='trailing-hunk-lines-truncated',
+            ),
+            # The uncommented +kzalloc line (12) is kept as context above the
+            # commented +ptr->field line (13); only "return 0" is truncated.
+            pytest.param(
+                [
+                    {
+                        'path': 'b/lib/helpers.c',
+                        'line': 13,
+                        'text': 'Check field assignment.',
+                    },
+                ],
+                _QUOTED_HEAD
+                + '> +\tptr->field = value;\n'
+                + '\nCheck field assignment.\n',
+                id='lines-before-comment-preserved',
+            ),
+            # Each comment lands directly under its quoted line; the
+            # trailing "return 0" after the last comment is truncated.
+            pytest.param(
+                [
+                    {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'First.'},
+                    {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Second.'},
+                ],
+                _QUOTED_HEAD
+                + '\nFirst.\n\n'
+                + '> +\tptr->field = value;\n'
+                + '\nSecond.\n',
+                id='two-comments-middle-lines-preserved',
+            ),
+        ],
+    )
+    def test_quoted_context_and_truncation(
+        self, comments: List[Dict[str, Any]], expected: str
+    ) -> None:
         result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
-        # The uncommented +kzalloc line (12) is kept as context above the
-        # commented +ptr->field line (13); only "return 0" is truncated.
-        assert result == (
-            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
-            '> index abc1234..def5678 100644\n'
-            '> --- a/lib/helpers.c\n'
-            '> +++ b/lib/helpers.c\n'
-            '> @@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)\n'
-            '>  \tint ret;\n'
-            '> \n'
-            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
-            '> +\tptr->field = value;\n'
-            '\n'
-            'Check field assignment.\n'
-        )
-
-    def test_two_comments_middle_lines_preserved(self) -> None:
-        """Lines between two comments are kept, trailing lines dropped."""
-        comments = [
-            {'path': 'b/lib/helpers.c', 'line': 12, 'text': 'First.'},
-            {'path': 'b/lib/helpers.c', 'line': 13, 'text': 'Second.'},
-        ]
-        result = review._build_reply_from_comments(SIMPLE_DIFF, comments, [])
-        # Each comment lands directly under its quoted line; the trailing
-        # "return 0" after the last comment is truncated.
-        assert result == (
-            '> diff --git a/lib/helpers.c b/lib/helpers.c\n'
-            '> index abc1234..def5678 100644\n'
-            '> --- a/lib/helpers.c\n'
-            '> +++ b/lib/helpers.c\n'
-            '> @@ -10,6 +10,8 @@ void setup_helper(struct ctx *ctx)\n'
-            '>  \tint ret;\n'
-            '> \n'
-            '> +\tptr = kzalloc(sizeof(*ptr), GFP_KERNEL);\n'
-            '\n'
-            'First.\n'
-            '\n'
-            '> +\tptr->field = value;\n'
-            '\n'
-            'Second.\n'
-        )
+        assert result == expected
 
     def test_no_truncation_when_comment_on_last_line(self) -> None:
         """When the comment is on the last diff line, nothing is lost."""
@@ -1379,8 +1311,15 @@ class TestReplyTrailerEditing:
         out = review._remove_trailer_from_reply(buf, 'reviewed-by')
         assert out == 'Intro.\n\nMore text.\n'
 
-    def test_remove_at_end_leaves_no_trailing_gap(self) -> None:
-        buf = 'Thanks!\n\nReviewed-by: Me <me@x.com>\n'
+    @pytest.mark.parametrize(
+        'buf',
+        [
+            pytest.param('Thanks!\n\nReviewed-by: Me <me@x.com>\n', id='lf'),
+            # Normalizes a CRLF buffer too.
+            pytest.param('Thanks!\r\n\r\nReviewed-by: Me <me@x.com>\r\n', id='crlf'),
+        ],
+    )
+    def test_remove_at_end_leaves_no_trailing_gap(self, buf: str) -> None:
         out = review._remove_trailer_from_reply(buf, 'reviewed-by')
         assert out == 'Thanks!\n'
 
@@ -1391,11 +1330,6 @@ class TestReplyTrailerEditing:
         out = review._insert_trailer_in_reply(buf, 'Tested-by: Me <me@x.com>')
         assert '\r' not in out
         assert 'Acked-by: Me <me@x.com>\nTested-by: Me <me@x.com>' in out
-
-    def test_remove_normalizes_crlf_buffer(self) -> None:
-        buf = 'Thanks!\r\n\r\nReviewed-by: Me <me@x.com>\r\n'
-        out = review._remove_trailer_from_reply(buf, 'reviewed-by')
-        assert out == 'Thanks!\n'
 
 
 class TestSyncReplyTrailers:
@@ -1600,10 +1534,21 @@ class TestReviewReplyTemplate:
             < body.index('\n-- \nsig')
         )
 
-    def test_no_template_configured(
-        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
+    @pytest.mark.parametrize(
+        'tpt_content',
+        [
+            pytest.param(None, id='no-template-configured'),
+            pytest.param('Hi ${firstname},\n', id='no-reply-placeholder-ignored'),
+        ],
+    )
+    def test_reply_left_unwrapped(
+        self,
+        _cfg: mock.Mock,
+        _sig: mock.Mock,
+        tmp_path: Any,
+        tpt_content: Optional[str],
     ) -> None:
-        body = self._body({'reply': 'Looks good.\n'}, None, tmp_path)
+        body = self._body({'reply': 'Looks good.\n'}, tpt_content, tmp_path)
         assert body.startswith('Looks good.')
         assert 'Hi ' not in body
 
@@ -1619,13 +1564,6 @@ class TestReviewReplyTemplate:
         raw = msg.get_payload(decode=True)
         assert isinstance(raw, bytes)
         assert raw.decode().startswith('Looks good.')
-
-    def test_template_without_reply_placeholder_ignored(
-        self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
-    ) -> None:
-        body = self._body({'reply': 'Looks good.\n'}, 'Hi ${firstname},\n', tmp_path)
-        assert body.startswith('Looks good.')
-        assert 'Hi Jane,' not in body
 
     def test_firstname_falls_back_to_localpart(
         self, _cfg: mock.Mock, _sig: mock.Mock, tmp_path: Any
@@ -1671,15 +1609,16 @@ class TestReviewReplyTemplate:
 class TestAddrsToLines:
     """Tests for review_tui._addrs_to_lines()."""
 
-    def test_empty_string(self) -> None:
-        assert review_tui._addrs_to_lines('') == ''
-
-    def test_single_bare_email(self) -> None:
-        assert review_tui._addrs_to_lines('user@example.com') == 'user@example.com'
-
-    def test_single_named_address(self) -> None:
-        result = review_tui._addrs_to_lines('Alice <alice@example.com>')
-        assert result == 'Alice <alice@example.com>'
+    @pytest.mark.parametrize(
+        'header',
+        [
+            pytest.param('', id='empty-string'),
+            pytest.param('user@example.com', id='single-bare-email'),
+            pytest.param('Alice <alice@example.com>', id='single-named-address'),
+        ],
+    )
+    def test_single_address_is_unchanged(self, header: str) -> None:
+        assert review_tui._addrs_to_lines(header) == header
 
     def test_multiple_addresses(self) -> None:
         header = 'Alice <alice@example.com>, bob@example.com'
@@ -1698,11 +1637,15 @@ class TestAddrsToLines:
 class TestLinesToHeader:
     """Tests for review_tui._lines_to_header()."""
 
-    def test_empty_string(self) -> None:
-        assert review_tui._lines_to_header('') == ''
-
-    def test_whitespace_only(self) -> None:
-        assert review_tui._lines_to_header('   \n  ') == ''
+    @pytest.mark.parametrize(
+        'text',
+        [
+            pytest.param('', id='empty-string'),
+            pytest.param('   \n  ', id='whitespace-only'),
+        ],
+    )
+    def test_blank_input_gives_empty_header(self, text: str) -> None:
+        assert review_tui._lines_to_header(text) == ''
 
     def test_single_bare_email(self) -> None:
         result = review_tui._lines_to_header('user@example.com')
@@ -1732,40 +1675,32 @@ class TestLinesToHeader:
 class TestValidateAddrs:
     """Tests for review_tui._validate_addrs()."""
 
-    def test_empty_is_valid(self) -> None:
-        assert review_tui._validate_addrs('') is None
-
-    def test_whitespace_is_valid(self) -> None:
-        assert review_tui._validate_addrs('  \n  ') is None
-
-    def test_valid_bare_email(self) -> None:
-        assert review_tui._validate_addrs('user@example.com') is None
-
-    def test_valid_named_address(self) -> None:
-        assert review_tui._validate_addrs('Alice <alice@example.com>') is None
-
-    def test_valid_multiple_lines(self) -> None:
-        text = 'Alice <alice@example.com>\nbob@example.com'
+    @pytest.mark.parametrize(
+        'text',
+        [
+            pytest.param('', id='empty'),
+            pytest.param('  \n  ', id='whitespace'),
+            pytest.param('user@example.com', id='bare-email'),
+            pytest.param('Alice <alice@example.com>', id='named-address'),
+            pytest.param('Alice <alice@example.com>\nbob@example.com', id='multiple'),
+            pytest.param('alice@example.com\n\nbob@example.com', id='blank-lines'),
+        ],
+    )
+    def test_valid(self, text: str) -> None:
         assert review_tui._validate_addrs(text) is None
 
-    def test_bare_word_rejected(self) -> None:
-        result = review_tui._validate_addrs('notanemail')
-        assert result is not None
-        assert 'Invalid' in result
-
-    def test_missing_at_rejected(self) -> None:
-        result = review_tui._validate_addrs('Alice <notanemail>')
-        assert result is not None
-        assert 'Invalid' in result
-
-    def test_mixed_valid_and_invalid(self) -> None:
-        text = 'alice@example.com\nnotanemail'
+    @pytest.mark.parametrize(
+        'text',
+        [
+            pytest.param('notanemail', id='bare-word'),
+            pytest.param('Alice <notanemail>', id='missing-at'),
+            pytest.param('alice@example.com\nnotanemail', id='mixed-valid-invalid'),
+        ],
+    )
+    def test_invalid_rejected(self, text: str) -> None:
         result = review_tui._validate_addrs(text)
         assert result is not None
-
-    def test_blank_lines_skipped(self) -> None:
-        text = 'alice@example.com\n\nbob@example.com'
-        assert review_tui._validate_addrs(text) is None
+        assert 'Invalid' in result
 
 
 @requires_textual
@@ -1800,18 +1735,21 @@ class TestMakeReviewMagicJson:
         result = review.make_review_magic_json({'key': 'value'})
         assert result.startswith(REVIEW_MAGIC_MARKER + '\n')
 
-    def test_json_payload_parses_back(self) -> None:
-        data = {'revision': 3, 'change-id': 'abc-123', 'tags': ['a', 'b']}
+    @pytest.mark.parametrize(
+        'data',
+        [
+            pytest.param(
+                {'revision': 3, 'change-id': 'abc-123', 'tags': ['a', 'b']},
+                id='json-payload-parses-back',
+            ),
+            pytest.param({}, id='empty-dict'),
+        ],
+    )
+    def test_json_payload_parses_back(self, data: Dict[str, Any]) -> None:
         result = review.make_review_magic_json(data)
         # Strip the two header lines to get the JSON
         lines = result.split('\n', 2)
-        parsed = json.loads(lines[2])
-        assert parsed == data
-
-    def test_empty_dict(self) -> None:
-        result = review.make_review_magic_json({})
-        lines = result.split('\n', 2)
-        assert json.loads(lines[2]) == {}
+        assert json.loads(lines[2]) == data
 
 
 # -- Tests for _get_my_review() ----------------------------------------------
@@ -1838,13 +1776,10 @@ class TestGetMyReview:
         result = review._get_my_review(target, {'email': 'user@example.com'})
         assert result == {}
 
-    def test_returns_empty_dict_when_no_reviews_key(self) -> None:
-        result = review._get_my_review({}, {'email': 'user@example.com'})
-        assert result == {}
-
-    def test_does_not_mutate_target(self) -> None:
+    def test_returns_empty_dict_when_no_reviews_key_and_does_not_mutate(self) -> None:
         target: Dict[str, Any] = {}
-        review._get_my_review(target, {'email': 'user@example.com'})
+        result = review._get_my_review(target, {'email': 'user@example.com'})
+        assert result == {}
         assert 'reviews' not in target
 
 
@@ -1876,12 +1811,6 @@ class TestEnsureMyReview:
         assert entry['name'] == 'New Name'
         assert entry['trailers'] == ['Reviewed-by: Old']
 
-    def test_mutates_target_in_place(self) -> None:
-        target: Dict[str, Any] = {}
-        review._ensure_my_review(target, {'email': 'a@b.com', 'name': 'A'})
-        assert 'reviews' in target
-        assert 'a@b.com' in target['reviews']
-
 
 # -- Tests for _cleanup_review() ---------------------------------------------
 
@@ -1889,8 +1818,15 @@ class TestEnsureMyReview:
 class TestCleanupReview:
     """Tests for _cleanup_review()."""
 
-    def test_removes_name_only_entry(self) -> None:
-        target = {'reviews': {'user@example.com': {'name': 'User'}}}
+    @pytest.mark.parametrize(
+        'entry',
+        [
+            pytest.param({'name': 'User'}, id='name-only-entry'),
+            pytest.param({}, id='empty-entry'),
+        ],
+    )
+    def test_removes_entry_and_empty_reviews_key(self, entry: Dict[str, Any]) -> None:
+        target: Dict[str, Any] = {'reviews': {'user@example.com': entry}}
         review._cleanup_review(target, {'email': 'user@example.com'})
         assert 'reviews' not in target
 
@@ -1906,20 +1842,10 @@ class TestCleanupReview:
         review._cleanup_review(target, {'email': 'user@example.com'})
         assert 'user@example.com' in target['reviews']
 
-    def test_removes_reviews_key_when_last_entry_deleted(self) -> None:
-        target = {'reviews': {'user@example.com': {'name': 'User'}}}
-        review._cleanup_review(target, {'email': 'user@example.com'})
-        assert 'reviews' not in target
-
     def test_noop_when_user_not_present(self) -> None:
         target = {'reviews': {'other@example.com': {'name': 'Other'}}}
         review._cleanup_review(target, {'email': 'user@example.com'})
         assert 'other@example.com' in target['reviews']
-
-    def test_removes_empty_entry(self) -> None:
-        target: Dict[str, Any] = {'reviews': {'user@example.com': {}}}
-        review._cleanup_review(target, {'email': 'user@example.com'})
-        assert 'reviews' not in target
 
     def test_keeps_reviews_dict_when_other_entries_remain(self) -> None:
         target = {
@@ -1998,14 +1924,19 @@ class TestClearOtherComments:
 class TestEnsureTrailersInBody:
     """Tests for _ensure_trailers_in_body()."""
 
-    def test_empty_trailers_returns_unchanged(self) -> None:
-        body = 'Some text.\n\n-- \nsig'
-        assert review._ensure_trailers_in_body(body, []) == body
-
-    def test_all_present_returns_unchanged(self) -> None:
-        trailer = 'Reviewed-by: Test <test@example.com>'
-        body = f'Some text.\n\n{trailer}\n\n-- \nsig'
-        assert review._ensure_trailers_in_body(body, [trailer]) == body
+    @pytest.mark.parametrize(
+        'body,trailers',
+        [
+            pytest.param('Some text.\n\n-- \nsig', [], id='empty-trailers'),
+            pytest.param(
+                'Some text.\n\nReviewed-by: Test <test@example.com>\n\n-- \nsig',
+                ['Reviewed-by: Test <test@example.com>'],
+                id='all-present',
+            ),
+        ],
+    )
+    def test_returns_unchanged(self, body: str, trailers: List[str]) -> None:
+        assert review._ensure_trailers_in_body(body, trailers) == body
 
     def test_appends_missing_before_signature(self) -> None:
         trailer = 'Reviewed-by: Test <test@example.com>'
@@ -2111,10 +2042,11 @@ class TestBuildReviewEmail:
         assert msg is not None
         assert 'list@lists.example.com' in msg['To']
 
-    def test_references_without_existing(self) -> None:
+    def test_threading_headers_without_existing_references(self) -> None:
         msg = self._build()
         assert msg is not None
         assert msg['References'] == '<test-msgid@example.com>'
+        assert msg['In-Reply-To'] == '<test-msgid@example.com>'
 
     def test_references_appended_to_existing(self) -> None:
         series = self._make_series(references='<prev@example.com>')
@@ -2122,11 +2054,6 @@ class TestBuildReviewEmail:
         assert msg is not None
         assert '<prev@example.com>' in msg['References']
         assert '<test-msgid@example.com>' in msg['References']
-
-    def test_in_reply_to_set(self) -> None:
-        msg = self._build()
-        assert msg is not None
-        assert msg['In-Reply-To'] == '<test-msgid@example.com>'
 
     def test_from_header_is_reviewer(self) -> None:
         msg = self._build()
@@ -2186,14 +2113,15 @@ class TestBuildReviewEmail:
         assert 'author@example.com' in msg['To']
         assert 'list@lists.example.com' in msg['Cc']
 
-    def test_edited_to_is_honoured(self) -> None:
-        """With tocc-edited, user's To choice should be used as-is."""
-        series = self._make_series(to='custom@example.com')
+    def test_edited_to_is_honoured_and_empty_cc_omitted(self) -> None:
+        """With tocc-edited, user's To is used as-is; an empty Cc is dropped."""
+        series = self._make_series(to='custom@example.com', cc='')
         series['header-info']['tocc-edited'] = True
         msg = self._build(series)
         assert msg is not None
         assert 'custom@example.com' in msg['To']
         assert 'author@example.com' not in (msg['To'] or '')
+        assert msg['Cc'] is None
 
     def test_edited_cc_is_honoured(self) -> None:
         """With tocc-edited, user's Cc choice should be used as-is."""
@@ -2203,14 +2131,6 @@ class TestBuildReviewEmail:
         assert msg is not None
         assert msg['To'] == 'custom@example.com'
         assert msg['Cc'] == 'other@example.com'
-
-    def test_edited_empty_cc_omitted(self) -> None:
-        """With tocc-edited, empty Cc should not produce a Cc header."""
-        series = self._make_series(to='custom@example.com', cc='')
-        series['header-info']['tocc-edited'] = True
-        msg = self._build(series)
-        assert msg is not None
-        assert msg['Cc'] is None
 
 
 # -- Tests for get_reference_message() ---------------------------------------
@@ -2234,16 +2154,16 @@ class TestGetReferenceMessage:
         lser.patches = [None, patch1]
         assert review.get_reference_message(lser) is patch1
 
-    def test_raises_when_neither_available(self) -> None:
+    @pytest.mark.parametrize(
+        'has_cover',
+        [
+            pytest.param(False, id='neither-available'),
+            pytest.param(True, id='cover-is-none'),
+        ],
+    )
+    def test_raises_when_no_message_available(self, has_cover: bool) -> None:
         lser = mock.Mock()
-        lser.has_cover = False
-        lser.patches = [None]
-        with pytest.raises(LookupError):
-            review.get_reference_message(lser)
-
-    def test_raises_when_cover_is_none(self) -> None:
-        lser = mock.Mock()
-        lser.has_cover = True
+        lser.has_cover = has_cover
         lser.patches = [None]
         with pytest.raises(LookupError):
             review.get_reference_message(lser)
@@ -2278,21 +2198,26 @@ class TestCollectReplyHeaders:
         assert 'alice@example.com' in result['to']
         assert 'bob@example.com' in result['cc']
 
-    def test_includes_reply_to(self) -> None:
-        lmsg = self._make_lore_message(
-            to='Alice <alice@example.com>',
-            reply_to='list@lists.example.com',
-        )
+    @pytest.mark.parametrize(
+        'headers,expected_reply_to',
+        [
+            pytest.param(
+                {'reply_to': 'list@lists.example.com'},
+                'list@lists.example.com',
+                id='includes-reply-to',
+            ),
+            pytest.param({}, None, id='no-reply-to-when-absent'),
+        ],
+    )
+    def test_reply_to(
+        self, headers: Dict[str, str], expected_reply_to: Optional[str]
+    ) -> None:
+        lmsg = self._make_lore_message(to='Alice <alice@example.com>', **headers)
         result = review._collect_reply_headers(lmsg)
-        assert 'reply-to' in result
-        assert 'list@lists.example.com' in result['reply-to']
-
-    def test_no_reply_to_when_absent(self) -> None:
-        lmsg = self._make_lore_message(
-            to='Alice <alice@example.com>',
-        )
-        result = review._collect_reply_headers(lmsg)
-        assert 'reply-to' not in result
+        if expected_reply_to is None:
+            assert 'reply-to' not in result
+        else:
+            assert expected_reply_to in result['reply-to']
 
     def test_handles_empty_headers(self) -> None:
         lmsg = self._make_lore_message()
@@ -2358,34 +2283,6 @@ class TestCollectFollowups:
         lmsg = self._make_lmsg('body\n', [ft])
         result = review._collect_followups(lmsg, self.LINKMASK)
         assert len(result) == 0
-
-    def test_skips_trailer_already_in_body(self) -> None:
-        """Follow-up trailers already present in the message body are skipped."""
-        body = (
-            'Patch description\n'
-            '\n'
-            'Reviewed-by: Reviewer <reviewer@example.com>\n'
-            'Signed-off-by: Author <author@example.com>\n'
-        )
-        ft = self._make_followup_trailer(
-            'Reviewed-by',
-            'Reviewer <reviewer@example.com>',
-        )
-        lmsg = self._make_lmsg(body, [ft])
-        result = review._collect_followups(lmsg, self.LINKMASK)
-        assert len(result) == 0
-
-    def test_keeps_trailer_not_in_body(self) -> None:
-        """Follow-up trailers NOT in the body are kept."""
-        body = 'Patch description\n\nSigned-off-by: Author <author@example.com>\n'
-        ft = self._make_followup_trailer(
-            'Acked-by',
-            'Acker <acker@example.com>',
-        )
-        lmsg = self._make_lmsg(body, [ft])
-        result = review._collect_followups(lmsg, self.LINKMASK)
-        assert len(result) == 1
-        assert 'Acked-by: Acker <acker@example.com>' in result[0]['trailers']
 
     def test_mixed_body_and_new_trailers(self) -> None:
         """Only trailers not already in body are collected."""
@@ -2490,16 +2387,16 @@ class TestGetArtCounts:
         result = _get_art_counts('/tmp', 'b4/review/test')
         assert result == (2, 1, 1)
 
+    @pytest.mark.parametrize(
+        'git_ret',
+        [
+            pytest.param((1, ''), id='git-failure'),
+            pytest.param((0, 'Just a commit message without marker'), id='no-marker'),
+        ],
+    )
     @mock.patch('b4.git_run_command')
-    def test_returns_none_on_git_failure(self, mock_git: mock.Mock) -> None:
-        mock_git.return_value = (1, '')
-        from b4.review_tui._tracking_app import _get_art_counts
-
-        assert _get_art_counts('/tmp', 'b4/review/test') is None
-
-    @mock.patch('b4.git_run_command')
-    def test_returns_none_without_marker(self, mock_git: mock.Mock) -> None:
-        mock_git.return_value = (0, 'Just a commit message without marker')
+    def test_returns_none(self, mock_git: mock.Mock, git_ret: Tuple[int, str]) -> None:
+        mock_git.return_value = git_ret
         from b4.review_tui._tracking_app import _get_art_counts
 
         assert _get_art_counts('/tmp', 'b4/review/test') is None
@@ -2597,47 +2494,46 @@ class TestParseArtFromMessage:
 class TestNoteCommentStripping:
     """Tests for _strip_note_footer(), used when saving an edited note."""
 
-    @staticmethod
-    def _strip_comments(raw_text: str) -> str:
-        from b4.review import _strip_note_footer
-
-        return _strip_note_footer(raw_text)
-
-    def test_strips_footer(self) -> None:
-        raw = (
-            'My note here\n'
-            '\n'
-            '# Add a private note about this patch. It will not be sent in your\n'
-            '# email reply, but it will be stored in the tracking commit and\n'
-            '# viewable by anyone if you push this branch to any remote.\n'
-            '#\n'
-            '# This trailing block of # lines will be removed. Any # you write\n'
-            '# above it is kept as part of your note.\n'
-        )
-        assert self._strip_comments(raw) == 'My note here'
-
-    def test_keeps_hash_lines_above_the_footer(self) -> None:
-        raw = (
-            'I had written\n'
-            '#define arm_smmu_kdump_is_attach_deferred NULL\n'
-            '\n'
-            '# Lines starting with # will be removed.\n'
-        )
-        assert self._strip_comments(raw) == (
-            'I had written\n#define arm_smmu_kdump_is_attach_deferred NULL'
-        )
-
-    def test_preserves_non_comment_lines(self) -> None:
-        raw = 'Line one\nLine two\nLine three'
-        assert self._strip_comments(raw) == 'Line one\nLine two\nLine three'
-
-    def test_empty_after_stripping(self) -> None:
-        raw = '# Only comments\n# Nothing else'
-        assert self._strip_comments(raw) == ''
-
-    def test_mixed_content(self) -> None:
-        raw = '# TODO: revisit\nNeed to check NULL path\n# end'
-        assert self._strip_comments(raw) == '# TODO: revisit\nNeed to check NULL path'
+    @pytest.mark.parametrize(
+        'raw,expected',
+        [
+            pytest.param(
+                'My note here\n'
+                '\n'
+                '# Add a private note about this patch. It will not be sent in your\n'
+                '# email reply, but it will be stored in the tracking commit and\n'
+                '# viewable by anyone if you push this branch to any remote.\n'
+                '#\n'
+                '# This trailing block of # lines will be removed. Any # you write\n'
+                '# above it is kept as part of your note.\n',
+                'My note here',
+                id='strips-footer',
+            ),
+            pytest.param(
+                'I had written\n'
+                '#define arm_smmu_kdump_is_attach_deferred NULL\n'
+                '\n'
+                '# Lines starting with # will be removed.\n',
+                'I had written\n#define arm_smmu_kdump_is_attach_deferred NULL',
+                id='keeps-hash-lines-above-the-footer',
+            ),
+            pytest.param(
+                'Line one\nLine two\nLine three',
+                'Line one\nLine two\nLine three',
+                id='preserves-non-comment-lines',
+            ),
+            pytest.param(
+                '# Only comments\n# Nothing else', '', id='empty-after-stripping'
+            ),
+            pytest.param(
+                '# TODO: revisit\nNeed to check NULL path\n# end',
+                '# TODO: revisit\nNeed to check NULL path',
+                id='mixed-content',
+            ),
+        ],
+    )
+    def test_strip_note_footer(self, raw: str, expected: str) -> None:
+        assert review._strip_note_footer(raw) == expected
 
 
 # -- Helpers for attestation tests -------------------------------------------
@@ -2687,35 +2583,23 @@ class TestCheckSeriesAttestation:
         ):
             assert check_series_attestation(lser) == 'none'
 
-    def test_single_signed_dkim(self) -> None:
-        """A single passing DKIM attestor is reported correctly."""
-        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
+    @pytest.mark.parametrize(
+        'status,identity,passing',
+        [
+            pytest.param('signed', 'DKIM/kernel.org', True, id='single-signed-dkim'),
+            pytest.param('nokey', 'ed25519/user@example.com', False, id='nokey'),
+            pytest.param('badsig', 'ed25519/user@example.com', False, id='badsig'),
+        ],
+    )
+    def test_single_attestor(self, status: str, identity: str, passing: bool) -> None:
+        """A single attestor is reported with its own status."""
+        att = [_make_mock_attestation(status, identity, passing)]
         lser = self._make_series([_make_mock_lmsg(att)])
         with mock.patch(
             'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
         ):
             result = check_series_attestation(lser)
-        assert result == 'signed:DKIM/kernel.org'
-
-    def test_nokey_attestor(self) -> None:
-        """A nokey attestor is reported with status 'nokey'."""
-        att = [_make_mock_attestation('nokey', 'ed25519/user@example.com', False)]
-        lser = self._make_series([_make_mock_lmsg(att)])
-        with mock.patch(
-            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
-        ):
-            result = check_series_attestation(lser)
-        assert result == 'nokey:ed25519/user@example.com'
-
-    def test_badsig_attestor(self) -> None:
-        """A badsig attestor is reported with status 'badsig'."""
-        att = [_make_mock_attestation('badsig', 'ed25519/user@example.com', False)]
-        lser = self._make_series([_make_mock_lmsg(att)])
-        with mock.patch(
-            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
-        ):
-            result = check_series_attestation(lser)
-        assert result == 'badsig:ed25519/user@example.com'
+        assert result == f'{status}:{identity}'
 
     def test_mixed_attestors(self) -> None:
         """Mixed signed and nokey attestors are semicolon-separated and sorted."""
@@ -2756,28 +2640,28 @@ class TestCheckSeriesAttestation:
             result = check_series_attestation(lser)
         assert result == 'signed:DKIM/kernel.org'
 
-    def test_staleness_days_passed_to_attestation(self) -> None:
-        """attestation-staleness-days config is passed through correctly."""
-        att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
-        lmsg = _make_mock_lmsg(att)
-        lser = self._make_series([lmsg])
-        config = {'attestation-policy': 'softfail', 'attestation-staleness-days': '30'}
-        with mock.patch('b4.get_main_config', return_value=config):
-            check_series_attestation(lser)
-        lmsg.get_attestation_status.assert_called_once_with('softfail', 30)
-
-    def test_invalid_staleness_days_defaults_to_zero(self) -> None:
-        """Non-numeric staleness-days falls back to 0."""
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            # attestation-staleness-days config is passed through
+            pytest.param('30', 30, id='numeric'),
+            # Non-numeric staleness-days falls back to 0
+            pytest.param('garbage', 0, id='invalid-defaults-to-zero'),
+        ],
+    )
+    def test_staleness_days_passed_to_attestation(
+        self, value: str, expected: int
+    ) -> None:
         att = [_make_mock_attestation('signed', 'DKIM/kernel.org', True)]
         lmsg = _make_mock_lmsg(att)
         lser = self._make_series([lmsg])
         config = {
             'attestation-policy': 'softfail',
-            'attestation-staleness-days': 'garbage',
+            'attestation-staleness-days': value,
         }
         with mock.patch('b4.get_main_config', return_value=config):
             check_series_attestation(lser)
-        lmsg.get_attestation_status.assert_called_once_with('softfail', 0)
+        lmsg.get_attestation_status.assert_called_once_with('softfail', expected)
 
     def test_default_policy_softfail(self) -> None:
         """When no attestation-policy set, defaults to softfail (not off)."""
@@ -3018,22 +2902,6 @@ class TestExtractCommentsFromQuotedReply:
         assert 'a.c' in comments[0]['text']
         assert comments[1]['path'] == 'b.c'
         assert 'b.c' in comments[1]['text']
-
-    def test_preamble_before_diff_ignored(self) -> None:
-        """Text before the first quoted diff line is not treated as a comment."""
-        inline = (
-            'Hi, some general feedback below:\n'
-            '\n'
-            '> diff --git a/f.c b/f.c\n'
-            '> @@ -1,3 +1,4 @@\n'
-            '>  ctx\n'
-            '> +new\n'
-            '\n'
-            'Actual inline comment.\n'
-        )
-        comments = review._extract_comments_from_quoted_reply(inline)
-        assert len(comments) == 1
-        assert 'Actual inline comment.' == comments[0]['text']
 
     def test_trailing_comment_flushed(self) -> None:
         """A comment at the very end (no trailing quoted line) is still captured."""
@@ -3390,26 +3258,25 @@ class TestResolveMessagePositions:
         review._resolve_message_positions(self.COVER, comments)
         assert [c['line'] for c in comments] == [3, 8, 10]
 
-    def test_keeps_position_without_content(self) -> None:
-        """A comment with no content anchor keeps its counted line."""
+    @pytest.mark.parametrize(
+        'line,anchor',
+        [
+            # A comment with no content anchor keeps its counted line.
+            pytest.param(5, {}, id='without-content'),
+            # An anchor absent from the body leaves the comment untouched.
+            pytest.param(
+                4,
+                {'content': 'text that is nowhere in the cover letter'},
+                id='anchor-not-found',
+            ),
+        ],
+    )
+    def test_keeps_counted_position(self, line: int, anchor: Dict[str, str]) -> None:
         comments = [
-            {'path': review.COMMIT_MESSAGE_PATH, 'line': 5, 'text': 'x'},
+            {'path': review.COMMIT_MESSAGE_PATH, 'line': line, 'text': 'x', **anchor},
         ]
         review._resolve_message_positions(self.COVER, comments)
-        assert comments[0]['line'] == 5
-
-    def test_keeps_position_when_anchor_not_found(self) -> None:
-        """An anchor absent from the body leaves the comment untouched."""
-        comments = [
-            {
-                'path': review.COMMIT_MESSAGE_PATH,
-                'line': 4,
-                'text': 'x',
-                'content': 'text that is nowhere in the cover letter',
-            },
-        ]
-        review._resolve_message_positions(self.COVER, comments)
-        assert comments[0]['line'] == 4
+        assert comments[0]['line'] == line
 
     def test_ignores_diff_path_comments(self) -> None:
         """Comments anchored to a file path are not message comments."""
@@ -3520,19 +3387,17 @@ class TestIntegrateSashikoReviews:
         ],
     }
 
-    def test_no_sashiko_url_returns_false(self) -> None:
-        """When sashiko-url is not configured, returns False immediately."""
-        with mock.patch('b4.get_main_config', return_value={}):
-            result = review._integrate_sashiko_reviews(
-                '/tmp', '', {'series': {}, 'patches': []}, [], []
-            )
-        assert result is False
-
-    def test_no_series_msgid_returns_false(self) -> None:
-        """When series has no message_id, returns False."""
-        with mock.patch(
-            'b4.get_main_config', return_value={'sashiko-url': 'https://sashiko.dev'}
-        ):
+    @pytest.mark.parametrize(
+        'config',
+        [
+            # Without sashiko-url configured, returns False immediately.
+            pytest.param({}, id='no-sashiko-url'),
+            # Without a series message_id, returns False.
+            pytest.param({'sashiko-url': 'https://sashiko.dev'}, id='no-series-msgid'),
+        ],
+    )
+    def test_returns_false_without_prerequisites(self, config: Dict[str, str]) -> None:
+        with mock.patch('b4.get_main_config', return_value=config):
             result = review._integrate_sashiko_reviews(
                 '/tmp', '', {'series': {}, 'patches': []}, [], []
             )
@@ -3748,35 +3613,28 @@ class TestIntegrateSashikoReviews:
 class TestApplyFindingsLocations:
     """Tests for _apply_findings_locations()."""
 
-    def test_noop_when_no_locations(self) -> None:
-        """When locations_by_file is empty nothing changes."""
-        comments = [{'path': 'f.c', 'line': 0, 'text': 'hello'}]
-        review._apply_findings_locations(comments, {})
-        assert comments[0]['line'] == 0
-
-    def test_anchors_unpositioned_comment(self) -> None:
-        """A comment at line 0 for a file with exactly one location gets updated."""
-        comments = [{'path': 'f.c', 'line': 0, 'text': 'needs anchoring'}]
-        review._apply_findings_locations(comments, {'f.c': [42]})
-        assert comments[0]['line'] == 42
-
-    def test_skips_already_positioned_comment(self) -> None:
-        """Comments with a real line number are left untouched."""
-        comments = [{'path': 'f.c', 'line': 10, 'text': 'already placed'}]
-        review._apply_findings_locations(comments, {'f.c': [99]})
-        assert comments[0]['line'] == 10
-
-    def test_skips_ambiguous_file(self) -> None:
-        """When multiple lines exist for a file, no fallback is applied."""
-        comments = [{'path': 'f.c', 'line': 0, 'text': 'ambiguous'}]
-        review._apply_findings_locations(comments, {'f.c': [10, 20]})
-        assert comments[0]['line'] == 0
-
-    def test_skips_unmatched_file(self) -> None:
-        """Locations for a different file do not affect the comment."""
-        comments = [{'path': 'f.c', 'line': 0, 'text': 'wrong file'}]
-        review._apply_findings_locations(comments, {'g.c': [5]})
-        assert comments[0]['line'] == 0
+    @pytest.mark.parametrize(
+        'line,locations,expected',
+        [
+            # When locations_by_file is empty nothing changes.
+            pytest.param(0, {}, 0, id='noop-when-no-locations'),
+            # A comment at line 0 for a file with exactly one location gets
+            # updated.
+            pytest.param(0, {'f.c': [42]}, 42, id='anchors-unpositioned-comment'),
+            # Comments with a real line number are left untouched.
+            pytest.param(10, {'f.c': [99]}, 10, id='skips-already-positioned'),
+            # When multiple lines exist for a file, no fallback is applied.
+            pytest.param(0, {'f.c': [10, 20]}, 0, id='skips-ambiguous-file'),
+            # Locations for a different file do not affect the comment.
+            pytest.param(0, {'g.c': [5]}, 0, id='skips-unmatched-file'),
+        ],
+    )
+    def test_apply_findings_locations(
+        self, line: int, locations: Dict[str, List[int]], expected: int
+    ) -> None:
+        comments = [{'path': 'f.c', 'line': line, 'text': 'hello'}]
+        review._apply_findings_locations(comments, locations)
+        assert comments[0]['line'] == expected
 
 
 class TestSashikoLocationsIntegration:
@@ -3792,8 +3650,6 @@ class TestSashikoLocationsIntegration:
         _apply_findings_locations; here we verify end-to-end that locations
         data is silently ignored when the comment is already positioned.
         """
-        import json as _json
-
         patchset = {
             'id': 42,
             'message_id': 'cover@example.com',
@@ -3816,7 +3672,7 @@ class TestSashikoLocationsIntegration:
                     # Finding carries locations in the real sashiko list-of-dicts
                     # format — must be parsed without error but must NOT
                     # override the already-positioned comment.
-                    'output': _json.dumps(
+                    'output': json.dumps(
                         {
                             'findings': [
                                 {
@@ -3875,8 +3731,6 @@ class TestSashikoLocationsIntegration:
 
     def test_no_locations_no_effect(self) -> None:
         """When findings carry no locations, behaviour is unchanged."""
-        import json as _json
-
         patchset = {
             'id': 42,
             'message_id': 'cover@example.com',
@@ -3897,7 +3751,7 @@ class TestSashikoLocationsIntegration:
                         '\nNormal comment.\n'
                     ),
                     # No locations in findings
-                    'output': _json.dumps(
+                    'output': json.dumps(
                         {'findings': [{'severity': 'Low', 'problem': 'style'}]}
                     ),
                 },
@@ -4043,9 +3897,17 @@ class TestIntegrateFollowupInlineComments:
         assert len(rev['comments']) == 1
         assert 'NULL check' in rev['comments'][0]['text']
 
-    def test_skips_followups_without_diff(self) -> None:
-        """Follow-ups that don't quote diff content are ignored."""
-        patches = [
+    @pytest.mark.parametrize(
+        'bodies_by_patch',
+        [
+            # Follow-ups that don't quote diff content are ignored.
+            pytest.param({1: [_FOLLOWUP_BODY_NO_DIFF]}, id='without-diff'),
+            # Follow-ups to the cover letter (display_idx 0) are skipped.
+            pytest.param({0: [_FOLLOWUP_BODY_WITH_DIFF]}, id='cover-letter'),
+        ],
+    )
+    def test_skips_followups(self, bodies_by_patch: Dict[int, List[str]]) -> None:
+        patches: List[Dict[str, Any]] = [
             {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
         ]
         series = {
@@ -4053,11 +3915,7 @@ class TestIntegrateFollowupInlineComments:
             'thread-blob': 'abc123',
         }
         tracking = {'series': series, 'patches': patches}
-        followup_comments = self._make_followup_comments(
-            {
-                1: [self._FOLLOWUP_BODY_NO_DIFF],
-            }
-        )
+        followup_comments = self._make_followup_comments(bodies_by_patch)
 
         with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
             with mock.patch('liblore.utils.split_mbox', return_value=[]):
@@ -4070,33 +3928,6 @@ class TestIntegrateFollowupInlineComments:
                     )
         assert result is False
         assert 'reviews' not in patches[0]
-
-    def test_skips_cover_letter_followups(self) -> None:
-        """Follow-ups to the cover letter (display_idx 0) are skipped."""
-        patches = [
-            {'header-info': {'msgid': 'patch1@example.com'}, 'title': 'patch 1'},
-        ]
-        series = {
-            'header-info': {'msgid': 'cover@example.com'},
-            'thread-blob': 'abc123',
-        }
-        tracking = {'series': series, 'patches': patches}
-        followup_comments = self._make_followup_comments(
-            {
-                0: [self._FOLLOWUP_BODY_WITH_DIFF],  # cover letter
-            }
-        )
-
-        with mock.patch('b4.review.tracking.get_thread_mbox', return_value=b'mbox'):
-            with mock.patch('liblore.utils.split_mbox', return_value=[]):
-                with mock.patch(
-                    'b4.review.tracking._parse_msgs_to_followup_comments',
-                    return_value=followup_comments,
-                ):
-                    result = review._integrate_followup_inline_comments(
-                        '/tmp', '', tracking, ['aaa'], patches
-                    )
-        assert result is False
 
     def test_multiple_reviewers_same_patch(self) -> None:
         """Multiple follow-ups to the same patch create separate review entries."""
@@ -4319,6 +4150,13 @@ class TestGetLoreSeriesVersionMismatch:
 # -- Tests for collect_review_emails() ----------------------------------------
 
 
+@mock.patch(
+    'b4.review._review._build_review_email', return_value=mock.sentinel.email_msg
+)
+@mock.patch(
+    'b4.get_user_config',
+    return_value={'name': 'Maintainer', 'email': 'maintainer@example.com'},
+)
 class TestCollectReviewEmails:
     """Tests for collect_review_emails() filtering logic.
 
@@ -4358,94 +4196,69 @@ class TestCollectReviewEmails:
         r.update(extra)
         return r
 
-    # Use a sentinel email message so we can count how many were produced.
-    _FAKE_MSG = mock.sentinel.email_msg
+    def _collect(
+        self, on_cover: bool, review_extra: Dict[str, Any]
+    ) -> List[email.message.EmailMessage]:
+        """Collect emails for a single review attached to the cover or a patch."""
+        reviews = {self.MY_EMAIL: self._review(**review_extra)}
+        if on_cover:
+            series = self._make_series(reviews)
+            return review.collect_review_emails(series, [], 'cover', '', [])
+        series = self._make_series()
+        patch = self._make_patch(reviews)
+        return review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
 
-    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
-    @mock.patch(
-        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    @pytest.mark.parametrize(
+        'on_cover',
+        [
+            # A review without sent-revision produces one email.
+            pytest.param(True, id='normal-cover-review'),
+            pytest.param(False, id='normal-patch-review'),
+        ],
     )
-    def test_sends_normal_cover_review(
-        self, _cfg: mock.Mock, _build: mock.Mock
+    def test_sends_unsent_review(
+        self, _cfg: mock.Mock, _build: mock.Mock, on_cover: bool
     ) -> None:
-        """A cover review without sent-revision produces one email."""
-        series = self._make_series({self.MY_EMAIL: self._review()})
-        msgs = review.collect_review_emails(series, [], 'cover', '', [])
+        msgs = self._collect(on_cover, {})
         assert len(msgs) == 1
 
-    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
-    @mock.patch(
-        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
+    @pytest.mark.parametrize(
+        'on_cover,review_extra',
+        [
+            # Reviews stamped with sent-revision are not re-sent.
+            pytest.param(True, {'sent-revision': 1}, id='cover-with-sent-revision'),
+            pytest.param(False, {'sent-revision': 1}, id='patch-with-sent-revision'),
+            # The upgrade step sets patch-state=skip AND skip-reason on
+            # unchanged patches whose review was already sent (combo A+B
+            # fix).  Both the skip filter and the sent-revision filter
+            # independently prevent re-sending; this row exercises the
+            # skip-state path.
+            pytest.param(
+                False,
+                {
+                    'sent-revision': 1,
+                    'patch-state': 'skip',
+                    'skip-reason': 'Patch unchanged from v1; review already sent',
+                },
+                id='patch-auto-skipped-after-upgrade',
+            ),
+            # Explicit skip state (manually set, no sent-revision) is honoured.
+            pytest.param(
+                False,
+                {'patch-state': 'skip'},
+                id='skip-state-without-sent-revision',
+            ),
+        ],
     )
-    def test_skips_cover_with_sent_revision(
-        self, _cfg: mock.Mock, _build: mock.Mock
+    def test_skips_already_sent_or_skipped(
+        self,
+        _cfg: mock.Mock,
+        _build: mock.Mock,
+        on_cover: bool,
+        review_extra: Dict[str, Any],
     ) -> None:
-        """Cover review stamped with sent-revision is not re-sent."""
-        series = self._make_series(
-            {self.MY_EMAIL: self._review(**{'sent-revision': 1})}
-        )
-        msgs = review.collect_review_emails(series, [], 'cover', '', [])
-        assert msgs == []
+        assert self._collect(on_cover, review_extra) == []
 
-    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
-    @mock.patch(
-        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
-    )
-    def test_sends_normal_patch_review(
-        self, _cfg: mock.Mock, _build: mock.Mock
-    ) -> None:
-        """A patch review without sent-revision produces one email."""
-        series = self._make_series()
-        patch = self._make_patch({self.MY_EMAIL: self._review()})
-        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
-        assert len(msgs) == 1
-
-    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
-    @mock.patch(
-        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
-    )
-    def test_skips_patch_with_sent_revision(
-        self, _cfg: mock.Mock, _build: mock.Mock
-    ) -> None:
-        """Patch review stamped with sent-revision is not re-sent."""
-        series = self._make_series()
-        patch = self._make_patch({self.MY_EMAIL: self._review(**{'sent-revision': 1})})
-        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
-        assert msgs == []
-
-    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
-    @mock.patch(
-        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
-    )
-    def test_skips_patch_auto_skipped_after_upgrade(
-        self, _cfg: mock.Mock, _build: mock.Mock
-    ) -> None:
-        """Patch auto-marked skip+skip-reason during upgrade is not re-sent.
-
-        This is the combo A+B fix: the upgrade step sets patch-state=skip
-        AND skip-reason on unchanged patches whose review was already sent.
-        Both the skip filter and the sent-revision filter independently
-        prevent re-sending; this test exercises the skip-state path.
-        """
-        series = self._make_series()
-        patch = self._make_patch(
-            {
-                self.MY_EMAIL: self._review(
-                    **{
-                        'sent-revision': 1,
-                        'patch-state': 'skip',
-                        'skip-reason': 'Patch unchanged from v1; review already sent',
-                    }
-                )
-            }
-        )
-        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
-        assert msgs == []
-
-    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
-    @mock.patch(
-        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
-    )
     def test_only_unsent_patches_included(
         self, _cfg: mock.Mock, _build: mock.Mock
     ) -> None:
@@ -4459,21 +4272,6 @@ class TestCollectReviewEmails:
             series, [sent_patch, fresh_patch], 'cover', '', ['sha1', 'sha2']
         )
         assert len(msgs) == 1
-
-    @mock.patch('b4.review._review._build_review_email', return_value=_FAKE_MSG)
-    @mock.patch(
-        'b4.get_user_config', return_value={'name': 'Maintainer', 'email': MY_EMAIL}
-    )
-    def test_skip_state_without_sent_revision_still_skipped(
-        self, _cfg: mock.Mock, _build: mock.Mock
-    ) -> None:
-        """Explicit skip state (manually set, no sent-revision) is honoured."""
-        series = self._make_series()
-        patch = self._make_patch(
-            {self.MY_EMAIL: self._review(**{'patch-state': 'skip'})}
-        )
-        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
-        assert msgs == []
 
 
 def _cron_args(**kwargs: Any) -> argparse.Namespace:
@@ -4746,7 +4544,7 @@ class TestQuietCron:
         assert handler.messages == []
 
 
-def test_update_all_tracking_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_update_all_tracking_lock() -> None:
     """A second update sweep must fail fast while the lock is held."""
     with b4.lockfile_nb(_review._get_update_lock_path('lockproj')):
         with pytest.raises(b4.LockHeldError):
@@ -4795,11 +4593,7 @@ def test_update_all_tracking_counts_upstream(
 ) -> None:
     """A series counts as upstream once if any of its fetches came from
     the upstream archive of the partial mirror."""
-    from unittest.mock import MagicMock
-
-    import liblore
-
-    node = MagicMock()
+    node = mock.MagicMock()
     node.is_shutdown = False
     node.hostname = '127.0.0.1:11043'
     node.upstream_url = 'https://lore.kernel.org/all'
@@ -4864,34 +4658,36 @@ class TestOwnMessageEntries:
         assert entries[0]['msgid'] == 'own@example.com'
         assert entries[0]['msg_date'] == '2026-07-27T10:00:00+00:00'
 
-    def test_match_is_case_insensitive(self) -> None:
-        msg = self._make_msg('Maint@Example.COM', 'own@example.com')
+    @pytest.mark.parametrize(
+        'fromhdr',
+        [
+            pytest.param('Maint@Example.COM', id='case-insensitive'),
+            pytest.param('maint@example.com', id='bare-address'),
+        ],
+    )
+    def test_address_matches(self, fromhdr: str) -> None:
+        msg = self._make_msg(fromhdr, 'own@example.com')
         entries = _review._own_message_entries([msg], 'maint@example.com')
         assert len(entries) == 1
 
-    def test_bare_address_matches(self) -> None:
-        msg = self._make_msg('maint@example.com', 'own@example.com')
-        entries = _review._own_message_entries([msg], 'maint@example.com')
-        assert len(entries) == 1
-
-    def test_other_address_no_match(self) -> None:
-        msg = self._make_msg('K R <other@example.com>', 'own@example.com')
-        assert _review._own_message_entries([msg], 'maint@example.com') == []
-
-    def test_dmarc_munged_from_no_match(self) -> None:
-        # A list that rewrites From keeps the name but swaps the address
-        msg = self._make_msg(
-            'K R via lists.example.com <lists@lists.example.com>',
-            'own@example.com',
-        )
-        assert _review._own_message_entries([msg], 'maint@example.com') == []
-
-    def test_missing_from_no_match(self) -> None:
-        msg = self._make_msg('', 'own@example.com')
-        assert _review._own_message_entries([msg], 'maint@example.com') == []
-
-    def test_missing_msgid_skipped(self) -> None:
-        msg = self._make_msg('maint@example.com', '')
+    @pytest.mark.parametrize(
+        'fromhdr,msgid',
+        [
+            pytest.param(
+                'K R <other@example.com>', 'own@example.com', id='other-address'
+            ),
+            # A list that rewrites From keeps the name but swaps the address
+            pytest.param(
+                'K R via lists.example.com <lists@lists.example.com>',
+                'own@example.com',
+                id='dmarc-munged-from',
+            ),
+            pytest.param('', 'own@example.com', id='missing-from'),
+            pytest.param('maint@example.com', '', id='missing-msgid-skipped'),
+        ],
+    )
+    def test_no_match(self, fromhdr: str, msgid: str) -> None:
+        msg = self._make_msg(fromhdr, msgid)
         assert _review._own_message_entries([msg], 'maint@example.com') == []
 
     def test_missing_date_gives_none(self) -> None:

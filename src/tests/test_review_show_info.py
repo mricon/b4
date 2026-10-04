@@ -6,6 +6,7 @@
 """Tests for ``b4 review show-info``."""
 
 import json
+from unittest.mock import patch as mock_patch
 
 import pytest
 
@@ -16,11 +17,6 @@ from b4.review._review import (
 )
 
 from .helpers.tracking import create_review_branch
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 # ---------------------------------------------------------------------------
 # TestGetReviewInfo
@@ -102,13 +98,16 @@ class TestShowReviewInfo:
         out = capsys.readouterr().out
         assert out.strip() == 'reviewing'
 
-    def test_branch_not_found(self, gitdir: str) -> None:
+    @pytest.mark.parametrize(
+        'spec',
+        [
+            pytest.param('nonexistent-branch:status', id='branch-not-found'),
+            pytest.param('master:status', id='not-review-branch'),
+        ],
+    )
+    def test_bad_branch_exits(self, gitdir: str, spec: str) -> None:
         with pytest.raises(SystemExit):
-            show_review_info('nonexistent-branch:status')
-
-    def test_not_review_branch(self, gitdir: str) -> None:
-        with pytest.raises(SystemExit):
-            show_review_info('master:status')
+            show_review_info(spec)
 
     def test_json_output(self, gitdir: str, capsys: pytest.CaptureFixture[str]) -> None:
         create_review_branch(gitdir, 'json-test', subject='JSON output test')
@@ -174,8 +173,6 @@ class TestTargetBranchInInfo:
 
     def test_target_branch_fallback(self, gitdir: str) -> None:
         """No per-series target + single config value = fallback shown."""
-        from unittest.mock import patch as mock_patch
-
         branch = create_review_branch(
             gitdir, 'target-fallback-test', subject='Fallback test'
         )

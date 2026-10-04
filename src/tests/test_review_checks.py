@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from unittest import mock
 
 import pytest
+import requests
 
 import liblore
 from b4.review import checks
@@ -79,15 +80,18 @@ class TestCacheDb:
         assert tools == {'lint', 'build'}
         conn.close()
 
-    def test_retrieve_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+    @pytest.mark.parametrize(
+        'msgids',
+        [
+            pytest.param(['nonexistent@example'], id='unknown-msgid'),
+            pytest.param([], id='empty-list'),
+        ],
+    )
+    def test_retrieve_empty(
+        self, tmp_path: pytest.TempPathFactory, msgids: List[str]
+    ) -> None:
         conn = checks.get_db()
-        cached = checks.get_cached_results(conn, ['nonexistent@example'])
-        assert cached == {}
-        conn.close()
-
-    def test_retrieve_empty_list(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = checks.get_db()
-        cached = checks.get_cached_results(conn, [])
+        cached = checks.get_cached_results(conn, msgids)
         assert cached == {}
         conn.close()
 
@@ -149,17 +153,23 @@ class TestCacheDb:
 class TestParseCmd:
     """Tests for parse_cmd shell splitting."""
 
-    def test_simple(self) -> None:
-        assert checks.parse_cmd('/usr/bin/check') == ['/usr/bin/check']
-
-    def test_with_args(self) -> None:
-        assert checks.parse_cmd('check --verbose -q') == ['check', '--verbose', '-q']
-
-    def test_quoted_arg(self) -> None:
-        assert checks.parse_cmd('check "hello world"') == ['check', 'hello world']
-
-    def test_single_quotes(self) -> None:
-        assert checks.parse_cmd("check 'hello world'") == ['check', 'hello world']
+    @pytest.mark.parametrize(
+        'cmd,expected',
+        [
+            pytest.param('/usr/bin/check', ['/usr/bin/check'], id='simple'),
+            pytest.param(
+                'check --verbose -q', ['check', '--verbose', '-q'], id='with-args'
+            ),
+            pytest.param(
+                'check "hello world"', ['check', 'hello world'], id='quoted-arg'
+            ),
+            pytest.param(
+                "check 'hello world'", ['check', 'hello world'], id='single-quotes'
+            ),
+        ],
+    )
+    def test_parse_cmd(self, cmd: str, expected: List[str]) -> None:
+        assert checks.parse_cmd(cmd) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +181,12 @@ class TestBuiltinCheckpatch:
     """Tests for _run_builtin_checkpatch output parsing."""
 
     def _run(
-        self, stdout: str, stderr: str = '', ecode: int = 0, topdir: str = '/fake'
+        self,
+        stdout: str,
+        stderr: str = '',
+        ecode: int = 0,
+        topdir: str = '/fake',
+        bdata: bytes = b'',
     ) -> List[Dict[str, str]]:
         msg = _make_msg()
         with (
@@ -184,29 +199,43 @@ class TestBuiltinCheckpatch:
                     stderr.encode() if stderr else b'',
                 ),
             ),
-            mock.patch('b4.LoreMessage.get_msg_as_bytes', return_value=b''),
+            mock.patch('b4.LoreMessage.get_msg_as_bytes', return_value=bdata),
         ):
             return checks._run_builtin_checkpatch(msg, topdir)
 
-    def test_clean_pass(self) -> None:
-        results = self._run('', ecode=0)
+    @pytest.mark.parametrize(
+        'stdout,ecode,status,summary_substr',
+        [
+            pytest.param('', 0, 'pass', None, id='clean-pass'),
+            pytest.param(
+                'ERROR: trailing whitespace\n', 0, 'fail', '1 error', id='error-lines'
+            ),
+            pytest.param(
+                'WARNING: missing Signed-off-by\n',
+                0,
+                'warn',
+                '1 warning',
+                id='warning-lines',
+            ),
+            pytest.param(
+                'CHECK: braces not needed\n', 0, 'warn', None, id='check-is-a-warning'
+            ),
+            pytest.param('', 1, 'fail', 'error code', id='nonzero-exit-no-output'),
+        ],
+    )
+    def test_status_and_summary(
+        self,
+        stdout: str,
+        ecode: int,
+        status: str,
+        summary_substr: Optional[str],
+    ) -> None:
+        results = self._run(stdout, ecode=ecode)
         assert len(results) == 1
-        assert results[0]['status'] == 'pass'
         assert results[0]['tool'] == 'checkpatch'
-
-    def test_error_lines(self) -> None:
-        results = self._run('ERROR: trailing whitespace\n')
-        assert results[0]['status'] == 'fail'
-        assert '1 error' in results[0]['summary']
-
-    def test_warning_lines(self) -> None:
-        results = self._run('WARNING: missing Signed-off-by\n')
-        assert results[0]['status'] == 'warn'
-        assert '1 warning' in results[0]['summary']
-
-    def test_check_treated_as_warning(self) -> None:
-        results = self._run('CHECK: braces not needed\n')
-        assert results[0]['status'] == 'warn'
+        assert results[0]['status'] == status
+        if summary_substr is not None:
+            assert summary_substr in results[0]['summary']
 
     def test_mixed_errors_and_warnings(self) -> None:
         output = 'ERROR: bad thing\nWARNING: mild thing\nWARNING: another\n'
@@ -221,11 +250,6 @@ class TestBuiltinCheckpatch:
         findings = json.loads(results[0]['details'])
         assert len(findings) == 1
         assert 'continuation' in findings[0]['description']
-
-    def test_nonzero_exit_no_output(self) -> None:
-        results = self._run('', ecode=1)
-        assert results[0]['status'] == 'fail'
-        assert 'error code' in results[0]['summary']
 
     def test_not_executable(self) -> None:
         msg = _make_msg()
@@ -263,44 +287,26 @@ class TestBuiltinCheckpatch:
         '+new line with trailing whitespace   \n'
     )
 
-    def _run_with_bytes(
-        self, stdout: str, bdata: bytes, stderr: str = '', ecode: int = 0
-    ) -> List[Dict[str, str]]:
-        msg = _make_msg()
-        with (
-            mock.patch('os.access', return_value=True),
-            mock.patch(
-                'b4._run_command',
-                return_value=(
-                    ecode,
-                    stdout.encode() if stdout else b'',
-                    stderr.encode() if stderr else b'',
-                ),
-            ),
-            mock.patch('b4.LoreMessage.get_msg_as_bytes', return_value=bdata),
-        ):
-            return checks._run_builtin_checkpatch(msg, '/fake')
-
     def test_commit_log_finding_gets_srcline(self) -> None:
         out = '-:4: WARNING: Possible unwrapped commit description\n'
-        results = self._run_with_bytes(out, self._SAMPLE_PATCH.encode())
+        results = self._run(out, bdata=self._SAMPLE_PATCH.encode())
         findings = json.loads(results[0]['details'])
         assert findings[0]['srcline'] == (
             'This commit log line is intentionally quite long and well over limits.'
         )
 
-    def test_diff_finding_has_no_srcline(self) -> None:
-        # A complaint pointing into the diff is left alone -- the reviewer can
-        # already see that line in the patch view.
-        out = '-:17: ERROR: trailing whitespace\n'
-        results = self._run_with_bytes(out, self._SAMPLE_PATCH.encode())
-        findings = json.loads(results[0]['details'])
-        assert 'srcline' not in findings[0]
-
-    def test_srcline_absent_without_line_number(self) -> None:
-        # A finding with no "-:N:" prefix can't be located, so no srcline.
-        out = 'WARNING: missing Signed-off-by\n'
-        results = self._run_with_bytes(out, self._SAMPLE_PATCH.encode())
+    @pytest.mark.parametrize(
+        'out',
+        [
+            # A complaint pointing into the diff is left alone -- the reviewer
+            # can already see that line in the patch view.
+            pytest.param('-:17: ERROR: trailing whitespace\n', id='diff-finding'),
+            # A finding with no "-:N:" prefix can't be located, so no srcline.
+            pytest.param('WARNING: missing Signed-off-by\n', id='no-line-number'),
+        ],
+    )
+    def test_no_srcline(self, out: str) -> None:
+        results = self._run(out, bdata=self._SAMPLE_PATCH.encode())
         findings = json.loads(results[0]['details'])
         assert 'srcline' not in findings[0]
 
@@ -308,16 +314,19 @@ class TestBuiltinCheckpatch:
 class TestFindCommitLogEnd:
     """Tests for the commit-log boundary helper."""
 
-    def test_scissors_wins(self) -> None:
-        lines = ['From: x', '', 'body', '---', 'diff --git a b']
-        assert checks._find_commit_log_end(lines) == 4
-
-    def test_diff_without_scissors(self) -> None:
-        lines = ['From: x', '', 'body', 'diff --git a b']
-        assert checks._find_commit_log_end(lines) == 4
-
-    def test_no_diff_at_all(self) -> None:
-        lines = ['just', 'commit', 'message']
+    @pytest.mark.parametrize(
+        'lines',
+        [
+            pytest.param(
+                ['From: x', '', 'body', '---', 'diff --git a b'], id='scissors-wins'
+            ),
+            pytest.param(
+                ['From: x', '', 'body', 'diff --git a b'], id='diff-without-scissors'
+            ),
+            pytest.param(['just', 'commit', 'message'], id='no-diff-at-all'),
+        ],
+    )
+    def test_commit_log_end(self, lines: List[str]) -> None:
         assert checks._find_commit_log_end(lines) == 4
 
 
@@ -370,10 +379,11 @@ class TestRunExternalCmd:
         assert results == []
 
     def test_empty_output_nonzero_exit(self) -> None:
-        results = self._run('', ecode=1)
+        results = self._run('', stderr='something broke', ecode=1)
         assert len(results) == 1
         assert results[0]['status'] == 'fail'
         assert 'error code' in results[0]['summary']
+        assert 'something broke' in results[0]['details']
 
     def test_invalid_status_defaults_to_fail(self) -> None:
         data = [{'tool': 'ci', 'status': 'banana'}]
@@ -396,10 +406,6 @@ class TestRunExternalCmd:
         assert results[0]['summary'] == ''
         assert results[0]['url'] == ''
         assert results[0]['details'] == ''
-
-    def test_stderr_in_error_details(self) -> None:
-        results = self._run('', stderr='something broke', ecode=1)
-        assert 'something broke' in results[0]['details']
 
     def test_extra_env_set_during_run(self) -> None:
         captured_env: Dict[str, str] = {}
@@ -463,37 +469,26 @@ class TestBuiltinPatchwork:
         ):
             return checks._run_builtin_patchwork(msg, 'proj', 'https://pw.example.com')
 
-    def test_all_success(self) -> None:
+    @pytest.mark.parametrize(
+        'pw_states,expected_status',
+        [
+            pytest.param(['success', 'success'], 'pass', id='all-success'),
+            pytest.param(['success', 'fail'], 'fail', id='worst-case-fail'),
+            pytest.param(['pending'], 'warn', id='pending-is-warn'),
+            pytest.param(['warning'], 'warn', id='warning-is-warn'),
+        ],
+    )
+    def test_status_aggregation(
+        self, pw_states: List[str], expected_status: str
+    ) -> None:
         pw = [
-            {'state': 'success', 'context': 'build', 'description': 'ok', 'url': ''},
-            {'state': 'success', 'context': 'test', 'description': 'ok', 'url': ''},
+            {'state': state, 'context': f'ctx{i}', 'description': 'd', 'url': ''}
+            for i, state in enumerate(pw_states)
         ]
         results = self._run(pw)
         assert len(results) == 1
         assert results[0]['tool'] == 'patchwork'
-        assert results[0]['status'] == 'pass'
-
-    def test_worst_case_fail(self) -> None:
-        pw = [
-            {'state': 'success', 'context': 'build', 'description': 'ok', 'url': ''},
-            {'state': 'fail', 'context': 'test', 'description': 'bad', 'url': ''},
-        ]
-        results = self._run(pw)
-        assert results[0]['status'] == 'fail'
-
-    def test_pending_is_warn(self) -> None:
-        pw = [
-            {'state': 'pending', 'context': 'ci', 'description': 'running', 'url': ''},
-        ]
-        results = self._run(pw)
-        assert results[0]['status'] == 'warn'
-
-    def test_warning_is_warn(self) -> None:
-        pw = [
-            {'state': 'warning', 'context': 'ci', 'description': 'iffy', 'url': ''},
-        ]
-        results = self._run(pw)
-        assert results[0]['status'] == 'warn'
+        assert results[0]['status'] == expected_status
 
     def test_details_are_json(self) -> None:
         pw = [
@@ -719,12 +714,19 @@ class TestSashikoCache:
         assert data2 is not None
         assert data2['id'] == 93
 
-    def test_fetch_404_caches_none(self) -> None:
-        resp = mock.Mock()
-        resp.status_code = 404
-
+    @pytest.mark.parametrize(
+        'get_config',
+        [
+            pytest.param({'return_value': mock.Mock(status_code=404)}, id='404'),
+            pytest.param(
+                {'side_effect': requests.ConnectionError('offline')},
+                id='network-error',
+            ),
+        ],
+    )
+    def test_fetch_failure_caches_none(self, get_config: Dict[str, Any]) -> None:
         session = mock.Mock()
-        session.get.return_value = resp
+        session.get.configure_mock(**get_config)
 
         with mock.patch('b4.get_requests_session', return_value=session):
             data = checks._fetch_sashiko_patchset(
@@ -734,87 +736,46 @@ class TestSashikoCache:
         assert data is None
         assert checks._sashiko_patchset_cache['unknown@example.com'] is None
 
-    def test_fetch_network_error_caches_none(self) -> None:
-        import requests
-
-        session = mock.Mock()
-        session.get.side_effect = requests.ConnectionError('offline')
-
-        with mock.patch('b4.get_requests_session', return_value=session):
-            data = checks._fetch_sashiko_patchset(
-                'test@example.com', 'https://sashiko.dev'
-            )
-
-        assert data is None
-        assert checks._sashiko_patchset_cache['test@example.com'] is None
-
 
 class TestParseSashikoFindings:
     """Tests for _parse_sashiko_findings."""
 
-    def test_empty_output(self) -> None:
-        assert checks._parse_sashiko_findings({'output': ''}) == []
+    @pytest.mark.parametrize(
+        'review',
+        [
+            pytest.param({'output': ''}, id='empty-output'),
+            pytest.param({'output': None}, id='null-output'),
+            pytest.param({}, id='no-output-key'),
+            pytest.param({'output': 'not json'}, id='invalid-json'),
+            pytest.param({'output': json.dumps({'fixes': []})}, id='no-findings-key'),
+        ],
+    )
+    def test_unusable_output_yields_no_findings(self, review: Dict[str, Any]) -> None:
+        assert checks._parse_sashiko_findings(review) == []
 
-    def test_null_output(self) -> None:
-        assert checks._parse_sashiko_findings({'output': None}) == []
-
-    def test_no_output_key(self) -> None:
-        assert checks._parse_sashiko_findings({}) == []
-
-    def test_invalid_json(self) -> None:
-        assert checks._parse_sashiko_findings({'output': 'not json'}) == []
-
-    def test_critical_finding(self) -> None:
+    @pytest.mark.parametrize(
+        'severity,problem,status,state',
+        [
+            pytest.param('Critical', 'UAF bug', 'fail', 'critical', id='critical'),
+            pytest.param('High', 'Missing check', 'fail', 'high', id='high'),
+            pytest.param('Medium', 'Questionable logic', 'warn', 'medium', id='medium'),
+            pytest.param('Low', 'Style issue', 'pass', 'low', id='low'),
+        ],
+    )
+    def test_severity_mapping(
+        self, severity: str, problem: str, status: str, state: str
+    ) -> None:
         review = {
             'output': json.dumps(
-                {
-                    'findings': [{'severity': 'Critical', 'problem': 'UAF bug'}],
-                }
+                {'findings': [{'severity': severity, 'problem': problem}]}
             )
         }
         findings = checks._parse_sashiko_findings(review)
         assert len(findings) == 1
-        assert findings[0]['status'] == 'fail'
-        assert findings[0]['state'] == 'critical'
-        assert 'UAF bug' in findings[0]['description']
-
-    def test_high_finding(self) -> None:
-        review = {
-            'output': json.dumps(
-                {
-                    'findings': [{'severity': 'High', 'problem': 'Missing check'}],
-                }
-            )
-        }
-        findings = checks._parse_sashiko_findings(review)
-        assert findings[0]['status'] == 'fail'
-        assert findings[0]['state'] == 'high'
-
-    def test_medium_finding(self) -> None:
-        review = {
-            'output': json.dumps(
-                {
-                    'findings': [
-                        {'severity': 'Medium', 'problem': 'Questionable logic'}
-                    ],
-                }
-            )
-        }
-        findings = checks._parse_sashiko_findings(review)
-        assert findings[0]['status'] == 'warn'
-        assert findings[0]['state'] == 'medium'
-
-    def test_low_finding(self) -> None:
-        review = {
-            'output': json.dumps(
-                {
-                    'findings': [{'severity': 'Low', 'problem': 'Style issue'}],
-                }
-            )
-        }
-        findings = checks._parse_sashiko_findings(review)
-        assert findings[0]['status'] == 'pass'
-        assert findings[0]['state'] == 'low'
+        assert findings[0]['status'] == status
+        assert findings[0]['state'] == state
+        assert findings[0]['context'] == f'sashiko/{state}'
+        assert problem in findings[0]['description']
 
     def test_severity_explanation_appended(self) -> None:
         review = {
@@ -883,17 +844,6 @@ class TestParseSashikoFindings:
         assert findings[0]['preexisting'] is True
         assert '(pre-existing)' in findings[0]['description']
 
-    def test_context_includes_severity(self) -> None:
-        review = {
-            'output': json.dumps(
-                {
-                    'findings': [{'severity': 'Medium', 'problem': 'test'}],
-                }
-            )
-        }
-        findings = checks._parse_sashiko_findings(review)
-        assert findings[0]['context'] == 'sashiko/medium'
-
     def test_multiple_findings(self) -> None:
         review = {
             'output': json.dumps(
@@ -907,10 +857,6 @@ class TestParseSashikoFindings:
         }
         findings = checks._parse_sashiko_findings(review)
         assert len(findings) == 2
-
-    def test_no_findings_key(self) -> None:
-        review = {'output': json.dumps({'fixes': []})}
-        assert checks._parse_sashiko_findings(review) == []
 
 
 class TestSashikoFindingsSummary:
@@ -1059,126 +1005,148 @@ class TestRunBuiltinSashiko:
         details = json.loads(results[0]['details'])
         assert len(details) == 3  # 1 low + 1 critical + 1 high
 
-    def test_patch_with_critical_finding(self) -> None:
+    @pytest.mark.parametrize(
+        'msgid,status,summary_substrs',
+        [
+            pytest.param(
+                'patch2@example.com',
+                'fail',
+                ('1 critical', '1 high'),
+                id='patch-with-critical-finding',
+            ),
+            pytest.param(
+                'patch1@example.com', 'pass', ('1 low',), id='patch-with-low-finding'
+            ),
+            pytest.param(
+                'patch3@example.com', 'pass', ('Skipped',), id='skipped-patch'
+            ),
+        ],
+    )
+    def test_patch_findings(
+        self, msgid: str, status: str, summary_substrs: Tuple[str, ...]
+    ) -> None:
         self._prefill_cache()
-        msg = _make_msg(msgid='patch2@example.com')
+        msg = _make_msg(msgid=msgid)
         results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'fail'
-        assert '1 critical' in results[0]['summary']
-        assert '1 high' in results[0]['summary']
+        assert results[0]['status'] == status
+        for substr in summary_substrs:
+            assert substr in results[0]['summary']
 
-    def test_patch_with_low_finding(self) -> None:
-        self._prefill_cache()
-        msg = _make_msg(msgid='patch1@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'pass'
-        assert '1 low' in results[0]['summary']
-
-    def test_skipped_patch(self) -> None:
-        self._prefill_cache()
-        msg = _make_msg(msgid='patch3@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'pass'
-        assert 'Skipped' in results[0]['summary']
-
-    def test_pending_patchset(self) -> None:
-        ps = dict(_SASHIKO_PATCHSET, status='Pending')
+    @pytest.mark.parametrize(
+        'ps_status,msgid,status,summary,exact',
+        [
+            pytest.param(
+                'Pending', 'patch1@example.com', 'warn', 'pending', False, id='pending'
+            ),
+            pytest.param(
+                'In Review',
+                'cover@example.com',
+                'warn',
+                'in review',
+                False,
+                id='in-review',
+            ),
+            pytest.param(
+                'Failed', 'cover@example.com', 'fail', 'Failed', True, id='failed'
+            ),
+            pytest.param(
+                'Failed To Apply',
+                'cover@example.com',
+                'fail',
+                None,
+                False,
+                id='failed-to-apply',
+            ),
+            pytest.param(
+                'Incomplete',
+                'cover@example.com',
+                'warn',
+                'incomplete',
+                False,
+                id='incomplete',
+            ),
+        ],
+    )
+    def test_patchset_status(
+        self,
+        ps_status: str,
+        msgid: str,
+        status: str,
+        summary: Optional[str],
+        exact: bool,
+    ) -> None:
+        ps = dict(_SASHIKO_PATCHSET, status=ps_status)
         self._prefill_cache(ps)
-        msg = _make_msg(msgid='patch1@example.com')
+        msg = _make_msg(msgid=msgid)
         results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'warn'
-        assert 'pending' in results[0]['summary'].lower()
+        assert results[0]['status'] == status
+        if summary is None:
+            return
+        if exact:
+            assert results[0]['summary'] == summary
+        else:
+            assert summary in results[0]['summary'].lower()
 
-    def test_in_review_patchset(self) -> None:
-        ps = dict(_SASHIKO_PATCHSET, status='In Review')
-        self._prefill_cache(ps)
-        msg = _make_msg(msgid='cover@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'warn'
-        assert 'in review' in results[0]['summary'].lower()
-
-    def test_failed_patchset(self) -> None:
-        ps = dict(_SASHIKO_PATCHSET, status='Failed')
-        self._prefill_cache(ps)
-        msg = _make_msg(msgid='cover@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'fail'
-        assert results[0]['summary'] == 'Failed'
-
-    def test_failed_to_apply_patchset(self) -> None:
-        ps = dict(_SASHIKO_PATCHSET, status='Failed To Apply')
-        self._prefill_cache(ps)
-        msg = _make_msg(msgid='cover@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'fail'
-
-    def test_incomplete_patchset(self) -> None:
-        ps = dict(_SASHIKO_PATCHSET, status='Incomplete')
-        self._prefill_cache(ps)
-        msg = _make_msg(msgid='cover@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'warn'
-        assert 'incomplete' in results[0]['summary'].lower()
-
-    def test_no_findings_pass(self) -> None:
-        reviews = [
-            {
-                'id': 100,
-                'patch_id': 1,
-                'status': 'Reviewed',
-                'result': 'Review completed successfully.',
-                'output': json.dumps({'findings': []}),
-            }
-        ]
+    @pytest.mark.parametrize(
+        'reviews,status,summary,exact',
+        [
+            pytest.param(
+                [
+                    {
+                        'id': 100,
+                        'patch_id': 1,
+                        'status': 'Reviewed',
+                        'result': 'Review completed successfully.',
+                        'output': json.dumps({'findings': []}),
+                    }
+                ],
+                'pass',
+                'No findings',
+                True,
+                id='no-findings-pass',
+            ),
+            pytest.param(
+                [{'id': 100, 'patch_id': 1, 'status': 'Pending', 'output': ''}],
+                'warn',
+                'in progress',
+                False,
+                id='pending-review',
+            ),
+            pytest.param(
+                [
+                    {
+                        'id': 100,
+                        'patch_id': 1,
+                        'status': 'Failed',
+                        'result': 'Token limit exceeded',
+                        'output': '',
+                    }
+                ],
+                'fail',
+                'Token limit',
+                False,
+                id='failed-review',
+            ),
+            # Patchset is reviewed but this specific patch has no review entry
+            pytest.param([], 'pass', 'No review', True, id='patch-without-review'),
+        ],
+    )
+    def test_review_for_patch(
+        self,
+        reviews: List[Dict[str, Any]],
+        status: str,
+        summary: str,
+        exact: bool,
+    ) -> None:
         ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
         self._prefill_cache(ps)
         msg = _make_msg(msgid='patch1@example.com')
         results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'pass'
-        assert results[0]['summary'] == 'No findings'
-
-    def test_pending_review_for_patch(self) -> None:
-        reviews = [{'id': 100, 'patch_id': 1, 'status': 'Pending', 'output': ''}]
-        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
-        self._prefill_cache(ps)
-        msg = _make_msg(msgid='patch1@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'warn'
-        assert 'in progress' in results[0]['summary'].lower()
-
-    def test_failed_review_for_patch(self) -> None:
-        reviews = [
-            {
-                'id': 100,
-                'patch_id': 1,
-                'status': 'Failed',
-                'result': 'Token limit exceeded',
-                'output': '',
-            }
-        ]
-        ps = dict(_SASHIKO_PATCHSET, reviews=reviews)
-        self._prefill_cache(ps)
-        msg = _make_msg(msgid='patch1@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'fail'
-        assert 'Token limit' in results[0]['summary']
-
-    def test_patch_not_in_sashiko(self) -> None:
-        self._prefill_cache()
-        msg = _make_msg(msgid='unknown-patch@example.com')
-        # Not in cache, will try to fetch
-        checks._sashiko_patchset_cache['unknown-patch@example.com'] = None
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results == []
-
-    def test_patch_without_review(self) -> None:
-        # Patchset is reviewed but this specific patch has no review entry
-        ps = dict(_SASHIKO_PATCHSET, reviews=[])
-        self._prefill_cache(ps)
-        msg = _make_msg(msgid='patch1@example.com')
-        results = checks._run_builtin_sashiko(msg, 'https://sashiko.dev')
-        assert results[0]['status'] == 'pass'
-        assert results[0]['summary'] == 'No review'
+        assert results[0]['status'] == status
+        if exact:
+            assert results[0]['summary'] == summary
+        else:
+            assert summary.lower() in results[0]['summary'].lower()
 
     def test_url_constructed_correctly(self) -> None:
         self._prefill_cache()
@@ -1296,25 +1264,25 @@ class TestRunBuiltinSashiko:
 class TestSashikoAutoWire:
     """Tests for auto-wiring _builtin_sashiko in load_check_cmds."""
 
-    def test_sashiko_added_when_url_configured(self) -> None:
-        config = {'sashiko-url': 'https://sashiko.dev'}
+    @pytest.mark.parametrize(
+        'config,present',
+        [
+            pytest.param(
+                {'sashiko-url': 'https://sashiko.dev'}, True, id='added-when-url-set'
+            ),
+            pytest.param({}, False, id='not-added-without-url'),
+        ],
+    )
+    def test_sashiko_wired_only_with_url(
+        self, config: Dict[str, Any], present: bool
+    ) -> None:
         with (
             mock.patch('b4.get_main_config', return_value=config),
             mock.patch('b4.git_get_toplevel', return_value=None),
         ):
             perpatch, series = checks.load_check_cmds()
-        assert '_builtin_sashiko' in perpatch
-        assert '_builtin_sashiko' in series
-
-    def test_sashiko_not_added_without_url(self) -> None:
-        config: Dict[str, Any] = {}
-        with (
-            mock.patch('b4.get_main_config', return_value=config),
-            mock.patch('b4.git_get_toplevel', return_value=None),
-        ):
-            perpatch, series = checks.load_check_cmds()
-        assert '_builtin_sashiko' not in perpatch
-        assert '_builtin_sashiko' not in series
+        assert ('_builtin_sashiko' in perpatch) is present
+        assert ('_builtin_sashiko' in series) is present
 
     def test_sashiko_not_duplicated(self) -> None:
         config = {
@@ -1334,11 +1302,15 @@ class TestSashikoAutoWire:
 class TestSashikoDispatch:
     """Tests for _dispatch_cmd routing to _builtin_sashiko."""
 
-    def test_dispatch_routes_to_sashiko(self) -> None:
+    def setup_method(self) -> None:
         checks.clear_sashiko_cache()
-        checks._sashiko_patchset_cache['test@ex'] = _SASHIKO_PATCHSET
+
+    def teardown_method(self) -> None:
+        checks.clear_sashiko_cache()
+
+    def test_dispatch_routes_to_sashiko(self) -> None:
         msg = _make_msg(msgid='test@ex')
-        # Pre-cache so no HTTP call is made; use cover msgid
+        # Pre-cache so no HTTP call is made
         checks._sashiko_patchset_cache['test@ex'] = dict(
             _SASHIKO_PATCHSET, message_id='test@ex'
         )
@@ -1346,7 +1318,6 @@ class TestSashikoDispatch:
         with mock.patch('b4.get_main_config', return_value=config):
             results = checks._dispatch_cmd('_builtin_sashiko', msg, '/fake')
         assert results[0]['tool'] == 'sashiko'
-        checks.clear_sashiko_cache()
 
     def test_dispatch_without_config(self) -> None:
         msg = _make_msg()

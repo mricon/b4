@@ -13,7 +13,7 @@ has the ``[bugs]`` extra installed.
 import argparse
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, List, Optional, Set
+from typing import Any, List, Optional, Set, Tuple
 
 import pytest
 
@@ -100,24 +100,31 @@ def _run(
 
 
 class TestBugMessageIds:
-    def test_first_comment_is_the_root(self) -> None:
-        bug = _bug(comments=[_comment('root@x'), _comment('reply@x', offset=1)])
-        root, followups = bug_message_ids(bug)
-        assert root == 'root@x'
-        assert followups == ['reply@x']
-
-    def test_no_comments_means_no_msgids(self) -> None:
-        assert bug_message_ids(_bug()) == (None, [])
-
-    def test_manually_filed_bug_has_no_root(self) -> None:
-        # A bug created in the TUI rather than imported has a plain
-        # first comment with no header block at all.
-        bug = _bug(comments=[_comment(None)])
-        assert bug_message_ids(bug) == (None, [])
-
-    def test_headerless_followups_are_dropped(self) -> None:
-        bug = _bug(comments=[_comment('root@x'), _comment(None, offset=1)])
-        assert bug_message_ids(bug) == ('root@x', [])
+    @pytest.mark.parametrize(
+        'comments,expected',
+        [
+            pytest.param(
+                [_comment('root@x'), _comment('reply@x', offset=1)],
+                ('root@x', ['reply@x']),
+                id='first-comment-is-the-root',
+            ),
+            pytest.param([], (None, []), id='no-comments-means-no-msgids'),
+            # A bug created in the TUI rather than imported has a plain
+            # first comment with no header block at all.
+            pytest.param(
+                [_comment(None)], (None, []), id='manually-filed-bug-has-no-root'
+            ),
+            pytest.param(
+                [_comment('root@x'), _comment(None, offset=1)],
+                ('root@x', []),
+                id='headerless-followups-are-dropped',
+            ),
+        ],
+    )
+    def test_message_ids(
+        self, comments: List[Comment], expected: Tuple[Optional[str], List[str]]
+    ) -> None:
+        assert bug_message_ids(_bug(comments=comments)) == expected
 
     def test_tombstoned_comments_still_count(self) -> None:
         # make_tombstone() keeps the Message-ID, so a redacted comment is
@@ -189,14 +196,11 @@ class TestCmdListJson:
         _run(monkeypatch, [], json_output=True)
         assert json.loads(capsys.readouterr().out) == []
 
-    def test_filters_are_passed_through(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_filters_are_passed_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         repo = _run(
             monkeypatch, [], json_output=True, status='closed', label='lifecycle:fixed'
         )
         assert repo.calls == [(Status.CLOSED, 'lifecycle:fixed')]
-        capsys.readouterr()
 
     def test_human_output_does_not_go_to_stdout(
         self,

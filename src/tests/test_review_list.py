@@ -13,7 +13,7 @@ optional ``[tui]`` extra absent.
 import argparse
 import json
 import sqlite3
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -73,19 +73,28 @@ def _args(**kwargs: Any) -> argparse.Namespace:
 class TestCollectTrackedSeries:
     """Tests for the data-gathering half of b4 review list."""
 
-    def test_archived_excluded_by_default(self) -> None:
-        _seed('proj', 'cid-live', status='reviewing')
-        _seed('proj', 'cid-done', status='archived')
-        entries = review_tracking.collect_tracked_series(identifiers=['proj'])
-        assert [e['change_id'] for e in entries] == ['cid-live']
-
-    def test_status_all_includes_archived(self) -> None:
+    @pytest.mark.parametrize(
+        'statuses,expected',
+        [
+            pytest.param(None, ['cid-live'], id='archived-excluded-by-default'),
+            pytest.param(
+                ['all'], ['cid-done', 'cid-live'], id='status-all-includes-archived'
+            ),
+            # An explicit --status archived overrides the default exclusion.
+            pytest.param(
+                ['archived'], ['cid-done'], id='status-filter-can-select-archived'
+            ),
+        ],
+    )
+    def test_archived_handling(
+        self, statuses: Optional[List[str]], expected: List[str]
+    ) -> None:
         _seed('proj', 'cid-live', status='reviewing')
         _seed('proj', 'cid-done', status='archived')
         entries = review_tracking.collect_tracked_series(
-            identifiers=['proj'], statuses=['all']
+            identifiers=['proj'], statuses=statuses
         )
-        assert {e['change_id'] for e in entries} == {'cid-live', 'cid-done'}
+        assert sorted(e['change_id'] for e in entries) == expected
 
     def test_status_filter_is_repeatable(self) -> None:
         _seed('proj', 'cid-new', status='new')
@@ -95,15 +104,6 @@ class TestCollectTrackedSeries:
             identifiers=['proj'], statuses=['new', 'waiting']
         )
         assert {e['change_id'] for e in entries} == {'cid-new', 'cid-wait'}
-
-    def test_status_filter_can_select_archived(self) -> None:
-        """An explicit --status archived overrides the default exclusion."""
-        _seed('proj', 'cid-live', status='reviewing')
-        _seed('proj', 'cid-done', status='archived')
-        entries = review_tracking.collect_tracked_series(
-            identifiers=['proj'], statuses=['archived']
-        )
-        assert [e['change_id'] for e in entries] == ['cid-done']
 
     def test_message_ids_union_all_three_tables(self) -> None:
         """A hit on any patch of a tracked series has to be recognisable."""
@@ -157,14 +157,16 @@ class TestCollectTrackedSeries:
         entries = review_tracking.collect_tracked_series(all_projects=True)
         assert {e['identifier'] for e in entries} == {'proj'}
 
-    def test_unknown_identifier_exits(self) -> None:
+    @pytest.mark.parametrize(
+        'kwargs',
+        [
+            pytest.param({'identifiers': ['no-such-project']}, id='unknown-identifier'),
+            pytest.param({'all_projects': True}, id='no-databases-at-all'),
+        ],
+    )
+    def test_unresolvable_projects_exit(self, kwargs: Dict[str, Any]) -> None:
         with pytest.raises(SystemExit) as exc:
-            review_tracking.collect_tracked_series(identifiers=['no-such-project'])
-        assert exc.value.code == 1
-
-    def test_no_databases_at_all_exits(self) -> None:
-        with pytest.raises(SystemExit) as exc:
-            review_tracking.collect_tracked_series(all_projects=True)
+            review_tracking.collect_tracked_series(**kwargs)
         assert exc.value.code == 1
 
     def test_unknown_status_raises(self) -> None:
@@ -222,7 +224,7 @@ class TestGetAllSeriesMessageIds:
             'cid-1': ['same@example.com']
         }
 
-    def test_broken_db_is_tolerated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_broken_db_is_tolerated(self) -> None:
         """A missing table must not take the whole listing down."""
         _seed('proj', 'cid-1')
         conn = review_tracking.get_db('proj')
@@ -319,11 +321,6 @@ class TestCmdList:
         assert display_width(lines[0]) == display_width(lines[1])
 
 
-# ---------------------------------------------------------------------------
-# resolve_projects()
-# ---------------------------------------------------------------------------
-
-
 class TestStatusVocabulary:
     """The --status vocabulary has to match what the DB actually holds."""
 
@@ -347,28 +344,32 @@ class TestStatusVocabulary:
         assert missing == {'archived'}
 
 
+# ---------------------------------------------------------------------------
+# resolve_projects()
+# ---------------------------------------------------------------------------
+
+
 class TestResolveProjects:
     """Tests for the shared identifier resolution."""
 
-    def test_unknown_identifier_reports_a_slug_in_json_mode(
-        self, capsys: pytest.CaptureFixture[str]
+    @pytest.mark.parametrize(
+        'kwargs,slug',
+        [
+            pytest.param(
+                {'requested': ['no-such-project']},
+                'no-project',
+                id='unknown-identifier',
+            ),
+            pytest.param({'force_all': True}, 'no-tracking-db', id='no-databases'),
+        ],
+    )
+    def test_failures_report_a_slug_in_json_mode(
+        self, capsys: pytest.CaptureFixture[str], kwargs: Dict[str, Any], slug: str
     ) -> None:
         with pytest.raises(SystemExit) as exc:
-            review_tracking.resolve_projects(
-                ['no-such-project'], cmdargs=_args(json_output=True)
-            )
+            review_tracking.resolve_projects(**kwargs, cmdargs=_args(json_output=True))
         assert exc.value.code == 1
-        assert json.loads(capsys.readouterr().out)['error'] == 'no-project'
-
-    def test_no_databases_reports_a_slug_in_json_mode(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            review_tracking.resolve_projects(
-                force_all=True, cmdargs=_args(json_output=True)
-            )
-        assert exc.value.code == 1
-        assert json.loads(capsys.readouterr().out)['error'] == 'no-tracking-db'
+        assert json.loads(capsys.readouterr().out)['error'] == slug
 
     def test_failures_stay_on_the_log_without_json(
         self, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
