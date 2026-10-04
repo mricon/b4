@@ -93,16 +93,16 @@ class TestRunLoreWorker:
         assert call['thread'] is True
         assert call['exit_on_error'] is False
 
-    def test_exit_on_error_override_is_honored(self) -> None:
+    @pytest.mark.parametrize(
+        'kwarg',
+        [
+            pytest.param('exit_on_error', id='exit_on_error-override-is-honored'),
+            pytest.param('exclusive', id='extra-kwargs-pass-through'),
+        ],
+    )
+    def test_kwargs_override_and_pass_through(self, kwarg: str) -> None:
         host = _RecordingHost()
 
-        run_lore_worker(host, lambda: None, name='_w', exit_on_error=True)
+        run_lore_worker(host, lambda: None, name='_w', **{kwarg: True})
 
-        assert host.calls[0]['exit_on_error'] is True
-
-    def test_extra_kwargs_pass_through(self) -> None:
-        host = _RecordingHost()
-
-        run_lore_worker(host, lambda: None, name='_w', exclusive=True)
-
-        assert host.calls[0]['exclusive'] is True
+        assert host.calls[0][kwarg] is True

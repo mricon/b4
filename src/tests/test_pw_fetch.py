@@ -123,29 +123,24 @@ def _fetch_with_backlog(
 
 
 class TestCountOutstanding:
-    def test_reads_count_from_last_link(self) -> None:
-        sess = _FakeSession(count=28180)
+    @pytest.mark.parametrize(
+        'count',
+        [
+            pytest.param(28180, id='reads-count-from-last-link'),
+            # count<=1 yields no 'last' link, so we count the returned rows
+            # instead.
+            pytest.param(1, id='falls-back-to-row-count-without-last-link'),
+            pytest.param(0, id='zero-outstanding'),
+        ],
+    )
+    def test_count_outstanding(self, count: int) -> None:
+        sess = _FakeSession(count=count)
         n = _pw_count_outstanding(
             cast(Any, sess), 'https://pw/patches', {'per_page': '250'}
         )
-        assert n == 28180
+        assert n == count
         # Probed with a single item, not the full page size.
         assert sess.requests[0]['per_page'] == '1'
-
-    def test_falls_back_to_row_count_without_last_link(self) -> None:
-        # count<=1 yields no 'last' link, so we count the returned rows instead.
-        sess = _FakeSession(count=1)
-        n = _pw_count_outstanding(
-            cast(Any, sess), 'https://pw/patches', {'per_page': '250'}
-        )
-        assert n == 1
-
-    def test_zero_outstanding(self) -> None:
-        sess = _FakeSession(count=0)
-        n = _pw_count_outstanding(
-            cast(Any, sess), 'https://pw/patches', {'per_page': '250'}
-        )
-        assert n == 0
 
 
 # ---------------------------------------------------------------------------

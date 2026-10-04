@@ -11,7 +11,7 @@ import pathlib
 import smtplib
 import socket
 import sys
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import dkim  # type: ignore[import-untyped]
 import dkim.dnsplug  # type: ignore[import-untyped]
@@ -45,13 +45,13 @@ def test_check_gpg_status(
 
 
 @pytest.mark.parametrize(
-    'source,regex,flags,ismbox',
+    'source,regex,ismbox',
     [
-        (None, r'^From git@z ', 0, False),
-        (None, r'\n\nFrom git@z ', 0, False),
-        ('save-7bit-clean', r'From: Unicôdé', 0, True),
+        (None, r'^From git@z ', False),
+        (None, r'\n\nFrom git@z ', False),
+        ('save-7bit-clean', r'From: Unicôdé', True),
         # mailbox.mbox does not properly handle 8bit-clean headers
-        ('save-8bit-clean', r'From: Unicôdé', 0, False),
+        ('save-8bit-clean', r'From: Unicôdé', False),
     ],
 )
 def test_save_git_am_mbox(
@@ -59,7 +59,6 @@ def test_save_git_am_mbox(
     tmp_path: pathlib.Path,
     source: Optional[str],
     regex: str,
-    flags: int,
     ismbox: bool,
 ) -> None:
     import re
@@ -87,7 +86,7 @@ def test_save_git_am_mbox(
         b4.save_git_am_mbox(msgs, fh)
     with open(dest, 'r') as fh:
         res = fh.read()
-    assert re.search(regex, res, flags=flags)
+    assert re.search(regex, res)
 
 
 def _msgid_domain(msgid: str) -> str:
@@ -103,35 +102,44 @@ def test_make_msgid_avoids_host_domain_by_default() -> None:
     assert _msgid_domain(b4_msgid) != socket.getfqdn()
 
 
-def test_make_msgid_custom_cmd_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(
-        b4.MAIN_CONFIG, 'custom-msgid-cmd', 'echo custom-1234@example.com'
-    )
-    # The custom command is only consulted when explicitly allowed.
-    assert b4.make_msgid(allow_custom_msgid_cmd=True) == '<custom-1234@example.com>'
-    # Without the opt-in, the built-in id is used and the command is ignored.
-    assert _msgid_domain(b4.make_msgid(idstring='b4-review')) == 'b4'
-
-
-def test_make_msgid_custom_cmd_preserves_brackets(
+@pytest.mark.parametrize(
+    'cmd,expected,check_opt_out',
+    [
+        # The custom command is only consulted when explicitly allowed.
+        pytest.param(
+            'echo custom-1234@example.com',
+            '<custom-1234@example.com>',
+            True,
+            id='opt-in',
+        ),
+        pytest.param(
+            'echo <wrapped-5678@example.com>',
+            '<wrapped-5678@example.com>',
+            False,
+            id='preserves-brackets',
+        ),
+        # Config options defined multiple times arrive as a list; use the
+        # first.
+        pytest.param(
+            ['echo first@example.com', 'echo second@example.com'],
+            '<first@example.com>',
+            False,
+            id='list-uses-first',
+        ),
+    ],
+)
+def test_make_msgid_custom_cmd(
     monkeypatch: pytest.MonkeyPatch,
+    cmd: Union[str, List[str]],
+    expected: str,
+    check_opt_out: bool,
 ) -> None:
-    monkeypatch.setitem(
-        b4.MAIN_CONFIG, 'custom-msgid-cmd', 'echo <wrapped-5678@example.com>'
-    )
-    assert b4.make_msgid(allow_custom_msgid_cmd=True) == '<wrapped-5678@example.com>'
-
-
-def test_make_msgid_custom_cmd_list_uses_first(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Config options defined multiple times arrive as a list; use the first.
-    monkeypatch.setitem(
-        b4.MAIN_CONFIG,
-        'custom-msgid-cmd',
-        ['echo first@example.com', 'echo second@example.com'],
-    )
-    assert b4.make_msgid(allow_custom_msgid_cmd=True) == '<first@example.com>'
+    monkeypatch.setitem(b4.MAIN_CONFIG, 'custom-msgid-cmd', cmd)
+    assert b4.make_msgid(allow_custom_msgid_cmd=True) == expected
+    if check_opt_out:
+        # Without the opt-in, the built-in id is used and the command is
+        # ignored.
+        assert _msgid_domain(b4.make_msgid(idstring='b4-review')) == 'b4'
 
 
 @pytest.mark.parametrize(
@@ -217,44 +225,39 @@ def test_parse_trailers(
 
 
 @pytest.mark.parametrize(
-    'body,followup,expected_fixes_values',
+    'body,expected_fixes_values',
     [
         # Valid Fixes: trailer (SHA-1 style)
         (
             'Reviewed-by: Foo Bar <foo@example.com>\nFixes: abcdef012345 ("This is the commit subject")\n',
-            True,
             ['abcdef012345 ("This is the commit subject")'],
         ),
         # Valid Fixes: trailer (SHA-256 style, 64 hex chars)
         (
             'Fixes: ' + 'a' * 64 + ' ("SHA-256 commit subject")\n',
-            True,
             ['a' * 64 + ' ("SHA-256 commit subject")'],
         ),
         # Malformed: reviewer wrote "Fixes: ?" as a question — must be rejected
         (
             'Reviewed-by: Foo Bar <foo@example.com>\nFixes: ?\n',
-            True,
             [],
         ),
         # Malformed: plain text value — must be rejected
         (
             'Fixes: some description with no hash\n',
-            True,
             [],
         ),
         # Bare hash without parenthesised subject — also valid
         (
             'Fixes: abcdef012345\n',
-            True,
             ['abcdef012345'],
         ),
     ],
 )
 def test_fixes_trailer_format_validation(
-    body: str, followup: bool, expected_fixes_values: List[str]
+    body: str, expected_fixes_values: List[str]
 ) -> None:
-    trailers, _ = b4.LoreMessage.find_trailers(body, followup=followup)
+    trailers, _ = b4.LoreMessage.find_trailers(body, followup=True)
     fixes = [t.value for t in trailers if t.name.lower() == 'fixes']
     assert fixes == expected_fixes_values
 
@@ -483,6 +486,9 @@ def test_same_trailer_in_two_replies_is_kept_twice(sampledir: str) -> None:
             lmbx.add_message(resend)
     lser = lmbx.get_series()
     assert lser is not None
+    # Deliberately called twice: get_series() must be able to run more than
+    # once on the same mailbox (ab1a0d3) without adding each follow-up
+    # trailer to its patch again.
     lser = lmbx.get_series()
     assert lser is not None
     sources = [
@@ -746,9 +752,10 @@ def test_format_addrs(pairs: List[Tuple[str, str]], verify: str, clean: bool) ->
         ('1-3', 5, [1, 2, 3]),
         ('-1', 5, [5]),
         ('1,3-5', 5, [1, 3, 4, 5]),
-        ('1', 5, [1]),
-        ('3', 5, [3]),
         ('5', 5, [5]),
+        # '<N' means everything below N
+        ('<4', 5, [1, 2, 3]),
+        ('<1', 5, []),
         ('1,3,4-', 6, [1, 3, 4, 5, 6]),
         ('1-3,5,-1', 7, [1, 2, 3, 5, 7]),
         ('-7', 5, []),
@@ -1361,45 +1368,52 @@ class TestLoreFetchMessages:
     def _messages(caplog: pytest.LogCaptureFixture, level: int) -> List[str]:
         return [r.getMessage() for r in caplog.records if r.levelno == level]
 
-    def test_thread_404_says_not_found(
-        self, node: Any, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        'make_exc,msgid,expected_critical',
+        [
+            pytest.param(
+                lambda ll: ll.RemoteError(
+                    'Server returned an error: 404', status_code=404
+                ),
+                'gone@example.com',
+                'Thread not found on mirror.example.org: gone@example.com',
+                id='404-says-not-found',
+            ),
+            pytest.param(
+                lambda ll: ll.RemoteError(
+                    'Server returned an error: 503', status_code=503
+                ),
+                'x@example.com',
+                'Could not retrieve thread: Server returned an error: 503',
+                id='server-error-keeps-detail',
+            ),
+            # liblore's message already names both the mirror and upstream.
+            pytest.param(
+                lambda ll: ll.NotOnMirrorError(
+                    'mirror.example.org does not have it, '
+                    'and lore.kernel.org did not answer'
+                ),
+                'x@example.com',
+                'mirror.example.org does not have it, '
+                'and lore.kernel.org did not answer',
+                id='not-on-mirror-uses-liblore-message',
+            ),
+        ],
+    )
+    def test_thread_errors(
+        self,
+        node: Any,
+        caplog: pytest.LogCaptureFixture,
+        make_exc: Callable[[Any], Exception],
+        msgid: str,
+        expected_critical: str,
     ) -> None:
         import liblore
 
-        node.get_mbox_by_msgid.side_effect = liblore.RemoteError(
-            'Server returned an error: 404', status_code=404
-        )
+        node.get_mbox_by_msgid.side_effect = make_exc(liblore)
         with caplog.at_level(logging.INFO, logger='b4'):
-            assert b4.get_pi_thread_by_msgid('gone@example.com') is None
-        assert self._messages(caplog, logging.CRITICAL) == [
-            'Thread not found on mirror.example.org: gone@example.com'
-        ]
-
-    def test_thread_server_error_keeps_detail(
-        self, node: Any, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        import liblore
-
-        node.get_mbox_by_msgid.side_effect = liblore.RemoteError(
-            'Server returned an error: 503', status_code=503
-        )
-        with caplog.at_level(logging.INFO, logger='b4'):
-            assert b4.get_pi_thread_by_msgid('x@example.com') is None
-        assert self._messages(caplog, logging.CRITICAL) == [
-            'Could not retrieve thread: Server returned an error: 503'
-        ]
-
-    def test_thread_not_on_mirror_uses_liblore_message(
-        self, node: Any, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        import liblore
-
-        # liblore's message already names both the mirror and upstream.
-        msg = 'mirror.example.org does not have it, and lore.kernel.org did not answer'
-        node.get_mbox_by_msgid.side_effect = liblore.NotOnMirrorError(msg)
-        with caplog.at_level(logging.INFO, logger='b4'):
-            assert b4.get_pi_thread_by_msgid('x@example.com') is None
-        assert self._messages(caplog, logging.CRITICAL) == [msg]
+            assert b4.get_pi_thread_by_msgid(msgid) is None
+        assert self._messages(caplog, logging.CRITICAL) == [expected_critical]
 
     def test_thread_quiet_logs_nothing_on_error(
         self, node: Any, caplog: pytest.LogCaptureFixture
@@ -1456,44 +1470,50 @@ class TestLoreFetchMessages:
             if r.levelno > logging.DEBUG
         )
 
-    def test_search_404_is_no_results(
-        self, node: Any, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        'make_exc,query,expected_info',
+        [
+            pytest.param(
+                lambda ll: ll.RemoteError(
+                    'Server returned an error: 404', status_code=404
+                ),
+                's:nothing',
+                'No messages found for that query',
+                id='404-is-no-results',
+            ),
+            pytest.param(
+                lambda ll: ll.RemoteError('Request failed: connection refused'),
+                's:thing',
+                'Could not search mirror.example.org: '
+                'Request failed: connection refused',
+                id='server-error-keeps-detail',
+            ),
+            pytest.param(
+                lambda ll: ll.NotOnMirrorError(
+                    'No results for the query on mirror.example.org, '
+                    'and lore.kernel.org did not answer'
+                ),
+                's:thing',
+                'No results for the query on mirror.example.org, '
+                'and lore.kernel.org did not answer',
+                id='not-on-mirror-uses-liblore-message',
+            ),
+        ],
+    )
+    def test_search_errors(
+        self,
+        node: Any,
+        caplog: pytest.LogCaptureFixture,
+        make_exc: Callable[[Any], Exception],
+        query: str,
+        expected_info: str,
     ) -> None:
         import liblore
 
-        node.get_mbox_by_query.side_effect = liblore.RemoteError(
-            'Server returned an error: 404', status_code=404
-        )
+        node.get_mbox_by_query.side_effect = make_exc(liblore)
         with caplog.at_level(logging.INFO, logger='b4'):
-            assert b4.get_pi_search_results('s:nothing') is None
-        info = self._messages(caplog, logging.INFO)
-        assert info[-1] == 'No messages found for that query'
-
-    def test_search_server_error_keeps_detail(
-        self, node: Any, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        import liblore
-
-        node.get_mbox_by_query.side_effect = liblore.RemoteError(
-            'Request failed: connection refused'
-        )
-        with caplog.at_level(logging.INFO, logger='b4'):
-            assert b4.get_pi_search_results('s:thing') is None
-        info = self._messages(caplog, logging.INFO)
-        assert info[-1] == (
-            'Could not search mirror.example.org: Request failed: connection refused'
-        )
-
-    def test_search_not_on_mirror_uses_liblore_message(
-        self, node: Any, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        import liblore
-
-        msg = 'No results for the query on mirror.example.org, and lore.kernel.org did not answer'
-        node.get_mbox_by_query.side_effect = liblore.NotOnMirrorError(msg)
-        with caplog.at_level(logging.INFO, logger='b4'):
-            assert b4.get_pi_search_results('s:thing') is None
-        assert self._messages(caplog, logging.INFO)[-1] == msg
+            assert b4.get_pi_search_results(query) is None
+        assert self._messages(caplog, logging.INFO)[-1] == expected_info
 
     def test_search_from_upstream_is_debug(
         self, node: Any, caplog: pytest.LogCaptureFixture
@@ -1509,22 +1529,14 @@ class TestLoreFetchMessages:
         assert line in self._messages(caplog, logging.DEBUG)
         assert line not in self._messages(caplog, logging.INFO)
 
-    def test_tracker_sees_upstream_thread(self, node: Any) -> None:
+    @pytest.mark.parametrize('quiet', [False, True], ids=['loud', 'quiet'])
+    def test_tracker_sees_upstream_thread(self, node: Any, quiet: bool) -> None:
         import liblore
 
         node.get_mbox_by_msgid.return_value = self.MBOX
         node.last_source = liblore.Source.UPSTREAM
         with b4.track_lore_sources() as sources:
-            b4.get_pi_thread_by_msgid('thing@example.com')
-        assert sources == {liblore.Source.UPSTREAM}
-
-    def test_tracker_sees_quiet_thread(self, node: Any) -> None:
-        import liblore
-
-        node.get_mbox_by_msgid.return_value = self.MBOX
-        node.last_source = liblore.Source.UPSTREAM
-        with b4.track_lore_sources() as sources:
-            b4.get_pi_thread_by_msgid('thing@example.com', quiet=True)
+            b4.get_pi_thread_by_msgid('thing@example.com', quiet=quiet)
         assert sources == {liblore.Source.UPSTREAM}
 
     def test_tracker_sees_every_source(self, node: Any) -> None:
@@ -1610,29 +1622,43 @@ class TestHasAttestationHeaders:
         monkeypatch.setattr(b4, 'get_main_config', lambda: config)
         return config
 
-    def test_unsigned(self, config: Dict[str, Any]) -> None:
-        assert not self._lmsg().has_attestation_headers
-
-    def test_patatt(self, config: Dict[str, Any]) -> None:
-        lmsg = self._lmsg((b4.DEVSIG_HDR, 'v=1; a=ed25519; b=AAAA'))
-        assert lmsg.has_attestation_headers
-
-    def test_dkim(self, config: Dict[str, Any]) -> None:
-        assert self._lmsg(
-            ('DKIM-Signature', 'v=1; d=example.com')
-        ).has_attestation_headers
-
-    def test_dkim_check_off(self, config: Dict[str, Any]) -> None:
-        config['attestation-check-dkim'] = 'no'
-        lmsg = self._lmsg(('DKIM-Signature', 'v=1; d=example.com'))
-        assert not lmsg.has_attestation_headers
-        assert lmsg.attestors == []
-
-    def test_policy_off(self, config: Dict[str, Any]) -> None:
-        config['attestation-policy'] = 'off'
-        lmsg = self._lmsg((b4.DEVSIG_HDR, 'v=1; a=ed25519; b=AAAA'))
-        assert not lmsg.has_attestation_headers
-        assert lmsg.attestors == []
+    @pytest.mark.parametrize(
+        'headers,overrides,expected',
+        [
+            pytest.param([], {}, False, id='unsigned'),
+            pytest.param(
+                [(b4.DEVSIG_HDR, 'v=1; a=ed25519; b=AAAA')], {}, True, id='patatt'
+            ),
+            pytest.param(
+                [('DKIM-Signature', 'v=1; d=example.com')], {}, True, id='dkim'
+            ),
+            pytest.param(
+                [('DKIM-Signature', 'v=1; d=example.com')],
+                {'attestation-check-dkim': 'no'},
+                False,
+                id='dkim-check-off',
+            ),
+            pytest.param(
+                [(b4.DEVSIG_HDR, 'v=1; a=ed25519; b=AAAA')],
+                {'attestation-policy': 'off'},
+                False,
+                id='policy-off',
+            ),
+        ],
+    )
+    def test_has_attestation_headers(
+        self,
+        config: Dict[str, Any],
+        headers: List[Tuple[str, str]],
+        overrides: Dict[str, str],
+        expected: bool,
+    ) -> None:
+        config.update(overrides)
+        lmsg = self._lmsg(*headers)
+        assert bool(lmsg.has_attestation_headers) is expected
+        if overrides:
+            # Disabled by config: nothing is collected either.
+            assert lmsg.attestors == []
 
 
 class TestDeprecatedConfig:
@@ -2047,21 +2073,27 @@ def test_git_run_command_log_fixup_looks_past_option_prefix(gitdir: str) -> None
 class TestGitBranchCheckedOut:
     """Tests for git_branch_checked_out()."""
 
-    def test_current_branch(self, gitdir: str) -> None:
-        """The branch checked out in the main worktree is detected."""
-        ecode, out = b4.git_run_command(gitdir, ['branch', '--show-current'])
-        assert ecode == 0
-        current = out.strip()
-        assert b4.git_branch_checked_out(gitdir, current) is True
-
-    def test_other_branch(self, gitdir: str) -> None:
-        """An existing but not checked-out branch is not flagged."""
-        ecode, _ = b4.git_run_command(gitdir, ['branch', 'parked-branch'])
-        assert ecode == 0
-        assert b4.git_branch_checked_out(gitdir, 'parked-branch') is False
-
-    def test_nonexistent_branch(self, gitdir: str) -> None:
-        assert b4.git_branch_checked_out(gitdir, 'no-such-branch') is False
+    @pytest.mark.parametrize(
+        'branch,create,expected',
+        [
+            # The branch checked out in the main worktree is detected.
+            pytest.param(None, False, True, id='current-branch'),
+            # An existing but not checked-out branch is not flagged.
+            pytest.param('parked-branch', True, False, id='other-branch'),
+            pytest.param('no-such-branch', False, False, id='nonexistent-branch'),
+        ],
+    )
+    def test_branch_checked_out(
+        self, gitdir: str, branch: Optional[str], create: bool, expected: bool
+    ) -> None:
+        if branch is None:
+            ecode, out = b4.git_run_command(gitdir, ['branch', '--show-current'])
+            assert ecode == 0
+            branch = out.strip()
+        if create:
+            ecode, _ = b4.git_run_command(gitdir, ['branch', branch])
+            assert ecode == 0
+        assert b4.git_branch_checked_out(gitdir, branch) is expected
 
     def test_linked_worktree_branch(self, gitdir: str, tmp_path: pathlib.Path) -> None:
         """A branch checked out in a linked worktree is detected too."""
@@ -2080,58 +2112,69 @@ class TestGitBranchCheckedOut:
 class TestSendemailLocalcmd:
     """Tests for get_sendemail_localcmd() and the local-command path of get_smtp()."""
 
-    def test_sendmailcmd_takes_precedence(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        'sendemail_cfg,expected',
+        [
+            # sendmailCmd wins over smtpServer, matching git behavior.
+            pytest.param(
+                {'sendmailcmd': 'msmtp', 'smtpserver': 'smtp.example.org'},
+                'msmtp',
+                id='sendmailcmd-takes-precedence',
+            ),
+            # The historical spelling: a path as the smtpServer value.
+            pytest.param(
+                {'smtpserver': '/usr/bin/msmtp'},
+                '/usr/bin/msmtp',
+                id='pathlike-smtpserver',
+            ),
+            pytest.param(
+                {'smtpserver': 'smtp.example.org'}, None, id='smtp-host-is-not-localcmd'
+            ),
+            pytest.param({}, None, id='no-transport-configured'),
+        ],
+    )
+    def test_get_sendemail_localcmd(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sendemail_cfg: Dict[str, str],
+        expected: Optional[str],
     ) -> None:
-        """sendmailCmd wins over smtpServer, matching git behavior."""
-        monkeypatch.setattr(
-            b4,
-            'SENDEMAIL_CONFIG',
-            {'sendmailcmd': 'msmtp', 'smtpserver': 'smtp.example.org'},
-        )
-        assert b4.get_sendemail_localcmd() == 'msmtp'
+        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', sendemail_cfg)
+        assert b4.get_sendemail_localcmd() == expected
 
-    def test_pathlike_smtpserver(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The historical spelling: a path as the smtpServer value."""
-        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', {'smtpserver': '/usr/bin/msmtp'})
-        assert b4.get_sendemail_localcmd() == '/usr/bin/msmtp'
-
-    def test_smtp_host_is_not_localcmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', {'smtpserver': 'smtp.example.org'})
-        assert b4.get_sendemail_localcmd() is None
-
-    def test_no_transport_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', dict())
-        assert b4.get_sendemail_localcmd() is None
-
-    def test_get_smtp_uses_sendmailcmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A bare command without slashes must work, like git's sendmailCmd."""
-        monkeypatch.setattr(
-            b4,
-            'SENDEMAIL_CONFIG',
-            {
-                'sendmailcmd': 'msmtp --account=work',
-                'from': 'Alice Developer <alice@example.org>',
-                'envelopesender': 'auto',
-            },
-        )
-        smtp, fromaddr = b4.get_smtp()
-        assert smtp == ['msmtp', '--account=work', '-i', '-f', 'alice@example.org']
-        assert fromaddr == 'Alice Developer <alice@example.org>'
-
-    def test_get_smtp_pathlike_smtpserver(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        'sendemail_cfg,expected_cmd',
+        [
+            # A bare command without slashes must work, like git's
+            # sendmailCmd.
+            pytest.param(
+                {
+                    'sendmailcmd': 'msmtp --account=work',
+                    'from': 'Alice Developer <alice@example.org>',
+                    'envelopesender': 'auto',
+                },
+                ['msmtp', '--account=work', '-i', '-f', 'alice@example.org'],
+                id='uses-sendmailcmd',
+            ),
+            pytest.param(
+                {
+                    'smtpserver': '/usr/bin/msmtp',
+                    'from': 'Alice Developer <alice@example.org>',
+                },
+                ['/usr/bin/msmtp', '-i'],
+                id='pathlike-smtpserver',
+            ),
+        ],
+    )
+    def test_get_smtp_local_command(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sendemail_cfg: Dict[str, str],
+        expected_cmd: List[str],
     ) -> None:
-        monkeypatch.setattr(
-            b4,
-            'SENDEMAIL_CONFIG',
-            {
-                'smtpserver': '/usr/bin/msmtp',
-                'from': 'Alice Developer <alice@example.org>',
-            },
-        )
+        monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', sendemail_cfg)
         smtp, fromaddr = b4.get_smtp()
-        assert smtp == ['/usr/bin/msmtp', '-i']
+        assert smtp == expected_cmd
         assert fromaddr == 'Alice Developer <alice@example.org>'
 
 
@@ -2272,18 +2315,24 @@ class TestSignBeforeConnect:
         smtp()
         return seen['timeout']
 
-    def test_default_timeout_matches_git(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """git-send-email gets 120s from Net::SMTP; b4 should not wait forever."""
-        assert self._capture_timeout(monkeypatch, None) == 120.0
-
-    def test_timeout_is_configurable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        assert self._capture_timeout(monkeypatch, '30') == 30.0
-
-    def test_zero_timeout_means_wait_forever(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        'timeout_cfg,expected',
+        [
+            # git-send-email gets 120s from Net::SMTP; b4 should not wait
+            # forever.
+            pytest.param(None, 120.0, id='default-matches-git'),
+            pytest.param('30', 30.0, id='configurable'),
+            # 0 must omit the argument, not pass a non-blocking zero through.
+            pytest.param('0', None, id='zero-means-wait-forever'),
+        ],
+    )
+    def test_timeout(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        timeout_cfg: Optional[str],
+        expected: Optional[float],
     ) -> None:
-        """0 must omit the argument, not pass a non-blocking zero through."""
-        assert self._capture_timeout(monkeypatch, '0') is None
+        assert self._capture_timeout(monkeypatch, timeout_cfg) == expected
 
     def test_bad_timeout_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
@@ -2527,12 +2576,17 @@ class TestUnicodeControlChars:
         assert isinstance(payload, bytes)
         assert self.ZWNJ in payload.decode()
 
-    def test_non_latin_body_is_not_flagged(self) -> None:
-        """Cf chars alongside Lo chars are legitimate (e.g. Arabic, Indic),
-        so a body with letters from a non-latin script must pass."""
-        lmsg = self._get_lmsg(f'\u0627\u0644\u0648\u064a\u062c{self.ZWNJ}\u062a')
-        lmsg.get_am_message(add_trailers=False)
-
-    def test_plain_ascii_body_is_not_flagged(self) -> None:
-        lmsg = self._get_lmsg('This adds a fancy widget.')
+    @pytest.mark.parametrize(
+        'body',
+        [
+            # Cf chars alongside Lo chars are legitimate (e.g. Arabic, Indic),
+            # so a body with letters from a non-latin script must pass.
+            pytest.param(
+                f'\u0627\u0644\u0648\u064a\u062c{ZWNJ}\u062a', id='non-latin-body'
+            ),
+            pytest.param('This adds a fancy widget.', id='plain-ascii-body'),
+        ],
+    )
+    def test_body_is_not_flagged(self, body: str) -> None:
+        lmsg = self._get_lmsg(body)
         lmsg.get_am_message(add_trailers=False)

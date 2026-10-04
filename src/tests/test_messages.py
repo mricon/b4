@@ -12,30 +12,22 @@ from b4.review import messages
 class TestGetDb:
     """Tests for get_db() and database creation."""
 
-    def test_creates_database(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_creates_database_and_schema(self) -> None:
         conn = messages.get_db()
         db_path = messages._get_db_path()
         assert os.path.exists(db_path)
         assert db_path.endswith('messages.sqlite3')
-        conn.close()
-
-    def test_creates_schema(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
         cursor = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         )
         tables = [row[0] for row in cursor.fetchall()]
         assert 'messages' in tables
         assert 'schema_version' in tables
-        conn.close()
-
-    def test_sets_schema_version(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
         version = conn.execute('SELECT version FROM schema_version').fetchone()[0]
         assert version == messages.SCHEMA_VERSION
         conn.close()
 
-    def test_reopens_existing(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_reopens_existing(self) -> None:
         conn1 = messages.get_db()
         messages.set_flag(conn1, 'test@example.com', 'Seen')
         conn1.close()
@@ -47,12 +39,12 @@ class TestGetDb:
 class TestGetFlags:
     """Tests for get_flags()."""
 
-    def test_unknown_msgid(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_unknown_msgid(self) -> None:
         conn = messages.get_db()
         assert messages.get_flags(conn, 'unknown@example.com') == ''
         conn.close()
 
-    def test_returns_flags(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_returns_flags(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'test@example.com', 'Seen')
         assert messages.get_flags(conn, 'test@example.com') == 'Seen'
@@ -62,12 +54,12 @@ class TestGetFlags:
 class TestGetFlagsBulk:
     """Tests for get_flags_bulk()."""
 
-    def test_empty_list(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_empty_list(self) -> None:
         conn = messages.get_db()
         assert messages.get_flags_bulk(conn, []) == {}
         conn.close()
 
-    def test_returns_known_only(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_returns_known_only(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'a@example.com', 'Seen')
         messages.set_flag(conn, 'b@example.com', 'Flagged')
@@ -83,25 +75,7 @@ class TestGetFlagsBulk:
 class TestSetFlag:
     """Tests for set_flag()."""
 
-    def test_creates_new_row(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
-        messages.set_flag(
-            conn, 'new@example.com', 'Seen', msg_date='2026-03-05T10:00:00'
-        )
-        flags = messages.get_flags(conn, 'new@example.com')
-        assert 'Seen' in flags
-        conn.close()
-
-    def test_adds_to_existing(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = messages.get_db()
-        messages.set_flag(conn, 'multi@example.com', 'Seen')
-        messages.set_flag(conn, 'multi@example.com', 'Flagged')
-        flags = messages.get_flags(conn, 'multi@example.com')
-        assert 'Seen' in flags
-        assert 'Flagged' in flags
-        conn.close()
-
-    def test_idempotent(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_idempotent(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'idem@example.com', 'Seen')
         messages.set_flag(conn, 'idem@example.com', 'Seen')
@@ -109,7 +83,7 @@ class TestSetFlag:
         assert flags == 'Seen'
         conn.close()
 
-    def test_flags_sorted(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_flags_sorted(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'sort@example.com', 'Seen')
         messages.set_flag(conn, 'sort@example.com', 'Flagged')
@@ -122,7 +96,7 @@ class TestSetFlag:
 class TestSetFlagsBulk:
     """Tests for set_flags_bulk()."""
 
-    def test_sets_multiple(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_sets_multiple(self) -> None:
         conn = messages.get_db()
         entries: List[Dict[str, Optional[str]]] = [
             {'msgid': 'a@example.com', 'msg_date': '2026-01-01T00:00:00'},
@@ -136,7 +110,7 @@ class TestSetFlagsBulk:
         assert all('Seen' in v for v in result.values())
         conn.close()
 
-    def test_skips_empty_msgid(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_skips_empty_msgid(self) -> None:
         conn = messages.get_db()
         entries = [
             {'msgid': '', 'msg_date': None},
@@ -148,7 +122,7 @@ class TestSetFlagsBulk:
         assert 'valid@example.com' in result
         conn.close()
 
-    def test_adds_to_existing_flags(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_adds_to_existing_flags(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'exist@example.com', 'Seen')
         entries = [{'msgid': 'exist@example.com', 'msg_date': None}]
@@ -162,7 +136,7 @@ class TestSetFlagsBulk:
 class TestRemoveFlag:
     """Tests for remove_flag()."""
 
-    def test_removes_single_flag(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_removes_single_flag(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'rm@example.com', 'Seen')
         messages.set_flag(conn, 'rm@example.com', 'Flagged')
@@ -172,19 +146,21 @@ class TestRemoveFlag:
         assert 'Flagged' not in flags
         conn.close()
 
-    def test_deletes_row_when_empty(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_deletes_row_when_empty(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'del@example.com', 'Seen')
         messages.remove_flag(conn, 'del@example.com', 'Seen')
         assert messages.get_flags(conn, 'del@example.com') == ''
         conn.close()
 
-    def test_noop_on_unknown(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_noop_on_unknown(self) -> None:
         conn = messages.get_db()
         messages.remove_flag(conn, 'nonexistent@example.com', 'Seen')
+        assert messages.get_flags(conn, 'nonexistent@example.com') == ''
+        assert conn.execute('SELECT COUNT(*) FROM messages').fetchone()[0] == 0
         conn.close()
 
-    def test_noop_on_absent_flag(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_noop_on_absent_flag(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'noop@example.com', 'Seen')
         messages.remove_flag(conn, 'noop@example.com', 'Flagged')
@@ -195,7 +171,7 @@ class TestRemoveFlag:
 class TestCleanupOld:
     """Tests for cleanup_old()."""
 
-    def test_removes_old_entries(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_removes_old_entries(self) -> None:
         conn = messages.get_db()
         old_date = (
             datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=200)
@@ -213,7 +189,7 @@ class TestCleanupOld:
         assert messages.get_flags(conn, 'recent@example.com') == 'Seen'
         conn.close()
 
-    def test_keeps_null_date(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_keeps_null_date(self) -> None:
         conn = messages.get_db()
         messages.set_flag(conn, 'nodate@example.com', 'Seen')
         deleted = messages.cleanup_old(conn, max_days=0)
@@ -235,28 +211,20 @@ class TestMarkOutgoingSeen:
             msg['Date'] = date
         return msg
 
-    def test_marks_seen_and_sent(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_marks_seen_and_sent_with_header_date(self) -> None:
         msg = self._make_msg('out1@example.com', 'Mon, 27 Jul 2026 10:00:00 +0000')
         messages.mark_outgoing_seen([msg])
         conn = messages.get_db()
         flags = messages.get_flags(conn, 'out1@example.com')
         assert 'Seen' in flags
         assert 'Sent' in flags
-        conn.close()
-
-    def test_stores_date_from_header(self, tmp_path: pytest.TempPathFactory) -> None:
-        msg = self._make_msg('out2@example.com', 'Mon, 27 Jul 2026 10:00:00 +0000')
-        messages.mark_outgoing_seen([msg])
-        conn = messages.get_db()
         row = conn.execute(
-            'SELECT msg_date FROM messages WHERE msgid = ?', ('out2@example.com',)
+            'SELECT msg_date FROM messages WHERE msgid = ?', ('out1@example.com',)
         ).fetchone()
         assert row[0] == '2026-07-27T10:00:00+00:00'
         conn.close()
 
-    def test_stores_date_when_header_missing(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_stores_date_when_header_missing(self) -> None:
         msg = self._make_msg('out3@example.com', None)
         messages.mark_outgoing_seen([msg])
         conn = messages.get_db()
@@ -266,9 +234,7 @@ class TestMarkOutgoingSeen:
         assert row[0]
         conn.close()
 
-    def test_skips_message_without_msgid(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_skips_message_without_msgid(self) -> None:
         msg = self._make_msg('', None)
         messages.mark_outgoing_seen([msg])
         conn = messages.get_db()
@@ -291,7 +257,7 @@ class TestMarkOutgoingSeenHelper:
         msg['Message-Id'] = f'<{msgid}>'
         return msg
 
-    def test_records_the_message(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_records_the_message(self) -> None:
         from b4.review_tui._common import mark_outgoing_seen
 
         mark_outgoing_seen([self._make_msg('helper1@example.com')])
@@ -299,7 +265,7 @@ class TestMarkOutgoingSeenHelper:
         assert 'Seen' in messages.get_flags(conn, 'helper1@example.com')
         conn.close()
 
-    def test_dryrun_records_nothing(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_dryrun_records_nothing(self) -> None:
         """A dry run never puts the message on the list, so there is nothing
         coming back that would need to be already read."""
         from b4.review_tui._common import mark_outgoing_seen
@@ -309,9 +275,7 @@ class TestMarkOutgoingSeenHelper:
         assert messages.get_flags(conn, 'helper2@example.com') == ''
         conn.close()
 
-    def test_never_raises(
-        self, tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_never_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """It runs after the message is already gone, so a bookkeeping
         failure must not reach the caller as a failure to send."""
         from b4.review_tui._common import mark_outgoing_seen

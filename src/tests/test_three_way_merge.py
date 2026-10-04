@@ -1,5 +1,5 @@
 import os
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
 import pytest
@@ -11,45 +11,29 @@ import b4.mbox
 class TestAmConflictError:
     """Tests for the AmConflictError exception class."""
 
-    def test_stores_worktree_path_and_output(self) -> None:
-        exc = b4.AmConflictError('/tmp/worktree', 'patch failed to apply')
+    @pytest.mark.parametrize(
+        'output',
+        [
+            pytest.param('patch failed to apply', id='stores-worktree-path-and-output'),
+            pytest.param('', id='empty-output'),
+        ],
+    )
+    def test_stores_worktree_path_and_output(self, output: str) -> None:
+        exc = b4.AmConflictError('/tmp/worktree', output)
         assert exc.worktree_path == '/tmp/worktree'
-        assert exc.output == 'patch failed to apply'
+        assert exc.output == output
 
     def test_inherits_from_runtime_error(self) -> None:
         exc = b4.AmConflictError('/tmp/wt', 'conflict')
         assert isinstance(exc, RuntimeError)
 
-    def test_catchable_as_runtime_error(self) -> None:
-        with pytest.raises(RuntimeError):
-            raise b4.AmConflictError('/tmp/wt', 'conflict')
-
     def test_str_is_output(self) -> None:
         exc = b4.AmConflictError('/tmp/wt', 'the error output')
         assert str(exc) == 'the error output'
 
-    def test_empty_output(self) -> None:
-        exc = b4.AmConflictError('/tmp/wt', '')
-        assert exc.output == ''
-        assert exc.worktree_path == '/tmp/wt'
-
 
 class TestRewriteFetchHeadOrigin:
     """Tests for the _rewrite_fetch_head_origin helper."""
-
-    def test_rewrites_worktree_path(self, gitdir: str) -> None:
-        fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
-        with open(fh_path, 'w') as fh:
-            fh.write("abc123\t\tnot-for-merge\tbranch 'master' of /tmp/b4-worktree\n")
-
-        b4._rewrite_fetch_head_origin(
-            gitdir, '/tmp/b4-worktree', 'https://lore.kernel.org/r/test@msg'
-        )
-
-        with open(fh_path, 'r') as fh:
-            contents = fh.read()
-        assert '/tmp/b4-worktree' not in contents
-        assert 'patches from https://lore.kernel.org/r/test@msg' in contents
 
     def test_noop_when_old_origin_absent(self, gitdir: str) -> None:
         fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
@@ -145,14 +129,22 @@ def _build_conflicting_patches(gitdir: str) -> Tuple[bytes, str]:
 class TestGitFetchAmIntoRepo:
     """Integration tests for git_fetch_am_into_repo with three-way merge."""
 
-    def test_clean_apply_with_three_way(self, gitdir: str) -> None:
-        """Patches apply cleanly with -3 flag, worktree is cleaned up."""
+    @pytest.mark.parametrize(
+        'am_flags',
+        [
+            pytest.param(['-3'], id='with-three-way'),
+            # The baseline: the patches also apply cleanly without -3.
+            pytest.param([], id='without-three-way'),
+        ],
+    )
+    def test_clean_apply(self, gitdir: str, am_flags: List[str]) -> None:
+        """Patches apply cleanly, with or without -3; worktree is cleaned up."""
         ambytes, base = _build_clean_patches(gitdir)
         common_dir = b4.git_get_common_dir(gitdir)
         assert common_dir is not None
         gwt = os.path.join(common_dir, 'b4-shazam-worktree')
 
-        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base, am_flags=['-3'])
+        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base, am_flags=am_flags)
 
         # Worktree should be cleaned up after success
         assert not os.path.exists(gwt)
@@ -176,7 +168,8 @@ class TestGitFetchAmIntoRepo:
         assert f'patches from {origin}' in contents
 
     def test_conflict_raises_am_conflict_error(self, gitdir: str) -> None:
-        """AmConflictError is raised when patches conflict."""
+        """AmConflictError is raised when patches conflict, and the worktree
+        is preserved for user resolution."""
         ambytes, _base = _build_conflicting_patches(gitdir)
 
         try:
@@ -187,24 +180,6 @@ class TestGitFetchAmIntoRepo:
 
             assert exc_info.value.worktree_path != ''
             assert exc_info.value.output != ''
-        finally:
-            # Clean up worktree
-            common_dir = b4.git_get_common_dir(gitdir)
-            if common_dir:
-                gwt = os.path.join(common_dir, 'b4-shazam-worktree')
-                if os.path.exists(gwt):
-                    b4.git_run_command(gitdir, ['worktree', 'remove', '--force', gwt])
-
-    def test_conflict_preserves_worktree(self, gitdir: str) -> None:
-        """On conflict, the worktree is preserved for user resolution."""
-        ambytes, _base = _build_conflicting_patches(gitdir)
-
-        try:
-            with pytest.raises(b4.AmConflictError) as exc_info:
-                b4.git_fetch_am_into_repo(
-                    gitdir, ambytes, at_base='HEAD', am_flags=['-3']
-                )
-
             wt_path = exc_info.value.worktree_path
             # Worktree must still exist for user to resolve
             assert os.path.isdir(wt_path)
@@ -222,15 +197,6 @@ class TestGitFetchAmIntoRepo:
                 gwt = os.path.join(common_dir, 'b4-shazam-worktree')
                 if os.path.exists(gwt):
                     b4.git_run_command(gitdir, ['worktree', 'remove', '--force', gwt])
-
-    def test_clean_apply_without_three_way(self, gitdir: str) -> None:
-        """Patches also apply cleanly without -3 (baseline)."""
-        ambytes, base = _build_clean_patches(gitdir)
-
-        b4.git_fetch_am_into_repo(gitdir, ambytes, at_base=base, am_flags=[])
-
-        fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
-        assert os.path.exists(fh_path)
 
     def test_check_only_with_three_way(self, gitdir: str) -> None:
         """check_only mode returns early without fetching, even with -3."""
@@ -261,8 +227,8 @@ def _build_subdir_three_way(gitdir: str) -> Tuple[bytes, str]:
     The submitter edits one line and the maintainer edits a different line
     close enough to sit inside the same hunk context, so the patch cannot
     apply directly but the 3-way merge resolves it without conflict. The file
-    lives in a subdirectory, which is the case the old empty sparse set could
-    not handle: git refuses to write skip-worktree paths during a merge.
+    lives in a subdirectory, so it must be among the sparse paths that get
+    materialized: git refuses to write skip-worktree paths during a merge.
 
     Returns (mbox bytes, base commit sha).
     """
@@ -303,54 +269,59 @@ def _build_subdir_three_way(gitdir: str) -> Tuple[bytes, str]:
     return mbox, base
 
 
-class TestTouchedPathsFromAm:
-    """Tests for the patch-path scanner that drives the sparse checkout."""
-
-    def test_plain_modification(self) -> None:
-        mbox = (
+@pytest.mark.parametrize(
+    'mbox,expected',
+    [
+        pytest.param(
             b'diff --git a/drivers/foo.c b/drivers/foo.c\n'
             b'--- a/drivers/foo.c\n'
-            b'+++ b/drivers/foo.c\n'
-        )
-        assert b4._touched_paths_from_am(mbox) == {'drivers/foo.c'}
-
-    def test_new_file_skips_dev_null(self) -> None:
-        mbox = (
+            b'+++ b/drivers/foo.c\n',
+            {'drivers/foo.c'},
+            id='plain-modification',
+        ),
+        pytest.param(
             b'diff --git a/new.c b/new.c\n'
             b'new file mode 100644\n'
             b'--- /dev/null\n'
-            b'+++ b/new.c\n'
-        )
-        assert b4._touched_paths_from_am(mbox) == {'new.c'}
-
-    def test_deletion_skips_dev_null(self) -> None:
-        mbox = (
+            b'+++ b/new.c\n',
+            {'new.c'},
+            id='new-file-skips-dev-null',
+        ),
+        pytest.param(
             b'diff --git a/gone.c b/gone.c\n'
             b'deleted file mode 100644\n'
             b'--- a/gone.c\n'
-            b'+++ /dev/null\n'
-        )
-        assert b4._touched_paths_from_am(mbox) == {'gone.c'}
-
-    def test_rename_collects_both_sides(self) -> None:
-        mbox = b'diff --git a/old/name.c b/new/name.c\nsimilarity index 95%\n'
-        assert b4._touched_paths_from_am(mbox) == {'old/name.c', 'new/name.c'}
-
-    def test_rename_with_spaces_in_names(self) -> None:
-        mbox = b'diff --git a/old name.c b/new name.c\nsimilarity index 95%\n'
-        assert b4._touched_paths_from_am(mbox) == {'old name.c', 'new name.c'}
-
-    def test_binary_patch_has_no_file_lines(self) -> None:
-        mbox = b'diff --git a/img.png b/img.png\nGIT binary patch\n'
-        assert b4._touched_paths_from_am(mbox) == {'img.png'}
-
-    def test_ignores_unmappable_prose(self) -> None:
-        """A commit-message line that looks like a diff header is skipped."""
-        mbox = b'--- v1 to v2 notes\ndiff --git a/real.c b/real.c\n'
-        assert b4._touched_paths_from_am(mbox) == {'real.c'}
-
-    def test_empty_mbox(self) -> None:
-        assert b4._touched_paths_from_am(b'Subject: nothing here\n') == set()
+            b'+++ /dev/null\n',
+            {'gone.c'},
+            id='deletion-skips-dev-null',
+        ),
+        pytest.param(
+            b'diff --git a/old/name.c b/new/name.c\nsimilarity index 95%\n',
+            {'old/name.c', 'new/name.c'},
+            id='rename-collects-both-sides',
+        ),
+        pytest.param(
+            b'diff --git a/old name.c b/new name.c\nsimilarity index 95%\n',
+            {'old name.c', 'new name.c'},
+            id='rename-with-spaces-in-names',
+        ),
+        pytest.param(
+            b'diff --git a/img.png b/img.png\nGIT binary patch\n',
+            {'img.png'},
+            id='binary-patch-has-no-file-lines',
+        ),
+        # A commit-message line that looks like a diff header is skipped.
+        pytest.param(
+            b'--- v1 to v2 notes\ndiff --git a/real.c b/real.c\n',
+            {'real.c'},
+            id='ignores-unmappable-prose',
+        ),
+        pytest.param(b'Subject: nothing here\n', set(), id='empty-mbox'),
+    ],
+)
+def test_touched_paths_from_am(mbox: bytes, expected: set[str]) -> None:
+    """The patch-path scanner that drives the sparse checkout."""
+    assert b4._touched_paths_from_am(mbox) == expected
 
 
 class TestSparsePatternsForPaths:
@@ -431,9 +402,24 @@ class TestSparseAmAvoidsFullCheckout:
 class TestSuspendToShellCwd:
     """Test that _suspend_to_shell passes cwd to subprocess.run."""
 
+    @pytest.mark.parametrize(
+        'kwargs,expected_cwd',
+        [
+            pytest.param(
+                {'cwd': '/tmp/test-worktree'},
+                '/tmp/test-worktree',
+                id='cwd-passed-through',
+            ),
+            pytest.param({}, None, id='cwd-none-by-default'),
+        ],
+    )
     @patch('b4.subprocess.run')
-    def test_cwd_passed_through(
-        self, mock_run: Any, monkeypatch: pytest.MonkeyPatch
+    def test_cwd(
+        self,
+        mock_run: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        kwargs: Dict[str, Any],
+        expected_cwd: Optional[str],
     ) -> None:
         from b4 import _suspend_to_shell
 
@@ -441,25 +427,11 @@ class TestSuspendToShellCwd:
         # the simple else branch (no tempfile/rcfile logic).
         monkeypatch.setenv('SHELL', '/tmp/fakeshell')
 
-        _suspend_to_shell(cwd='/tmp/test-worktree')
+        _suspend_to_shell(**kwargs)
 
         mock_run.assert_called_once()
-        _args, kwargs = mock_run.call_args
-        assert kwargs.get('cwd') == '/tmp/test-worktree'
-
-    @patch('b4.subprocess.run')
-    def test_cwd_none_by_default(
-        self, mock_run: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from b4 import _suspend_to_shell
-
-        monkeypatch.setenv('SHELL', '/tmp/fakeshell')
-
-        _suspend_to_shell()
-
-        mock_run.assert_called_once()
-        _args, kwargs = mock_run.call_args
-        assert kwargs.get('cwd') is None
+        _args, run_kwargs = mock_run.call_args
+        assert run_kwargs.get('cwd') == expected_cwd
 
     @patch('b4.subprocess.run')
     def test_hint_appears_in_env(
@@ -479,9 +451,11 @@ class TestSuspendToShellCwd:
 class TestConflictResolutionFlow:
     """Integration tests for the conflict resolution workflow.
 
-    These exercise the same git operations that the TUI conflict
-    handlers use (sparse-checkout disable, rebase-apply detection,
-    fetch from worktree), without requiring the TUI itself.
+    The scratch worktree starts out sparse, holding only the paths the
+    patches touch.  These tests exercise the same git operations that the
+    TUI conflict handlers use (sparse-checkout disable to expose the whole
+    tree, rebase-apply detection, fetch from worktree), without requiring
+    the TUI itself.
     """
 
     def test_worktree_resolve_and_fetch(self, gitdir: str) -> None:
@@ -494,7 +468,7 @@ class TestConflictResolutionFlow:
         wt = exc_info.value.worktree_path
 
         # --- same steps the TUI handler takes ---
-        # 1. Disable sparse checkout so files are visible
+        # 1. Disable sparse checkout so the whole tree is visible
         b4.git_run_command(
             wt, ['sparse-checkout', 'disable'], logstderr=True, rundir=wt
         )
@@ -522,7 +496,16 @@ class TestConflictResolutionFlow:
         fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
         assert os.path.exists(fh_path)
 
-        # 5. Clean up worktree
+        # 5. Rewrite FETCH_HEAD so it names the patch source, not the
+        #    scratch worktree (as the TUI handler does)
+        origin = 'https://lore.kernel.org/r/test@example.com'
+        b4._rewrite_fetch_head_origin(gitdir, wt, origin)
+        with open(fh_path, 'r') as fh:
+            contents = fh.read()
+        assert wt not in contents
+        assert f'patches from {origin}' in contents
+
+        # 6. Clean up worktree
         b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
         assert not os.path.exists(wt)
 
@@ -556,8 +539,10 @@ class TestConflictResolutionFlow:
 
         wt = exc_info.value.worktree_path
 
-        # Before: sparse checkout may hide files
-        # (the worktree was created with sparse-checkout set to empty)
+        # Before: only the paths the patch touches (file1.txt) were
+        # materialized; the rest of the tree is hidden by the sparse checkout.
+        assert os.path.exists(os.path.join(wt, 'file1.txt'))
+        assert not os.path.exists(os.path.join(wt, 'file2.txt'))
         b4.git_run_command(
             wt, ['sparse-checkout', 'disable'], logstderr=True, rundir=wt
         )
@@ -569,42 +554,13 @@ class TestConflictResolutionFlow:
 
         b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
 
-    def test_fetch_head_origin_rewrite_after_resolve(self, gitdir: str) -> None:
-        """After resolving and fetching, FETCH_HEAD origin is rewritten."""
-        ambytes, _base = _build_conflicting_patches(gitdir)
-
-        with pytest.raises(b4.AmConflictError) as exc_info:
-            b4.git_fetch_am_into_repo(gitdir, ambytes, at_base='HEAD', am_flags=['-3'])
-
-        wt = exc_info.value.worktree_path
-
-        # Resolve and fetch
-        b4.git_run_command(
-            wt, ['sparse-checkout', 'disable'], logstderr=True, rundir=wt
-        )
-        b4.git_run_command(wt, ['checkout', '--theirs', '.'], logstderr=True, rundir=wt)
-        b4.git_run_command(wt, ['add', '-A'], logstderr=True, rundir=wt)
-        b4.git_run_command(wt, ['am', '--continue'], logstderr=True, rundir=wt)
-        b4.git_run_command(gitdir, ['fetch', wt], logstderr=True)
-
-        # Rewrite FETCH_HEAD (as the TUI handler does)
-        origin = 'https://lore.kernel.org/r/test@example.com'
-        b4._rewrite_fetch_head_origin(gitdir, wt, origin)
-
-        fh_path = os.path.join(gitdir, '.git', 'FETCH_HEAD')
-        with open(fh_path, 'r') as fh:
-            contents = fh.read()
-        assert wt not in contents
-        assert f'patches from {origin}' in contents
-
-        b4.git_run_command(gitdir, ['worktree', 'remove', '--force', wt])
-
 
 class TestDirectAmConflictFlow:
     """Integration tests for the direct git-am conflict path (_do_take_am).
 
     This path runs git-am directly on the user's working branch
-    (not in a worktree), so resolution happens in-place.
+    (not in a worktree), so resolution happens in-place.  It only drives
+    plain git commands; it does not call into b4 itself.
     """
 
     def test_am_conflict_and_resolution(self, gitdir: str) -> None:
@@ -644,11 +600,6 @@ class TestDirectAmConflictFlow:
         # Abort (as user would after incomplete resolution)
         b4.git_run_command(gitdir, ['am', '--abort'], logstderr=True)
         assert not os.path.isdir(rebase_apply)
-
-
-# ---------------------------------------------------------------------------
-# Tier 4 — Shazam state machine tests
-# ---------------------------------------------------------------------------
 
 
 def _build_multi_patch_conflict(gitdir: str) -> Tuple[bytes, str]:
@@ -700,13 +651,14 @@ def _build_multi_patch_conflict(gitdir: str) -> Tuple[bytes, str]:
 def _build_subdir_conflict(gitdir: str) -> bytes:
     """2-patch mbox whose conflicting patch touches a file in a SUBDIRECTORY.
 
-    The shazam worktree is a cone-mode sparse checkout (only root-level files
-    materialized), and git's 3-way merge refuses to touch skip-worktree paths,
-    so a conflict in a subdirectory file used to abort ``git am`` with a clean
-    index (no markers) -- and ``git am --skip`` would silently drop the patch.
-    With ``resolve=True``, git_fetch_am_into_repo rebuilds a full worktree and
-    replays so the conflict is recorded. Patch 1 changes a root file cleanly;
-    patch 2 changes ``drivers/foo.txt`` and conflicts with master.
+    The shazam worktree is a sparse checkout that materializes the paths the
+    patches touch, so ``drivers/foo.txt`` is on disk and git's 3-way merge can
+    record the conflict in it. A conflict that leaves a clean index (no
+    markers) would let ``git am --skip`` silently drop the patch, so the
+    conflict must be recorded as unmerged. With ``resolve=True``,
+    git_fetch_am_into_repo also replays a failed am on a full worktree.
+    Patch 1 changes a root file cleanly; patch 2 changes ``drivers/foo.txt``
+    and conflicts with master.
     """
     # Seed a subdirectory file on master so it is part of the base tree.
     os.makedirs(os.path.join(gitdir, 'drivers'), exist_ok=True)
@@ -742,10 +694,10 @@ def _build_subdir_clean_3way(gitdir: str) -> bytes:
 
     The patch edits ``drivers/foo.txt`` near (but clear of) a line master also
     changed, so the direct ``git apply`` misses on context and falls back to a
-    3-way merge that is clean. In the sparse shazam worktree git-am still stops
-    (it can't write the skip-worktree subdir file), but the full replay applies
-    cleanly -- so ``git_fetch_am_into_repo(resolve=True)`` must NOT report a
-    conflict.
+    3-way merge that is clean. The subdir file is one of the touched paths, so
+    it is materialized in the sparse shazam worktree and the 3-way merge
+    succeeds there -- ``git_fetch_am_into_repo(resolve=True)`` must NOT report
+    a conflict.
     """
     lines = ''.join('%d\n' % n for n in range(1, 21))
     os.makedirs(os.path.join(gitdir, 'drivers'), exist_ok=True)
@@ -910,10 +862,9 @@ class TestShazamResolveInline:
 class TestSubdirConflictResolve:
     """Regression: a conflict in a subdirectory file must be resolvable.
 
-    The sparse shazam worktree can't record conflicts in subdirectory files,
-    so ``git am`` aborted with a clean index and the patch was silently
-    dropped. ``resolve=True`` must rebuild a full worktree so the conflict is
-    materialized and every patch survives.
+    The conflict must be recorded as an unmerged path with markers in the
+    worktree (not left as a clean index, which would let the patch be
+    silently dropped), so the user can resolve it and every patch survives.
     """
 
     def test_subdir_conflict_records_markers_and_keeps_patch(self, gitdir: str) -> None:
@@ -927,7 +878,7 @@ class TestSubdirConflictResolve:
         wt = exc_info.value.worktree_path
 
         # The subdir file is materialized and recorded as an unmerged conflict
-        # (without the fix it would be absent / clean and the patch lost).
+        # (if it were absent or clean the patch would be lost).
         assert os.path.exists(os.path.join(wt, 'drivers', 'foo.txt'))
         _ecode, unmerged = b4.git_run_command(
             wt, ['diff', '--name-only', '--diff-filter=U'], rundir=wt
@@ -971,10 +922,9 @@ class TestSubdirConflictResolve:
 class TestSubdirCleanThreeWay:
     """Regression: a clean 3-way in a subdir file must not be a phantom conflict.
 
-    The sparse worktree can't write skip-worktree paths, so git-am stops on the
-    subdir file even though the 3-way is clean. The full replay applies cleanly,
-    so ``resolve=True`` must complete normally -- not raise AmConflictError and
-    send the user off to resolve a conflict that does not exist.
+    The 3-way merge of the subdir file is clean, so ``resolve=True`` must
+    complete normally -- not raise AmConflictError and send the user off to
+    resolve a conflict that does not exist.
     """
 
     def test_clean_subdir_3way_does_not_raise(self, gitdir: str) -> None:
@@ -982,7 +932,7 @@ class TestSubdirCleanThreeWay:
         assert common_dir is not None
         ambytes = _build_subdir_clean_3way(gitdir)
 
-        # Must NOT raise: only sparseness blocked the sparse am; the replay is clean.
+        # Must NOT raise: the 3-way merge is clean.
         b4.git_fetch_am_into_repo(
             gitdir, ambytes, at_base='HEAD', am_flags=['-3'], resolve=True
         )

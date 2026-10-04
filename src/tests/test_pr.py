@@ -164,13 +164,15 @@ def test_parse_pr_data_no_repo_leaves_remote_tip_none() -> None:
 # ---------------------------------------------------------------------------
 # git_get_commit_id_from_repo_ref: protocol handling and ref resolution
 # ---------------------------------------------------------------------------
-def test_repo_ref_rejects_unsupported_protocol() -> None:
-    assert (
-        b4.pr.git_get_commit_id_from_repo_ref('/local/path/repo.git', 'master') is None
-    )
-    assert (
-        b4.pr.git_get_commit_id_from_repo_ref('ssh://host/repo.git', 'master') is None
-    )
+@pytest.mark.parametrize(
+    'url',
+    [
+        pytest.param('/local/path/repo.git', id='local-path'),
+        pytest.param('ssh://host/repo.git', id='ssh'),
+    ],
+)
+def test_repo_ref_rejects_unsupported_protocol(url: str) -> None:
+    assert b4.pr.git_get_commit_id_from_repo_ref(url, 'master') is None
 
 
 def test_repo_ref_resolves_head(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -199,6 +201,14 @@ def test_fetch_remote_into_fetch_head(prremote: Dict[str, str]) -> None:
     assert ecode == 0
     fetched = b4.git_get_command_lines(None, ['rev-parse', 'FETCH_HEAD'])[0]
     assert fetched == prremote['tip']
+    # The fetch also records a ty tracking file for the tip.
+    prfile = os.path.join(b4.get_data_dir(), f'{prremote["tip"]}.pr')
+    assert os.path.exists(prfile)
+    with open(prfile, encoding='utf-8') as fh:
+        data = json.load(fh)
+    assert data['msgid'] == 'pull-1@example.com'
+    assert data['remote'] == prremote['path']
+    assert data['ref'] == 'for-pull'
 
 
 def test_fetch_remote_into_branch(prremote: Dict[str, str]) -> None:
@@ -210,37 +220,21 @@ def test_fetch_remote_into_branch(prremote: Dict[str, str]) -> None:
     assert head == prremote['tip']
 
 
-def test_fetch_remote_unknown_base(prremote: Dict[str, str]) -> None:
-    _msg, lmsg = _make_lmsg(prremote, base='0' * 40)
+@pytest.mark.parametrize(
+    'attr,value',
+    [
+        pytest.param('pr_base_commit', '0' * 40, id='unknown-base'),
+        pytest.param('pr_remote_tip_commit', 'f' * 40, id='tip-mismatch'),
+        pytest.param('pr_repo', None, id='missing-repo'),
+    ],
+)
+def test_fetch_remote_rejects_bad_pr_data(
+    prremote: Dict[str, str], attr: str, value: Optional[str]
+) -> None:
+    _msg, lmsg = _make_lmsg(prremote)
+    setattr(lmsg, attr, value)
     ecode = b4.pr.fetch_remote(None, lmsg, check_sig=False)
     assert ecode == 1
-
-
-def test_fetch_remote_tip_mismatch(prremote: Dict[str, str]) -> None:
-    _msg, lmsg = _make_lmsg(prremote)
-    lmsg.pr_remote_tip_commit = 'f' * 40
-    ecode = b4.pr.fetch_remote(None, lmsg, check_sig=False)
-    assert ecode == 1
-
-
-def test_fetch_remote_missing_repo(prremote: Dict[str, str]) -> None:
-    _msg, lmsg = _make_lmsg(prremote)
-    lmsg.pr_repo = None
-    ecode = b4.pr.fetch_remote(None, lmsg, check_sig=False)
-    assert ecode == 1
-
-
-def test_fetch_remote_records_ty(prremote: Dict[str, str]) -> None:
-    _msg, lmsg = _make_lmsg(prremote)
-    ecode = b4.pr.fetch_remote(None, lmsg, check_sig=False)
-    assert ecode == 0
-    prfile = os.path.join(b4.get_data_dir(), f'{prremote["tip"]}.pr')
-    assert os.path.exists(prfile)
-    with open(prfile, encoding='utf-8') as fh:
-        data = json.load(fh)
-    assert data['msgid'] == 'pull-1@example.com'
-    assert data['remote'] == prremote['path']
-    assert data['ref'] == 'for-pull'
 
 
 def test_fetch_remote_skip_ty(prremote: Dict[str, str]) -> None:
@@ -282,18 +276,28 @@ def test_main_already_in_current_branch_records_ty(
     assert os.path.exists(os.path.join(b4.get_data_dir(), f'{head}.pr'))
 
 
-def test_main_check_already_present_is_readonly(
-    prremote: Dict[str, str], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    'tip_is_head',
+    [
+        pytest.param(True, id='already-present'),
+        pytest.param(False, id='not-in-tree'),
+    ],
+)
+def test_main_check_is_readonly(
+    prremote: Dict[str, str], monkeypatch: pytest.MonkeyPatch, tip_is_head: bool
 ) -> None:
     head = b4.git_get_command_lines(None, ['rev-parse', 'HEAD'])[0]
-    msg, lmsg = _make_lmsg(prremote, tip=head)
+    tip = head if tip_is_head else None
+    msg, lmsg = _make_lmsg(prremote, tip=tip)
     _patch_main_lookups(monkeypatch, msg, lmsg)
     cmdargs = _parse_main_args(['--check'])
     with pytest.raises(SystemExit) as e:
         b4.pr.main(cmdargs)
     assert e.value.code == 0
     # --check is a read-only probe: it must not write a ty record.
-    assert not os.path.exists(os.path.join(b4.get_data_dir(), f'{head}.pr'))
+    assert not os.path.exists(
+        os.path.join(b4.get_data_dir(), f'{lmsg.pr_tip_commit}.pr')
+    )
 
 
 def test_main_present_only_in_unrelated_branch_still_fetches(
@@ -335,18 +339,6 @@ def test_main_fetch_into_branch(
     assert b4.git_branch_exists(None, 'mybranch')
     head = b4.git_get_command_lines(None, ['rev-parse', 'mybranch'])[0]
     assert head == prremote['tip']
-
-
-def test_main_check_not_in_tree(
-    prremote: Dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    msg, lmsg = _make_lmsg(prremote)
-    _patch_main_lookups(monkeypatch, msg, lmsg)
-    cmdargs = _parse_main_args(['--check'])
-    with pytest.raises(SystemExit) as e:
-        b4.pr.main(cmdargs)
-    assert e.value.code == 0
-    assert not os.path.exists(os.path.join(b4.get_data_dir(), f'{prremote["tip"]}.pr'))
 
 
 def test_main_no_pr_info_errors(monkeypatch: pytest.MonkeyPatch) -> None:

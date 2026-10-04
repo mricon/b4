@@ -16,9 +16,9 @@ import b4.ez
 import b4.mbox
 
 
-@pytest.fixture(scope='function')
-def prepdir(gitdir: str) -> Generator[str, None, None]:
-    b4.MAIN_CONFIG.update({'prep-cover-strategy': 'branch-description'})
+def _prep_branch(gitdir: str, strategy: str) -> str:
+    """Run `b4 prep -n pytest` in gitdir with the given prep-cover-strategy."""
+    b4.MAIN_CONFIG.update({'prep-cover-strategy': strategy})
     parser = b4.command.setup_parser()
     b4args = [
         '--no-stdin',
@@ -30,7 +30,12 @@ def prepdir(gitdir: str) -> Generator[str, None, None]:
     ]
     cmdargs = parser.parse_args(b4args)
     b4.ez.cmd_prep(cmdargs)
-    yield gitdir
+    return gitdir
+
+
+@pytest.fixture(scope='function')
+def prepdir(gitdir: str) -> Generator[str, None, None]:
+    yield _prep_branch(gitdir, 'branch-description')
 
 
 @pytest.fixture(scope='function')
@@ -38,19 +43,7 @@ def prepdir_commit(gitdir: str) -> Generator[str, None, None]:
     """Like prepdir but with prep-cover-strategy=commit, so the cover lives
     in an actual git commit (and `store_cover` exercises the rewrite path).
     """
-    b4.MAIN_CONFIG.update({'prep-cover-strategy': 'commit'})
-    parser = b4.command.setup_parser()
-    b4args = [
-        '--no-stdin',
-        '--no-interactive',
-        '--offline-mode',
-        'prep',
-        '-n',
-        'pytest',
-    ]
-    cmdargs = parser.parse_args(b4args)
-    b4.ez.cmd_prep(cmdargs)
-    yield gitdir
+    yield _prep_branch(gitdir, 'commit')
 
 
 @pytest.mark.parametrize(
@@ -97,7 +90,7 @@ def prepdir_commit(gitdir: str) -> Generator[str, None, None]:
             'trailers-thread-with-followups',
             {'shazam-am-flags': '--signoff'},
         ),
-        # Test that we properly perserve commits with --- in them
+        # Test that we properly preserve commits with --- in them
         (
             'trailers-thread-with-followups',
             'trailers-with-tripledash',
@@ -105,7 +98,7 @@ def prepdir_commit(gitdir: str) -> Generator[str, None, None]:
             [],
             ['log', '--format=%ae%n%s%n%b---', 'HEAD~4..'],
             'trailers-thread-with-followups-and-tripledash',
-            None,
+            {},
         ),
     ],
 )
@@ -786,29 +779,29 @@ def test_parse_trailer_review_marks_rejections() -> None:
     assert rejected == {0, 2}
 
 
-def test_parse_trailer_review_rejects_edited_text() -> None:
-    """Editing the trailer text breaks the positional contract and aborts."""
+@pytest.mark.parametrize(
+    'old,new',
+    [
+        # Editing the trailer text breaks the positional contract and aborts.
+        pytest.param('Foo Bar', 'Foo Baz', id='edited-text'),
+        # Adding or removing trailer lines entirely also aborts (ambiguous
+        # edit).
+        pytest.param(
+            '  + Acked-by: Bar Foo <bar@example.com>\n', '', id='count-mismatch'
+        ),
+        # The patch header is load-bearing: tampering with it aborts the run.
+        pytest.param(
+            '- [PATCH 2/2] wire it up',
+            '- [PATCH 2/2] WIRED up',
+            id='edited-patch-header',
+        ),
+    ],
+)
+def test_parse_trailer_review_rejects_edits(old: str, new: str) -> None:
     sections = _review_sections()
     text = b4.ez.render_trailer_review(sections).decode('utf-8')
-    text = text.replace('Foo Bar', 'Foo Baz')
-    with pytest.raises(ValueError):
-        b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
-
-
-def test_parse_trailer_review_rejects_count_mismatch() -> None:
-    """Adding or removing trailer lines entirely also aborts (ambiguous edit)."""
-    sections = _review_sections()
-    text = b4.ez.render_trailer_review(sections).decode('utf-8')
-    text = text.replace('  + Acked-by: Bar Foo <bar@example.com>\n', '')
-    with pytest.raises(ValueError):
-        b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
-
-
-def test_parse_trailer_review_rejects_edited_patch_header() -> None:
-    """The patch header is load-bearing: tampering with it aborts the run."""
-    sections = _review_sections()
-    text = b4.ez.render_trailer_review(sections).decode('utf-8')
-    text = text.replace('- [PATCH 2/2] wire it up', '- [PATCH 2/2] WIRED up')
+    assert old in text
+    text = text.replace(old, new)
     with pytest.raises(ValueError):
         b4.ez.parse_trailer_review(text.encode('utf-8'), sections)
 
@@ -854,36 +847,48 @@ def test_trailer_ignores_roundtrip(gitdir: str) -> None:
     assert b4.ez.load_trailer_ignores() == keys
 
 
-def test_trailer_ignores_missing_file_is_empty(gitdir: str) -> None:
-    """A repo with no ignore file yet yields an empty set (not an error)."""
+@pytest.mark.parametrize(
+    'content',
+    [
+        # A repo with no ignore file yet yields an empty set (not an error).
+        pytest.param(None, id='missing-file'),
+        # A corrupt ignore file degrades to an empty set instead of crashing.
+        pytest.param('this is not json{{', id='corrupt-file'),
+    ],
+)
+def test_trailer_ignores_unusable_file_is_empty(
+    gitdir: str, content: Optional[str]
+) -> None:
+    if content is not None:
+        path = b4.ez._trailer_ignore_path()
+        assert path is not None
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write(content)
     assert b4.ez.load_trailer_ignores() == set()
 
 
-def test_trailer_ignores_corrupt_file_is_empty(gitdir: str) -> None:
-    """A corrupt ignore file degrades to an empty set instead of crashing."""
-    path = b4.ez._trailer_ignore_path()
-    assert path is not None
-    with open(path, 'w', encoding='utf-8') as fh:
-        fh.write('this is not json{{')
-    assert b4.ez.load_trailer_ignores() == set()
+class _Src:
+    """Stand-in for the LoreMessage a trailer was harvested from."""
+
+    def __init__(self, msgid: str) -> None:
+        self.msgid = msgid
+
+
+class _Commit:
+    """Stand-in for the LoreMessage of a patch in the series."""
+
+    def __init__(self, subject: str, patchid: str) -> None:
+        self.subject = subject
+        self.git_patch_id = patchid
 
 
 def test_interactive_trailer_review_drops_and_remembers(
     gitdir: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Rejecting a trailer in the editor drops it from the updates and records
-    it (keyed by patch-id + trailer + via msgid) for future runs.
+    it (keyed by trailer + via msgid) for future runs.
     """
     config = b4.get_main_config()
-
-    class _Src:
-        def __init__(self, msgid: str) -> None:
-            self.msgid = msgid
-
-    class _Commit:
-        def __init__(self, subject: str, patchid: str) -> None:
-            self.subject = subject
-            self.git_patch_id = patchid
 
     rev = b4.LoreTrailer(name='Reviewed-by', value='Foo Bar <foo@example.com>')
     rev.lmsg = cast(b4.LoreMessage, _Src('rev-msgid@example.com'))
@@ -923,15 +928,6 @@ def test_interactive_trailer_review_same_trailer_two_patches(
     first patch's key is remembered.
     """
     config = b4.get_main_config()
-
-    class _Src:
-        def __init__(self, msgid: str) -> None:
-            self.msgid = msgid
-
-    class _Commit:
-        def __init__(self, subject: str, patchid: str) -> None:
-            self.subject = subject
-            self.git_patch_id = patchid
 
     tr_a = b4.LoreTrailer(name='Reviewed-by', value='Foo Bar <foo@example.com>')
     tr_a.lmsg = cast(b4.LoreMessage, _Src('via-a@example.com'))

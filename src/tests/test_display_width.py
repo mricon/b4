@@ -1,68 +1,41 @@
+import pytest
+
 from b4._textwidth import display_width, pad_display
 
 
-class TestDisplayWidth:
-    """Tests for display_width()."""
-
-    def test_ascii(self) -> None:
-        assert display_width('hello') == 5
-
-    def test_empty(self) -> None:
-        assert display_width('') == 0
-
-    def test_cjk(self) -> None:
+@pytest.mark.parametrize(
+    'text,expected',
+    [
+        pytest.param('hello', 5, id='ascii'),
+        pytest.param('', 0, id='empty'),
         # Each CJK character is 2 columns wide
-        assert display_width('戸田晃太') == 8
-
-    def test_mixed(self) -> None:
-        # 4 CJK chars (8) + 1 space (1) + 3 ASCII (3) = 12
-        assert display_width('戸田晃太 abc') == 12
-
-    def test_fullwidth_latin(self) -> None:
+        pytest.param('戸田晃太', 8, id='cjk'),
         # U+FF21 FULLWIDTH LATIN CAPITAL LETTER A
-        assert display_width('\uff21') == 2
-
-    def test_ambiguous_width_is_narrow(self) -> None:
+        pytest.param('Ａ', 2, id='fullwidth-latin'),
         # BLACK STAR has east_asian_width 'A' (ambiguous); we treat it as 1
         # column, matching what western terminals render.
-        assert display_width('\u2605') == 1
+        pytest.param('★', 1, id='ambiguous-width-is-narrow'),
+    ],
+)
+def test_display_width(text: str, expected: int) -> None:
+    assert display_width(text) == expected
 
 
-class TestPadDisplay:
-    """Tests for pad_display()."""
-
-    def test_ascii_padding(self) -> None:
-        result = pad_display('hello', 10)
-        assert result == 'hello     '
-        assert len(result) == 10
-
-    def test_cjk_padding(self) -> None:
+@pytest.mark.parametrize(
+    'text,width,expected',
+    [
+        pytest.param('hello', 10, 'hello     ', id='ascii-padding'),
         # '戸田' = 4 display cols, pad to 10 = 6 spaces
-        result = pad_display('戸田', 10)
-        assert display_width(result) == 10
-        assert result == '戸田      '
-
-    def test_no_padding_when_exact(self) -> None:
-        result = pad_display('hello', 5)
-        assert result == 'hello'
-
-    def test_truncate_when_over(self) -> None:
-        result = pad_display('hello world', 5)
-        assert result == 'hell\u2026'
-        assert display_width(result) == 5
-
-    def test_truncate_long_name(self) -> None:
-        result = pad_display('Bastien Curutchet (Schneider Electric)', 30)
-        assert display_width(result) == 30
-        assert result.endswith('\u2026')
-
-    def test_truncate_cjk(self) -> None:
+        pytest.param('戸田', 10, '戸田      ', id='cjk-padding'),
+        pytest.param('hello', 5, 'hello', id='no-padding-when-exact'),
+        pytest.param('hello world', 5, 'hell…', id='truncate-when-over'),
         # '戸田晃太' = 8 display cols, truncate to 5: '戸田' (4) + ellipsis (1)
-        result = pad_display('戸田晃太', 5)
-        assert display_width(result) == 5
-        assert result.endswith('\u2026')
-
-    def test_mixed_padding(self) -> None:
+        pytest.param('戸田晃太', 5, '戸田…', id='truncate-cjk'),
         # 'K 戸田' = 1 + 1 + 2 + 2 = 6 display cols, pad to 10 = 4 spaces
-        result = pad_display('K 戸田', 10)
-        assert display_width(result) == 10
+        pytest.param('K 戸田', 10, 'K 戸田    ', id='mixed-padding'),
+    ],
+)
+def test_pad_display(text: str, width: int, expected: str) -> None:
+    result = pad_display(text, width)
+    assert result == expected
+    assert display_width(result) == width

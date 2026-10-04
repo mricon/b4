@@ -272,9 +272,21 @@ class TestGitMapBlobsToCommits:
 class TestFindBase:
     """Tests for LoreSeries.find_base()."""
 
-    def test_no_indexes(self, repo: Dict[str, str]) -> None:
+    @pytest.mark.parametrize(
+        'indexes',
+        [
+            pytest.param([], id='no-indexes'),
+            pytest.param(
+                [('nosuch.txt', '0' * 12), ('alsonot.txt', '1' * 12)],
+                id='nothing-matches',
+            ),
+        ],
+    )
+    def test_raises_when_no_base_found(
+        self, repo: Dict[str, str], indexes: List[Tuple[str, str]]
+    ) -> None:
         with pytest.raises(IndexError):
-            _series([]).find_base(repo['repo'])
+            _series(indexes).find_base(repo['repo'])
 
     def test_head_when_everything_already_matches(self, repo: Dict[str, str]) -> None:
         path = repo['repo']
@@ -302,11 +314,6 @@ class TestFindBase:
         describe, checked, fewest = lser.find_base(path)
         assert (checked, fewest) == (3, 0)
         assert _git(path, 'rev-parse', f'{describe}^{{}}') == repo['c2']
-
-    def test_raises_when_nothing_matches(self, repo: Dict[str, str]) -> None:
-        lser = _series([('nosuch.txt', '0' * 12), ('alsonot.txt', '1' * 12)])
-        with pytest.raises(IndexError):
-            lser.find_base(repo['repo'])
 
     def test_settles_for_the_best_partial_match(self, repo: Dict[str, str]) -> None:
         path = repo['repo']

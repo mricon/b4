@@ -73,20 +73,28 @@ def test_parse_ty_review_marks_skips() -> None:
     assert skipped == {1}
 
 
-def test_parse_ty_review_rejects_edited_subject() -> None:
-    """Editing an item subject breaks the positional contract and aborts."""
+@pytest.mark.parametrize(
+    'old,new',
+    [
+        # Editing an item subject breaks the positional contract and aborts.
+        pytest.param(
+            'Add frobnicator support',
+            'Add frobnicator SUPPORT',
+            id='edited-subject',
+        ),
+        # Removing an item line entirely also aborts (ambiguous edit).
+        pytest.param(
+            '+ [GIT PULL] frobnicator updates\n',
+            '',
+            id='count-mismatch',
+        ),
+    ],
+)
+def test_parse_ty_review_rejects_edits(old: str, new: str) -> None:
     sections = _review_sections()
     text = b4.ty.render_ty_review(sections).decode('utf-8')
-    text = text.replace('Add frobnicator support', 'Add frobnicator SUPPORT')
-    with pytest.raises(ValueError):
-        b4.ty.parse_ty_review(text.encode('utf-8'), sections)
-
-
-def test_parse_ty_review_rejects_count_mismatch() -> None:
-    """Removing an item line entirely also aborts (ambiguous edit)."""
-    sections = _review_sections()
-    text = b4.ty.render_ty_review(sections).decode('utf-8')
-    text = text.replace('+ [GIT PULL] frobnicator updates\n', '')
+    assert old in text
+    text = text.replace(old, new)
     with pytest.raises(ValueError):
         b4.ty.parse_ty_review(text.encode('utf-8'), sections)
 
@@ -103,74 +111,56 @@ def test_parse_ty_review_rejects_reorder() -> None:
         b4.ty.parse_ty_review(buf, sections)
 
 
-def test_interactive_ty_review_drops_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Marking an item 'x' drops it from the returned list; the kept item
-    survives, in order. Skipped items are simply omitted (no persistence).
-    """
-    applied: List[b4.ty.JsonDictT] = [
-        {
-            'subject': '[PATCH 0/2] Add frobnicator support',
-            'fromname': 'Foo Bar',
-            'fromemail': 'foo@example.com',
-            'sentdate': 'Mon, 1 Jan 2026 00:00:00 +0000',
-            'msgid': 'cover-1@example.com',
-            'trackfile': 'aaa.am',
-        },
-        {
-            'subject': '[GIT PULL] frobnicator updates',
-            'fromname': 'Bar Foo',
-            'fromemail': 'bar@example.com',
-            'sentdate': 'Tue, 2 Jan 2026 00:00:00 +0000',
-            'msgid': 'pull-2@example.com',
-            'trackfile': 'bbb.pr',
-        },
-    ]
+_APPLIED: List[b4.ty.JsonDictT] = [
+    {
+        'subject': '[PATCH 0/2] Add frobnicator support',
+        'fromname': 'Foo Bar',
+        'fromemail': 'foo@example.com',
+        'sentdate': 'Mon, 1 Jan 2026 00:00:00 +0000',
+        'msgid': 'cover-1@example.com',
+        'trackfile': 'aaa.am',
+    },
+    {
+        'subject': '[GIT PULL] frobnicator updates',
+        'fromname': 'Bar Foo',
+        'fromemail': 'bar@example.com',
+        'sentdate': 'Tue, 2 Jan 2026 00:00:00 +0000',
+        'msgid': 'pull-2@example.com',
+        'trackfile': 'bbb.pr',
+    },
+]
 
+
+@pytest.mark.parametrize(
+    'skip_pull',
+    [
+        # Marking an item 'x' drops it from the returned list; the kept item
+        # survives, in order. Skipped items are simply omitted (no
+        # persistence).
+        pytest.param(True, id='drops-skipped'),
+        # An unedited buffer keeps the full list unchanged, in order.
+        pytest.param(False, id='keeps-all-when-pristine'),
+    ],
+)
+def test_interactive_ty_review(
+    monkeypatch: pytest.MonkeyPatch, skip_pull: bool
+) -> None:
     def fake_edit(
         bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
     ) -> bytes:
+        if not skip_pull:
+            return bdata
         # Maintainer skips the pull request, keeps the patch series.
         text = bdata.decode('utf-8').replace('+ [GIT PULL]', 'x [GIT PULL]')
         return text.encode('utf-8')
 
     monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
 
-    kept = b4.ty.interactive_ty_review(applied, None)
-    assert [jd['subject'] for jd in kept] == ['[PATCH 0/2] Add frobnicator support']
-
-
-def test_interactive_ty_review_keeps_all_when_pristine(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An unedited buffer keeps the full list unchanged, in order."""
-    applied: List[b4.ty.JsonDictT] = [
-        {
-            'subject': '[PATCH 0/2] Add frobnicator support',
-            'fromname': 'Foo Bar',
-            'fromemail': 'foo@example.com',
-            'sentdate': 'Mon, 1 Jan 2026 00:00:00 +0000',
-            'msgid': 'cover-1@example.com',
-            'trackfile': 'aaa.am',
-        },
-        {
-            'subject': '[GIT PULL] frobnicator updates',
-            'fromname': 'Bar Foo',
-            'fromemail': 'bar@example.com',
-            'sentdate': 'Tue, 2 Jan 2026 00:00:00 +0000',
-            'msgid': 'pull-2@example.com',
-            'trackfile': 'bbb.pr',
-        },
-    ]
-
-    def fake_edit(
-        bdata: bytes, filehint: str = 'COMMIT_EDITMSG', **kwargs: Any
-    ) -> bytes:
-        return bdata
-
-    monkeypatch.setattr(b4, 'edit_in_editor', fake_edit)
-
-    kept = b4.ty.interactive_ty_review(applied, None)
-    assert kept == applied
+    kept = b4.ty.interactive_ty_review(_APPLIED, None)
+    if skip_pull:
+        assert [jd['subject'] for jd in kept] == ['[PATCH 0/2] Add frobnicator support']
+    else:
+        assert kept == _APPLIED
 
 
 def test_interactive_ty_review_edits_in_the_named_tree(
@@ -527,7 +517,7 @@ def test_queue_message_explicit_repo_and_branch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     """Explicit checkrepo/checkbranch are recorded verbatim, bypassing
-    mask derivation entirely (the shortlink-mask case)."""
+    mask derivation entirely."""
     repo = str(tmp_path / 'repo')
     _init_repo(repo)
     monkeypatch.chdir(repo)
@@ -637,14 +627,18 @@ def test_queue_message_atomic_write(
     assert not [f for f in entries if f.endswith('.tmp')]
 
 
-def _queue_test_message(change_id: str = 'test-change-id', revision: int = 1) -> str:
+def _queue_test_message(
+    change_id: str = 'test-change-id',
+    revision: int = 1,
+    archive_after: bool = False,
+) -> str:
     """Queue a minimal thanks message; returns the expected full sha."""
     fullsha = '9a8b' * 10
     checkurl = f'https://git.kernel.org/pub/scm/utils/b4/b4.git/commit/?id={fullsha}'
     msg = EmailMessage()
     msg['Subject'] = 'Re: [PATCH] test'
     msg.set_content('Thanks!')
-    b4.ty.queue_message(msg, checkurl, change_id, revision)
+    b4.ty.queue_message(msg, checkurl, change_id, revision, archive_after=archive_after)
     return fullsha
 
 
@@ -727,59 +721,21 @@ def test_process_queue_finalizes_thanked(
 ) -> None:
     """Delivering a queued message marks the series 'thanked' in the
     tracking database."""
-    import b4.review.tracking as tracking
-
     repo = str(tmp_path / 'repo')
     _init_repo(repo)
     monkeypatch.chdir(repo)
-    conn = tracking.init_db('cronproj')
-    tracking.add_series_to_db(
-        conn,
-        'test-change-id',
-        1,
-        'test subject',
-        'Test',
-        't@example.com',
-        None,
-        '<msg@id>',
-        1,
-    )
-    conn.commit()
-    conn.close()
+    _add_tracked_series('cronproj')
 
     _queue_test_message()
-    monkeypatch.setattr(
-        b4.ty,
-        'commit_reachable_on_remote',
-        lambda commit, repo_url, branch='', gitdir=None: True,
-    )
-    monkeypatch.setattr(b4, 'get_smtp', lambda dryrun=False: (None, 't@example.com'))
-    monkeypatch.setattr(b4, 'send_mail', lambda *args, **kwargs: 1)
+    _mock_delivery(monkeypatch)
 
     delivered, pending, dseries = b4.ty.process_queue(identifier='cronproj')
     assert (delivered, pending) == (1, 0)
     assert dseries == [('test-change-id', 1)]
-    conn = tracking.get_db('cronproj')
-    row = conn.execute(
-        'SELECT status FROM series WHERE change_id = ?', ('test-change-id',)
-    ).fetchone()
-    conn.close()
-    assert row[0] == 'thanked'
+    assert _series_status('cronproj') == 'thanked'
     qdir = b4.ty._get_queue_dir()
     assert not os.path.exists(os.path.join(qdir, 'test-change-id-v1.msg'))
     assert os.path.exists(os.path.join(qdir, 'sent', 'test-change-id-v1.msg'))
-
-
-def _queue_archive_after_message(
-    change_id: str = 'test-change-id', revision: int = 1
-) -> None:
-    """Queue a minimal thanks message with the archive-after-send flag."""
-    fullsha = '9a8b' * 10
-    checkurl = f'https://git.kernel.org/pub/scm/utils/b4/b4.git/commit/?id={fullsha}'
-    msg = EmailMessage()
-    msg['Subject'] = 'Re: [PATCH] test'
-    msg.set_content('Thanks!')
-    b4.ty.queue_message(msg, checkurl, change_id, revision, archive_after=True)
 
 
 def _add_tracked_series(
@@ -841,7 +797,7 @@ def test_queue_message_archive_after_header(
     assert parsed is not None
     assert 'X-B4-Archive-After-Send' not in parsed
 
-    _queue_archive_after_message('archive-cid')
+    _queue_test_message('archive-cid', archive_after=True)
     parsed = b4.ty._parse_queue_file(os.path.join(qdir, 'archive-cid-v1.msg'))
     assert parsed is not None
     assert parsed['X-B4-Archive-After-Send'] == 'yes'
@@ -856,7 +812,7 @@ def test_process_queue_archives_after_send(
     _init_repo(repo)
     monkeypatch.chdir(repo)
     _add_tracked_series('cronproj')
-    _queue_archive_after_message()
+    _queue_test_message(archive_after=True)
     _mock_delivery(monkeypatch)
     sent_msgs: List[EmailMessage] = []
 
@@ -886,7 +842,7 @@ def test_process_queue_keeps_series_with_newer_revision(
     _init_repo(repo)
     monkeypatch.chdir(repo)
     _add_tracked_series('cronproj', revisions=[1, 2])
-    _queue_archive_after_message()
+    _queue_test_message(archive_after=True)
     _mock_delivery(monkeypatch)
 
     statuses: List[str] = []
@@ -907,7 +863,7 @@ def test_process_queue_keeps_series_after_status_drift(
     _init_repo(repo)
     monkeypatch.chdir(repo)
     _add_tracked_series('cronproj', status='reviewing')
-    _queue_archive_after_message()
+    _queue_test_message(archive_after=True)
     _mock_delivery(monkeypatch)
 
     statuses: List[str] = []
@@ -953,7 +909,7 @@ def test_process_queue_skips_archive_when_checked_out(
     review_branch = 'b4/review/test-change-id'
     ecode, out = b4.git_run_command(None, ['checkout', '-b', review_branch])
     assert ecode == 0, out
-    _queue_archive_after_message()
+    _queue_test_message(archive_after=True)
     _mock_delivery(monkeypatch)
 
     statuses: List[str] = []
