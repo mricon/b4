@@ -29,27 +29,11 @@ from b4.review_tui._lite_app import (
     check_attestation,
 )
 
-from .helpers.tui import static_text
+from .helpers.tui import CUT_BUFFER, CUT_TRIMMED, static_text
 
 
 class TestLiteSendReply:
     """The lite view sends the same trimmed body the preview showed."""
-
-    BUFFER = (
-        'On today, Reviewer wrote:\n'
-        '> old context one\n'
-        '> old context two\n'
-        '>--cut--\n'
-        '> context kept below the marker\n'
-        'My reply.\n'
-        '> trailing untouched quote\n'
-    )
-    TRIMMED = (
-        'On today, Reviewer wrote:\n'
-        '> [ ... 2 lines skipped ... ]\n'
-        '> context kept below the marker\n'
-        'My reply.'
-    )
 
     def test_send_trims_like_the_review_panel(self) -> None:
         """A trailing quoted run and a >--cut-- marker are resolved on the
@@ -73,10 +57,10 @@ class TestLiteSendReply:
             mock.patch('b4.get_smtp', return_value=(None, 'me@example.com')),
             mock.patch('b4.send_mail', return_value=0) as send_mail,
         ):
-            screen._send_reply(node, self.BUFFER)
+            screen._send_reply(node, CUT_BUFFER)
 
         body = lmsg.make_reply.call_args.args[0]
-        assert body.startswith(self.TRIMMED)
+        assert body.startswith(CUT_TRIMMED)
         assert '>--cut--\n' not in body
         assert '> old context one' not in body
         assert '> trailing untouched quote' not in body

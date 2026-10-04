@@ -19,3 +19,25 @@ def static_text(widget: Any) -> str:
     if hasattr(widget, 'content'):
         return str(widget.content)
     return str(widget.renderable)
+
+
+# A reply buffer exercising every trim rule the send paths share: the
+# instruction header is dropped, everything quoted above the >--cut--
+# marker collapses into a "lines skipped" note, and a trailing quoted run
+# after the reply text is removed.
+CUT_INSTRUCTION = '# Put ">--cut--" alone on a line to trim quoted context.\n'
+CUT_BUFFER = (
+    'On today, Reviewer wrote:\n'
+    '> old context one\n'
+    '> old context two\n'
+    '>--cut--\n'
+    '> context kept below the marker\n'
+    'My reply.\n'
+    '> trailing untouched quote\n'
+)
+CUT_TRIMMED = (
+    'On today, Reviewer wrote:\n'
+    '> [ ... 2 lines skipped ... ]\n'
+    '> context kept below the marker\n'
+    'My reply.'
+)

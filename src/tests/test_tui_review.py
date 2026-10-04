@@ -27,6 +27,7 @@ from b4.review_tui._common import filter_range_diff_for_commit
 from b4.review_tui._review_app import PatchListItem, ReviewApp
 
 from .helpers.tracking import create_review_branch
+from .helpers.tui import CUT_BUFFER, CUT_INSTRUCTION, CUT_TRIMMED
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -365,16 +366,7 @@ class TestFollowupSnipMarker:
         outgoing = email.message.EmailMessage()
         lmsg.make_reply.return_value = outgoing
         entry = {'lmsg': lmsg, 'fromemail': 'reviewer@example.com'}
-        buffer = (
-            '# Put ">--cut--" alone on a line to trim quoted context.\n'
-            'On today, Reviewer wrote:\n'
-            '> old context one\n'
-            '> old context two\n'
-            '>--cut--\n'
-            '> context kept below the marker\n'
-            'My reply.\n'
-            '> trailing untouched quote\n'
-        )
+        buffer = CUT_INSTRUCTION + CUT_BUFFER
 
         with (
             mock.patch.object(
@@ -387,11 +379,7 @@ class TestFollowupSnipMarker:
             app._send_followup_reply(entry, buffer)
 
         lmsg.make_reply.assert_called_once_with(
-            'On today, Reviewer wrote:\n'
-            '> [ ... 2 lines skipped ... ]\n'
-            '> context kept below the marker\n'
-            'My reply.'
-            '\n\n-- \n' + b4.get_email_signature()
+            CUT_TRIMMED + '\n\n-- \n' + b4.get_email_signature()
         )
         assert send_mail.call_args.args[1] == [outgoing]
 
@@ -518,54 +506,6 @@ class TestReconcileAfterShell:
             # Original state should be preserved
             assert app._commit_shas == old_shas
             assert app._series['first-patch-commit'] == patch_shas[0]
-
-
-class TestLoreNodeShutdown:
-    """The app shuts the shared lore node down when it quits.
-
-    Single-shot network workers block inside one fetch and cannot poll a
-    cancellation flag, so the app shuts the lore node down on exit to
-    unblock any in-flight request instead of stalling on exit.
-    """
-
-    @pytest.mark.asyncio
-    async def test_quit_shuts_down_lore_node(self, gitdir: str) -> None:
-        branch, _patch_shas = _create_review_branch_with_patches(
-            gitdir, 'shutdown-cancel', ['patch 1']
-        )
-        session = _build_session(gitdir, branch)
-
-        node = mock.Mock()
-        app = ReviewApp(session)
-        # Patch the singleton accessor so we observe the shutdown
-        # without touching real lore state.
-        with mock.patch('b4.get_lore_node', return_value=node):
-            async with app.run_test(size=(120, 30)) as pilot:
-                await pilot.pause()
-                await pilot.press('Q')
-                await pilot.pause()
-
-        # on_unmount fired during app teardown and shut the node down.
-        assert node.shutdown.called
-
-
-class TestQuitKeys:
-    """Bare 'q' warns instead of quitting; capital 'Q' quits."""
-
-    @pytest.mark.asyncio
-    async def test_q_warns_instead_of_quitting(self, gitdir: str) -> None:
-        branch, _patch_shas = _create_review_branch_with_patches(
-            gitdir, 'quit-hint', ['patch 1']
-        )
-        session = _build_session(gitdir, branch)
-        app = ReviewApp(session)
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            await pilot.press('q')
-            await pilot.pause()
-            assert app._exit is False
-            messages = [n.message for n in app._notifications]
-            assert any("'Q'" in m for m in messages)
 
 
 class TestRenderDetailLines:

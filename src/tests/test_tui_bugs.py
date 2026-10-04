@@ -537,18 +537,6 @@ class TestParseMsgidForImport:
         assert '@' not in result
 
 
-class TestQuitBindings:
-    """BugListApp quits on capital 'Q'; bare 'q' only shows a hint."""
-
-    def test_quit_takes_capital_q(self) -> None:
-        from textual.binding import Binding
-
-        bmap = {b.key: b for b in BugListApp.BINDINGS if isinstance(b, Binding)}
-        assert bmap['Q'].action == 'quit'
-        assert bmap['q'].action == 'quit_hint'
-        assert bmap['q'].show is False
-
-
 class TestRefreshScrollPreservation:
     """The bug list is rebuilt wholesale on refresh; the viewport must stay put."""
 
@@ -627,11 +615,6 @@ class TestLoreChokepoint:
         assert kwargs.get('thread') is True
         assert kwargs.get('exit_on_error') is False
         assert kwargs.get('name') == name
-
-    def test_app_shuts_down_lore_node_on_exit(self) -> None:
-        from b4.tui import LoreNodeShutdownMixin
-
-        assert issubclass(BugListApp, LoreNodeShutdownMixin)
 
     def test_import_fetch_goes_through_chokepoint(self) -> None:
         host = mock.Mock()

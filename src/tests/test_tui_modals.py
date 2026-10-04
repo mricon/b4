@@ -47,7 +47,7 @@ from b4.review_tui._modals import (
     _FetchViewerScreen,
 )
 
-from .helpers.tui import static_text
+from .helpers.tui import CUT_BUFFER, CUT_INSTRUCTION, CUT_TRIMMED, static_text
 
 # ---------------------------------------------------------------------------
 # Minimal host app — just enough to push modal screens onto
@@ -1199,23 +1199,6 @@ class TestSendKeybindings:
 class TestFollowupReplyPreviewTrim:
     """The followup reply preview must show the body that will be sent."""
 
-    BUFFER = (
-        '# Put ">--cut--" alone on a line to trim quoted context.\n'
-        'On today, Reviewer wrote:\n'
-        '> old context one\n'
-        '> old context two\n'
-        '>--cut--\n'
-        '> context kept below the marker\n'
-        'My reply.\n'
-        '> trailing untouched quote\n'
-    )
-    TRIMMED = (
-        'On today, Reviewer wrote:\n'
-        '> [ ... 2 lines skipped ... ]\n'
-        '> context kept below the marker\n'
-        'My reply.'
-    )
-
     async def test_preview_renders_trimmed_body(self) -> None:
         """The instruction header, the >--cut-- marker and the trailing
         quote are resolved before the preview is rendered."""
@@ -1225,11 +1208,13 @@ class TestFollowupReplyPreviewTrim:
         entry = {'lmsg': lmsg, 'fromemail': 'reviewer@example.com'}
 
         async with app.run_test() as pilot:
-            app.push_screen(FollowupReplyPreviewScreen(entry, self.BUFFER))
+            app.push_screen(
+                FollowupReplyPreviewScreen(entry, CUT_INSTRUCTION + CUT_BUFFER)
+            )
             await pilot.pause()
 
         body = lmsg.make_reply.call_args.args[0]
-        assert body.startswith(self.TRIMMED)
+        assert body.startswith(CUT_TRIMMED)
         assert '# Put ">--cut--"' not in body
         assert '>--cut--\n' not in body
         assert '> old context one' not in body
