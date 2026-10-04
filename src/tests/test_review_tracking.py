@@ -7,7 +7,7 @@ import pathlib
 import re
 import sqlite3
 from email.message import EmailMessage
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest import mock
 
 import pytest
@@ -25,6 +25,20 @@ from b4.review_tui._tracking_app import _format_attestation, _format_snooze_unti
 
 from .helpers.mail import AUTHOR, MINIMAL_DIFF
 from .helpers.tracking import add_worktree, create_review_branch, make_tracking_data
+
+
+def _insert_patches(
+    conn: sqlite3.Connection, change_id: str, revision: int, msgids: list[str]
+) -> None:
+    """Directly seed series_patches rows for test setup."""
+    for pos, mid in enumerate(msgids, start=1):
+        conn.execute(
+            'INSERT INTO series_patches'
+            ' (change_id, revision, position, message_id, subject)'
+            ' VALUES (?, ?, ?, ?, ?)',
+            (change_id, revision, pos, mid, f'[PATCH {pos}] thing'),
+        )
+    conn.commit()
 
 
 class TestGetReviewDataDir:
@@ -350,24 +364,27 @@ class TestRepoMetadata:
 class TestResolveIdentifier:
     """Tests for resolve_identifier()."""
 
-    def test_uses_cmdargs_identifier(self, gitdir: str) -> None:
-        """Verify command line identifier takes precedence."""
-        # Set up repo metadata
+    @pytest.mark.parametrize(
+        'cmd_id,expected',
+        [
+            pytest.param(
+                'cmdline-identifier',
+                'cmdline-identifier',
+                id='cmdargs_takes_precedence',
+            ),
+            pytest.param(None, 'repo-identifier', id='falls_back_to_repo_metadata'),
+        ],
+    )
+    def test_resolve_identifier(
+        self, gitdir: str, cmd_id: Optional[str], expected: str
+    ) -> None:
+        """Verify the command line identifier wins, else repo metadata is used."""
         git_dir = os.path.join(gitdir, '.git')
         review_tracking.save_repo_metadata(git_dir, 'repo-identifier')
 
-        cmdargs = argparse.Namespace(identifier='cmdline-identifier')
+        cmdargs = argparse.Namespace(identifier=cmd_id)
         result = review_tracking.resolve_identifier(cmdargs, gitdir)
-        assert result == 'cmdline-identifier'
-
-    def test_falls_back_to_repo_metadata(self, gitdir: str) -> None:
-        """Verify falls back to repo metadata when no cmdargs identifier."""
-        git_dir = os.path.join(gitdir, '.git')
-        review_tracking.save_repo_metadata(git_dir, 'repo-identifier')
-
-        cmdargs = argparse.Namespace(identifier=None)
-        result = review_tracking.resolve_identifier(cmdargs, gitdir)
-        assert result == 'repo-identifier'
+        assert result == expected
 
     def test_returns_none_when_no_identifier(
         self, tmp_path: pytest.TempPathFactory
@@ -382,18 +399,12 @@ class TestResolveIdentifier:
 class TestCmdEnroll:
     """Tests for cmd_enroll()."""
 
-    def test_enroll_creates_database(self, gitdir: str) -> None:
-        """Verify enroll creates the database."""
+    def test_enroll_creates_database_and_metadata(self, gitdir: str) -> None:
+        """Verify enroll creates the database and the .git metadata file."""
         cmdargs = argparse.Namespace(repo_path=gitdir, identifier='enroll-test')
         review_tracking.cmd_enroll(cmdargs)
 
         assert review_tracking.db_exists('enroll-test')
-
-    def test_enroll_creates_metadata_file(self, gitdir: str) -> None:
-        """Verify enroll creates metadata file in .git directory."""
-        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='metadata-test')
-        review_tracking.cmd_enroll(cmdargs)
-
         metadata_path = os.path.join(gitdir, '.git', 'b4-review', 'metadata.json')
         assert os.path.exists(metadata_path)
 
@@ -522,8 +533,16 @@ class TestCmdEnroll:
         metadata_path = os.path.join(gitdir, '.git', 'b4-review', 'metadata.json')
         assert os.path.exists(metadata_path)
 
-    def test_enroll_from_worktree_already_enrolled(self, gitdir: str) -> None:
-        """Verify enrolling from worktree exits 0 when repo already enrolled."""
+    @pytest.mark.parametrize(
+        'second_id,code',
+        [
+            pytest.param('main-id', 0, id='already_enrolled_same_identifier'),
+            pytest.param('different-id', 1, id='conflicting_identifier'),
+        ],
+    )
+    def test_enroll_from_worktree(self, gitdir: str, second_id: str, code: int) -> None:
+        """Verify enrolling from a worktree exits 0 for the same identifier
+        and 1 for a different one."""
         # Enroll the main repo first
         cmdargs = argparse.Namespace(repo_path=gitdir, identifier='main-id')
         review_tracking.cmd_enroll(cmdargs)
@@ -531,26 +550,10 @@ class TestCmdEnroll:
         # Create a real worktree
         worktree_dir = add_worktree(gitdir)
 
-        # Enrolling from worktree with same identifier should exit 0
-        cmdargs2 = argparse.Namespace(repo_path=worktree_dir, identifier='main-id')
+        cmdargs2 = argparse.Namespace(repo_path=worktree_dir, identifier=second_id)
         with pytest.raises(SystemExit) as exc_info:
             review_tracking.cmd_enroll(cmdargs2)
-        assert exc_info.value.code == 0
-
-    def test_enroll_from_worktree_conflicting_identifier(self, gitdir: str) -> None:
-        """Verify enrolling from worktree fails with a different identifier."""
-        # Enroll the main repo first
-        cmdargs = argparse.Namespace(repo_path=gitdir, identifier='main-id')
-        review_tracking.cmd_enroll(cmdargs)
-
-        # Create a real worktree
-        worktree_dir = add_worktree(gitdir)
-
-        # Enrolling from worktree with different identifier should fail
-        cmdargs2 = argparse.Namespace(repo_path=worktree_dir, identifier='different-id')
-        with pytest.raises(SystemExit) as exc_info:
-            review_tracking.cmd_enroll(cmdargs2)
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == code
 
 
 class TestCmdTrack:
@@ -616,21 +619,51 @@ class TestCmdTrack:
 
         return lser
 
+    @pytest.mark.parametrize(
+        'lser_kwargs,column,expected',
+        [
+            pytest.param(
+                {'change_id': 'real-change-id'},
+                'change_id',
+                'real-change-id',
+                id='with_change_id',
+            ),
+            # Format: YYYYMMDD-slug-fingerprint[:12], fully determined by the
+            # mock message date, subject slug, and series fingerprint.
+            pytest.param(
+                {'change_id': None},
+                'change_id',
+                '20240115-test-series-mock-fingerp',
+                id='generates_change_id_without_change_id',
+            ),
+            pytest.param(
+                {'has_cover': False, 'first_patch_msgid': 'first-patch@example.com'},
+                'message_id',
+                'first-patch@example.com',
+                id='uses_first_patch_without_cover',
+            ),
+        ],
+    )
     @mock.patch('b4.retrieve_messages')
     @mock.patch('b4.LoreMailbox')
-    def test_track_with_change_id(
-        self, mock_mailbox_class: mock.Mock, mock_retrieve: mock.Mock, gitdir: str
+    def test_track_records_series(
+        self,
+        mock_mailbox_class: mock.Mock,
+        mock_retrieve: mock.Mock,
+        gitdir: str,
+        lser_kwargs: Dict[str, Any],
+        column: str,
+        expected: str,
     ) -> None:
-        """Verify tracking a series with a change-id."""
-        # Set up enrolled project
+        """Verify tracking stores the change-id (real or generated) and the
+        message-id (cover, else first patch) of the series."""
         cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='track-test')
         review_tracking.cmd_enroll(cmdargs_enroll)
 
-        # Mock the series retrieval
         mock_msg = mock.Mock()
         mock_retrieve.return_value = ('test-msgid', [mock_msg])
 
-        mock_lser = self._make_mock_lore_series(change_id='real-change-id')
+        mock_lser = self._make_mock_lore_series(**lser_kwargs)
         mock_mailbox = mock.Mock()
         mock_mailbox.series = {1: mock_lser}
         mock_mailbox.get_series.return_value = mock_lser
@@ -646,67 +679,38 @@ class TestCmdTrack:
         )
         review_tracking.cmd_track(cmdargs)
 
-        # Verify it was added to database
         conn = review_tracking.get_db('track-test')
-        cursor = conn.execute('SELECT change_id, revision FROM series')
-        row = cursor.fetchone()
-        assert row['change_id'] == 'real-change-id'
+        row = conn.execute(f'SELECT {column}, revision FROM series').fetchone()
+        conn.close()
+        assert row[column] == expected
         assert row['revision'] == 1
-        conn.close()
 
+    @pytest.mark.parametrize(
+        'all_present,expect_warning',
+        [
+            # Default mock series claims 3 patches but only carries patch 1.
+            pytest.param(False, True, id='warns_when_thread_incomplete'),
+            pytest.param(True, False, id='no_warning_when_thread_complete'),
+        ],
+    )
     @mock.patch('b4.retrieve_messages')
     @mock.patch('b4.LoreMailbox')
-    def test_track_generates_change_id_without_change_id(
-        self, mock_mailbox_class: mock.Mock, mock_retrieve: mock.Mock, gitdir: str
-    ) -> None:
-        """Verify tracking generates a change-id when series has none."""
-        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='noid-test')
-        review_tracking.cmd_enroll(cmdargs_enroll)
-
-        mock_msg = mock.Mock()
-        mock_retrieve.return_value = ('test-msgid', [mock_msg])
-
-        mock_lser = self._make_mock_lore_series(change_id=None)
-        mock_mailbox = mock.Mock()
-        mock_mailbox.series = {1: mock_lser}
-        mock_mailbox.get_series.return_value = mock_lser
-        mock_mailbox_class.return_value = mock_mailbox
-
-        cmdargs = argparse.Namespace(
-            series_id='test-msgid@example.com',
-            identifier='noid-test',
-            msgid=None,
-            noparent=False,
-            wantname=None,
-            wantver=None,
-        )
-        review_tracking.cmd_track(cmdargs)
-
-        conn = review_tracking.get_db('noid-test')
-        cursor = conn.execute('SELECT change_id FROM series')
-        row = cursor.fetchone()
-        # Format: YYYYMMDD-slug-fingerprint[:12], fully determined by the
-        # mock message date, subject slug, and series fingerprint.
-        assert row['change_id'] == '20240115-test-series-mock-fingerp'
-        conn.close()
-
-    @mock.patch('b4.retrieve_messages')
-    @mock.patch('b4.LoreMailbox')
-    def test_track_warns_when_thread_incomplete(
+    def test_track_thread_completeness_warning(
         self,
         mock_mailbox_class: mock.Mock,
         mock_retrieve: mock.Mock,
         gitdir: str,
         caplog: pytest.LogCaptureFixture,
+        all_present: bool,
+        expect_warning: bool,
     ) -> None:
-        """Verify a partial import is called out instead of looking successful."""
+        """Verify a partial import is called out, and a full one stays quiet."""
         cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='partial-test')
         review_tracking.cmd_enroll(cmdargs_enroll)
 
         mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
 
-        # Default mock series claims 3 patches but only carries patch 1.
-        mock_lser = self._make_mock_lore_series()
+        mock_lser = self._make_mock_lore_series(all_patches_present=all_present)
         mock_mailbox = mock.Mock()
         mock_mailbox.series = {1: mock_lser}
         mock_mailbox.get_series.return_value = mock_lser
@@ -723,81 +727,12 @@ class TestCmdTrack:
         with caplog.at_level(logging.CRITICAL, logger='b4'):
             review_tracking.cmd_track(cmdargs)
 
-        assert 'Thread incomplete' in caplog.text
-        assert 'missing 2 of 3 patches' in caplog.text
-        assert '2, 3' in caplog.text
-
-    @mock.patch('b4.retrieve_messages')
-    @mock.patch('b4.LoreMailbox')
-    def test_track_no_warning_when_thread_complete(
-        self,
-        mock_mailbox_class: mock.Mock,
-        mock_retrieve: mock.Mock,
-        gitdir: str,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Verify a full import stays quiet about completeness."""
-        cmdargs_enroll = argparse.Namespace(repo_path=gitdir, identifier='full-test')
-        review_tracking.cmd_enroll(cmdargs_enroll)
-
-        mock_retrieve.return_value = ('test-msgid', [mock.Mock()])
-
-        mock_lser = self._make_mock_lore_series(all_patches_present=True)
-        mock_mailbox = mock.Mock()
-        mock_mailbox.series = {1: mock_lser}
-        mock_mailbox.get_series.return_value = mock_lser
-        mock_mailbox_class.return_value = mock_mailbox
-
-        cmdargs = argparse.Namespace(
-            series_id='test-msgid@example.com',
-            identifier='full-test',
-            msgid=None,
-            noparent=False,
-            wantname=None,
-            wantver=None,
-        )
-        with caplog.at_level(logging.CRITICAL, logger='b4'):
-            review_tracking.cmd_track(cmdargs)
-
-        assert 'Thread incomplete' not in caplog.text
-
-    @mock.patch('b4.retrieve_messages')
-    @mock.patch('b4.LoreMailbox')
-    def test_track_uses_first_patch_without_cover(
-        self, mock_mailbox_class: mock.Mock, mock_retrieve: mock.Mock, gitdir: str
-    ) -> None:
-        """Verify tracking uses first patch msgid when no cover letter."""
-        cmdargs_enroll = argparse.Namespace(
-            repo_path=gitdir, identifier='no-cover-test'
-        )
-        review_tracking.cmd_enroll(cmdargs_enroll)
-
-        mock_msg = mock.Mock()
-        mock_retrieve.return_value = ('test-msgid', [mock_msg])
-
-        mock_lser = self._make_mock_lore_series(
-            has_cover=False, first_patch_msgid='first-patch@example.com'
-        )
-        mock_mailbox = mock.Mock()
-        mock_mailbox.series = {1: mock_lser}
-        mock_mailbox.get_series.return_value = mock_lser
-        mock_mailbox_class.return_value = mock_mailbox
-
-        cmdargs = argparse.Namespace(
-            series_id='test-msgid@example.com',
-            identifier='no-cover-test',
-            msgid=None,
-            noparent=False,
-            wantname=None,
-            wantver=None,
-        )
-        review_tracking.cmd_track(cmdargs)
-
-        conn = review_tracking.get_db('no-cover-test')
-        cursor = conn.execute('SELECT message_id FROM series')
-        row = cursor.fetchone()
-        assert row['message_id'] == 'first-patch@example.com'
-        conn.close()
+        if expect_warning:
+            assert 'Thread incomplete' in caplog.text
+            assert 'missing 2 of 3 patches' in caplog.text
+            assert '2, 3' in caplog.text
+        else:
+            assert 'Thread incomplete' not in caplog.text
 
     @mock.patch('b4.retrieve_messages')
     @mock.patch('b4.LoreMailbox')
@@ -1235,18 +1170,17 @@ class TestUpdateSeriesStatus:
 class TestGitGetCommonDir:
     """Tests for git_get_common_dir()."""
 
-    def test_returns_git_dir_for_main_repo(self, gitdir: str) -> None:
-        """Verify git_get_common_dir returns .git path for a normal repo."""
-        result = b4.git_get_common_dir(gitdir)
-        assert result is not None
-        expected = os.path.join(gitdir, '.git')
-        assert os.path.normpath(result) == os.path.normpath(expected)
-
-    def test_returns_shared_git_dir_from_worktree(self, gitdir: str) -> None:
-        """Verify git_get_common_dir returns the shared .git from a worktree."""
-        worktree_dir = add_worktree(gitdir)
-
-        result = b4.git_get_common_dir(worktree_dir)
+    @pytest.mark.parametrize(
+        'use_worktree',
+        [
+            pytest.param(False, id='main_repo'),
+            pytest.param(True, id='worktree_shares_main_git_dir'),
+        ],
+    )
+    def test_returns_common_git_dir(self, gitdir: str, use_worktree: bool) -> None:
+        """Verify git_get_common_dir returns the shared .git path."""
+        path = add_worktree(gitdir) if use_worktree else gitdir
+        result = b4.git_get_common_dir(path)
         assert result is not None
         expected = os.path.join(gitdir, '.git')
         assert os.path.normpath(result) == os.path.normpath(expected)
@@ -1264,19 +1198,6 @@ class TestGitGetCommonDir:
 class TestUpdateTrackingStatus:
     """Tests for update_tracking_status() helper."""
 
-    def test_updates_status(self, gitdir: str) -> None:
-        """Verify update_tracking_status writes status to tracking commit."""
-        branch = create_review_branch(
-            gitdir, 'status-test', identifier='test-proj', subject='Test'
-        )
-
-        result = b4.review.update_tracking_status(gitdir, branch, 'replied')
-        assert result is True
-
-        # Read back and verify
-        _cover, trk = b4.review.load_tracking(gitdir, branch)
-        assert trk['series']['status'] == 'replied'
-
     def test_round_trip(self, gitdir: str) -> None:
         """Verify status survives a write-then-read round-trip."""
         branch = create_review_branch(
@@ -1288,7 +1209,7 @@ class TestUpdateTrackingStatus:
         )
 
         for new_status in ('replied', 'waiting', 'accepted', 'thanked'):
-            b4.review.update_tracking_status(gitdir, branch, new_status)
+            assert b4.review.update_tracking_status(gitdir, branch, new_status) is True
             _cover, trk = b4.review.load_tracking(gitdir, branch)
             assert trk['series']['status'] == new_status
 
@@ -1547,11 +1468,9 @@ class TestFollowupCounts:
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
         """Verify v1 DB gets followup/update columns during migration."""
-        import sqlite3 as _sqlite3
-
         db_path = review_tracking.get_db_path('fc-migration-test')
         # Manually build a schema-version 1 database (no branch_sha, no followup cols)
-        raw = _sqlite3.connect(db_path)
+        raw = sqlite3.connect(db_path)
         raw.executescript("""
             CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
             CREATE TABLE series (
@@ -1721,192 +1640,229 @@ class TestFollowupBlob:
         assert result is None
 
 
+_PS_EMAIL = 'reviewer@example.com'
+
+
+def _ps_target(review_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return a minimal target dict, optionally with review data."""
+    if review_data is None:
+        return {}
+    return {'reviews': {_PS_EMAIL: {'name': 'Test Reviewer', **review_data}}}
+
+
 class TestPatchState:
     """Tests for _get_patch_state() and _set_patch_state()."""
 
-    _EMAIL = 'reviewer@example.com'
-    _USERCFG: b4.ConfigDictT = {'email': _EMAIL, 'name': 'Test Reviewer'}
+    _EMAIL = _PS_EMAIL
+    _USERCFG: b4.ConfigDictT = {'email': _PS_EMAIL, 'name': 'Test Reviewer'}
+    _make_target = staticmethod(_ps_target)
 
-    def _make_target(self, review_data: Dict[str, Any] | None = None) -> Dict[str, Any]:
-        """Return a minimal target dict, optionally with review data."""
-        if review_data is None:
-            return {}
-        return {'reviews': {self._EMAIL: {'name': 'Test Reviewer', **review_data}}}
-
-    def test_no_data(self) -> None:
-        """Empty reviews dict → no state."""
-        target = self._make_target()
-        assert b4.review._get_patch_state(target, self._USERCFG) == ''
-
-    def test_note_only(self) -> None:
-        """A private note alone never triggers 'draft'."""
-        target = self._make_target({'note': 'just a private note'})
-        assert b4.review._get_patch_state(target, self._USERCFG) == ''
-
-    def test_comments(self) -> None:
-        """Inline comments list → 'draft'."""
-        target = self._make_target(
-            {'comments': [{'path': 'a.c', 'line': 1, 'text': 'hi'}]}
-        )
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
-
-    def test_reply(self) -> None:
-        """Non-empty reply text → 'draft'."""
-        target = self._make_target({'reply': 'Looks good overall but...'})
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
-
-    def test_reviewed_by(self) -> None:
-        """Reviewed-by trailer → 'done'."""
-        target = self._make_target(
-            {'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>']}
-        )
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
-
-    def test_acked_by(self) -> None:
-        """Acked-by trailer → 'done'."""
-        target = self._make_target(
-            {'trailers': ['Acked-by: Test Reviewer <reviewer@example.com>']}
-        )
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
-
-    def test_nacked_by_alone(self) -> None:
-        """NACKed-by trailer alone → 'draft' (explanation required)."""
-        target = self._make_target(
-            {'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>']}
-        )
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
-
-    def test_nacked_by_with_acked(self) -> None:
-        """NACK wins over Acked-by — result is still 'draft'."""
-        target = self._make_target(
-            {
-                'trailers': [
-                    'NACKed-by: Test Reviewer <reviewer@example.com>',
-                    'Acked-by: Test Reviewer <reviewer@example.com>',
-                ]
-            }
-        )
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
-
-    def test_explicit_done(self) -> None:
-        """Stored patch-state=done with no other content → 'done'."""
-        target = self._make_target({'patch-state': 'done'})
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
-
-    def test_explicit_skip(self) -> None:
-        """Stored patch-state=skip → 'skip'."""
-        target = self._make_target({'patch-state': 'skip'})
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'skip'
-
-    def test_explicit_done_beats_nack(self) -> None:
-        """Explicit done overrides a NACKed-by trailer (human override wins)."""
-        target = self._make_target(
-            {
-                'patch-state': 'done',
-                'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>'],
-            }
-        )
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
-
-    def test_thread_reviewed_by_from_me(self) -> None:
-        """An approval trailer I sent to the list before tracking → 'done'."""
-        target = {
-            'followups': [
+    @pytest.mark.parametrize(
+        'target,expected',
+        [
+            pytest.param(_ps_target(), '', id='no_data'),
+            pytest.param(
+                _ps_target({'note': 'just a private note'}),
+                '',
+                id='note_only_never_draft',
+            ),
+            pytest.param(
+                _ps_target({'comments': [{'path': 'a.c', 'line': 1, 'text': 'hi'}]}),
+                'draft',
+                id='comments',
+            ),
+            pytest.param(
+                _ps_target({'reply': 'Looks good overall but...'}),
+                'draft',
+                id='reply',
+            ),
+            pytest.param(
+                _ps_target(
+                    {'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>']}
+                ),
+                'done',
+                id='reviewed_by',
+            ),
+            pytest.param(
+                _ps_target(
+                    {'trailers': ['Acked-by: Test Reviewer <reviewer@example.com>']}
+                ),
+                'done',
+                id='acked_by',
+            ),
+            pytest.param(
+                _ps_target(
+                    {'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>']}
+                ),
+                'draft',
+                id='nacked_by_alone_needs_explanation',
+            ),
+            pytest.param(
+                _ps_target(
+                    {
+                        'trailers': [
+                            'NACKed-by: Test Reviewer <reviewer@example.com>',
+                            'Acked-by: Test Reviewer <reviewer@example.com>',
+                        ]
+                    }
+                ),
+                'draft',
+                id='nack_wins_over_acked',
+            ),
+            pytest.param(
+                _ps_target({'patch-state': 'done'}), 'done', id='explicit_done'
+            ),
+            pytest.param(
+                _ps_target({'patch-state': 'skip'}), 'skip', id='explicit_skip'
+            ),
+            pytest.param(
+                _ps_target(
+                    {
+                        'patch-state': 'done',
+                        'trailers': ['NACKed-by: Test Reviewer <reviewer@example.com>'],
+                    }
+                ),
+                'done',
+                id='explicit_done_beats_nack',
+            ),
+            pytest.param(
+                _ps_target(
+                    {
+                        'patch-state': 'draft',
+                        'trailers': [
+                            'Reviewed-by: Test Reviewer <reviewer@example.com>'
+                        ],
+                    }
+                ),
+                'draft',
+                id='explicit_draft_beats_trailer',
+            ),
+            # Approval trailers I sent to the list before tracking.
+            pytest.param(
                 {
-                    'fromemail': self._EMAIL,
-                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
-                }
-            ]
-        }
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
-
-    def test_thread_acked_by_from_me(self) -> None:
-        """An Acked-by I sent to the list is detected too."""
-        target = {
-            'followups': [
+                    'followups': [
+                        {
+                            'fromemail': _PS_EMAIL,
+                            'trailers': [
+                                'Reviewed-by: Test Reviewer <reviewer@example.com>'
+                            ],
+                        }
+                    ]
+                },
+                'done',
+                id='thread_reviewed_by_from_me',
+            ),
+            pytest.param(
                 {
-                    'fromemail': 'Reviewer@Example.COM',  # case-insensitive match
-                    'trailers': ['Acked-by: Test Reviewer <reviewer@example.com>'],
-                }
-            ]
-        }
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
-
-    def test_thread_approval_from_other_ignored(self) -> None:
-        """An approval from someone else does not mark the patch done."""
-        target = {
-            'followups': [
+                    'followups': [
+                        {
+                            'fromemail': 'Reviewer@Example.COM',  # case-insensitive
+                            'trailers': [
+                                'Acked-by: Test Reviewer <reviewer@example.com>'
+                            ],
+                        }
+                    ]
+                },
+                'done',
+                id='thread_acked_by_from_me',
+            ),
+            pytest.param(
                 {
-                    'fromemail': 'somebody@else.example.com',
-                    'trailers': ['Reviewed-by: Some Body <somebody@else.example.com>'],
-                }
-            ]
-        }
-        assert b4.review._get_patch_state(target, self._USERCFG) == ''
-
-    def test_thread_nack_from_me_vetoes(self) -> None:
-        """My own NACK in the thread vetoes auto-done (stays neutral)."""
-        target = {
-            'followups': [
+                    'followups': [
+                        {
+                            'fromemail': 'somebody@else.example.com',
+                            'trailers': [
+                                'Reviewed-by: Some Body <somebody@else.example.com>'
+                            ],
+                        }
+                    ]
+                },
+                '',
+                id='thread_approval_from_other_ignored',
+            ),
+            pytest.param(
                 {
-                    'fromemail': self._EMAIL,
-                    'trailers': [
-                        'Acked-by: Test Reviewer <reviewer@example.com>',
-                        'NACKed-by: Test Reviewer <reviewer@example.com>',
+                    'followups': [
+                        {
+                            'fromemail': _PS_EMAIL,
+                            'trailers': [
+                                'Acked-by: Test Reviewer <reviewer@example.com>',
+                                'NACKed-by: Test Reviewer <reviewer@example.com>',
+                            ],
+                        }
+                    ]
+                },
+                '',
+                id='thread_nack_from_me_vetoes',
+            ),
+            pytest.param(
+                {
+                    'reviews': {
+                        _PS_EMAIL: {'name': 'Test Reviewer', 'patch-state': 'skip'}
+                    },
+                    'followups': [
+                        {
+                            'fromemail': _PS_EMAIL,
+                            'trailers': [
+                                'Reviewed-by: Test Reviewer <reviewer@example.com>'
+                            ],
+                        }
                     ],
-                }
-            ]
-        }
-        assert b4.review._get_patch_state(target, self._USERCFG) == ''
-
-    def test_manual_skip_beats_thread_approval(self) -> None:
-        """A manual skip supersedes an auto-detected thread approval."""
-        target = {
-            'reviews': {self._EMAIL: {'name': 'Test Reviewer', 'patch-state': 'skip'}},
-            'followups': [
+                },
+                'skip',
+                id='manual_skip_beats_thread_approval',
+            ),
+            pytest.param(
                 {
-                    'fromemail': self._EMAIL,
-                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
-                }
-            ],
-        }
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'skip'
-
-    def test_draft_comment_beats_thread_approval(self) -> None:
-        """An in-progress inline comment supersedes auto-detected thread approval."""
-        target = {
-            'reviews': {
-                self._EMAIL: {
-                    'name': 'Test Reviewer',
-                    'comments': [{'path': 'a.c', 'line': 1, 'text': 'wait'}],
-                }
-            },
-            'followups': [
+                    'reviews': {
+                        _PS_EMAIL: {
+                            'name': 'Test Reviewer',
+                            'comments': [{'path': 'a.c', 'line': 1, 'text': 'wait'}],
+                        }
+                    },
+                    'followups': [
+                        {
+                            'fromemail': _PS_EMAIL,
+                            'trailers': [
+                                'Reviewed-by: Test Reviewer <reviewer@example.com>'
+                            ],
+                        }
+                    ],
+                },
+                'draft',
+                id='draft_comment_beats_thread_approval',
+            ),
+            pytest.param(
                 {
-                    'fromemail': self._EMAIL,
-                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
-                }
-            ],
-        }
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
+                    'reviews': {
+                        'other@example.com': {
+                            'name': 'Other',
+                            'comments': [{'path': 'a.c', 'line': 1, 'text': 'nit'}],
+                        }
+                    },
+                    'followups': [
+                        {
+                            'fromemail': _PS_EMAIL,
+                            'trailers': [
+                                'Reviewed-by: Test Reviewer <reviewer@example.com>'
+                            ],
+                        }
+                    ],
+                },
+                'done',
+                id='thread_approval_beats_external',
+            ),
+        ],
+    )
+    def test_get_patch_state(self, target: Dict[str, Any], expected: str) -> None:
+        """_get_patch_state() derives the state from review data and followups.
 
-    def test_thread_approval_beats_external(self) -> None:
-        """My prior list approval shows 'done', not 'external', when others commented."""
-        target = {
-            'reviews': {
-                'other@example.com': {
-                    'name': 'Other',
-                    'comments': [{'path': 'a.c', 'line': 1, 'text': 'nit'}],
-                }
-            },
-            'followups': [
-                {
-                    'fromemail': self._EMAIL,
-                    'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
-                }
-            ],
-        }
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
+        Stored human choices (explicit patch-state, in-progress comments)
+        outrank auto-detected trailers; a NACK needs an explanation (draft)
+        and my own thread NACK vetoes auto-done; approvals from others are
+        ignored.
+        """
+        assert b4.review._get_patch_state(target, self._USERCFG) == expected
 
     def test_set_and_clear(self) -> None:
         """_set_patch_state done then clear → state '' and entry cleaned up."""
@@ -1962,16 +1918,6 @@ class TestPatchState:
         }
         assert b4.review._get_patch_state(target, self._USERCFG) == 'done'
         assert b4.review._toggle_patch_done(target, self._USERCFG) == 'draft'
-        assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
-
-    def test_explicit_draft_beats_trailer(self) -> None:
-        """A stored patch-state=draft overrides a Reviewed-by trailer."""
-        target = self._make_target(
-            {
-                'patch-state': 'draft',
-                'trailers': ['Reviewed-by: Test Reviewer <reviewer@example.com>'],
-            }
-        )
         assert b4.review._get_patch_state(target, self._USERCFG) == 'draft'
 
 
@@ -2075,14 +2021,6 @@ class TestBuildReplyFromComments:
         # Comment at 22: lines 21-22 (adjacent, no second skip)
         assert '> +line15' in lines
         assert '> +line22' in lines
-
-    def test_hunk_header_always_present(self) -> None:
-        """The @@ hunk header is always included even for a comment on line 20."""
-        lines = self._call([self._make_comment(20, 'end')])
-        assert any('@@ -0,0 +1,40 @@' in line for line in lines)
-        assert self._skip_markers(lines)
-        assert '> +line20' in lines
-        assert '> +line14' not in lines
 
     def test_no_duplicate_lines_between_comments(self) -> None:
         """Lines are never quoted twice when two comments share context."""
@@ -2228,52 +2166,53 @@ class TestGetExpiredSnoozedDatetime:
         )
         review_tracking.snooze_series(conn, change_id, snoozed_until)
 
-    def test_past_datetime_is_expired(self) -> None:
-        """A series snoozed until a past datetime shows up as expired."""
-        conn = review_tracking.init_db('snooze-past-dt')
-        past = (
-            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
-        ).isoformat()
-        self._make_snoozed_series(conn, 'past-dt-id', past)
-        expired = review_tracking.get_expired_snoozed(conn)
-        assert len(expired) == 1
-        assert expired[0]['change_id'] == 'past-dt-id'
-        conn.close()
-
-    def test_future_datetime_not_expired(self) -> None:
-        """A series snoozed until a future datetime does not show up."""
-        conn = review_tracking.init_db('snooze-future-dt')
-        future = (
-            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)
-        ).isoformat()
-        self._make_snoozed_series(conn, 'future-dt-id', future)
-        expired = review_tracking.get_expired_snoozed(conn)
-        assert len(expired) == 0
-        conn.close()
-
-    def test_past_date_only_is_expired(self) -> None:
-        """A legacy date-only value in the past still works."""
-        conn = review_tracking.init_db('snooze-past-date')
-        yesterday = (
-            datetime.datetime.now(datetime.timezone.utc).date()
-            - datetime.timedelta(days=1)
-        ).isoformat()
-        self._make_snoozed_series(conn, 'past-date-id', yesterday)
-        expired = review_tracking.get_expired_snoozed(conn)
-        assert len(expired) == 1
-        assert expired[0]['change_id'] == 'past-date-id'
-        conn.close()
-
-    def test_future_date_only_not_expired(self) -> None:
-        """A legacy date-only value in the future still works."""
-        conn = review_tracking.init_db('snooze-future-date')
-        tomorrow = (
-            datetime.datetime.now(datetime.timezone.utc).date()
-            + datetime.timedelta(days=2)
-        ).isoformat()
-        self._make_snoozed_series(conn, 'future-date-id', tomorrow)
-        expired = review_tracking.get_expired_snoozed(conn)
-        assert len(expired) == 0
+    @pytest.mark.parametrize(
+        'until_fn,expired',
+        [
+            pytest.param(
+                lambda: (
+                    datetime.datetime.now(datetime.timezone.utc)
+                    - datetime.timedelta(minutes=5)
+                ).isoformat(),
+                1,
+                id='past_datetime_is_expired',
+            ),
+            pytest.param(
+                lambda: (
+                    datetime.datetime.now(datetime.timezone.utc)
+                    + datetime.timedelta(hours=2)
+                ).isoformat(),
+                0,
+                id='future_datetime_not_expired',
+            ),
+            # Legacy date-only values still work.
+            pytest.param(
+                lambda: (
+                    datetime.datetime.now(datetime.timezone.utc).date()
+                    - datetime.timedelta(days=1)
+                ).isoformat(),
+                1,
+                id='past_date_only_is_expired',
+            ),
+            pytest.param(
+                lambda: (
+                    datetime.datetime.now(datetime.timezone.utc).date()
+                    + datetime.timedelta(days=2)
+                ).isoformat(),
+                0,
+                id='future_date_only_not_expired',
+            ),
+            pytest.param(lambda: 'tag:v6.15-rc3', 0, id='tag_snoozed_not_in_expired'),
+        ],
+    )
+    def test_expiry(self, until_fn: Callable[[], str], expired: int) -> None:
+        """Only past time-based snoozes expire; tag-based ones never do."""
+        conn = review_tracking.init_db('snooze-expiry')
+        self._make_snoozed_series(conn, 'snooze-id', until_fn())
+        result = review_tracking.get_expired_snoozed(conn)
+        assert len(result) == expired
+        if expired:
+            assert result[0]['change_id'] == 'snooze-id'
         conn.close()
 
     def test_mixed_date_and_datetime(self) -> None:
@@ -2296,14 +2235,6 @@ class TestGetExpiredSnoozedDatetime:
         expired = review_tracking.get_expired_snoozed(conn)
         expired_ids = {e['change_id'] for e in expired}
         assert expired_ids == {'expired-dt', 'expired-date'}
-        conn.close()
-
-    def test_tag_snoozed_not_in_expired(self) -> None:
-        """Tag-based snoozed entries don't appear in time-based expiry results."""
-        conn = review_tracking.init_db('snooze-tag-not-expired')
-        self._make_snoozed_series(conn, 'tag-id', 'tag:v6.15-rc3')
-        expired = review_tracking.get_expired_snoozed(conn)
-        assert len(expired) == 0
         conn.close()
 
     def test_get_tag_snoozed(self) -> None:
@@ -2355,34 +2286,25 @@ class TestAttestationDb:
         assert row[0] == 'pending'
         conn.close()
 
-    def test_update_attestation_stores_value(self) -> None:
-        """update_attestation() writes the value to the DB."""
+    @pytest.mark.parametrize(
+        'value',
+        [
+            pytest.param('signed:DKIM/kernel.org', id='stores_value'),
+            pytest.param(None, id='none_value_policy_off'),
+        ],
+    )
+    def test_update_attestation_stores(self, value: Optional[str]) -> None:
+        """update_attestation() writes a value, or None when policy is off."""
         ident = 'att-update'
         conn = review_tracking.init_db(ident)
         self._add_test_series(conn)
         conn.close()
-        review_tracking.update_attestation(
-            ident, 'att-test-id', 1, 'signed:DKIM/kernel.org'
-        )
+        review_tracking.update_attestation(ident, 'att-test-id', 1, value)
         conn = review_tracking.get_db(ident)
         row = conn.execute(
             "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
         ).fetchone()
-        assert row[0] == 'signed:DKIM/kernel.org'
-        conn.close()
-
-    def test_update_attestation_none_value(self) -> None:
-        """update_attestation() can store None (policy off)."""
-        ident = 'att-none'
-        conn = review_tracking.init_db(ident)
-        self._add_test_series(conn)
-        conn.close()
-        review_tracking.update_attestation(ident, 'att-test-id', 1, None)
-        conn = review_tracking.get_db(ident)
-        row = conn.execute(
-            "SELECT attestation FROM series WHERE change_id = 'att-test-id'"
-        ).fetchone()
-        assert row[0] is None
+        assert row[0] == value
         conn.close()
 
     def test_update_attestation_overwrite(self) -> None:
@@ -2447,8 +2369,6 @@ class TestAttestationDb:
 
     def test_schema_v4_migration_adds_attestation(self) -> None:
         """Migrating from schema v4 adds the attestation column."""
-        import sqlite3
-
         ident = 'att-migrate-v4'
         # Create a v4-style database manually
         db_path = review_tracking.get_db_path(ident)
@@ -2645,15 +2565,24 @@ class TestUpdateSeriesTrackingLocalSufficient:
             )
         return get_extra_series
 
-    def test_series_on_the_mirror_stays_local(self) -> None:
-        get_extra_series = self._run(liblore.Source.LOCAL)
+    @pytest.mark.parametrize(
+        'source,expected',
+        [
+            pytest.param(
+                liblore.Source.LOCAL, True, id='series_on_the_mirror_stays_local'
+            ),
+            pytest.param(
+                liblore.Source.UPSTREAM,
+                False,
+                id='series_fetched_from_upstream_may_ask_upstream_again',
+            ),
+        ],
+    )
+    def test_local_sufficient(self, source: liblore.Source, expected: bool) -> None:
+        """Only a mirror-sourced series is flagged local_sufficient."""
+        get_extra_series = self._run(source)
 
-        assert get_extra_series.call_args.kwargs['local_sufficient'] is True
-
-    def test_series_fetched_from_upstream_may_ask_upstream_again(self) -> None:
-        get_extra_series = self._run(liblore.Source.UPSTREAM)
-
-        assert get_extra_series.call_args.kwargs['local_sufficient'] is False
+        assert get_extra_series.call_args.kwargs['local_sufficient'] is expected
 
 
 # ---------------------------------------------------------------------------
@@ -2755,30 +2684,26 @@ class TestCmdTrackCancellation:
             identifier='test-id',
         )
 
-    def test_operation_cancelled_exits_130(self, tmp_path: pathlib.Path) -> None:
-        """OperationCancelledError from retrieve_messages causes sys.exit(130)."""
-        cmdargs = self._make_cmdargs()
-        with (
-            mock.patch('b4.review.tracking.resolve_identifier', return_value='test-id'),
-            mock.patch('b4.review.tracking.db_exists', return_value=True),
-            mock.patch(
-                'b4.retrieve_messages',
-                side_effect=liblore.OperationCancelledError('cancelled'),
+    @pytest.mark.parametrize(
+        'exc',
+        [
+            pytest.param(
+                liblore.OperationCancelledError('cancelled'),
+                id='operation_cancelled',
             ),
-            mock.patch('b4.git_get_toplevel', return_value=str(tmp_path)),
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                review_tracking.cmd_track(cmdargs)
-
-        assert exc_info.value.code == 130
-
-    def test_keyboard_interrupt_exits_130(self, tmp_path: pathlib.Path) -> None:
-        """KeyboardInterrupt from retrieve_messages causes sys.exit(130)."""
+            pytest.param(KeyboardInterrupt(), id='keyboard_interrupt'),
+        ],
+    )
+    def test_interrupt_exits_130(
+        self, tmp_path: pathlib.Path, exc: BaseException
+    ) -> None:
+        """OperationCancelledError or KeyboardInterrupt from retrieve_messages
+        causes sys.exit(130)."""
         cmdargs = self._make_cmdargs()
         with (
             mock.patch('b4.review.tracking.resolve_identifier', return_value='test-id'),
             mock.patch('b4.review.tracking.db_exists', return_value=True),
-            mock.patch('b4.retrieve_messages', side_effect=KeyboardInterrupt()),
+            mock.patch('b4.retrieve_messages', side_effect=exc),
             mock.patch('b4.git_get_toplevel', return_value=str(tmp_path)),
         ):
             with pytest.raises(SystemExit) as exc_info:
@@ -2790,8 +2715,7 @@ class TestCmdTrackCancellation:
 # ---------------------------------------------------------------------------
 # Manual revision linking (feature/review-manual-revision-link)
 #
-# Red spec — written test-first, before the implementation exists.  These
-# pin down the schema-v9 groundwork (per-revision fingerprint + source
+# These pin down the schema-v9 groundwork (per-revision fingerprint + source
 # provenance) and the precedence rule that a manual link must win over, and
 # never be downgraded by, heuristic auto-discovery.  See plan.otl v0.16
 # "Manual revision linking", git-bug 47d5a4c.
@@ -2917,33 +2841,31 @@ class TestRevisionSourceProvenance:
         conn.close()
         assert revs[0]['source'] == 'heuristic'
 
-    def test_manual_link_upgrades_heuristic(
-        self, tmp_path: pytest.TempPathFactory
+    @pytest.mark.parametrize(
+        'first,second',
+        [
+            # A manual link over a heuristic row promotes the source to manual.
+            pytest.param('heuristic', 'manual', id='manual_upgrades_heuristic'),
+            # A later heuristic pass must not clobber a manual link.
+            pytest.param(
+                'manual', 'heuristic', id='heuristic_does_not_downgrade_manual'
+            ),
+        ],
+    )
+    def test_manual_source_wins(
+        self, tmp_path: pytest.TempPathFactory, first: str, second: str
     ) -> None:
-        """A manual link over a heuristic row promotes the source to manual."""
-        conn = review_tracking.init_db('mrl-upgrade-test')
-        review_tracking.add_revision(conn, 'change-abc', 3, 'v3@example.com')
+        """Re-adding a revision never lets a heuristic source beat a manual one."""
+        conn = review_tracking.init_db('mrl-precedence-test')
         review_tracking.add_revision(
-            conn, 'change-abc', 3, 'v3@example.com', source='manual'
+            conn, 'change-abc', 3, 'v3@example.com', source=first
+        )
+        review_tracking.add_revision(
+            conn, 'change-abc', 3, 'v3@example.com', source=second
         )
         revs = review_tracking.get_revisions(conn, 'change-abc')
         conn.close()
         assert len(revs) == 1
-        assert revs[0]['source'] == 'manual'
-
-    def test_heuristic_does_not_downgrade_manual(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """A later heuristic pass must not clobber a manual link."""
-        conn = review_tracking.init_db('mrl-nodowngrade-test')
-        review_tracking.add_revision(
-            conn, 'change-abc', 3, 'v3@example.com', source='manual'
-        )
-        review_tracking.add_revision(
-            conn, 'change-abc', 3, 'v3@example.com', source='heuristic'
-        )
-        revs = review_tracking.get_revisions(conn, 'change-abc')
-        conn.close()
         assert revs[0]['source'] == 'manual'
 
     def test_add_revision_backfills_missing_fingerprint(
@@ -3126,20 +3048,6 @@ class TestFindExistingChangeId:
 # ---------------------------------------------------------------------------
 
 
-def _insert_patches(
-    conn: sqlite3.Connection, change_id: str, revision: int, msgids: list[str]
-) -> None:
-    """Directly seed series_patches rows for test setup."""
-    for pos, mid in enumerate(msgids, start=1):
-        conn.execute(
-            'INSERT INTO series_patches'
-            ' (change_id, revision, position, message_id, subject)'
-            ' VALUES (?, ?, ?, ?, ?)',
-            (change_id, revision, pos, mid, f'[PATCH {pos}] thing'),
-        )
-    conn.commit()
-
-
 def _seed_stray_series(
     conn: sqlite3.Connection, change_id: str, revision: int, fingerprint: str
 ) -> None:
@@ -3250,7 +3158,7 @@ class TestAbsorbSeriesAsRevision:
 
 # ---------------------------------------------------------------------------
 # Tier 4: fingerprint semantics guard.  These pin the LoreSeries.fingerprint
-# and __eq__ contracts the absorption logic and the future consumer rely on.
+# and __eq__ contracts the absorption logic and its consumers rely on.
 # They pass against current behaviour; their job is to fail loudly if a
 # refactor ever changes it.
 # ---------------------------------------------------------------------------
@@ -3383,39 +3291,33 @@ class TestRecordLinkedRevision:
         assert result['status'] == 'linked'
         assert [r['revision'] for r in revs] == [1, 3]
 
-    def test_link_collision_blocks_without_force(
-        self, tmp_path: pytest.TempPathFactory
+    @pytest.mark.parametrize(
+        'force,status,source',
+        [
+            pytest.param(False, 'collision', 'heuristic', id='blocks_without_force'),
+            pytest.param(True, 'linked', 'manual', id='force_overrides'),
+        ],
+    )
+    def test_link_collision(
+        self, tmp_path: pytest.TempPathFactory, force: bool, status: str, source: str
     ) -> None:
+        """A colliding revision is left untouched unless force is given."""
         conn = review_tracking.init_db('mrl-link-collide-test')
         _seed_target(conn, 'series-A', 1)
         review_tracking.add_revision(conn, 'series-A', 2, 'pre-v2@example.com')
         lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
 
-        result = review_tracking.record_linked_revision(conn, 'series-A', lser)
-        revs = review_tracking.get_revisions(conn, 'series-A')
-        conn.close()
-        assert result['status'] == 'collision'
-        # Existing v2 untouched.
-        rev2 = next(r for r in revs if r['revision'] == 2)
-        assert rev2['message_id'] == 'pre-v2@example.com'
-        assert rev2['source'] == 'heuristic'
-
-    def test_link_collision_force_overrides(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        conn = review_tracking.init_db('mrl-link-force-test')
-        _seed_target(conn, 'series-A', 1)
-        review_tracking.add_revision(conn, 'series-A', 2, 'pre-v2@example.com')
-        lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
-
         result = review_tracking.record_linked_revision(
-            conn, 'series-A', lser, force=True
+            conn, 'series-A', lser, force=force
         )
         revs = review_tracking.get_revisions(conn, 'series-A')
         conn.close()
-        assert result['status'] == 'linked'
+        assert result['status'] == status
         rev2 = next(r for r in revs if r['revision'] == 2)
-        assert rev2['source'] == 'manual'
+        if not force:
+            # Existing v2 untouched.
+            assert rev2['message_id'] == 'pre-v2@example.com'
+        assert rev2['source'] == source
 
     def test_link_promotes_waiting_series(
         self, tmp_path: pytest.TempPathFactory
@@ -3572,10 +3474,10 @@ class TestFetchSeriesForLink:
 # ---------------------------------------------------------------------------
 # Rethread <-> version-upgrade composition (feature/rethread-upgrade-compose)
 #
-# Red spec — written test-first.  A series tracked at vN and rethreaded at
-# vN+1 must reassemble correctly on upgrade.  That needs per-revision rethread
-# state (schema v10), patch storage on the upgrade-link recording path, and a
-# retrieval seam that honours the per-revision flag.  None of this exists yet.
+# A series tracked at vN and rethreaded at vN+1 reassembles correctly on
+# upgrade.  That relies on per-revision rethread state (schema v10), patch
+# storage on the upgrade-link recording path, and a retrieval seam that
+# honours the per-revision flag.
 # ---------------------------------------------------------------------------
 
 
@@ -3725,32 +3627,35 @@ class TestAddRevisionRethreadFlag:
 class TestRecordDiscoveredRethreaded:
     """Layer 2: the upgrade-link recording path stores patches + flag."""
 
-    def test_rethreaded_rev_gets_patches_and_flag(
-        self, tmp_path: pytest.TempPathFactory
+    @pytest.mark.parametrize(
+        'rethreaded_revs,flag,n_patches',
+        [
+            pytest.param({6}, True, 3, id='rethreaded_rev_gets_patches_and_flag'),
+            pytest.param(None, False, 0, id='normal_rev_left_unflagged'),
+        ],
+    )
+    def test_record_discovered_rethreaded(
+        self,
+        rethreaded_revs: Optional[set[int]],
+        flag: bool,
+        n_patches: int,
     ) -> None:
         conn = review_tracking.init_db('rt-up-rdr')
         lmbx = _build_lmbx('thing', AUTHOR, 6, 3)
+        kwargs: Dict[str, Any] = {}
+        if rethreaded_revs is not None:
+            kwargs['rethreaded_revs'] = rethreaded_revs
         new = review_tracking._record_discovered_revisions(
-            conn, 'cid-X', lmbx, '', rethreaded_revs={6}
+            conn, 'cid-X', lmbx, '', **kwargs
         )
-        assert 6 in new
+        if flag:
+            assert 6 in new
         revs = review_tracking.get_revisions(conn, 'cid-X')
         r6 = next(r for r in revs if r['revision'] == 6)
         patches = review_tracking.get_series_patches(conn, 'cid-X', 6)
         conn.close()
-        assert r6['is_rethreaded']
-        assert len(patches) == 3
-
-    def test_normal_rev_left_unflagged(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = review_tracking.init_db('rt-up-rdr-normal')
-        lmbx = _build_lmbx('thing', AUTHOR, 6, 3)
-        review_tracking._record_discovered_revisions(conn, 'cid-Y', lmbx, '')
-        revs = review_tracking.get_revisions(conn, 'cid-Y')
-        r6 = next(r for r in revs if r['revision'] == 6)
-        patches = review_tracking.get_series_patches(conn, 'cid-Y', 6)
-        conn.close()
-        assert not r6['is_rethreaded']
-        assert patches == []
+        assert bool(r6['is_rethreaded']) is flag
+        assert len(patches) == n_patches
 
 
 # ---------------------------------------------------------------------------
@@ -3764,41 +3669,52 @@ class TestRecordDiscoveredRethreaded:
 class TestRecordDiscoveredCoverSubject:
     """_record_discovered_revisions prefers the parse-time cover letter."""
 
-    def test_cover_subject_and_msgid_preferred(
-        self, tmp_path: pytest.TempPathFactory
+    @pytest.mark.parametrize(
+        'cover,rethreaded,exp_subject,exp_msgid',
+        [
+            pytest.param(
+                True,
+                None,
+                '[PATCH v6 0/3] thing: do things better',
+                'thing-v6-p0@example.com',
+                id='cover_subject_and_msgid_preferred',
+            ),
+            pytest.param(
+                False,
+                None,
+                '[PATCH v6 1/3] thing: part 1',
+                'thing-v6-p1@example.com',
+                id='no_cover_falls_back_to_first_patch',
+            ),
+            # A rethreaded revision's msgid must stay a real, fetchable patch.
+            pytest.param(
+                True,
+                {6},
+                None,
+                'thing-v6-p1@example.com',
+                id='rethreaded_rev_skips_cover',
+            ),
+        ],
+    )
+    def test_cover_subject_and_msgid(
+        self,
+        cover: bool,
+        rethreaded: Optional[set[int]],
+        exp_subject: Optional[str],
+        exp_msgid: str,
     ) -> None:
+        """Identify a discovered revision by its cover, else its first patch."""
         conn = review_tracking.init_db('rdr-cover')
-        lmbx = _build_lmbx('thing', AUTHOR, 6, 3, cover=True)
-        review_tracking._record_discovered_revisions(conn, 'cid-C', lmbx, '')
+        lmbx = _build_lmbx('thing', AUTHOR, 6, 3, cover=cover)
+        review_tracking._record_discovered_revisions(
+            conn, 'cid-C', lmbx, '', rethreaded_revs=rethreaded
+        )
         revs = review_tracking.get_revisions(conn, 'cid-C')
         conn.close()
         r6 = next(r for r in revs if r['revision'] == 6)
-        assert r6['subject'] == '[PATCH v6 0/3] thing: do things better'
-        assert r6['message_id'] == 'thing-v6-p0@example.com'
-
-    def test_no_cover_falls_back_to_first_patch(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        conn = review_tracking.init_db('rdr-nocover')
-        lmbx = _build_lmbx('thing', AUTHOR, 6, 3)
-        review_tracking._record_discovered_revisions(conn, 'cid-N', lmbx, '')
-        revs = review_tracking.get_revisions(conn, 'cid-N')
-        conn.close()
-        r6 = next(r for r in revs if r['revision'] == 6)
-        assert r6['subject'] == '[PATCH v6 1/3] thing: part 1'
-        assert r6['message_id'] == 'thing-v6-p1@example.com'
-
-    def test_rethreaded_rev_skips_cover(self, tmp_path: pytest.TempPathFactory) -> None:
-        """A rethreaded revision's msgid must stay a real, fetchable patch."""
-        conn = review_tracking.init_db('rdr-rt-cover')
-        lmbx = _build_lmbx('thing', AUTHOR, 6, 3, cover=True)
-        review_tracking._record_discovered_revisions(
-            conn, 'cid-R', lmbx, '', rethreaded_revs={6}
-        )
-        revs = review_tracking.get_revisions(conn, 'cid-R')
-        conn.close()
-        r6 = next(r for r in revs if r['revision'] == 6)
-        assert r6['message_id'] == 'thing-v6-p1@example.com'
+        if exp_subject is not None:
+            assert r6['subject'] == exp_subject
+        assert r6['message_id'] == exp_msgid
 
     @pytest.mark.parametrize(
         'source, expected_subject',
@@ -4106,30 +4022,49 @@ class TestRealignSeriesSubject:
         conn.close()
         return str(row['subject'])
 
-    def test_realigns_first_patch_title(self, tmp_path: pytest.TempPathFactory) -> None:
-        self._seed('rsj-fix', '[PATCH v3 1/2] thing: part 1')
-        assert self._realign('rsj-fix', cover=True) is True
-        assert self._subject('rsj-fix') == '[PATCH v3 0/2] thing: do things better'
-
-    def test_prefix_only_difference_is_left_alone(
-        self, tmp_path: pytest.TempPathFactory
+    @pytest.mark.parametrize(
+        'seed_subject,cover,ret,final_subject',
+        [
+            pytest.param(
+                '[PATCH v3 1/2] thing: part 1',
+                True,
+                True,
+                '[PATCH v3 0/2] thing: do things better',
+                id='realigns_first_patch_title',
+            ),
+            pytest.param(
+                'thing: do things better',
+                True,
+                False,
+                'thing: do things better',
+                id='prefix_only_difference_is_left_alone',
+            ),
+            pytest.param(
+                'thing: do things better',
+                False,
+                False,
+                'thing: do things better',
+                id='coverless_thread_never_overwrites',
+            ),
+        ],
+    )
+    def test_realign_series_subject(
+        self,
+        seed_subject: str,
+        cover: bool,
+        ret: bool,
+        final_subject: str,
     ) -> None:
-        """The track and upgrade paths format the prefix differently."""
-        self._seed('rsj-pfx', 'thing: do things better')
-        assert self._realign('rsj-pfx', cover=True) is False
-        assert self._subject('rsj-pfx') == 'thing: do things better'
+        """Re-title only from a real cover letter, never from a first patch.
 
-    def test_coverless_thread_never_overwrites(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        """Without a cover there is nothing better than what is stored.
-
-        Re-titling from the first-patch fallback would corrupt every correctly
-        titled row whose cover letter is not in the fetched thread.
+        The track and upgrade paths format the prefix differently, so a
+        prefix-only difference is left alone. Re-titling from the first-patch
+        fallback would corrupt every correctly titled row whose cover letter
+        is not in the fetched thread.
         """
-        self._seed('rsj-nocover', 'thing: do things better')
-        assert self._realign('rsj-nocover', cover=False) is False
-        assert self._subject('rsj-nocover') == 'thing: do things better'
+        self._seed('rsj', seed_subject)
+        assert self._realign('rsj', cover=cover) is ret
+        assert self._subject('rsj') == final_subject
 
     def test_missing_series_row_is_a_noop(
         self, tmp_path: pytest.TempPathFactory
@@ -4328,10 +4263,9 @@ class TestRethreadFlagCarriedOnLink:
 # Cross-machine portability of the rethread/upgrade catalog
 # (feature/rethread-upgrade-portable)
 #
-# Red spec — the revisions catalog (incl. rethreaded patch lists) must travel
-# in the review branch tracking commit so another machine can rebuild it.
-# build_known_revisions/record_known_revisions and the rescan replay don't
-# exist yet.
+# The revisions catalog (incl. rethreaded patch lists) travels in the review
+# branch tracking commit so another machine can rebuild it, via
+# build_known_revisions/record_known_revisions and the rescan replay.
 # ---------------------------------------------------------------------------
 
 
@@ -4612,38 +4546,26 @@ class TestUpdateMessageCountSeenBump:
         assert self._get_counts(conn) == (3, 3)
         conn.close()
 
-    def test_bump_advances_seen(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = self._setup_series('bump-adv')
+    @pytest.mark.parametrize(
+        'second_n,bump,expected',
+        [
+            pytest.param(5, 1, (5, 4), id='bump_advances_seen'),
+            pytest.param(5, 0, (5, 3), id='no_bump_keeps_seen'),
+            pytest.param(4, 10, (4, 4), id='bump_clamped_to_count'),
+        ],
+    )
+    def test_seen_bump_after_growth(
+        self, second_n: int, bump: int, expected: Tuple[int, int]
+    ) -> None:
+        """Verify seen_bump advances, is skipped when absent, and is clamped."""
+        conn = self._setup_series('bump-grow')
         review_tracking.update_message_count_from_msgs(
             conn, 'bump-cid', 1, self._make_msgs(3)
         )
         review_tracking.update_message_count_from_msgs(
-            conn, 'bump-cid', 1, self._make_msgs(5), seen_bump=1
+            conn, 'bump-cid', 1, self._make_msgs(second_n), seen_bump=bump
         )
-        # 2 new messages, 1 of them already read: badge shows 1 unread
-        assert self._get_counts(conn) == (5, 4)
-        conn.close()
-
-    def test_no_bump_keeps_seen(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = self._setup_series('bump-none')
-        review_tracking.update_message_count_from_msgs(
-            conn, 'bump-cid', 1, self._make_msgs(3)
-        )
-        review_tracking.update_message_count_from_msgs(
-            conn, 'bump-cid', 1, self._make_msgs(5)
-        )
-        assert self._get_counts(conn) == (5, 3)
-        conn.close()
-
-    def test_bump_clamped_to_count(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = self._setup_series('bump-clamp')
-        review_tracking.update_message_count_from_msgs(
-            conn, 'bump-cid', 1, self._make_msgs(3)
-        )
-        review_tracking.update_message_count_from_msgs(
-            conn, 'bump-cid', 1, self._make_msgs(4), seen_bump=10
-        )
-        assert self._get_counts(conn) == (4, 4)
+        assert self._get_counts(conn) == expected
         conn.close()
 
     def test_unchanged_count_no_write(self, tmp_path: pytest.TempPathFactory) -> None:
@@ -4679,42 +4601,26 @@ class TestFindTrackedChangeId:
             conn, 'cid-forget', 2, ['p1-v2@example.com', 'p2-v2@example.com']
         )
 
-    def test_match_by_change_id(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = review_tracking.init_db('ftci-cid')
+    @pytest.mark.parametrize(
+        'query,expected',
+        [
+            pytest.param('cid-forget', 'cid-forget', id='by_change_id'),
+            pytest.param(
+                'primary-v2@example.com', 'cid-forget', id='by_series_message_id'
+            ),
+            pytest.param(
+                'linked-v3@example.com', 'cid-forget', id='by_revision_message_id'
+            ),
+            pytest.param('p2-v2@example.com', 'cid-forget', id='by_patch_message_id'),
+            pytest.param('nope@example.com', None, id='no_match'),
+            pytest.param('', None, id='empty_query'),
+        ],
+    )
+    def test_find_tracked_change_id(self, query: str, expected: Optional[str]) -> None:
+        """Verify change-id, series, revision and patch msgids all resolve."""
+        conn = review_tracking.init_db('ftci')
         self._seed(conn)
-        assert review_tracking.find_tracked_change_id(conn, 'cid-forget') == (
-            'cid-forget'
-        )
-        conn.close()
-
-    def test_match_by_series_message_id(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = review_tracking.init_db('ftci-series-mid')
-        self._seed(conn)
-        found = review_tracking.find_tracked_change_id(conn, 'primary-v2@example.com')
-        assert found == 'cid-forget'
-        conn.close()
-
-    def test_match_by_revision_message_id(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        conn = review_tracking.init_db('ftci-rev-mid')
-        self._seed(conn)
-        found = review_tracking.find_tracked_change_id(conn, 'linked-v3@example.com')
-        assert found == 'cid-forget'
-        conn.close()
-
-    def test_match_by_patch_message_id(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = review_tracking.init_db('ftci-patch-mid')
-        self._seed(conn)
-        found = review_tracking.find_tracked_change_id(conn, 'p2-v2@example.com')
-        assert found == 'cid-forget'
-        conn.close()
-
-    def test_no_match(self, tmp_path: pytest.TempPathFactory) -> None:
-        conn = review_tracking.init_db('ftci-miss')
-        self._seed(conn)
-        assert review_tracking.find_tracked_change_id(conn, 'nope@example.com') is None
-        assert review_tracking.find_tracked_change_id(conn, '') is None
+        assert review_tracking.find_tracked_change_id(conn, query) == expected
         conn.close()
 
 
