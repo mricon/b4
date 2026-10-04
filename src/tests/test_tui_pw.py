@@ -10,7 +10,7 @@ the Patchwork REST calls and lore retrieval are mocked.
 """
 
 import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest import mock
 
 import pytest
@@ -274,80 +274,71 @@ def _backlog_toasts(app: PwApp) -> List[Any]:
     return [n for n in app._notifications if n.title == 'Large Patchwork backlog']
 
 
+def _stub_pw_fetch(
+    monkeypatch: pytest.MonkeyPatch, total: int, window: Optional[int]
+) -> None:
+    """Make the Patchwork fetch return one series with the given backlog shape."""
+    monkeypatch.setattr(
+        b4.review,
+        'pw_fetch_series',
+        lambda *a, **k: PwFetchResult([_backlog_series()], total, window),
+    )
+    monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+
+
 class TestPwBacklogNotice:
     """When the fetch is windowed, the user gets a one-shot, self-dismissing
     notification (not a blocking modal)."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'total,window,project,substrs',
+        [
+            pytest.param(
+                28180, 30, 'linux-kselftest', ['28,180', '30 days'], id='windowed'
+            ),
+            pytest.param(42, None, 'proj', None, id='full-fetch-silent'),
+            # The project name is the one user-controlled field in the toast.
+            # It used to be neutralised with notify(markup=False), but that
+            # kwarg only exists in newer Textual and raised TypeError on the
+            # 2.x Debian ships (github #80). It is escaped instead, so markup
+            # in the project name must survive as literal text everywhere.
+            pytest.param(
+                28180,
+                30,
+                '[bold red]evil[/]',
+                [r'\[bold red]evil\[/]'],
+                id='project-markup-escaped',
+            ),
+        ],
+    )
     async def test_windowed_fetch_notifies(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        total: int,
+        window: Optional[int],
+        project: str,
+        substrs: Optional[List[str]],
     ) -> None:
-        monkeypatch.setattr(
-            b4.review,
-            'pw_fetch_series',
-            lambda *a, **k: PwFetchResult([_backlog_series()], 28180, 30),
-        )
-        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
-        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+        """A windowed fetch posts one warning toast carrying the count and
+        window; a full fetch posts nothing."""
+        _stub_pw_fetch(monkeypatch, total, window)
 
-        app = PwApp('fakekey', 'https://pw.example.org', 'linux-kselftest')
+        app = PwApp('fakekey', 'https://pw.example.org', project)
         async with app.run_test(size=(120, 30)) as pilot:
             await app.workers.wait_for_complete()
             await pilot.pause()
-            # A toast was posted (not a modal screen), carrying the count/window.
             toasts = _backlog_toasts(app)
+            if substrs is None:
+                assert toasts == []
+                return
             assert len(toasts) == 1
             assert toasts[0].severity == 'warning'
-            assert '28,180' in toasts[0].message
-            assert '30 days' in toasts[0].message
-            assert app._backlog_count == 28180
-            assert app._window_days == 30
-
-    @pytest.mark.asyncio
-    async def test_full_fetch_does_not_notify(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            b4.review,
-            'pw_fetch_series',
-            lambda *a, **k: PwFetchResult([_backlog_series()], 42, None),
-        )
-        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
-        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
-
-        app = PwApp('fakekey', 'https://pw.example.org', 'proj')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            assert _backlog_toasts(app) == []
-
-    @pytest.mark.asyncio
-    async def test_project_name_markup_is_escaped(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The project name is the one user-controlled field in the toast.
-
-        It used to be neutralised with notify(markup=False), but that kwarg
-        only exists in newer Textual and raised TypeError on the 2.x Debian
-        ships (github #80). It is escaped instead, so markup in the project
-        name must survive as literal text on every Textual version.
-        """
-        monkeypatch.setattr(
-            b4.review,
-            'pw_fetch_series',
-            lambda *a, **k: PwFetchResult([_backlog_series()], 28180, 30),
-        )
-        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
-        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
-
-        app = PwApp('fakekey', 'https://pw.example.org', '[bold red]evil[/]')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            toasts = _backlog_toasts(app)
-            assert len(toasts) == 1
-            # Escaped, so Rich renders the brackets rather than acting on them.
-            assert r'\[bold red]evil\[/]' in toasts[0].message
+            for substr in substrs:
+                assert substr in toasts[0].message
+            assert app._backlog_count == total
+            assert app._window_days == window
 
     @pytest.mark.asyncio
     async def test_notifies_once_across_refresh(
@@ -412,17 +403,31 @@ class TestPwLoadingProgress:
             assert callable(captured['cb'])
 
     @pytest.mark.asyncio
-    async def test_multi_page_progress_drives_determinate_bar(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        'fetched,total,determinate,status_substr',
+        [
+            pytest.param(
+                b4.review.PW_PER_PAGE,
+                b4.review.PW_PER_PAGE * 3,
+                True,
+                'of',
+                id='multi-page-determinate',
+            ),
+            pytest.param(0, 204, False, 'Loading 204 patches', id='single-page-pulses'),
+        ],
+    )
+    async def test_progress_bar_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fetched: int,
+        total: int,
+        determinate: bool,
+        status_substr: str,
     ) -> None:
-        """When the result spans several pages, the bar tracks total/progress."""
-        monkeypatch.setattr(
-            b4.review,
-            'pw_fetch_series',
-            lambda *a, **k: PwFetchResult([_backlog_series()], 1, None),
-        )
-        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
-        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+        """A multi-page result drives a determinate bar; a single page can't
+        advance one, so the bar keeps pulsing while the status shows the
+        count."""
+        _stub_pw_fetch(monkeypatch, 1, None)
 
         app = PwApp('fakekey', 'https://pw.example.org', 'proj')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -431,44 +436,16 @@ class TestPwLoadingProgress:
             # The initial dialog is gone once the list is populated; mount a
             # fresh loading panel to exercise the handler deterministically.
             await app.mount(app._make_loading())
-            total = b4.review.PW_PER_PAGE * 3
-            app.on_pw_fetch_progress(
-                PwFetchProgress(fetched=b4.review.PW_PER_PAGE, total=total)
-            )
+            app.on_pw_fetch_progress(PwFetchProgress(fetched=fetched, total=total))
             await pilot.pause()
             bar = app.query_one('#pw-loading-bar', ProgressBar)
-            assert bar.total == total
-            assert bar.progress == b4.review.PW_PER_PAGE
+            if determinate:
+                assert bar.total == total
+                assert bar.progress == fetched
+            else:
+                assert bar.total is None
             status = app.query_one('#pw-loading-status', Label)
-            assert 'of' in static_text(status)
-
-    @pytest.mark.asyncio
-    async def test_single_page_progress_stays_indeterminate(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A single page of patches can't advance a determinate bar, so it
-        keeps pulsing while the status line shows the count."""
-        monkeypatch.setattr(
-            b4.review,
-            'pw_fetch_series',
-            lambda *a, **k: PwFetchResult([_backlog_series()], 1, None),
-        )
-        monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
-        monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
-
-        app = PwApp('fakekey', 'https://pw.example.org', 'proj')
-        async with app.run_test(size=(120, 30)) as pilot:
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            await app.mount(app._make_loading())
-            app.on_pw_fetch_progress(PwFetchProgress(fetched=0, total=204))
-            await pilot.pause()
-            # No total set -> the bar is still in its indeterminate (pulsing)
-            # state, not stuck at 0% of a known total.
-            bar = app.query_one('#pw-loading-bar', ProgressBar)
-            assert bar.total is None
-            status = app.query_one('#pw-loading-status', Label)
-            assert 'Loading 204 patches' in static_text(status)
+            assert status_substr in static_text(status)
 
 
 # ---------------------------------------------------------------------------

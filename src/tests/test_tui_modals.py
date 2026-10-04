@@ -134,7 +134,14 @@ class TestConfirmScreen:
     """Tests for the ConfirmScreen modal."""
 
     @pytest.mark.asyncio
-    async def test_y_confirms(self) -> None:
+    @pytest.mark.parametrize(
+        'key,expected',
+        [
+            pytest.param('y', True, id='y-confirms'),
+            pytest.param('escape', False, id='escape-cancels'),
+        ],
+    )
+    async def test_dismiss_keys(self, key: str, expected: bool) -> None:
         app = ModalTestApp()
         results: List[Optional[bool]] = []
 
@@ -146,29 +153,12 @@ class TestConfirmScreen:
             await pilot.pause()
             assert isinstance(app.screen, ConfirmScreen)
 
-            await pilot.press('y')
+            await pilot.press(key)
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmScreen)
             # https://github.com/python/mypy/issues/9457:
             # app.screen is stale-narrowed across await.
-            assert results == [True]  # type: ignore[unreachable]
-
-    @pytest.mark.asyncio
-    async def test_escape_cancels(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[bool]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                ConfirmScreen('Delete?', ['This is permanent.']),
-                results.append,
-            )
-            await pilot.pause()
-
-            await pilot.press('escape')
-            await pilot.pause()
-            assert not isinstance(app.screen, ConfirmScreen)
-            assert results == [False]
+            assert results == [expected]  # type: ignore[unreachable]
 
     @pytest.mark.asyncio
     async def test_subject_shown(self) -> None:
@@ -206,135 +196,55 @@ class TestTrailerScreen:
     """Tests for the TrailerScreen modal."""
 
     @pytest.mark.asyncio
-    async def test_cancel_returns_none(self) -> None:
+    @pytest.mark.parametrize(
+        'existing,keys,expected',
+        [
+            pytest.param([], ['escape'], None, id='escape-cancels'),
+            pytest.param([], ['q'], [], id='q-confirms-nothing'),
+            pytest.param(
+                ['Reviewed-by: Alice <a@b.com>'],
+                ['q'],
+                ['Reviewed-by'],
+                id='existing-pretoggled',
+            ),
+            pytest.param(
+                ['Acked-by: Bob <b@c.com>'],
+                ['enter'],
+                ['Acked-by'],
+                id='enter-confirms',
+            ),
+            pytest.param([], ['space', 'space', 'q'], [], id='toggle-twice-deselects'),
+            pytest.param(
+                [],
+                ['j', 'j', 'space', 'q'],
+                ['Tested-by'],
+                id='jk-moves-without-toggling',
+            ),
+            pytest.param(
+                [],
+                ['space', 'j', 'space', 'q'],
+                ['Acked-by', 'Reviewed-by'],
+                id='space-toggles-highlighted',
+            ),
+        ],
+    )
+    async def test_selection(
+        self, existing: List[str], keys: List[str], expected: Optional[List[str]]
+    ) -> None:
+        """Space toggles, j/k move, q/enter confirm, escape cancels; trailers
+        already present start toggled on."""
         app = ModalTestApp()
         results: List[Optional[List[str]]] = []
 
         async with app.run_test() as pilot:
-            app.push_screen(TrailerScreen([]), results.append)
+            app.push_screen(TrailerScreen(existing), results.append)
             await pilot.pause()
             assert isinstance(app.screen, TrailerScreen)
 
-            await pilot.press('escape')
+            for key in keys:
+                await pilot.press(key)
             await pilot.pause()
-            assert results == [None]
-
-    @pytest.mark.asyncio
-    async def test_confirm_empty_returns_empty_list(self) -> None:
-        """With nothing toggled, q/confirm returns an empty list."""
-        app = ModalTestApp()
-        results: List[Optional[List[str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(TrailerScreen([]), results.append)
-            await pilot.pause()
-
-            await pilot.press('q')
-            await pilot.pause()
-            assert len(results) == 1
-            assert results[0] == []
-
-    @pytest.mark.asyncio
-    async def test_existing_trailers_pretoggled(self) -> None:
-        """Trailers already present should be pre-selected."""
-        app = ModalTestApp()
-        results: List[Optional[List[str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                TrailerScreen(['Reviewed-by: Alice <a@b.com>']),
-                results.append,
-            )
-            await pilot.pause()
-
-            # Confirm immediately — should have Reviewed-by selected
-            await pilot.press('q')
-            await pilot.pause()
-            assert results[0] == ['Reviewed-by']
-
-    @pytest.mark.asyncio
-    async def test_toggle_and_confirm(self) -> None:
-        """Space toggles the highlighted item; q confirms."""
-        app = ModalTestApp()
-        results: List[Optional[List[str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(TrailerScreen([]), results.append)
-            await pilot.pause()
-
-            # First item is Acked-by (index 0), toggle it
-            await pilot.press('space')
-            await pilot.pause()
-            # Move down to Reviewed-by, toggle it
-            await pilot.press('j')
-            await pilot.press('space')
-            await pilot.pause()
-            # Confirm
-            await pilot.press('q')
-            await pilot.pause()
-
-            assert len(results) == 1
-            assert results[0] is not None
-            assert 'Acked-by' in results[0]
-            assert 'Reviewed-by' in results[0]
-            assert 'Tested-by' not in results[0]
-            assert 'NACKed-by' not in results[0]
-
-    @pytest.mark.asyncio
-    async def test_toggle_twice_deselects(self) -> None:
-        """Toggling the same item twice should deselect it."""
-        app = ModalTestApp()
-        results: List[Optional[List[str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(TrailerScreen([]), results.append)
-            await pilot.pause()
-
-            await pilot.press('space')  # select Acked-by
-            await pilot.press('space')  # deselect Acked-by
-            await pilot.pause()
-
-            await pilot.press('q')
-            await pilot.pause()
-            assert results[0] == []
-
-    @pytest.mark.asyncio
-    async def test_jk_navigation(self) -> None:
-        """j/k should move the highlight without toggling."""
-        app = ModalTestApp()
-        results: List[Optional[List[str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(TrailerScreen([]), results.append)
-            await pilot.pause()
-
-            # Navigate down to Tested-by (index 2) and toggle only it
-            await pilot.press('j')
-            await pilot.press('j')
-            await pilot.press('space')
-            await pilot.pause()
-
-            await pilot.press('q')
-            await pilot.pause()
-            assert results[0] == ['Tested-by']
-
-    @pytest.mark.asyncio
-    async def test_enter_confirms(self) -> None:
-        """Enter on the ListView should also confirm (via on_list_view_selected)."""
-        app = ModalTestApp()
-        results: List[Optional[List[str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                TrailerScreen(['Acked-by: Bob <b@c.com>']),
-                results.append,
-            )
-            await pilot.pause()
-
-            await pilot.press('enter')
-            await pilot.pause()
-            assert len(results) == 1
-            assert results[0] == ['Acked-by']
+            assert results == [expected]
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +392,7 @@ class TestSnoozeScreen:
 
     @pytest.mark.asyncio
     async def test_duration_snooze(self) -> None:
-        """Entering a duration and confirming should return a datetime."""
+        """Entering a duration and confirming returns an ISO datetime in until."""
         app = ModalTestApp()
         results: List[Optional[Dict[str, str]]] = []
 
@@ -525,8 +435,18 @@ class TestSnoozeScreen:
             assert results[0]['source'] == 'tag'
 
     @pytest.mark.asyncio
-    async def test_empty_fields_shows_error(self) -> None:
-        """Confirming with no fields filled should show an error, not dismiss."""
+    @pytest.mark.parametrize(
+        'duration,tag,error',
+        [
+            pytest.param('', '', 'please enter', id='nothing-filled'),
+            pytest.param('1d', 'v6.15', 'only one', id='two-fields'),
+            pytest.param('banana', '', 'invalid duration', id='bad-duration'),
+        ],
+    )
+    async def test_bad_input_shows_error(
+        self, duration: str, tag: str, error: str
+    ) -> None:
+        """Bad input shows an error and keeps the dialog open."""
         app = ModalTestApp()
         results: List[Optional[Dict[str, str]]] = []
 
@@ -534,52 +454,15 @@ class TestSnoozeScreen:
             app.push_screen(SnoozeScreen(), results.append)
             await pilot.pause()
 
-            await pilot.press('ctrl+y')
-            await pilot.pause()
-            # Should still be on the snooze screen (not dismissed)
-            assert isinstance(app.screen, SnoozeScreen)
-            assert len(results) == 0
-
-            error = app.screen.query_one('#snooze-error')
-            error_text = static_text(error).lower()
-            assert 'enter' in error_text or 'please' in error_text
-
-    @pytest.mark.asyncio
-    async def test_multiple_fields_shows_error(self) -> None:
-        """Filling more than one field should show an error."""
-        app = ModalTestApp()
-        results: List[Optional[Dict[str, str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(SnoozeScreen(), results.append)
-            await pilot.pause()
-
-            app.screen.query_one('#snooze-duration', Input).value = '1d'
-            app.screen.query_one('#snooze-tag', Input).value = 'v6.15'
+            app.screen.query_one('#snooze-duration', Input).value = duration
+            app.screen.query_one('#snooze-tag', Input).value = tag
 
             await pilot.press('ctrl+y')
             await pilot.pause()
             assert isinstance(app.screen, SnoozeScreen)
-            assert len(results) == 0
-
-            error = app.screen.query_one('#snooze-error')
-            assert 'only one' in static_text(error).lower()
-
-    @pytest.mark.asyncio
-    async def test_invalid_duration_shows_error(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[Dict[str, str]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(SnoozeScreen(), results.append)
-            await pilot.pause()
-
-            app.screen.query_one('#snooze-duration', Input).value = 'banana'
-
-            await pilot.press('ctrl+y')
-            await pilot.pause()
-            assert isinstance(app.screen, SnoozeScreen)
-            assert len(results) == 0
+            assert results == []
+            error_text = static_text(app.screen.query_one('#snooze-error')).lower()
+            assert error in error_text, error_text
 
     @pytest.mark.asyncio
     async def test_prepopulate_last_source(self) -> None:
@@ -629,7 +512,14 @@ class TestSetStateScreen:
             assert results == [None]
 
     @pytest.mark.asyncio
-    async def test_select_state_with_enter(self) -> None:
+    @pytest.mark.parametrize(
+        'keys,expected',
+        [
+            pytest.param(['j', 'enter'], ('reviewing', False), id='j-enter-selects'),
+            pytest.param(['a', 'enter'], ('new', True), id='a-toggles-archive'),
+        ],
+    )
+    async def test_select(self, keys: List[str], expected: Tuple[str, bool]) -> None:
         app = ModalTestApp()
         results: List[Optional[Tuple[str, bool]]] = []
 
@@ -640,36 +530,10 @@ class TestSetStateScreen:
             )
             await pilot.pause()
 
-            # Navigate to 'reviewing' (one down from 'new')
-            await pilot.press('j')
-            await pilot.press('enter')
+            for key in keys:
+                await pilot.press(key)
             await pilot.pause()
-
-            assert len(results) == 1
-            assert results[0] is not None
-            assert results[0][0] == 'reviewing'
-            assert results[0][1] is False  # not archived
-
-    @pytest.mark.asyncio
-    async def test_archive_toggle(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[Tuple[str, bool]]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                SetStateScreen(self._states(), 'new'),
-                results.append,
-            )
-            await pilot.pause()
-
-            # Toggle archive, then confirm
-            await pilot.press('a')
-            await pilot.press('enter')
-            await pilot.pause()
-
-            assert len(results) == 1
-            assert results[0] is not None
-            assert results[0][1] is True  # archived
+            assert results == [expected]
 
     @pytest.mark.asyncio
     async def test_current_state_preselected(self) -> None:
@@ -707,7 +571,12 @@ class TestLimitScreen:
             assert results == [None]
 
     @pytest.mark.asyncio
-    async def test_enter_submits_value(self) -> None:
+    @pytest.mark.parametrize(
+        'value',
+        [pytest.param('netfilter', id='pattern'), pytest.param('', id='empty-clears')],
+    )
+    async def test_enter_submits_value(self, value: str) -> None:
+        """Enter returns the typed pattern; an empty one means clear the filter."""
         app = ModalTestApp()
         results: List[Optional[str]] = []
 
@@ -715,26 +584,11 @@ class TestLimitScreen:
             app.push_screen(LimitScreen(), results.append)
             await pilot.pause()
 
-            inp = app.screen.query_one('#limit-input', Input)
-            inp.value = 'netfilter'
+            app.screen.query_one('#limit-input', Input).value = value
 
             await pilot.press('enter')
             await pilot.pause()
-            assert results == ['netfilter']
-
-    @pytest.mark.asyncio
-    async def test_empty_enter_clears_filter(self) -> None:
-        """Submitting empty input should return empty string (clear filter)."""
-        app = ModalTestApp()
-        results: List[Optional[str]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(LimitScreen(), results.append)
-            await pilot.pause()
-
-            await pilot.press('enter')
-            await pilot.pause()
-            assert results == ['']
+            assert results == [value]
 
     @pytest.mark.asyncio
     async def test_current_pattern_prepopulated(self) -> None:
@@ -787,7 +641,16 @@ class TestActionScreen:
             assert results == [None]
 
     @pytest.mark.asyncio
-    async def test_enter_confirms_highlighted(self) -> None:
+    @pytest.mark.parametrize(
+        'keys,expected',
+        [
+            pytest.param(['enter'], 'review', id='enter-takes-first'),
+            pytest.param(['j', 'j', 'enter'], 'snooze', id='j-moves-highlight'),
+        ],
+    )
+    async def test_enter_confirms_highlighted(
+        self, keys: List[str], expected: str
+    ) -> None:
         app = ModalTestApp()
         results: List[Optional[str]] = []
 
@@ -795,25 +658,10 @@ class TestActionScreen:
             app.push_screen(ActionScreen(self._actions()), results.append)
             await pilot.pause()
 
-            # First item is 'review'
-            await pilot.press('enter')
+            for key in keys:
+                await pilot.press(key)
             await pilot.pause()
-            assert results == ['review']
-
-    @pytest.mark.asyncio
-    async def test_navigate_and_confirm(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[str]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(ActionScreen(self._actions()), results.append)
-            await pilot.pause()
-
-            await pilot.press('j')  # take
-            await pilot.press('j')  # snooze
-            await pilot.press('enter')
-            await pilot.pause()
-            assert results == ['snooze']
+            assert results == [expected]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -874,57 +722,35 @@ class TestUpdateRevisionScreen:
             assert results == [None]
 
     @pytest.mark.asyncio
-    async def test_select_first_revision(self) -> None:
+    @pytest.mark.parametrize(
+        'current,shown,keys,expected',
+        [
+            pytest.param(1, 3, ['enter'], 2, id='enter-takes-first'),
+            pytest.param(1, 3, ['j', 'j', 'enter'], 4, id='j-moves-highlight'),
+            pytest.param(3, 1, ['enter'], 4, id='older-revisions-filtered'),
+        ],
+    )
+    async def test_select(
+        self, current: int, shown: int, keys: List[str], expected: int
+    ) -> None:
+        """Only revisions newer than *current* are listed; enter picks the
+        highlighted one."""
         app = ModalTestApp()
         results: List[Optional[int]] = []
 
         async with app.run_test() as pilot:
             app.push_screen(
-                UpdateRevisionScreen(1, self._revisions()),
+                UpdateRevisionScreen(current, self._revisions()),
                 results.append,
             )
             await pilot.pause()
+            lv = app.screen.query_one('#update-rev-list', ListView)
+            assert len(lv.children) == shown
 
-            await pilot.press('enter')
+            for key in keys:
+                await pilot.press(key)
             await pilot.pause()
-            assert results == [2]
-
-    @pytest.mark.asyncio
-    async def test_navigate_and_select(self) -> None:
-        app = ModalTestApp()
-        results: List[Optional[int]] = []
-
-        async with app.run_test() as pilot:
-            app.push_screen(
-                UpdateRevisionScreen(1, self._revisions()),
-                results.append,
-            )
-            await pilot.pause()
-
-            await pilot.press('j')  # v3
-            await pilot.press('j')  # v4
-            await pilot.press('enter')
-            await pilot.pause()
-            assert results == [4]
-
-    @pytest.mark.asyncio
-    async def test_filters_older_revisions(self) -> None:
-        """Only revisions newer than current should appear."""
-        app = ModalTestApp()
-        results: List[Optional[int]] = []
-
-        async with app.run_test() as pilot:
-            # current_revision=3, so only v4 should appear
-            app.push_screen(
-                UpdateRevisionScreen(3, self._revisions()),
-                results.append,
-            )
-            await pilot.pause()
-
-            # Only one item in the list — entering should select v4
-            await pilot.press('enter')
-            await pilot.pause()
-            assert results == [4]
+            assert results == [expected]
 
 
 # ---------------------------------------------------------------------------

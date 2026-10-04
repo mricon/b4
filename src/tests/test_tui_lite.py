@@ -405,17 +405,12 @@ class TestHeaderToggle:
         return screen.query_one('#msg-viewer', RichLog).lines[0].text
 
     @pytest.mark.asyncio
-    async def test_no_headers_by_default(self) -> None:
+    async def test_h_toggles_brief_headers(self) -> None:
+        """No headers by default; h shows the brief set, h again hides it."""
         app = _LiteHost(_make_tree())
         async with app.run_test(size=(120, 30)) as pilot:
             screen = await _open(app, pilot)
             assert self._first_line(screen) == 'Body.'
-
-    @pytest.mark.asyncio
-    async def test_h_toggles_brief_headers(self) -> None:
-        app = _LiteHost(_make_tree())
-        async with app.run_test(size=(120, 30)) as pilot:
-            screen = await _open(app, pilot)
             await pilot.press('h')
             await pilot.pause()
             assert self._names(screen) == BRIEF

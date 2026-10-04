@@ -5,13 +5,15 @@
 #
 """Integration tests for the ReviewApp TUI.
 
-Tests the shell-return reconciliation logic that detects and handles
-cosmetic commit edits (e.g. reworded subjects via git rebase -i).
+Covers follow-up reply composition and sending, the shell-return
+reconciliation that detects cosmetic commit edits (e.g. reworded subjects
+via git rebase -i), range-diff filtering and gating, check-detail
+rendering, and the branch-restore logic on exit.
 """
 
 import email.message
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from unittest import mock
 
 import pytest
@@ -21,6 +23,7 @@ pytest.importorskip('textual')
 import b4
 import b4.review
 import b4.review.tracking
+from b4.review_tui._common import filter_range_diff_for_commit
 from b4.review_tui._review_app import PatchListItem, ReviewApp
 
 from .helpers.tracking import create_review_branch
@@ -415,7 +418,8 @@ class TestReconcileAfterShell:
 
     @pytest.mark.asyncio
     async def test_reworded_commits(self, gitdir: str) -> None:
-        """Tracking is updated after commit messages are reworded."""
+        """Tracking, in memory and on disk, is updated after commit messages
+        are reworded."""
         branch, patch_shas = _create_review_branch_with_patches(
             gitdir, 'reconcile-reword', ['original subject 1', 'original subject 2']
         )
@@ -446,6 +450,12 @@ class TestReconcileAfterShell:
             assert app._commit_subjects == ['reworded subject 1', 'reworded subject 2']
             # sha_map should be updated
             assert len(app._sha_map) == 2
+            # The on-disk tracking commit was amended with the new
+            # first-patch-commit too.
+            _cover_text, tracking = b4.review.load_tracking(gitdir, branch)
+            disk_first = tracking['series']['first-patch-commit']
+            assert disk_first == app._commit_shas[0]
+            assert disk_first != old_shas[0]
 
     @pytest.mark.asyncio
     async def test_single_reword_preserves_unchanged(self, gitdir: str) -> None:
@@ -508,34 +518,6 @@ class TestReconcileAfterShell:
             # Original state should be preserved
             assert app._commit_shas == old_shas
             assert app._series['first-patch-commit'] == patch_shas[0]
-
-    @pytest.mark.asyncio
-    async def test_tracking_commit_persisted(self, gitdir: str) -> None:
-        """The on-disk tracking commit is amended with new first-patch-commit."""
-        branch, _patch_shas = _create_review_branch_with_patches(
-            gitdir, 'reconcile-persist', ['persist patch 1', 'persist patch 2']
-        )
-        session = _build_session(gitdir, branch)
-        base_sha = session['base_commit']
-
-        app = ReviewApp(session)
-        async with app.run_test(size=(120, 30)) as pilot:
-            await pilot.pause()
-            old_shas = list(app._commit_shas)
-
-            # Reword both patches
-            trk_msg = _save_tracking_msg(gitdir)
-            _rewrite_patches(
-                gitdir, base_sha, ['reworded persist 1', 'reworded persist 2'], trk_msg
-            )
-
-            app._reconcile_after_shell(old_shas)
-
-            # Verify the on-disk tracking commit was updated
-            _cover_text, tracking = b4.review.load_tracking(gitdir, branch)
-            disk_first = tracking['series']['first-patch-commit']
-            assert disk_first == app._commit_shas[0]
-            assert disk_first != old_shas[0]
 
 
 class TestLoreNodeShutdown:
@@ -878,8 +860,6 @@ class TestFilterRangeDiffForCommit:
     def test_matches_right_side_block(self) -> None:
         """Reviewing the newest revision: the current commit is on the right
         side of the range-diff, and only its block should be returned."""
-        from b4.review_tui._common import filter_range_diff_for_commit
-
         block = filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, 'bbbb2222' + 'f' * 32)
         assert block == (
             '2:  aaaa2222 ! 2:  bbbb2222 second patch\n'
@@ -891,27 +871,24 @@ class TestFilterRangeDiffForCommit:
     def test_matches_left_side_block(self) -> None:
         """Comparing against a newer revision puts the current commit on the
         left side; the block must still be found."""
-        from b4.review_tui._common import filter_range_diff_for_commit
-
         block = filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, 'aaaa3333' + '0' * 32)
         assert block == '3:  aaaa3333 < -:  -------- third patch (dropped)\n'
 
-    def test_dashes_never_match(self) -> None:
-        """Placeholder dashes on either side must not be treated as commits."""
-        from b4.review_tui._common import filter_range_diff_for_commit
-
-        assert filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, '--------') is None
-
-    def test_no_match_returns_none(self) -> None:
-        from b4.review_tui._common import filter_range_diff_for_commit
-
-        assert filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, 'cccc9999') is None
+    @pytest.mark.parametrize(
+        'sha',
+        [
+            pytest.param('--------', id='placeholder-dashes'),
+            pytest.param('cccc9999', id='unknown'),
+        ],
+    )
+    def test_no_match_returns_none(self, sha: str) -> None:
+        """Placeholder dashes on either side must not be treated as commits,
+        and an unknown sha finds nothing."""
+        assert filter_range_diff_for_commit(_RANGE_DIFF_SAMPLE, sha) is None
 
     def test_ansi_colours_ignored_for_matching_but_preserved(self) -> None:
         """git range-diff --color wraps the headers in ANSI sequences; they
         must not confuse matching, and the block keeps its colours."""
-        from b4.review_tui._common import filter_range_diff_for_commit
-
         coloured = (
             '\x1b[33m1:  aaaa1111 = 1:  bbbb1111\x1b[m first patch\n'
             '\x1b[33m2:  aaaa2222 ! 2:  bbbb2222\x1b[m second patch\n'
@@ -930,8 +907,6 @@ class TestFilterRangeDiffForCommit:
     def test_wide_series_padding(self) -> None:
         """Counters are right-aligned in series with 10+ patches; padded
         headers must still be recognized as block boundaries."""
-        from b4.review_tui._common import filter_range_diff_for_commit
-
         output = (
             ' 9:  aaaa9999 =  9:  bbbb9999 ninth patch\n'
             '10:  aaaa0000 ! 10:  bbbb0000 tenth patch\n'
@@ -987,23 +962,25 @@ class TestRangeDiffBindingGate:
             lambda conn, change_id: revisions,
         )
 
-    def test_hidden_without_tracking_db(self, gitdir: str) -> None:
-        branch, _shas = _create_review_branch_with_patches(
-            gitdir, 'rdgate-nodb', ['patch 1']
-        )
-        session = _build_session(gitdir, branch)
-        app = ReviewApp(session)
-        assert app._has_other_revisions is False
-        assert app.check_action('range_diff', ()) is False
-
-    def test_hidden_when_only_own_revision_known(
-        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        'revisions',
+        [
+            pytest.param(None, id='no-tracking-db'),
+            pytest.param([{'revision': 1}], id='own-only'),
+        ],
+    )
+    def test_hidden_without_other_revisions(
+        self,
+        gitdir: str,
+        monkeypatch: pytest.MonkeyPatch,
+        revisions: Optional[List[Dict[str, Any]]],
     ) -> None:
         branch, _shas = _create_review_branch_with_patches(
-            gitdir, 'rdgate-solo', ['patch 1']
+            gitdir, 'rdgate-hidden', ['patch 1']
         )
         session = _build_session(gitdir, branch)
-        self._patch_tracking(monkeypatch, [{'revision': 1}])
+        if revisions is not None:
+            self._patch_tracking(monkeypatch, revisions)
         app = ReviewApp(session)
         assert app._has_other_revisions is False
         assert app.check_action('range_diff', ()) is False
