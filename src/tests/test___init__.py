@@ -1,3 +1,4 @@
+import copy
 import email
 import email.message
 import email.parser
@@ -421,6 +422,76 @@ def test_followup_trailers(
     b4.save_git_am_mbox(amsgs, ifh)
     with open(f'{sampledir}/trailers-followup-{source}-ref-{reference}.txt', 'r') as fh:
         assert ifh.getvalue().decode() == fh.read()
+
+
+def _followup_trailer_keys(lser: b4.LoreSeries) -> List[List[Tuple[str, str, str]]]:
+    """Each patch's follow-up trailers, with the message each came from."""
+    return [
+        [
+            (t.name, t.value, t.lmsg.msgid if t.lmsg else '')
+            for t in lmsg.followup_trailers
+        ]
+        for lmsg in lser.patches
+        if lmsg is not None
+    ]
+
+
+@pytest.mark.parametrize(
+    'source', ['single', 'with-cover', 'nore', 'name-parens', 'bare-address', 'custody']
+)
+def test_get_series_twice_adds_no_duplicate_trailers(
+    sampledir: str, source: str
+) -> None:
+    """Asking a mailbox for the same series again gives the same series."""
+    lmbx = b4.LoreMailbox()
+    for msg in b4.get_msgs_from_mailbox_or_maildir(
+        f'{sampledir}/trailers-followup-{source}.mbox'
+    ):
+        lmbx.add_message(msg)
+    first = lmbx.get_series()
+    assert first is not None
+    before = _followup_trailer_keys(first)
+    assert any(before), 'the sample should have follow-up trailers'
+    slots = [p.msgid if p else None for p in first.patches]
+    again = lmbx.get_series()
+    assert again is not None
+    # The cover letter is added again, and must not push out patch 1
+    assert [p.msgid if p else None for p in again.patches] == slots
+    assert _followup_trailer_keys(again) == before
+
+
+def test_same_trailer_in_two_replies_is_kept_twice(sampledir: str) -> None:
+    """Only a repeat from the same message is a duplicate, not a second reply."""
+    msgs = b4.get_msgs_from_mailbox_or_maildir(
+        f'{sampledir}/trailers-followup-nore.mbox'
+    )
+    lmbx = b4.LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+    lser = lmbx.get_series()
+    assert lser is not None
+    counted = [t for p in _followup_trailer_keys(lser) for t in p]
+    name, value, src_msgid = counted[0]
+
+    lmbx = b4.LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+        if b4.LoreMessage.get_clean_msgid(msg) == src_msgid:
+            resend = copy.deepcopy(msg)
+            del resend['Message-Id']
+            resend['Message-Id'] = '<second-reply@example.com>'
+            lmbx.add_message(resend)
+    lser = lmbx.get_series()
+    assert lser is not None
+    lser = lmbx.get_series()
+    assert lser is not None
+    sources = [
+        m
+        for p in _followup_trailer_keys(lser)
+        for n, v, m in p
+        if (n, v) == (name, value)
+    ]
+    assert sorted(sources) == sorted([src_msgid, 'second-reply@example.com'])
 
 
 @pytest.mark.parametrize(

@@ -638,11 +638,11 @@ class LoreMailbox:
                         # not change
                         if pmsg.git_patch_id:
                             self.trailer_map[pmsg.git_patch_id].append(fmsg)
-                    pmsg.followup_trailers += trailers
+                    pmsg.add_followup_trailers(trailers)
                     break
                 if not pmsg.reply:
                     # Could be a cover letter
-                    pmsg.followup_trailers += trailers
+                    pmsg.add_followup_trailers(trailers)
                     break
                 # TODO(https://github.com/astral-sh/ruff/pull/24458): remove this when ty understands conditional walrus.
                 nmsg = None
@@ -872,6 +872,11 @@ class LoreSeries:
             self.patches.append(None)
         self.expected = lmsg.expected
         omsg = self.patches[lmsg.counter]
+        if omsg is not None and omsg.msgid == lmsg.msgid:
+            # The same message again: LoreMailbox.get_series() adds the
+            # cover letter every time it runs. Treating it as a second
+            # message would push it over the patch in the next slot.
+            return
         if omsg is not None:
             # Okay, strange, is the one in there a reply?
             logger.warning(
@@ -2000,6 +2005,24 @@ class LoreMessage:
                 if trailer.lname not in badtrailers:
                     trailer.lmsg = self
                     self.trailers.append(trailer)
+
+    def add_followup_trailers(self, trailers: List['LoreTrailer']) -> None:
+        """Add follow-up trailers, skipping any this message already has.
+
+        A trailer counts as already there only if it came from the same
+        follow-up message: the same trailer in a second reply is kept.
+        This lets LoreMailbox.get_series() run more than once on the
+        same mailbox without adding every follow-up trailer again.
+        """
+        seen = {
+            (t.lname, t.value.lower(), t.lmsg.msgid if t.lmsg else None)
+            for t in self.followup_trailers
+        }
+        for ltr in trailers:
+            key = (ltr.lname, ltr.value.lower(), ltr.lmsg.msgid if ltr.lmsg else None)
+            if key not in seen:
+                seen.add(key)
+                self.followup_trailers.append(ltr)
 
     def get_trailers(
         self, sloppy: bool = False
