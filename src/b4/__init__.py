@@ -362,6 +362,9 @@ SENDEMAIL_CONFIG: ConfigDictT = dict()
 # Used for storing our requests session
 REQSESSION: Optional[requests.Session] = None
 LORENODE: Optional[liblore.LoreNode] = None
+# Archive URLs that pasted message-ids came from, as msgid -> (midmask,
+# switch).  See parse_msgid() and _try_url_server().
+URL_SERVERS: Dict[str, Tuple[str, bool]] = dict()
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
 # DNS answers for the life of the process (see _setup_dns_resolver)
@@ -4600,6 +4603,41 @@ def get_requests_session() -> requests.Session:
     return REQSESSION
 
 
+def _new_lore_node(midmask: str) -> liblore.LoreNode:
+    """Return a LoreNode for *midmask*, configured from git config."""
+    config = get_main_config()
+    # Extract base URL from midmask (e.g. 'https://lore.kernel.org/all/%s' -> 'https://lore.kernel.org/all')
+    base_url = midmask.replace('/%s', '').rstrip('/')
+    # If midmask had no list path (e.g. 'https://lore.kernel.org/%s'), the base_url
+    # is just a bare origin. Append '/all' so liblore can construct valid URLs —
+    # the old code relied on HEAD+redirect to discover the list path, but liblore
+    # builds URLs directly.
+    parsed = urllib.parse.urlparse(base_url)
+    if not parsed.path or parsed.path == '/':
+        base_url += '/all'
+    cache_dir = str(pathlib.Path(get_cache_dir()) / 'lore')
+    try:
+        cache_expire = int(str(config['cache-expire']))
+    except (ValueError, KeyError):
+        cache_expire = int(str(DEFAULT_CONFIG['cache-expire']))
+    try:
+        node = liblore.LoreNode.from_git_config(
+            base_url,
+            cache_dir=cache_dir,
+            cache_ttl=cache_expire * 60,
+        )
+    except liblore.LibloreError as ex:
+        origin = f'{parsed.scheme}://{parsed.netloc}'
+        raise LoreConfigError(
+            f'Bad liblore setting in git config: {ex}\n'
+            f'Fix it in the [liblore "{origin}"] section'
+            + (' (or [lore])' if parsed.netloc == 'lore.kernel.org' else '')
+            + ' of your git config.'
+        ) from ex
+    node.set_user_agent('b4', __VERSION__)
+    return node
+
+
 def get_lore_node() -> liblore.LoreNode:
     """Return a LoreNode configured from git config with b4's URL and cache."""
     global LORENODE
@@ -4610,37 +4648,9 @@ def get_lore_node() -> liblore.LoreNode:
         LORENODE = None
     if LORENODE is None:
         config = get_main_config()
-        # Extract base URL from midmask (e.g. 'https://lore.kernel.org/all/%s' -> 'https://lore.kernel.org/all')
         midmask = config.get('midmask', DEFAULT_CONFIG['midmask'])
         assert isinstance(midmask, str), 'b4.midmask must be a string'
-        base_url = midmask.replace('/%s', '').rstrip('/')
-        # If midmask had no list path (e.g. 'https://lore.kernel.org/%s'), the base_url
-        # is just a bare origin. Append '/all' so liblore can construct valid URLs —
-        # the old code relied on HEAD+redirect to discover the list path, but liblore
-        # builds URLs directly.
-        parsed = urllib.parse.urlparse(base_url)
-        if not parsed.path or parsed.path == '/':
-            base_url += '/all'
-        cache_dir = str(pathlib.Path(get_cache_dir()) / 'lore')
-        try:
-            cache_expire = int(str(config['cache-expire']))
-        except (ValueError, KeyError):
-            cache_expire = int(str(DEFAULT_CONFIG['cache-expire']))
-        try:
-            LORENODE = liblore.LoreNode.from_git_config(
-                base_url,
-                cache_dir=cache_dir,
-                cache_ttl=cache_expire * 60,
-            )
-        except liblore.LibloreError as ex:
-            origin = f'{parsed.scheme}://{parsed.netloc}'
-            raise LoreConfigError(
-                f'Bad liblore setting in git config: {ex}\n'
-                f'Fix it in the [liblore "{origin}"] section'
-                + (' (or [lore])' if parsed.netloc == 'lore.kernel.org' else '')
-                + ' of your git config.'
-            ) from ex
-        LORENODE.set_user_agent('b4', __VERSION__)
+        LORENODE = _new_lore_node(midmask)
     return LORENODE
 
 
@@ -4655,8 +4665,16 @@ def get_msgid_from_stdin() -> Optional[str]:
     return None
 
 
-def parse_msgid(msgid: str) -> str:
-    """Parse a clean message-id from a string that may be a URL, angle-bracketed, or bare msgid."""
+def parse_msgid(msgid: str, switch_server: bool = False) -> str:
+    """Parse a clean message-id from a string that may be a URL, angle-bracketed, or bare msgid.
+
+    A public-inbox URL on a server other than the b4.midmask one is
+    remembered in URL_SERVERS.  The thread is still looked up on the
+    b4.midmask server first, and the URL's server is only asked when
+    that one doesn't have it.  With *switch_server*, a thread found
+    that way makes the URL's server the b4.midmask one for the rest of
+    the run, so that follow-up lookups go there, too.
+    """
     msgid = msgid.strip().strip('<>')
     # Handle the case when someone pastes a full URL to the message
     # Is this a patchwork URL?
@@ -4676,10 +4694,11 @@ def parse_msgid(msgid: str) -> str:
         config = get_main_config()
         myloc = urllib.parse.urlparse(str(config['midmask']))
         wantloc = urllib.parse.urlparse(msgid)
-        if myloc.netloc != wantloc.netloc:
-            logger.debug('Overriding midmask with passed url parameters')
-            config['midmask'] = f'{wantloc.scheme}://{wantloc.netloc}/{chunks[0]}/%s'
         msgid = urllib.parse.unquote(chunks[1])
+        if myloc.netloc != wantloc.netloc:
+            url_midmask = f'{wantloc.scheme}://{wantloc.netloc}/{chunks[0]}/%s'
+            logger.debug('Remembering %s for %s', url_midmask, msgid)
+            URL_SERVERS[msgid] = (url_midmask, switch_server)
     elif msgid.startswith('http'):
         # Finally, try finding something that looks like msgid in that URL
         matches = re.search(r'^https?://[^@]+/([^/]+@[^/]+)', msgid, re.IGNORECASE)
@@ -4704,7 +4723,7 @@ def get_msgid(cmdargs: argparse.Namespace) -> Optional[str]:
     if msgid is None:
         return None
 
-    return parse_msgid(msgid)
+    return parse_msgid(msgid, switch_server=True)
 
 
 def get_strict_thread(
@@ -4936,6 +4955,93 @@ def get_series_by_patch_id(
     return lmbx
 
 
+def _log_thread_error(
+    node: liblore.LoreNode, msgid: str, ex: liblore.RemoteError
+) -> None:
+    if isinstance(ex, liblore.NotOnMirrorError):
+        logger.critical('%s', ex)
+    elif ex.status_code == 404:
+        logger.critical('Thread not found on %s: %s', node.hostname, msgid)
+    else:
+        logger.critical('Could not retrieve thread: %s', ex)
+
+
+def _archive_of(url: str) -> str:
+    """Return the host of *url*, with all lore.kernel.org hosts as one.
+
+    Hosts under lore.kernel.org (such as its failover mirrors) all serve
+    the lore.kernel.org archive, so a thread missing from one of them is
+    missing from lore.kernel.org, too.
+    """
+    host = urllib.parse.urlsplit(url).netloc.lower()
+    if host.endswith('.lore.kernel.org'):
+        return 'lore.kernel.org'
+    return host
+
+
+def _try_url_server(
+    node: liblore.LoreNode,
+    msgid: str,
+    ex: liblore.RemoteError,
+    nocache: bool,
+    quiet: bool,
+) -> Optional[Tuple[liblore.LoreNode, bytes]]:
+    """Look for *msgid* on the server of the URL it was pasted as.
+
+    Called when *node* (the b4.midmask server, and the upstream archive
+    of a partial mirror) could not give the thread and failed with *ex*.
+    The URL's server is asked only when it is not one of those, and only
+    when they don't have the thread or could not be reached.  Any other
+    answer, such as a 403 for a missing useragentplus, is a setup problem
+    to show, not a reason to quietly ask another server.  Returns
+    the node that has the thread, and its mbox, or None after logging
+    why there is no thread (unless *quiet*).
+    """
+    global LORENODE
+    url_midmask, switch_server = URL_SERVERS.get(msgid, (None, False))
+    asked = {_archive_of(origin) for origin in node.origins}
+    if node.upstream_url:
+        asked.add(_archive_of(node.upstream_url))
+    try_url = (
+        url_midmask is not None
+        and _archive_of(url_midmask) not in asked
+        and (ex.status_code == 404 or isinstance(ex, liblore.NotOnMirrorError))
+    )
+    if not try_url:
+        if not quiet:
+            _log_thread_error(node, msgid, ex)
+        return None
+    assert url_midmask is not None
+    logger.debug('Not on %s, trying %s', node.hostname, url_midmask)
+    try:
+        url_node = _new_lore_node(url_midmask)
+    except LoreConfigError as cex:
+        if not quiet:
+            _log_thread_error(node, msgid, ex)
+            logger.critical('%s', cex)
+        return None
+    try:
+        t_mbox = url_node.get_mbox_by_msgid(msgid, nocache=nocache)
+    except liblore.RemoteError as uex:
+        if not quiet:
+            _log_thread_error(node, msgid, ex)
+            _log_thread_error(url_node, msgid, uex)
+        url_node.close()
+        return None
+    if not quiet:
+        logger.info('Fetched from %s instead of %s', url_node.hostname, node.hostname)
+    if switch_server:
+        logger.debug('Using %s for the rest of this run', url_midmask)
+        get_main_config()['midmask'] = url_midmask
+        if node is LORENODE:
+            node.close()
+            LORENODE = url_node
+    else:
+        # The fetch is done, nothing else uses this node
+        url_node.close()
+    return url_node, t_mbox
+
+
 def get_pi_thread_by_msgid(
     msgid: str,
     nocache: bool = False,
@@ -4948,17 +5054,11 @@ def get_pi_thread_by_msgid(
     node = get_lore_node()
     try:
         t_mbox = node.get_mbox_by_msgid(msgid, nocache=nocache)
-    except liblore.NotOnMirrorError as ex:
-        if not quiet:
-            logger.critical('%s', ex)
-        return None
     except liblore.RemoteError as ex:
-        if not quiet:
-            if ex.status_code == 404:
-                logger.critical('Thread not found on %s: %s', node.hostname, msgid)
-            else:
-                logger.critical('Could not retrieve thread: %s', ex)
-        return None
+        found = _try_url_server(node, msgid, ex, nocache, quiet)
+        if found is None:
+            return None
+        node, t_mbox = found
     if not t_mbox:
         if not quiet:
             logger.critical('No messages found for that query')

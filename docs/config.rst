@@ -340,6 +340,13 @@ B4 then works like this:
   names both servers.
 - **Remembered.**  B4 remembers the upstream archive in its cache, so
   this still works the next time, even when the mirror is stopped.
+- **Pasted URLs.**  When you give b4 a URL, such as
+  ``https://lore.kernel.org/linux-doc/<msgid>``, b4 asks the mirror (and
+  its upstream archive) first, too.  B4 asks the server in the URL only
+  when they don't have the thread, and only if it hasn't asked that
+  server already.  All servers under lore.kernel.org count as one
+  archive here.  When the thread is found on the server in the URL, b4
+  uses that server for the rest of the command.
 
 Servers that don't send these headers, lore.kernel.org included, work
 the same as before.

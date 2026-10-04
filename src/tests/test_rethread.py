@@ -5,7 +5,10 @@ import email.message
 from typing import Any, Dict, List, Optional, Tuple
 from unittest import mock
 
+import pytest
+
 import b4
+import liblore
 
 
 # ---------------------------------------------------------------------------
@@ -94,13 +97,212 @@ class TestParseMsgid:
         """A bare msgid without special prefixes passes through unchanged."""
         assert b4.parse_msgid('simple-msgid@host') == 'simple-msgid@host'
 
-    def test_midmask_override_for_foreign_server(self) -> None:
-        """When a URL points to a different server, midmask is overridden."""
-        old_midmask = b4.MAIN_CONFIG.get('midmask')
+    def test_url_does_not_change_midmask(self) -> None:
+        """A URL on another server is remembered, not made the midmask."""
+        midmask = b4.MAIN_CONFIG['midmask']
         b4.parse_msgid('https://other.archive.org/linux-mm/foo@bar.com/')
-        assert b4.MAIN_CONFIG['midmask'] == 'https://other.archive.org/linux-mm/%s'
-        # Restore
-        b4.MAIN_CONFIG['midmask'] = old_midmask
+        assert b4.MAIN_CONFIG['midmask'] == midmask
+        assert b4.URL_SERVERS['foo@bar.com'] == (
+            'https://other.archive.org/linux-mm/%s',
+            False,
+        )
+
+    def test_url_on_midmask_server_not_remembered(self) -> None:
+        b4.parse_msgid('https://lore.kernel.org/linux-mm/foo@bar.com/')
+        assert 'foo@bar.com' not in b4.URL_SERVERS
+
+
+# ===========================================================================
+# Threads of pasted URLs: the b4.midmask server first, the URL's second
+# ===========================================================================
+def _thread_mbox(msgid: str) -> bytes:
+    return (
+        f'From mboxrd@z Thu Jan  1 00:00:00 1970\n'
+        f'Message-ID: <{msgid}>\n'
+        f'From: Test Author <test@example.com>\n'
+        f'Subject: [PATCH] Fix the frobnicator\n'
+        f'Date: Mon, 23 Mar 2026 12:00:00 +0000\n'
+        f'\n'
+        f'Hello\n'
+    ).encode()
+
+
+class _FakeNode:
+    """Just enough of a LoreNode for get_pi_thread_by_msgid()."""
+
+    def __init__(
+        self,
+        url: str,
+        has: bool,
+        upstream_url: Optional[str] = None,
+        unreachable_upstream: bool = False,
+        status_code: int = 404,
+    ) -> None:
+        self.url = url
+        self.hostname = url.split('/')[2]
+        self.origins = ['/'.join(url.split('/')[:3])]
+        self.upstream_url = upstream_url
+        self.has = has
+        self.unreachable_upstream = unreachable_upstream
+        self.status_code = status_code
+        self.asked = 0
+        self.closed = False
+        self.is_shutdown = False
+        self.last_source = None
+
+    def get_mbox_by_msgid(self, msgid: str, nocache: bool = False) -> bytes:
+        self.asked += 1
+        if self.has:
+            return _thread_mbox(msgid)
+        if self.unreachable_upstream:
+            raise liblore.NotOnMirrorError('not on the mirror, upstream down')
+        raise liblore.RemoteError(
+            f'HTTP {self.status_code}', status_code=self.status_code
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestPastedUrlThread:
+    MIRROR = 'http://localhost:11043/lore/all/%s'
+    LORE_URL = (
+        'https://lore.kernel.org/linux-doc/cover.1791035885.git.daniel@makrotopia.org'
+    )
+    THIRDPARTY_URL = (
+        'https://inbox.example.org/devel/cover.1791035885.git.daniel@makrotopia.org'
+    )
+    MSGID = 'cover.1791035885.git.daniel@makrotopia.org'
+
+    @pytest.fixture(autouse=True)
+    def _mirror(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'midmask', self.MIRROR)
+        self.url_nodes: Dict[str, _FakeNode] = dict()
+        monkeypatch.setattr(b4, '_new_lore_node', self._new_node)
+
+    def _new_node(self, midmask: str) -> _FakeNode:
+        return self.url_nodes[midmask]
+
+    def _use_mirror(self, monkeypatch: pytest.MonkeyPatch, node: _FakeNode) -> None:
+        monkeypatch.setattr(b4, 'LORENODE', node)
+
+    def _add_url_node(self, midmask: str, has: bool) -> _FakeNode:
+        node = _FakeNode(midmask, has)
+        self.url_nodes[midmask] = node
+        return node
+
+    def test_mirror_answers_lore_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mirror = _FakeNode(self.MIRROR, True, 'https://lore.kernel.org/all')
+        self._use_mirror(monkeypatch, mirror)
+        msgid = b4.parse_msgid(self.LORE_URL, switch_server=True)
+        msgs = b4.get_pi_thread_by_msgid(msgid)
+        assert msgs and len(msgs) == 1
+        assert mirror.asked == 1
+        assert b4.MAIN_CONFIG['midmask'] == self.MIRROR
+
+    def test_lore_not_asked_again_after_upstream_miss(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The mirror already went upstream to lore, so lore isn't asked twice."""
+        mirror = _FakeNode(self.MIRROR, False, 'https://lore.kernel.org/all')
+        self._use_mirror(monkeypatch, mirror)
+        msgid = b4.parse_msgid(self.LORE_URL, switch_server=True)
+        assert b4.get_pi_thread_by_msgid(msgid) is None
+        assert self.url_nodes == {}
+
+    def test_lore_subdomain_upstream_counts_as_lore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After another lore.kernel.org host, lore proper isn't asked."""
+        mirror = _FakeNode(self.MIRROR, False, 'https://sea.lore.kernel.org/all')
+        self._use_mirror(monkeypatch, mirror)
+        msgid = b4.parse_msgid(self.LORE_URL, switch_server=True)
+        assert b4.get_pi_thread_by_msgid(msgid) is None
+        assert self.url_nodes == {}
+
+    def test_lore_url_asked_when_mirror_has_no_upstream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A full mirror without the thread falls back to the URL's server."""
+        mirror = _FakeNode(self.MIRROR, False)
+        self._use_mirror(monkeypatch, mirror)
+        lore = self._add_url_node('https://lore.kernel.org/linux-doc/%s', True)
+        msgid = b4.parse_msgid(self.LORE_URL, switch_server=True)
+        assert b4.get_pi_thread_by_msgid(msgid)
+        assert lore.asked == 1
+
+    def test_thirdparty_url_after_miss_switches_server(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mirror = _FakeNode(self.MIRROR, False, 'https://lore.kernel.org/all')
+        self._use_mirror(monkeypatch, mirror)
+        other = self._add_url_node('https://inbox.example.org/devel/%s', True)
+        msgid = b4.parse_msgid(self.THIRDPARTY_URL, switch_server=True)
+        assert b4.get_pi_thread_by_msgid(msgid)
+        assert (mirror.asked, other.asked) == (1, 1)
+        # Follow-up lookups of this run go to the thirdparty server
+        assert b4.MAIN_CONFIG['midmask'] == 'https://inbox.example.org/devel/%s'
+        assert b4.LORENODE is other
+        assert mirror.closed
+
+    def test_thirdparty_url_without_switch_is_one_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """As in the TUIs: the thread is fetched, the node stays the same."""
+        mirror = _FakeNode(self.MIRROR, False, 'https://lore.kernel.org/all')
+        self._use_mirror(monkeypatch, mirror)
+        other = self._add_url_node('https://inbox.example.org/devel/%s', True)
+        msgid = b4.parse_msgid(self.THIRDPARTY_URL)
+        assert b4.get_pi_thread_by_msgid(msgid)
+        assert b4.MAIN_CONFIG['midmask'] == self.MIRROR
+        assert b4.LORENODE is mirror
+        assert not mirror.closed
+        assert other.closed
+
+    def test_thirdparty_url_tried_when_upstream_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mirror = _FakeNode(
+            self.MIRROR, False, 'https://lore.kernel.org/all', unreachable_upstream=True
+        )
+        self._use_mirror(monkeypatch, mirror)
+        other = self._add_url_node('https://inbox.example.org/devel/%s', True)
+        msgid = b4.parse_msgid(self.THIRDPARTY_URL, switch_server=True)
+        assert b4.get_pi_thread_by_msgid(msgid)
+        assert other.asked == 1
+
+    def test_upstream_refusal_is_not_hidden(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A 403 means a broken setup: say so, don't go to the URL's server."""
+        mirror = _FakeNode(
+            self.MIRROR, False, 'https://lore.kernel.org/all', status_code=403
+        )
+        self._use_mirror(monkeypatch, mirror)
+        self._add_url_node('https://inbox.example.org/devel/%s', True)
+        msgid = b4.parse_msgid(self.THIRDPARTY_URL, switch_server=True)
+        assert b4.get_pi_thread_by_msgid(msgid) is None
+        assert self.url_nodes['https://inbox.example.org/devel/%s'].asked == 0
+        assert 'Could not retrieve thread: HTTP 403' in caplog.text
+        assert b4.MAIN_CONFIG['midmask'] == self.MIRROR
+
+    def test_thirdparty_miss_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mirror = _FakeNode(self.MIRROR, False, 'https://lore.kernel.org/all')
+        self._use_mirror(monkeypatch, mirror)
+        other = self._add_url_node('https://inbox.example.org/devel/%s', False)
+        msgid = b4.parse_msgid(self.THIRDPARTY_URL, switch_server=True)
+        assert b4.get_pi_thread_by_msgid(msgid) is None
+        assert other.closed
+        assert b4.LORENODE is mirror
+        assert b4.MAIN_CONFIG['midmask'] == self.MIRROR
+
+    def test_bare_msgid_never_leaves_midmask(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mirror = _FakeNode(self.MIRROR, False)
+        self._use_mirror(monkeypatch, mirror)
+        assert b4.get_pi_thread_by_msgid(self.MSGID) is None
+        assert self.url_nodes == {}
 
 
 # ===========================================================================

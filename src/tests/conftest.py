@@ -18,6 +18,7 @@ def settestdefaults(
     if topdir and topdir != os.getcwd():
         os.chdir(topdir)
     monkeypatch.setattr(b4, 'can_network', False)
+    monkeypatch.setattr(b4, 'URL_SERVERS', {})
     monkeypatch.setattr(
         b4,
         'MAIN_CONFIG',
