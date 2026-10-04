@@ -2584,12 +2584,23 @@ def update_series_tracking(
     status = series.get('status', 'new')
 
     try:
-        msgs = retrieve_series_messages(series, identifier)
+        with b4.track_lore_sources() as sources:
+            msgs = retrieve_series_messages(series, identifier)
     except liblore.OperationCancelledError:
         raise
     except (LookupError, Exception) as ex:
         result['error'] = str(ex)
         return result
+
+    # The mirror just answered for this series itself, or it didn't. An
+    # empty follow-up search (a newer revision? review trailers elsewhere?)
+    # is genuinely ambiguous for a series the mirror doesn't have at all —
+    # upstream is worth asking. It is not ambiguous for a series the mirror
+    # does have: nothing local beats what the mirror already gave us, so
+    # these searches treat the mirror's answer as sufficient rather than
+    # treating "empty" as a reason to ask lore.kernel.org about something
+    # it already answered for.
+    local_sufficient = liblore.Source.UPSTREAM not in sources
 
     # Save thread messages before get_extra_series adds cross-version
     # messages — used below for message count + thread blob updates.
@@ -2611,10 +2622,16 @@ def update_series_tracking(
         except Exception:
             _known = set()
 
-        msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
+        msgs = b4.mbox.get_extra_series(
+            msgs, direction=1, nocache=True, local_sufficient=local_sufficient
+        )
         if current_rev > 1 and not _known:
             msgs = b4.mbox.get_extra_series(
-                msgs, direction=-1, wantvers=list(range(1, current_rev)), nocache=True
+                msgs,
+                direction=-1,
+                wantvers=list(range(1, current_rev)),
+                nocache=True,
+                local_sufficient=local_sufficient,
             )
 
     lmbx = b4.LoreMailbox()
@@ -2650,9 +2667,11 @@ def update_series_tracking(
 
     # Re-check attestation on every update (key imports, policy changes, etc.)
     # Try the tracked revision first; fall back to the latest available.
-    lser_att = lmbx.get_series(current_rev, sloppytrailers=False)
+    lser_att = lmbx.get_series(
+        current_rev, sloppytrailers=False, local_sufficient=local_sufficient
+    )
     if lser_att is None:
-        lser_att = lmbx.get_series(sloppytrailers=False)
+        lser_att = lmbx.get_series(sloppytrailers=False, local_sufficient=local_sufficient)
     if lser_att is not None:
         att = check_series_attestation(lser_att)
         b4.review.tracking.update_attestation(identifier, change_id, current_rev, att)
@@ -2721,7 +2740,12 @@ def update_series_tracking(
         else:
             t_series.pop('newer-versions', None)
 
-        lser = lmbx.get_series(wantver, sloppytrailers=False, codereview_trailers=True)
+        lser = lmbx.get_series(
+            wantver,
+            sloppytrailers=False,
+            codereview_trailers=True,
+            local_sufficient=local_sufficient,
+        )
         if lser is None:
             result['error'] = f'Could not find series v{wantver} in retrieved messages'
             return result

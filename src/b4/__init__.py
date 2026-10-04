@@ -479,7 +479,7 @@ class LoreMailbox:
             lser.subject = pser.subject
             logger.debug('Reconstituted successfully')
 
-    def load_codereview_trailers(self) -> None:
+    def load_codereview_trailers(self, local_sufficient: bool = False) -> None:
         q = list()
         for lser in self.series.values():
             for lmsg in lser.patches:
@@ -492,7 +492,9 @@ class LoreMailbox:
             return
         query = ' OR '.join(q)
         qmsgs = get_pi_search_results(
-            query, message='Looking for additional code-review trailers on %s'
+            query,
+            message='Looking for additional code-review trailers on %s',
+            local_sufficient=local_sufficient,
         )
         if not qmsgs:
             logger.debug('No matching code-review messages')
@@ -520,6 +522,7 @@ class LoreMailbox:
         sloppytrailers: bool = False,
         reroll: bool = True,
         codereview_trailers: bool = True,
+        local_sufficient: bool = False,
     ) -> Optional['LoreSeries']:
         if revision is None:
             if not len(self.series):
@@ -571,7 +574,7 @@ class LoreMailbox:
                         break
 
         if codereview_trailers and can_network:
-            self.load_codereview_trailers()
+            self.load_codereview_trailers(local_sufficient=local_sufficient)
 
         # Do we have any follow-ups?
         for fmsg in self.followups:
@@ -4622,6 +4625,7 @@ def get_pi_search_results(
     nocache: bool = False,
     message: Optional[str] = None,
     full_threads: bool = True,
+    local_sufficient: bool = False,
 ) -> Optional[List[EmailMessage]]:
     node = get_lore_node()
     if message is not None and len(message):
@@ -4630,7 +4634,10 @@ def get_pi_search_results(
         logger.info('Grabbing search results from %s', node.hostname)
     try:
         t_mbox = node.get_mbox_by_query(
-            query, full_threads=full_threads, nocache=nocache
+            query,
+            full_threads=full_threads,
+            nocache=nocache,
+            local_sufficient=local_sufficient,
         )
     except liblore.NotOnMirrorError as ex:
         logger.info('%s', ex)

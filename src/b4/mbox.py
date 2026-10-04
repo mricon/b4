@@ -689,6 +689,7 @@ def get_extra_series(
     direction: int = 1,
     wantvers: Optional[List[int]] = None,
     nocache: bool = False,
+    local_sufficient: bool = False,
 ) -> List[EmailMessage]:
     base_msg: Optional[EmailMessage] = None
     latest_revision: Optional[int] = None
@@ -777,7 +778,7 @@ def get_extra_series(
 
     q = '(%s) AND %s' % (' OR '.join(queries), datelim)
     logger.debug('Query: %s', q)
-    q_msgs = b4.get_pi_search_results(q, nocache=nocache)
+    q_msgs = b4.get_pi_search_results(q, nocache=nocache, local_sufficient=local_sufficient)
     if not q_msgs:
         return msgs
 

@@ -2706,6 +2706,72 @@ class TestUpdateSeriesTrackingCancellation:
 
 
 # ---------------------------------------------------------------------------
+# local_sufficient: update_series_tracking
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateSeriesTrackingLocalSufficient:
+    """A series the mirror already answered for stops follow-up searches
+    from asking upstream just because they come up empty.
+
+    retrieve_series_messages is mocked to not touch the network at all, so
+    it reports its own Source by calling _log_lore_source directly, the
+    same way get_pi_thread_by_msgid does after a real fetch.
+    """
+
+    @staticmethod
+    def _retrieve_with_source(source: liblore.Source) -> Any:
+        def _fn(
+            series: Dict[str, Any], identifier: str, progress_cb: Any = None
+        ) -> List[EmailMessage]:
+            node = mock.Mock(
+                last_source=source,
+                hostname='localhost',
+                upstream_url='https://lore.kernel.org/all/',
+            )
+            b4._log_lore_source(node, logging.DEBUG)
+            return [_make_test_msg('cover@example.com')]
+
+        return _fn
+
+    def _run(self, source: liblore.Source) -> mock.Mock:
+        series: Dict[str, Any] = {
+            'change_id': 'local-sufficient-test',
+            'revision': 1,
+            'status': 'new',
+            'message_id': 'cover@example.com',
+        }
+        mock_lmbx = mock.Mock()
+        mock_lmbx.series = {}
+        mock_lmbx.covers = {}
+        mock_lmbx.get_series.return_value = None
+        get_extra_series = mock.Mock(side_effect=lambda msgs, **_kw: msgs)
+        with (
+            mock.patch('b4.can_network', True),
+            mock.patch(
+                'b4.review._review.retrieve_series_messages',
+                side_effect=self._retrieve_with_source(source),
+            ),
+            mock.patch('b4.mbox.get_extra_series', get_extra_series),
+            mock.patch('b4.LoreMailbox', return_value=mock_lmbx),
+        ):
+            b4.review.update_series_tracking(
+                series, 'local-sufficient-id', 'https://example.com/%s'
+            )
+        return get_extra_series
+
+    def test_series_on_the_mirror_stays_local(self) -> None:
+        get_extra_series = self._run(liblore.Source.LOCAL)
+
+        assert get_extra_series.call_args.kwargs['local_sufficient'] is True
+
+    def test_series_fetched_from_upstream_may_ask_upstream_again(self) -> None:
+        get_extra_series = self._run(liblore.Source.UPSTREAM)
+
+        assert get_extra_series.call_args.kwargs['local_sufficient'] is False
+
+
+# ---------------------------------------------------------------------------
 # Message counts: update_series_tracking
 # ---------------------------------------------------------------------------
 
