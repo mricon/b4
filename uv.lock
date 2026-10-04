@@ -284,7 +284,7 @@ misc = [
 [package.metadata]
 requires-dist = [
     { name = "argcomplete", marker = "extra == 'completion'", specifier = ">=3.0" },
-    { name = "dkimpy", specifier = ">=1.0,<2.0" },
+    { name = "dkimpy", specifier = ">=1.0.5,<2.0" },
     { name = "dnspython", specifier = ">=2.0,<3.0" },
     { name = "ezgb", marker = "extra == 'bugs'", specifier = ">=0.2.0" },
     { name = "liblore", specifier = ">=0.10.1" },
