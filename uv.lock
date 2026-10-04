@@ -287,7 +287,7 @@ requires-dist = [
     { name = "dkimpy", specifier = ">=1.0,<2.0" },
     { name = "dnspython", specifier = ">=2.0,<3.0" },
     { name = "ezgb", marker = "extra == 'bugs'", specifier = ">=0.2.0" },
-    { name = "liblore", specifier = ">=0.10" },
+    { name = "liblore", specifier = ">=0.10.1" },
     { name = "patatt", specifier = ">=0.6,<2.0" },
     { name = "pygit2", specifier = ">=1.14,<2.0" },
     { name = "requests", specifier = ">=2.24,<3.0" },
@@ -979,14 +979,14 @@ wheels = [
 
 [[package]]
 name = "liblore"
-version = "0.10.0"
+version = "0.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/97/18/2787445b9debd8bc917d577ad0ae4846d4e1ab6ed13196b05d1bcac13c5f/liblore-0.10.0.tar.gz", hash = "sha256:1aa5e848cb3511c7b1484c62e31e73400978e45af6d4d42a564f09e33d474a96", size = 152611, upload-time = "2026-10-01T20:46:59.518Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/3e/6cfd7bc2a24f263ee4c2b0bdb242da27c8c04a9b6f432cf8c9282175a020/liblore-0.10.1.tar.gz", hash = "sha256:37e6d756d810c78351179c1a348361ef2966c1649711c1350ae7217e5497f248", size = 153704, upload-time = "2026-10-04T01:18:35.079Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/99/f67b6079a2fb951cfdc47a4c6ac01c94ebd0f627506bcfbab6bc2b4a23f8/liblore-0.10.0-py3-none-any.whl", hash = "sha256:0c13ddd335c7a650736c16ce08c6156da8ef2a905c02d79aa8b9f802ac7cbf43", size = 73750, upload-time = "2026-10-01T20:46:58.215Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/46/e2cb8ef19aa46167b28f0ba1266b85352902cfcfb49ddbb3119c173bde4d/liblore-0.10.1-py3-none-any.whl", hash = "sha256:847ed8b2551c5562e8ae4d0fae51ae7558f84638b2424b417a546ba77a3726cf", size = 74125, upload-time = "2026-10-04T01:18:32.683Z" },
 ]
 
 [[package]]

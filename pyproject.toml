@@ -32,7 +32,10 @@ dependencies = [
     # dkimpy needs it too, but b4 sets up its resolver cache directly.
     "dnspython>=2.0,<3.0",
     "patatt>=0.6,<2.0",
-    "liblore>=0.10",
+    # 0.10.1 added local_sufficient, which update_series_tracking() relies
+    # on to stop asking lore.kernel.org about a series the mirror already
+    # answered for.
+    "liblore>=0.10.1",
 ]
 
 [dependency-groups]
