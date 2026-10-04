@@ -63,144 +63,12 @@ from b4.review_tui._tracking_app import (
     _worktree_for_branch,
 )
 
-# ---------------------------------------------------------------------------
-# Compat helper — Textual ≥ 1.0 (pip) uses Static.content,
-# older builds (e.g. Fedora 43 package) still use Static.renderable.
-# ---------------------------------------------------------------------------
-
-
-def _static_text(widget: Any) -> str:
-    """Return the text content of a Static widget across Textual versions."""
-    if hasattr(widget, 'content'):
-        return str(widget.content)
-    return str(widget.renderable)
-
+from .helpers.tracking import create_review_branch, seed_db
+from .helpers.tui import static_text
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _seed_db(identifier: str, series_list: List[Dict[str, Any]]) -> None:
-    """Create and populate a tracking database with test series."""
-    conn = tracking.init_db(identifier)
-    for s in series_list:
-        tracking.add_series_to_db(
-            conn,
-            change_id=s['change_id'],
-            revision=s.get('revision', 1),
-            subject=s.get('subject', '[PATCH] test'),
-            sender_name=s.get('sender_name', 'Test Author'),
-            sender_email=s.get('sender_email', 'author@example.com'),
-            sent_at=s.get('sent_at', '2026-01-15T10:00:00+00:00'),
-            message_id=s.get('message_id', f'{s["change_id"]}@example.com'),
-            num_patches=s.get('num_patches', 1),
-        )
-        # Set status if specified (add_series_to_db always starts as 'new')
-        status = s.get('status')
-        if status and status != 'new':
-            conn.execute(
-                'UPDATE series SET status = ? WHERE change_id = ? AND revision = ?',
-                (status, s['change_id'], s.get('revision', 1)),
-            )
-            conn.commit()
-        # Set message counts if specified
-        mc = s.get('message_count')
-        if mc is not None:
-            conn.execute(
-                'UPDATE series SET message_count = ?, seen_message_count = ? '
-                'WHERE change_id = ? AND revision = ?',
-                (
-                    mc,
-                    s.get('seen_message_count', mc),
-                    s['change_id'],
-                    s.get('revision', 1),
-                ),
-            )
-            conn.commit()
-    conn.close()
-
-
-def _create_review_branch(
-    gitdir: str,
-    change_id: str,
-    identifier: str = 'test-project',
-    revision: int = 1,
-    status: str = 'reviewing',
-    subject: str = 'Test series',
-    sender_name: str = 'Test Author',
-    sender_email: str = 'test@example.com',
-    with_patch: bool = False,
-) -> str:
-    """Create a fake b4 review branch with a proper tracking commit.
-
-    With ``with_patch``, a real patch commit modifying file1.txt sits
-    between the base and the tracking commit, and the tracking metadata
-    describes it.  Returns the branch name.
-    """
-    branch_name = f'b4/review/{change_id}'
-    # Get current HEAD as base
-    ecode, base_sha = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
-    assert ecode == 0
-    base_sha = base_sha.strip()
-    # Create the branch at HEAD
-    ecode, _ = b4.git_run_command(gitdir, ['branch', branch_name, base_sha])
-    assert ecode == 0
-    parent_sha = base_sha
-    patches: List[Dict[str, Any]] = []
-    if with_patch:
-        ecode, _ = b4.git_run_command(gitdir, ['checkout', branch_name])
-        assert ecode == 0
-        with open(os.path.join(gitdir, 'file1.txt'), 'a') as fh:
-            fh.write(f'{change_id} tweak\n')
-        b4.git_run_command(gitdir, ['add', 'file1.txt'])
-        ecode, _ = b4.git_run_command(
-            gitdir, ['commit', '-m', f'{change_id}: tweak file1']
-        )
-        assert ecode == 0
-        ecode, parent_sha = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
-        assert ecode == 0
-        parent_sha = parent_sha.strip()
-        ecode, _ = b4.git_run_command(gitdir, ['checkout', 'master'])
-        assert ecode == 0
-        patches = [{'title': f'{change_id}: tweak file1', 'link': ''}]
-    # Build tracking metadata
-    trk = {
-        'series': {
-            'identifier': identifier,
-            'change-id': change_id,
-            'revision': revision,
-            'status': status,
-            'subject': subject,
-            'fromname': sender_name,
-            'fromemail': sender_email,
-            'expected': 1,
-            'complete': True,
-            'base-commit': base_sha,
-            'prerequisite-commits': [],
-            'first-patch-commit': parent_sha,
-            'header-info': {},
-        },
-        'followups': [],
-        'patches': patches,
-    }
-    commit_msg = f'{subject}\n\n{b4.review.make_review_magic_json(trk)}'
-    # Create an empty tracking commit on the branch
-    ecode, tree = b4.git_run_command(gitdir, ['rev-parse', f'{branch_name}^{{tree}}'])
-    assert ecode == 0
-    tree = tree.strip()
-    ecode, new_sha = b4.git_run_command(
-        gitdir,
-        ['commit-tree', tree, '-p', parent_sha],
-        stdin=commit_msg.encode(),
-    )
-    assert ecode == 0
-    new_sha = new_sha.strip()
-    ecode, _ = b4.git_run_command(
-        gitdir, ['update-ref', f'refs/heads/{branch_name}', new_sha]
-    )
-    assert ecode == 0
-    return branch_name
 
 
 SAMPLE_SERIES: List[Dict[str, Any]] = [
@@ -248,7 +116,7 @@ class TestTrackingAppStartup:
     @pytest.mark.asyncio
     async def test_empty_database(self, tmp_path: pathlib.Path) -> None:
         """App should show empty message when no series are tracked."""
-        _seed_db('test-empty', [])
+        seed_db('test-empty', [])
 
         app = TrackingApp('test-empty')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -260,7 +128,7 @@ class TestTrackingAppStartup:
     @pytest.mark.asyncio
     async def test_series_listed_newest_first(self, tmp_path: pathlib.Path) -> None:
         """App should display all seeded series, newest-tracked-first."""
-        _seed_db('test-listing', SAMPLE_SERIES)
+        seed_db('test-listing', SAMPLE_SERIES)
 
         app = TrackingApp('test-listing')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -281,7 +149,7 @@ class TestTrackingNavigation:
 
     @pytest.mark.asyncio
     async def test_jk_navigation(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-nav', SAMPLE_SERIES)
+        seed_db('test-nav', SAMPLE_SERIES)
 
         app = TrackingApp('test-nav')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -317,7 +185,7 @@ class TestTrackingNavigation:
             }
             for i in range(40)
         ]
-        _seed_db('test-scroll', many)
+        seed_db('test-scroll', many)
 
         app = TrackingApp('test-scroll')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -356,7 +224,7 @@ class TestTrackingNavigation:
 
     @pytest.mark.asyncio
     async def test_help_opens_and_closes(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-help', SAMPLE_SERIES)
+        seed_db('test-help', SAMPLE_SERIES)
 
         app = TrackingApp('test-help')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -383,7 +251,7 @@ class TestRefreshListWithoutFooter:
     async def test_refresh_survives_missing_footer(
         self, tmp_path: pathlib.Path
     ) -> None:
-        _seed_db('test-nofooter', SAMPLE_SERIES)
+        seed_db('test-nofooter', SAMPLE_SERIES)
 
         app = TrackingApp('test-nofooter')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -420,7 +288,7 @@ class TestTrackingLimit:
     @pytest.mark.asyncio
     async def test_limit_apply_and_clear(self, tmp_path: pathlib.Path) -> None:
         """Limits filter by subject and sender, show in the title, and clear."""
-        _seed_db('test-limit', SAMPLE_SERIES)
+        seed_db('test-limit', SAMPLE_SERIES)
 
         app = TrackingApp('test-limit')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -433,7 +301,7 @@ class TestTrackingLimit:
             assert len(items) == 1
             assert 'bravo' in items[0].series['subject']
             title = app.query_one('#title-left', Static)
-            assert 'drm' in _static_text(title)
+            assert 'drm' in static_text(title)
 
             # Filter by sender name
             await self._apply_limit(pilot, app, 'Charlie')
@@ -452,7 +320,7 @@ class TestTrackingLimitPrefixes:
     @pytest.mark.asyncio
     async def test_limit_by_status(self, tmp_path: pathlib.Path) -> None:
         """s:snoozed should show only snoozed series."""
-        _seed_db(
+        seed_db(
             'test-limit-status',
             [
                 {
@@ -634,7 +502,7 @@ class TestTrackingStatusGroups:
                 'message_id': 'new1@ex.com',
             },
         ]
-        _seed_db('test-groups', mixed_series)
+        seed_db('test-groups', mixed_series)
 
         app = TrackingApp('test-groups')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -663,10 +531,10 @@ class TestTrackingStatusGroups:
         it can safely stay branchless.
         """
         identifier = 'test-groups-wake'
-        _create_review_branch(
+        create_review_branch(
             gitdir, 'waiting-w', identifier=identifier, status='waiting'
         )
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -730,7 +598,7 @@ class TestTrackingStatusGroups:
                 'message_id': 'arch@ex.com',
             },
         ]
-        _seed_db('test-archived', series_with_archived)
+        seed_db('test-archived', series_with_archived)
 
         app = TrackingApp('test-archived')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -746,7 +614,7 @@ class TestTrackingFocusChangeId:
 
     @pytest.mark.asyncio
     async def test_focus_on_specific_series(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-focus', SAMPLE_SERIES)
+        seed_db('test-focus', SAMPLE_SERIES)
 
         # alpha is listed LAST (charlie, bravo, alpha: added_at desc), so a
         # focus that lands on index 2 proves focus_change_id was honoured
@@ -765,7 +633,7 @@ class TestTrackingQuit:
 
     @pytest.mark.asyncio
     async def test_q_warns_and_capital_q_exits(self, tmp_path: pathlib.Path) -> None:
-        _seed_db('test-quit', SAMPLE_SERIES)
+        seed_db('test-quit', SAMPLE_SERIES)
 
         app = TrackingApp('test-quit')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -795,8 +663,8 @@ class TestTrackingWithReviewBranch:
         """Series with a real review branch should appear as 'reviewing'."""
         identifier = 'test-reviewing'
         change_id = 'test-review-branch-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -821,8 +689,8 @@ class TestTrackingWithReviewBranch:
         """Pressing 'r' on a reviewing series should exit with branch name."""
         identifier = 'test-review-exit'
         change_id = 'test-exit-branch'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -847,8 +715,8 @@ class TestTrackingWithReviewBranch:
         """Enter on a 'reviewing' series should go directly to review mode."""
         identifier = 'test-enter-review'
         change_id = 'test-enter-branch'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -872,10 +740,8 @@ class TestTrackingWithReviewBranch:
         """Pressing 'r' on a waiting series should change it to reviewing."""
         identifier = 'test-wait-review'
         change_id = 'test-waiting-branch'
-        _create_review_branch(
-            gitdir, change_id, identifier=identifier, status='waiting'
-        )
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier, status='waiting')
+        seed_db(
             identifier,
             [
                 {
@@ -910,8 +776,8 @@ class TestTrackingWithReviewBranch:
         """Entering review should mark all messages as seen."""
         identifier = 'test-seen'
         change_id = 'test-seen-branch'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -948,7 +814,7 @@ class TestTrackingActionMenu:
     @pytest.mark.asyncio
     async def test_action_menu_for_new_series(self, tmp_path: pathlib.Path) -> None:
         """New series should show review/abandon/snooze actions."""
-        _seed_db(
+        seed_db(
             'test-action-new',
             [
                 {
@@ -988,8 +854,8 @@ class TestTrackingActionMenu:
         """Reviewing series should show take/rebase/waiting/snooze actions."""
         identifier = 'test-action-reviewing'
         change_id = 'reviewing-action-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1022,7 +888,7 @@ class TestTrackingActionMenu:
     @pytest.mark.asyncio
     async def test_action_menu_for_snoozed(self, tmp_path: pathlib.Path) -> None:
         """Snoozed series should show unsnooze/abandon actions."""
-        _seed_db(
+        seed_db(
             'test-action-snoozed',
             [
                 {
@@ -1056,7 +922,7 @@ class TestTrackingActionMenu:
     @pytest.mark.asyncio
     async def test_enter_on_new_opens_action_menu(self, tmp_path: pathlib.Path) -> None:
         """Enter on a 'new' series should open action menu (not review)."""
-        _seed_db(
+        seed_db(
             'test-enter-new',
             [
                 {
@@ -1125,7 +991,7 @@ class TestTrackingUpgradeNewSeries:
         self, tmp_path: pathlib.Path
     ) -> None:
         """New series without newer revisions should not offer upgrade."""
-        _seed_db(
+        seed_db(
             'test-upgrade-none',
             [
                 {
@@ -1220,7 +1086,7 @@ class TestTrackingSnooze:
     async def test_snooze_new_series(self, tmp_path: pathlib.Path) -> None:
         """Snoozing a new series should update the database."""
         identifier = 'test-snooze'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1271,7 +1137,7 @@ class TestTrackingSnooze:
     async def test_snooze_cancel(self, tmp_path: pathlib.Path) -> None:
         """Cancelling snooze should leave the series unchanged."""
         identifier = 'test-snooze-cancel'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1308,8 +1174,8 @@ class TestTrackingSnooze:
         """Snoozing a reviewing series should also update the tracking commit."""
         identifier = 'test-snooze-branch'
         change_id = 'snooze-branch-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1363,7 +1229,7 @@ class TestTrackingUpgradeGating:
 
     def _seed_with_newer(self, identifier: str, change_id: str, status: str) -> None:
         """Seed a v1 series in *status* with a v2 recorded (so has_newer)."""
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1385,7 +1251,7 @@ class TestTrackingUpgradeGating:
         """A waiting series with a newer revision offers upgrade in the menu."""
         identifier = 'test-upgrade-waiting'
         change_id = 'upgrade-waiting-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
+        create_review_branch(gitdir, change_id, identifier=identifier)
         self._seed_with_newer(identifier, change_id, 'waiting')
 
         app = TrackingApp(identifier)
@@ -1408,7 +1274,7 @@ class TestTrackingUpgradeGating:
         """A partial series with a newer revision offers upgrade (cc3f07d)."""
         identifier = 'test-upgrade-partial'
         change_id = 'upgrade-partial-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
+        create_review_branch(gitdir, change_id, identifier=identifier)
         self._seed_with_newer(identifier, change_id, 'partial')
 
         app = TrackingApp(identifier)
@@ -1430,8 +1296,8 @@ class TestTrackingUpgradeGating:
         """A waiting series with no newer revision must not offer upgrade."""
         identifier = 'test-upgrade-waiting-none'
         change_id = 'upgrade-waiting-none-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1492,7 +1358,7 @@ class TestTrackingAbandon:
     async def test_abandon_new_series(self, tmp_path: pathlib.Path) -> None:
         """Abandoning a new series should remove it from the DB."""
         identifier = 'test-abandon'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1543,7 +1409,7 @@ class TestTrackingAbandon:
     async def test_abandon_cancel(self, tmp_path: pathlib.Path) -> None:
         """Cancelling abandon should leave the series intact."""
         identifier = 'test-abandon-cancel'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1579,8 +1445,8 @@ class TestTrackingAbandon:
         """Abandoning a series with a review branch should delete the branch."""
         identifier = 'test-abandon-branch'
         change_id = 'abandon-branch-1'
-        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        branch_name = create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1628,8 +1494,8 @@ class TestTrackingAbandon:
         ours and declines to help."""
         identifier = 'test-abandon-onbranch'
         change_id = 'abandon-onbranch-1'
-        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        branch_name = create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1658,10 +1524,10 @@ class TestTrackingAbandon:
         same way abandoning does."""
         identifier = 'test-archive-onbranch'
         change_id = 'archive-onbranch-1'
-        branch_name = _create_review_branch(
+        branch_name = create_review_branch(
             gitdir, change_id, identifier=identifier, with_patch=True
         )
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1693,8 +1559,8 @@ class TestTrackingAbandon:
         whatever that happens to be."""
         identifier = 'test-abandon-detached'
         change_id = 'abandon-detached-1'
-        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        branch_name = create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1731,8 +1597,8 @@ class TestTrackingAbandon:
         nothing should move it back."""
         identifier = 'test-abandon-elsewhere'
         change_id = 'abandon-elsewhere-1'
-        branch_name = _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        branch_name = create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1764,8 +1630,8 @@ class TestTrackingWaiting:
         """Marking a reviewing series as waiting should update DB and tracking."""
         identifier = 'test-waiting'
         change_id = 'waiting-test-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1805,7 +1671,7 @@ class TestTrackingWaiting:
         """Marking a new (unimported) series as waiting should update DB only."""
         identifier = 'test-new-waiting'
         change_id = 'new-waiting-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1848,7 +1714,7 @@ class TestTrackingWaiting:
         """
         identifier = 'test-selected-sync'
         change_id = 'sync-test-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -1902,8 +1768,8 @@ class TestTrackingWaiting:
         """
         identifier = 'test-action-refresh'
         change_id = 'action-refresh-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -1951,7 +1817,7 @@ class TestTrackingDetailPanel:
     @pytest.mark.asyncio
     async def test_detail_panel_lifecycle(self, tmp_path: pathlib.Path) -> None:
         """The panel auto-shows, follows navigation, and hides on escape."""
-        _seed_db('test-detail', SAMPLE_SERIES)
+        seed_db('test-detail', SAMPLE_SERIES)
 
         app = TrackingApp('test-detail')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -1968,10 +1834,9 @@ class TestTrackingDetailPanel:
             subject_widget = app.query_one('#detail-subject', Static)
             from_widget = app.query_one('#detail-from', Static)
             assert (
-                _static_text(subject_widget)
-                == '[bpf,v2,0/7] charlie: verifier refactor'
+                static_text(subject_widget) == '[bpf,v2,0/7] charlie: verifier refactor'
             )
-            assert _static_text(from_widget) == 'Charlie Coder <charlie@example.com>'
+            assert static_text(from_widget) == 'Charlie Coder <charlie@example.com>'
 
             # Navigating to a different series updates the panel
             await pilot.press('j')
@@ -1979,10 +1844,10 @@ class TestTrackingDetailPanel:
             assert app._selected_series is not None
             assert 'bravo' in app._selected_series.get('subject', '')
             assert (
-                _static_text(subject_widget)
+                static_text(subject_widget)
                 == '[drm,v1,0/1] bravo: fix cursor rendering'
             )
-            assert _static_text(from_widget) == 'Bob Builder <bob@example.com>'
+            assert static_text(from_widget) == 'Bob Builder <bob@example.com>'
 
             await pilot.press('j')
             await pilot.pause()
@@ -2004,10 +1869,10 @@ class TestTrackingMultipleSeries:
         """App should correctly display a mix of new and reviewing series."""
         identifier = 'test-mixed'
         change_id_rev = 'mixed-reviewing-1'
-        _create_review_branch(
+        create_review_branch(
             gitdir, change_id_rev, identifier=identifier, subject='Reviewing series'
         )
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2052,10 +1917,10 @@ class TestTrackingMultipleSeries:
         """Navigate to a non-first series and enter review mode."""
         identifier = 'test-nav-review'
         change_id = 'nav-review-target'
-        _create_review_branch(
+        create_review_branch(
             gitdir, change_id, identifier=identifier, subject='Target series'
         )
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2095,7 +1960,7 @@ class TestTrackingSnoozeRemembersChoice:
     async def test_snooze_remembers_last_input(self, tmp_path: pathlib.Path) -> None:
         """Second snooze should pre-populate with the first snooze's input."""
         identifier = 'test-snooze-memory'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2186,7 +2051,7 @@ class TestLinkRevisionAction:
         self, tmp_path: pathlib.Path
     ) -> None:
         identifier = 'test-link-action'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2233,10 +2098,10 @@ class TestSeriesLifecycle:
         branch_name = f'b4/review/{change_id}'
 
         # Seed series as 'reviewing' with a real review branch
-        _create_review_branch(
+        create_review_branch(
             gitdir, change_id, identifier=identifier, status='reviewing'
         )
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2409,7 +2274,7 @@ class TestSeriesLifecycle:
         """A new series can be snoozed without ever entering review."""
         identifier = 'test-lifecycle-snooze-new'
         change_id = 'direct-snooze-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2440,10 +2305,8 @@ class TestSeriesLifecycle:
         """A thanked series offers reopen-to-reviewing and archive."""
         identifier = 'test-lifecycle-thanked'
         change_id = 'thanked-series-1'
-        _create_review_branch(
-            gitdir, change_id, identifier=identifier, status='thanked'
-        )
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier, status='thanked')
+        seed_db(
             identifier,
             [
                 {
@@ -2471,10 +2334,10 @@ class TestSeriesLifecycle:
         """Accepted series should show review, thank, abandon, and archive."""
         identifier = 'test-lifecycle-accepted'
         change_id = 'accepted-menu-1'
-        _create_review_branch(
+        create_review_branch(
             gitdir, change_id, identifier=identifier, status='accepted'
         )
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2503,7 +2366,7 @@ class TestSeriesLifecycle:
         """A 'gone' series (branch deleted externally) should allow
         review and abandon."""
         identifier = 'test-lifecycle-gone'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2536,9 +2399,7 @@ class TestSeriesLifecycle:
         change_id = 'snooze-wait-1'
         branch_name = f'b4/review/{change_id}'
         # Create branch with 'snoozed' status + snoozed metadata
-        _create_review_branch(
-            gitdir, change_id, identifier=identifier, status='snoozed'
-        )
+        create_review_branch(gitdir, change_id, identifier=identifier, status='snoozed')
         # Manually inject snoozed.previous_state into tracking commit
         cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
         trk['series']['snoozed'] = {
@@ -2547,7 +2408,7 @@ class TestSeriesLifecycle:
         }
         b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
 
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2581,10 +2442,10 @@ class TestSeriesLifecycle:
         for status in ('reviewing', 'snoozed'):
             identifier = f'test-lifecycle-abandon-{status}'
             change_id = f'abandon-{status}'
-            _create_review_branch(
+            create_review_branch(
                 gitdir, change_id, identifier=identifier, status=status
             )
-            _seed_db(
+            seed_db(
                 identifier,
                 [
                     {
@@ -2630,10 +2491,8 @@ class TestSeriesLifecycle:
         """A 'partial' series offers take/rebase/thank/etc."""
         identifier = 'test-lifecycle-partial-menu'
         change_id = 'partial-menu-1'
-        _create_review_branch(
-            gitdir, change_id, identifier=identifier, status='partial'
-        )
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier, status='partial')
+        seed_db(
             identifier,
             [
                 {
@@ -2670,10 +2529,8 @@ class TestSeriesLifecycle:
         """A 'partial' series appears in the normal listing (not hidden)."""
         identifier = 'test-lifecycle-partial-visible'
         change_id = 'partial-visible-1'
-        _create_review_branch(
-            gitdir, change_id, identifier=identifier, status='partial'
-        )
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier, status='partial')
+        seed_db(
             identifier,
             [
                 {
@@ -2696,7 +2553,7 @@ class TestSeriesLifecycle:
         """Cherry-picking a subset of patches → status 'partial' in tracking blob."""
         identifier = 'test-partial-coverage'
         change_id = 'partial-cov-1'
-        branch_name = _create_review_branch(
+        branch_name = create_review_branch(
             gitdir, change_id, identifier=identifier, status='reviewing'
         )
         # Inject 4-patch tracking data into the blob
@@ -2733,7 +2590,7 @@ class TestSeriesLifecycle:
         """Taking remaining patches after a partial take → auto-promotes to 'accepted'."""
         identifier = 'test-full-coverage'
         change_id = 'full-cov-1'
-        branch_name = _create_review_branch(
+        branch_name = create_review_branch(
             gitdir, change_id, identifier=identifier, status='partial'
         )
         # Inject 3-patch tracking data with patches 1+2 already taken
@@ -2778,7 +2635,7 @@ class TestSeriesLifecycle:
         happened.  Saying None for both leaves the caller unable to tell them
         apart, and 'unrecorded' must not reach the status column either."""
         change_id = 'take-unrecorded-1'
-        branch_name = _create_review_branch(
+        branch_name = create_review_branch(
             gitdir, change_id, identifier='test-unrecorded', status='reviewing'
         )
         app = TrackingApp.__new__(TrackingApp)
@@ -2811,7 +2668,7 @@ class TestSeriesLifecycle:
         CI-lookup metadata.
         """
         change_id = 'branch-tip-1'
-        branch_name = _create_review_branch(
+        branch_name = create_review_branch(
             gitdir, change_id, identifier='test-branch-tip', status='reviewing'
         )
         cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
@@ -2863,7 +2720,7 @@ class TestSeriesLifecycle:
 
         identifier = 'test-thank-partial'
         change_id = 'thank-partial-1'
-        branch_name = _create_review_branch(
+        branch_name = create_review_branch(
             gitdir, change_id, identifier=identifier, status='partial'
         )
         # 3-patch series: patches 1+2 taken, patch 3 still open.
@@ -2888,7 +2745,7 @@ class TestSeriesLifecycle:
         ]
         b4.review.save_tracking_ref(gitdir, branch_name, cover_text, trk)
 
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2953,7 +2810,7 @@ class TestSeriesLifecycle:
         change_id = 'partial-ingest-1'
 
         # Seed DB: v1, partial (patches 1+2 taken, patch 3 still open)
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -2973,7 +2830,7 @@ class TestSeriesLifecycle:
         conn.close()
 
         # Create review branch with partial state and per-patch tracking data
-        branch_name = _create_review_branch(
+        branch_name = create_review_branch(
             gitdir, change_id, identifier=identifier, status='partial'
         )
         cover_text, trk = b4.review.load_tracking(gitdir, branch_name)
@@ -3314,7 +3171,7 @@ class TestMergeTakeSkipRouting:
     def _setup_branch(
         self, gitdir: str, change_id: str, skip_indices: List[int]
     ) -> str:
-        branch = _create_review_branch(gitdir, change_id, status='reviewing')
+        branch = create_review_branch(gitdir, change_id, status='reviewing')
         cover_text, trk = b4.review.load_tracking(gitdir, branch)
         usercfg = b4.get_user_config()
         patches: List[Dict[str, Any]] = []
@@ -3417,7 +3274,7 @@ class TestTargetBranch:
         """Press t on a new series, type a branch, confirm — DB is updated."""
         identifier = 'test-target-new'
         change_id = 'target-new-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -3458,8 +3315,8 @@ class TestTargetBranch:
         """Set target on a reviewing series — tracking commit updated too."""
         identifier = 'test-target-rev'
         change_id = 'target-rev-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -3501,7 +3358,7 @@ class TestTargetBranch:
         """Verify detail panel shows Target: row when target is set."""
         identifier = 'test-target-detail'
         change_id = 'target-detail-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -3521,7 +3378,7 @@ class TestTargetBranch:
             await pilot.pause()
             # Detail panel should be visible after selecting series
             target_widget = app.query_one('#detail-target', Static)
-            text = _static_text(target_widget)
+            text = static_text(target_widget)
             assert 'sound/for-next' in text
 
     @pytest.mark.asyncio
@@ -3529,7 +3386,7 @@ class TestTargetBranch:
         """Ctrl+d in modal clears the target branch."""
         identifier = 'test-target-clear'
         change_id = 'target-clear-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -3686,14 +3543,14 @@ def _setup_update_test(
 
     Returns the review branch name.
     """
-    branch = _create_review_branch(
+    branch = create_review_branch(
         gitdir,
         change_id,
         identifier=identifier,
         revision=current_rev,
         status='reviewing',
     )
-    _seed_db(
+    seed_db(
         identifier,
         [
             {
@@ -3733,8 +3590,8 @@ class TestUpdateRevisionWorkflow:
         """Target revision without a message-id should notify an error."""
         identifier = 'test-update-nomsgid'
         change_id = 'update-nomsgid-1'
-        _create_review_branch(gitdir, change_id, identifier=identifier)
-        _seed_db(
+        create_review_branch(gitdir, change_id, identifier=identifier)
+        seed_db(
             identifier,
             [
                 {
@@ -3770,7 +3627,7 @@ class TestUpdateRevisionWorkflow:
         """Fetching an upgrade should describe each potentially slow step."""
         identifier = 'test-update-progress'
         change_id = 'update-progress-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -3864,7 +3721,7 @@ class TestUpdateRevisionWorkflow:
     async def test_prepared_none_is_noop(self, tmp_path: pathlib.Path) -> None:
         """A None result (worker cancelled) should do nothing."""
         identifier = 'test-update-none'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -3895,7 +3752,7 @@ class TestUpdateRevisionWorkflow:
     async def test_prepared_pushes_base_selection(self, tmp_path: pathlib.Path) -> None:
         """Successful worker result should push BaseSelectionScreen."""
         identifier = 'test-update-base'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -3937,7 +3794,7 @@ class TestUpdateRevisionWorkflow:
         upgrade carried that through to the series list.
         """
         identifier = 'test-update-title'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -3980,7 +3837,7 @@ class TestUpdateRevisionWorkflow:
         good catalog subject.
         """
         identifier = 'test-update-untitled'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -4017,7 +3874,7 @@ class TestUpdateRevisionWorkflow:
     async def test_base_selected_none_cancels(self, tmp_path: pathlib.Path) -> None:
         """Passing None as base_sha should cancel the update."""
         identifier = 'test-update-cancel'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -4202,7 +4059,7 @@ class TestUpdateRevisionWorkflow:
         ) -> None:
             """Simulate create_review_branch by making a real branch."""
             branch_suffix = branch.removeprefix('b4/review/')
-            _create_review_branch(
+            create_review_branch(
                 topdir,
                 branch_suffix,
                 identifier=identifier or 'test',
@@ -4302,7 +4159,7 @@ class TestUpdateRevisionWorkflow:
 
         def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
             """Create the branch and check it out, as the real one does."""
-            _create_review_branch(
+            create_review_branch(
                 topdir,
                 branch.removeprefix('b4/review/'),
                 identifier=identifier,
@@ -4384,7 +4241,7 @@ class TestUpdateRevisionWorkflow:
         lser = _make_mock_lser()
 
         def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
-            _create_review_branch(
+            create_review_branch(
                 topdir,
                 branch.removeprefix('b4/review/'),
                 identifier=identifier,
@@ -4562,7 +4419,7 @@ class TestUpdateRevisionWorkflow:
 
         def _fake_create(topdir: str, branch: str, *args: Any, **kwargs: Any) -> None:
             branch_suffix = branch.removeprefix('b4/review/')
-            _create_review_branch(
+            create_review_branch(
                 topdir,
                 branch_suffix,
                 identifier=identifier,
@@ -4721,7 +4578,7 @@ class TestLoadSeriesCaching:
         self, tmp_path: pathlib.Path
     ) -> None:
         """Caches should persist when _check_db_changed finds no change."""
-        _seed_db('cache-nochg', SAMPLE_SERIES)
+        seed_db('cache-nochg', SAMPLE_SERIES)
 
         app = TrackingApp('cache-nochg')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -4737,7 +4594,7 @@ class TestLoadSeriesCaching:
         self, tmp_path: pathlib.Path
     ) -> None:
         """_invalidate_caches() without change_id clears everything."""
-        _seed_db('cache-full-inv', SAMPLE_SERIES)
+        seed_db('cache-full-inv', SAMPLE_SERIES)
 
         app = TrackingApp('cache-full-inv')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -4756,7 +4613,7 @@ class TestLoadSeriesCaching:
         self, tmp_path: pathlib.Path
     ) -> None:
         """_invalidate_caches(change_id) only evicts that ART entry."""
-        _seed_db('cache-sel-inv', SAMPLE_SERIES)
+        seed_db('cache-sel-inv', SAMPLE_SERIES)
 
         app = TrackingApp('cache-sel-inv')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -4862,7 +4719,7 @@ class TestAmTakeWorktree:
         from types import SimpleNamespace
 
         change_id = 'am-wt-1'
-        review_branch = _create_review_branch(gitdir, change_id, status='reviewing')
+        review_branch = create_review_branch(gitdir, change_id, status='reviewing')
         app = TrackingApp.__new__(TrackingApp)
         app._identifier = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         app._selected_series = {}
@@ -5442,7 +5299,7 @@ class TestDoTakeMergeConflict:
         from types import SimpleNamespace
 
         change_id = 'merge-conflict-e2e'
-        review_branch = _create_review_branch(gitdir, change_id, status='reviewing')
+        review_branch = create_review_branch(gitdir, change_id, status='reviewing')
         app = TrackingApp.__new__(TrackingApp)
         app._identifier = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         app._selected_series = {}
@@ -5571,7 +5428,7 @@ class TestTestApplyNoSigning:
     def test_take_confirm_test_apply_does_not_sign(
         self, gitdir: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        branch = _create_review_branch(gitdir, 'sign-take', with_patch=True)
+        branch = create_review_branch(gitdir, 'sign-take', with_patch=True)
         _poison_gpg_signing(monkeypatch)
         screen = TakeConfirmScreen('linear', 'master', branch)
         ok, detail = screen._test_take()
@@ -5606,7 +5463,7 @@ class TestTestApplySubmoduleRecurse:
     def test_take_confirm_test_apply_ignores_submodule_recurse(
         self, gitdir: str, add_unpopulated_submodule: Callable[..., str]
     ) -> None:
-        branch = _create_review_branch(gitdir, 'recurse-take', with_patch=True)
+        branch = create_review_branch(gitdir, 'recurse-take', with_patch=True)
         add_unpopulated_submodule(gitdir)
         b4.git_set_config(gitdir, 'submodule.recurse', 'true')
         screen = TakeConfirmScreen('linear', 'master', branch)
@@ -5792,7 +5649,7 @@ class TestBadCharsGuard:
     async def test_modal_shows_finding_and_confirms(self, gitdir: str) -> None:
         """'y' proceeds, and the dialog spells out what was found."""
         identifier = 'test-badchars-modal'
-        _seed_db(identifier, [])
+        seed_db(identifier, [])
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
@@ -5800,7 +5657,7 @@ class TestBadCharsGuard:
             app.push_screen(BadCharsScreen(self._make_error()), callback=result.append)
             await pilot.pause()
             assert isinstance(app.screen, BadCharsScreen)
-            text = _static_text(app.screen.query_one('#badchars-context', Static))
+            text = static_text(app.screen.query_one('#badchars-context', Static))
             assert 'ZERO WIDTH NON-JOINER' in text
             assert '0x200c' in text
             # Caret must sit under the offending character.
@@ -5815,7 +5672,7 @@ class TestBadCharsGuard:
     async def test_modal_defaults_to_cancel(self, gitdir: str) -> None:
         """Enter must not be a way to accidentally accept hidden characters."""
         identifier = 'test-badchars-cancel'
-        _seed_db(identifier, [])
+        seed_db(identifier, [])
         app = TrackingApp(identifier)
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
@@ -5830,7 +5687,7 @@ class TestBadCharsGuard:
     async def test_confirm_retries_and_remembers(self, gitdir: str) -> None:
         """Accepting whitelists the message-id and re-runs the action."""
         identifier = 'test-badchars-retry'
-        _seed_db(identifier, [])
+        seed_db(identifier, [])
         app = TrackingApp(identifier)
         series = {'message_id': 'badchars@example.com'}
         retried: List[bool] = []
@@ -5849,7 +5706,7 @@ class TestBadCharsGuard:
     @pytest.mark.asyncio
     async def test_cancel_does_not_retry(self, gitdir: str) -> None:
         identifier = 'test-badchars-noretry'
-        _seed_db(identifier, [])
+        seed_db(identifier, [])
         app = TrackingApp(identifier)
         series = {'message_id': 'badchars@example.com'}
         retried: List[bool] = []
@@ -5869,7 +5726,7 @@ class TestBadCharsGuard:
         letting it escape the thread (which is how the TUI used to die)."""
         identifier = 'test-badchars-worker'
         change_id = 'badchars-worker-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -5902,7 +5759,7 @@ class TestBadCharsGuard:
         """A whitelisted message-id passes allowbadchars=True downstream."""
         identifier = 'test-badchars-honour'
         change_id = 'badchars-honour-1'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -6023,7 +5880,7 @@ def _rendered_rows(app: TrackingApp) -> List[str]:
     """Plain text of every rendered list row, header first."""
     header = app.query_one('#tracking-header', Static)
     lv = app.query_one('#tracking-list', ListView)
-    rows = [str(_static_text(header))]
+    rows = [str(static_text(header))]
     for item in lv.children:
         if isinstance(item, TrackedSeriesItem):
             rows.append(item.render_label().plain)
@@ -6063,7 +5920,7 @@ class TestListAlignment:
     @pytest.mark.asyncio
     async def test_columns_stay_aligned_with_a_wide_badge(self) -> None:
         """A 71(13) row must not shove the S/Subject columns rightwards."""
-        _seed_db('test-align', self.ALIGN_SERIES)
+        seed_db('test-align', self.ALIGN_SERIES)
 
         app = TrackingApp('test-align')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -6080,7 +5937,7 @@ class TestListAlignment:
 
     @pytest.mark.asyncio
     async def test_msgs_header_sits_over_the_totals(self) -> None:
-        _seed_db('test-align-hdr', self.ALIGN_SERIES)
+        seed_db('test-align-hdr', self.ALIGN_SERIES)
 
         app = TrackingApp('test-align-hdr')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -6101,7 +5958,7 @@ class TestListAlignment:
     async def test_upgrade_shows_in_the_version_token(self) -> None:
         """has_newer renders as v1→v3 in the prefix, not a status suffix."""
         identifier = 'test-upgrade-token'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -6138,7 +5995,7 @@ class TestListAlignment:
 
     @pytest.mark.asyncio
     async def test_no_upgrade_renders_plain_version(self) -> None:
-        _seed_db('test-noupgrade', self.ALIGN_SERIES[:1])
+        seed_db('test-noupgrade', self.ALIGN_SERIES[:1])
 
         app = TrackingApp('test-noupgrade')
         async with app.run_test(size=(120, 30)) as pilot:
@@ -6197,7 +6054,7 @@ class TestAttestationColumnRendering:
     @pytest.mark.asyncio
     async def test_nokey_plus_dkim_gets_a_checkmark(self) -> None:
         identifier = 'test-att-column'
-        _seed_db(
+        seed_db(
             identifier,
             [
                 {
@@ -6255,7 +6112,7 @@ class TestUpdateSummary:
         node.is_shutdown = False
         node.upstream_url = 'https://lore.kernel.org/all'
         monkeypatch.setattr(b4, 'LORENODE', node)
-        _seed_db(identifier, SAMPLE_SERIES)
+        seed_db(identifier, SAMPLE_SERIES)
         app = TrackingApp(identifier)
         messages: List[str] = []
         async with app.run_test(size=(120, 30)) as pilot:

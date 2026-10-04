@@ -11,6 +11,8 @@ import b4
 import b4.command
 import b4.mbox
 
+from .helpers.mail import make_msg
+
 
 @pytest.mark.parametrize(
     'mboxf, shazamargs, compareargs, compareout, b4cfg',
@@ -118,13 +120,8 @@ def test_shazam_merge_stdin_at_eof(
 def _make_msg(
     subject: str, from_addr: str, date: str, body: str = '', msgid: str = ''
 ) -> EmailMessage:
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = from_addr
-    msg['Date'] = date
-    msg['Message-Id'] = msgid or f'<{abs(hash(subject + date))}@example.com>'
-    msg.set_payload(body)
-    return msg
+    msgid = msgid.strip('<>') or f'{abs(hash(subject + date))}@example.com'
+    return make_msg(msgid, subject, from_addr=from_addr, date=date, body=body)
 
 
 def test_get_extra_series_rejects_prerequisite_change_id() -> None:

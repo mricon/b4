@@ -23,6 +23,8 @@ import b4.review
 import b4.review.tracking
 from b4.review_tui._review_app import PatchListItem, ReviewApp
 
+from .helpers.tracking import create_review_branch
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -32,77 +34,16 @@ def _create_review_branch_with_patches(
     gitdir: str,
     change_id: str,
     patch_messages: List[str],
-    identifier: str = 'test-project',
-    revision: int = 1,
-    status: str = 'reviewing',
-    subject: str = 'Test series',
+    **kwargs: Any,
 ) -> Tuple[str, List[str]]:
-    """Create a review branch with real patch commits and a tracking commit.
-
-    Each entry in *patch_messages* becomes a separate commit (with an
-    empty diff via --allow-empty).  A tracking commit is appended at the
-    tip.
+    """Create a review branch with real patch commits and leave HEAD on it.
 
     Returns (branch_name, list_of_patch_commit_shas).
     """
-    branch_name = f'b4/review/{change_id}'
-
-    # Base commit
-    ecode, base_sha = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
-    assert ecode == 0
-    base_sha = base_sha.strip()
-
-    # Create the branch
-    ecode, _ = b4.git_run_command(gitdir, ['branch', branch_name, base_sha])
-    assert ecode == 0
-    ecode, _ = b4.git_run_command(gitdir, ['checkout', branch_name])
-    assert ecode == 0
-
-    # Create patch commits
-    patch_shas: List[str] = []
-    for msg in patch_messages:
-        ecode, _ = b4.git_run_command(gitdir, ['commit', '--allow-empty', '-m', msg])
-        assert ecode == 0
-        ecode, sha = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
-        assert ecode == 0
-        patch_shas.append(sha.strip())
-
-    # Build tracking metadata
-    patches_meta: List[Dict[str, Any]] = []
-    for i, _sha in enumerate(patch_shas):
-        patches_meta.append(
-            {
-                'header-info': {'msgid': f'{change_id}-patch{i + 1}@example.com'},
-                'followups': [],
-            }
-        )
-
-    trk: Dict[str, Any] = {
-        'series': {
-            'identifier': identifier,
-            'change-id': change_id,
-            'revision': revision,
-            'status': status,
-            'subject': subject,
-            'fromname': 'Test Author',
-            'fromemail': 'test@example.com',
-            'expected': len(patch_messages),
-            'complete': True,
-            'base-commit': base_sha,
-            'prerequisite-commits': [],
-            'first-patch-commit': patch_shas[0],
-            'header-info': {},
-        },
-        'followups': [],
-        'patches': patches_meta,
-    }
-    commit_msg = f'{subject}\n\n{b4.review.make_review_magic_json(trk)}'
-
-    # Create tracking commit (empty)
-    ecode, _ = b4.git_run_command(gitdir, ['commit', '--allow-empty', '-m', commit_msg])
-    assert ecode == 0
-
-    return branch_name, patch_shas
+    branch = create_review_branch(
+        gitdir, change_id, patch_messages=patch_messages, checkout=True, **kwargs
+    )
+    return branch, branch.patch_shas
 
 
 def _build_session(gitdir: str, branch_name: str) -> Dict[str, Any]:

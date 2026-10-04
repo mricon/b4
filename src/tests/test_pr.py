@@ -14,6 +14,8 @@ import b4
 import b4.command
 import b4.pr
 
+from .helpers.mail import make_msg
+
 
 # ---------------------------------------------------------------------------
 # Helpers and fixtures
@@ -63,16 +65,16 @@ def _make_msg(
     subject: str = '[GIT PULL] test changes',
     body: str = 'Please pull the changes.\n',
 ) -> EmailMessage:
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = 'Pull Author <pull@example.com>'
-    msg['Date'] = 'Mon, 01 Jun 2026 10:00:00 +0000'
-    msg['Message-Id'] = f'<{msgid}>'
-    msg['To'] = 'Maintainer <maint@example.com>'
-    msg['Cc'] = 'Some List <list@example.com>'
-    msg['References'] = '<prev@example.com>'
-    msg.set_payload(body)
-    return msg
+    return make_msg(
+        msgid,
+        subject,
+        from_addr='Pull Author <pull@example.com>',
+        date='Mon, 01 Jun 2026 10:00:00 +0000',
+        to='Maintainer <maint@example.com>',
+        cc='Some List <list@example.com>',
+        references='<prev@example.com>',
+        body=body,
+    )
 
 
 def _make_lmsg(

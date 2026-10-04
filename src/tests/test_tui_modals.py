@@ -47,18 +47,7 @@ from b4.review_tui._modals import (
     _FetchViewerScreen,
 )
 
-# ---------------------------------------------------------------------------
-# Compat helper — Textual ≥ 1.0 (pip) uses Static.content,
-# older builds (e.g. Fedora 43 package) still use Static.renderable.
-# ---------------------------------------------------------------------------
-
-
-def _static_text(widget: Any) -> str:
-    """Return the text content of a Static widget across Textual versions."""
-    if hasattr(widget, 'content'):
-        return str(widget.content)
-    return str(widget.renderable)
-
+from .helpers.tui import static_text
 
 # ---------------------------------------------------------------------------
 # Minimal host app — just enough to push modal screens onto
@@ -192,7 +181,7 @@ class TestConfirmScreen:
             await pilot.pause()
 
             title_widget = app.screen.query_one('#confirm-title')
-            assert 'My Subject' in _static_text(title_widget)
+            assert 'My Subject' in static_text(title_widget)
 
     @pytest.mark.asyncio
     async def test_warning_border(self) -> None:
@@ -552,7 +541,7 @@ class TestSnoozeScreen:
             assert len(results) == 0
 
             error = app.screen.query_one('#snooze-error')
-            error_text = _static_text(error).lower()
+            error_text = static_text(error).lower()
             assert 'enter' in error_text or 'please' in error_text
 
     @pytest.mark.asyncio
@@ -574,7 +563,7 @@ class TestSnoozeScreen:
             assert len(results) == 0
 
             error = app.screen.query_one('#snooze-error')
-            assert 'only one' in _static_text(error).lower()
+            assert 'only one' in static_text(error).lower()
 
     @pytest.mark.asyncio
     async def test_invalid_duration_shows_error(self) -> None:
@@ -1118,7 +1107,7 @@ class TestLinkRevisionConfirmScreen:
             )
             await pilot.pause()
             warning = app.screen.query_one('#link-confirm-warning', Static)
-            assert 'absorbed' in _static_text(warning)
+            assert 'absorbed' in static_text(warning)
 
 
 # ---------------------------------------------------------------------------
@@ -1148,11 +1137,11 @@ class TestWorkerScreen:
                 await pilot.pause()
 
                 status = screen.query_one('#ws-status', Static)
-                assert _static_text(status) == 'Fetching 0/2…'
+                assert static_text(status) == 'Fetching 0/2…'
 
                 screen.update_status('Fetching 1/2…')
                 await pilot.pause()
-                assert _static_text(status) == 'Fetching 1/2…'
+                assert static_text(status) == 'Fetching 1/2…'
 
     @pytest.mark.asyncio
     async def test_successful_fetch_dismisses_with_result(self) -> None:
@@ -1313,7 +1302,7 @@ class TestTakeScreen:
             assert app.screen.query_one('#take-method', Select).value == expected_method
             if expect_hint:
                 hint = app.screen.query_one('#take-nocover', Static)
-                assert 'No cover letter' in _static_text(hint)
+                assert 'No cover letter' in static_text(hint)
             else:
                 assert not app.screen.query('#take-nocover')
 

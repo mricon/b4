@@ -15,6 +15,8 @@ from b4 import review, review_tui
 from b4.review import _review
 from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
 
+from .helpers.mail import AUTHOR, MINIMAL_DIFF, make_msg
+
 # The address-helper functions exposed via review_tui live in a module that
 # imports textual at load time, so the tests that exercise them need the [tui]
 # extra even though the functions themselves are pure. Skip them when textual
@@ -4238,39 +4240,15 @@ class TestFollowupItemPerMessage:
 # _get_lore_series version-mismatch tests (cc529aa)
 # ---------------------------------------------------------------------------
 
-_MINIMAL_DIFF = """\
-Fix bar.
-
-Signed-off-by: Author <author@example.com>
----
- foo.c | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/foo.c b/foo.c
-index aaa..bbb 100644
---- a/foo.c
-+++ b/foo.c
-@@ -1,3 +1,4 @@
- void foo(void) {
-+    bar();
- }
-"""
-
 
 def _make_patch_msg(
     subject: str, from_addr: str, date: str, body: str = '', msgid: str = ''
 ) -> email.message.EmailMessage:
     """Build a minimal EmailMessage that LoreMailbox can parse as a patch."""
-    msg = email.message.EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = from_addr
-    msg['Date'] = date
-    msg['Message-Id'] = msgid or f'<{abs(hash(subject + date))}@test.com>'
-    msg.set_payload(body or _MINIMAL_DIFF)
-    return msg
-
-
-_AUTHOR = 'Author <author@example.com>'
+    msgid = msgid.strip('<>') or f'{abs(hash(subject + date))}@test.com'
+    return make_msg(
+        msgid, subject, from_addr=from_addr, date=date, body=body or MINIMAL_DIFF
+    )
 
 
 class TestGetLoreSeriesVersionMismatch:
@@ -4285,7 +4263,7 @@ class TestGetLoreSeriesVersionMismatch:
         return [
             _make_patch_msg(
                 '[PATCH v2] foo: fix bar',
-                _AUTHOR,
+                AUTHOR,
                 'Thu, 19 Mar 2026 08:51:12 +0530',
                 msgid='<v2-patch@example.com>',
             ),
@@ -4296,7 +4274,7 @@ class TestGetLoreSeriesVersionMismatch:
         return [
             _make_patch_msg(
                 '[PATCH v3] foo: fix bar',
-                _AUTHOR,
+                AUTHOR,
                 'Fri, 27 Mar 2026 14:51:06 +0530',
                 msgid='<v3-patch@example.com>',
             ),
@@ -4877,15 +4855,7 @@ class TestOwnMessageEntries:
         msgid: str = 'msg@example.com',
         date: Optional[str] = 'Mon, 27 Jul 2026 10:00:00 +0000',
     ) -> email.message.EmailMessage:
-        msg = email.message.EmailMessage()
-        msg['Subject'] = 'Test'
-        if fromhdr:
-            msg['From'] = fromhdr
-        if msgid:
-            msg['Message-Id'] = f'<{msgid}>'
-        if date:
-            msg['Date'] = date
-        return msg
+        return make_msg(msgid, 'Test', from_addr=fromhdr, date=date, body='')
 
     def test_exact_match(self) -> None:
         msg = self._make_msg('K R <maint@example.com>', 'own@example.com')

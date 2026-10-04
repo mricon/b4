@@ -10,30 +10,15 @@ import pytest
 import b4
 import liblore
 
+from .helpers.mail import make_msg
+
 
 # ---------------------------------------------------------------------------
 # Helpers for building synthetic EmailMessage objects
 # ---------------------------------------------------------------------------
-def _make_msg(
-    msgid: str,
-    subject: str,
-    from_addr: str = 'Test Author <test@example.com>',
-    date: str = 'Mon, 23 Mar 2026 12:00:00 +0000',
-    in_reply_to: Optional[str] = None,
-    references: Optional[str] = None,
-    body: str = 'Hello\n',
-) -> email.message.EmailMessage:
-    msg = email.message.EmailMessage()
-    msg['Message-ID'] = f'<{msgid}>'
-    msg['Subject'] = subject
-    msg['From'] = from_addr
-    msg['Date'] = date
-    if in_reply_to:
-        msg['In-Reply-To'] = f'<{in_reply_to}>'
-    if references:
-        msg['References'] = references
-    msg.set_payload(body, 'utf-8')
-    return msg
+def _make_msg(msgid: str, subject: str, **kwargs: Any) -> email.message.EmailMessage:
+    """``make_msg`` with a utf-8 charset, so bodies go through the decoder."""
+    return make_msg(msgid, subject, charset='utf-8', **kwargs)
 
 
 # ===========================================================================

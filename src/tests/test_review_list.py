@@ -20,6 +20,8 @@ import pytest
 import b4
 from b4.review import tracking as review_tracking
 
+from .helpers.tracking import seed_series
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -37,44 +39,18 @@ def _seed(
     message_id: Optional[str] = None,
 ) -> None:
     """Add one tracked series with matching revision and patch rows."""
-    if message_id is None:
-        message_id = f'{change_id}-cover@example.com'
-    if review_tracking.db_exists(identifier):
-        conn = review_tracking.get_db(identifier)
-    else:
-        conn = review_tracking.init_db(identifier)
-    review_tracking.add_series_to_db(
-        conn,
-        change_id=change_id,
+    seed_series(
+        identifier,
+        change_id,
         revision=revision,
+        status=status,
         subject=subject,
         sender_name=sender_name,
-        sender_email='author@example.com',
-        sent_at='2026-01-15T10:00:00+00:00',
-        message_id=message_id,
         num_patches=num_patches,
+        message_id=message_id or f'{change_id}-cover@example.com',
+        revisions=[revision],
+        patch_rows=True,
     )
-    conn.execute(
-        'UPDATE series SET status = ? WHERE change_id = ? AND revision = ?',
-        (status, change_id, revision),
-    )
-    review_tracking.add_revision(
-        conn,
-        change_id=change_id,
-        revision=revision,
-        message_id=message_id,
-    )
-    rows = [
-        (change_id, revision, pos, f'{change_id}-p{pos}@example.com', f'patch {pos}')
-        for pos in range(1, num_patches + 1)
-    ]
-    conn.executemany(
-        'INSERT INTO series_patches (change_id, revision, position, message_id,'
-        ' subject) VALUES (?, ?, ?, ?, ?)',
-        rows,
-    )
-    conn.commit()
-    conn.close()
 
 
 def _args(**kwargs: Any) -> argparse.Namespace:

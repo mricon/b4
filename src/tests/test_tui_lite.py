@@ -29,6 +29,8 @@ from b4.review_tui._lite_app import (
     check_attestation,
 )
 
+from .helpers.tui import static_text
+
 
 class TestLiteSendReply:
     """The lite view sends the same trimmed body the preview showed."""
@@ -80,13 +82,6 @@ class TestLiteSendReply:
         assert '> trailing untouched quote' not in body
         assert body.endswith('\n\n-- \n' + b4.get_email_signature())
         assert send_mail.call_args.args[1] == [outgoing]
-
-
-def _static_text(widget: Any) -> str:
-    """Return the text content of a Static widget across Textual versions."""
-    if hasattr(widget, 'content'):
-        return str(widget.content)
-    return str(widget.renderable)
 
 
 def _make_lmsg(
@@ -239,11 +234,11 @@ class TestLazyAttestation:
             screen = await _open(app, pilot)
             line = _attestation_line(screen)
             assert line.display
-            assert _static_text(line) == 'Attestation: checking\u2026'
+            assert static_text(line) == 'Attestation: checking\u2026'
 
             checks.release('top@example.com')
             await _settle(app, pilot)
-            assert _static_text(line) == 'Attestation: \u2713 DKIM/example.com'
+            assert static_text(line) == 'Attestation: \u2713 DKIM/example.com'
         assert checks.calls == ['top@example.com']
 
     @pytest.mark.asyncio
@@ -273,7 +268,7 @@ class TestLazyAttestation:
             await pilot.pause()
             assert screen.node is nodes[1]
             assert (
-                _static_text(_attestation_line(screen)) == 'Attestation: checking\u2026'
+                static_text(_attestation_line(screen)) == 'Attestation: checking\u2026'
             )
 
             # The first message's answer lands while the second is shown
@@ -285,12 +280,12 @@ class TestLazyAttestation:
                 await pilot.pause(0.05)
             assert nodes[0].attestation == PASSED
             assert (
-                _static_text(_attestation_line(screen)) == 'Attestation: checking\u2026'
+                static_text(_attestation_line(screen)) == 'Attestation: checking\u2026'
             )
 
             await pilot.press('k')
             await pilot.pause()
-            assert _static_text(_attestation_line(screen)) == (
+            assert static_text(_attestation_line(screen)) == (
                 'Attestation: \u2713 DKIM/example.com'
             )
             checks.release('reply@example.com')
@@ -309,7 +304,7 @@ class TestLazyAttestation:
             screen = await _open(app, pilot)
             checks.release('top@example.com')
             await _settle(app, pilot)
-            assert _static_text(_attestation_line(screen)) == (
+            assert static_text(_attestation_line(screen)) == (
                 'Attestation: \u2713 DKIM/example.com'
             )
         assert checks.calls == ['top@example.com']
@@ -327,7 +322,7 @@ class TestLazyAttestation:
             app.pop_screen()
             await pilot.pause()
             assert app.screen is screen
-            assert _static_text(_attestation_line(screen)) == (
+            assert static_text(_attestation_line(screen)) == (
                 'Attestation: \u2713 DKIM/example.com'
             )
 
@@ -339,7 +334,7 @@ class TestLazyAttestation:
         async with app.run_test(size=(120, 30)) as pilot:
             screen = await _open(app, pilot)
             await _settle(app, pilot)
-            assert _static_text(_attestation_line(screen)) == (
+            assert static_text(_attestation_line(screen)) == (
                 'Attestation: \u2717 check failed: kaboom'
             )
 
@@ -368,10 +363,10 @@ class TestFixedHeader:
             assert header.styles.border_bottom[0] == ''
             dialog = screen.query_one('#msg-dialog')
             assert [w.id for w in dialog.children][:2] == ['msg-header', 'msg-viewer']
-            assert _static_text(screen.query_one('#msg-from', Static)) == (
+            assert static_text(screen.query_one('#msg-from', Static)) == (
                 'From: Dev <dev@example.com>'
             )
-            assert _static_text(screen.query_one('#msg-title', Static)) == (
+            assert static_text(screen.query_one('#msg-title', Static)) == (
                 'Subject: [PATCH] top'
             )
             # Shown once, in the fixed lines only
@@ -379,7 +374,7 @@ class TestFixedHeader:
 
             await pilot.press('j', 'j')
             await _settle(app, pilot)
-            assert _static_text(screen.query_one('#msg-from', Static)) == (
+            assert static_text(screen.query_one('#msg-from', Static)) == (
                 'From: Reviewer <reviewer@example.com>'
             )
 

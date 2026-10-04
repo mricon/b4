@@ -27,6 +27,8 @@ from b4.review._review import PwFetchResult
 from b4.review_tui._modals import ApplyStateModal, SetStateScreen
 from b4.review_tui._pw_app import PwApp, PwFetchProgress
 
+from .helpers.tui import static_text
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -272,17 +274,6 @@ def _backlog_toasts(app: PwApp) -> List[Any]:
     return [n for n in app._notifications if n.title == 'Large Patchwork backlog']
 
 
-def _static_text(widget: Any) -> str:
-    """Return a Static/Label's text across Textual versions.
-
-    Textual >= 1.0 (pip) exposes ``content``; older builds (Fedora package)
-    still use ``renderable``.
-    """
-    if hasattr(widget, 'content'):
-        return str(widget.content)
-    return str(widget.renderable)
-
-
 class TestPwBacklogNotice:
     """When the fetch is windowed, the user gets a one-shot, self-dismissing
     notification (not a blocking modal)."""
@@ -449,7 +440,7 @@ class TestPwLoadingProgress:
             assert bar.total == total
             assert bar.progress == b4.review.PW_PER_PAGE
             status = app.query_one('#pw-loading-status', Label)
-            assert 'of' in _static_text(status)
+            assert 'of' in static_text(status)
 
     @pytest.mark.asyncio
     async def test_single_page_progress_stays_indeterminate(
@@ -477,7 +468,7 @@ class TestPwLoadingProgress:
             bar = app.query_one('#pw-loading-bar', ProgressBar)
             assert bar.total is None
             status = app.query_one('#pw-loading-status', Label)
-            assert 'Loading 204 patches' in _static_text(status)
+            assert 'Loading 204 patches' in static_text(status)
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +546,7 @@ class TestPwMarkSelection:
             # First series marked and the cursor stepped to the second row.
             assert app._selected_ids == {1}
             assert lv.index == 1
-            assert '1 selected' in _static_text(app.query_one('#pw-title'))
+            assert '1 selected' in static_text(app.query_one('#pw-title'))
 
             await pilot.press('space')
             await pilot.pause()
@@ -576,10 +567,10 @@ class TestPwMarkSelection:
             await pilot.pause()
             item = app._get_highlighted_item()
             assert item is not None
-            assert not _static_text(item.query_one(Label)).startswith('*')
+            assert not static_text(item.query_one(Label)).startswith('*')
             app.action_toggle_mark()
             await pilot.pause()
-            assert _static_text(item.query_one(Label)).startswith('*')
+            assert static_text(item.query_one(Label)).startswith('*')
 
     @pytest.mark.asyncio
     async def test_mark_all_then_unmark_all(
@@ -761,7 +752,7 @@ class TestPwSetStateNullName:
             assert isinstance(modal, ApplyStateModal)
             assert modal._series_name == '(no subject)'
             label = modal.query_one('#apply-series', Label)
-            assert _static_text(label) == '(no subject)'
+            assert static_text(label) == '(no subject)'
 
 
 class TestPwQuitKeys:

@@ -9,6 +9,8 @@ import pytest
 import b4
 import b4.ty
 
+from .helpers.tracking import seed_series
+
 
 def _review_sections() -> List[Tuple[str, List[str]]]:
     return [
@@ -788,25 +790,19 @@ def _add_tracked_series(
     revisions: Optional[List[int]] = None,
 ) -> None:
     """Seed a tracking database with one series in the given status."""
-    import b4.review.tracking as tracking
-
-    conn = tracking.init_db(identifier)
-    tracking.add_series_to_db(
-        conn,
+    seed_series(
+        identifier,
         change_id,
-        revision,
-        'test subject',
-        'Test',
-        't@example.com',
-        None,
-        '<msg@id>',
-        1,
+        revision=revision,
+        status=status,
+        subject='test subject',
+        sender_name='Test',
+        sender_email='t@example.com',
+        sent_at=None,
+        message_id='<msg@id>',
+        revisions=revisions,
+        stamp_activity=True,
     )
-    tracking.update_series_status(conn, change_id, status, revision=revision)
-    for rv in revisions or []:
-        tracking.add_revision(conn, change_id, rv, f'<v{rv}@id>')
-    conn.commit()
-    conn.close()
 
 
 def _series_status(identifier: str, change_id: str = 'test-change-id') -> str:

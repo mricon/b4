@@ -13,6 +13,8 @@ import b4.command
 from b4 import review
 from b4.review import tracking
 
+from .helpers.tracking import seed_series
+
 
 def test_cleanup_parser_and_dispatch() -> None:
     parser = b4.command.setup_parser()
@@ -33,35 +35,19 @@ def test_cleanup_parser_and_dispatch() -> None:
 class TestCmdCleanup:
     @staticmethod
     def _seed(identifier: str, statuses: Dict[str, str]) -> None:
-        conn = tracking.init_db(identifier)
         for revision, (change_id, status) in enumerate(statuses.items(), 1):
-            tracking.add_series_to_db(
-                conn,
+            seed_series(
+                identifier,
                 change_id,
-                revision,
-                f'Subject for {change_id}',
-                'Author',
-                'author@example.com',
-                '2026-08-01T10:00:00+00:00',
-                f'{change_id}@example.com',
-                1,
+                revision=revision,
+                status=status,
+                subject=f'Subject for {change_id}',
+                sender_name='Author',
+                sent_at='2026-08-01T10:00:00+00:00',
+                revisions=[revision],
+                patch_rows=True,
+                stamp_activity=True,
             )
-            tracking.update_series_status(conn, change_id, status, revision=revision)
-            tracking.add_revision(conn, change_id, revision, f'{change_id}@example.com')
-            conn.execute(
-                'INSERT INTO series_patches '
-                '(change_id, revision, position, message_id, subject) '
-                'VALUES (?, ?, ?, ?, ?)',
-                (
-                    change_id,
-                    revision,
-                    1,
-                    f'{change_id}-patch@example.com',
-                    f'Patch for {change_id}',
-                ),
-            )
-        conn.commit()
-        conn.close()
 
     @staticmethod
     def _row_counts(identifier: str, change_id: str) -> Dict[str, int]:

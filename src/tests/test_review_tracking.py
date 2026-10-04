@@ -23,6 +23,9 @@ from b4.review import tracking as review_tracking
 from b4.review_tui._modals import SnoozeScreen
 from b4.review_tui._tracking_app import _format_attestation, _format_snooze_until
 
+from .helpers.mail import AUTHOR, MINIMAL_DIFF
+from .helpers.tracking import add_worktree, create_review_branch, make_tracking_data
+
 
 class TestGetReviewDataDir:
     """Tests for get_review_data_dir()."""
@@ -338,11 +341,7 @@ class TestRepoMetadata:
         review_tracking.save_repo_metadata(git_dir, 'worktree-project')
 
         # Create a real worktree
-        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(
-            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
-        )
-        assert out == 0
+        worktree_dir = add_worktree(gitdir)
 
         identifier = review_tracking.get_repo_identifier(worktree_dir)
         assert identifier == 'worktree-project'
@@ -512,11 +511,7 @@ class TestCmdEnroll:
     ) -> None:
         """Verify enroll from a worktree writes metadata to the shared .git."""
         # Create a real worktree
-        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(
-            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
-        )
-        assert out == 0
+        worktree_dir = add_worktree(gitdir)
 
         cmdargs = argparse.Namespace(repo_path=worktree_dir, identifier='worktree-test')
         review_tracking.cmd_enroll(cmdargs)
@@ -534,11 +529,7 @@ class TestCmdEnroll:
         review_tracking.cmd_enroll(cmdargs)
 
         # Create a real worktree
-        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(
-            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
-        )
-        assert out == 0
+        worktree_dir = add_worktree(gitdir)
 
         # Enrolling from worktree with same identifier should exit 0
         cmdargs2 = argparse.Namespace(repo_path=worktree_dir, identifier='main-id')
@@ -553,11 +544,7 @@ class TestCmdEnroll:
         review_tracking.cmd_enroll(cmdargs)
 
         # Create a real worktree
-        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(
-            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
-        )
-        assert out == 0
+        worktree_dir = add_worktree(gitdir)
 
         # Enrolling from worktree with different identifier should fail
         cmdargs2 = argparse.Namespace(repo_path=worktree_dir, identifier='different-id')
@@ -1257,11 +1244,7 @@ class TestGitGetCommonDir:
 
     def test_returns_shared_git_dir_from_worktree(self, gitdir: str) -> None:
         """Verify git_get_common_dir returns the shared .git from a worktree."""
-        worktree_dir = os.path.join(str(os.path.dirname(gitdir)), 'worktree')
-        out, _logstr = b4.git_run_command(
-            gitdir, ['worktree', 'add', worktree_dir, '-b', 'wt-branch']
-        )
-        assert out == 0
+        worktree_dir = add_worktree(gitdir)
 
         result = b4.git_get_common_dir(worktree_dir)
         assert result is not None
@@ -1278,62 +1261,14 @@ class TestGitGetCommonDir:
         assert result is None
 
 
-def _create_review_branch(
-    topdir: str, change_id: str, tracking_data: Dict[str, Any]
-) -> str:
-    """Helper: create a b4/review/<change_id> branch with a tracking commit."""
-    branch = f'b4/review/{change_id}'
-    cover_text = f'Cover letter for {change_id}'
-    commit_msg = cover_text + '\n\n' + b4.review.make_review_magic_json(tracking_data)
-    # Create an orphan-ish branch off current HEAD
-    b4.git_run_command(topdir, ['branch', branch])
-    # Create a tracking commit on it via commit-tree
-    ecode, tree = b4.git_run_command(topdir, ['rev-parse', f'{branch}^{{tree}}'])
-    assert ecode == 0
-    tree = tree.strip()
-    ecode, parent = b4.git_run_command(topdir, ['rev-parse', branch])
-    assert ecode == 0
-    parent = parent.strip()
-    ecode, new_sha = b4.git_run_command(
-        topdir,
-        ['commit-tree', tree, '-p', parent, '-F', '-'],
-        stdin=commit_msg.encode(),
-    )
-    assert ecode == 0
-    new_sha = new_sha.strip()
-    ecode, _ = b4.git_run_command(
-        topdir, ['update-ref', f'refs/heads/{branch}', new_sha]
-    )
-    assert ecode == 0
-    return branch
-
-
 class TestUpdateTrackingStatus:
     """Tests for update_tracking_status() helper."""
 
     def test_updates_status(self, gitdir: str) -> None:
         """Verify update_tracking_status writes status to tracking commit."""
-        tracking_data = {
-            'series': {
-                'identifier': 'test-proj',
-                'status': 'reviewing',
-                'revision': 1,
-                'change-id': 'status-test',
-                'subject': 'Test',
-                'fromname': 'Author',
-                'fromemail': 'a@example.com',
-                'expected': 1,
-                'complete': True,
-                'base-commit': 'abc123',
-                'prerequisite-commits': [],
-                'first-patch-commit': 'def456',
-                'header-info': {},
-                'link': '',
-            },
-            'followups': [],
-            'patches': [],
-        }
-        branch = _create_review_branch(gitdir, 'status-test', tracking_data)
+        branch = create_review_branch(
+            gitdir, 'status-test', identifier='test-proj', subject='Test'
+        )
 
         result = b4.review.update_tracking_status(gitdir, branch, 'replied')
         assert result is True
@@ -1344,27 +1279,13 @@ class TestUpdateTrackingStatus:
 
     def test_round_trip(self, gitdir: str) -> None:
         """Verify status survives a write-then-read round-trip."""
-        tracking_data = {
-            'series': {
-                'identifier': 'test-proj',
-                'status': 'reviewing',
-                'revision': 2,
-                'change-id': 'roundtrip-test',
-                'subject': 'Roundtrip',
-                'fromname': 'Author',
-                'fromemail': 'a@example.com',
-                'expected': 3,
-                'complete': True,
-                'base-commit': 'abc123',
-                'prerequisite-commits': [],
-                'first-patch-commit': 'def456',
-                'header-info': {},
-                'link': '',
-            },
-            'followups': [],
-            'patches': [],
-        }
-        branch = _create_review_branch(gitdir, 'roundtrip-test', tracking_data)
+        branch = create_review_branch(
+            gitdir,
+            'roundtrip-test',
+            identifier='test-proj',
+            revision=2,
+            subject='Roundtrip',
+        )
 
         for new_status in ('replied', 'waiting', 'accepted', 'thanked'):
             b4.review.update_tracking_status(gitdir, branch, new_status)
@@ -1384,29 +1305,8 @@ class TestGetReviewBranches:
 
     def test_lists_review_branches(self, gitdir: str) -> None:
         """Verify get_review_branches finds b4/review/* branches."""
-        tracking_data: Dict[str, Any] = {
-            'series': {
-                'identifier': 'test-proj',
-                'status': 'reviewing',
-                'revision': 1,
-                'change-id': 'branch-list-1',
-                'subject': 'Test 1',
-                'fromname': 'A',
-                'fromemail': 'a@example.com',
-                'expected': 1,
-                'complete': True,
-                'base-commit': 'abc',
-                'prerequisite-commits': [],
-                'first-patch-commit': 'def',
-                'header-info': {},
-                'link': '',
-            },
-            'followups': [],
-            'patches': [],
-        }
-        _create_review_branch(gitdir, 'branch-list-1', tracking_data)
-        tracking_data['series']['change-id'] = 'branch-list-2'
-        _create_review_branch(gitdir, 'branch-list-2', tracking_data)
+        create_review_branch(gitdir, 'branch-list-1', identifier='test-proj')
+        create_review_branch(gitdir, 'branch-list-2', identifier='test-proj')
 
         branches = review_tracking.get_review_branches(gitdir)
         names = set(branches)
@@ -1430,29 +1330,20 @@ class TestRescanBranches:
         revision: int = 1,
         subject: str = 'Test series',
     ) -> Dict[str, Any]:
-        return {
-            'series': {
-                'identifier': identifier,
-                'status': status,
-                'revision': revision,
-                'change-id': change_id,
-                'subject': subject,
-                'fromname': 'Test Author',
-                'fromemail': 'author@example.com',
-                'expected': 3,
-                'complete': True,
-                'base-commit': 'abc123',
-                'prerequisite-commits': [],
-                'first-patch-commit': 'def456',
-                'header-info': {
-                    'msgid': f'{change_id}@example.com',
-                    'sentdate': 'Mon, 15 Jan 2024 10:00:00 +0000',
-                },
-                'link': f'https://lore.kernel.org/r/{change_id}',
+        return make_tracking_data(
+            change_id,
+            identifier=identifier,
+            status=status,
+            revision=revision,
+            subject=subject,
+            sender_email='author@example.com',
+            expected=3,
+            header_info={
+                'msgid': f'{change_id}@example.com',
+                'sentdate': 'Mon, 15 Jan 2024 10:00:00 +0000',
             },
-            'followups': [],
-            'patches': [],
-        }
+            link=f'https://lore.kernel.org/r/{change_id}',
+        )
 
     def test_rescan_single_branch(self, gitdir: str) -> None:
         """Verify rescan populates DB from a single branch."""
@@ -1462,7 +1353,9 @@ class TestRescanBranches:
         tracking_data = self._make_tracking_data(
             'single-change', identifier=identifier, status='replied'
         )
-        branch = _create_review_branch(gitdir, 'single-change', tracking_data)
+        branch = create_review_branch(
+            gitdir, 'single-change', tracking_data=tracking_data
+        )
 
         review_tracking.rescan_branches(identifier, gitdir, branch=branch)
 
@@ -1516,7 +1409,7 @@ class TestRescanBranches:
         tracking_data = self._make_tracking_data(
             'mismatch-change', identifier='other-project'
         )
-        _create_review_branch(gitdir, 'mismatch-change', tracking_data)
+        create_review_branch(gitdir, 'mismatch-change', tracking_data=tracking_data)
 
         review_tracking.rescan_branches(identifier, gitdir)
 
@@ -1565,7 +1458,7 @@ class TestRescanBranches:
         for i in range(3):
             cid = f'all-change-{i}'
             tracking_data = self._make_tracking_data(cid, identifier=identifier)
-            _create_review_branch(gitdir, cid, tracking_data)
+            create_review_branch(gitdir, cid, tracking_data=tracking_data)
 
         review_tracking.rescan_branches(identifier, gitdir)
 
@@ -1581,7 +1474,7 @@ class TestRescanBranches:
         review_tracking.init_db(identifier).close()
 
         tracking_data = self._make_tracking_data('sha-skip', identifier=identifier)
-        _create_review_branch(gitdir, 'sha-skip', tracking_data)
+        create_review_branch(gitdir, 'sha-skip', tracking_data=tracking_data)
 
         # First rescan: new branch, should be processed.
         result = review_tracking.rescan_branches(identifier, gitdir)
@@ -1600,7 +1493,7 @@ class TestRescanBranches:
         tracking_data = self._make_tracking_data(
             'sha-change', identifier=identifier, status='reviewing'
         )
-        branch = _create_review_branch(gitdir, 'sha-change', tracking_data)
+        branch = create_review_branch(gitdir, 'sha-change', tracking_data=tracking_data)
 
         # First rescan: registers the branch with status 'reviewing'.
         result = review_tracking.rescan_branches(identifier, gitdir)
@@ -1740,29 +1633,17 @@ def _make_blob_tracking_data(
     change_id: str, identifier: str = 'blob-proj'
 ) -> Dict[str, Any]:
     """Return a minimal tracking dict for blob tests."""
-    return {
-        'series': {
-            'identifier': identifier,
-            'status': 'reviewing',
-            'revision': 1,
-            'change-id': change_id,
-            'subject': 'Test series',
-            'fromname': 'Test Author',
-            'fromemail': 'author@example.com',
-            'expected': 3,
-            'complete': True,
-            'base-commit': 'abc123',
-            'prerequisite-commits': [],
-            'first-patch-commit': 'def456',
-            'header-info': {
-                'msgid': f'{change_id}@example.com',
-                'sentdate': 'Mon, 15 Jan 2024 10:00:00 +0000',
-            },
-            'link': f'https://lore.kernel.org/r/{change_id}',
+    return make_tracking_data(
+        change_id,
+        identifier=identifier,
+        sender_email='author@example.com',
+        expected=3,
+        header_info={
+            'msgid': f'{change_id}@example.com',
+            'sentdate': 'Mon, 15 Jan 2024 10:00:00 +0000',
         },
-        'followups': [],
-        'patches': [],
-    }
+        link=f'https://lore.kernel.org/r/{change_id}',
+    )
 
 
 class TestFollowupBlob:
@@ -1773,7 +1654,9 @@ class TestFollowupBlob:
     ) -> None:
         """_store_thread_blob serializes msgs via save_mboxrd_mbox and records SHA."""
         change_id = 'blob-write-test'
-        _create_review_branch(gitdir, change_id, _make_blob_tracking_data(change_id))
+        create_review_branch(
+            gitdir, change_id, tracking_data=_make_blob_tracking_data(change_id)
+        )
 
         msgs = [_make_test_msg('cover@example.com')]
         blob_sha = review_tracking._store_thread_blob(gitdir, change_id, msgs)
@@ -1797,7 +1680,9 @@ class TestFollowupBlob:
     ) -> None:
         """_store_thread_blob avoids a new tracking commit when SHA is unchanged."""
         change_id = 'blob-nochurn-test'
-        _create_review_branch(gitdir, change_id, _make_blob_tracking_data(change_id))
+        create_review_branch(
+            gitdir, change_id, tracking_data=_make_blob_tracking_data(change_id)
+        )
 
         msgs = [_make_test_msg('nochurn@example.com')]
 
@@ -3370,26 +3255,6 @@ class TestAbsorbSeriesAsRevision:
 # refactor ever changes it.
 # ---------------------------------------------------------------------------
 
-_AUTHOR = 'Author <author@example.com>'
-
-_MINIMAL_DIFF = """\
-Fix bar.
-
-Signed-off-by: Author <author@example.com>
----
- foo.c | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/foo.c b/foo.c
-index aaa..bbb 100644
---- a/foo.c
-+++ b/foo.c
-@@ -1,3 +1,4 @@
- void foo(void) {
-+    bar();
- }
-"""
-
 
 def _build_series(
     subject: str, from_addr: str, revision: int, msgid: str = ''
@@ -3400,7 +3265,7 @@ def _build_series(
     msg['From'] = from_addr
     msg['Date'] = 'Thu, 19 Mar 2026 08:51:12 +0530'
     msg['Message-Id'] = msgid or f'<{abs(hash(subject + from_addr))}@test.com>'
-    msg.set_payload(_MINIMAL_DIFF)
+    msg.set_payload(MINIMAL_DIFF)
     lmbx = b4.LoreMailbox()
     lmbx.add_message(msg)
     lser = lmbx.get_series(revision)
@@ -3413,14 +3278,14 @@ class TestFingerprintSemantics:
 
     def test_different_revisions_differ(self) -> None:
         """Two revisions never share a fingerprint (revision is folded in)."""
-        v1 = _build_series('[PATCH] foo: fix bar', _AUTHOR, 1)
-        v2 = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        v1 = _build_series('[PATCH] foo: fix bar', AUTHOR, 1)
+        v2 = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
         assert v1.fingerprint != v2.fingerprint
 
     def test_identical_posting_matches(self) -> None:
         """The same exact posting hashes identically (idempotent ingest)."""
-        a = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2, msgid='<x@test.com>')
-        b = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2, msgid='<x@test.com>')
+        a = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2, msgid='<x@test.com>')
+        b = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2, msgid='<x@test.com>')
         assert a.fingerprint == b.fingerprint
 
     def test_same_patches_different_sender(self) -> None:
@@ -3447,7 +3312,7 @@ def _patch_email(subject: str, from_addr: str, msgid: str) -> EmailMessage:
     msg['From'] = from_addr
     msg['Date'] = 'Fri, 20 Mar 2026 14:49:18 +0000'
     msg['Message-Id'] = msgid
-    msg.set_payload(_MINIMAL_DIFF)
+    msg.set_payload(MINIMAL_DIFF)
     return msg
 
 
@@ -3490,7 +3355,7 @@ class TestRecordLinkedRevision:
     ) -> None:
         conn = review_tracking.init_db('mrl-link-new-test')
         _seed_target(conn, 'series-A', 1)
-        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
 
         result = review_tracking.record_linked_revision(conn, 'series-A', lser)
 
@@ -3510,7 +3375,7 @@ class TestRecordLinkedRevision:
     def test_link_older_revision(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = review_tracking.init_db('mrl-link-old-test')
         _seed_target(conn, 'series-A', 3)
-        lser = _build_series('[PATCH] foo: fix bar', _AUTHOR, 1)
+        lser = _build_series('[PATCH] foo: fix bar', AUTHOR, 1)
 
         result = review_tracking.record_linked_revision(conn, 'series-A', lser)
         revs = review_tracking.get_revisions(conn, 'series-A')
@@ -3524,7 +3389,7 @@ class TestRecordLinkedRevision:
         conn = review_tracking.init_db('mrl-link-collide-test')
         _seed_target(conn, 'series-A', 1)
         review_tracking.add_revision(conn, 'series-A', 2, 'pre-v2@example.com')
-        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
 
         result = review_tracking.record_linked_revision(conn, 'series-A', lser)
         revs = review_tracking.get_revisions(conn, 'series-A')
@@ -3541,7 +3406,7 @@ class TestRecordLinkedRevision:
         conn = review_tracking.init_db('mrl-link-force-test')
         _seed_target(conn, 'series-A', 1)
         review_tracking.add_revision(conn, 'series-A', 2, 'pre-v2@example.com')
-        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
 
         result = review_tracking.record_linked_revision(
             conn, 'series-A', lser, force=True
@@ -3557,7 +3422,7 @@ class TestRecordLinkedRevision:
     ) -> None:
         conn = review_tracking.init_db('mrl-link-promote-test')
         _seed_target(conn, 'series-A', 1, status='waiting')
-        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
 
         result = review_tracking.record_linked_revision(conn, 'series-A', lser)
         status = conn.execute(
@@ -3572,7 +3437,7 @@ class TestRecordLinkedRevision:
     ) -> None:
         conn = review_tracking.init_db('mrl-link-absorb-test')
         _seed_target(conn, 'series-A', 1)
-        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
         # The stray was tracked from the same posting, so it shares a fingerprint.
         _seed_stray_series(conn, 'series-B', 2, lser.fingerprint)
 
@@ -3653,7 +3518,7 @@ class TestLinkRevisionWrapper:
         _seed_target(conn, 'series-A', 1)
         conn.close()
 
-        msg = _patch_email('[PATCH v2] foo: fix bar', _AUTHOR, '<v2@example.com>')
+        msg = _patch_email('[PATCH v2] foo: fix bar', AUTHOR, '<v2@example.com>')
         mock_retrieve.return_value = ('v2@example.com', [msg])
         result = review_tracking.link_revision(
             'mrl-wrap-ok-test', 'series-A', 'v2@example.com'
@@ -3673,7 +3538,7 @@ class TestFetchSeriesForLink:
 
     @mock.patch('b4.retrieve_messages')
     def test_returns_series_on_success(self, mock_retrieve: mock.Mock) -> None:
-        msg = _patch_email('[PATCH v2] foo: fix bar', _AUTHOR, '<v2@example.com>')
+        msg = _patch_email('[PATCH v2] foo: fix bar', AUTHOR, '<v2@example.com>')
         mock_retrieve.return_value = ('v2@example.com', [msg])
         lser = review_tracking.fetch_series_for_link('v2@example.com')
         assert lser is not None
@@ -3696,7 +3561,7 @@ class TestFetchSeriesForLink:
     ) -> None:
         """Messages that don't form a parseable series yield None."""
         msg = EmailMessage()
-        msg['From'] = _AUTHOR
+        msg['From'] = AUTHOR
         msg['Subject'] = 'Re: some discussion'
         msg['Message-Id'] = '<x@example.com>'
         msg.set_content('just words, no patch')
@@ -3864,7 +3729,7 @@ class TestRecordDiscoveredRethreaded:
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
         conn = review_tracking.init_db('rt-up-rdr')
-        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3)
+        lmbx = _build_lmbx('thing', AUTHOR, 6, 3)
         new = review_tracking._record_discovered_revisions(
             conn, 'cid-X', lmbx, '', rethreaded_revs={6}
         )
@@ -3878,7 +3743,7 @@ class TestRecordDiscoveredRethreaded:
 
     def test_normal_rev_left_unflagged(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = review_tracking.init_db('rt-up-rdr-normal')
-        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3)
+        lmbx = _build_lmbx('thing', AUTHOR, 6, 3)
         review_tracking._record_discovered_revisions(conn, 'cid-Y', lmbx, '')
         revs = review_tracking.get_revisions(conn, 'cid-Y')
         r6 = next(r for r in revs if r['revision'] == 6)
@@ -3903,7 +3768,7 @@ class TestRecordDiscoveredCoverSubject:
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
         conn = review_tracking.init_db('rdr-cover')
-        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
+        lmbx = _build_lmbx('thing', AUTHOR, 6, 3, cover=True)
         review_tracking._record_discovered_revisions(conn, 'cid-C', lmbx, '')
         revs = review_tracking.get_revisions(conn, 'cid-C')
         conn.close()
@@ -3915,7 +3780,7 @@ class TestRecordDiscoveredCoverSubject:
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
         conn = review_tracking.init_db('rdr-nocover')
-        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3)
+        lmbx = _build_lmbx('thing', AUTHOR, 6, 3)
         review_tracking._record_discovered_revisions(conn, 'cid-N', lmbx, '')
         revs = review_tracking.get_revisions(conn, 'cid-N')
         conn.close()
@@ -3926,7 +3791,7 @@ class TestRecordDiscoveredCoverSubject:
     def test_rethreaded_rev_skips_cover(self, tmp_path: pytest.TempPathFactory) -> None:
         """A rethreaded revision's msgid must stay a real, fetchable patch."""
         conn = review_tracking.init_db('rdr-rt-cover')
-        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
+        lmbx = _build_lmbx('thing', AUTHOR, 6, 3, cover=True)
         review_tracking._record_discovered_revisions(
             conn, 'cid-R', lmbx, '', rethreaded_revs={6}
         )
@@ -3972,7 +3837,7 @@ class TestRecordDiscoveredCoverSubject:
             subject='[PATCH v6 1/3] thing: part 1',
             source=source,
         )
-        lmbx = _build_lmbx('thing', _AUTHOR, 6, 3, cover=True)
+        lmbx = _build_lmbx('thing', AUTHOR, 6, 3, cover=True)
         review_tracking._record_discovered_revisions(conn, 'cid-H', lmbx, '')
         revs = review_tracking.get_revisions(conn, 'cid-H')
         conn.close()
@@ -4034,8 +3899,8 @@ class TestUpdateSeriesTrackingCoverSubject:
         )
         conn.close()
 
-        msgs = _series_msgs('thing', _AUTHOR, 1, 3, cover=True)
-        msgs += _series_msgs('thing', _AUTHOR, 2, 3, cover=True)
+        msgs = _series_msgs('thing', AUTHOR, 1, 3, cover=True)
+        msgs += _series_msgs('thing', AUTHOR, 2, 3, cover=True)
         result = self._update(identifier, change_id, 1, msgs)
 
         assert result['error'] is None
@@ -4074,7 +3939,7 @@ class TestUpdateSeriesTrackingCoverSubject:
         )
         conn.close()
 
-        msgs = _series_msgs('thing', _AUTHOR, 2, 3, cover=True)
+        msgs = _series_msgs('thing', AUTHOR, 2, 3, cover=True)
         result = self._update(identifier, change_id, 2, msgs)
 
         assert result['error'] is None
@@ -4102,7 +3967,7 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
     @classmethod
     def _late_review_of_v1(cls) -> list[EmailMessage]:
         """Patch 1 of v1, and a review of it sent after v2 came out."""
-        v1_patch = _series_msgs('thing', _AUTHOR, 1, 2, cover=True)[1]
+        v1_patch = _series_msgs('thing', AUTHOR, 1, 2, cover=True)[1]
         reply = EmailMessage()
         reply['Subject'] = 'Re: [PATCH v1 1/2] thing: part 1'
         reply['From'] = 'Late Reviewer <late@example.com>'
@@ -4115,29 +3980,19 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
 
     @staticmethod
     def _tracking_data(change_id: str) -> Dict[str, Any]:
-        return {
-            'series': {
-                'identifier': 'crs-proj',
-                'status': 'reviewing',
-                'revision': 2,
-                'change-id': change_id,
-                'subject': 'thing: do things better',
-                'fromname': 'Author',
-                'fromemail': 'author@example.com',
-                'expected': 2,
-                'complete': True,
-                'base-commit': 'abc123',
-                'prerequisite-commits': [],
-                'first-patch-commit': 'def456',
-                'header-info': {},
-                'link': '',
-            },
-            'followups': [],
-            'patches': [
+        return make_tracking_data(
+            change_id,
+            identifier='crs-proj',
+            revision=2,
+            subject='thing: do things better',
+            sender_name='Author',
+            sender_email='author@example.com',
+            expected=2,
+            patches=[
                 {'subject': 'thing: part 1', 'message-id': 'thing-v2-p1@example.com'},
                 {'subject': 'thing: part 2', 'message-id': 'thing-v2-p2@example.com'},
             ],
-        }
+        )
 
     def _update(
         self, status: str, topdir: str | None = None
@@ -4163,7 +4018,7 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
             mock.patch('b4.can_network', True),
             mock.patch(
                 'b4.review._review.retrieve_series_messages',
-                return_value=_series_msgs('thing', _AUTHOR, 2, 2, cover=True),
+                return_value=_series_msgs('thing', AUTHOR, 2, 2, cover=True),
             ),
             mock.patch(
                 'b4.mbox.get_extra_series', side_effect=lambda msgs, **_kw: msgs
@@ -4177,8 +4032,8 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
         return result, searches, check_att
 
     def test_late_review_of_v1_lands_on_v2(self, gitdir: str) -> None:
-        branch = _create_review_branch(
-            gitdir, 'cid-crs', self._tracking_data('cid-crs')
+        branch = create_review_branch(
+            gitdir, 'cid-crs', tracking_data=self._tracking_data('cid-crs')
         )
 
         result, searches, check_att = self._update('reviewing', topdir=gitdir)
@@ -4202,8 +4057,8 @@ class TestUpdateSeriesTrackingCodeReviewSearch:
         check_att.assert_called_once()
 
     def test_checked_out_branch_skips_search(self, gitdir: str) -> None:
-        branch = _create_review_branch(
-            gitdir, 'cid-crs', self._tracking_data('cid-crs')
+        branch = create_review_branch(
+            gitdir, 'cid-crs', tracking_data=self._tracking_data('cid-crs')
         )
         before = b4.review.load_tracking(gitdir, branch)
         ecode, _ = b4.git_run_command(gitdir, ['checkout', branch])
@@ -4237,7 +4092,7 @@ class TestRealignSeriesSubject:
         conn.close()
 
     def _realign(self, identifier: str, cover: bool) -> bool:
-        lmbx = _build_lmbx('thing', _AUTHOR, 3, 2, cover=cover)
+        lmbx = _build_lmbx('thing', AUTHOR, 3, 2, cover=cover)
         conn = review_tracking.get_db(identifier)
         ret = review_tracking.realign_series_subject(conn, 'cid-A', 3, lmbx)
         conn.close()
@@ -4280,7 +4135,7 @@ class TestRealignSeriesSubject:
         self, tmp_path: pytest.TempPathFactory
     ) -> None:
         conn = review_tracking.init_db('rsj-none')
-        lmbx = _build_lmbx('thing', _AUTHOR, 3, 2, cover=True)
+        lmbx = _build_lmbx('thing', AUTHOR, 3, 2, cover=True)
         assert review_tracking.realign_series_subject(conn, 'cid-A', 3, lmbx) is False
         conn.close()
 
@@ -4459,7 +4314,7 @@ class TestRethreadFlagCarriedOnLink:
     def test_record_linked_carries_flag(self, tmp_path: pytest.TempPathFactory) -> None:
         conn = review_tracking.init_db('rt-up-link')
         _seed_target(conn, 'series-A', 1)
-        lser = _build_series('[PATCH v2] foo: fix bar', _AUTHOR, 2)
+        lser = _build_series('[PATCH v2] foo: fix bar', AUTHOR, 2)
         review_tracking.record_linked_revision(
             conn, 'series-A', lser, is_rethreaded=True
         )
@@ -4488,38 +4343,18 @@ def _make_review_branch_with_catalog(
     known_revisions: list[dict[str, Any]],
 ) -> str:
     """Create a review branch whose tracking commit carries known-revisions."""
-    branch = f'b4/review/{change_id}'
-    ecode, base = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
-    assert ecode == 0
-    base = base.strip()
-    b4.git_run_command(gitdir, ['branch', branch, base])
-    b4.git_run_command(gitdir, ['checkout', branch])
-    trk = {
-        'series': {
-            'identifier': identifier,
-            'change-id': change_id,
-            'revision': revision,
-            'status': 'reviewing',
-            'subject': change_id,
-            'fromname': 'Author',
-            'fromemail': 'author@example.com',
-            'expected': 1,
-            'complete': True,
-            'base-commit': base,
-            'prerequisite-commits': [],
-            'first-patch-commit': base,
-            'link': '',
-            'header-info': {'msgid': f'{change_id}-v{revision}@example.com'},
-            'is-rethreaded': False,
-        },
-        'followups': [],
-        'patches': [],
-        'known-revisions': known_revisions,
-    }
-    commit_msg = f'{change_id}\n\n{b4.review.make_review_magic_json(trk)}'
-    b4.git_run_command(gitdir, ['commit', '--allow-empty', '-m', commit_msg])
-    b4.git_run_command(gitdir, ['checkout', 'master'])
-    return branch
+    trk = make_tracking_data(
+        change_id,
+        identifier=identifier,
+        revision=revision,
+        subject=change_id,
+        sender_name='Author',
+        sender_email='author@example.com',
+        header_info={'msgid': f'{change_id}-v{revision}@example.com'},
+        series_extra={'is-rethreaded': False},
+        extra={'known-revisions': known_revisions},
+    )
+    return create_review_branch(gitdir, change_id, tracking_data=trk)
 
 
 class TestKnownRevisionsCatalog:
@@ -5021,26 +4856,7 @@ class TestUpdateSkipsCheckedOutBranch:
     """update_series_tracking leaves a checked-out review branch alone."""
 
     def _tracking_data(self, change_id: str) -> Dict[str, Any]:
-        return {
-            'series': {
-                'identifier': 'co-test',
-                'status': 'reviewing',
-                'revision': 1,
-                'change-id': change_id,
-                'subject': 'Test',
-                'fromname': 'Author',
-                'fromemail': 'a@example.com',
-                'expected': 1,
-                'complete': True,
-                'base-commit': 'abc123',
-                'prerequisite-commits': [],
-                'first-patch-commit': 'def456',
-                'header-info': {},
-                'link': '',
-            },
-            'followups': [],
-            'patches': [],
-        }
+        return make_tracking_data(change_id, identifier='co-test', subject='Test')
 
     def _run_update(self, gitdir: str, change_id: str) -> Dict[str, Any]:
         conn = review_tracking.init_db('co-test')
@@ -5083,8 +4899,8 @@ class TestUpdateSkipsCheckedOutBranch:
     def test_checked_out_branch_left_alone(self, gitdir: str) -> None:
         """A checked-out branch is skipped: flag set, tip untouched."""
         change_id = 'co-checkedout'
-        branch = _create_review_branch(
-            gitdir, change_id, self._tracking_data(change_id)
+        branch = create_review_branch(
+            gitdir, change_id, tracking_data=self._tracking_data(change_id)
         )
         ecode, _ = b4.git_run_command(gitdir, ['checkout', branch])
         assert ecode == 0
@@ -5105,7 +4921,9 @@ class TestUpdateSkipsCheckedOutBranch:
         """Control: with the branch not checked out the section is entered
         (and fails on the mocked-away series — the sentinel error)."""
         change_id = 'co-parked'
-        _create_review_branch(gitdir, change_id, self._tracking_data(change_id))
+        create_review_branch(
+            gitdir, change_id, tracking_data=self._tracking_data(change_id)
+        )
 
         result = self._run_update(gitdir, change_id)
 
@@ -5117,28 +4935,14 @@ class TestAutoWakeSkipsCheckedOutBranch:
     """auto_wake_snoozed defers waking a checked-out review branch."""
 
     def _seed_snoozed(self, gitdir: str, identifier: str, change_id: str) -> str:
-        tracking_data = {
-            'series': {
-                'identifier': identifier,
-                'status': 'snoozed',
-                'revision': 1,
-                'change-id': change_id,
-                'subject': 'Test',
-                'fromname': 'Author',
-                'fromemail': 'a@example.com',
-                'expected': 1,
-                'complete': True,
-                'base-commit': 'abc123',
-                'prerequisite-commits': [],
-                'first-patch-commit': 'def456',
-                'header-info': {},
-                'link': '',
-                'snoozed': {'previous_state': 'replied'},
-            },
-            'followups': [],
-            'patches': [],
-        }
-        branch = _create_review_branch(gitdir, change_id, tracking_data)
+        branch = create_review_branch(
+            gitdir,
+            change_id,
+            identifier=identifier,
+            status='snoozed',
+            subject='Test',
+            series_extra={'snoozed': {'previous_state': 'replied'}},
+        )
         conn = review_tracking.init_db(identifier)
         review_tracking.add_series_to_db(
             conn,
