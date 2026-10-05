@@ -1856,14 +1856,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                             topdir, branch_name, 'reviewing'
                         )
                     if status == 'thanked':
-                        pw_sid = self._selected_series.get('pw_series_id')
-                        if pw_sid:
-                            try:
-                                b4.review.pw_update_series_state(
-                                    pw_sid, 'under-review', archived=False
-                                )
-                            except Exception:
-                                pass
+                        review_state = b4.review.pw_config_state('pw-review-state')
+                        if review_state:
+                            b4.review.pw_update_tracked_series(
+                                self._identifier,
+                                change_id,
+                                revision,
+                                review_state,
+                                archived=False,
+                            )
                 # Clear the followup badge — user is about to read this series
                 if conn and self._identifier and isinstance(revision, int):
                     b4.review.tracking.mark_all_messages_seen(conn, change_id, revision)
@@ -2336,10 +2337,15 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             except (SystemExit, Exception):
                 pass
 
-        # Update Patchwork state if series was tracked from Patchwork
-        pw_series_id = series.get('pw_series_id')
-        if pw_series_id:
-            b4.review.pw_update_series_state(pw_series_id, 'under-review')
+        # Update Patchwork state, as b4 am/shazam do with pw-review-state
+        review_state = b4.review.pw_config_state('pw-review-state')
+        if review_state and self._identifier:
+            b4.review.pw_update_tracked_series(
+                self._identifier,
+                series.get('change_id', ''),
+                series.get('revision'),
+                review_state,
+            )
 
         # Clear the followup badge — user is about to review this series
         _co_change_id = series.get('change_id', '')
@@ -3423,10 +3429,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 except (SystemExit, Exception):
                     pass
 
-        if new_status == 'accepted' and self._selected_series:
-            pw_sid = self._selected_series.get('pw_series_id')
-            if pw_sid:
-                b4.review.pw_update_series_state(pw_sid, 'accepted')
+        # Update Patchwork state, as b4 ty does with pw-accept-state
+        accept_state = b4.review.pw_config_state('pw-accept-state')
+        if new_status == 'accepted' and accept_state and self._identifier:
+            b4.review.pw_update_tracked_series(
+                self._identifier, change_id, series.get('revision'), accept_state
+            )
 
     def _prepare_am_messages(
         self,
@@ -4793,14 +4801,10 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             # --- 5. Archive old branch and rename upgrade → review ---
             logger.info('Archiving v%d...', current_rev)
-            pw_series_id = None
-            if self._selected_series:
-                pw_series_id = self._selected_series.get('pw_series_id')
             if not self._archive_branch(
                 change_id,
                 current_rev,
                 review_branch,
-                pw_series_id=pw_series_id,
                 notify=False,
             ):
                 logger.critical('Failed to archive v%d', current_rev)
@@ -4993,7 +4997,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return
         change_id = self._selected_series.get('change_id', '')
         revision = self._selected_series.get('revision')
-        pw_series_id = self._selected_series.get('pw_series_id')
         review_branch = f'b4/review/{change_id}'
         has_branch = b4.git_branch_exists(None, review_branch)
         self.push_screen(
@@ -5008,7 +5011,6 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 change_id,
                 review_branch,
                 has_branch,
-                pw_series_id,
                 revision=revision,
             ),
         )
@@ -5018,7 +5020,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         change_id: str,
         revision: Optional[int],
         review_branch: str,
-        pw_series_id: Optional[int] = None,
+        pw_state: Optional[str] = None,
         notify: bool = True,
     ) -> bool:
         """Archive a review branch and update the tracking database.
@@ -5027,6 +5029,9 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         tar.gz archive of the cover letter, tracking metadata, and
         patches, then deletes the branch and marks the series as
         archived.  Returns True on success.
+
+        The series is also archived in Patchwork; *pw_state*, when given,
+        sets its Patchwork state as well.
 
         When *notify* is False, TUI notifications are suppressed (useful
         when called from within ``suspend()``).
@@ -5045,7 +5050,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 self._identifier,
                 change_id,
                 revision=revision,
-                pw_series_id=pw_series_id,
+                pw_state=pw_state,
                 allow_switch=True,
             )
         if not ok:
@@ -5066,14 +5071,11 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         change_id: str,
         review_branch: str,
         has_branch: bool,
-        pw_series_id: Optional[int] = None,
         revision: Optional[int] = None,
     ) -> None:
         if not confirmed:
             return
-        if self._archive_branch(
-            change_id, revision, review_branch, pw_series_id=pw_series_id
-        ):
+        if self._archive_branch(change_id, revision, review_branch):
             self._selected_series = None
             panel = self.query_one('#details-panel', Vertical)
             panel.styles.height = 0
@@ -5389,7 +5391,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             change_id,
             revision,
             review_branch,
-            pw_series_id=series.get('pw_series_id'),
+            pw_state=b4.review.pw_config_state('pw-accept-state'),
         ):
             self._selected_series = None
             panel = self.query_one('#details-panel', Vertical)

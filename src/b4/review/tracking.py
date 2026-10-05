@@ -2497,6 +2497,42 @@ def get_pw_series_id(
     return int(row[0]) if row and row[0] is not None else None
 
 
+def set_pw_series_id(
+    conn: sqlite3.Connection, change_id: str, revision: int, pw_series_id: int
+) -> None:
+    """Record the Patchwork series id of a tracked series revision."""
+    conn.execute(
+        'UPDATE series SET pw_series_id = ? WHERE change_id = ? AND revision = ?',
+        (pw_series_id, change_id, revision),
+    )
+    conn.commit()
+
+
+def get_series_message_id(
+    conn: sqlite3.Connection, change_id: str, revision: int
+) -> Optional[str]:
+    """Return the message-id (cover or first patch) of a series revision."""
+    row = conn.execute(
+        'SELECT message_id FROM series WHERE change_id = ? AND revision = ?',
+        (change_id, revision),
+    ).fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
+def get_newest_series_revision(
+    conn: sqlite3.Connection, change_id: str
+) -> Optional[int]:
+    """Return the newest tracked revision in the series table, or None.
+
+    Unlike get_newest_revision(), this does not use the revisions
+    catalog, which can be empty for a tracked series.
+    """
+    row = conn.execute(
+        'SELECT MAX(revision) FROM series WHERE change_id = ?', (change_id,)
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def get_review_target_branches() -> list[str]:
     """Return all configured review-target-branch values."""
     config = b4.get_main_config()

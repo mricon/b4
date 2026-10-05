@@ -850,17 +850,19 @@ def archive_series(
     identifier: str,
     change_id: str,
     revision: Optional[int] = None,
-    pw_series_id: Optional[int] = None,
+    pw_state: Optional[str] = None,
     allow_switch: bool = False,
 ) -> Tuple[bool, str]:
     """Archive a tracked series.
 
     Tars the cover letter, tracking metadata and patches from the
     review branch into the data directory, deletes the branch, marks
-    the series 'archived' in the tracking database, and (when
-    *pw_series_id* is given) archives the series in Patchwork.  A
-    series whose review branch is already gone is archived
-    database-only, so the operation is idempotent.
+    the series 'archived' in the tracking database, and archives the
+    series in Patchwork when it can be found there.  *pw_state*, when
+    given, also sets the Patchwork state (e.g. pw-accept-state after a
+    thank-you); otherwise the Patchwork state is left alone.  A series
+    whose review branch is already gone is archived database-only, so
+    the operation is idempotent.
 
     Returns (success, detail): detail is the archive tarball path on
     success (empty for a database-only archive), or an error message.
@@ -943,14 +945,9 @@ def archive_series(
             conn.close()
 
     # Mark as archived in Patchwork.  The local archive is already done and
-    # cannot be retried, so a Patchwork hiccup is a warning, not a failure.
-    if pw_series_id:
-        try:
-            pw_update_series_state(pw_series_id, 'accepted', archived=True)
-        except Exception as ex:
-            logger.warning(
-                'Could not archive series %s in Patchwork: %s', change_id, ex
-            )
+    # cannot be retried, so a Patchwork hiccup is a warning, not a failure
+    # (pw_update_tracked_series never raises).
+    pw_update_tracked_series(identifier, change_id, revision, pw_state, archived=True)
 
     return True, tarpath
 
@@ -4178,23 +4175,42 @@ def pw_fetch_checks(
     return all_checks
 
 
-def pw_set_series_state(
-    pwkey: str, pwurl: str, patch_ids: List[int], state: str, archived: bool
-) -> Tuple[int, int]:
-    """Set state and archived flag on patches by patch ID.
+def pw_config_state(key: str) -> Optional[str]:
+    """Return the Patchwork state named by config *key*, or None if unset.
 
+    *key* is one of ``pw-accept-state`` or ``pw-review-state``. As with
+    ``b4 ty`` and ``b4 am``, an unset key means b4 leaves the Patchwork
+    state alone.
+    """
+    state = b4.get_main_config().get(key)
+    return state if isinstance(state, str) and state else None
+
+
+def pw_set_series_state(
+    pwkey: str,
+    pwurl: str,
+    patch_ids: List[int],
+    state: Optional[str],
+    archived: Optional[bool],
+) -> Tuple[int, int]:
+    """Set state and/or archived flag on patches by patch ID.
+
+    A *state* or *archived* of None leaves that field unchanged.
     Returns (success_count, failure_count).
     """
+    data: Dict[str, Any] = {}
+    if state is not None:
+        data['state'] = state
+    if archived is not None:
+        data['archived'] = archived
+    if not data:
+        return 0, 0
     pses, api_url = b4.get_patchwork_session(pwkey, pwurl)
     patches_url = '/'.join((api_url, 'patches'))
     ok = 0
     fail = 0
     for patch_id in patch_ids:
         patchid_url = '/'.join((patches_url, str(patch_id), ''))
-        data = {
-            'state': state,
-            'archived': archived,
-        }
         try:
             rsp = pses.patch(patchid_url, data=data, stream=False)
             rsp.raise_for_status()
@@ -4206,13 +4222,14 @@ def pw_set_series_state(
 
 
 def pw_update_series_state(
-    pw_series_id: int, state: str, archived: bool = False
+    pw_series_id: int, state: Optional[str], archived: Optional[bool] = None
 ) -> bool:
     """Update Patchwork state for a series tracked by pw_series_id.
 
     Looks up pw-key and pw-url from git config, fetches the patch IDs
-    for the series, and sets the requested state.  Returns True on
-    success (or when Patchwork is not configured), False on failure.
+    for the series, and sets the requested state and/or archived flag
+    (None leaves a field unchanged).  Returns True on success (or when
+    Patchwork is not configured), False on failure.
     """
     config = b4.get_main_config()
     pwkey = str(config.get('pw-key', ''))
@@ -4239,5 +4256,101 @@ def pw_update_series_state(
     if fail:
         logger.warning('Failed to update %d/%d patches in Patchwork', fail, ok + fail)
         return False
-    logger.debug('Updated %d patches to state %s in Patchwork', ok, state)
+    logger.debug(
+        'Updated %d patches in Patchwork (state=%s, archived=%s)', ok, state, archived
+    )
     return True
+
+
+def pw_lookup_series_id(msgid: str) -> Optional[int]:
+    """Find the Patchwork series that a message belongs to.
+
+    *msgid* may be a cover letter or a patch, so both the covers and the
+    patches endpoints are asked. Returns None when Patchwork is not
+    configured or does not know the message.
+    """
+    config = b4.get_main_config()
+    pwkey = str(config.get('pw-key', ''))
+    pwurl = str(config.get('pw-url', ''))
+    pwproj = str(config.get('pw-project', ''))
+    if not (pwkey and pwurl and pwproj):
+        return None
+    pses, api_url = b4.get_patchwork_session(pwkey, pwurl)
+    params = [('project', pwproj), ('msgid', msgid)]
+    for endpoint in ('covers', 'patches'):
+        try:
+            rsp = pses.get('/'.join((api_url, endpoint, '')), params=params)
+            rsp.raise_for_status()
+            entries = rsp.json()
+        except Exception as ex:
+            logger.debug('Patchwork %s lookup failed for %s: %s', endpoint, msgid, ex)
+            continue
+        for entry in entries:
+            for series in entry.get('series') or []:
+                if series.get('id'):
+                    return int(series['id'])
+    logger.debug('Patchwork does not know %s', msgid)
+    return None
+
+
+def resolve_pw_series_id(
+    identifier: str, change_id: str, revision: Optional[int] = None
+) -> Optional[int]:
+    """Return the Patchwork series id of a tracked series revision.
+
+    Only series tracked from the Patchwork TUI have the id stored at
+    tracking time. For any other series, look it up once by message-id
+    and store it, so later state changes reach Patchwork too. Returns
+    None when the series cannot be found in Patchwork.
+    """
+    try:
+        conn = b4.review.tracking.get_db(identifier)
+    except Exception as ex:
+        logger.debug('Could not open tracking db for %s: %s', identifier, ex)
+        return None
+    try:
+        if revision is None:
+            revision = b4.review.tracking.get_newest_series_revision(conn, change_id)
+            if revision is None:
+                return None
+        pw_series_id = b4.review.tracking.get_pw_series_id(
+            conn, change_id, revision=revision
+        )
+        if pw_series_id:
+            return pw_series_id
+        msgid = b4.review.tracking.get_series_message_id(conn, change_id, revision)
+        if not msgid:
+            return None
+        pw_series_id = pw_lookup_series_id(msgid)
+        if pw_series_id:
+            b4.review.tracking.set_pw_series_id(conn, change_id, revision, pw_series_id)
+        return pw_series_id
+    except Exception as ex:
+        logger.debug('Could not resolve Patchwork series for %s: %s', change_id, ex)
+        return None
+    finally:
+        conn.close()
+
+
+def pw_update_tracked_series(
+    identifier: str,
+    change_id: str,
+    revision: Optional[int],
+    state: Optional[str],
+    archived: Optional[bool] = None,
+) -> bool:
+    """Update Patchwork for a tracked series, finding its id if needed.
+
+    Does nothing (and returns True) when there is nothing to change or
+    the series is not in Patchwork. Never raises.
+    """
+    if state is None and archived is None:
+        return True
+    try:
+        pw_series_id = resolve_pw_series_id(identifier, change_id, revision)
+        if not pw_series_id:
+            return True
+        return pw_update_series_state(pw_series_id, state, archived)
+    except Exception as ex:
+        logger.warning('Could not update %s in Patchwork: %s', change_id, ex)
+        return False

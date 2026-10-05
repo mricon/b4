@@ -1392,13 +1392,9 @@ def _maybe_archive_after_send(
     if prestatus != 'accepted':
         return ' (not archived: series status changed since queueing)'
     newest = None
-    pw_series_id = None
     try:
         conn = b4.review.tracking.get_db(identifier)
         newest = b4.review.tracking.get_newest_revision(conn, change_id)
-        pw_series_id = b4.review.tracking.get_pw_series_id(
-            conn, change_id, revision=revision
-        )
         conn.close()
     except Exception:
         pass
@@ -1411,7 +1407,11 @@ def _maybe_archive_after_send(
         return ' (not archived: branch is checked out)'
     try:
         ok, detail = b4.review.archive_series(
-            topdir, identifier, change_id, revision=revision, pw_series_id=pw_series_id
+            topdir,
+            identifier,
+            change_id,
+            revision=revision,
+            pw_state=b4.review.pw_config_state('pw-accept-state'),
         )
     except Exception as ex:
         ok, detail = False, str(ex)

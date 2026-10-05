@@ -2901,7 +2901,7 @@ def _mock_archive_branch(
     cid: str,
     rev: Optional[int],
     rbranch: str,
-    pw_series_id: Optional[int] = None,
+    pw_state: Optional[str] = None,
     notify: bool = True,
 ) -> bool:
     """Stand-in for TrackingApp._archive_branch: delete the branch and mark
