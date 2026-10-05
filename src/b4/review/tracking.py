@@ -656,11 +656,8 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
             logger.critical('No series found in retrieved messages')
             sys.exit(1)
 
-        # Get the latest revision by default, or specified version
-        if hasattr(cmdargs, 'wantver') and cmdargs.wantver:
-            wanted_ver = cmdargs.wantver
-        else:
-            wanted_ver = max(lmbx.series.keys())
+        # Track the latest revision
+        wanted_ver = max(lmbx.series.keys())
 
         # Discover all available revisions (newer and older)
         if b4.can_network:
