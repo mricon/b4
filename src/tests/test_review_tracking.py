@@ -4807,6 +4807,94 @@ class TestCmdForget:
         assert self._rows_left('forget-checkedout', 'cid-gone')['series'] == 1
 
 
+class TestCmdForgetHonoursNoStdin:
+    """--no-stdin has to stop cmd_forget reaching for stdin as well.
+
+    Naming no series makes cmd_forget look for one on stdin, which is the
+    read the flag exists to prevent: the pipe belongs to the caller.
+    """
+
+    def _enroll(self, gitdir: str, identifier: str) -> None:
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier=identifier)
+        )
+        conn = review_tracking.get_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-gone',
+            1,
+            'Archived series',
+            'Mark',
+            'mark@example.com',
+            '2026-06-01T10:00:00+00:00',
+            'gone-v1@example.com',
+            1,
+        )
+        conn.commit()
+        conn.close()
+
+    def test_no_stdin_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._enroll(gitdir, 'forget-nostdin')
+        cmdargs = argparse.Namespace(
+            series_id=None, identifier='forget-nostdin', no_stdin=True
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_forget(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+        assert 'No series identifier provided' in caplog.text
+
+    def test_a_hand_assembled_namespace_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A namespace without no_stdin defaults to True here too."""
+        self._enroll(gitdir, 'forget-nostdin-default')
+        cmdargs = argparse.Namespace(
+            series_id=None, identifier='forget-nostdin-default'
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_forget(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+
+    def test_stdin_is_still_read_without_no_stdin(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The gate must not cost the piped-message workflow its input."""
+        self._enroll(gitdir, 'forget-pipe')
+        monkeypatch.setattr('builtins.input', lambda _prompt: 'y')
+        cmdargs = argparse.Namespace(
+            series_id=None, identifier='forget-pipe', no_stdin=False
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
+        ) as mock_stdin:
+            review_tracking.cmd_forget(cmdargs)
+
+        mock_stdin.assert_called_once()
+        conn = review_tracking.get_db('forget-pipe')
+        left = conn.execute(
+            'SELECT COUNT(*) FROM series WHERE change_id = ?', ('cid-gone',)
+        ).fetchone()[0]
+        conn.close()
+        assert left == 0
+
+
 class TestUpdateSkipsCheckedOutBranch:
     """update_series_tracking leaves a checked-out review branch alone."""
 

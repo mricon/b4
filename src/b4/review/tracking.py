@@ -872,7 +872,9 @@ def cmd_forget(cmdargs: argparse.Namespace) -> None:
 
     series_id = cmdargs.series_id
     if not series_id:
-        series_id = b4.get_msgid_from_stdin()
+        # Default True: a namespace built by code has nothing piped in.
+        if not getattr(cmdargs, 'no_stdin', True):
+            series_id = b4.get_msgid_from_stdin()
         if not series_id:
             logger.critical('No series identifier provided')
             logger.critical('Pipe a message or pass msgid/URL/change-id as parameter')
