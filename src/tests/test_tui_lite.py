@@ -336,7 +336,7 @@ class TestAttestationText:
         [
             pytest.param('tofu', True, '\u2713 ed25519/a@example.org', id='tofu'),
             pytest.param(
-                'tofu-new', True, '? ed25519/a@example.org (new key)', id='new'
+                'tofu-new', False, '? ed25519/a@example.org (new key)', id='new'
             ),
             pytest.param(
                 'tofu-changed',

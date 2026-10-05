@@ -49,8 +49,10 @@ EMBEDDED_KEEP_SECS = 30 * 86400
 
 # Statuses that stop b4 under attestation-policy=hardfail
 CRITICAL_STATUSES = ('tofu-changed', 'tofu-rejected')
-# Statuses that count as a valid signature
-PASSING_STATUSES = ('tofu', 'tofu-new')
+# Statuses that count as a valid signature.  A key seen for the first
+# time is not one of them: anyone can make up a key, so "tofu-new" is
+# neutral, like "nokey", and shows with its own mark.
+PASSING_STATUSES = ('tofu',)
 
 # (sources, identity, cwd) -> keys found in the keyrings
 _keyring_cache: Dict[Tuple[Tuple[str, ...], str, str], List[str]] = dict()

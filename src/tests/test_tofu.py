@@ -568,7 +568,19 @@ class TestStatusesAndPolicies:
         lmsg = load(series_msgs(alice, 's1', count=1, cover=False)[0])
         atts, passing, crit = lmsg.get_attestation_status(policy, tofu=True)
         assert [a['status'] for a in atts] == ['tofu-new']
-        assert passing and not crit
+        # Anyone can make up a key, so a first sighting is neutral like
+        # "nokey": neither passing nor critical
+        assert [a['passing'] for a in atts] == [False]
+        assert not passing and not crit
+
+    def test_new_key_does_not_rescue_failing_dkim(self, alice: Dev) -> None:
+        lmsg = load(series_msgs(alice, 's1', count=1, cover=False)[0])
+        # A DKIM signature that failed, next to the first-seen key
+        dkim = b4.LoreAttestorDKIM(False, 'example.org', None, ['bad dkim'])
+        lmsg.attestors.append(dkim)
+        atts, passing, _crit = lmsg.get_attestation_status('softfail', tofu=True)
+        assert sorted(a['status'] for a in atts) == ['badsig', 'tofu-new']
+        assert not passing
 
     @pytest.mark.parametrize(
         ('policy', 'critical'), [('softfail', False), ('hardfail', True)]

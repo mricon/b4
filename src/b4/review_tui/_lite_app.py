@@ -155,11 +155,13 @@ def _build_attestation_text(
         status = att.get('status', 'unknown')
         identity = att.get('identity', 'unknown')
         if att.get('passing'):
-            if status == 'tofu-new':
-                # Trusted on first use, but this is the first time
-                att_text.append(f'? {identity} (new key)', style=ts['warning'])
-            else:
-                att_text.append(f'\u2713 {identity}', style=ts['success'])
+            att_text.append(f'\u2713 {identity}', style=ts['success'])
+            if 'mismatch' in att:
+                att_text.append(f' (From: {att["mismatch"]})', style=ts['warning'])
+        elif status == 'tofu-new':
+            # Valid with the key the message carries, seen for the first
+            # time: neutral, neither a checkmark nor a failure
+            att_text.append(f'? {identity} (new key)', style=ts['warning'])
             if 'mismatch' in att:
                 att_text.append(f' (From: {att["mismatch"]})', style=ts['warning'])
         else:

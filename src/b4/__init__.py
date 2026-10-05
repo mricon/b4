@@ -2536,6 +2536,8 @@ class LoreMessage:
                 if att_tofu['passing']:
                     has_passing = True
                     continue
+                # Like "nokey", a key seen for the first time proves
+                # nothing yet, so it is never passing and never critical
                 has_failing = True
                 if attpolicy == 'hardfail' and att_tofu['status'] in (
                     'badsig',
@@ -2635,7 +2637,10 @@ class LoreMessage:
 
         status = tofu_info['status']
         passing = status in tofu.PASSING_STATUSES
-        if passing and maxdays and attestor.signtime is not None:
+        # The signature is valid with its own key for "tofu" and
+        # "tofu-new", so a stale signature is suspicious for both
+        valid = status in ('tofu', 'tofu-new')
+        if valid and maxdays and attestor.signtime is not None:
             # Same rule as LoreAttestor.check_time_drift()
             sdrift = attestor.signtime - self.date
             if sdrift > datetime.timedelta(days=maxdays):
