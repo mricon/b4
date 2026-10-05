@@ -288,7 +288,7 @@ requires-dist = [
     { name = "dnspython", specifier = ">=2.0,<3.0" },
     { name = "ezgb", marker = "extra == 'bugs'", specifier = ">=0.2.0" },
     { name = "liblore", specifier = ">=0.10.1" },
-    { name = "patatt", specifier = ">=0.6,<2.0" },
+    { name = "patatt", specifier = ">=0.7,<2.0" },
     { name = "pygit2", specifier = ">=1.14,<2.0" },
     { name = "requests", specifier = ">=2.24,<3.0" },
     { name = "rich", marker = "extra == 'tui'", specifier = ">=13.0" },
