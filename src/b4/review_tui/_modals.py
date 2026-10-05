@@ -366,7 +366,7 @@ PW_HELP_LINES = [
     '\n',
     '[bold]Select[/bold]\n',
     '  [bold]Space[/bold]     Mark/unmark series\n',
-    '  [bold]a[/bold]         Mark/unmark all shown\n',
+    '  [bold]Ctrl-a[/bold]    Mark/unmark all shown\n',
     '  [bold]Esc[/bold]       Clear marks\n',
     '\n',
     '[bold]App[/bold]\n',

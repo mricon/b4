@@ -504,7 +504,7 @@ def _install_series(
 
 
 class TestPwMarkSelection:
-    """Marking series with space/a/Esc tracks ids and renders a leading '*'."""
+    """Marking series with space/Ctrl-a/Esc tracks ids and renders a leading '*'."""
 
     @pytest.mark.asyncio
     async def test_space_marks_and_advances(
@@ -565,6 +565,25 @@ class TestPwMarkSelection:
             app.action_mark_all()
             await pilot.pause()
             assert app._selected_ids == set()
+
+    @pytest.mark.asyncio
+    async def test_ctrl_a_marks_all(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Mark-all is Ctrl-a, as "select all" is elsewhere; plain 'a' is
+        "action" in the other TUIs and 'A' is "abandon" in tracking."""
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            assert app._selected_ids == set()
+            await pilot.press('A')
+            await pilot.pause()
+            assert app._selected_ids == set()
+            await pilot.press('ctrl+a')
+            await pilot.pause()
+            assert app._selected_ids == {1, 2}
 
     @pytest.mark.asyncio
     async def test_escape_clears_marks(self, monkeypatch: pytest.MonkeyPatch) -> None:

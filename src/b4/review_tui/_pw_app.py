@@ -274,7 +274,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         Binding('j', 'cursor_down', 'Down', show=False),
         Binding('k', 'cursor_up', 'Up', show=False),
         Binding('u', 'unhide_series', 'unhide', show=False),
-        Binding('a', 'mark_all', 'mark all', show=False),
+        Binding('ctrl+a', 'mark_all', 'mark all', show=False),
         Binding('escape', 'clear_marks', 'clear marks', show=False),
         # Series-specific actions
         Binding('c', 'ci_checks', 'ci checks'),
