@@ -243,6 +243,9 @@ ATT_PASS_SIMPLE = 'v'
 ATT_FAIL_SIMPLE = 'x'
 ATT_PASS_FANCY = '\033[32m\u2713\033[0m'
 ATT_FAIL_FANCY = '\033[31m\u2717\033[0m'
+# Valid with the key the message carries, but we have never seen it before
+ATT_NEW_SIMPLE = '?'
+ATT_NEW_FANCY = '\033[33m?\033[0m'
 
 CI_FLAGS_SIMPLE = {
     'pending': '<?>',
@@ -297,6 +300,8 @@ DEFAULT_CONFIG: ConfigDictT = {
     'attestation-staleness-days': '30',
     # Should we check DKIM signatures if we don't find any other attestation?
     'attestation-check-dkim': 'yes',
+    # Trust ed25519 keys on first use when no keyring has a key for the signer
+    'attestation-tofu': 'yes',
     # You can specify your own resolvers instead of using the ones provided by your OS
     # This can be handy if you're on an internal network that interferes with DNS lookups
     'attestation-dns-resolvers': None,
@@ -1160,6 +1165,12 @@ class LoreSeries:
         attcrit = False
         if attpolicy != 'off':
             logger.info('Checking attestation on all messages, may take a moment...')
+            from b4 import tofu
+
+            # Record the keys first, so a key pinned by this series shows
+            # as first seen, and not as "no key"
+            tofu.record_series(self)
+            tofu.print_warnings([lmsg for lmsg in self.patches if lmsg is not None])
             for lmsg in self.patches[1:]:
                 if lmsg is None:
                     attsame = False
@@ -2267,27 +2278,8 @@ class LoreMessage:
         # This should be always the case, but assert it anyway
         assert isinstance(self._attestors, list)
 
-        # load our key sources if necessary
-        ddir = get_data_dir()
-        pdir = os.path.join(ddir, 'keyring')
         config = get_main_config()
-        sources = config.get('keyringsrc')
-        if not sources:
-            # fallback to patatt's keyring if none is specified for b4
-            patatt_config = patatt.get_config_from_git(
-                r'patatt\..*', multivals=['keyringsrc']
-            )
-            sources = patatt_config.get('keyringsrc')
-            if not sources:
-                sources = [
-                    'ref:::.keys',
-                    'ref:::.local-keys',
-                    'ref::refs/meta/keyring:',
-                ]
-        if not isinstance(sources, list):
-            sources = [sources]
-        if pdir not in sources:
-            sources.append(pdir)
+        sources = get_keyring_sources()
 
         # Push our logger and GPGBIN into patatt
         patatt.logger = logger
@@ -2310,12 +2302,7 @@ class LoreMessage:
             ):
                 _patatt_remember(digest, trimmed, attestations)
 
-        if trimmed:
-            # If we only succeeded after trimming the body, then we MUST set the body
-            # to that value, otherwise someone can append arbitrary content after the l= value
-            # limit message.
-            self._trim_body()
-
+        attestors: List[LoreAttestor] = list()
         for result, identity, signtime, keysrc, keyalgo, errors in attestations:
             if signtime:
                 signdt = LoreAttestor.parse_ts(signtime)
@@ -2324,7 +2311,72 @@ class LoreMessage:
             attestor = LoreAttestorPatatt(
                 result, identity, signdt, keysrc, keyalgo, errors
             )
-            self._attestors.append(attestor)
+            if (
+                result == patatt.RES_NOKEY
+                and keyalgo == 'ed25519'
+                and identity
+                and self._check_embedded_key(attestor, msgbytes, identity, sources)
+            ):
+                trimmed = True
+            attestors.append(attestor)
+
+        if trimmed:
+            # If we only succeeded after trimming the body, then we MUST set the body
+            # to that value, otherwise someone can append arbitrary content after the l= value
+            # limit message.
+            self._trim_body()
+
+        self._attestors += attestors
+
+    def _check_embedded_key(
+        self,
+        attestor: 'LoreAttestor',
+        msgbytes: bytes,
+        identity: str,
+        sources: List[str],
+    ) -> bool:
+        """Check a "no key" ed25519 signature against the key in the message.
+
+        This is the first step of trust on first use (see :mod:`b4.tofu`).
+        A signature that fails with its own key is a bad signature.  A
+        valid one gets ``tofu_pk`` set, and stays non-passing until the
+        TOFU layer decides what it means.  If a keyring has the same key
+        under a different selector, the signature is simply valid.
+
+        Returns True if the signature only passed on the trimmed body.
+        """
+        from b4 import tofu
+
+        if not tofu.enabled():
+            return False
+        checked = tofu.verify_embedded(self, msgbytes, identity)
+        if checked is None:
+            return False
+        pk, valid, trimmed = checked
+        if not valid:
+            attestor.have_key = True
+            attestor.errors.append(
+                '%s failed to validate with the key in the message' % identity
+            )
+            return False
+        keyring = tofu.keyring_keys(identity, sources)
+        if pk in keyring:
+            logger.debug('Keyring has %s under another selector', identity)
+            attestor.passing = True
+            attestor.have_key = True
+            attestor.keysrc = '(keyring, other selector)'
+            return trimmed
+        attestor.tofu_pk = pk
+        attestor.tofu_keyring = keyring
+        return trimmed
+
+    def get_tofu_status(self, attestor: 'LoreAttestor') -> Optional[Dict[str, Any]]:
+        """Return the live TOFU status of *attestor* (see :func:`b4.tofu.evaluate`)."""
+        if not attestor.tofu_pk:
+            return None
+        from b4 import tofu
+
+        return tofu.evaluate(attestor, self)
 
     @staticmethod
     def run_local_check(
@@ -2448,21 +2500,26 @@ class LoreMessage:
         self.pw_ci_status = ci_status
 
     def get_attestation_status(
-        self, attpolicy: str, maxdays: int = 0
+        self, attpolicy: str, maxdays: int = 0, tofu: bool = False
     ) -> Tuple[List[Dict[str, Any]], bool, bool]:
         """Get attestation status for this message.
 
         Args:
             attpolicy: Attestation policy ('off', 'softfail', 'hardfail')
             maxdays: Maximum allowed time drift in days (0 to disable)
+            tofu: Report the trust-on-first-use status of signatures that
+                no keyring has a key for.  Without it, they show as 'nokey'.
 
         Returns:
             Tuple of (attestations, overall_passing, critical) where:
             - attestations: List of dicts with keys:
-                - status: 'signed', 'badsig', 'nokey'
+                - status: 'signed', 'badsig', 'nokey', or with *tofu* also
+                  'tofu', 'tofu-new', 'tofu-changed', 'tofu-retired',
+                  'tofu-rejected'
                 - identity: The attestor identity (e.g., 'ed25519/user@example.com')
                 - mismatch: From address if identity doesn't match (optional)
                 - passing: Boolean for this specific attestor
+                - tofu: the dict from :func:`b4.tofu.evaluate` (tofu statuses only)
             - overall_passing: True if no failures (including when no attestation info)
             - critical: True if hardfail policy triggered
         """
@@ -2472,6 +2529,22 @@ class LoreMessage:
         critical = False
 
         for attestor in self.attestors:
+            tofu_info = self.get_tofu_status(attestor) if tofu else None
+            if tofu_info is not None:
+                att_tofu = self._tofu_attestation(attestor, tofu_info, maxdays)
+                attestations.append(att_tofu)
+                if att_tofu['passing']:
+                    has_passing = True
+                    continue
+                has_failing = True
+                if attpolicy == 'hardfail' and att_tofu['status'] in (
+                    'badsig',
+                    'tofu-changed',
+                    'tofu-rejected',
+                ):
+                    critical = True
+                continue
+
             if (
                 attestor.passing
                 and maxdays
@@ -2554,6 +2627,39 @@ class LoreMessage:
         overall_passing = not has_failing or has_passing
         return attestations, overall_passing, critical
 
+    def _tofu_attestation(
+        self, attestor: 'LoreAttestor', tofu_info: Dict[str, Any], maxdays: int
+    ) -> Dict[str, Any]:
+        """Turn a TOFU decision into one entry of get_attestation_status()."""
+        from b4 import tofu
+
+        status = tofu_info['status']
+        passing = status in tofu.PASSING_STATUSES
+        if passing and maxdays and attestor.signtime is not None:
+            # Same rule as LoreAttestor.check_time_drift()
+            sdrift = attestor.signtime - self.date
+            if sdrift > datetime.timedelta(days=maxdays):
+                attestor.errors.append(
+                    'Time drift between Date and t too great (%s)' % sdrift
+                )
+                logger.debug('The time drift is too much, marking as badsig')
+                return {
+                    'status': 'badsig',
+                    'identity': attestor.trailer,
+                    'passing': False,
+                }
+        att: Dict[str, Any] = {
+            'status': status,
+            'identity': attestor.trailer,
+            'passing': passing,
+            'tofu': tofu_info,
+        }
+        if attestor.identity is not None and not tofu.sender_matches(
+            self, attestor.identity
+        ):
+            att['mismatch'] = self.fromemail
+        return att
+
     def get_attestation_trailers(
         self, attpolicy: str, maxdays: int = 0
     ) -> Tuple[Optional[str], List[str], bool]:
@@ -2570,22 +2676,29 @@ class LoreMessage:
             - critical: True if hardfail policy triggered
         """
         attestations, _overall_passing, critical = self.get_attestation_status(
-            attpolicy, maxdays
+            attpolicy, maxdays, tofu=True
         )
 
         config = get_main_config()
         if config['attestation-checkmarks'] == 'fancy':
             pass_mark = ATT_PASS_FANCY
             fail_mark = ATT_FAIL_FANCY
+            new_mark = ATT_NEW_FANCY
         else:
             pass_mark = ATT_PASS_SIMPLE
             fail_mark = ATT_FAIL_SIMPLE
+            new_mark = ATT_NEW_SIMPLE
 
         trailers = []
         checkmark = None
 
         for att in attestations:
-            if att['passing']:
+            if 'tofu' in att:
+                mark, trailer = self._tofu_trailer(att, pass_mark, fail_mark, new_mark)
+                if checkmark is None:
+                    checkmark = mark
+                trailers.append(trailer)
+            elif att['passing']:
                 mark = pass_mark
                 if checkmark is None:
                     checkmark = mark
@@ -2605,6 +2718,38 @@ class LoreMessage:
                     trailers.append(f'{mark} No key: {att["identity"]}')
 
         return checkmark, trailers, critical
+
+    @staticmethod
+    def _tofu_trailer(
+        att: Dict[str, Any], pass_mark: str, fail_mark: str, new_mark: str
+    ) -> Tuple[str, str]:
+        """Format one TOFU attestation as (checkmark, trailer)."""
+        info = att['tofu']
+        status = att['status']
+        identity = att['identity']
+        if status == 'tofu':
+            mark = pass_mark
+            if info['count']:
+                notes = f'TOFU, {info["count"]} other series'
+            else:
+                notes = 'TOFU'
+            if info['retired']:
+                notes += ', retired key'
+            trailer = f'{mark} Signed: {identity} ({notes})'
+        elif status == 'tofu-new':
+            mark = new_mark
+            trailer = f'{mark} Signed: {identity} (TOFU, first seen)'
+        else:
+            mark = fail_mark
+            label = {
+                'tofu-changed': 'KEY CHANGED',
+                'tofu-rejected': 'REJECTED KEY',
+                'tofu-retired': 'RETIRED KEY',
+            }.get(status, status)
+            trailer = f'{mark} {label}: {identity}'
+        if 'mismatch' in att:
+            trailer += f' (From: {att["mismatch"]})'
+        return mark, trailer
 
     def __repr__(self) -> str:
         out = list()
@@ -3353,7 +3498,34 @@ class LoreMessage:
             extra = ''
             if ltr.lmsg is not None:
                 for attestor in ltr.lmsg.attestors:
-                    if attestor.passing:
+                    tofu_info = ltr.lmsg.get_tofu_status(attestor)
+                    if tofu_info is not None:
+                        # Follow-ups never pin a key, but are checked against
+                        # the pins: only a changed or rejected key is critical
+                        att = ltr.lmsg._tofu_attestation(attestor, tofu_info, 0)
+                        mark, _trailer = ltr.lmsg._tofu_trailer(
+                            att,
+                            LoreAttestor.mark(True),
+                            LoreAttestor.mark(False),
+                            LoreAttestor.mark(None),
+                        )
+                        extra = ' (%s %s)' % (mark, attestor.trailer)
+                        if att['status'] in ('tofu-changed', 'tofu-rejected'):
+                            from b4 import tofu
+
+                            tofu.print_warnings([ltr.lmsg])
+                        if attpolicy == 'hardfail' and att['status'] in (
+                            'tofu-changed',
+                            'tofu-rejected',
+                        ):
+                            import sys
+
+                            logger.critical('---')
+                            logger.critical(
+                                'Exiting due to attestation-policy: hardfail'
+                            )
+                            sys.exit(1)
+                    elif attestor.passing:
                         extra = ' (%s %s)' % (attestor.checkmark, attestor.trailer)
                     elif attpolicy in ('hardfail', 'softfail'):
                         extra = ' (%s %s)' % (attestor.checkmark, attestor.trailer)
@@ -3663,6 +3835,13 @@ class LoreAttestor:
     passing: bool
     have_key: bool
     errors: List[str]
+    # Set when no keyring had a key, but the signature is valid with the
+    # ed25519 key the message carries.  passing stays False, so code that
+    # does not know about TOFU treats it as "no key".
+    tofu_pk: Optional[str]
+    # Different keys the keyrings have for this identity under other
+    # selectors.  If any, tofu_pk is a key change, not a first sighting.
+    tofu_keyring: List[str]
 
     def __init__(self) -> None:
         self.mode = None
@@ -3674,17 +3853,23 @@ class LoreAttestor:
         self.passing = False
         self.have_key = False
         self.errors = list()
+        self.tofu_pk = None
+        self.tofu_keyring = list()
+
+    @staticmethod
+    def mark(passing: Optional[bool]) -> str:
+        """Return the configured mark for pass (True), fail (False) or new (None)."""
+        config = get_main_config()
+        fancy = config['attestation-checkmarks'] == 'fancy'
+        if passing is None:
+            return ATT_NEW_FANCY if fancy else ATT_NEW_SIMPLE
+        if passing:
+            return ATT_PASS_FANCY if fancy else ATT_PASS_SIMPLE
+        return ATT_FAIL_FANCY if fancy else ATT_FAIL_SIMPLE
 
     @property
     def checkmark(self) -> str:
-        config = get_main_config()
-        if config['attestation-checkmarks'] == 'fancy':
-            if self.passing:
-                return ATT_PASS_FANCY
-            return ATT_FAIL_FANCY
-        if self.passing:
-            return ATT_PASS_SIMPLE
-        return ATT_FAIL_SIMPLE
+        return self.mark(self.passing)
 
     @property
     def trailer(self) -> str:
@@ -3824,6 +4009,33 @@ def _dkim_remember_pass(digest: str) -> None:
 # expires at a random point in the last sixth of this window, so the
 # results of one big sweep are not all checked again in the same sweep.
 PATATT_RECHECK_SECS = 86400
+
+
+def get_keyring_sources() -> List[str]:
+    """Return the patatt keyring sources b4 uses, in lookup order."""
+    config = get_main_config()
+    sources = config.get('keyringsrc')
+    if not sources:
+        # fallback to patatt's keyring if none is specified for b4
+        patatt_config = patatt.get_config_from_git(
+            r'patatt\..*', multivals=['keyringsrc']
+        )
+        sources = patatt_config.get('keyringsrc')
+        if not sources:
+            sources = [
+                'ref:::.keys',
+                'ref:::.local-keys',
+                'ref::refs/meta/keyring:',
+            ]
+    if isinstance(sources, list):
+        # Do not change the list stored in the config
+        sources = list(sources)
+    else:
+        sources = [sources]
+    pdir = os.path.join(get_data_dir(), 'keyring')
+    if pdir not in sources:
+        sources.append(pdir)
+    return sources
 
 
 def _patatt_store_path() -> str:
