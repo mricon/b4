@@ -838,6 +838,27 @@ and dim for pending. Press ``c`` to open a detailed view of all CI
 checks grouped by patch, showing the check context, description, and a
 link to the full CI results.
 
+To set the state of many series at once, mark them first (``space``, or
+``Ctrl-a`` to mark all), then press ``s``. B4 asks you to confirm before it
+changes anything. While the states are being set, press ``Esc`` to stop
+after the current patch.
+
+B4 also keeps Patchwork up to date as you work through the review
+lifecycle. This works for any tracked series that Patchwork knows
+about, not only the series you track from the Patchwork browser. B4
+finds the series in Patchwork by its message-id the first time it is
+needed.
+
+* Checking out a series sets :term:`b4.pw-review-state`
+* Taking a series as accepted sets :term:`b4.pw-accept-state`
+* Archiving a series after the thank-you sets
+  :term:`b4.pw-accept-state` and archives it in Patchwork
+* Archiving a series manually, or when you upgrade to a newer
+  revision, only archives it in Patchwork; the state stays the same
+
+If one of these settings is not set, b4 does not change that state in
+Patchwork. This is the same behaviour as ``b4 am`` and ``b4 ty``.
+
 Taking action
 -------------
 

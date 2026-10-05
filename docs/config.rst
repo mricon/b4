@@ -934,7 +934,14 @@ integrate your b4 workflow with patchwork.
 
          pw-accept-state = accepted
 
+     ``b4 review`` uses it too: taking a series as accepted, and archiving
+     a series after the thank-you is sent, set this state in Patchwork.
+     When it is not set, ``b4 review`` does not change the Patchwork state.
+
      Default: ``None``
+
+     .. versionchanged:: v0.17
+        Also used by ``b4 review``.
 
    :term:`b4.pw-discard-state`
      Enabling this option makes ``b4 ty -d`` set the status of any matching
@@ -964,7 +971,14 @@ integrate your b4 workflow with patchwork.
 
          pw-review-state = under-review
 
+     ``b4 review`` uses it too: checking out a series for review sets this
+     state in Patchwork. When it is not set, ``b4 review`` does not change
+     the Patchwork state.
+
      Default: ``None``
+
+     .. versionchanged:: v0.17
+        Also used by ``b4 review``.
 
    :term:`b4.pw-url`
      The URL of your patchwork server. Note, that this should point at the
