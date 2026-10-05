@@ -778,7 +778,9 @@ def get_extra_series(
 
     q = '(%s) AND %s' % (' OR '.join(queries), datelim)
     logger.debug('Query: %s', q)
-    q_msgs = b4.get_pi_search_results(q, nocache=nocache, local_sufficient=local_sufficient)
+    q_msgs = b4.get_pi_search_results(
+        q, nocache=nocache, local_sufficient=local_sufficient
+    )
     if not q_msgs:
         return msgs
 
