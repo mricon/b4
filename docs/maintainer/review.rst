@@ -146,7 +146,8 @@ Each row in the tracking list shows:
 
 * **Submitter** — patch author name (truncated if necessary)
 * **A** — attestation indicator: ``✔`` when all signatures verify,
-  blank otherwise (details shown in the bottom panel)
+  a red ``!`` when a signing key changed or was rejected (see
+  :doc:`kr`), blank otherwise (details shown in the bottom panel)
 * **A·R·T** — Acked-by · Reviewed-by · Tested-by trailer counts
   collected from the review branch
 * **Msgs** — total message count for the thread, with any unseen
@@ -244,6 +245,11 @@ single-keypress shortcut shown in square brackets so you can act
 quickly — for example, ``a`` then ``T`` to take a series. Available
 actions depend on the series status:
 
+When a series is signed with a changed or rejected key, the menu
+starts with ``[K]`` **Decide about the signing key**: accept the key
+as an additional one (``a``), as a replacement (``r``), or reject it
+(``x``).
+
 **Reviewing / replied:**
 
 * ``[T]`` **Take** — apply patches to the target branch
@@ -312,12 +318,20 @@ results for the series. Possible states:
   not available locally
 * **✘ identity (signature failed)** (red) — key is available but
   verification failed
+* **✔ identity (TOFU: N series)** (green) — signed with a key b4 has
+  seen in N other series from this address
+* **? identity (TOFU: new key)** (orange) — first series with this
+  key; not a pass
+* **✘ identity (key changed / rejected key / retired key)** (red) — see
+  :doc:`kr`; for a changed or rejected key, decide via ``a`` then ``K``
 
 Attestation is checked automatically when a series is updated (``u`` or
 ``U``) and when a review branch is checked out. Results are stored in
 the tracking database and displayed without re-checking on subsequent
-views. The attestation check honours the :term:`b4.attestation-policy`
-and :term:`b4.attestation-staleness-days` configuration options.
+views. Key decisions (``b4 kr accept``/``reject``) show up right away,
+without a new check. The attestation check honours the
+:term:`b4.attestation-policy`, :term:`b4.attestation-staleness-days` and
+:term:`b4.attestation-tofu` configuration options.
 
 Lite thread viewer
 ~~~~~~~~~~~~~~~~~~

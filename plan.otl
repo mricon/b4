@@ -101,7 +101,7 @@ v0.17
 	[X] Core: embedded-key validation, tofu.sqlite3, pin/count, new statuses, selector gap check
 	[X] Reconcile: b4 kr list/show/accept/reject/forget/promote, keep --show-keys working
 	[X] Review integration: record in enroll/update/cron, TUI badge + reconcile modal
-	[_] Docs: rewrite docs/maintainer/kr.rst, config.rst, attestation docs
+	[X] Docs: rewrite docs/maintainer/kr.rst, config.rst, attestation docs
 [X] Non-interactive cover/deps editing in `b4 prep`
 	: --show-cover/--cover-from-file and --show-deps/--deps-from-file, for
 	: scripts and agents that have no editor ("-" reads stdin)

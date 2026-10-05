@@ -512,6 +512,20 @@ Attestation settings
 
      Default: ``softfail``
 
+   :term:`b4.attestation-tofu`
+     Check patatt ed25519 signatures with the key they carry when your
+     keyring has no key for the sender, and warn when that key changes
+     (trust on first use). See :doc:`maintainer/kr`.
+
+     Keys are stored in ``~/.local/share/b4/tofu.sqlite3``. This file
+     is not a cache: deleting it loses all trust history.
+
+     Has no effect when :term:`b4.attestation-policy` is ``off``.
+
+     .. versionadded:: v0.17
+
+     Default: ``yes``
+
    :term:`b4.attestation-staleness-days`
      Ignore attestation signatures that are more than this many days
      old. This helps avoid a class of attacks when someone re-sends old
@@ -541,6 +555,9 @@ Attestation settings
      ``~/.local/share/b4/patatt-checked.sqlite3`` for up to 24 hours,
      so a revoked key stops showing a pass within a day. "No key"
      results are not remembered, so a key you add is used right away.
+
+     Keys in your keyring always win over keys trusted on first use
+     (see :term:`b4.attestation-tofu`).
 
      .. versionchanged:: v0.17
         b4 remembers developer signature checks for up to 24 hours.
