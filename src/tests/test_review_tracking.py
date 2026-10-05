@@ -5159,6 +5159,225 @@ class TestCmdTrackRetrievalFailure:
                 review_tracking.cmd_track(self._cmdargs('track-lookup'))
 
 
+class TestGetCurrentRevisionState:
+    """Layer 1: which of a series' per-revision rows stands for the series."""
+
+    @staticmethod
+    def _seed(
+        identifier: str, rows: list[tuple[int, str | None]]
+    ) -> sqlite3.Connection:
+        """Insert (revision, status) rows for 'cid' in the order given."""
+        review_tracking.init_db(identifier).close()
+        conn = review_tracking.get_db(identifier)
+        for revision, status in rows:
+            conn.execute(
+                'INSERT INTO series (change_id, revision, status) VALUES (?, ?, ?)',
+                ('cid', revision, status),
+            )
+        conn.commit()
+        return conn
+
+    def test_live_revision_wins_over_an_archived_one(self) -> None:
+        """The archived leftover of an upgrade never speaks for the series."""
+        conn = self._seed('state-live', [(2, 'archived'), (3, 'reviewing')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == (
+            'reviewing',
+            3,
+        )
+        conn.close()
+
+    def test_live_revision_wins_even_when_it_is_the_older_one(self) -> None:
+        """Highest live, not highest revision: v3 can be abandoned before v2."""
+        conn = self._seed('state-older', [(2, 'reviewing'), (3, 'archived')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == (
+            'reviewing',
+            2,
+        )
+        conn.close()
+
+    def test_newest_of_several_live_revisions_wins(self) -> None:
+        """Among live rows the newest revision is the one being worked on."""
+        conn = self._seed('state-newest', [(2, 'reviewing'), (3, 'replied')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == ('replied', 3)
+        conn.close()
+
+    def test_snoozed_counts_as_live(self) -> None:
+        """The TUI hides only archived rows, so a snoozed series is still shown."""
+        conn = self._seed('state-snoozed', [(2, 'archived'), (3, 'snoozed')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == ('snoozed', 3)
+        conn.close()
+
+    def test_newest_archived_stands_in_when_all_are_archived(self) -> None:
+        """A wholly archived series is described by its last revision."""
+        conn = self._seed('state-dead', [(2, 'archived'), (3, 'archived')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == (
+            'archived',
+            3,
+        )
+        conn.close()
+
+    def test_null_status_reads_as_new_and_counts_as_live(self) -> None:
+        """A row with no status is not archived, and reports the column default."""
+        conn = self._seed('state-null', [(2, 'archived'), (3, None)])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == ('new', 3)
+        conn.close()
+
+    def test_untracked_change_id_is_unknown(self) -> None:
+        """No rows at all: the caller gets the placeholder, not a crash."""
+        conn = self._seed('state-none', [])
+        assert review_tracking.get_current_revision_state(conn, 'other') == (
+            'unknown',
+            0,
+        )
+        conn.close()
+
+
+class TestCmdTrackAlreadyTrackedState:
+    """Re-tracking reports the live revision, not a superseded one.
+
+    cmd_track used to describe whichever row an unordered lookup by
+    change-id handed back, so a series under active review was announced as
+    archived and offered "b4 review forget" -- which erases its rows and
+    deletes its review branch.
+    """
+
+    CHANGE_ID = 'cid-state'
+
+    @classmethod
+    def _retrieved(cls, revision: int) -> mock.Mock:
+        """A retrieved vN carrying the tracked change-id."""
+        cover = mock.Mock(
+            msgid=f'v{revision}-cover@example.com',
+            full_subject=f'[PATCH v{revision} 0/2] thing',
+        )
+        p1 = mock.Mock(
+            msgid=f'v{revision}-p1@example.com',
+            full_subject=f'[PATCH v{revision} 1/2] thing: part 1',
+        )
+        lser = mock.Mock()
+        lser.revision = revision
+        lser.expected = 2
+        lser.change_id = cls.CHANGE_ID
+        lser.fromname = 'Author'
+        lser.fromemail = 'author@example.com'
+        lser.subject = 'thing'
+        lser.fingerprint = f'fp-v{revision}'
+        lser.has_cover = True
+        lser.patches = [cover, p1, None]
+
+        mbx = mock.Mock()
+        mbx.series = {revision: lser}
+        mbx.covers = {revision: cover}
+        mbx.get_series.return_value = lser
+        return mbx
+
+    @classmethod
+    def _seed_upgraded_series(
+        cls, gitdir: str, identifier: str, v3_status: str
+    ) -> None:
+        """Leave rows (v2, archived) and (v3, *v3_status*), v2 inserted first.
+
+        That is the order an upgrade leaves behind, and it makes the unordered
+        lookup return the archived row deterministically: v2 is both the
+        earlier rowid and the lower key in the UNIQUE (change_id, revision)
+        index that serves the lookup.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier=identifier)
+        )
+        conn = review_tracking.get_db(identifier)
+        for revision in (2, 3):
+            review_tracking.add_series_to_db(
+                conn,
+                change_id=cls.CHANGE_ID,
+                revision=revision,
+                subject='thing',
+                sender_name='Author',
+                sender_email='author@example.com',
+                sent_at='2026-03-09T00:00:00+00:00',
+                message_id=f'v{revision}-cover@example.com',
+                num_patches=2,
+                fingerprint=f'fp-v{revision}',
+            )
+            review_tracking.add_revision(
+                conn, cls.CHANGE_ID, revision, f'v{revision}-cover@example.com'
+            )
+        review_tracking.update_series_status(conn, cls.CHANGE_ID, v3_status, revision=3)
+        review_tracking.update_series_status(
+            conn, cls.CHANGE_ID, 'archived', revision=2
+        )
+        rows = conn.execute(
+            'SELECT revision, status FROM series WHERE change_id = ?',
+            (cls.CHANGE_ID,),
+        ).fetchall()
+        conn.close()
+        # Guard the premise: the raw lookup really does hand back the v2 row.
+        assert [(row[0], row[1]) for row in rows] == [(2, 'archived'), (3, v3_status)]
+
+    @classmethod
+    def _track(cls, identifier: str, revision: int) -> None:
+        cmdargs = _track_cmdargs(identifier, series_id='thing@example.com')
+        with (
+            mock.patch('b4.retrieve_messages', return_value=(None, [mock.Mock()])),
+            mock.patch('b4.LoreMailbox', return_value=cls._retrieved(revision)),
+        ):
+            review_tracking.cmd_track(cmdargs)
+
+    def test_live_revision_is_reported_not_the_archived_leftover(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """v3 is under review, so re-tracking at v4 offers the TUI upgrade."""
+        identifier = 'state-live-track'
+        self._seed_upgraded_series(gitdir, identifier, 'reviewing')
+
+        with caplog.at_level(logging.INFO, logger='b4'):
+            self._track(identifier, revision=4)
+
+        assert (
+            f'Series already tracked as {self.CHANGE_ID} (status: reviewing, v3)'
+            in caplog.text
+        )
+        assert 'Recorded new revision(s): v4' in caplog.text
+        assert 'Upgrade the series in the review TUI' in caplog.text
+        assert 'This series is archived' not in caplog.text
+        assert 'review forget' not in caplog.text
+
+    def test_wholly_archived_series_still_gets_the_forget_advice(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """With every revision archived the TUI shows nothing, so forget it."""
+        identifier = 'state-dead-track'
+        self._seed_upgraded_series(gitdir, identifier, 'archived')
+
+        with caplog.at_level(logging.INFO, logger='b4'):
+            self._track(identifier, revision=4)
+
+        assert (
+            f'Series already tracked as {self.CHANGE_ID} (status: archived, v3)'
+            in caplog.text
+        )
+        assert 'This series is archived and not shown in the TUI.' in caplog.text
+        assert f'Use "b4 review forget {self.CHANGE_ID}"' in caplog.text
+        assert 'Upgrade the series in the review TUI' not in caplog.text
+
+    def test_no_new_revisions_reports_the_live_revision(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Re-tracking v3 refuses, naming the revision it already has."""
+        identifier = 'state-same-track'
+        self._seed_upgraded_series(gitdir, identifier, 'reviewing')
+
+        with (
+            caplog.at_level(logging.CRITICAL, logger='b4'),
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            self._track(identifier, revision=3)
+
+        assert excinfo.value.code == 1
+        assert 'This series is already tracked (status: reviewing, v3)' in caplog.text
+        assert f'Use "b4 review forget {self.CHANGE_ID}"' in caplog.text
+
+
 class TestCmdTrackRethreadOffline:
     """--rethread refuses in offline mode instead of querying lore.
 
