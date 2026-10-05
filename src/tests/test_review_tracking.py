@@ -5,6 +5,7 @@ import logging
 import os
 import pathlib
 import re
+import signal
 import sqlite3
 from email.message import EmailMessage
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -2704,6 +2705,21 @@ class TestUpdateSeriesTrackingCounts:
 # ---------------------------------------------------------------------------
 
 
+def _track_cmdargs(identifier: str, **kwargs: Any) -> argparse.Namespace:
+    """Build the namespace "b4 review track" hands to cmd_track.
+
+    Mirrors what sp_rev_track defines, so the tests drive the same code path
+    the CLI does.
+    """
+    defaults: Dict[str, Any] = {
+        'series_id': None,
+        'identifier': identifier,
+        'rethread': None,
+    }
+    defaults.update(kwargs)
+    return argparse.Namespace(**defaults)
+
+
 class TestCmdTrackCancellation:
     """cmd_track exits with code 130 when the network operation is interrupted."""
 
@@ -4926,3 +4942,128 @@ class TestAutoWakeSkipsCheckedOutBranch:
         woken = review_tracking.auto_wake_snoozed(identifier, gitdir)
         assert woken == 1
         assert self._status(identifier, change_id) == 'replied'
+
+
+class TestCmdTrackRetrievalFailure:
+    """A LookupError from the retrieval becomes one CRITICAL line and exit 1."""
+
+    @staticmethod
+    def _cmdargs(identifier: str) -> argparse.Namespace:
+        return _track_cmdargs(identifier, series_id='wanted@example.com')
+
+    def test_offline_retrieval_is_reported_not_raised(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """conftest pins b4.can_network off, as --offline-mode does."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-offline')
+        )
+
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit) as excinfo:
+                review_tracking.cmd_track(self._cmdargs('track-offline'))
+
+        assert excinfo.value.code == 1
+        assert (
+            'CRITICAL: Cannot retrieve threads from remote in offline mode'
+            in caplog.text
+        )
+
+    def test_the_retrievals_own_words_reach_the_user(
+        self, gitdir: str, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Whatever the retrieval named is what the user is told.
+
+        retrieve_messages() raises a LookupError per reason it can have --
+        a mailbox that is not there, a message-id missing from the one that
+        is -- and the handler must pass that text through rather than
+        substitute a report of its own.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-nombox')
+        )
+        missing = tmp_path / 'nonexistent.mbox'
+
+        with mock.patch(
+            'b4.retrieve_messages',
+            side_effect=LookupError(f'Mailbox {missing} does not exist'),
+        ):
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(self._cmdargs('track-nombox'))
+
+        assert excinfo.value.code == 1
+        assert f'CRITICAL: Mailbox {missing} does not exist' in caplog.text
+
+    def test_the_sigint_handler_is_still_restored(self, gitdir: str) -> None:
+        """The finally: clause has to run on this exit path too.
+
+        cmd_track installs a SIGINT handler that cancels the in-flight lore
+        request; leaving it behind would have the next Ctrl-C in the process
+        cancel a request that is no longer running.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-sigint')
+        )
+        before = signal.getsignal(signal.SIGINT)
+
+        with pytest.raises(SystemExit):
+            review_tracking.cmd_track(self._cmdargs('track-sigint'))
+
+        assert signal.getsignal(signal.SIGINT) is before
+
+    def test_cancellation_still_exits_130(self, gitdir: str) -> None:
+        """A LookupError handler must not shadow the cancellation contract."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-cancel')
+        )
+
+        with mock.patch(
+            'b4.retrieve_messages',
+            side_effect=liblore.OperationCancelledError('cancelled'),
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                review_tracking.cmd_track(self._cmdargs('track-cancel'))
+
+        assert excinfo.value.code == 130
+
+    def test_unrelated_exceptions_still_propagate(self, gitdir: str) -> None:
+        """Only LookupError is turned into an exit; nothing else is swallowed."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-propagate')
+        )
+
+        with mock.patch(
+            'b4.retrieve_messages', side_effect=RuntimeError('something else')
+        ):
+            with pytest.raises(RuntimeError, match='something else'):
+                review_tracking.cmd_track(self._cmdargs('track-propagate'))
+
+    def test_a_lookup_error_past_the_retrieval_still_propagates(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KeyError and IndexError are LookupErrors too, and past the
+        retrieval they are bugs that want their traceback.
+
+        get_extra_series() reads getaddresses(...)[0][1] off the base message,
+        so a message with no From: raises IndexError from inside the block a
+        handler around the whole retrieval would have turned into "CRITICAL:
+        list index out of range" and exit 1.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-lookup')
+        )
+        monkeypatch.setattr(b4, 'can_network', True)
+        msgs = _series_msgs('lookup', AUTHOR, 1, 2)
+
+        with (
+            mock.patch(
+                'b4.retrieve_messages', return_value=('lookup-v1-p1@example.com', msgs)
+            ),
+            mock.patch(
+                'b4.mbox.get_extra_series',
+                side_effect=IndexError('list index out of range'),
+            ),
+        ):
+            with pytest.raises(IndexError, match='list index out of range'):
+                review_tracking.cmd_track(self._cmdargs('track-lookup'))

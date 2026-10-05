@@ -633,16 +633,21 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     try:
         _msgid: Optional[str]
         msgs: Optional[List[Any]]
-        if rethread:
-            logger.info('Rethreading series from %d message IDs', len(rethread))
-            # retrieve_rethreaded_messages reports whether it actually had to
-            # stitch the patches together (was_rethreaded), or found and used
-            # a properly-threaded copy of the same version posted to the list.
-            _msgid, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(cmdargs)
-        else:
-            logger.info('Retrieving series: %s', series_id)
-            _msgid, msgs = b4.retrieve_messages(cmdargs)
-            was_rethreaded = False
+        try:
+            if rethread:
+                logger.info('Rethreading series from %d message IDs', len(rethread))
+                # retrieve_rethreaded_messages reports whether it actually had to
+                # stitch the patches together (was_rethreaded), or found and used
+                # a properly-threaded copy of the same version posted to the list.
+                _msgid, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(cmdargs)
+            else:
+                logger.info('Retrieving series: %s', series_id)
+                _msgid, msgs = b4.retrieve_messages(cmdargs)
+                was_rethreaded = False
+        except LookupError as ex:
+            # The retrieval's "nothing to fetch"; elsewhere a LookupError is a bug.
+            logger.critical('CRITICAL: %s', ex)
+            sys.exit(1)
         if not msgs:
             logger.critical('Could not retrieve series: %s', series_id)
             sys.exit(1)
