@@ -24,10 +24,10 @@ import b4.review
 import b4.review.tracking as tracking
 import liblore
 from b4.review._review import PwFetchResult
-from b4.review_tui._modals import ApplyStateModal, SetStateScreen
+from b4.review_tui._modals import ApplyStateModal, ConfirmScreen, SetStateScreen
 from b4.review_tui._pw_app import PwApp, PwFetchProgress
 
-from .helpers.tui import static_text
+from .helpers.tui import current_screen, static_text
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -653,6 +653,15 @@ class TestPwBulkSetState:
             assert isinstance(app.screen, SetStateScreen)
             await app.screen.dismiss(('reviewing', False))
             await pilot.pause()
+            # Several series: a summary asks for confirmation first.
+            assert isinstance(app.screen, ConfirmScreen)
+            assert (
+                static_text(app.screen.query_one('#confirm-title'))
+                == 'Marking 2 series as "reviewing"'
+            )
+            assert fake.patched == []
+            await pilot.press('y')
+            await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
 
@@ -692,6 +701,34 @@ class TestPwBulkSetState:
             assert by_id[1]['state'] == 'new'
             assert by_id[2]['state'] == 'accepted'
             assert len(fake.patched) == 2
+
+    @pytest.mark.asyncio
+    async def test_bulk_confirm_escape_changes_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = _FakePwSession()
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (fake, 'https://pw/api')
+        )
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_mark_all()
+            app.action_set_state()
+            await pilot.pause()
+            await app.screen.dismiss(('accepted', False))
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            await pilot.press('escape')
+            await pilot.pause()
+
+            assert not isinstance(current_screen(app), (ConfirmScreen, ApplyStateModal))
+            assert fake.patched == []
+            assert all(s['state'] == 'new' for s in app._all_series)
+            # Backing out keeps the marks, so the user can pick another state.
+            assert app._selected_ids == {1, 2}
 
     @pytest.mark.asyncio
     async def test_set_state_needs_states_loaded(

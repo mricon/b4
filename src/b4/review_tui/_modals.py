@@ -2696,6 +2696,21 @@ class SetStateScreen(JKListNavMixin, ModalScreen[Optional[Tuple[str, bool]]]):
         self.dismiss(None)
 
 
+def SetStateConfirmScreen(
+    num_series: int, num_patches: int, new_state: str, archived: bool
+) -> ConfirmScreen:
+    """Build a confirmation screen for a bulk Patchwork state change."""
+    body = [f'{num_patches} patches will be updated on the Patchwork server.']
+    if archived:
+        body.append('They will also be archived.')
+    body += ['', 'Are you sure?']
+    return ConfirmScreen(
+        title='Set State',
+        body=body,
+        subject=f'Marking {num_series} series as "{new_state}"',
+    )
+
+
 class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
     """Modal showing progress while applying state changes to patches.
 

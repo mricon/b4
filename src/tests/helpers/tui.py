@@ -21,6 +21,18 @@ def static_text(widget: Any) -> str:
     return str(widget.renderable)
 
 
+def current_screen(app: Any) -> Any:
+    """Return the app's active screen, read fresh.
+
+    After ``assert isinstance(app.screen, X)`` mypy narrows ``app.screen``
+    for the rest of the test and does not know that a key press can swap
+    the screen. A later ``assert not isinstance(app.screen, X)`` then makes
+    every following line "unreachable". Reading the screen through a
+    function call avoids that narrowing.
+    """
+    return app.screen
+
+
 # A reply buffer exercising every trim rule the send paths share: the
 # instruction header is dropped, everything quoted above the >--cut--
 # marker collapses into a "lines skipped" note, and a trailing quoted run

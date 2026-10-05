@@ -42,6 +42,7 @@ from b4.review_tui._modals import (
     CIChecksScreen,
     HelpScreen,
     LimitScreen,
+    SetStateConfirmScreen,
     SetStateScreen,
 )
 
@@ -767,8 +768,29 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
 
         if len(targets) == 1:
             label = targets[0].get('name') or '(no subject)'
-        else:
-            label = f'{len(targets)} series ({len(patch_ids)} patches)'
+            self._apply_state(patch_ids, new_state, archived, label, targets)
+            return
+
+        # Several series in one go: let the user check the count first.
+        label = f'{len(targets)} series ({len(patch_ids)} patches)'
+
+        def _on_confirm(confirmed: Optional[bool]) -> None:
+            if confirmed:
+                self._apply_state(patch_ids, new_state, archived, label, targets)
+
+        self.push_screen(
+            SetStateConfirmScreen(len(targets), len(patch_ids), new_state, archived),
+            callback=_on_confirm,
+        )
+
+    def _apply_state(
+        self,
+        patch_ids: List[int],
+        new_state: str,
+        archived: bool,
+        label: str,
+        targets: List[Dict[str, Any]],
+    ) -> None:
         self.push_screen(
             ApplyStateModal(
                 self._pwkey, self._pwurl, patch_ids, new_state, archived, label
