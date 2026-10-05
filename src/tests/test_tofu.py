@@ -631,13 +631,13 @@ class TestStatusesAndPolicies:
         series_statuses(get_series(series_msgs(alice, 's1')))
         lmsg = load(series_msgs(alice, 's1', count=1, cover=False)[0])
         _mark, trailers, _crit = lmsg.get_attestation_trailers('softfail')
-        assert trailers == [f'? Signed: ed25519/{alice.email} (TOFU, first seen)']
+        assert trailers == [f'? Signed: ed25519/{alice.email} (TOFU: new key)']
         series_statuses(get_series(series_msgs(alice, 's2', revision=2)))
         series_statuses(get_series(series_msgs(alice, 's3', revision=3)))
         lmsg = load(series_msgs(alice, 's4', count=1, cover=False)[0])
         mark, trailers, _crit = lmsg.get_attestation_trailers('softfail')
         assert mark == 'v'
-        assert trailers == [f'v Signed: ed25519/{alice.email} (TOFU, 3 other series)']
+        assert trailers == [f'v Signed: ed25519/{alice.email} (TOFU: 3 series)']
         lmsg = load(series_msgs(alice2, 's5', count=1, cover=False)[0])
         mark, trailers, _crit = lmsg.get_attestation_trailers('softfail')
         assert mark == 'x'
@@ -651,7 +651,7 @@ class TestAmReady:
         lser = get_series(series_msgs(alice, 's1'))
         with caplog.at_level(logging.INFO, logger='b4'):
             assert len(lser.get_am_ready()) == 2
-        assert f'? Signed: ed25519/{alice.email} (TOFU, first seen)' in caplog.text
+        assert f'? Signed: ed25519/{alice.email} (TOFU: new key)' in caplog.text
         assert key_rows(alice.email) == {alice.pk: 'trusted'}
 
     def test_changed_key_softfail_warns(

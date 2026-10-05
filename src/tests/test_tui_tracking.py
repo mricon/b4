@@ -5143,20 +5143,19 @@ class TestTofuHelpers:
             pytest.param(
                 'tofu',
                 {'count': 2, 'retired': False},
-                '\u2714 ed25519/a@example.org (key trusted on first use, 2 other series)',
+                '\u2714 ed25519/a@example.org (TOFU: 2 series)',
                 id='tofu',
             ),
             pytest.param(
                 'tofu',
                 {'count': 0, 'retired': True},
-                '\u2714 ed25519/a@example.org '
-                '(key trusted on first use, 0 other series, retired since)',
+                '\u2714 ed25519/a@example.org (TOFU: 0 series, retired)',
                 id='retired-history',
             ),
             pytest.param(
                 'tofu-new',
                 {},
-                '? ed25519/a@example.org (new key, trusted on first use)',
+                '? ed25519/a@example.org (TOFU: new key)',
                 id='new',
             ),
             pytest.param(

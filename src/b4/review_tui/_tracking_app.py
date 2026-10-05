@@ -861,9 +861,9 @@ def _format_attestation(
             mark, style = _TOFU_MARKS[status]
             note = _TOFU_NOTES[status]
             if status == 'tofu':
-                note += f', {info.get("count", 0)} other series'
+                note += f': {info.get("count", 0)} series'
                 if info.get('retired'):
-                    note += ', retired since'
+                    note += ', retired'
             elif status == 'tofu-changed':
                 # A key change against the keyring is stored as is (see
                 # b4.tofu.stored_status), so it comes without details.
@@ -888,8 +888,8 @@ _TOFU_MARKS: Dict[str, Tuple[str, str]] = {
     'tofu-rejected': ('\u2718', 'error'),
 }
 _TOFU_NOTES: Dict[str, str] = {
-    'tofu': 'key trusted on first use',
-    'tofu-new': 'new key, trusted on first use',
+    'tofu': 'TOFU',
+    'tofu-new': 'TOFU: new key',
     'tofu-changed': 'key changed',
     'tofu-retired': 'retired key',
     'tofu-rejected': 'rejected key',

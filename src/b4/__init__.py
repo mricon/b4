@@ -2734,16 +2734,13 @@ class LoreMessage:
         identity = att['identity']
         if status == 'tofu':
             mark = pass_mark
-            if info['count']:
-                notes = f'TOFU, {info["count"]} other series'
-            else:
-                notes = 'TOFU'
+            notes = f'TOFU: {info["count"]} series'
             if info['retired']:
-                notes += ', retired key'
+                notes += ', retired'
             trailer = f'{mark} Signed: {identity} ({notes})'
         elif status == 'tofu-new':
             mark = new_mark
-            trailer = f'{mark} Signed: {identity} (TOFU, first seen)'
+            trailer = f'{mark} Signed: {identity} (TOFU: new key)'
         else:
             mark = fail_mark
             label = {
