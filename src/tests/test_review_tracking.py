@@ -4230,6 +4230,7 @@ class TestRetrieveSeriesMessagesRethreadSeam:
 
         progress_cb = mock.Mock()
         with (
+            mock.patch('b4.can_network', True),
             mock.patch(
                 'b4.fetch_rethread_messages',
                 side_effect=_fetch_rethread_messages,
@@ -5067,3 +5068,91 @@ class TestCmdTrackRetrievalFailure:
         ):
             with pytest.raises(IndexError, match='list index out of range'):
                 review_tracking.cmd_track(self._cmdargs('track-lookup'))
+
+
+class TestCmdTrackRethreadOffline:
+    """--rethread refuses in offline mode instead of querying lore.
+
+    cmd_track calls b4.retrieve_rethreaded_messages() directly instead of
+    going through retrieve_messages(), where the offline guard used to live,
+    so "b4 --offline-mode review track --rethread" asked the list archive for
+    every message-id on the command line.
+    """
+
+    def test_refuses_without_querying_lore(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='rt-offline')
+        )
+        cmdargs = _track_cmdargs(
+            'rt-offline', rethread=['one@example.com', 'two@example.com']
+        )
+
+        with (
+            mock.patch('b4.get_pi_thread_by_msgid') as mock_thread,
+            mock.patch('b4.get_pi_search_results') as mock_search,
+        ):
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        assert excinfo.value.code == 1
+        assert 'offline mode' in caplog.text
+        mock_thread.assert_not_called()
+        mock_search.assert_not_called()
+        conn = review_tracking.get_db('rt-offline')
+        count = conn.execute('SELECT COUNT(*) FROM series').fetchone()[0]
+        conn.close()
+        assert count == 0
+
+
+class TestFetchSeriesThreadOffline:
+    """A rethreaded series refuses offline instead of querying lore."""
+
+    @staticmethod
+    def _seed(identifier: str) -> Dict[str, Any]:
+        """Track a rethreaded v6 whose three patches are stored individually."""
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_revision(
+            conn, 'cid-rt', 6, 'rt-v6-p1@example.com', is_rethreaded=True
+        )
+        _insert_patches(conn, 'cid-rt', 6, ['rt-p1@q', 'rt-p2@q', 'rt-p3@q'])
+        conn.close()
+        return {
+            'change_id': 'cid-rt',
+            'revision': 6,
+            'message_id': 'rt-v6-p1@example.com',
+            'is_rethreaded': True,
+        }
+
+    def test_refuses_without_querying_lore(self) -> None:
+        """Not one of the stored patches is fetched before the refusal."""
+        series = self._seed('rt-offline-fetch')
+
+        with mock.patch('b4.get_pi_thread_by_msgid') as mock_thread:
+            with pytest.raises(
+                LookupError, match='Cannot retrieve threads from remote in offline mode'
+            ):
+                b4.review.retrieve_series_messages(series, 'rt-offline-fetch')
+
+        mock_thread.assert_not_called()
+
+    def test_refusal_matches_the_normal_path_word_for_word(self) -> None:
+        """Callers must not be able to tell the two paths apart.
+
+        Nothing downstream should come to treat an offline rethreaded series
+        as a different kind of failure from an offline ordinary one, and the
+        cheapest way to keep that true is to say the same thing on both.
+        """
+        series = self._seed('rt-offline-same')
+        seen: List[str] = []
+
+        for is_rethreaded in (True, False):
+            with pytest.raises(LookupError) as exc_info:
+                b4.review.retrieve_series_messages(
+                    {**series, 'is_rethreaded': is_rethreaded}, 'rt-offline-same'
+                )
+            seen.append(str(exc_info.value))
+
+        assert seen == ['Cannot retrieve threads from remote in offline mode'] * 2

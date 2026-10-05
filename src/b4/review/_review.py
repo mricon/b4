@@ -221,6 +221,9 @@ def retrieve_series_messages(
     is_rethreaded = series.get('is_rethreaded', False)
 
     if is_rethreaded and change_id and revision is not None:
+        # Same refusal, same wording, as retrieve_messages().
+        if not b4.can_network:
+            raise LookupError('Cannot retrieve threads from remote in offline mode')
         conn = b4.review.tracking.get_db(identifier)
         patches = b4.review.tracking.get_series_patches(conn, change_id, int(revision))
         conn.close()

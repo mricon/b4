@@ -7190,7 +7190,14 @@ def retrieve_rethreaded_messages(
     threaded copy of the same version already exists in lore it is preferred
     and returned as-is with ``was_rethreaded=False``; otherwise the patches
     are stitched into a synthetic thread and ``was_rethreaded`` is True.
+
+    Raises LookupError in offline mode: every message this stitches together
+    has to come from the list archive.
     """
+    # Checked here so every caller sees it, and before stdin is read.
+    if not can_network:
+        raise LookupError('Cannot retrieve threads from remote in offline mode')
+
     raw_ids: List[str] = cmdargs.rethread
 
     # Support reading from stdin with --rethread -
@@ -7241,8 +7248,6 @@ def retrieve_messages(
 ) -> Tuple[Optional[str], Optional[List[EmailMessage]]]:
     # Handle --rethread mode: fetch multiple unrelated messages and stitch them together
     if getattr(cmdargs, 'rethread', None):
-        if not can_network:
-            raise LookupError('Cannot retrieve threads from remote in offline mode')
         if cmdargs.localmbox:
             raise LookupError('--rethread cannot be used with --use-local-mbox')
         cover_msgid, msgs, _was_rethreaded = retrieve_rethreaded_messages(cmdargs)

@@ -955,6 +955,15 @@ class TestFindThreadedCopy:
 class TestRetrieveRethreadedResendPreference:
     """retrieve_rethreaded_messages signals whether it stitched or found a copy."""
 
+    @pytest.fixture(autouse=True)
+    def _network_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The lore entry points are faked, but the retrieval refuses offline.
+
+        conftest pins b4.can_network off for every test; these exercise what
+        the retrieval does with messages it did get, so say the network is up.
+        """
+        monkeypatch.setattr(b4, 'can_network', True)
+
     @staticmethod
     def _cmdargs(msgids: List[str]) -> argparse.Namespace:
         return argparse.Namespace(rethread=msgids, nocache=True)
@@ -1019,3 +1028,49 @@ class TestFindThreadedCopyTargetedRevision:
         t_patch, s_patch = _fake_lore(threads, broken_v6)
         with t_patch, s_patch:
             assert b4.find_threaded_copy(broken_v6, revision=99) is None
+
+
+class TestRetrieveRethreadedOfflineMode:
+    """--offline-mode is honoured by the rethread retrieval itself.
+
+    Rethreading has nothing but the list archive to work with, so offline it
+    can only refuse.  The refusal used to live in retrieve_messages(), which
+    is not the only caller: "b4 review track --rethread" calls the retrieval
+    directly and queried lore with --offline-mode in effect.  conftest pins
+    b4.can_network off, which is exactly what --offline-mode does.
+    """
+
+    @staticmethod
+    def _lore_mocks() -> Tuple[Any, Any]:
+        return (
+            mock.patch('b4.get_pi_thread_by_msgid'),
+            mock.patch('b4.get_pi_search_results'),
+        )
+
+    def test_refuses_without_querying_lore(self) -> None:
+        """No thread lookup and no search happen before the refusal."""
+        t_patch, s_patch = self._lore_mocks()
+        with t_patch as m_thread, s_patch as m_search:
+            with pytest.raises(
+                LookupError, match='Cannot retrieve threads from remote in offline mode'
+            ):
+                b4.retrieve_rethreaded_messages(
+                    argparse.Namespace(rethread=['c1@q', 'c2@q'], nocache=True)
+                )
+        m_thread.assert_not_called()
+        m_search.assert_not_called()
+
+    def test_retrieve_messages_still_refuses(self) -> None:
+        """The refusal reaches the --rethread callers going through retrieve_messages."""
+        t_patch, s_patch = self._lore_mocks()
+        with t_patch as m_thread, s_patch as m_search:
+            with pytest.raises(
+                LookupError, match='Cannot retrieve threads from remote in offline mode'
+            ):
+                b4.retrieve_messages(
+                    argparse.Namespace(
+                        rethread=['c1@q', 'c2@q'], localmbox=None, nocache=True
+                    )
+                )
+        m_thread.assert_not_called()
+        m_search.assert_not_called()
