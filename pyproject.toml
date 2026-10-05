@@ -185,3 +185,11 @@ all = "error"
 # for the 3.11 fallback (typing.override is 3.12+), which is too much weight
 # for a style rule. Revisit if/when the supported Python floor moves to 3.12.
 missing-override-decorator = "ignore"
+# Opt-in strictness rules added in ty 0.0.70-0.0.79. The unsound-* pair flags
+# every Any (json, sqlite rows, argparse) flowing into an annotated type, the
+# -strict condition rule has known false positives, and disjoint-cast trips
+# over pygit2's stubs. Narrowing those Any sources is a separate cleanup.
+unsound-return-statement = "ignore"
+unsound-assignment = "ignore"
+redundant-condition-strict = "ignore"
+disjoint-cast = "ignore"

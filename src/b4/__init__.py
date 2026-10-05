@@ -4307,7 +4307,7 @@ def git_run_command(
     U = TypeVar('U', str, bytes)
 
     def _handle(_out: U, _err: U) -> Tuple[int, U]:
-        if logstderr and len(_err.strip()):  # ty:ignore[no-matching-overload, invalid-argument-type] # https://github.com/astral-sh/ty/issues/1503
+        if logstderr and len(_err.strip()):
             logger.debug('Stderr: %s', _err)
             _out += _err
 
@@ -6149,12 +6149,7 @@ def send_mail(
     if isinstance(smtp, list):
         # This is a local command
 
-        # This a little crazy but it's possible, through multiple inheritance,
-        # for smtp to be a list of something other than str if it is also one of
-        # the other types in the union.
-        #
-        # https://github.com/astral-sh/ty/issues/1578
-        smtps = ' '.join(smtp)  # ty:ignore[no-matching-overload]
+        smtps = ' '.join(smtp)
         if reflect:
             logger.info('Reflecting via "%s"', smtps)
         else:
@@ -6165,9 +6160,7 @@ def send_mail(
                 cmdargs = list(smtp) + [envpair[1]]
             else:
                 cmdargs = list(smtp) + list(destaddrs)
-            # ty infers list[object] for the list+list concatenation above;
-            # both operands are lists of str at runtime (see ty issue #1578).
-            ecode, _out, err = _run_command(cmdargs, stdin=bdata)  # ty:ignore[invalid-argument-type]
+            ecode, _out, err = _run_command(cmdargs, stdin=bdata)
             if ecode > 0:
                 raise RuntimeError('Error running %s: %s' % (smtps, err.decode()))
             sent += 1
