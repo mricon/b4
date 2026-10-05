@@ -12,7 +12,7 @@ import pathlib
 import sqlite3
 import threading
 from collections.abc import Generator
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
@@ -1019,3 +1019,243 @@ class TestKrCli:
         assert 'recv-key' not in caplog.text
         # Looking at keys must not create keyring directories
         assert not (tmp_path / 'b4' / 'keyring').exists()
+
+
+# --- Stored attestation results (b4 review) ----------------------------------
+
+ALICE = 'ed25519/alice@example.org'
+
+
+def stored(lser: b4.LoreSeries) -> Tuple[Optional[str], List[str]]:
+    """Check *lser* the way b4 review does, and return a resolve_stored() row."""
+    from b4.review import check_series_attestation
+
+    msgids = [lmsg.msgid for lmsg in lser.patches if lmsg is not None]
+    return check_series_attestation(lser), msgids
+
+
+def live(row: Tuple[Optional[str], List[str]]) -> Tuple[Optional[str], Dict[str, Any]]:
+    ((att, details),) = tofu.resolve_stored([row])
+    return att, details
+
+
+class TestStoredResults:
+    """The review database keeps "nokey", the TOFU status is worked out live."""
+
+    def test_check_records_and_stores_nokey(self, alice: Dev) -> None:
+        row = stored(get_series(series_msgs(alice, 's1')))
+        assert row[0] == f'nokey:{ALICE}'
+        # Checking a series records it, there is no separate step
+        assert key_rows(alice.email) == {alice.pk: 'trusted'}
+        att, details = live(row)
+        assert att == f'tofu-new:{ALICE}'
+        assert details[ALICE]['pk'] == alice.pk
+
+    def test_next_revision_makes_both_trusted(self, alice: Dev) -> None:
+        v1 = stored(get_series(series_msgs(alice, 's1')))
+        v2 = stored(get_series(series_msgs(alice, 's2', revision=2)))
+        # Each revision counts the other one
+        assert [live(row)[0] for row in (v1, v2)] == [f'tofu:{ALICE}'] * 2
+        assert live(v1)[1][ALICE]['count'] == 1
+
+    @pytest.mark.parametrize(
+        ('decision', 'expected'),
+        [
+            # The new key signed only this series, so it is new
+            pytest.param('add', 'tofu-new', id='add'),
+            pytest.param('replace', 'tofu-new', id='replace'),
+            pytest.param('reject', 'tofu-rejected', id='reject'),
+        ],
+    )
+    def test_decision_takes_effect_without_a_check(
+        self, alice: Dev, alice2: Dev, decision: str, expected: str
+    ) -> None:
+        stored(get_series(series_msgs(alice, 's1')))
+        row = stored(get_series(series_msgs(alice2, 's2', revision=2)))
+        assert row[0] == f'nokey:{ALICE}'
+        att, details = live(row)
+        assert att == f'tofu-changed:{ALICE}'
+        assert details[ALICE]['pk'] == alice2.pk
+        if decision == 'reject':
+            tofu.reject_key(alice.email, alice2.pk)
+        else:
+            tofu.accept_key(alice.email, alice2.pk, replace=decision == 'replace')
+        assert live(row)[0] == f'{expected}:{ALICE}'
+
+    def test_replaced_key_keeps_its_history(self, alice: Dev, alice2: Dev) -> None:
+        old = stored(get_series(series_msgs(alice, 's1')))
+        stored(get_series(series_msgs(alice2, 's2', revision=2)))
+        tofu.accept_key(alice.email, alice2.pk, replace=True)
+        att, details = live(old)
+        assert att == f'tofu:{ALICE}'
+        assert details[ALICE]['retired']
+
+    def test_worst_key_wins(self, alice: Dev, alice2: Dev) -> None:
+        stored(get_series(series_msgs(alice, 's0')))
+        row = stored(get_series(series_msgs(alice, 's1', signers={2: alice2})))
+        assert live(row)[0] == f'tofu-changed:{ALICE}'
+
+    def test_other_entries_are_kept(self, alice: Dev) -> None:
+        att, msgids = stored(get_series(series_msgs(alice, 's1')))
+        row = (f'{att};signed:DKIM/example.org;nokey:openpgp/bob@example.com', msgids)
+        assert live(row)[0] == (
+            f'nokey:openpgp/bob@example.com;signed:DKIM/example.org;tofu-new:{ALICE}'
+        )
+
+    def test_keyring_gap_is_stored(
+        self, tofu_env: pathlib.Path, alice: Dev, alice2: Dev
+    ) -> None:
+        install_key(tofu_env, alice, selector='20211009')
+        row = stored(get_series(series_msgs(alice2, 's1')))
+        assert row[0] == f'tofu-changed:{ALICE}'
+        assert live(row) == (row[0], {})
+
+    @pytest.mark.parametrize(
+        'case', ['unknown-messages', 'disabled', 'no-messages', 'pending']
+    )
+    def test_stays_nokey(
+        self, monkeypatch: pytest.MonkeyPatch, alice: Dev, case: str
+    ) -> None:
+        att, msgids = stored(get_series(series_msgs(alice, 's1')))
+        if case == 'unknown-messages':
+            msgids = ['other@example.com']
+        elif case == 'disabled':
+            monkeypatch.setitem(b4.MAIN_CONFIG, 'attestation-tofu', 'no')
+        elif case == 'no-messages':
+            msgids = []
+        else:
+            att = 'pending'
+        assert live((att, msgids)) == (att, {})
+
+    def test_many_series_one_connection(
+        self, monkeypatch: pytest.MonkeyPatch, alice: Dev
+    ) -> None:
+        rows = [
+            stored(get_series(series_msgs(alice, f's{num}', revision=num)))
+            for num in range(1, 4)
+        ]
+        calls: List[int] = list()
+        connect = tofu.connect
+
+        def counting_connect() -> sqlite3.Connection:
+            calls.append(1)
+            return connect()
+
+        monkeypatch.setattr(tofu, 'connect', counting_connect)
+        monkeypatch.setattr(tofu, '_CHUNK', 2)
+        results = tofu.resolve_stored(rows * 10)
+        assert len(calls) == 1
+        assert [att for att, _details in results] == [f'tofu:{ALICE}'] * 30
+
+
+def track(identifier: str, change_id: str, lser: b4.LoreSeries) -> None:
+    """Track *lser* and store its attestation, as b4 review update does."""
+    from b4.review import tracking
+
+    from .helpers.tracking import seed_series
+
+    att, _msgids = stored(lser)
+    cover = lser.patches[0] or lser.patches[1]
+    assert cover is not None
+    seed_series(
+        identifier,
+        change_id,
+        sender_email='alice@example.org',
+        message_id=cover.msgid,
+        num_patches=lser.expected,
+    )
+    conn = tracking.get_db(identifier)
+    try:
+        tracking.add_series_patches(conn, change_id, 1, lser)
+    finally:
+        conn.close()
+    tracking.update_attestation(identifier, change_id, 1, att)
+
+
+class TestTrackedSeries:
+    """Every reader of the tracking database sees the live status."""
+
+    def test_get_all_tracked_series(self, alice: Dev, alice2: Dev) -> None:
+        from b4.review import tracking
+
+        track('proj', 'old', get_series(series_msgs(alice, 's1')))
+        track('proj', 'new', get_series(series_msgs(alice2, 's2', revision=2)))
+        rows = {s['change_id']: s for s in tracking.get_all_tracked_series('proj')}
+        assert rows['old']['attestation'] == f'tofu-new:{ALICE}'
+        assert rows['new']['attestation'] == f'tofu-changed:{ALICE}'
+        assert rows['new']['tofu'][ALICE]['pk'] == alice2.pk
+        tofu.reject_key(alice.email, alice2.pk)
+        rows = {s['change_id']: s for s in tracking.get_all_tracked_series('proj')}
+        assert rows['new']['attestation'] == f'tofu-rejected:{ALICE}'
+
+    def test_untouched_without_tofu_signatures(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a signature TOFU may know, nothing extra is read."""
+        from b4.review import tracking
+
+        from .helpers.tracking import seed_series
+
+        seed_series('proj', 'dkim')
+        tracking.update_attestation('proj', 'dkim', 1, 'signed:DKIM/example.org')
+        monkeypatch.setattr(tofu, 'resolve_stored', None)
+        (row,) = tracking.get_all_tracked_series('proj')
+        assert row['attestation'] == 'signed:DKIM/example.org'
+        assert row['tofu'] == {}
+
+    def test_tofu_failure_keeps_the_list(
+        self, monkeypatch: pytest.MonkeyPatch, alice: Dev
+    ) -> None:
+        from b4.review import tracking
+
+        track('proj', 'old', get_series(series_msgs(alice, 's1')))
+
+        def broken(rows: Any) -> Any:
+            raise RuntimeError('boom')
+
+        monkeypatch.setattr(tofu, 'resolve_stored', broken)
+        (row,) = tracking.get_all_tracked_series('proj')
+        assert row['attestation'] == f'nokey:{ALICE}'
+        assert row['tofu'] == {}
+
+    @pytest.mark.asyncio
+    async def test_tui_badge_and_decision(self, alice: Dev, alice2: Dev) -> None:
+        from textual.widgets import ListView
+
+        from b4.review_tui._modals import KeyDecisionScreen
+        from b4.review_tui._tracking_app import TrackedSeriesItem, TrackingApp
+
+        track('proj', 'old', get_series(series_msgs(alice, 's1')))
+        track('proj', 'v2', get_series(series_msgs(alice, 's2', revision=2)))
+        track('proj', 'new', get_series(series_msgs(alice2, 's3', revision=3)))
+
+        def marks(app: TrackingApp) -> Dict[str, str]:
+            lv = app.query_one('#tracking-list', ListView)
+            return {
+                item.series['change_id']: item.render_label().plain[20]
+                for item in lv.children
+                if isinstance(item, TrackedSeriesItem)
+            }
+
+        app = TrackingApp('proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            assert marks(app) == {'old': '✔', 'v2': '✔', 'new': '!'}
+            lv = app.query_one('#tracking-list', ListView)
+            lv.index = next(
+                idx
+                for idx, item in enumerate(lv.children)
+                if isinstance(item, TrackedSeriesItem)
+                and item.series['change_id'] == 'new'
+            )
+            await pilot.pause()
+            await pilot.press('a')
+            await pilot.pause()
+            await pilot.press('K')
+            await pilot.pause()
+            assert isinstance(app.screen, KeyDecisionScreen)
+            await pilot.press('r')
+            await pilot.pause()
+            # The old series are history now, the new one is a fresh key
+            assert marks(app) == {'old': '✔', 'v2': '✔', 'new': ' '}
+        assert key_rows(alice.email) == {alice.pk: 'retired', alice2.pk: 'trusted'}

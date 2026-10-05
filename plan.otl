@@ -100,7 +100,7 @@ v0.17
 	: Identity is (email, pk); on by default via b4.attestation-tofu
 	[X] Core: embedded-key validation, tofu.sqlite3, pin/count, new statuses, selector gap check
 	[X] Reconcile: b4 kr list/show/accept/reject/forget/promote, keep --show-keys working
-	[_] Review integration: record in enroll/update/cron, TUI badge + reconcile modal
+	[X] Review integration: record in enroll/update/cron, TUI badge + reconcile modal
 	[_] Docs: rewrite docs/maintainer/kr.rst, config.rst, attestation docs
 [X] Non-interactive cover/deps editing in `b4 prep`
 	: --show-cover/--cover-from-file and --show-deps/--deps-from-file, for

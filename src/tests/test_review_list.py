@@ -272,6 +272,7 @@ class TestCmdList:
             'target_branch',
             'is_rethreaded',
             'snoozed_until',
+            'tofu',
         ):
             assert key in data[0], key
         assert 'cid-1-p2@example.com' in data[0]['message_ids']

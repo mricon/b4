@@ -27,6 +27,7 @@ import b4
 import b4.mbox
 import b4.review
 import b4.review.tracking
+import b4.tofu
 import b4.ty
 
 logger = b4.logger
@@ -138,6 +139,12 @@ def check_series_attestation(lser: b4.LoreSeries) -> Optional[str]:
         signed  — signature verified successfully
         nokey   — signed but we don't have the key
         badsig  — we have the key and verification failed
+        tofu-changed — the keyring has a different key for this identity
+
+    A signature checked on trust on first use is stored as ``nokey``,
+    and :func:`b4.tofu.resolve_stored` works out its status again when
+    the result is read.  Checking also records which keys signed the
+    series, see :func:`b4.tofu.record_series`.
 
     Examples:
         'signed:DKIM/kernel.org'
@@ -163,11 +170,12 @@ def check_series_attestation(lser: b4.LoreSeries) -> Optional[str]:
         if lmsg is None:
             continue
         attestations, _passing, _critical = lmsg.get_attestation_status(
-            attpolicy, maxdays
+            attpolicy, maxdays, tofu=True
         )
         for att in attestations:
-            key = (att.get('status', ''), att.get('identity', ''))
+            key = (b4.tofu.stored_status(att), att.get('identity', ''))
             seen.add(key)
+    b4.tofu.record_series(lser)
 
     if not seen:
         return 'none'

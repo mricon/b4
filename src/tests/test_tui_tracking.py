@@ -5043,6 +5043,163 @@ class TestAttestationPasses:
         att = 'weird:openpgp/ljs@kernel.org;signed:DKIM/kernel.org'
         assert _tracking_app.attestation_passes(att) is False
 
+    @pytest.mark.parametrize(
+        'att,passes',
+        [
+            # A key that signed other series counts like a keyring key
+            pytest.param('tofu:ed25519/a@example.org', True, id='tofu'),
+            # A key seen for the first time proves nothing yet
+            pytest.param('tofu-new:ed25519/a@example.org', False, id='new-alone'),
+            pytest.param(
+                'tofu-new:ed25519/a@example.org;signed:DKIM/example.org',
+                True,
+                id='new-is-neutral',
+            ),
+            pytest.param(
+                'tofu-changed:ed25519/a@example.org;signed:DKIM/example.org',
+                False,
+                id='changed',
+            ),
+            pytest.param(
+                'tofu-retired:ed25519/a@example.org;signed:DKIM/example.org',
+                False,
+                id='retired',
+            ),
+            pytest.param(
+                'tofu-rejected:ed25519/a@example.org;signed:DKIM/example.org',
+                False,
+                id='rejected',
+            ),
+        ],
+    )
+    def test_tofu_statuses(self, att: str, passes: bool) -> None:
+        assert _tracking_app.attestation_passes(att) is passes
+
+
+class TestTofuHelpers:
+    """The TOFU badge, the key decision action, and the detail panel."""
+
+    @pytest.mark.parametrize(
+        'att,alert',
+        [
+            pytest.param('signed:DKIM/example.org', None, id='signed'),
+            pytest.param('tofu-new:ed25519/a@example.org', None, id='new'),
+            pytest.param('tofu-retired:ed25519/a@example.org', 'warning', id='retired'),
+            pytest.param(
+                'tofu-retired:ed25519/a@example.org;tofu-changed:ed25519/b@example.org',
+                'error',
+                id='worst-wins',
+            ),
+            pytest.param('tofu-rejected:ed25519/a@example.org', 'error', id='rejected'),
+            pytest.param(None, None, id='nothing'),
+        ],
+    )
+    def test_alert(self, att: Optional[str], alert: Optional[str]) -> None:
+        assert _tracking_app.attestation_alert(att) == alert
+
+    def test_decisions_skip_keyring_changes(self) -> None:
+        series = {
+            'tofu': {
+                'ed25519/a@example.org': {'status': 'tofu-changed', 'pk': 'A'},
+                'ed25519/b@example.org': {'status': 'tofu-rejected', 'pk': 'B'},
+                'ed25519/c@example.org': {'status': 'tofu', 'pk': 'C'},
+                # Only editing the keyring changes this one
+                'ed25519/d@example.org': {
+                    'status': 'tofu-changed',
+                    'against': 'keyring',
+                    'pk': 'D',
+                },
+            }
+        }
+        decisions = _tracking_app.tofu_decisions(series)
+        assert [identity for identity, _info in decisions] == [
+            'ed25519/a@example.org',
+            'ed25519/b@example.org',
+        ]
+        assert _tracking_app.tofu_decisions({}) == []
+
+    @pytest.mark.parametrize(
+        'att,expected',
+        [
+            pytest.param(
+                'signed:DKIM/example.org;tofu-changed:ed25519/a@example.org',
+                'DKIM signature passes (example.org)',
+                id='passes',
+            ),
+            pytest.param(
+                'badsig:DKIM/example.org',
+                'DKIM signature fails (example.org)',
+                id='fails',
+            ),
+            pytest.param('nokey:ed25519/a@example.org', 'No DKIM signature', id='none'),
+        ],
+    )
+    def test_dkim_summary(self, att: str, expected: str) -> None:
+        assert _tracking_app._dkim_summary(att) == expected
+
+    @pytest.mark.parametrize(
+        'status,info,expected',
+        [
+            pytest.param(
+                'tofu',
+                {'count': 2, 'retired': False},
+                '\u2714 ed25519/a@example.org (key trusted on first use, 2 other series)',
+                id='tofu',
+            ),
+            pytest.param(
+                'tofu',
+                {'count': 0, 'retired': True},
+                '\u2714 ed25519/a@example.org '
+                '(key trusted on first use, 0 other series, retired since)',
+                id='retired-history',
+            ),
+            pytest.param(
+                'tofu-new',
+                {},
+                '? ed25519/a@example.org (new key, trusted on first use)',
+                id='new',
+            ),
+            pytest.param(
+                'tofu-changed',
+                {'against': 'tofu'},
+                '\u2718 ed25519/a@example.org (key changed, decide with [a]ction)',
+                id='changed',
+            ),
+            pytest.param(
+                'tofu-changed',
+                {'against': 'keyring'},
+                '\u2718 ed25519/a@example.org (does not match the key in your keyring)',
+                id='keyring',
+            ),
+            pytest.param(
+                'tofu-rejected',
+                {},
+                '\u2718 ed25519/a@example.org (rejected key)',
+                id='rejected',
+            ),
+        ],
+    )
+    def test_format(self, status: str, info: Dict[str, Any], expected: str) -> None:
+        identity = 'ed25519/a@example.org'
+        text = _tracking_app._format_attestation(
+            f'{status}:{identity}', details={identity: info}
+        )
+        assert text is not None
+        assert text.plain == expected
+
+    def test_stored_keyring_change_has_no_decision(self) -> None:
+        # A key change against the keyring is stored as tofu-changed with
+        # no details (see b4.tofu.stored_status).  Only the keyring can
+        # settle it, so the note must not point at the action menu.
+        identity = 'ed25519/a@example.org'
+        series = {'attestation': f'tofu-changed:{identity}', 'tofu': {}}
+        text = _tracking_app._format_attestation(series['attestation'], details={})
+        assert text is not None
+        assert text.plain == (
+            '\u2718 ed25519/a@example.org (does not match the key in your keyring)'
+        )
+        assert _tracking_app.tofu_decisions(series) == []
+
 
 class TestAttestationColumnRendering:
     """End-to-end: the checkmark shows up for a nokey+signed series."""

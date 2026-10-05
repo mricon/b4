@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from string import Template
@@ -46,6 +47,7 @@ import b4
 import b4.mbox
 import b4.review
 import b4.review.tracking
+import b4.tofu
 import b4.ty
 from b4.review._review import NO_COVER_NOTE
 from b4.review_tui._common import (
@@ -82,6 +84,7 @@ from b4.review_tui._modals import (
     CheckLoadingScreen,
     CherryPickScreen,
     HelpScreen,
+    KeyDecisionScreen,
     LimitScreen,
     LinkRevisionConfirmScreen,
     LinkRevisionScreen,
@@ -114,6 +117,7 @@ _ACTION_SHORTCUTS: Dict[str, str] = {
     'thank': 't',
     'abandon': 'A',
     'archive': 'x',
+    'keys': 'K',
 }
 
 
@@ -164,6 +168,12 @@ def _effective_tier(series: Dict[str, Any]) -> int:
     return _STATUS_TIER.get(status, 2)
 
 
+# Attestation entries that neither grant nor withhold the checkmark
+_NEUTRAL = ('nokey:', 'tofu-new:')
+# Attestation entries that count as a valid signature
+_GRANTING = ('signed:', 'tofu:')
+
+
 def attestation_passes(att: Optional[str]) -> bool:
     """Whether the A column should show a checkmark for *att*.
 
@@ -182,11 +192,72 @@ def attestation_passes(att: Optional[str]) -> bool:
     unimportable PGP key is a permanent state for many submitters, and
     before this a perfectly good DKIM signature sitting next to one
     rendered the same as no attestation at all.
+
+    Keys trusted on first use (see :mod:`b4.tofu`) follow the same idea.
+    ``tofu`` is a key that signed other series before, so it counts like
+    ``signed``.  ``tofu-new`` is a key seen for the first time: it proves
+    nothing yet, so it is neutral like ``nokey``.  Any other status,
+    such as a changed or rejected key, withholds the checkmark.
     """
     if not att or att in ('pending', 'none'):
         return False
-    checked = [e for e in att.split(';') if e and not e.startswith('nokey:')]
-    return bool(checked) and all(e.startswith('signed:') for e in checked)
+    checked = [e for e in att.split(';') if e and not e.startswith(_NEUTRAL)]
+    return bool(checked) and all(e.startswith(_GRANTING) for e in checked)
+
+
+# TOFU statuses that need the maintainer's attention, and the style of
+# the badge that shows them in the A column
+_TOFU_ALERTS: Dict[str, str] = {
+    'tofu-rejected': 'error',
+    'tofu-changed': 'error',
+    'tofu-retired': 'warning',
+}
+
+
+def attestation_alert(att: Optional[str]) -> Optional[str]:
+    """Return the badge style for *att*, or None if nothing needs attention."""
+    styles = {_TOFU_ALERTS.get(e.split(':', 1)[0], '') for e in (att or '').split(';')}
+    for style in ('error', 'warning'):
+        if style in styles:
+            return style
+    return None
+
+
+def _dkim_summary(att: str) -> str:
+    """Describe the DKIM result stored in *att*, for the key decision."""
+    passed = []
+    failed = []
+    for entry in att.split(';'):
+        status, _, identity = entry.partition(':')
+        if not identity.startswith('DKIM/'):
+            continue
+        domain = identity[len('DKIM/') :]
+        if status == 'signed':
+            passed.append(domain)
+        else:
+            failed.append(domain)
+    if passed:
+        return 'DKIM signature passes (%s)' % ', '.join(passed)
+    if failed:
+        return 'DKIM signature fails (%s)' % ', '.join(failed)
+    return 'No DKIM signature'
+
+
+def tofu_decisions(series: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """Return the (identity, details) pairs of keys waiting for a decision.
+
+    These are keys that changed or that were rejected.  A key that does
+    not match the keyring is not one of them: the keyring always wins,
+    so only editing the keyring changes that.
+    """
+    out = []
+    for identity, info in sorted((series.get('tofu') or {}).items()):
+        if info.get('status') not in ('tofu-changed', 'tofu-rejected'):
+            continue
+        if info.get('against') == 'keyring':
+            continue
+        out.append((identity, info))
+    return out
 
 
 def msgs_cell(series: Dict[str, Any]) -> Tuple[str, str, bool]:
@@ -754,8 +825,13 @@ def _get_art_counts_batch(
     return result
 
 
-def _format_attestation(att: str, app: Any = None) -> Optional[RichText]:
+def _format_attestation(
+    att: str, app: Any = None, details: Optional[Dict[str, Dict[str, Any]]] = None
+) -> Optional[RichText]:
     """Format an attestation DB value into a Rich text snippet.
+
+    *details* is the ``tofu`` field of the series, see
+    :func:`b4.review.tracking.get_all_tracked_series`.
 
     Returns None when there is nothing to display (e.g. 'pending', 'none').
     """
@@ -780,9 +856,44 @@ def _format_attestation(att: str, app: Any = None) -> Optional[RichText]:
         elif status == 'badsig':
             text.append(f'\u2718 {identity}', style=ts['error'])
             text.append(' (signature failed)', style='dim')
+        elif status in _TOFU_NOTES:
+            info = (details or {}).get(identity, {})
+            mark, style = _TOFU_MARKS[status]
+            note = _TOFU_NOTES[status]
+            if status == 'tofu':
+                note += f', {info.get("count", 0)} other series'
+                if info.get('retired'):
+                    note += ', retired since'
+            elif status == 'tofu-changed':
+                # A key change against the keyring is stored as is (see
+                # b4.tofu.stored_status), so it comes without details.
+                # Only a change against a pinned key can be decided here.
+                if info.get('against', 'keyring') == 'keyring':
+                    note = 'does not match the key in your keyring'
+                else:
+                    note += ', decide with [a]ction'
+            text.append(f'{mark} {identity}', style=ts[style])
+            text.append(f' ({note})', style='dim')
         else:
             text.append(entry)
     return text
+
+
+# Mark and style for each TOFU status in the detail panel
+_TOFU_MARKS: Dict[str, Tuple[str, str]] = {
+    'tofu': ('\u2714', 'success'),
+    'tofu-new': ('?', 'warning'),
+    'tofu-changed': ('\u2718', 'error'),
+    'tofu-retired': ('\u2718', 'error'),
+    'tofu-rejected': ('\u2718', 'error'),
+}
+_TOFU_NOTES: Dict[str, str] = {
+    'tofu': 'key trusted on first use',
+    'tofu-new': 'new key, trusted on first use',
+    'tofu-changed': 'key changed',
+    'tofu-retired': 'retired key',
+    'tofu-rejected': 'rejected key',
+}
 
 
 class TrackedSeriesItem(ListItem):
@@ -859,7 +970,10 @@ class TrackedSeriesItem(ListItem):
         accent = f'bold {ts["warning"]}'
         label = RichText(no_wrap=True, overflow='ellipsis')
         label.append(submitter)
-        if attestation_passes(att):
+        alert = attestation_alert(att)
+        if alert:
+            label.append('!', style=f'bold {ts[alert]}')
+        elif attestation_passes(att):
             label.append('✔', style=ts['success'])  # ✔
         else:
             label.append(' ')
@@ -1618,6 +1732,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             if status != 'thanked':
                 actions.append(('abandon', 'Abandon series'))
             actions.append(('archive', 'Archive series'))
+        if tofu_decisions(self._selected_series):
+            actions.insert(0, ('keys', 'Decide about the signing key'))
         self.push_screen(
             ActionScreen(actions, shortcuts=_ACTION_SHORTCUTS),
             callback=self._on_action_selected,
@@ -1639,9 +1755,52 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             'waiting': self.action_waiting,
             'snooze': self.action_snooze,
             'unsnooze': self.action_unsnooze,
+            'keys': self.action_decide_key,
         }.get(action)
         if handler:
             handler()
+
+    def action_decide_key(self) -> None:
+        """Accept or reject a key that changed (see :mod:`b4.tofu`)."""
+        if not self._selected_series:
+            return
+        pending = tofu_decisions(self._selected_series)
+        if not pending:
+            self.notify('No key waiting for a decision', severity='information')
+            return
+        change_id = self._selected_series.get('change_id')
+        trailer, info = pending[0]
+        identity = trailer.split('/', 1)[-1].lower()
+        dkim = _dkim_summary(self._selected_series.get('attestation') or '')
+        screen = KeyDecisionScreen(
+            identity,
+            info,
+            b4.tofu.key_history(identity),
+            b4.tofu.recent_series(identity, limit=3),
+            dkim,
+        )
+
+        def _decided(choice: Optional[str]) -> None:
+            if choice is None:
+                return
+            try:
+                if choice == 'reject':
+                    b4.tofu.reject_key(identity, info['pk'])
+                    self.notify(f'Rejected the new key of {identity}')
+                else:
+                    b4.tofu.accept_key(
+                        identity, info['pk'], replace=choice == 'replace'
+                    )
+                    self.notify(f'Trusted the new key of {identity}')
+            except (b4.tofu.TofuError, OSError, sqlite3.Error) as ex:
+                self.notify(str(ex), severity='error')
+                return
+            # TOFU statuses are worked out when the list loads, so every
+            # series signed with this key shows the decision at once
+            self._focus_change_id = change_id
+            self._load_series()
+
+        self.push_screen(screen, callback=_decided)
 
     def action_review(self) -> None:
         if not self._selected_series:
@@ -2266,7 +2425,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             att_widget.update(RichText('no signatures', style='dim'))
             att_row.display = True
         else:
-            att_text = _format_attestation(att, app=self)
+            att_text = _format_attestation(att, app=self, details=series.get('tofu'))
             if att_text is not None:
                 att_widget.update(att_text)
                 att_row.display = True

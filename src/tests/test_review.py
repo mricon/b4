@@ -2552,6 +2552,8 @@ def _make_mock_lmsg(
     lmsg.get_attestation_status = mock.Mock(
         return_value=(attestations, passing, critical)
     )
+    # No signatures for b4.tofu.record_series() to record
+    lmsg.attestors = []
     return lmsg
 
 
@@ -2661,7 +2663,42 @@ class TestCheckSeriesAttestation:
         }
         with mock.patch('b4.get_main_config', return_value=config):
             check_series_attestation(lser)
-        lmsg.get_attestation_status.assert_called_once_with('softfail', expected)
+        lmsg.get_attestation_status.assert_called_once_with(
+            'softfail', expected, tofu=True
+        )
+
+    @pytest.mark.parametrize(
+        'tofu_info,expected',
+        [
+            # Worked out again when read, see b4.tofu.resolve_stored()
+            pytest.param({'status': 'tofu'}, 'nokey', id='tofu-stored-as-nokey'),
+            pytest.param(
+                {'status': 'tofu-changed', 'against': 'tofu'},
+                'nokey',
+                id='tofu-change-stored-as-nokey',
+            ),
+            # Depends only on the keyring, so it is safe to store
+            pytest.param(
+                {'status': 'tofu-changed', 'against': 'keyring'},
+                'tofu-changed',
+                id='keyring-change-stored',
+            ),
+        ],
+    )
+    def test_tofu_statuses_are_not_stored(
+        self, tofu_info: Dict[str, Any], expected: str
+    ) -> None:
+        """Accepting or rejecting a key must not need a fresh check."""
+        att = _make_mock_attestation(
+            tofu_info['status'], 'ed25519/user@example.com', False
+        )
+        att['tofu'] = tofu_info
+        lser = self._make_series([_make_mock_lmsg([att])])
+        with mock.patch(
+            'b4.get_main_config', return_value={'attestation-policy': 'softfail'}
+        ):
+            result = check_series_attestation(lser)
+        assert result == f'{expected}:ed25519/user@example.com'
 
     def test_default_policy_softfail(self) -> None:
         """When no attestation-policy set, defaults to softfail (not off)."""

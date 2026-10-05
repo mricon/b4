@@ -647,6 +647,190 @@ def key_history(identity: str) -> List[Dict[str, Any]]:
     return out
 
 
+# --- Stored attestation results ----------------------------------------------
+
+# The review tracking database stores only what patatt said, so a
+# signature that TOFU handles is stored as "nokey".  These helpers add
+# the TOFU status when the result is read, so accepting or rejecting a
+# key shows up everywhere at once.  A reader that skips them still sees
+# "nokey", which never counts as a valid signature.
+
+# Worst first: when one series is signed with more than one key, the
+# worst status wins.
+_STATUS_RANK = ('tofu-rejected', 'tofu-changed', 'tofu-retired', 'tofu-new', 'tofu')
+NOKEY_PREFIX = f'nokey:{TOFU_ALGO}/'
+# SQLite allows a limited number of "?" in one statement
+_CHUNK = 500
+
+
+def stored_status(att: Dict[str, Any]) -> str:
+    """Return the status to store for one get_attestation_status() entry.
+
+    TOFU statuses are stored as ``nokey`` and worked out again when the
+    result is read (see :func:`resolve_stored`).  A key change against
+    the keyring is the exception: it depends only on the keyring and the
+    message, so it is safe to store as ``tofu-changed``.
+    """
+    info = att.get('tofu')
+    if info is None:
+        return str(att.get('status', ''))
+    if info.get('against') == 'keyring':
+        return 'tofu-changed'
+    return 'nokey'
+
+
+def _chunks(items: List[str]) -> List[List[str]]:
+    return [items[i : i + _CHUNK] for i in range(0, len(items), _CHUNK)]
+
+
+def _resolve_one(
+    sightings: List[Tuple[str, str, int]],
+    keys: Dict[str, Tuple[str, int]],
+    counted: Dict[str, Set[str]],
+) -> Optional[Dict[str, Any]]:
+    """Decide the status of one identity in one series.
+
+    *sightings* are the (pk, series_key, seen_at) rows for the messages
+    of this series, *keys* maps each known pk of the identity to its
+    (status, changed_at), and *counted* maps each pk to the series keys
+    it was counted for.  Follows the same rules as :func:`evaluate`.
+    """
+    if not sightings:
+        return None
+    own = {skey for _pk, skey, _seen in sightings}
+    found: Dict[str, Dict[str, Any]] = dict()
+    for pk in sorted({pk for pk, _skey, _seen in sightings}):
+        info: Dict[str, Any] = {'pk': pk, 'count': 0, 'retired': False}
+        found[pk] = info
+        if pk not in keys:
+            if keys:
+                info['status'] = 'tofu-changed'
+                info['against'] = 'tofu'
+            continue
+        status, changed_at = keys[pk]
+        info['count'] = len(counted.get(pk, set()) - own)
+        if status == 'retired':
+            seen = [seen_at for spk, _skey, seen_at in sightings if spk == pk]
+            if all(seen_at < changed_at for seen_at in seen):
+                info['status'] = 'tofu'
+                info['retired'] = True
+            else:
+                info['status'] = 'tofu-retired'
+        elif status == 'rejected':
+            info['status'] = 'tofu-rejected'
+        elif status == 'pending':
+            info['status'] = 'tofu-changed'
+            info['against'] = 'tofu'
+        else:
+            info['status'] = 'tofu' if info['count'] else 'tofu-new'
+    decided = [info for info in found.values() if 'status' in info]
+    if not decided:
+        return None
+    return min(decided, key=lambda info: _STATUS_RANK.index(info['status']))
+
+
+def resolve_stored(
+    rows: List[Tuple[Optional[str], List[str]]],
+) -> List[Tuple[Optional[str], Dict[str, Dict[str, Any]]]]:
+    """Add the live TOFU status to stored attestation results.
+
+    Each row is a stored result (see
+    :func:`b4.review.check_series_attestation`) and the message-ids of
+    the series it belongs to.  Every ``nokey:ed25519/...`` entry whose
+    signature TOFU recorded for one of those messages becomes a
+    ``tofu*`` entry.  Returns, for each row, the new result and a dict
+    that maps the identity of each changed entry (``ed25519/<email>``)
+    to its details, as in :func:`evaluate`.
+
+    All rows are resolved with a handful of queries, so a list of any
+    length costs the same.
+    """
+    out: List[Tuple[Optional[str], Dict[str, Dict[str, Any]]]] = [
+        (att, dict()) for att, _msgids in rows
+    ]
+    wanted = [
+        idx
+        for idx, (att, msgids) in enumerate(rows)
+        if att and msgids and NOKEY_PREFIX in att
+    ]
+    if not wanted or not enabled():
+        return out
+    idents: Set[str] = set()
+    allmsgids: Set[str] = set()
+    for idx in wanted:
+        att, msgids = rows[idx]
+        for entry in str(att).split(';'):
+            if entry.startswith(NOKEY_PREFIX):
+                idents.add(entry[len(NOKEY_PREFIX) :].lower())
+        allmsgids.update(msgids)
+
+    # identity -> pk -> (status, changed_at)
+    keys: Dict[str, Dict[str, Tuple[str, int]]] = dict()
+    # identity -> pk -> series keys it was counted for
+    counted: Dict[str, Dict[str, Set[str]]] = dict()
+    # msgid -> [(identity, pk, series_key, seen_at), ...]
+    bymsgid: Dict[str, List[Tuple[str, str, str, int]]] = dict()
+    try:
+        conn = connect()
+        try:
+            for chunk in _chunks(sorted(idents)):
+                marks = ','.join('?' * len(chunk))
+                for identity, pk, status, changed_at in conn.execute(
+                    'SELECT identity, pk, status, changed_at FROM keys '
+                    f'WHERE algo = ? AND identity IN ({marks})',
+                    (TOFU_ALGO, *chunk),
+                ):
+                    keys.setdefault(identity, dict())[pk] = (status, int(changed_at))
+                for identity, pk, skey in conn.execute(
+                    'SELECT DISTINCT identity, pk, series_key FROM sightings '
+                    f'WHERE algo = ? AND counted = 1 AND identity IN ({marks})',
+                    (TOFU_ALGO, *chunk),
+                ):
+                    counted.setdefault(identity, dict()).setdefault(pk, set()).add(skey)
+            for chunk in _chunks(sorted(allmsgids)):
+                marks = ','.join('?' * len(chunk))
+                for identity, pk, skey, msgid, seen_at in conn.execute(
+                    'SELECT identity, pk, series_key, msgid, seen_at FROM sightings '
+                    f'WHERE algo = ? AND msgid IN ({marks})',
+                    (TOFU_ALGO, *chunk),
+                ):
+                    bymsgid.setdefault(msgid, list()).append(
+                        (identity, pk, skey, int(seen_at))
+                    )
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.debug('Unable to read the TOFU store: %s', ex)
+        return out
+
+    for idx in wanted:
+        att, msgids = rows[idx]
+        details: Dict[str, Dict[str, Any]] = dict()
+        entries: List[str] = list()
+        for entry in str(att).split(';'):
+            if not entry.startswith(NOKEY_PREFIX):
+                entries.append(entry)
+                continue
+            trailer = entry[len('nokey:') :]
+            identity = trailer[len(TOFU_ALGO) + 1 :].lower()
+            sightings = [
+                (pk, skey, seen_at)
+                for msgid in msgids
+                for sident, pk, skey, seen_at in bymsgid.get(msgid, list())
+                if sident == identity
+            ]
+            info = _resolve_one(
+                sightings, keys.get(identity, dict()), counted.get(identity, dict())
+            )
+            if info is None:
+                entries.append(entry)
+                continue
+            details[trailer] = info
+            entries.append(f'{info["status"]}:{trailer}')
+        out[idx] = (';'.join(sorted(set(entries))), details)
+    return out
+
+
 # --- Reconciling -------------------------------------------------------------
 
 

@@ -25,6 +25,7 @@ from b4.review_tui._lite_app import (
     LiteThreadScreen,
     MessageViewScreen,
     ThreadNode,
+    _build_attestation_text,
     build_thread_tree,
     check_attestation,
 )
@@ -182,8 +183,10 @@ def checks(monkeypatch: pytest.MonkeyPatch) -> _FakeChecks:
 
     # A plain function, so it binds as a method and gets the message
     def _status(
-        lmsg: b4.LoreMessage, attpolicy: str, maxdays: int = 0
+        lmsg: b4.LoreMessage, attpolicy: str, maxdays: int = 0, tofu: bool = False
     ) -> Tuple[List[Dict[str, Any]], bool, bool]:
+        # The message view must see keys trusted on first use
+        assert tofu
         return fake(lmsg, attpolicy, maxdays)
 
     monkeypatch.setattr(b4.LoreMessage, 'get_attestation_status', _status)
@@ -321,6 +324,46 @@ class TestLazyAttestation:
             assert static_text(_attestation_line(screen)) == (
                 'Attestation: \u2717 check failed: kaboom'
             )
+
+
+class TestAttestationText:
+    """The Attestation line of the message view."""
+
+    TS = {'success': 'green', 'warning': 'yellow', 'error': 'red'}
+
+    @pytest.mark.parametrize(
+        'status,passing,expected',
+        [
+            pytest.param('tofu', True, '\u2713 ed25519/a@example.org', id='tofu'),
+            pytest.param(
+                'tofu-new', True, '? ed25519/a@example.org (new key)', id='new'
+            ),
+            pytest.param(
+                'tofu-changed',
+                False,
+                '\u2717 Key changed: ed25519/a@example.org',
+                id='changed',
+            ),
+            pytest.param(
+                'tofu-retired',
+                False,
+                '\u2717 Retired key: ed25519/a@example.org',
+                id='retired',
+            ),
+            pytest.param(
+                'tofu-rejected',
+                False,
+                '\u2717 Rejected key: ed25519/a@example.org',
+                id='rejected',
+            ),
+        ],
+    )
+    def test_tofu_statuses(self, status: str, passing: bool, expected: str) -> None:
+        att = [
+            {'status': status, 'identity': 'ed25519/a@example.org', 'passing': passing}
+        ]
+        text = _build_attestation_text(att, self.TS)
+        assert text.plain == f'Attestation: {expected}'
 
 
 class TestFixedHeader:

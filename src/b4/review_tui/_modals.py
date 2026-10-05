@@ -37,6 +37,7 @@ from textual.worker import Worker, WorkerState
 
 import b4
 import b4.review
+import b4.tofu
 import b4.ty
 import liblore
 from b4.review_tui._common import (
@@ -313,6 +314,8 @@ TRACKING_HELP_LINES = [
     '                could not be checked at all (no public key in the\n',
     '                keyring) is ignored, so a valid DKIM signature still\n',
     '                earns the ✔; a failed signature never does.\n',
+    '                ! when the signing key changed or was rejected\n',
+    '                (decide via a).\n',
     '  A·R·T         Acked-by · Reviewed-by · Tested-by trailer counts\n',
     '  Msgs          Thread message count (total, unseen in yellow)\n',
     '  S             Status symbol (see above) + refresh flag\n',
@@ -3831,3 +3834,119 @@ class BadCharsScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+
+class KeyDecisionScreen(ModalScreen[Optional[str]]):
+    """Decide about a key trusted on first use that changed.
+
+    Shows the new key next to what we know about the keys this address
+    used before, so the maintainer has evidence to go on.  Returns
+    ``add`` (trust both keys), ``replace`` (retire the old keys),
+    ``reject``, or None to decide later.  See :mod:`b4.tofu`.
+    """
+
+    BINDINGS = [
+        Binding('a', 'choose("add")', 'Accept as additional', show=False),
+        Binding('r', 'choose("replace")', 'Accept as replacement', show=False),
+        Binding('x', 'choose("reject")', 'Reject', show=False),
+        Binding('escape', 'cancel', 'Decide later'),
+        Binding('q', 'cancel', 'Decide later', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    KeyDecisionScreen {
+        align: center middle;
+    }
+    #keydecision-dialog {
+        width: 90;
+        height: auto;
+        max-height: 90%;
+        border: solid $warning;
+        background: $surface;
+        padding: 1 2;
+    }
+    #keydecision-new {
+        text-style: bold;
+    }
+    #keydecision-history {
+        margin-top: 1;
+    }
+    #keydecision-warning {
+        margin-top: 1;
+        color: $warning;
+    }
+    #keydecision-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(
+        self,
+        identity: str,
+        info: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        recent: Dict[str, List[Dict[str, Any]]],
+        dkim: str,
+    ) -> None:
+        super().__init__()
+        self._identity = identity
+        self._info = info
+        self._history = history
+        self._recent = recent
+        self._dkim = dkim
+
+    def _history_lines(self) -> List[str]:
+        lines = []
+        for entry in self._history:
+            if entry['pk'] == self._info['pk']:
+                continue
+            lines.append(
+                f'{entry["status"]:<9} {b4.tofu.short_key(entry["pk"])}  '
+                f'{entry["count"]} series, '
+                f'last seen {b4.tofu.fmt_day(entry["last_seen"])}'
+            )
+            for series in self._recent.get(entry['pk'], []):
+                lines.append(
+                    f'    {b4.tofu.fmt_day(series["seen_at"])}  '
+                    f'{series["subject"] or "(no subject)"}'
+                )
+        if not lines:
+            lines.append('No other key is known for this address.')
+        return lines
+
+    def compose(self) -> ComposeResult:
+        rejected = self._info.get('status') == 'tofu-rejected'
+        with Vertical(id='keydecision-dialog') as dialog:
+            dialog.border_title = 'Rejected key' if rejected else 'Key changed'
+            if rejected:
+                intro = f'{self._identity} signed this series with a key you rejected:'
+            else:
+                intro = f'{self._identity} signed this series with a new key:'
+            yield Static(intro, markup=False)
+            yield Static(self._info['pk'], id='keydecision-new', markup=False)
+            yield Static(
+                'Keys known for this address:\n'
+                + '\n'.join(f'  {line}' for line in self._history_lines()),
+                id='keydecision-history',
+                markup=False,
+            )
+            yield Static(self._dkim, markup=False)
+            yield Static(
+                'Check with the developer through a channel you trust before '
+                'accepting.  A stolen account can send a new key, too.',
+                id='keydecision-warning',
+                markup=False,
+            )
+            yield Static(
+                'a accept as additional  |  r accept as replacement  |  '
+                'x reject  |  Escape decide later',
+                id='keydecision-hint',
+                markup=False,
+            )
+
+    def action_choose(self, choice: str) -> None:
+        self.dismiss(choice)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

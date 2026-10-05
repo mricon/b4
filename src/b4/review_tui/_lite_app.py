@@ -128,9 +128,19 @@ def check_attestation(node: ThreadNode) -> List[Dict[str, Any]]:
         maxdays = int(str(config.get('attestation-staleness-days', '0')))
     except ValueError:
         maxdays = 0
-    att_list, _passing, _critical = node.lmsg.get_attestation_status(attpolicy, maxdays)
+    att_list, _passing, _critical = node.lmsg.get_attestation_status(
+        attpolicy, maxdays, tofu=True
+    )
     node.attestation = att_list
     return att_list
+
+
+# How the message view names the TOFU statuses that fail (see b4.tofu)
+_TOFU_FAILURES: Dict[str, str] = {
+    'tofu-changed': 'Key changed',
+    'tofu-retired': 'Retired key',
+    'tofu-rejected': 'Rejected key',
+}
 
 
 def _build_attestation_text(
@@ -145,11 +155,19 @@ def _build_attestation_text(
         status = att.get('status', 'unknown')
         identity = att.get('identity', 'unknown')
         if att.get('passing'):
-            att_text.append(f'\u2713 {identity}', style=ts['success'])
+            if status == 'tofu-new':
+                # Trusted on first use, but this is the first time
+                att_text.append(f'? {identity} (new key)', style=ts['warning'])
+            else:
+                att_text.append(f'\u2713 {identity}', style=ts['success'])
             if 'mismatch' in att:
                 att_text.append(f' (From: {att["mismatch"]})', style=ts['warning'])
         else:
-            if status == 'badsig':
+            if status in _TOFU_FAILURES:
+                att_text.append(
+                    f'\u2717 {_TOFU_FAILURES[status]}: {identity}', style=ts['error']
+                )
+            elif status == 'badsig':
                 att_text.append(f'\u2717 BADSIG: {identity}', style=ts['error'])
             elif status == 'nokey':
                 att_text.append(f'\u2717 No key: {identity}', style=ts['warning'])

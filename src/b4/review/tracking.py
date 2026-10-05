@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import b4
 import b4.mbox
+import b4.tofu
 import liblore
 from b4._textwidth import pad_display
 
@@ -1169,6 +1170,11 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
     Returns a list of dicts with keys: track_id, change_id, revision, subject,
     sender_name, sender_email, sent_at, added_at, status, num_patches,
     message_id, pw_series_id, message_count, seen_message_count.
+
+    The ``attestation`` field carries the live trust-on-first-use status
+    of each signature, and ``tofu`` its details (see
+    :func:`b4.tofu.resolve_stored`).  Always read attestation results
+    through here, so accepting or rejecting a key shows up at once.
     """
     if not db_exists(identifier):
         return []
@@ -1207,10 +1213,44 @@ def get_all_tracked_series(identifier: str) -> list[dict[str, Any]]:
                     'snoozed_until': row[18],
                 }
             )
+        try:
+            _resolve_attestation(conn, result)
+        except Exception as ex:
+            # The stored "nokey" never counts as valid, so showing it is safe
+            logger.debug('Unable to add TOFU statuses: %s', ex)
         conn.close()
         return result
     except Exception:
         return []
+
+
+def _resolve_attestation(
+    conn: sqlite3.Connection, series: List[Dict[str, Any]]
+) -> None:
+    """Replace each stored attestation result with its live TOFU status.
+
+    Adds a ``tofu`` field with the details of each signature TOFU
+    decided, see :func:`b4.tofu.resolve_stored`.  Patch message-ids are
+    only read when some series has a signature TOFU may know about.
+    """
+    for entry in series:
+        entry.setdefault('tofu', {})
+    if not any(b4.tofu.NOKEY_PREFIX in (s['attestation'] or '') for s in series):
+        return
+    msgids: Dict[Tuple[str, int], List[str]] = {}
+    for change_id, revision, msgid in conn.execute(
+        'SELECT change_id, revision, message_id FROM series_patches ORDER BY position'
+    ):
+        msgids.setdefault((change_id, int(revision)), []).append(msgid)
+    rows = []
+    for entry in series:
+        ids = list(msgids.get((entry['change_id'], int(entry['revision'])), []))
+        if entry['message_id'] and entry['message_id'] not in ids:
+            ids.append(entry['message_id'])
+        rows.append((entry['attestation'], ids))
+    for entry, (att, details) in zip(series, b4.tofu.resolve_stored(rows)):
+        entry['attestation'] = att
+        entry['tofu'] = details
 
 
 def get_all_series_message_ids(identifier: str) -> Dict[str, List[str]]:
