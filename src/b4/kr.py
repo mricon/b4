@@ -32,7 +32,9 @@ def _keyring_note(identity: str) -> Optional[str]:
 
 def _never_seen(entry: Dict[str, Any]) -> bool:
     """True for a key added by hand that no message used yet."""
-    return entry['origin'] == 'manual' and entry['last_seen'] == entry['first_seen']
+    return bool(
+        entry['origin'] == 'manual' and entry['last_seen'] == entry['first_seen']
+    )
 
 
 def _key_line(entry: Dict[str, Any]) -> str:

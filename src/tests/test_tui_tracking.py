@@ -5191,8 +5191,9 @@ class TestTofuHelpers:
         # no details (see b4.tofu.stored_status).  Only the keyring can
         # settle it, so the note must not point at the action menu.
         identity = 'ed25519/a@example.org'
-        series = {'attestation': f'tofu-changed:{identity}', 'tofu': {}}
-        text = _tracking_app._format_attestation(series['attestation'], details={})
+        attestation = f'tofu-changed:{identity}'
+        series: Dict[str, Any] = {'attestation': attestation, 'tofu': {}}
+        text = _tracking_app._format_attestation(attestation, details={})
         assert text is not None
         assert text.plain == (
             '\u2718 ed25519/a@example.org (does not match the key in your keyring)'

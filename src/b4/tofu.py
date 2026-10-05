@@ -29,7 +29,17 @@ import sqlite3
 import time
 import urllib.parse
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    TypeVar,
+)
 
 import b4
 import patatt
@@ -38,6 +48,8 @@ if TYPE_CHECKING:
     from b4 import LoreAttestor, LoreMessage, LoreSeries
 
 logger = b4.logger
+
+_T = TypeVar('_T')
 
 DEVKEY_HDR = 'X-Developer-Key'
 TOFU_ALGO = 'ed25519'
@@ -526,11 +538,11 @@ def record_series(lser: 'LoreSeries') -> None:
         return
     for identity in seen:
         perpatch[identity] = list()
-        for lmsg in patches:
-            if lmsg is None:
+        for patch in patches:
+            if patch is None:
                 perpatch[identity].append(set())
             else:
-                perpatch[identity].append(_tofu_signatures(lmsg).get(identity, set()))
+                perpatch[identity].append(_tofu_signatures(patch).get(identity, set()))
 
     now = int(time.time())
     try:
@@ -859,7 +871,7 @@ def resolve_pk(identity: str, pk: str) -> str:
     """
     identity = identity.lower()
     pk = pk.strip()
-    known = [entry['pk'] for entry in key_history(identity)]
+    known: List[str] = [entry['pk'] for entry in key_history(identity)]
     if pk in known:
         return pk
     if valid_pk(pk):
@@ -949,7 +961,9 @@ def _set_status(
     )
 
 
-def _write(identity: str, pk: str, action: Any) -> Any:
+def _write(
+    identity: str, pk: str, action: Callable[[sqlite3.Connection, int], _T]
+) -> _T:
     """Run *action(conn, now)* in one write transaction."""
     if not valid_pk(pk):
         raise TofuError(f'Not a valid ed25519 public key: {pk}')

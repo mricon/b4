@@ -610,7 +610,7 @@ class TestStatusesAndPolicies:
         assert att['status'] == 'tofu' and att['tofu']['retired']
         # A new message with the old key is not, even when its t= says
         # it was signed long ago
-        monkeypatch.setattr(patatt.time, 'time', lambda: 1_000_000_000.0)
+        monkeypatch.setattr('patatt.time.time', lambda: 1_000_000_000.0)
         new = load(series_msgs(alice, 's2', count=1, cover=False)[0])
         atts, passing, crit = new.get_attestation_status('hardfail', tofu=True)
         assert [a['status'] for a in atts] == ['tofu-retired']
@@ -620,7 +620,7 @@ class TestStatusesAndPolicies:
         self, monkeypatch: pytest.MonkeyPatch, alice: Dev
     ) -> None:
         # Signed a year after the Date: header
-        monkeypatch.setattr(patatt.time, 'time', lambda: 1_806_000_000.0)
+        monkeypatch.setattr('patatt.time.time', lambda: 1_806_000_000.0)
         lmsg = load(series_msgs(alice, 's1', count=1, cover=False)[0])
         atts, _passing, _crit = lmsg.get_attestation_status(
             'softfail', maxdays=30, tofu=True
