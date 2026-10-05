@@ -19,6 +19,8 @@ Everything is stored in ``tofu.sqlite3`` in the b4 data directory.  It
 is not a cache: losing it means losing all trust history.
 """
 
+import base64
+import binascii
 import datetime
 import email.utils
 import hashlib
@@ -607,7 +609,7 @@ def record_series(lser: 'LoreSeries') -> None:
         conn.close()
 
 
-# --- Warnings ----------------------------------------------------------------
+# --- Reading the history -----------------------------------------------------
 
 
 def key_history(identity: str) -> List[Dict[str, Any]]:
@@ -645,7 +647,250 @@ def key_history(identity: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _fmt_day(ts: int) -> str:
+# --- Reconciling -------------------------------------------------------------
+
+
+class TofuError(Exception):
+    """A reconcile action cannot be done."""
+
+
+def valid_pk(pk: str) -> bool:
+    """Return True if *pk* looks like a base64 ed25519 public key."""
+    try:
+        raw = base64.b64decode(pk.encode(), validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return len(raw) == 32
+
+
+def resolve_pk(identity: str, pk: str) -> str:
+    """Turn *pk* into a full key of *identity*.
+
+    *pk* may be a full key, or the start of a key we already know for
+    this identity (for example the first part of what ``b4 kr list``
+    shows).  A full key we have never seen is returned as it is, so the
+    maintainer can act on a key they got some other way.
+    """
+    identity = identity.lower()
+    pk = pk.strip()
+    known = [entry['pk'] for entry in key_history(identity)]
+    if pk in known:
+        return pk
+    if valid_pk(pk):
+        return pk
+    if pk.endswith('...'):
+        pk = pk[:-3]
+    if pk:
+        matches = [key for key in known if key.startswith(pk)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise TofuError(f'More than one key of {identity} starts with {pk}')
+    raise TofuError(f'No key of {identity} matches {pk}')
+
+
+def identities() -> List[str]:
+    """Return every identity we know keys for, sorted."""
+    try:
+        conn = connect()
+        try:
+            rows = conn.execute(
+                'SELECT DISTINCT identity FROM keys WHERE algo = ? ORDER BY identity',
+                (TOFU_ALGO,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.debug('Unable to read the TOFU store: %s', ex)
+        return list()
+    return [row[0] for row in rows]
+
+
+def recent_series(identity: str, limit: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+    """Return the newest series signed by each key of *identity*.
+
+    The result maps each pk to at most *limit* dicts with ``series_key``,
+    ``subject``, ``counted`` and ``seen_at``, newest first.  The subject
+    is the one of the cover letter when we have it.
+    """
+    identity = identity.lower()
+    out: Dict[str, List[Dict[str, Any]]] = dict()
+    try:
+        conn = connect()
+        try:
+            rows = conn.execute(
+                'SELECT s.pk, s.series_key, MAX(s.counted), MIN(s.seen_at), '
+                '(SELECT s2.subject FROM sightings s2 '
+                ' WHERE s2.identity = s.identity AND s2.algo = s.algo '
+                ' AND s2.pk = s.pk AND s2.series_key = s.series_key '
+                ' ORDER BY s2.msgid = s2.series_key DESC, s2.rowid LIMIT 1) '
+                'FROM sightings s WHERE s.identity = ? AND s.algo = ? '
+                'GROUP BY s.pk, s.series_key '
+                'ORDER BY MIN(s.seen_at) DESC, MIN(s.rowid) DESC',
+                (identity, TOFU_ALGO),
+            ).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as ex:
+        logger.debug('Unable to read the TOFU store: %s', ex)
+        return out
+    for pk, skey, counted, seen_at, subject in rows:
+        entries = out.setdefault(pk, list())
+        if len(entries) >= limit:
+            continue
+        entries.append(
+            {
+                'series_key': skey,
+                'subject': subject,
+                'counted': bool(counted),
+                'seen_at': int(seen_at),
+            }
+        )
+    return out
+
+
+def _set_status(
+    conn: sqlite3.Connection, identity: str, pk: str, status: str, now: int
+) -> None:
+    """Give *pk* a new status, adding it as a manual key if it is new."""
+    conn.execute(
+        'INSERT INTO keys (identity, algo, pk, status, origin, '
+        'first_seen, last_seen, changed_at) '
+        "VALUES (?, ?, ?, ?, 'manual', ?, ?, ?) "
+        'ON CONFLICT (identity, algo, pk) '
+        'DO UPDATE SET status = excluded.status, changed_at = excluded.changed_at',
+        (identity, TOFU_ALGO, pk, status, now, now, now),
+    )
+
+
+def _write(identity: str, pk: str, action: Any) -> Any:
+    """Run *action(conn, now)* in one write transaction."""
+    if not valid_pk(pk):
+        raise TofuError(f'Not a valid ed25519 public key: {pk}')
+    now = int(time.time())
+    conn = connect()
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            result = action(conn, now)
+            conn.execute('COMMIT')
+        except BaseException:
+            conn.execute('ROLLBACK')
+            raise
+    finally:
+        conn.close()
+    return result
+
+
+def accept_key(identity: str, pk: str, replace: bool) -> List[str]:
+    """Trust *pk* for *identity*.
+
+    With *replace*, every other trusted key of the identity becomes
+    retired: messages we saw before now still show as valid, but new
+    ones signed with the old key fail.  Returns the keys that were
+    retired.
+    """
+    identity = identity.lower()
+
+    def action(conn: sqlite3.Connection, now: int) -> List[str]:
+        retired: List[str] = list()
+        if replace:
+            rows = conn.execute(
+                'SELECT pk FROM keys WHERE identity = ? AND algo = ? '
+                "AND status = 'trusted' AND pk != ?",
+                (identity, TOFU_ALGO, pk),
+            ).fetchall()
+            retired = [row[0] for row in rows]
+            for oldpk in retired:
+                # Every message seen so far is history, even one seen
+                # earlier in this same second
+                row = conn.execute(
+                    'SELECT MAX(seen_at) FROM sightings '
+                    'WHERE identity = ? AND algo = ? AND pk = ?',
+                    (identity, TOFU_ALGO, oldpk),
+                ).fetchone()
+                retire_at = max(now, int(row[0]) + 1) if row[0] is not None else now
+                _set_status(conn, identity, oldpk, 'retired', retire_at)
+        _set_status(conn, identity, pk, 'trusted', now)
+        return retired
+
+    return _write(identity, pk, action)
+
+
+def reject_key(identity: str, pk: str) -> None:
+    """Mark *pk* as rejected: messages signed with it always fail."""
+    identity = identity.lower()
+
+    def action(conn: sqlite3.Connection, now: int) -> None:
+        _set_status(conn, identity, pk, 'rejected', now)
+
+    _write(identity, pk, action)
+
+
+def forget_identity(identity: str) -> Tuple[int, int]:
+    """Delete all keys and sightings of *identity*.
+
+    The next valid series from this address pins a key again.  Returns
+    how many keys and sightings were deleted.
+    """
+    identity = identity.lower()
+    conn = connect()
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        try:
+            nkeys = conn.execute(
+                'DELETE FROM keys WHERE identity = ? AND algo = ?',
+                (identity, TOFU_ALGO),
+            ).rowcount
+            nsight = conn.execute(
+                'DELETE FROM sightings WHERE identity = ? AND algo = ?',
+                (identity, TOFU_ALGO),
+            ).rowcount
+            conn.execute('COMMIT')
+        except BaseException:
+            conn.execute('ROLLBACK')
+            raise
+    finally:
+        conn.close()
+    return nkeys, nsight
+
+
+def promote_path(identity: str, selector: str = 'default') -> Path:
+    """Where :func:`promote_key` writes the key of *identity*."""
+    keypath = patatt.make_pkey_path(TOFU_ALGO, identity.lower(), selector)
+    return Path(b4.get_data_dir()) / 'keyring' / keypath
+
+
+def promote_key(
+    identity: str, pk: str, selector: str = 'default', force: bool = False
+) -> Path:
+    """Write *pk* into the b4 keyring, so patatt finds it by itself.
+
+    Refuses to overwrite a different key unless *force* is set.
+    Returns the path of the key file.
+    """
+    if not valid_pk(pk):
+        raise TofuError(f'Not a valid ed25519 public key: {pk}')
+    try:
+        path = promote_path(identity, selector)
+    except patatt.Error as ex:
+        raise TofuError(str(ex)) from ex
+    if path.exists():
+        current = path.read_text(errors='replace').strip()
+        if current == pk:
+            return path
+        if not force:
+            raise TofuError(f'{path} already has a different key: {current}')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(pk + '\n')
+    reset_caches()
+    return path
+
+
+# --- Warnings ----------------------------------------------------------------
+
+
+def fmt_day(ts: int) -> str:
     return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime(
         '%Y-%m-%d'
     )
@@ -678,8 +923,8 @@ def format_warning(
                 continue
             lines.append(f'  {entry["status"].capitalize() + " key:":<14}{entry["pk"]}')
             lines.append(
-                f'                first seen {_fmt_day(entry["first_seen"])}, '
-                f'last seen {_fmt_day(entry["last_seen"])}, '
+                f'                first seen {fmt_day(entry["first_seen"])}, '
+                f'last seen {fmt_day(entry["last_seen"])}, '
                 f'{entry["count"]} series'
             )
     lines.append('')

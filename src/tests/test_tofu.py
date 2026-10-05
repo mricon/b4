@@ -682,3 +682,340 @@ class TestAmReady:
         # Unsigned patches are "no key", which hardfail tolerates
         am_msgs = lser.get_am_ready()
         assert f'Reviewed-by: {alice.from_addr}' in am_msgs[0].as_string()
+
+
+def latest_status(dev: Dev, tag: str) -> str:
+    """The status of a new single patch from *dev*, not recorded."""
+    (status,) = statuses(load(series_msgs(dev, tag, count=1, cover=False)[0]))
+    return status
+
+
+class TestReconcile:
+    """The tofu.py helpers behind the b4 kr subcommands."""
+
+    def test_accept_add_trusts_both(self, alice: Dev, alice2: Dev) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        series_statuses(get_series(series_msgs(alice2, 's2', revision=2)))
+        assert key_rows(alice.email) == {alice.pk: 'trusted', alice2.pk: 'pending'}
+        assert tofu.accept_key(alice.email, alice2.pk, replace=False) == []
+        assert key_rows(alice.email) == {alice.pk: 'trusted', alice2.pk: 'trusted'}
+        assert latest_status(alice, 's3') == 'tofu'
+        # The series signed while the key was pending counts now
+        info = tofu_info(load(series_msgs(alice2, 's4', count=1, cover=False)[0]))
+        assert info['status'] == 'tofu' and info['tofu']['count'] == 1
+
+    def test_accept_replace_retires_old_key(self, alice: Dev, alice2: Dev) -> None:
+        old = get_series(series_msgs(alice, 's1'))
+        series_statuses(old)
+        series_statuses(get_series(series_msgs(alice2, 's2', revision=2)))
+        assert tofu.accept_key(alice.email, alice2.pk, replace=True) == [alice.pk]
+        assert key_rows(alice.email) == {alice.pk: 'retired', alice2.pk: 'trusted'}
+        # What we saw before the change is still history
+        lmsg = old.patches[1]
+        assert lmsg is not None
+        att = tofu_info(lmsg)
+        assert att['status'] == 'tofu' and att['tofu']['retired']
+        assert latest_status(alice, 's3') == 'tofu-retired'
+
+    def test_reject_pending_key(self, alice: Dev, alice2: Dev) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        series_statuses(get_series(series_msgs(alice2, 's2', revision=2)))
+        tofu.reject_key(alice.email, alice2.pk)
+        assert key_rows(alice.email) == {alice.pk: 'trusted', alice2.pk: 'rejected'}
+        assert latest_status(alice2, 's3') == 'tofu-rejected'
+        assert latest_status(alice, 's4') == 'tofu'
+
+    def test_accept_key_never_seen_pins_by_hand(self, alice: Dev) -> None:
+        tofu.accept_key(alice.email.upper(), alice.pk, replace=False)
+        assert tofu.key_history(alice.email)[0]['origin'] == 'manual'
+        lser = get_series(series_msgs(alice, 's1'))
+        assert series_statuses(lser) == ['tofu-new', 'tofu-new']
+        assert key_rows(alice.email) == {alice.pk: 'trusted'}
+
+    def test_reject_key_never_seen(self, alice: Dev) -> None:
+        tofu.reject_key(alice.email, alice.pk)
+        assert latest_status(alice, 's1') == 'tofu-rejected'
+
+    def test_forget_pins_again(self, alice: Dev, alice2: Dev) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        assert tofu.forget_identity(alice.email) == (1, 3)
+        assert tofu.identities() == []
+        series_statuses(get_series(series_msgs(alice2, 's2')))
+        assert key_rows(alice.email) == {alice2.pk: 'trusted'}
+
+    def test_forget_leaves_other_identities(self, alice: Dev, mallory: Dev) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        series_statuses(get_series(series_msgs(mallory, 's2')))
+        tofu.forget_identity(alice.email)
+        assert tofu.identities() == [mallory.email]
+
+    def test_promote_moves_key_to_keyring(self, alice: Dev, alice2: Dev) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        path = tofu.promote_key(alice.email, alice.pk)
+        assert path == tofu.promote_path(alice.email)
+        assert path.read_text() == alice.pk + '\n'
+        # patatt finds the key now, so TOFU is out of the picture, and
+        # another key under the same selector is a bad signature
+        assert latest_status(alice, 's2') == 'signed'
+        assert latest_status(alice2, 's3') == 'badsig'
+
+    def test_promote_refuses_to_overwrite(self, alice: Dev, alice2: Dev) -> None:
+        tofu.promote_key(alice.email, alice.pk)
+        # Writing the same key again is fine
+        tofu.promote_key(alice.email, alice.pk)
+        with pytest.raises(tofu.TofuError, match='already has a different key'):
+            tofu.promote_key(alice.email, alice2.pk)
+        tofu.promote_key(alice.email, alice2.pk, force=True)
+        assert tofu.promote_path(alice.email).read_text() == alice2.pk + '\n'
+
+    def test_promote_with_selector(self, alice: Dev) -> None:
+        path = tofu.promote_key(alice.email, alice.pk, selector='laptop')
+        assert path.parts[-4:] == ('ed25519', 'example.org', 'alice', 'laptop')
+
+    @pytest.mark.parametrize('pk', ['', 'not-base64!', 'c2hvcnQ='])
+    def test_invalid_key_is_refused(self, alice: Dev, pk: str) -> None:
+        with pytest.raises(tofu.TofuError, match='Not a valid'):
+            tofu.accept_key(alice.email, pk, replace=False)
+        with pytest.raises(tofu.TofuError, match='Not a valid'):
+            tofu.promote_key(alice.email, pk)
+        assert key_rows(alice.email) == {}
+
+    def test_resolve_pk(self, alice: Dev, alice2: Dev) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        assert tofu.resolve_pk(alice.email, alice.pk[:10]) == alice.pk
+        assert tofu.resolve_pk(alice.email, tofu.short_key(alice.pk)[:13]) == alice.pk
+        # A full key we have never seen is taken as it is
+        assert tofu.resolve_pk(alice.email, alice2.pk) == alice2.pk
+        with pytest.raises(tofu.TofuError, match='No key'):
+            tofu.resolve_pk(alice.email, '!!!')
+        with pytest.raises(tofu.TofuError, match='No key'):
+            tofu.resolve_pk('nobody@example.org', alice.pk[:10])
+
+    def test_resolve_pk_ambiguous(self, alice: Dev) -> None:
+        for pk in ('AAAAone', 'AAAAtwo'):
+            conn = db()
+            conn.execute(
+                'INSERT INTO keys VALUES (?, ?, ?, ?, ?, 1, 1, 1)',
+                (alice.email, 'ed25519', pk, 'pending', 'tofu'),
+            )
+            conn.close()
+        with pytest.raises(tofu.TofuError, match='More than one'):
+            tofu.resolve_pk(alice.email, 'AAAA')
+
+    def test_recent_series(self, alice: Dev) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        series_statuses(get_series(series_msgs(alice, 's2', revision=2)))
+        series_statuses(get_series(series_msgs(alice, 's3', cover=False)))
+        recent = tofu.recent_series(alice.email, limit=2)
+        assert list(recent) == [alice.pk]
+        assert [s['series_key'] for s in recent[alice.pk]] == [
+            's3-1@example.com',
+            's2-0@example.com',
+        ]
+        # The cover letter subject names the series
+        assert recent[alice.pk][1]['subject'] == '[PATCH v2 0/2] foo: a series'
+        assert recent[alice.pk][0]['subject'] == '[PATCH 1/2] foo: change 1'
+
+
+def kr(*args: str) -> int:
+    """Run ``b4 kr`` with *args* and return its exit code."""
+    import b4.command
+    import b4.kr
+
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(b4.command._legacy_kr_argv(['kr', *args]))
+    try:
+        b4.kr.main(cmdargs)
+    except SystemExit as ex:
+        return int(ex.code or 0)
+    return 0
+
+
+class TestKrCli:
+    @pytest.fixture(autouse=True)
+    def _log(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.INFO, logger='b4')
+
+    @pytest.mark.parametrize(
+        ('argv', 'expected'),
+        [
+            (
+                ['kr', '--show-keys', 'id@x'],
+                ['kr', 'show-keys', '--show-keys', 'id@x'],
+            ),
+            (
+                ['-d', '-c', 'b4.x=y', 'kr', 'id@x', '--show-keys'],
+                ['-d', '-c', 'b4.x=y', 'kr', 'show-keys', 'id@x', '--show-keys'],
+            ),
+            (['kr', 'list'], ['kr', 'list']),
+            (['kr', 'show-keys', 'id@x'], ['kr', 'show-keys', 'id@x']),
+            (
+                ['kr', 'show-keys', '--show-keys', 'id@x'],
+                ['kr', 'show-keys', '--show-keys', 'id@x'],
+            ),
+            (['am', 'kr', '--show-keys'], ['am', 'kr', '--show-keys']),
+            (['-c', 'kr', 'am', '--show-keys'], ['-c', 'kr', 'am', '--show-keys']),
+        ],
+    )
+    def test_legacy_argv(self, argv: List[str], expected: List[str]) -> None:
+        import b4.command
+
+        assert b4.command._legacy_kr_argv(argv) == expected
+
+    def test_legacy_show_keys_parses(self) -> None:
+        import b4.command
+
+        parser = b4.command.setup_parser()
+        argv = b4.command._legacy_kr_argv(['kr', '--show-keys', 'id@x'])
+        cmdargs = parser.parse_args(argv)
+        assert cmdargs.kr_subcmd == 'show-keys'
+        assert cmdargs.showkeys is True
+        assert cmdargs.msgid == 'id@x'
+
+    def test_no_subcommand(self, caplog: pytest.LogCaptureFixture) -> None:
+        assert kr() == 1
+        assert 'Please specify a kr sub-command' in caplog.text
+
+    def test_list(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev, alice2: Dev
+    ) -> None:
+        assert kr('list') == 0
+        assert 'No keys trusted on first use yet.' in caplog.text
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        series_statuses(get_series(series_msgs(alice2, 's2', revision=2)))
+        caplog.clear()
+        assert kr('list') == 0
+        assert alice.email in caplog.text
+        assert f'trusted   {tofu.short_key(alice.pk)}    1 series' in caplog.text
+        assert f'pending   {tofu.short_key(alice2.pk)}    1 series' in caplog.text
+
+    def test_list_mentions_keyring(
+        self, caplog: pytest.LogCaptureFixture, tofu_env: pathlib.Path, alice: Dev
+    ) -> None:
+        tofu.accept_key(alice.email, alice.pk, replace=False)
+        install_key(tofu_env, alice, selector='other')
+        assert kr('list') == 0
+        assert 'Your keyring has a key for this address' in caplog.text
+
+    def test_show(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev, alice2: Dev
+    ) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        # Patch 2/2 is missing, so this revision does not count
+        series_statuses(get_series(series_msgs(alice2, 's2', revision=2, skip=[2])))
+        assert kr('show', alice.email.upper()) == 0
+        assert f'Key: {alice.pk}' in caplog.text
+        assert 'Status: pending (tofu)' in caplog.text
+        assert '[PATCH 0/2] foo: a series' in caplog.text
+        assert f'{b4.LINKADDR}/s1-0@example.com' in caplog.text
+        assert '(not counted)' in caplog.text
+        assert f'b4 kr accept {alice.email} {alice2.pk[:10]} --replace' in caplog.text
+
+    def test_show_unknown(self, caplog: pytest.LogCaptureFixture) -> None:
+        assert kr('show', 'nobody@example.org') == 0
+        assert 'Nothing known about nobody@example.org.' in caplog.text
+
+    def test_accept_needs_mode(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev, alice2: Dev
+    ) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        series_statuses(get_series(series_msgs(alice2, 's2', revision=2)))
+        assert kr('accept', alice.email, alice2.pk[:10]) == 1
+        assert 'Use --add to trust both' in caplog.text
+        assert key_rows(alice.email)[alice2.pk] == 'pending'
+        assert kr('accept', alice.email, alice2.pk[:10], '--replace') == 0
+        assert f'Retired: {alice.pk}' in caplog.text
+        assert key_rows(alice.email) == {alice.pk: 'retired', alice2.pk: 'trusted'}
+
+    def test_accept_add_and_replace_conflict(self, alice: Dev) -> None:
+        with pytest.raises(SystemExit):
+            kr('accept', alice.email, alice.pk, '--add', '--replace')
+
+    def test_accept_first_key_needs_no_mode(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev
+    ) -> None:
+        assert kr('accept', alice.email, alice.pk) == 0
+        assert 'never seen in a message' in caplog.text
+        assert key_rows(alice.email) == {alice.pk: 'trusted'}
+        assert kr('list') == 0
+        assert '0 series  added by hand' in caplog.text
+        assert kr('show', alice.email) == 0
+        assert 'Added by hand:' in caplog.text
+
+    def test_accept_unknown_prefix(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev
+    ) -> None:
+        assert kr('accept', alice.email, 'nope') == 1
+        assert f'No key of {alice.email} matches nope' in caplog.text
+
+    def test_reject_last_trusted_key(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev
+    ) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        assert kr('reject', alice.email, alice.pk[:10]) == 0
+        assert 'No trusted key is left' in caplog.text
+        assert key_rows(alice.email) == {alice.pk: 'rejected'}
+
+    @pytest.mark.parametrize(('answer', 'forgotten'), [('y', True), ('', False)])
+    def test_forget(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        alice: Dev,
+        answer: str,
+        forgotten: bool,
+    ) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        monkeypatch.setattr('builtins.input', lambda _prompt: answer)
+        assert kr('forget', alice.email) == 0
+        assert (key_rows(alice.email) == {}) is forgotten
+        if not forgotten:
+            assert 'Aborted, nothing forgotten.' in caplog.text
+
+    def test_promote_default_key(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev, alice2: Dev
+    ) -> None:
+        series_statuses(get_series(series_msgs(alice, 's1')))
+        assert kr('promote', alice.email) == 0
+        assert tofu.promote_path(alice.email).read_text() == alice.pk + '\n'
+        tofu.accept_key(alice.email, alice2.pk, replace=False)
+        assert kr('promote', alice.email, '-s', 'laptop') == 1
+        assert 'has 2 trusted keys' in caplog.text
+
+    def test_promote_conflict(
+        self, caplog: pytest.LogCaptureFixture, alice: Dev, alice2: Dev
+    ) -> None:
+        tofu.promote_key(alice.email, alice.pk)
+        assert kr('promote', alice.email, alice2.pk) == 1
+        assert 'Use --force' in caplog.text
+        assert kr('promote', alice.email, alice2.pk, '--force') == 0
+
+    @pytest.mark.parametrize('legacy', [False, True])
+    def test_show_keys(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: pathlib.Path,
+        alice: Dev,
+        mallory: Dev,
+        legacy: bool,
+    ) -> None:
+        series_statuses(get_series(series_msgs(alice, 's0')))
+        msgs = series_msgs(alice, 's1', count=1)
+        msgs.append(followup_msg(mallory, 'fu', 's1-1@example.com'))
+        mbox = tmp_path / 'thread.mbox'
+        mbox.write_bytes(
+            b''.join(
+                b'From x@y Thu Jan  1 00:00:00 1970\n' + m.as_bytes(policy=b4.emlpolicy)
+                for m in msgs
+            )
+        )
+        args = ['-m', str(mbox), 's1-0@example.com']
+        args = ['--show-keys', *args] if legacy else ['show-keys', *args]
+        assert kr(*args) == 0
+        assert ('is deprecated' in caplog.text) is legacy
+        assert f'{alice.email}: (trusted on first use, 1 series)' in caplog.text
+        assert f'{mallory.email}: (unknown)' in caplog.text
+        assert f'b4 kr promote {mallory.email} {mallory.pk}' in caplog.text
+        assert 'recv-key' not in caplog.text
+        # Looking at keys must not create keyring directories
+        assert not (tmp_path / 'b4' / 'keyring').exists()

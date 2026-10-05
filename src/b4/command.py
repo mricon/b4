@@ -9,7 +9,7 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 import argparse
 import logging
 import sys
-from typing import Any, Optional, Sequence, Union
+from typing import Any, List, Optional, Sequence, Union
 
 import b4
 
@@ -951,15 +951,97 @@ def setup_parser() -> argparse.ArgumentParser:
 
     # b4 kr
     sp_kr = subparsers.add_parser('kr', help='Keyring operations')
-    cmd_retrieval_common_opts(sp_kr)
-    sp_kr.add_argument(
+    sp_kr.set_defaults(func=cmd_kr)
+    kr_subparsers = sp_kr.add_subparsers(help='kr sub-command help', dest='kr_subcmd')
+
+    # b4 kr show-keys
+    sp_kr_sk = kr_subparsers.add_parser(
+        'show-keys', help='Show all developer keys found in a thread'
+    )
+    cmd_retrieval_common_opts(sp_kr_sk)
+    # The old "b4 kr --show-keys <msgid>" form, see _legacy_kr_argv()
+    sp_kr_sk.add_argument(
         '--show-keys',
         dest='showkeys',
         action='store_true',
         default=False,
-        help='Show all developer keys found in a thread',
+        help=argparse.SUPPRESS,
     )
-    sp_kr.set_defaults(func=cmd_kr)
+
+    # b4 kr list
+    kr_subparsers.add_parser(
+        'list', help='List all addresses with keys trusted on first use'
+    )
+
+    # b4 kr show
+    sp_kr_show = kr_subparsers.add_parser(
+        'show', help='Show the keys and recent series of one address'
+    )
+    sp_kr_show.add_argument('identity', help='Email address of the developer')
+    sp_kr_show.add_argument(
+        '--recent',
+        type=int,
+        default=5,
+        help='How many recent series to show for each key (default: 5)',
+    )
+
+    # b4 kr accept
+    sp_kr_acc = kr_subparsers.add_parser('accept', help='Trust a key for an address')
+    sp_kr_acc.add_argument('identity', help='Email address of the developer')
+    sp_kr_acc.add_argument('pk', help='Public key, or the start of a known key')
+    acc_mode = sp_kr_acc.add_mutually_exclusive_group()
+    acc_mode.add_argument(
+        '--add',
+        dest='mode',
+        action='store_const',
+        const='add',
+        help='Trust this key in addition to the keys already trusted',
+    )
+    acc_mode.add_argument(
+        '--replace',
+        dest='mode',
+        action='store_const',
+        const='replace',
+        help='Trust this key instead of the keys already trusted',
+    )
+
+    # b4 kr reject
+    sp_kr_rej = kr_subparsers.add_parser(
+        'reject', help='Never accept messages signed with a key'
+    )
+    sp_kr_rej.add_argument('identity', help='Email address of the developer')
+    sp_kr_rej.add_argument('pk', help='Public key, or the start of a known key')
+
+    # b4 kr forget
+    sp_kr_fgt = kr_subparsers.add_parser(
+        'forget', help='Erase everything known about an address (with confirmation)'
+    )
+    sp_kr_fgt.add_argument('identity', help='Email address of the developer')
+
+    # b4 kr promote
+    sp_kr_pro = kr_subparsers.add_parser(
+        'promote', help='Write a key into the b4 keyring directory'
+    )
+    sp_kr_pro.add_argument('identity', help='Email address of the developer')
+    sp_kr_pro.add_argument(
+        'pk',
+        nargs='?',
+        default=None,
+        help='Public key, or the start of a known key (default: the trusted key)',
+    )
+    sp_kr_pro.add_argument(
+        '-s',
+        '--selector',
+        default='default',
+        help='Key selector to store the key under (default: default)',
+    )
+    sp_kr_pro.add_argument(
+        '-f',
+        '--force',
+        action='store_true',
+        default=False,
+        help='Overwrite a different key already stored under this selector',
+    )
 
     # b4 prep
     sp_prep = subparsers.add_parser(
@@ -1420,6 +1502,32 @@ def setup_parser() -> argparse.ArgumentParser:
     return parser
 
 
+KR_SUBCMDS = ('show-keys', 'list', 'show', 'accept', 'reject', 'forget', 'promote')
+
+
+def _legacy_kr_argv(argv: List[str]) -> List[str]:
+    """Rewrite the old ``b4 kr --show-keys`` form as ``b4 kr show-keys``.
+
+    The ``--show-keys`` flag stays in the arguments, so the command can
+    tell the old form apart and print a deprecation notice.
+    """
+    pos = 0
+    while pos < len(argv):
+        arg = argv[pos]
+        if arg in ('-c', '--config', '--print-completion'):
+            # These take a value as the next argument
+            pos += 2
+        elif arg.startswith('-'):
+            pos += 1
+        else:
+            break
+    if pos >= len(argv) or argv[pos] != 'kr' or '--show-keys' not in argv[pos + 1 :]:
+        return argv
+    if pos + 1 < len(argv) and argv[pos + 1] in KR_SUBCMDS:
+        return argv
+    return argv[: pos + 1] + ['show-keys'] + argv[pos + 1 :]
+
+
 def cmd() -> None:
     parser = setup_parser()
     try:
@@ -1429,7 +1537,7 @@ def cmd() -> None:
     except ImportError:
         pass
 
-    cmdargs = parser.parse_args()
+    cmdargs = parser.parse_args(_legacy_kr_argv(sys.argv[1:]))
     logger.setLevel(logging.DEBUG)
 
     ch = logging.StreamHandler()
