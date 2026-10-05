@@ -9,7 +9,9 @@ Uses real SQLite databases (via b4.review.tracking) but no network access:
 the Patchwork REST calls and lore retrieval are mocked.
 """
 
+import asyncio
 import datetime
+import threading
 from typing import Any, Dict, List, Optional
 from unittest import mock
 
@@ -24,7 +26,12 @@ import b4.review
 import b4.review.tracking as tracking
 import liblore
 from b4.review._review import PwFetchResult
-from b4.review_tui._modals import ApplyStateModal, ConfirmScreen, SetStateScreen
+from b4.review_tui._modals import (
+    PW_PATCH_TIMEOUT,
+    ApplyStateModal,
+    ConfirmScreen,
+    SetStateScreen,
+)
 from b4.review_tui._pw_app import PwApp, PwFetchProgress
 
 from .helpers.tui import current_screen, static_text
@@ -485,10 +492,44 @@ class _FakePwSession:
 
     def __init__(self) -> None:
         self.patched: List[str] = []
+        self.timeouts: List[Optional[float]] = []
 
-    def patch(self, url: str, data: Any = None, stream: bool = False) -> _FakeResp:
+    def patch(
+        self,
+        url: str,
+        data: Any = None,
+        stream: bool = False,
+        timeout: Optional[float] = None,
+    ) -> _FakeResp:
         self.patched.append(url)
+        self.timeouts.append(timeout)
         return _FakeResp()
+
+
+class _BlockingPwSession(_FakePwSession):
+    """Holds the *block_at*-th PATCH call until the test releases it.
+
+    That gives a test a fixed point in the middle of a bulk run where it
+    can press Esc.
+    """
+
+    def __init__(self, block_at: int) -> None:
+        super().__init__()
+        self._block_at = block_at
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def patch(
+        self,
+        url: str,
+        data: Any = None,
+        stream: bool = False,
+        timeout: Optional[float] = None,
+    ) -> _FakeResp:
+        if len(self.patched) + 1 == self._block_at:
+            self.entered.set()
+            self.release.wait(timeout=10)
+        return super().patch(url, data=data, stream=stream, timeout=timeout)
 
 
 def _install_series(
@@ -672,6 +713,8 @@ class TestPwBulkSetState:
             assert by_id[3]['state'] == 'new'
             # One PATCH per patch across the two marked series.
             assert len(fake.patched) == 4
+            # Every request is bounded, so a hung server can't block Esc.
+            assert fake.timeouts == [PW_PATCH_TIMEOUT] * 4
             # Marks are consumed once applied.
             assert app._selected_ids == set()
 
@@ -729,6 +772,52 @@ class TestPwBulkSetState:
             assert all(s['state'] == 'new' for s in app._all_series)
             # Backing out keeps the marks, so the user can pick another state.
             assert app._selected_ids == {1, 2}
+
+    @pytest.mark.asyncio
+    async def test_escape_stops_bulk_apply(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Esc mid-run stops it; only finished series take the new state.
+
+        Each series has two patches. The run is held on the third PATCH (the
+        first patch of series 2) while Esc is pressed, so series 1 is done,
+        series 2 is half done and series 3 is not touched.
+        """
+        fake = _BlockingPwSession(block_at=3)
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (fake, 'https://pw/api')
+        )
+        _install_series(monkeypatch, [_mk_series(1), _mk_series(2), _mk_series(3)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_mark_all()
+            app.action_set_state()
+            await pilot.pause()
+            await app.screen.dismiss(('reviewing', False))
+            await pilot.pause()
+            await pilot.press('y')
+            await pilot.pause()
+            assert isinstance(app.screen, ApplyStateModal)
+
+            assert await asyncio.to_thread(fake.entered.wait, 5)
+            await pilot.press('escape')
+            await pilot.pause()
+            fake.release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert not isinstance(current_screen(app), ApplyStateModal)
+            # The held request finishes, then the loop stops.
+            assert len(fake.patched) == 3
+            by_id = {s['id']: s for s in app._all_series}
+            assert by_id[1]['state'] == 'reviewing'
+            assert by_id[2]['state'] == 'new'
+            assert by_id[3]['state'] == 'new'
+            # Unfinished series stay marked for another try; Esc on the
+            # modal must not have reached the app's clear-marks binding.
+            assert app._selected_ids == {2, 3}
 
     @pytest.mark.asyncio
     async def test_set_state_needs_states_loaded(

@@ -10,7 +10,7 @@ import email.utils
 import io
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 from rich import box
 from rich.panel import Panel
@@ -2711,11 +2711,33 @@ def SetStateConfirmScreen(
     )
 
 
-class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
+# Seconds to wait for one Patchwork PATCH. Esc can only stop the run
+# between requests, so a hung request must not block it for ever.
+PW_PATCH_TIMEOUT = 30
+
+
+class ApplyStateResult(NamedTuple):
+    """Outcome of an ApplyStateModal run."""
+
+    # Patch ids the server accepted the new state for
+    done_ids: Set[int]
+    fail: int
+    new_state: str
+    # True when the user stopped the run with Esc before it finished
+    cancelled: bool
+
+
+class ApplyStateModal(ModalScreen[ApplyStateResult]):
     """Modal showing progress while applying state changes to patches.
 
-    Returns (success_count, failure_count, new_state) when complete.
+    Esc stops the run after the request that is in flight. The result
+    lists the patch ids that were updated, so the caller can tell which
+    series were finished and which were not.
     """
+
+    BINDINGS = [
+        Binding('escape', 'cancel', 'Cancel'),
+    ]
 
     DEFAULT_CSS = """
     ApplyStateModal {
@@ -2739,6 +2761,10 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
         width: 100%;
         height: 1;
     }
+    #apply-hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
     """
 
     def __init__(
@@ -2757,8 +2783,9 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
         self._new_state = new_state
         self._archived = archived
         self._series_name = series_name
-        self._ok = 0
+        self._done_ids: Set[int] = set()
         self._fail = 0
+        self._cancelled = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id='apply-dialog'):
@@ -2770,11 +2797,25 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
             yield ProgressBar(
                 total=len(self._patch_ids), show_eta=False, id='apply-progress'
             )
+            yield Label('Escape stop', id='apply-hint')
 
     def on_mount(self) -> None:
         self.run_worker(self._apply_states, name='_apply_states', thread=True)
 
-    def _apply_states(self) -> Tuple[int, int, str]:
+    def action_cancel(self) -> None:
+        if self._cancelled:
+            return
+        self._cancelled = True
+        self.query_one('#apply-hint', Label).update(
+            'Stopping after the current patch...'
+        )
+
+    def _result(self) -> ApplyStateResult:
+        return ApplyStateResult(
+            set(self._done_ids), self._fail, self._new_state, self._cancelled
+        )
+
+    def _apply_states(self) -> ApplyStateResult:
         import b4
 
         with _quiet_worker():
@@ -2782,8 +2823,9 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
             patches_url = '/'.join((api_url, 'patches'))
 
             for i, patch_id in enumerate(self._patch_ids):
-                # One network round-trip per patch; bail promptly on exit.
-                if worker_cancelled():
+                # One network round-trip per patch; bail promptly on Esc or
+                # on exit.
+                if self._cancelled or worker_cancelled():
                     break
                 patchid_url = '/'.join((patches_url, str(patch_id), ''))
                 data = {
@@ -2791,16 +2833,21 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
                     'archived': self._archived,
                 }
                 try:
-                    rsp = pses.patch(patchid_url, data=data, stream=False)
+                    rsp = pses.patch(
+                        patchid_url,
+                        data=data,
+                        stream=False,
+                        timeout=PW_PATCH_TIMEOUT,
+                    )
                     rsp.raise_for_status()
-                    self._ok += 1
+                    self._done_ids.add(patch_id)
                 except Exception:
                     self._fail += 1
 
                 # Update progress from worker thread
                 self.app.call_from_thread(self._update_progress, i + 1)
 
-        return self._ok, self._fail, self._new_state
+        return self._result()
 
     def _update_progress(self, completed: int) -> None:
         self.query_one('#apply-status', Label).update(
@@ -2815,7 +2862,7 @@ class ApplyStateModal(ModalScreen[Tuple[int, int, str]]):
             self.dismiss(event.worker.result)
         elif event.state == WorkerState.ERROR:
             # Return what we have so far
-            self.dismiss((self._ok, self._fail, self._new_state))
+            self.dismiss(self._result())
 
 
 class UpdateAllScreen(ModalScreen[Dict[str, Any]]):

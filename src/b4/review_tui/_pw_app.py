@@ -39,6 +39,7 @@ from b4.review_tui._common import (
 from b4.review_tui._modals import (
     PW_HELP_LINES,
     ApplyStateModal,
+    ApplyStateResult,
     CIChecksScreen,
     HelpScreen,
     LimitScreen,
@@ -799,12 +800,28 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         )
 
     def _on_apply_complete(
-        self, result: Optional[Tuple[int, int, str]], targets: List[Dict[str, Any]]
+        self, result: Optional[ApplyStateResult], targets: List[Dict[str, Any]]
     ) -> None:
         assert result is not None
-        ok, fail, new_state = result
-        if fail:
-            self.notify(f'{ok} updated, {fail} failed', severity='warning')
+        new_state = result.new_state
+        # Only a series whose every patch was updated takes the new state.
+        # The rest (failed, or not reached before Esc) keep their old state
+        # and stay marked, so pressing 's' again finishes the job.
+        done = [
+            s
+            for s in targets
+            if s.get('patch_ids')
+            and all(pid in result.done_ids for pid in s['patch_ids'])
+        ]
+        ok = len(result.done_ids)
+        if result.cancelled:
+            self.notify(
+                f'Stopped: {len(done)} of {len(targets)} series set to '
+                f'{new_state} ({ok} patches)',
+                severity='warning',
+            )
+        elif result.fail:
+            self.notify(f'{ok} updated, {result.fail} failed', severity='warning')
         elif len(targets) == 1:
             self.notify(f'{ok} patch(es) set to {new_state}', severity='information')
         else:
@@ -813,8 +830,9 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                 severity='information',
             )
         mounted = {item.series.get('id'): item for item in self._visible_items()}
-        for s in targets:
+        for s in done:
             s['state'] = new_state
+            self._selected_ids.discard(s.get('id'))
             item = mounted.get(s.get('id'))
             if item is None:
                 continue
@@ -824,7 +842,6 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             else:
                 item.add_class('--dimmed')
             item.refresh_label()
-        self._selected_ids.clear()
         self._update_title_selection()
 
     def action_track_series(self) -> None:
