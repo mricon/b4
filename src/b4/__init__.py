@@ -7464,7 +7464,10 @@ def view_in_pager(bdata: bytes, filehint: str = 'b4-view.txt') -> None:
         else:
             sp = shlex.shlex(pager, posix=True)
             sp.whitespace_split = True
-            cmdargs = list(sp) + [temp_fpath]
+            cmdargs = list(sp)
+            if cmdargs and os.path.basename(cmdargs[0]) == 'less':
+                cmdargs.append('-+F')
+            cmdargs.append(temp_fpath)
             logger.debug('Running %s', ' '.join(cmdargs))
             spop = subprocess.Popen(cmdargs, env=env)
         spop.wait()
