@@ -50,6 +50,11 @@ def _create_review_branch_with_patches(
     return branch, branch.patch_shas
 
 
+def _selected_followup(app: ReviewApp) -> Optional[str]:
+    """Read the selection fresh, past mypy narrowing it to what we set."""
+    return app._selected_followup_msgid
+
+
 def _build_session(gitdir: str, branch_name: str) -> Dict[str, Any]:
     """Build a ReviewApp session dict from a review branch."""
     cover_text, tracking = b4.review.load_tracking(gitdir, branch_name)
@@ -324,7 +329,7 @@ class TestFollowupSelection:
             assert app.check_action('edit_reply', ()) is True
             app._show_content(2)
             await pilot.pause()
-            assert app._selected_followup_msgid is None
+            assert _selected_followup(app) is None
             assert app._selected_idx == 2
 
 

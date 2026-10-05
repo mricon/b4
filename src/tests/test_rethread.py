@@ -126,6 +126,11 @@ class _FakeNode:
         self.closed = True
 
 
+def _current_node() -> object:
+    """b4.LORENODE, typed loosely enough to compare with a _FakeNode."""
+    return b4.LORENODE
+
+
 class TestPastedUrlThread:
     MIRROR = 'http://localhost:11043/lore/all/%s'
     LORE_URL = (
@@ -204,7 +209,7 @@ class TestPastedUrlThread:
         assert (mirror.asked, other.asked) == (1, 1)
         # Follow-up lookups of this run go to the thirdparty server
         assert b4.MAIN_CONFIG['midmask'] == 'https://inbox.example.org/devel/%s'
-        assert b4.LORENODE is other
+        assert _current_node() is other
         assert mirror.closed
 
     def test_thirdparty_url_without_switch_is_one_off(
@@ -217,7 +222,7 @@ class TestPastedUrlThread:
         msgid = b4.parse_msgid(self.THIRDPARTY_URL)
         assert b4.get_pi_thread_by_msgid(msgid)
         assert b4.MAIN_CONFIG['midmask'] == self.MIRROR
-        assert b4.LORENODE is mirror
+        assert _current_node() is mirror
         assert not mirror.closed
         assert other.closed
 
@@ -255,7 +260,7 @@ class TestPastedUrlThread:
         msgid = b4.parse_msgid(self.THIRDPARTY_URL, switch_server=True)
         assert b4.get_pi_thread_by_msgid(msgid) is None
         assert other.closed
-        assert b4.LORENODE is mirror
+        assert _current_node() is mirror
         assert b4.MAIN_CONFIG['midmask'] == self.MIRROR
 
     def test_bare_msgid_never_leaves_midmask(
