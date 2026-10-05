@@ -2270,17 +2270,33 @@ def make_msgid_tpt(change_id: str, revision: int, domain: Optional[str] = None) 
 def get_cover_dests(
     cbody: str,
 ) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]], str]:
-    htrs, cmsg, mtrs, basement, sig = b4.LoreMessage.get_body_parts(cbody)
+    htrs, cmsg, main_trailers, basement, sig = b4.LoreMessage.get_body_parts(
+        cbody, force_patch_separator=True
+    )
+    # Earlier b4 versions could put recipients below the changelog. Find
+    # those addresses too, but remove To/Cc only from the main trailer
+    # block so the changelog stays intact.
+    all_trailers, _others = b4.LoreMessage.find_trailers(cbody)
     tos = list()
     ccs = list()
-    for mtr in list(mtrs):
-        if mtr.lname == 'to' and mtr.addr is not None:
-            tos.append(mtr.addr)
-            mtrs.remove(mtr)
-        elif mtr.lname == 'cc' and mtr.addr is not None:
-            ccs.append(mtr.addr)
-            mtrs.remove(mtr)
-    cbody = b4.LoreMessage.rebuild_message(htrs, cmsg, mtrs, basement, sig)
+    seen = set()
+    for trailer in all_trailers:
+        if trailer.lname not in ('to', 'cc') or trailer.addr is None:
+            continue
+        _realname, addr = trailer.addr
+        if addr in seen:
+            continue
+        seen.add(addr)
+        if trailer.lname == 'to':
+            tos.append(trailer.addr)
+        else:
+            ccs.append(trailer.addr)
+    main_trailers = [
+        trailer
+        for trailer in main_trailers
+        if trailer.lname not in ('to', 'cc') or trailer.addr is None
+    ]
+    cbody = b4.LoreMessage.rebuild_message(htrs, cmsg, main_trailers, basement, sig)
     return tos, ccs, cbody
 
 
@@ -2325,7 +2341,7 @@ def mixin_cover(cbody: str, patches: List[Tuple[str, EmailMessage]]) -> None:
         b4.LoreMessage.get_body_parts(pbody)
     )
     _cheaders, cmessage, ctrailers, cbasement, csignature = (
-        b4.LoreMessage.get_body_parts(cbody)
+        b4.LoreMessage.get_body_parts(cbody, force_patch_separator=True)
     )
     nbparts = list()
     nmessage = cmessage.rstrip('\r\n') + '\n'
@@ -4008,9 +4024,9 @@ def auto_to_cc() -> None:
 
     logger.debug('Getting addresses from cover letter')
     cover, tracking = load_cover(strip_comments=False)
-    parts = b4.LoreMessage.get_body_parts(cover)
+    trailers, _others = b4.LoreMessage.find_trailers(cover)
     seen = set()
-    for ltr in parts[2]:
+    for ltr in trailers:
         if not ltr.addr:
             continue
         seen.add(ltr.addr[1])
@@ -4065,7 +4081,9 @@ def auto_to_cc() -> None:
         cmsg.set_payload(cover, charset='utf-8')
         clm = b4.LoreMessage(cmsg)
         fallback_order = str(config.get('send-trailer-order', 'To,Cc,*'))
-        clm.fix_trailers(extras=extras, fallback_order=fallback_order)
+        clm.fix_trailers(
+            force_patch_separator=True, extras=extras, fallback_order=fallback_order
+        )
         logger.info('---')
         logger.info('You can trim/expand this list with: b4 prep --edit-cover')
         store_cover(clm.body, tracking)

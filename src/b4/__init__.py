@@ -3217,6 +3217,7 @@ class LoreMessage:
     def find_trailers(
         body: str, followup: bool = False
     ) -> Tuple[List[LoreTrailer], List[str]]:
+        """Find trailers before the email signature, ignoring '---' boundaries."""
         ignores = {'phone', 'mail', 'email', 'e-mail', 'prerequisite-message-id'}
         headers = {'subject', 'date', 'from'}
         links = {'link', 'buglink', 'closes'}
@@ -3365,7 +3366,10 @@ class LoreMessage:
     @staticmethod
     def get_body_parts(
         body: str,
+        *,
+        force_patch_separator: bool = False,
     ) -> Tuple[List[LoreTrailer], str, List[LoreTrailer], str, str]:
+        """Split sections and find trailers in the main body's last paragraph."""
         # remove any starting/trailing blank lines
         body = body.replace('\r', '')
         body = body.strip('\n')
@@ -3382,11 +3386,11 @@ class LoreMessage:
             signature = sparts[1]
             body = sparts[0]
 
-        # Only apply patch-separator splitting for messages that contain actual
-        # diff content. Free-form replies should not be split on '---', which
-        # may appear as a visual separator unrelated to any patch.
+        # Covers can have a changelog separator before a diffstat is generated.
+        # Their callers must request splitting explicitly. For other messages,
+        # require diff content so visual separators in replies remain prose.
         parts = [body]
-        if DIFF_RE.search(body) or DIFFSTAT_RE.search(body):
+        if force_patch_separator or DIFF_RE.search(body) or DIFFSTAT_RE.search(body):
             parts = re.split(r'^---\s*\n', body, maxsplit=1, flags=re.M)
             if len(parts) == 2:
                 basement = parts[1]
@@ -3446,12 +3450,14 @@ class LoreMessage:
         addmysob: bool = False,
         fallback_order: str = '*',
         omit_trailers: Optional[List[str]] = None,
+        *,
+        force_patch_separator: bool = False,
     ) -> None:
 
         config = get_main_config()
 
         bheaders, message, btrailers, basement, signature = LoreMessage.get_body_parts(
-            self.body
+            self.body, force_patch_separator=force_patch_separator
         )
 
         sobtr = LoreTrailer()

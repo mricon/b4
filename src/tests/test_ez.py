@@ -463,7 +463,28 @@ def _make_patch_msg(body: str) -> EmailMessage:
     return msg
 
 
-def test_mixin_cover_relocates_basement_without_change_id() -> None:
+def test_get_cover_dests_without_diffstat() -> None:
+    cbody = (
+        'Describe the series.\n\n'
+        'To: Project List <list@example.com>\n'
+        'Cc: Maintainer <maintainer@example.com>\n'
+        'Signed-off-by: Test Override <test-override@example.com>\n'
+        '---\nChanges in v2:\n- Update the implementation.\n'
+    )
+
+    tos, ccs, body = b4.ez.get_cover_dests(cbody)
+
+    assert tos == [('Project List', 'list@example.com')]
+    assert ccs == [('Maintainer', 'maintainer@example.com')]
+    assert body == (
+        'Describe the series.\n\n'
+        'Signed-off-by: Test Override <test-override@example.com>\n'
+        '---\nChanges in v2:\n- Update the implementation.\n'
+    )
+
+
+@pytest.mark.parametrize('with_diffstat', [False, True])
+def test_mixin_cover_relocates_basement_without_change_id(with_diffstat: bool) -> None:
     """A cover whose basement omits `change-id:` must still relocate the
     basement (base-commit, prerequisites) to the very bottom of a lone patch.
 
@@ -487,6 +508,10 @@ def test_mixin_cover_relocates_basement_without_change_id() -> None:
         '---\n'
         'base-commit: 1234abcd5678\n'
     )
+    if not with_diffstat:
+        cbody = cbody.replace(
+            ' feature.txt | 1 +\n 1 file changed, 1 insertion(+)\n', ''
+        )
 
     b4.ez.mixin_cover(cbody, [('', patch)])
     body, _charset = b4.LoreMessage.get_payload(patch)
@@ -629,6 +654,108 @@ def test_mixin_cover_keeps_notes_with_midsection_trailer_line() -> None:
     assert body.index('change-id: handling was simplified') < body.index('diff --git')
     # The genuine basement is relocated below the diff.
     assert body.index('base-commit:') > body.index('diff --git')
+
+
+@pytest.mark.parametrize('strategy', ['branch-description', 'commit'])
+@pytest.mark.parametrize('location', ['above-cut', 'below-cut', 'both'])
+def test_auto_to_cc_preserves_cover_recipients(
+    gitdir: str, strategy: str, location: str, tmp_path: pathlib.Path
+) -> None:
+    template = tmp_path / 'cover.txt'
+    template.write_text('${cover}\n---\nbase-commit: ${base_commit}\n')
+    b4.MAIN_CONFIG.update(
+        {
+            'prep-cover-strategy': strategy,
+            'prep-cover-template': str(template),
+            'send-series-to': 'Project List <list@example.com>',
+            'send-series-cc': 'Maintainer <maintainer@example.com>',
+        }
+    )
+    _run_prep('-n', 'recipients')
+    pathlib.Path(gitdir, 'recipient-test.txt').write_text('A series change.\n')
+    ecode, out = b4.git_run_command(None, ['add', 'recipient-test.txt'])
+    assert ecode == 0, out
+    ecode, out = b4.git_run_command(None, ['commit', '-m', 'Add a file'])
+    assert ecode == 0, out
+
+    changelog = (
+        'Changes in v2:\n- Keep recipient updates separate from the notes.\n'
+        '\n---\nChanges in v1:\n- Initial version.'
+    )
+    recipients = (
+        'To: Project List <list@example.com>\nCc: Maintainer <maintainer@example.com>\n'
+    )
+    cover = 'A series with recipients\n\nDescribe the series.\n\n'
+    if location != 'below-cut':
+        cover += recipients
+    cover += 'Signed-off-by: Test Override <test-override@example.com>\n'
+    cover += f'---\n{changelog}'
+    if location != 'above-cut':
+        cover += f'\n\n{recipients}'
+    cover = cover.rstrip()
+    _, tracking = b4.ez.load_cover()
+    b4.ez.store_cover(cover, tracking)
+
+    # Old b4 versions put recipients below the changelog, sometimes
+    # duplicating those above it. Discover each destination once without
+    # adding another copy to the cover.
+    _run_prep('--auto-to-cc')
+    assert b4.ez.load_cover() == (cover, tracking)
+    tos, ccs, _tag, _patches = b4.ez.get_prep_branch_as_patches()
+    assert tos == [('Project List', 'list@example.com')]
+    assert ccs == [('Maintainer', 'maintainer@example.com')]
+    branch = b4.git_get_current_branch()
+    assert branch is not None
+    info = b4.ez.get_info(branch)
+    assert (info['needs-recipients'], info['needs-auto-to-cc']) == (False, False)
+
+    b4.MAIN_CONFIG.update(
+        {
+            'send-series-to': (
+                'Project List <list@example.com>, Additional List <additional@example.com>'
+            ),
+            'send-series-cc': (
+                'Maintainer <maintainer@example.com>, Reviewer <reviewer@example.com>'
+            ),
+        }
+    )
+    _run_prep('--auto-to-cc')
+    updated, updated_tracking = b4.ez.load_cover()
+    if location == 'below-cut':
+        expected = cover.replace(
+            'Signed-off-by:',
+            'To: Additional List <additional@example.com>\n'
+            'Cc: Reviewer <reviewer@example.com>\nSigned-off-by:',
+        )
+    else:
+        expected = cover.replace(
+            'Cc: Maintainer',
+            'To: Additional List <additional@example.com>\nCc: Maintainer',
+            1,
+        ).replace(
+            'Signed-off-by:', 'Cc: Reviewer <reviewer@example.com>\nSigned-off-by:'
+        )
+    assert updated == expected
+    assert updated_tracking == tracking
+
+    pre_head = b4.git_revparse_obj('HEAD')
+    _run_prep('--auto-to-cc')
+    assert b4.git_revparse_obj('HEAD') == pre_head
+    assert b4.ez.load_cover() == (updated, tracking)
+    tos, ccs, _tag, patches = b4.ez.get_prep_branch_as_patches()
+    assert sorted(tos) == [
+        ('Additional List', 'additional@example.com'),
+        ('Project List', 'list@example.com'),
+    ]
+    assert sorted(ccs) == [
+        ('Maintainer', 'maintainer@example.com'),
+        ('Reviewer', 'reviewer@example.com'),
+    ]
+    ((_commit, patch),) = patches
+    body, _charset = b4.LoreMessage.get_payload(patch)
+    assert body.index('base-commit:') > body.index('diff --git')
+    info = b4.ez.get_info(branch)
+    assert (info['needs-recipients'], info['needs-auto-to-cc']) == (False, False)
 
 
 # A single patch whose commit message body is empty: the payload jumps straight

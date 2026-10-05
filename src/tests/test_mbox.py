@@ -16,6 +16,16 @@ import b4.mbox
 from .helpers.mail import make_msg
 
 
+def test_minimize_thread_preserves_reply_separator() -> None:
+    body = 'First review comment.\n\n---\n\nSecond review comment.\n'
+    msg = make_msg('reply@example.com', 'Re: [PATCH] A change', body=body)
+
+    (minimized,) = b4.mbox.minimize_thread([msg])
+    decoded_body, _ = b4.LoreMessage.get_payload(minimized)
+
+    assert decoded_body.strip() == body.strip()
+
+
 @pytest.mark.parametrize(
     'mboxf, shazamargs, compareargs, compareout',
     [
