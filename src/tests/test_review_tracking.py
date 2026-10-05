@@ -2709,12 +2709,13 @@ def _track_cmdargs(identifier: str, **kwargs: Any) -> argparse.Namespace:
     """Build the namespace "b4 review track" hands to cmd_track.
 
     Mirrors what sp_rev_track defines, so the tests drive the same code path
-    the CLI does.
+    the CLI does, with --no-stdin set so no test reads the real stdin.
     """
     defaults: Dict[str, Any] = {
         'series_id': None,
         'identifier': identifier,
         'rethread': None,
+        'no_stdin': True,
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -5156,3 +5157,87 @@ class TestFetchSeriesThreadOffline:
             seen.append(str(exc_info.value))
 
         assert seen == ['Cannot retrieve threads from remote in offline mode'] * 2
+
+
+def _parse_track_args(argv: List[str]) -> argparse.Namespace:
+    """Parse *argv* with the real b4 parser.
+
+    b4.command is imported here rather than at module scope so the whole CLI
+    is only built for the handful of tests that need it.
+    """
+    import b4.command
+
+    parser = b4.command.setup_parser()
+    return parser.parse_args(argv)
+
+
+class TestCmdTrackHonoursNoStdin:
+    """--no-stdin has to stop cmd_track's own look at stdin as well.
+
+    b4.get_msgid() consults cmdargs.no_stdin, but cmd_track reaches for a
+    series identifier on stdin itself, well before the retrieval gets that
+    far.  Ungated, "cat something | b4 --no-stdin review track" ate the pipe
+    the caller had asked it to leave alone.
+    """
+
+    def test_no_stdin_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='nostdin-gate')
+        )
+        cmdargs = _parse_track_args(
+            ['--no-stdin', 'review', 'track', '-i', 'nostdin-gate']
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='piped@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+        assert 'No series identifier provided' in caplog.text
+
+    def test_a_hand_assembled_namespace_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A namespace without no_stdin defaults to True here too."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='nostdin-gate-default')
+        )
+        cmdargs = _track_cmdargs('nostdin-gate-default')
+        delattr(cmdargs, 'no_stdin')
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='piped@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+        assert 'No series identifier provided' in caplog.text
+
+    def test_stdin_is_still_read_without_no_stdin(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The gate must not cost the piped-message workflow its input."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='nostdin-open')
+        )
+        cmdargs = _parse_track_args(['review', 'track', '-i', 'nostdin-open'])
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='piped@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.INFO, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        mock_stdin.assert_called_once()
+        assert excinfo.value.code == 1
+        assert 'Retrieving series: piped@example.com' in caplog.text
