@@ -94,7 +94,7 @@ v0.17
 	[_] Subpath mirror bases need liblore 0.10 (fallbacks are origin-only today)
 		: e.g. https://private.local:8888/lore/ or http://<onion>/lore.kernel.org/
 	[_] docs/config.rst — add b4.piurl, deprecate midmask + searchmask, rework failover section
-[_] TOFU for contributor ed25519 keys (`b4 kr`)
+[X] TOFU for contributor ed25519 keys (`b4 kr`)
 	: Pin on first valid series, count each revision, warn loudly on key change
 	: Only series members pin and count; follow-ups are checked but never count
 	: Identity is (email, pk); on by default via b4.attestation-tofu
