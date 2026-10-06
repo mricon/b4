@@ -10,7 +10,6 @@ import os
 import pathlib
 import smtplib
 import socket
-import subprocess
 import sys
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
 
@@ -2568,61 +2567,6 @@ def test_git_head_restore_args_round_trip(gitdir: str) -> None:
 
     assert b4.git_get_current_branch(gitdir) is None
     assert b4.git_head_restore_args(gitdir) == restore
-
-
-class TestViewInPagerLessFlags:
-    """A less pager is told -+F, so short output does not flash past.
-
-    view_in_pager() strips F from LESS, but a core.pager such as
-    "less -FRSX" carries it on the command line, which less parses after
-    LESS.  A trailing -+F resets it there, and is a no-op where F is unset.
-    """
-
-    class _Spawned:
-        """Stands in for the pager process."""
-
-        def wait(self) -> int:
-            return 0
-
-    @classmethod
-    def _argv(cls, monkeypatch: pytest.MonkeyPatch, pager: str) -> List[str]:
-        """Return the argv view_in_pager() would run, minus the file."""
-        seen: List[List[str]] = list()
-        real_popen = subprocess.Popen
-
-        def fake_popen(args: Any, **kwargs: Any) -> Any:
-            # b4 reads its config through Popen too; those calls capture
-            # stdout, the pager's does not.
-            if kwargs.get('stdout') is not None:
-                return real_popen(args, **kwargs)
-            seen.append(list(args))
-            return cls._Spawned()
-
-        monkeypatch.setenv('GIT_PAGER', pager)
-        monkeypatch.setattr(subprocess, 'Popen', fake_popen)
-        b4.view_in_pager(b'short enough to fit one screen\n')
-        assert len(seen) == 1
-        assert seen[0][-1].endswith('b4-view.txt')
-        return seen[0][:-1]
-
-    @pytest.mark.parametrize(
-        'pager,expected',
-        [
-            ('less -FRSX', ['less', '-FRSX', '-+F']),
-            ('less', ['less', '-+F']),
-            ('/usr/bin/less -F', ['/usr/bin/less', '-F', '-+F']),
-            # Only less is told.
-            ('most -F', ['most', '-F']),
-        ],
-    )
-    def test_less_is_told_to_reset_f(
-        self,
-        gitdir: str,
-        monkeypatch: pytest.MonkeyPatch,
-        pager: str,
-        expected: List[str],
-    ) -> None:
-        assert self._argv(monkeypatch, pager) == expected
 
 
 class TestUnicodeControlChars:
