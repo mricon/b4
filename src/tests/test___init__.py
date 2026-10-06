@@ -90,6 +90,72 @@ def test_save_git_am_mbox(
     assert re.search(regex, res)
 
 
+# A body line that git and liblore both take for an mbox separator
+_SEPARATOR_LINE = (
+    'From 008046b33ef4b476048e3ddb2c679a453254e535 Mon Sep 17 00:00:00 2001'
+)
+
+
+class TestSaveMboxrdMbox:
+    """save_mboxrd_mbox() must write real mboxrd, so that reading it back
+    gives the same messages with the same bodies."""
+
+    @pytest.mark.parametrize(
+        'line,escaped',
+        [
+            (_SEPARATOR_LINE, '>' + _SEPARATOR_LINE),
+            ('From here on', '>From here on'),
+            ('>From x', '>>From x'),
+            ('>>From x', '>>>From x'),
+            ('From: not a separator', 'From: not a separator'),
+            ('> From x', '> From x'),
+        ],
+    )
+    def test_round_trip(self, line: str, escaped: str) -> None:
+        msgs = []
+        for x in range(3):
+            msg = email.message.EmailMessage()
+            msg['From'] = f'Me{x} <me{x}@foo.bar>'
+            msg['Subject'] = f'Re: hello {x}'
+            msg['Message-Id'] = f'<msg{x}@foo.bar>'
+            msg.set_payload(f'before\n\n{line}\nafter\n')
+            msgs.append(msg)
+
+        buf = io.BytesIO()
+        b4.save_mboxrd_mbox(msgs, buf)
+        out = buf.getvalue().decode()
+        assert out.count(f'\n{escaped}\n') == 3
+
+        back = b4.mailsplit_bytes(buf.getvalue())
+        assert [b4.LoreMessage.get_clean_msgid(m) for m in back] == [
+            'msg0@foo.bar',
+            'msg1@foo.bar',
+            'msg2@foo.bar',
+        ]
+        for orig, got in zip(msgs, back):
+            # The splitter adds a newline to the last message; ignore it.
+            got_payload = got.get_payload(decode=True)
+            orig_payload = orig.get_payload(decode=True)
+            assert isinstance(got_payload, bytes)
+            assert isinstance(orig_payload, bytes)
+            assert got_payload.rstrip(b'\n') == orig_payload.rstrip(b'\n')
+
+    def test_headers_are_not_escaped(self) -> None:
+        msg = email.message.EmailMessage()
+        msg['From'] = 'Me <me@foo.bar>'
+        msg['Subject'] = 'hello'
+        msg.set_payload('From here on\n')
+        buf = io.BytesIO()
+        b4.save_mboxrd_mbox([msg], buf)
+        assert buf.getvalue() == (
+            b'From mboxrd@z Thu Jan  1 00:00:00 1970\n'
+            b'From: Me <me@foo.bar>\n'
+            b'Subject: hello\n'
+            b'\n'
+            b'>From here on\n'
+        )
+
+
 def _msgid_domain(msgid: str) -> str:
     return msgid.strip('<>').rsplit('@', maxsplit=1)[1]
 

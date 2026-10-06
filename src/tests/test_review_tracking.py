@@ -1623,6 +1623,37 @@ class TestFollowupBlob:
         assert ecode == 0
         assert tip2.strip() == tip1.strip()
 
+    def test_store_thread_blob_keeps_inline_format_patch(self, gitdir: str) -> None:
+        """A reply that pastes a git format-patch header reads back whole."""
+        change_id = 'blob-inline-patch-test'
+        create_review_branch(
+            gitdir, change_id, tracking_data=_make_blob_tracking_data(change_id)
+        )
+        reply = _make_test_msg('reply@example.com')
+        body = (
+            'So I think we could go with something like\n'
+            '\n'
+            'From 008046b33ef4b476048e3ddb2c679a453254e535 Mon Sep 17 00:00:00 2001\n'
+            'From: Test Author <author@example.com>\n'
+            'Subject: [PATCH] kbuild: do the thing\n'
+        )
+        reply.set_payload(body)
+        msgs = [_make_test_msg('cover@example.com'), reply]
+
+        blob_sha = review_tracking._store_thread_blob(gitdir, change_id, msgs)
+        assert blob_sha is not None
+        mbox_bytes = review_tracking.get_thread_mbox(gitdir, blob_sha)
+        assert mbox_bytes is not None
+
+        back = b4.mailsplit_bytes(mbox_bytes)
+        assert [b4.LoreMessage.get_clean_msgid(m) for m in back] == [
+            'cover@example.com',
+            'reply@example.com',
+        ]
+        payload = back[1].get_payload(decode=True)
+        assert isinstance(payload, bytes)
+        assert payload.decode().rstrip('\n') == body.rstrip('\n')
+
     def test_get_thread_mbox_returns_bytes(self, gitdir: str) -> None:
         """get_thread_mbox returns the exact bytes written to the blob."""
         sample = b'From mboxrd@z Thu Jan  1 00:00:00 1970\nSubject: hi\n\nbody\n'

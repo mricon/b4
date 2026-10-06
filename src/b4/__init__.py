@@ -215,6 +215,8 @@ DIFF_RE = re.compile(
     r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I
 )
 DIFFSTAT_RE = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
+# Body lines that mboxrd escapes by adding one more '>'
+MBOXRD_FROM_RE = re.compile(rb'^(>*From )', flags=re.M)
 
 # Every status a tracked series can hold.  The first ten are the ones the
 # tracking TUI draws a symbol for; 'archived' is set when a series is filed
@@ -5738,15 +5740,28 @@ def save_git_am_mbox(msgs: List[EmailMessage], dest: BinaryIO) -> None:
         dest.write(LoreMessage.get_msg_as_bytes(msg, headers='decode'))
 
 
-def save_mboxrd_mbox(
-    msgs: List[EmailMessage], dest: BinaryIO, mangle_from: bool = False
-) -> None:
-    gen = email.generator.BytesGenerator(
-        dest, mangle_from_=mangle_from, policy=emlpolicy
-    )
+def save_mboxrd_mbox(msgs: List[EmailMessage], dest: BinaryIO) -> None:
+    # Python's mangle_from_ only implements mboxo, which escapes bare "From "
+    # lines but leaves ">From " alone, so mboxrd readers (git mailsplit
+    # --mboxrd, liblore, public-inbox) strip a ">" that was really there.
+    # Do the mboxrd escaping ourselves: one more ">" on every body line
+    # matching ^>*From.
     for msg in msgs:
+        buf = io.BytesIO()
+        email.generator.BytesGenerator(
+            buf, mangle_from_=False, policy=emlpolicy
+        ).flatten(msg)
+        bmsg = buf.getvalue()
+        if bmsg.startswith(b'\n'):
+            hdrs, body = b'', bmsg
+        else:
+            hdrs, sep, body = bmsg.partition(b'\n\n')
+            hdrs += sep
         dest.write(b'From mboxrd@z Thu Jan  1 00:00:00 1970\n')
-        gen.flatten(msg)
+        dest.write(hdrs)
+        dest.write(MBOXRD_FROM_RE.sub(rb'>\1', body))
+        if not bmsg.endswith(b'\n'):
+            dest.write(b'\n')
 
 
 def save_maildir(msgs: List[EmailMessage], dest: str) -> None:

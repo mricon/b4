@@ -42,7 +42,7 @@ def save_msgs_as_mbox(
     dest: str, msgs: List[EmailMessage], filterdupes: bool = False
 ) -> int:
     if dest == '-':
-        b4.save_mboxrd_mbox(msgs, sys.stdout.buffer, mangle_from=False)
+        b4.save_mboxrd_mbox(msgs, sys.stdout.buffer)
         return len(msgs)
 
     if b4.is_maildir(dest):
@@ -59,7 +59,7 @@ def save_msgs_as_mbox(
         return added
 
     with open(dest, 'wb') as fh:
-        b4.save_mboxrd_mbox(msgs, fh, mangle_from=True)
+        b4.save_mboxrd_mbox(msgs, fh)
 
     return len(msgs)
 
