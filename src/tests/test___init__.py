@@ -2819,3 +2819,49 @@ class TestFakeAmGitlinkPreimage:
             ecode, entry = b4.git_run_command(repo, ['ls-tree', commit, 'sub'])
             assert ecode == 0
             assert entry.split()[:3] == ['160000', 'commit', gitlink]
+
+
+class TestGetAmMessageFromLines:
+    """git mailinfo never undoes ">From " escaping, so get_am_message()
+    must not escape the commit message it hands to mailinfo."""
+
+    def test_from_lines_survive(self) -> None:
+        body = (
+            'Fix bar.\n'
+            '\n'
+            'From the manual, bar() must be called here.\n'
+            '>From an old thread.\n'
+            '\n'
+            'Signed-off-by: Test Author <test@example.com>\n'
+            '---\n'
+            ' foo.c | 1 +\n'
+            ' 1 file changed, 1 insertion(+)\n'
+            '\n'
+            'diff --git a/foo.c b/foo.c\n'
+            'index aaa..bbb 100644\n'
+            '--- a/foo.c\n'
+            '+++ b/foo.c\n'
+            '@@ -1,3 +1,4 @@\n'
+            ' void foo(void) {\n'
+            '+    bar();\n'
+            ' }\n'
+        )
+        msg = email.message.EmailMessage()
+        msg['From'] = 'Test Author <test@example.com>'
+        msg['Subject'] = '[PATCH] Fix bar'
+        msg['Date'] = 'Mon, 1 Jan 2024 00:00:00 +0000'
+        msg['Message-Id'] = '<20240101-bar-v1-1@example.com>'
+        msg.set_payload(body)
+        lmbx = b4.LoreMailbox()
+        lmbx.add_message(msg)
+        lser = lmbx.get_series()
+        assert lser is not None
+        lmsg = lser.patches[1]
+        assert lmsg is not None
+
+        am_msg = lmsg.get_am_message(add_trailers=False)
+        payload = am_msg.get_payload(decode=True)
+        assert isinstance(payload, bytes)
+        lines = payload.decode().splitlines()
+        assert 'From the manual, bar() must be called here.' in lines
+        assert '>From an old thread.' in lines

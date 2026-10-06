@@ -3707,9 +3707,9 @@ class LoreMessage:
         mi_msg.set_payload(self.body, charset='utf-8')
         mi_msg.set_charset('utf-8')
 
-        ifh = io.BytesIO()
-        save_mboxrd_mbox([mi_msg], ifh, mangle_from=True)
-        i, m, p = get_mailinfo(ifh.getvalue(), scissors=True)
+        # mailinfo reads a single message and never undoes ">From " escaping,
+        # so hand it the message as-is rather than as an escaped mbox.
+        i, m, p = get_mailinfo(mi_msg.as_bytes(policy=emlpolicy), scissors=True)
         self.body = m.decode() + p.decode()
         if add_trailers:
             self.fix_trailers(copyccs=copyccs, addmysob=addmysob, extras=extras)
