@@ -428,44 +428,125 @@ def test_commit_reachable_uses_the_gitdir_it_is_given(
     )
 
 
-def test_get_check_repo_for_branch_priority(
+def test_get_thanks_target_check_repo_priority(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     """Check-repo resolution: per-remote b4-check-repo, then the
-    b4.thanks-check-repo config, then the remote URL, then the mask."""
+    b4.thanks-check-repo config, then the remote URL."""
     repo = str(tmp_path / 'repo')
     _init_repo(repo)
-    monkeypatch.chdir(repo)
-    _commit_empty('c1')
     b4.git_set_config(repo, 'remote.spi.url', 'https://example.com/spi.git')
     b4.git_set_config(repo, 'branch.for-next.remote', 'spi')
     b4.git_set_config(repo, 'branch.for-next.merge', 'refs/heads/for-next')
-    checkurl = 'https://github.com/user/repo/commit/0123456789abcdef'
 
-    # No overrides: the branch's remote URL wins over mask derivation
-    assert (
-        b4.ty.get_check_repo_for_branch(repo, 'for-next', checkurl)
-        == 'https://example.com/spi.git'
-    )
-    # A branch with no remote falls back to the mask-derived repo
-    assert (
-        b4.ty.get_check_repo_for_branch(repo, 'orphan', checkurl)
-        == 'https://github.com/user/repo'
-    )
+    def _checkrepo(branch: str) -> Optional[str]:
+        return b4.ty.get_thanks_target(repo, branch).checkrepo
+
+    assert _checkrepo('for-next') == 'https://example.com/spi.git'
+    # A branch with no remote has nothing to check against
+    assert _checkrepo('orphan') is None
     # b4.thanks-check-repo beats the remote URL
     monkeypatch.setitem(
         b4.MAIN_CONFIG, 'thanks-check-repo', 'https://example.com/g.git'
     )
-    assert (
-        b4.ty.get_check_repo_for_branch(repo, 'for-next', checkurl)
-        == 'https://example.com/g.git'
-    )
+    assert _checkrepo('for-next') == 'https://example.com/g.git'
+    assert _checkrepo('orphan') == 'https://example.com/g.git'
     # remote.<name>.b4-check-repo beats everything
     b4.git_set_config(repo, 'remote.spi.b4-check-repo', 'https://example.com/pub.git')
-    assert (
-        b4.ty.get_check_repo_for_branch(repo, 'for-next', checkurl)
-        == 'https://example.com/pub.git'
+    assert _checkrepo('for-next') == 'https://example.com/pub.git'
+
+
+def test_get_thanks_target_remote_overrides_global(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """remote.<name>.b4-* settings win over the global b4.thanks-* ones,
+    and only for branches tracking that remote."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    b4.git_set_config(repo, 'branch.for-next.remote', 'spi')
+    b4.git_set_config(repo, 'branch.for-next.merge', 'refs/heads/spi-next')
+    for key, val in (
+        ('thanks-commit-url-mask', 'https://example.com/global/c/%s'),
+        ('thanks-treename', 'global/tree'),
+        ('thanks-am-template', '/global/am'),
+    ):
+        monkeypatch.setitem(b4.MAIN_CONFIG, key, val)
+    for key, val in (
+        ('b4-commit-url-mask', 'https://example.com/spi/c/%.12s'),
+        ('b4-treename', 'spi/tree'),
+        ('b4-am-template', '/spi/am'),
+    ):
+        b4.git_set_config(repo, f'remote.spi.{key}', val)
+
+    target = b4.ty.get_thanks_target(repo, 'for-next')
+    assert target.branch == 'spi-next'
+    assert target.cidmask == 'https://example.com/spi/c/%.12s'
+    assert target.treename == 'spi/tree'
+    assert target.am_template == '/spi/am'
+
+    target = b4.ty.get_thanks_target(repo, 'orphan')
+    assert target.branch == 'orphan'
+    assert target.cidmask == 'https://example.com/global/c/%s'
+    assert target.treename == 'global/tree'
+    assert target.am_template == '/global/am'
+
+
+def test_get_thanks_target_ignores_mask_without_conversion(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A valueless mask key reads back as 'true'; using it as a mask would
+    crash the % formatting, so it counts as no mask at all."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    b4.git_set_config(repo, 'branch.for-next.remote', 'spi')
+    with open(os.path.join(repo, '.git', 'config'), 'a') as fh:
+        fh.write('[remote "spi"]\n\tb4-commit-url-mask\n')
+    assert b4.ty.get_thanks_target(repo, 'for-next').cidmask is None
+
+
+def _am_jsondata(commit: str) -> b4.ty.JsonDictT:
+    return {
+        'fromname': 'Foo Bar',
+        'fromemail': 'foo@example.com',
+        'to': 'list@example.com',
+        'cc': '',
+        'references': '',
+        'msgid': 'patch@example.com',
+        'sentdate': 'Mon, 1 Jan 2026 00:00:00 +0000',
+        'subject': '[PATCH] frobnicate',
+        'myname': 'Test',
+        'myemail': 'test@example.com',
+        'signature': 'Test',
+        'quote': '> frobnicate',
+        'patches': [('frobnicate', '', 'patch@example.com', '1/1')],
+        'commits': [(1, commit)],
+    }
+
+
+def test_generate_am_thanks_does_not_leak_between_branches(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One process (the review TUI) thanking series on two branches must
+    not carry the first branch's remote settings into the second message."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    b4.git_set_config(repo, 'branch.for-next.remote', 'spi')
+    b4.git_set_config(
+        repo, 'remote.spi.b4-commit-url-mask', 'https://example.com/spi/c/%.12s'
     )
+    b4.git_set_config(repo, 'remote.spi.b4-treename', 'spi/tree')
+    commit = '0123456789abcdef0123456789abcdef01234567'
+    cmdargs = mock.Mock(metoo=False, since=None)
+
+    first = _am_jsondata(commit)
+    b4.ty.generate_am_thanks(repo, first, 'for-next', cmdargs)
+    assert 'https://example.com/spi/c/0123456789ab' in str(first['summary'])
+
+    second = _am_jsondata(commit)
+    b4.ty.generate_am_thanks(repo, second, 'orphan', cmdargs)
+    assert second['summary'] == f'[1/1] frobnicate\n      commit: {commit}'
+    assert second['treename'] == 'local tree'
+    assert b4.MAIN_CONFIG['thanks-commit-url-mask'] is None
 
 
 def test_queue_message_check_headers(

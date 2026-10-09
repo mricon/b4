@@ -5169,7 +5169,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         cmdargs.since = None
 
         try:
-            msg = b4.ty.generate_am_thanks(topdir, jsondata, target_branch, cmdargs)
+            # The queue check below must refer to the same tree as the
+            # message, so resolve the branch settings only once
+            target = b4.ty.get_thanks_target(topdir, target_branch)
+            msg = b4.ty.generate_am_thanks(
+                topdir, jsondata, target_branch, cmdargs, target=target
+            )
         except Exception as ex:
             self.notify(f'Failed to generate thank-you: {ex}', severity='error')
             return
@@ -5177,8 +5182,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         # Compute checkurl from last taken commit for queue support
         checkurl: Optional[str] = None
         checkcommit: Optional[str] = None
-        cidmask = config.get('thanks-commit-url-mask')
-        if isinstance(cidmask, str) and cidmask and '%' in cidmask:
+        cidmask = target.cidmask
+        if cidmask:
             # Find the last commit ID (highest patch index with a commit)
             last_cid: Optional[str] = None
             for _idx, cid in commits:
@@ -5188,23 +5193,16 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 checkurl = cidmask % last_cid
                 checkcommit = last_cid
 
-        # The repo and branch the "applied to" line refers to; queue
-        # delivery verifies the commit is reachable from there
-        checkrepo = b4.ty.get_check_repo_for_branch(
-            topdir, target_branch, checkurl or ''
-        )
-        # set_branch_details rewrites 'branch' to the remote branch name
-        _cbranch = jsondata.get('branch')
-        checkbranch = _cbranch if isinstance(_cbranch, str) else target_branch
-
         self._show_thank_preview(
             msg,
             series,
             checkurl=checkurl,
             checkcommit=checkcommit,
             archive_after=archive_after,
-            checkrepo=checkrepo,
-            checkbranch=checkbranch,
+            # The repo and branch the "applied to" line refers to; queue
+            # delivery verifies the commit is reachable from there
+            checkrepo=target.checkrepo,
+            checkbranch=target.branch,
         )
 
     def _show_thank_preview(

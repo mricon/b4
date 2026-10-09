@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
 from string import Template
@@ -20,7 +21,6 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast
 
 import b4
 
-ConfigDictT = b4.ConfigDictT
 JsonDictT = Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
 
 logger = b4.logger
@@ -61,8 +61,6 @@ ${signature}
 
 # Used to track commits created by current user
 MY_COMMITS: Optional[Dict[str, Tuple[str, str, List[str]]]] = None
-# Used to track additional branch info
-BRANCH_INFO: Optional[Dict[str, str]] = None
 
 
 def git_get_merge_id(
@@ -294,54 +292,95 @@ def auto_locate_series(
     return found
 
 
-def set_branch_details(
-    gitdir: Optional[str], branch: str, jsondata: JsonDictT, config: ConfigDictT
-) -> Tuple[JsonDictT, ConfigDictT]:
+@dataclass(frozen=True)
+class ThanksTarget:
+    """Where a thank-you message says the commits went, and how to show it.
+
+    Resolved once per message from the branch's remote and the
+    b4.thanks-* settings, so the message text and the queued publish
+    check can never disagree about the tree they refer to.
+    """
+
+    branch: str
+    treename: str
+    cidmask: Optional[str]
+    checkrepo: Optional[str]
+    am_template: Optional[str]
+    pr_template: Optional[str]
+
+
+def get_thanks_target(gitdir: Optional[str], branch: str) -> ThanksTarget:
+    """Resolve the thank-you settings for *branch*.
+
+    remote.<name>.b4-* settings on the branch's remote override the
+    global b4.thanks-* ones, so one repository can feed several trees.
+    """
     binfo = get_branch_info(gitdir, branch)
-    jsondata['branch'] = branch
-    for key, val in binfo.items():
-        if key == 'b4-treename':
-            config['thanks-treename'] = val
-        elif key == 'b4-commit-url-mask':
-            config['thanks-commit-url-mask'] = val
-        elif key == 'b4-pr-template':
-            config['thanks-pr-template'] = val
-        elif key == 'b4-am-template':
-            config['thanks-am-template'] = val
-        elif key == 'branch':
-            jsondata['branch'] = val
+    config = b4.get_main_config()
 
-    if 'thanks-treename' in config and isinstance(config['thanks-treename'], str):
-        jsondata['treename'] = config['thanks-treename']
-    elif 'url' in binfo:
-        try:
-            # Try to grab the last two chunks of the path
-            purl = Path(binfo['url'])
-            jsondata['treename'] = os.path.join(purl.parts[-2], purl.parts[-1])
-        except Exception:
-            # Something went wrong... just use the whole URL
-            jsondata['treename'] = binfo['url']
-    else:
-        jsondata['treename'] = 'local tree'
+    def _setting(remote_key: str, config_key: str) -> Optional[str]:
+        if remote_key in binfo:
+            return binfo[remote_key]
+        val = config.get(config_key)
+        return val if isinstance(val, str) else None
 
-    return jsondata, config
+    treename = _setting('b4-treename', 'thanks-treename')
+    if treename is None:
+        if 'url' in binfo:
+            try:
+                # Try to grab the last two chunks of the path
+                purl = Path(binfo['url'])
+                treename = os.path.join(purl.parts[-2], purl.parts[-1])
+            except Exception:
+                # Something went wrong... just use the whole URL
+                treename = binfo['url']
+        else:
+            treename = 'local tree'
+
+    cidmask = _setting('b4-commit-url-mask', 'thanks-commit-url-mask') or None
+    if cidmask is not None and '%' not in cidmask:
+        # A valueless key reads back as 'true'; applying it would crash
+        logger.warning('Ignoring commit URL mask without a %%s: %s', cidmask)
+        cidmask = None
+
+    checkrepo = binfo.get('b4-check-repo')
+    if not checkrepo:
+        _ctcr = config.get('thanks-check-repo')
+        if isinstance(_ctcr, str) and _ctcr:
+            checkrepo = _ctcr
+        else:
+            checkrepo = binfo.get('url')
+
+    return ThanksTarget(
+        branch=binfo.get('branch', branch),
+        treename=treename,
+        cidmask=cidmask,
+        checkrepo=checkrepo or None,
+        am_template=_setting('b4-am-template', 'thanks-am-template') or None,
+        pr_template=_setting('b4-pr-template', 'thanks-pr-template') or None,
+    )
 
 
 def generate_pr_thanks(
-    gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace
+    gitdir: Optional[str],
+    jsondata: JsonDictT,
+    branch: str,
+    cmdargs: argparse.Namespace,
+    target: Optional[ThanksTarget] = None,
 ) -> EmailMessage:
-    config = b4.get_main_config()
-    jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
+    if target is None:
+        target = get_thanks_target(gitdir, branch)
+    jsondata['branch'] = target.branch
+    jsondata['treename'] = target.treename
     thanks_template = DEFAULT_PR_TEMPLATE
-    _ctpr = config.get('thanks-pr-template')
-    if isinstance(_ctpr, str) and _ctpr:
+    if target.pr_template:
         # Try to load this template instead
         try:
-            thanks_template = b4.read_template(_ctpr)
+            thanks_template = b4.read_template(target.pr_template)
         except FileNotFoundError:
             logger.critical(
                 'ERROR: thanks-pr-template says to use %s, but it does not exist',
-                config['thanks-pr-template'],
+                target.pr_template,
             )
             sys.exit(2)
 
@@ -357,32 +396,32 @@ def generate_pr_thanks(
             sys.exit(1)
         jsondata['merge_commit_id'] = merge_commit_id
     # Make a summary
-    cidmask = config['thanks-commit-url-mask']
-    if not cidmask:
-        cidmask = 'merge commit: %s'
-    assert isinstance(cidmask, str), 'thanks-commit-url-mask must be a string'
+    cidmask = target.cidmask or 'merge commit: %s'
     jsondata['summary'] = cidmask % jsondata['merge_commit_id']
     msg = make_reply(thanks_template, jsondata, gitdir, cmdargs)
     return msg
 
 
 def generate_am_thanks(
-    gitdir: Optional[str], jsondata: JsonDictT, branch: str, cmdargs: argparse.Namespace
+    gitdir: Optional[str],
+    jsondata: JsonDictT,
+    branch: str,
+    cmdargs: argparse.Namespace,
+    target: Optional[ThanksTarget] = None,
 ) -> EmailMessage:
-    global BRANCH_INFO
-    BRANCH_INFO = None
-    config = b4.get_main_config()
-    jsondata, config = set_branch_details(gitdir, branch, jsondata, config)
+    if target is None:
+        target = get_thanks_target(gitdir, branch)
+    jsondata['branch'] = target.branch
+    jsondata['treename'] = target.treename
     thanks_template = DEFAULT_AM_TEMPLATE
-    _ctat = config.get('thanks-am-template')
-    if isinstance(_ctat, str) and _ctat:
+    if target.am_template:
         # Try to load this template instead
         try:
-            thanks_template = b4.read_template(_ctat)
+            thanks_template = b4.read_template(target.am_template)
         except FileNotFoundError:
             logger.critical(
                 'ERROR: thanks-am-template says to use %s, but it does not exist',
-                config['thanks-am-template'],
+                target.am_template,
             )
             sys.exit(2)
     if 'commits' not in jsondata:
@@ -391,10 +430,7 @@ def generate_am_thanks(
         assert isinstance(jsondata['commits'], list), 'commits must be a list'
         commits = jsondata['commits']
 
-    cidmask = config['thanks-commit-url-mask']
-    if not cidmask:
-        cidmask = 'commit: %s'
-    assert isinstance(cidmask, str), 'thanks-commit-url-mask must be a string'
+    cidmask = target.cidmask or 'commit: %s'
     slines = list()
     nomatch = 0
     padlen = len(str(len(commits)))
@@ -900,7 +936,6 @@ def check_stale_thanks(outdir: str) -> None:
 
 
 def get_wanted_branch(cmdargs: argparse.Namespace) -> str:
-    global BRANCH_INFO
     gitdir = cmdargs.gitdir
     if not cmdargs.branch:
         # Find out our current branch
@@ -1021,41 +1056,6 @@ def _get_check_repo(checkurl: str) -> Optional[str]:
         return crepo
     repo, _commit = _parse_checkurl(checkurl)
     return repo
-
-
-def get_check_repo_for_branch(
-    gitdir: Optional[str], branch: str, checkurl: str = ''
-) -> Optional[str]:
-    """Return the git URL to verify queued-thanks commits against.
-
-    When the branch named in the thanks message tracks a remote, that
-    remote is what "applied to branch X" refers to, so having the commit
-    reachable there is what qualifies as pushed. Priority:
-
-    1. remote.<name>.b4-check-repo on the branch's remote
-    2. the b4.thanks-check-repo config option
-    3. the branch's remote URL
-    4. a repo URL derived from the commit check URL
-    """
-    # Long-lived callers (the TUI) thank series on different branches;
-    # never serve another branch's cached remote info
-    global BRANCH_INFO
-    BRANCH_INFO = None
-    binfo = get_branch_info(gitdir, branch)
-    crepo = binfo.get('b4-check-repo')
-    if crepo:
-        return crepo
-    config = b4.get_main_config()
-    ccrepo = config.get('thanks-check-repo')
-    if isinstance(ccrepo, str) and ccrepo:
-        return ccrepo
-    crepo = binfo.get('url')
-    if crepo:
-        return crepo
-    if checkurl:
-        repo, _commit = _parse_checkurl(checkurl)
-        return repo
-    return None
 
 
 def commit_reachable_on_remote(
@@ -1568,20 +1568,21 @@ def _process_queue_locked(
 
 
 def get_branch_info(gitdir: Optional[str], branch: str) -> Dict[str, str]:
-    global BRANCH_INFO
-    if BRANCH_INFO is not None:
-        return BRANCH_INFO
+    # Not cached: the TUI thanks series on different branches in one
+    # process, and a cache keyed on nothing served one branch's remote
+    # settings to the next
+    branch_info: Dict[str, str] = dict()
 
-    BRANCH_INFO = dict()
-
-    remotecfg = b4.get_config_from_git('branch\\.%s\\..*' % branch)
+    remotecfg = b4.get_config_from_git(
+        r'^branch\.%s\.' % re.escape(branch), gitdir=gitdir
+    )
     if 'remote' not in remotecfg:
         # Did not find a matching branch entry, so look at remotes
         gitargs = ['remote', 'show']
         lines = b4.git_get_command_lines(gitdir, gitargs)
         if not len(lines):
             # No remotes? Hmm...
-            return BRANCH_INFO
+            return branch_info
 
         remote = None
         for entry in lines:
@@ -1591,21 +1592,23 @@ def get_branch_info(gitdir: Optional[str], branch: str) -> Dict[str, str]:
 
         if remote is None:
             # Not found any matching remotes
-            return BRANCH_INFO
+            return branch_info
 
-        BRANCH_INFO['remote'] = remote
-        BRANCH_INFO['branch'] = branch.replace(f'{remote}/', '')
+        branch_info['remote'] = remote
+        branch_info['branch'] = branch.replace(f'{remote}/', '')
 
     else:
-        BRANCH_INFO['remote'] = remotecfg['remote']
+        branch_info['remote'] = remotecfg['remote']
         if 'merge' in remotecfg:
-            BRANCH_INFO['branch'] = re.sub(r'^refs/heads/', '', remotecfg['merge'])
+            branch_info['branch'] = re.sub(r'^refs/heads/', '', remotecfg['merge'])
 
     # Grab template overrides
-    remotecfg = b4.get_config_from_git('remote\\.%s\\..*' % BRANCH_INFO['remote'])
-    BRANCH_INFO.update(remotecfg)
+    remotecfg = b4.get_config_from_git(
+        r'^remote\.%s\.' % re.escape(branch_info['remote']), gitdir=gitdir
+    )
+    branch_info.update(remotecfg)
 
-    return BRANCH_INFO
+    return branch_info
 
 
 def main(cmdargs: argparse.Namespace) -> None:

@@ -2108,7 +2108,11 @@ class TestSeriesLifecycle:
         captured: Dict[str, Any] = {}
 
         def _fake_generate(
-            topdir: str, jsondata: Dict[str, Any], target: str, cmdargs: Any
+            topdir: str,
+            jsondata: Dict[str, Any],
+            branch: str,
+            cmdargs: Any,
+            target: Any = None,
         ) -> email.message.EmailMessage:
             captured['jsondata'] = jsondata
             return email.message.EmailMessage()
@@ -2140,6 +2144,48 @@ class TestSeriesLifecycle:
         assert jsondata['cherrypick'] is True
         # Only the two taken patches contribute commits (by 1-based index).
         assert jsondata['commits'] == [(1, 'aaa111'), (2, 'bbb222')]
+
+    def test_thank_queue_target_follows_branch_remote(self, gitdir: str) -> None:
+        """The queue check uses the per-remote mask, repo and branch that
+        the message itself was generated from."""
+        b4.git_set_config(gitdir, 'branch.for-next.remote', 'spi')
+        b4.git_set_config(gitdir, 'branch.for-next.merge', 'refs/heads/spi-next')
+        b4.git_set_config(
+            gitdir, 'remote.spi.b4-commit-url-mask', 'https://example.com/spi/c/%.12s'
+        )
+        b4.git_set_config(gitdir, 'remote.spi.b4-check-repo', 'https://example.com/spi')
+        commit = '0123456789abcdef0123456789abcdef01234567'
+        tracking_data: Dict[str, Any] = {
+            'series': {'header-info': {}, 'taken': {'branch': 'for-next'}},
+            'patches': [
+                {
+                    'title': '[PATCH] frobnicate',
+                    'header-info': {'msgid': 'patch@example.com'},
+                    'taken': {'commit-id': commit},
+                }
+            ],
+        }
+        series = {'change_id': 'test-change-id'}
+        app = Mock()
+        generated = email.message.EmailMessage()
+
+        with (
+            patch('b4.git_get_toplevel', return_value=gitdir),
+            patch('b4.review.load_tracking', return_value=('cover', tracking_data)),
+            patch('b4.ty.generate_am_thanks', return_value=generated),
+            patch('b4.get_email_signature', return_value='Test'),
+        ):
+            TrackingApp._start_thank(app, series)
+
+        app._show_thank_preview.assert_called_once_with(
+            generated,
+            series,
+            checkurl='https://example.com/spi/c/0123456789ab',
+            checkcommit=commit,
+            archive_after=False,
+            checkrepo='https://example.com/spi',
+            checkbranch='spi-next',
+        )
 
     def test_partial_series_ingests_new_revision(self, gitdir: str) -> None:
         """A 'partial' series must ingest an incoming v2 and record it.
