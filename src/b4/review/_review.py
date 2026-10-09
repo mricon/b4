@@ -4277,6 +4277,7 @@ def pw_lookup_series_id(msgid: str) -> Optional[int]:
         return None
     pses, api_url = b4.get_patchwork_session(pwkey, pwurl)
     params = [('project', pwproj), ('msgid', msgid)]
+    want = msgid.strip('<>')
     for endpoint in ('covers', 'patches'):
         try:
             rsp = pses.get('/'.join((api_url, endpoint, '')), params=params)
@@ -4286,6 +4287,11 @@ def pw_lookup_series_id(msgid: str) -> Optional[int]:
             logger.debug('Patchwork %s lookup failed for %s: %s', endpoint, msgid, ex)
             continue
         for entry in entries:
+            # A server that does not filter by msgid answers with the whole
+            # project listing. Trusting the first entry would store the
+            # wrong series id for good, so insist on an exact match.
+            if str(entry.get('msgid', '')).strip('<>') != want:
+                continue
             for series in entry.get('series') or []:
                 if series.get('id'):
                     return int(series['id'])

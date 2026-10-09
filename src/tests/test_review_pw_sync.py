@@ -54,16 +54,26 @@ class _FakePw:
     ) -> None:
         self.covers = covers or {}
         self.patches = patches or {}
+        # When set, the msgid filter is ignored and every known entry is
+        # listed, as a server without that filter would do.
+        self.ignore_msgid_filter = False
         self.gets: List[str] = []
         self.patched: List[Tuple[str, Dict[str, Any]]] = []
+
+    @staticmethod
+    def _entry(msgid: str, series_id: int) -> Dict[str, Any]:
+        # Patchwork wraps message-ids in angle brackets; b4 stores them bare.
+        return {'id': 1, 'msgid': f'<{msgid}>', 'series': [{'id': series_id}]}
 
     def get(self, url: str, params: Any = None, stream: bool = False) -> _FakeResp:
         self.gets.append(url)
         msgid = dict(params or []).get('msgid')
         for endpoint, known in (('/covers/', self.covers), ('/patches/', self.patches)):
             if url.endswith(endpoint):
+                if self.ignore_msgid_filter:
+                    return _FakeResp([self._entry(m, sid) for m, sid in known.items()])
                 if msgid in known:
-                    return _FakeResp([{'id': 1, 'series': [{'id': known[msgid]}]}])
+                    return _FakeResp([self._entry(msgid, known[msgid])])
                 return _FakeResp([])
         if url.endswith(f'/series/{PW_SERIES_ID}/'):
             return _FakeResp({'patches': [{'id': pid} for pid in PW_PATCH_IDS]})
@@ -148,6 +158,23 @@ class TestResolvePwSeriesId:
         _seed(message_id='nobody@example.com')
         assert b4.review.resolve_pw_series_id(IDENTIFIER, CHANGE_ID, 1) is None
         assert _stored_pw_id() is None
+
+    def test_ignores_entries_for_other_messages(self, fake_pw: _FakePw) -> None:
+        """A server that ignores the msgid filter must not yield a wrong id.
+
+        Such a server answers with the whole project listing. The first
+        entry would be stored as this series' id for good, so only an
+        entry whose msgid matches counts.
+        """
+        fake_pw.covers = {'other@example.com': 55}
+        fake_pw.ignore_msgid_filter = True
+        _seed()
+        assert b4.review.resolve_pw_series_id(IDENTIFIER, CHANGE_ID, 1) is None
+        assert _stored_pw_id() is None
+
+        # The right series is still found when it is somewhere in the list.
+        fake_pw.covers[COVER_MSGID] = PW_SERIES_ID
+        assert b4.review.resolve_pw_series_id(IDENTIFIER, CHANGE_ID, 1) == PW_SERIES_ID
 
     def test_revision_defaults_to_newest(self, fake_pw: _FakePw) -> None:
         _seed()
