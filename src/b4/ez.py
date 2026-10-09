@@ -1182,6 +1182,92 @@ def get_dependencies(prereqs: List[str]) -> List[str]:
     return [x for x in prereqs if not is_base_tree_entry(x)]
 
 
+def get_stated_base_commit(usebranch: Optional[str] = None) -> str:
+    """Return the commit that base-commit: names when the series is sent."""
+    base_commit, _start, _end = get_series_range(usebranch=usebranch)
+    _cover, tracking = load_cover(usebranch=usebranch)
+    for prereq in get_dependencies(tracking['series'].get('prerequisites', list())):
+        if not prereq.startswith('base-commit:'):
+            continue
+        override = prereq.split(':', 1)[1].strip()
+        # Peel to the commit: an annotated tag's own id is not a base-commit
+        ecode, out = b4.git_run_command(
+            None, ['rev-parse', '--verify', '-q', f'{override}^{{commit}}']
+        )
+        if ecode > 0:
+            logger.warning(
+                'WARNING: unable to resolve base-commit override %s', override
+            )
+            base_commit = override
+        else:
+            base_commit = out.strip()
+            logger.debug('Overriding base-commit with: %s', base_commit)
+    return base_commit
+
+
+def check_base_tree(
+    usebranch: Optional[str] = None,
+) -> Optional[Tuple[bool, str, str]]:
+    """Check that base-commit: is in the tree that base-tree: names.
+
+    Returns (found, what was checked, explanation), or None when there is
+    no answer: the remote can't be asked or doesn't reply, or base-tree:
+    none turned the footer off. Without a known tree to ask, fall back
+    to the local remote-tracking branches.
+    """
+    _cover, tracking = load_cover(usebranch=usebranch)
+    chosen, chosen_tree = _get_chosen_base_tree(tracking)
+    if chosen and chosen_tree is None:
+        # Turned off, or a URL we can't use, which was warned about
+        return None
+    base_commit = get_stated_base_commit(usebranch=usebranch)
+    if not b4.git_commit_exists(None, base_commit):
+        # An unresolvable base-commit override; get_stated_base_commit()
+        # warned about it, and --check-deps reports it as a failed dep
+        return None
+    tree = get_base_tree(base_commit, usebranch=usebranch)
+    if tree is None:
+        if not b4.git_get_command_lines(None, ['remote']):
+            return None
+        label = 'base-tree: (no known tree)'
+        found = b4.git_get_command_lines(
+            None,
+            ['for-each-ref', '--count=1', '--contains', base_commit, 'refs/remotes/'],
+        )
+        if found:
+            return True, label, 'base-commit is on a remote branch'
+        return (
+            False,
+            label,
+            f'base-commit {base_commit} is not on any remote branch. '
+            'Is it on a local topic branch?',
+        )
+
+    if not b4.can_network:
+        return None
+    url, branch = tree
+    label = ' '.join(['base-tree:', url, branch]).rstrip()
+    try:
+        found_in_tree = b4.base_commit_in_remote_tree(base_commit, url, branch=branch)
+    except b4.RemoteBranchMissingError:
+        # Rebasing won't help here; the tree has no such branch
+        return (
+            False,
+            label,
+            f'{url} has no branch {branch}. Was it renamed or deleted?',
+        )
+    if found_in_tree is None:
+        return None
+    if found_in_tree:
+        return True, label, 'base-commit found in this tree'
+    where = f'{url} {branch}'.rstrip()
+    return (
+        False,
+        label,
+        f'base-commit {base_commit} is not in {where}. Rebase onto it?',
+    )
+
+
 class BaseTree(NamedTuple):
     url: str
     # Empty when not known
@@ -1556,11 +1642,13 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
     is_prep_branch(mustbe=True)
     _cover, tracking = load_cover()
     prereqs = get_dependencies(tracking['series'].get('prerequisites', list()))
+    res: Dict[str, Tuple[bool, str]] = dict()
     if not prereqs:
         logger.info('This series has no defined dependencies.')
         logger.info('To add dependencies, use --edit-deps.')
+        _add_base_tree_result(res)
+        _print_check_results(res)
         return
-    res = dict()
     prereq_patches = list()
     known_patches = dict()
     base_commit = None
@@ -1742,16 +1830,27 @@ def check_deps(cmdargs: argparse.Namespace) -> None:
     else:
         logger.info('Not checking applicability of the series due to other errors')
 
-    if res:
-        logger.info('---')
-        for prereq, info in res.items():
-            if info[0]:
-                logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], prereq)
-            else:
-                logger.info('%s %s', b4.CI_FLAGS_FANCY['fail'], prereq)
-                logger.info('   - %s', info[1])
-
+    _add_base_tree_result(res)
+    _print_check_results(res)
     store_preflight_check('check-deps')
+
+
+def _add_base_tree_result(res: Dict[str, Tuple[bool, str]]) -> None:
+    if (checked := check_base_tree()) is not None:
+        found, label, explanation = checked
+        res[label] = (found, explanation)
+
+
+def _print_check_results(res: Dict[str, Tuple[bool, str]]) -> None:
+    if not res:
+        return
+    logger.info('---')
+    for prereq, info in res.items():
+        if info[0]:
+            logger.info('%s %s', b4.CI_FLAGS_FANCY['success'], prereq)
+        else:
+            logger.info('%s %s', b4.CI_FLAGS_FANCY['fail'], prereq)
+            logger.info('   - %s', info[1])
 
 
 def get_series_start(usebranch: Optional[str] = None) -> Optional[str]:
@@ -2802,14 +2901,7 @@ def get_prep_branch_as_patches(
 
         chunks = [x.strip() for x in prereq.split(':')]
         if prereq.startswith('base-commit:'):
-            base_commit = b4.git_revparse_obj(chunks[1])
-            if not base_commit:
-                logger.warning(
-                    'WARNING: unable to resolve base-commit override %s', chunks[1]
-                )
-                base_commit = chunks[1]
-            else:
-                logger.debug('Overriding base-commit with: %s', base_commit)
+            # Resolved by get_stated_base_commit() below
             continue
 
         spatches = list()
@@ -2874,6 +2966,8 @@ def get_prep_branch_as_patches(
                 logger.debug('Adding prerequisite-patch-id %s from %s', ppid, prereq)
                 prerequisites += f'prerequisite-patch-id: {ppid}\n'
                 seen_patch_ids.add(ppid)
+
+    base_commit = get_stated_base_commit(usebranch=usebranch)
 
     # Like ${prerequisites}, ${base_tree} is a whole line or nothing, so a
     # series without a known tree doesn't get an empty footer
@@ -3337,6 +3431,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 'needs-checking-deps': True,
                 'needs-auto-to-cc': True,
                 'misplaced-body': True,
+                'base-not-in-tree': True,
             }
             _cppfc = config.get('prep-pre-flight-checks', 'enable-all')
             if not isinstance(_cppfc, str):
@@ -3354,6 +3449,14 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                     if f'disable-{pfcheck}' in cfg_checks:
                         logger.debug('Disabling pre-flight check %s', pfcheck)
                         del pfchecks[pfcheck]
+            base_tree_problem = ''
+            if 'base-not-in-tree' in pfchecks:
+                # Asks the remote, so it runs here and not in show-info.
+                # No answer means no warning.
+                checked = check_base_tree(usebranch=mybranch)
+                if checked is not None and not checked[0]:
+                    base_tree_problem = checked[2]
+                sinfo['base-not-in-tree'] = bool(base_tree_problem)
             failing = False
             for pfcheck in pfchecks:
                 pfdata = sinfo[pfcheck]
@@ -3385,6 +3488,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                         logger.critical(
                             '  - Empty commit body: text below "---" looks misplaced'
                         )
+                    elif pfcheck == 'base-not-in-tree':
+                        logger.critical('  - Base not in tree : %s', base_tree_problem)
                 try:
                     logger.critical('---')
                     input(

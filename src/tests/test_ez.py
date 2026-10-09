@@ -1850,6 +1850,120 @@ def test_prep_base_tree_footer(
     assert 'base-tree:' not in _basement()
 
 
+def _set_deps(tmp_path: pathlib.Path, deps: str) -> None:
+    _run_prep('--deps-from-file', _write(tmp_path, 'deps.txt', deps))
+
+
+def test_prep_check_base_tree(
+    prepdir: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The base must be in the stated tree; with no known tree, on some
+    remote branch. No answer from the remote is not a failure."""
+    _add_series_commit(prepdir)
+    base = b4.ez.get_stated_base_commit()
+    # A base that is on no remote: a fix branched off a local topic branch
+    ecode, topic = b4.git_run_command(
+        None, ['commit-tree', f'{base}^{{tree}}', '-p', base, '-m', 'topic']
+    )
+    assert ecode == 0, topic
+    topic = topic.strip()
+
+    # Without MAINTAINERS or a configured tree, only remote branches count
+    unknown = 'base-tree: (no known tree)'
+    assert b4.ez.check_base_tree() == (
+        True,
+        unknown,
+        'base-commit is on a remote branch',
+    )
+    _set_deps(tmp_path, f'base-commit: {topic}\n')
+    checked = b4.ez.check_base_tree()
+    assert checked is not None and checked[:2] == (False, unknown)
+
+    # Serve a "public" tree from a local bare repo
+    pub = str(tmp_path / 'pub.git')
+    _git('init', '-q', '--bare', pub)
+    _git('push', '-q', pub, f'{base}:refs/heads/master')
+    korg = 'https://git.kernel.org/pub/scm/test/b4.git'
+    _git('config', f'url.file://{pub}.insteadOf', korg)
+    _set_deps(tmp_path, f'base-tree: {korg} master\nbase-commit: {topic}\n')
+    # Offline: no answer, so nothing to report
+    assert b4.ez.check_base_tree() is None
+    monkeypatch.setattr(b4, 'can_network', True)
+    assert b4.ez.check_base_tree() == (
+        False,
+        f'base-tree: {korg} master',
+        f'base-commit {topic} is not in {korg} master. Rebase onto it?',
+    )
+    with caplog.at_level(logging.INFO):
+        _run_prep('--check-deps')
+    assert f'base-commit {topic} is not in {korg} master' in caplog.text
+
+    _set_deps(tmp_path, f'base-tree: {korg} master\n')
+    assert b4.ez.check_base_tree() == (
+        True,
+        f'base-tree: {korg} master',
+        'base-commit found in this tree',
+    )
+    # A branch the tree doesn't have: "rebase" would be the wrong advice.
+    # (A base that is a tip anywhere in the tree is found before the
+    # branch matters, so state one below the tip.)
+    _set_deps(tmp_path, f'base-tree: {korg} gone\nbase-commit: {base}~1\n')
+    assert b4.ez.check_base_tree() == (
+        False,
+        f'base-tree: {korg} gone',
+        f'{korg} has no branch gone. Was it renamed or deleted?',
+    )
+    _set_deps(tmp_path, f'base-tree: none\nbase-commit: {topic}\n')
+    assert b4.ez.check_base_tree() is None
+
+    # An override that doesn't resolve is a failed dep, not a crash
+    _set_deps(tmp_path, f'base-tree: {korg} master\nbase-commit: nosuchref\n')
+    with caplog.at_level(logging.WARNING):
+        assert b4.ez.check_base_tree() is None
+    assert 'unable to resolve base-commit override nosuchref' in caplog.text
+    with caplog.at_level(logging.INFO):
+        _run_prep('--check-deps')
+    assert 'Base commit not found in the current tree' in caplog.text
+
+
+def test_send_preflight_base_not_in_tree(
+    prepdir: str,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """send stops at the pre-flight prompt when the base is not in the
+    stated tree, and the check can be turned off like the others."""
+    _add_series_commit(prepdir)
+    base = b4.ez.get_stated_base_commit()
+    ecode, topic = b4.git_run_command(
+        None, ['commit-tree', f'{base}^{{tree}}', '-p', base, '-m', 'topic']
+    )
+    assert ecode == 0, topic
+    _set_deps(tmp_path, f'base-commit: {topic.strip()}\n')
+
+    def _abort(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr('builtins.input', _abort)
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        ['--no-stdin', '--no-interactive', 'send', '--to', 'list@example.com']
+    )
+    # The other checks still fail (the cover needs editing), so the
+    # prompt shows either way; only the base-tree line comes and goes
+    for pfconfig, shown in (('enable-all', True), ('disable-base-not-in-tree', False)):
+        b4.MAIN_CONFIG['prep-pre-flight-checks'] = pfconfig
+        caplog.clear()
+        with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit) as exc:
+            b4.ez.cmd_send(cmdargs)
+        assert exc.value.code == 130
+        assert ('Base not in tree : base-commit' in caplog.text) is shown
+
+
 def test_prep_deps_from_stdin_blank_clears(
     prepdir: str, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
