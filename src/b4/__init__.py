@@ -113,6 +113,10 @@ class LoreConfigError(RuntimeError):
     """
 
 
+class RemoteBranchMissingError(LookupError):
+    """A remote does not advertise the branch it was asked about."""
+
+
 class BadCharsError(RuntimeError):
     """Raised when a message body contains suspicious unicode control chars.
 
@@ -4660,48 +4664,15 @@ def commit_reachable_on_remote(
     (e.g. the remote is unreachable, or none of the advertised tips are
     in the local repository).
     """
-    gitargs = [
-        '-c',
-        'http.lowSpeedLimit=1000',
-        '-c',
-        'http.lowSpeedTime=15',
-        'ls-remote',
-        '--heads',
-        repo_url,
-    ]
-    ecode, out = git_run_command(gitdir, gitargs)
-    if ecode > 0:
-        logger.debug('ls-remote failed for %s (exit code %s)', repo_url, ecode)
+    tips = _ls_remote_tips(repo_url, gitdir)
+    if tips is None:
         return None
-    tips: Set[str] = set()
-    branchtip: Optional[str] = None
-    for line in out.splitlines():
-        chunks = line.split(None, 1)
-        if chunks:
-            tips.add(chunks[0])
-            if branch and len(chunks) > 1 and chunks[1] == f'refs/heads/{branch}':
-                branchtip = chunks[0]
-    if branchtip:
-        tips = {branchtip}
-    elif branch:
-        logger.debug(
-            '%s does not advertise refs/heads/%s, checking all heads',
-            repo_url,
-            branch,
-        )
-    if not tips:
+    heads = _branch_tips(tips, repo_url, branch)
+    if not heads:
         return False
     # Filter out tips we don't have locally -- we can't compute ancestry
     # for them, so treat them as not containing the commit
-    stdin = ('\n'.join(sorted(tips)) + '\n').encode()
-    _ecode, out = git_run_command(
-        gitdir, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], stdin=stdin
-    )
-    known: List[str] = []
-    for line in out.splitlines():
-        chunks = line.split()
-        if len(chunks) == 2 and chunks[1] == 'commit':
-            known.append(chunks[0])
+    known = _local_commits(gitdir, heads)
     if not known:
         # Undetermined, not unpublished: without the objects we cannot
         # say anything about the commit, and reporting "not yet visible"
@@ -4716,13 +4687,150 @@ def commit_reachable_on_remote(
             gitdir or os.getcwd(),
         )
         return None
+    return _reachable_from(gitdir, commit, known)
+
+
+# Give up on a remote that stalls, instead of hanging the caller
+_REMOTE_TIMEOUT_OPTS = [
+    '-c',
+    'http.lowSpeedLimit=1000',
+    '-c',
+    'http.lowSpeedTime=15',
+]
+
+
+def _ls_remote_tips(
+    repo_url: str, gitdir: Optional[str], tags: bool = False
+) -> Optional[Dict[str, str]]:
+    """Return {refname: commit} advertised by a remote, or None on failure.
+
+    Annotated tags map to the commit they point at, not the tag object.
+    """
+    gitargs = [*_REMOTE_TIMEOUT_OPTS, 'ls-remote', '--heads']
+    if tags:
+        gitargs.append('--tags')
+    ecode, out = git_run_command(gitdir, [*gitargs, repo_url])
+    if ecode > 0:
+        logger.debug('ls-remote failed for %s (exit code %s)', repo_url, ecode)
+        return None
+    tips: Dict[str, str] = dict()
+    for line in out.splitlines():
+        chunks = line.split(None, 1)
+        if len(chunks) == 2:
+            # A peeled ^{} line comes after its tag and replaces it
+            tips[chunks[1].removesuffix('^{}')] = chunks[0]
+    return tips
+
+
+def _branch_tips(tips: Dict[str, str], repo_url: str, branch: str) -> Set[str]:
+    """Return the tip of *branch*, or of every head when it isn't advertised."""
+    heads = {ref: sha for ref, sha in tips.items() if ref.startswith('refs/heads/')}
+    if branch:
+        if f'refs/heads/{branch}' in heads:
+            return {heads[f'refs/heads/{branch}']}
+        logger.debug(
+            '%s does not advertise refs/heads/%s, checking all heads',
+            repo_url,
+            branch,
+        )
+    return set(heads.values())
+
+
+def _local_commits(gitdir: Optional[str], shas: Set[str]) -> List[str]:
+    """Return the commits among *shas* that exist in the local repository."""
+    stdin = ('\n'.join(sorted(shas)) + '\n').encode()
+    _ecode, out = git_run_command(
+        gitdir, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], stdin=stdin
+    )
+    known: List[str] = []
+    for line in out.splitlines():
+        chunks = line.split()
+        if len(chunks) == 2 and chunks[1] == 'commit':
+            known.append(chunks[0])
+    return known
+
+
+def _reachable_from(
+    gitdir: Optional[str], commit: str, tips: List[str]
+) -> Optional[bool]:
     # Empty output means every commit reachable from ours is also
-    # reachable from one of the known tips, i.e. ours is published
-    ecode, out = git_run_command(gitdir, ['rev-list', '-1', commit, '--not', *known])
+    # reachable from one of the tips, i.e. ours is an ancestor of one
+    ecode, out = git_run_command(gitdir, ['rev-list', '-1', commit, '--not', *tips])
     if ecode > 0:
         logger.debug('rev-list failed for %s (exit code %s)', commit, ecode)
         return None
     return not out.strip()
+
+
+def base_commit_in_remote_tree(
+    commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
+) -> Optional[bool]:
+    """Check if a base commit is published in the tree at repo_url.
+
+    The base counts as published when it is the tip of a branch or tag,
+    or an ancestor of *branch*. With no branch, any head counts.
+
+    Only the tip of *branch* is ever fetched, objects only: the check
+    must not touch the user's refs or tags, and fetching every head of a
+    tree we don't track could pull in the whole tree. So without a
+    branch, the heads we already have can prove that the base is there,
+    but never that it isn't. A base that is only an ancestor of a tag is
+    not looked for either.
+
+    Returns True/False, or None when the remote gave no answer. Callers
+    stay quiet on None: no answer is not a verdict. Raises
+    RemoteBranchMissingError when the remote has no *branch*: unlike a
+    merged-away branch in a thanks check, that is a mistake in the
+    stated tree, and widening the search to every head would hide it.
+    """
+    ecode, out = git_run_command(
+        gitdir, ['rev-parse', '--verify', '-q', f'{commit}^{{commit}}']
+    )
+    if ecode > 0:
+        return None
+    commit = out.strip()
+    tips = _ls_remote_tips(repo_url, gitdir, tags=True)
+    if tips is None:
+        return None
+    if commit in tips.values():
+        return True
+    if branch:
+        tip = tips.get(f'refs/heads/{branch}')
+        if tip is None:
+            raise RemoteBranchMissingError(f'{repo_url} has no branch {branch}')
+        heads = {tip}
+    else:
+        heads = {sha for ref, sha in tips.items() if ref.startswith('refs/heads/')}
+    if not heads:
+        return False
+    missing = heads - set(_local_commits(gitdir, heads))
+    if missing and not branch:
+        known = sorted(heads - missing)
+        if known and _reachable_from(gitdir, commit, known):
+            return True
+        logger.debug(
+            'Not fetching %s heads from %s without a branch to go by',
+            len(missing),
+            repo_url,
+        )
+        return None
+    if missing:
+        gitargs = [
+            *_REMOTE_TIMEOUT_OPTS,
+            'fetch',
+            '--quiet',
+            '--no-tags',
+            '--no-write-fetch-head',
+            '--no-recurse-submodules',
+            '--no-auto-maintenance',
+            repo_url,
+            *sorted(missing),
+        ]
+        ecode, out = git_run_command(gitdir, gitargs)
+        if ecode > 0:
+            logger.debug('Fetching tips from %s failed: %s', repo_url, out.strip())
+            return None
+    return _reachable_from(gitdir, commit, sorted(heads))
 
 
 @contextmanager

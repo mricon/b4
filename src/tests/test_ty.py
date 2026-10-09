@@ -534,6 +534,78 @@ def test_commit_reachable_uses_the_gitdir_it_is_given(
     assert b4.commit_reachable_on_remote(c1, pub, branch='master', gitdir=local) is True
 
 
+def test_base_commit_in_remote_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A base is in a tree when it is a branch or tag tip there, or an
+    ancestor of a branch; missing tips are fetched without touching refs."""
+    local = str(tmp_path / 'local')
+    pub = str(tmp_path / 'pub')
+    other = str(tmp_path / 'other')
+    _init_repo(local)
+    ecode, out = b4.git_run_command(None, ['init', '--bare', '-b', 'master', pub])
+    assert ecode == 0, out
+    monkeypatch.chdir(local)
+
+    def _git(*args: str) -> str:
+        ecode, out = b4.git_run_command(None, list(args))
+        assert ecode == 0, out
+        return out
+
+    c1 = _commit_empty('c1')
+    _commit_empty('master-tip')
+    _git('push', pub, 'HEAD:refs/heads/master')
+    # A base that only an annotated tag points at, on no branch
+    _git('checkout', '-q', '--detach')
+    tagged = _commit_empty('tagged')
+    _git('tag', '-a', '-m', 'tag', 'v1')
+    _git('push', pub, 'refs/tags/v1')
+    # A base that is only an ancestor of a tag: the known gap
+    under_tag = _commit_empty('under-tag')
+    _commit_empty('tag-tip')
+    _git('tag', 'v2')
+    _git('push', pub, 'refs/tags/v2')
+    _git('checkout', '-q', 'master')
+    local_only = _commit_empty('local-only')
+
+    assert b4.base_commit_in_remote_tree(c1, pub) is True
+    assert b4.base_commit_in_remote_tree(tagged, pub) is True
+    assert b4.base_commit_in_remote_tree(under_tag, pub) is False
+    assert b4.base_commit_in_remote_tree(local_only, pub) is False
+    # A stated branch that isn't there is a mistake, not "any branch"
+    assert b4.base_commit_in_remote_tree(c1, pub, branch='master') is True
+    with pytest.raises(b4.RemoteBranchMissingError):
+        b4.base_commit_in_remote_tree(c1, pub, branch='gone')
+    # A second, unrelated history that we keep up with
+    empty_tree = _git('hash-object', '-t', 'tree', '/dev/null').strip()
+    side_base = _git('commit-tree', '-m', 'side-base', empty_tree).strip()
+    side_tip = _git('commit-tree', '-p', side_base, '-m', 'side-tip', empty_tree)
+    _git('push', pub, f'{side_tip.strip()}:refs/heads/side')
+
+    # The remote moves on without us: its tip is fetched to prove that
+    # c1 is still in there, and nothing local changes
+    _git('clone', '-q', pub, other)
+    b4.git_set_config(other, 'user.name', 'Test')
+    b4.git_set_config(other, 'user.email', 'test@example.com')
+    monkeypatch.chdir(other)
+    _commit_empty('elsewhere')
+    _git('push', pub, 'HEAD:refs/heads/master')
+    monkeypatch.chdir(local)
+    refs = _git('for-each-ref')
+    # Without a branch to go by, nothing is fetched: the heads we have can
+    # prove that a base is there, but the unknown master tip might hold c1
+    assert b4.base_commit_in_remote_tree(side_base, pub) is True
+    assert b4.base_commit_in_remote_tree(c1, pub) is None
+    assert not b4.git_commit_exists(None, _git('ls-remote', pub, 'master').split()[0])
+    assert b4.base_commit_in_remote_tree(c1, pub, branch='master') is True
+    assert _git('for-each-ref') == refs
+    assert not os.path.exists(os.path.join(local, '.git', 'FETCH_HEAD'))
+
+    # No answer from the remote, or no base to ask about: not a verdict
+    assert b4.base_commit_in_remote_tree(c1, str(tmp_path / 'nope')) is None
+    assert b4.base_commit_in_remote_tree('0' * 40, pub) is None
+
+
 def test_get_thanks_target_check_repo_priority(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
