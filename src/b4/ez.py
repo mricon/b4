@@ -98,6 +98,13 @@ DEPS_HELP = """
 #
 # IMPORTANT: specify all dependencies in the order they must be applied
 #
+# You can also set the tree that holds the base commit. It is not a
+# dependency. When it is not set here or in b4.prep-base-tree, b4 only
+# names a tree that MAINTAINERS lists:
+#
+# base-tree: [https:// or git:// URL of the tree, optionally followed by a branch]
+# base-tree: none  (to leave the base-tree: footer out)
+#
 # For example:
 # ------------
 # patch-id: 7709c0eec24c2c0c973d6af92c7915b8d0a2e52c
@@ -105,6 +112,7 @@ DEPS_HELP = """
 # change-id: 20240320-some-other-example-change-id:v5
 # message-id: <20240320-some-prereq-series-v1-0@example.com>
 # base-commit: v6.9-rc1
+# base-tree: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git master
 #
 # All dependencies will be checked and converted into prerequisite-patch-id: entries
 # during "b4 send".
@@ -1161,6 +1169,19 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
     logger.info('Claimed %s. The series is now committed by %s.', mybranch, myemail)
 
 
+def is_base_tree_entry(entry: str) -> bool:
+    return entry.split(':', 1)[0].strip().lower() == 'base-tree'
+
+
+def get_dependencies(prereqs: List[str]) -> List[str]:
+    """Return the entries that are actual dependencies of the series.
+
+    base-tree: shares the --edit-deps list with the dependencies, but
+    only says where the base commit lives.
+    """
+    return [x for x in prereqs if not is_base_tree_entry(x)]
+
+
 def parse_deps(data: str) -> List[str]:
     """Turn prerequisite text into a list of prerequisite entries.
 
@@ -1168,8 +1189,8 @@ def parse_deps(data: str) -> List[str]:
     with a prefix we know about earns a warning -- but is still kept, since
     it's the user's data and they may know something we don't.
     """
-    prereqs = list()
-    recognized = {'patch-id', 'change-id', 'message-id', 'base-commit'}
+    prereqs: List[str] = list()
+    recognized = {'patch-id', 'change-id', 'message-id', 'base-commit', 'base-tree'}
     for line in data.split('\n'):
         entry = line.strip()
         if not entry or entry.startswith('#'):
@@ -1178,6 +1199,8 @@ def parse_deps(data: str) -> List[str]:
         chunks = [x.strip() for x in entry.split(':')]
         if chunks[0] not in recognized:
             logger.warning('WARNING: Unrecognized entry: %s', entry)
+        elif is_base_tree_entry(entry) and any(is_base_tree_entry(x) for x in prereqs):
+            logger.warning('WARNING: More than one base-tree, using the first one')
         prereqs.append(entry)
 
     return prereqs
@@ -1299,7 +1322,7 @@ def edit_deps() -> None:
 def check_deps(cmdargs: argparse.Namespace) -> None:
     is_prep_branch(mustbe=True)
     _cover, tracking = load_cover()
-    prereqs = tracking['series'].get('prerequisites', list())
+    prereqs = get_dependencies(tracking['series'].get('prerequisites', list()))
     if not prereqs:
         logger.info('This series has no defined dependencies.')
         logger.info('To add dependencies, use --edit-deps.')
@@ -2536,7 +2559,7 @@ def get_prep_branch_as_patches(
                 config['prep-cover-template'],
             )
             sys.exit(2)
-    prereqs = tracking['series'].get('prerequisites', list())
+    prereqs = get_dependencies(tracking['series'].get('prerequisites', list()))
     prerequisites = ''
     seen_patch_ids = set()
     for prereq in prereqs:
@@ -3841,7 +3864,7 @@ def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
     todests, ccdests, _, patches = get_prep_branch_as_patches(
         usebranch=usebranch, expandprereqs=False
     )
-    prereqs = tracking['series'].get('prerequisites', list())
+    prereqs = get_dependencies(tracking['series'].get('prerequisites', list()))
     tocmd, cccmd = get_auto_to_cc_cmds()
     ppcmds, scmds = get_check_cmds()
     pf_checks = get_preflight_checks(usebranch=usebranch)

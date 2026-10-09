@@ -1447,6 +1447,15 @@ def _write(tmp_path: pathlib.Path, name: str, content: str) -> str:
     return str(fpath)
 
 
+def _add_series_commit(gitdir: str) -> None:
+    """Give the prep branch one patch, so the series can be formatted."""
+    pathlib.Path(gitdir, 'series-file.txt').write_text('A series change.\n')
+    ecode, out = b4.git_run_command(None, ['add', 'series-file.txt'])
+    assert ecode == 0, out
+    ecode, out = b4.git_run_command(None, ['commit', '-m', 'Add a series file'])
+    assert ecode == 0, out
+
+
 def _as_stdin(bdata: bytes) -> Any:
     """A stand-in for sys.stdin that only needs to satisfy .buffer.read()."""
     return SimpleNamespace(buffer=io.BytesIO(bdata))
@@ -1561,6 +1570,7 @@ def test_prep_deps_from_file_round_trip(
         '\n'
         'change-id: some-change-id:v2\n'
         '  base-commit: abcdef1234  \n'
+        'base-tree: https://git.kernel.org/pub/scm/utils/b4/b4.git master\n'
         'bogus: entry\n'
     )
     fpath = _write(tmp_path, 'deps.txt', deps)
@@ -1571,15 +1581,39 @@ def test_prep_deps_from_file_round_trip(
     _run_prep('--show-deps')
     # No DEPS_HELP banner in the output: it must be pipe-able back in.
     assert capsys.readouterr().out == (
-        'change-id: some-change-id:v2\nbase-commit: abcdef1234\nbogus: entry\n'
+        'change-id: some-change-id:v2\n'
+        'base-commit: abcdef1234\n'
+        'base-tree: https://git.kernel.org/pub/scm/utils/b4/b4.git master\n'
+        'bogus: entry\n'
     )
 
     _cover, tracking = b4.ez.load_cover()
     assert tracking['series']['prerequisites'] == [
         'change-id: some-change-id:v2',
         'base-commit: abcdef1234',
+        'base-tree: https://git.kernel.org/pub/scm/utils/b4/b4.git master',
         'bogus: entry',
     ]
+
+
+def test_prep_base_tree_is_not_a_dependency(
+    prepdir: str, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """base-tree: lives in the deps list but must not make the series look
+    like it has dependencies, or end up as a prerequisite footer."""
+    _add_series_commit(prepdir)
+    deps = 'base-tree: https://example.org/a.git\nbase-tree: none\n'
+    with caplog.at_level(logging.WARNING):
+        _run_prep('--deps-from-file', _write(tmp_path, 'deps.txt', deps))
+    assert 'More than one base-tree' in caplog.text
+
+    branch = b4.git_get_current_branch()
+    assert branch is not None
+    info = b4.ez.get_info(branch)
+    assert (info['has-prerequisites'], info['needs-checking-deps']) == (False, False)
+    _tos, _ccs, _tag, patches = b4.ez.get_prep_branch_as_patches()
+    body, _charset = b4.LoreMessage.get_payload(patches[0][1])
+    assert 'prerequisite-' not in body
 
 
 def test_prep_deps_from_stdin_blank_clears(
