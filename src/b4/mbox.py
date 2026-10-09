@@ -82,6 +82,18 @@ def get_base_commit(
         # Does it actually exist in this tree?
         if not b4.git_commit_exists(topdir, base_commit):
             logger.warning(' Base: base-commit %s not known, ignoring', base_commit)
+            # A fetch needs the full hash. Suggest it rather than run it:
+            # the URL comes from an email.
+            if lser.base_tree and len(base_commit) in (40, 64):
+                logger.warning(
+                    ' Base: it should be in %s, to get it run:',
+                    ' '.join(lser.base_tree).rstrip(),
+                )
+                logger.warning(
+                    '       git fetch %s %s',
+                    shlex.quote(lser.base_tree[0]),
+                    base_commit,
+                )
             base_commit = 'HEAD'
         elif not cmdargs.mergebase:
             logger.debug(' Base: using specified base-commit %s', base_commit)

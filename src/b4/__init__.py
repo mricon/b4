@@ -827,6 +827,8 @@ class LoreSeries:
     base_commit: Optional[str] = None
     change_id: Optional[str] = None
     prereq_patch_ids: Optional[List[str]] = None
+    # (https:// URL, branch or ''), from a base-tree: footer
+    base_tree: Optional[Tuple[str, str]] = None
     _submission_date: Optional[datetime.datetime] = None
 
     def __init__(self, revision: int, expected: int) -> None:
@@ -937,6 +939,16 @@ class LoreSeries:
                 )
                 if matches:
                     self.change_id = matches.groups()[0]
+            if not self.base_tree and '\nbase-tree:' in lmsg.body:
+                # Only https:// and git://: the URL may end up in a command
+                # we suggest, so no ext::, ssh or local paths
+                matches = re.search(
+                    r'^base-tree:[ \t]+((?:https|git)://\S+)(?:[ \t]+(\S+))?[ \t]*$',
+                    lmsg.body,
+                    flags=re.I | re.M,
+                )
+                if matches:
+                    self.base_tree = (matches.group(1), matches.group(2) or '')
             if not self.prereq_patch_ids and '\nprerequisite-patch-id:' in lmsg.body:
                 self.prereq_patch_ids = re.findall(
                     r'^prerequisite-patch-id:\s+(\S+)', lmsg.body, flags=re.I | re.M

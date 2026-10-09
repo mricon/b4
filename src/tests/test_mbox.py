@@ -1,10 +1,12 @@
+import argparse
 import io
+import logging
 import mailbox
 import os
 import sys
 from email.message import EmailMessage
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from unittest.mock import patch as mock_patch
 
 import pytest
@@ -13,7 +15,7 @@ import b4
 import b4.command
 import b4.mbox
 
-from .helpers.mail import make_msg
+from .helpers.mail import MINIMAL_DIFF, make_msg
 
 
 def test_minimize_thread_preserves_reply_separator() -> None:
@@ -301,3 +303,49 @@ def test_get_extra_series_accepts_matching_change_id() -> None:
     assert 'v2-1@example.com' in result_msgids
     assert 'v2-2@example.com' in result_msgids
     assert len(result) == 4
+
+
+@pytest.mark.parametrize(
+    'tree,hint',
+    [
+        (
+            'https://git.kernel.org/pub/scm/utils/b4/b4.git master',
+            'git fetch https://git.kernel.org/pub/scm/utils/b4/b4.git ',
+        ),
+        (
+            'git://git.kernel.org/pub/scm/utils/b4/b4.git master',
+            'git fetch git://git.kernel.org/pub/scm/utils/b4/b4.git ',
+        ),
+        # Only https:// and git:// are ever suggested
+        ('ssh://example.org/b4.git master', None),
+        ('ext::sh%20-c%20touch%20pwned', None),
+        ('git://example.org/b4.git; rm -rf ~', None),
+    ],
+)
+def test_unknown_base_suggests_base_tree_fetch(
+    gitdir: str, caplog: pytest.LogCaptureFixture, tree: str, hint: Optional[str]
+) -> None:
+    base = 'f' * 40
+    body = f'Series\n\n---\nbase-commit: {base}\nbase-tree: {tree}\n'
+    lmbx = b4.LoreMailbox()
+    lmbx.add_message(make_msg('cover@example.com', '[PATCH 0/1] Series', body=body))
+    lmbx.add_message(
+        make_msg(
+            'patch@example.com',
+            '[PATCH 1/1] Patch',
+            body=MINIMAL_DIFF,
+            in_reply_to='cover@example.com',
+        )
+    )
+    lser = lmbx.get_series(codereview_trailers=False)
+    assert lser is not None
+    cmdargs = argparse.Namespace(mergebase=False, guessbase=False)
+    with caplog.at_level(logging.WARNING):
+        assert b4.mbox.get_base_commit(gitdir, body, lser, cmdargs) == 'HEAD'
+    assert f'base-commit {base} not known' in caplog.text
+    if hint is None:
+        assert lser.base_tree is None
+        assert 'git fetch' not in caplog.text
+    else:
+        assert lser.base_tree == tuple(tree.split())
+        assert f'{hint}{base}' in caplog.text
