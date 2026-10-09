@@ -306,9 +306,86 @@ verifications:
 - checks if newer versions of the series are available
 - checks that the specified base-commit is present in the tree
 - checks if prerequisite series plus your patches cleanly apply
+- checks that the base commit is in the tree named by ``base-tree:``
+  (see :ref:`prep_base_tree`)
 
 You should run ``--check-deps`` right after editing them, and right
 before submitting your series for review.
+
+.. _prep_base_tree:
+
+Naming the base tree
+--------------------
+
+.. versionadded:: v0.17
+
+The ``base-commit:`` footer says which commit your series applies to,
+but not where to get it. B4 can also add a ``base-tree:`` footer that
+names the tree and branch, so maintainers and CI systems don't have to
+guess::
+
+    base-commit: 1a2b3c4d5e6f...
+    base-tree: https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git main
+    change-id: 20261009-example-1a2b3c4d5e6f
+
+B4 never makes a tree public by naming it. A remote can be a private
+repository or a fork that you don't advertise, even on a public host
+like GitHub, so b4 only names a tree that you chose, or one that is
+public already. In this order:
+
+1. The ``base-tree:`` line of the series, which you set with
+   ``b4 prep --edit-deps``.
+2. The :term:`b4.prep-base-tree` setting in your git configuration.
+3. A tree that the ``MAINTAINERS`` file at the top of your repository
+   lists, such as the Linux kernel's. B4 only uses it when you have a
+   remote for that tree whose branches contain your base commit.
+
+If none of these gives a tree, b4 leaves the footer out.
+
+You set the tree with one of these lines, in ``--edit-deps`` for one
+series, or in :term:`b4.prep-base-tree` for all of them::
+
+    base-tree: https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git main
+    base-tree: none
+
+The URL must use ``https://`` or ``git://``, and the branch is optional.
+``none`` leaves the footer out. The ``base-tree:`` line is not a
+dependency, and its place in the list doesn't matter.
+
+When b4 takes the tree from ``MAINTAINERS``, it writes the URL the way
+``MAINTAINERS`` spells it, even if your remote is an ssh or gitolite push
+URL. B4 looks for the remote-tracking branches that contain your base
+commit, whatever cover letter strategy you use, and picks:
+
+- the base branch you started the series from, if it still contains
+  the base commit (after a rebase, it may not);
+- otherwise, from each tree that has it, the tree's main branch: the
+  branch that ``MAINTAINERS`` names for the tree, or else the branch
+  that the remote's ``HEAD`` points to (or ``master`` or ``main``), not a
+  side branch that happens to start at the same tag. If the main branch
+  doesn't have it, the closest branch that does;
+- if several trees have it, the tree whose branch is closest to the base
+  commit, which is usually the most specific tree. For example, a series
+  based on a subsystem tree names that tree, not linux-next, which
+  merges it.
+
+Keep your remotes fetched, because b4 only sees the remote-tracking
+branches that you have locally.
+
+Checking that the base is in the tree
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+A common mistake is to fix a bug on a local topic branch and send the
+fix without rebasing it first. Then the ``base-commit:`` exists only on
+your computer. To catch this, ``b4 prep --check-deps`` and ``b4 send``
+ask the tree from ``base-tree:`` whether it has your base commit. If
+b4 has no tree to name, it checks that the base commit is at least on
+one of your remote-tracking branches.
+
+B4 only warns when the tree clearly doesn't have the base commit. When
+you are offline, or the remote doesn't answer, the check passes quietly.
+If your clone is behind the tree, b4 fetches the tip of the branch named
+in ``base-tree:`` (objects only, never a whole tree) to answer. The check
+never changes your branches or tags.
 
 .. _prep_recipients:
 
@@ -418,7 +495,9 @@ modifying defaults for some of these flags.
 
 ``--edit-deps``
   Lets you edit the series dependencies in the configured editor (same
-  editor selection order as ``--edit-cover``).
+  editor selection order as ``--edit-cover``). This is also where you
+  can set or turn off the ``base-tree:`` footer (see
+  :ref:`prep_base_tree`).
 
   .. versionadded:: v0.14
 
@@ -449,7 +528,8 @@ modifying defaults for some of these flags.
 
 ``--check-deps``
   Verifies that b4 can resolve all specified dependencies and that
-  everything cleanly applies to the base-commit specified.
+  everything cleanly applies to the base-commit specified. It also
+  checks that the base commit is in the tree named by ``base-tree:``.
 
   .. versionadded:: v0.14
 

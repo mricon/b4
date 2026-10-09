@@ -342,6 +342,20 @@ skipped.
 This means that many series that would previously fail to apply now
 succeed without any manual intervention.
 
+Fetching an unknown base commit
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When the ``base-commit:`` of a series is not in your repository, b4
+says so and applies the series on your current ``HEAD`` instead. If the
+series also has a ``base-tree:`` footer, b4 tells you where the base
+commit lives and how to get it::
+
+     Base: base-commit 1a2b3c4d... not known, ignoring
+     Base: it should be in https://git.kernel.org/.../net-next.git, to get it run:
+           git fetch https://git.kernel.org/.../net-next.git 1a2b3c4d...
+
+B4 only suggests this command and never runs it, because the URL comes
+from an email. After the fetch, run b4 again.
+
 Conflict resolution
 ~~~~~~~~~~~~~~~~~~~~
 If a series still fails to apply even with three-way merge, ``b4

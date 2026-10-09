@@ -202,6 +202,11 @@ generates a warning:
   the description was written into the cover letter (which, for a
   single-patch series, b4 folds below the cut) instead of the commit
   message itself, where ``git am`` would discard it
+- ``base-not-in-tree``: the tree named in the ``base-tree:`` footer
+  doesn't have your base commit, which usually means that you forgot to
+  rebase a fix that you made on a local topic branch (see
+  :ref:`prep_base_tree`). This check asks the remote when you send, and
+  stays quiet when the remote doesn't answer.
 
 If you find that some of these pre-flight checks aren't relevant to you,
 you can either turn them all off, or only the ones that you don't like.

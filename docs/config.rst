@@ -1030,6 +1030,19 @@ Contributor-oriented settings
 .. glossary::
    :sorted:
 
+   :term:`b4.prep-base-tree`
+     The tree to name in the ``base-tree:`` footer of every series in this
+     repository: an ``https://`` or ``git://`` URL, optionally followed by
+     a branch, or ``none`` to leave the footer out. A ``base-tree:`` line
+     in ``b4 prep --edit-deps`` wins over it. When neither is set, b4 only
+     names a tree that ``MAINTAINERS`` lists (see :ref:`prep_base_tree`).
+     B4 doesn't accept this setting from ``.b4-config``, so a
+     repository you clone can't choose a URL for your email.
+
+     Default: ``None``
+
+     .. versionadded:: v0.17
+
    :term:`b4.prep-cover-strategy`
      Alternative cover letter storage strategy to use, in case you don't
      want to use the default ``commit`` strategy. See
@@ -1046,6 +1059,8 @@ Contributor-oriented settings
      * ``${diffstat}``: the ``git diff --stat`` output for the series
      * ``${range_diff}``: the ``git range-diff`` output against the previous revision of the series
      * ``${base_commit}``: the base commit of the series
+     * ``${base_tree}``: the whole ``base-tree:`` footer line, or nothing
+       when b4 has no tree to name (see :ref:`prep_base_tree`)
      * ``${change_id}``: the change-id of the series
      * ``${signature}``: your signature, either from ``~/.signature`` if found, or from your Git config
 
