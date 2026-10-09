@@ -75,7 +75,7 @@ def get_base_commit(
         )
         base_commit = lser.prereq_base_commit
     else:
-        matches = re.search(r'base-commit: .*?([\da-f]+)', body, re.MULTILINE)
+        matches = b4.BASE_COMMIT_RE.search(body)
         if matches:
             base_commit = matches.groups()[0]
         else:

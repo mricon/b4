@@ -95,11 +95,13 @@ def _blob(repo: str, at: str, fname: str, length: int = 12) -> str:
     return _git(repo, 'rev-parse', f'{at}:{fname}')[:length]
 
 
-def _series(indexes: List[Tuple[str, str]]) -> b4.LoreSeries:
+def _series(
+    indexes: List[Tuple[str, str]], submitted: datetime.datetime = SUBMITTED
+) -> b4.LoreSeries:
     """A series carrying nothing but the blob indexes we want to look up."""
     lser = b4.LoreSeries(revision=1, expected=1)
     lser._indexes = indexes
-    lser._submission_date = SUBMITTED
+    lser._submission_date = submitted
     return lser
 
 
@@ -166,6 +168,21 @@ class TestCheckAppliesClean:
         checked, mismatches = _series(indexes).check_applies_clean(path, 'nosuchref')
         assert checked == 2
         assert mismatches == indexes
+
+    def test_answers_stay_with_their_commit(self, repo: Dict[str, str]) -> None:
+        # find_base() asks about many commits in one go; a revision git cannot
+        # resolve in the middle must not shift the answers for the ones after.
+        path = repo['repo']
+        indexes = [
+            ('a.txt', _blob(path, repo['c2'], 'a.txt')),
+            ('b.txt', _blob(path, repo['c2'], 'b.txt')),
+            ('c.txt', _blob(path, repo['c2'], 'c.txt')),
+        ]
+        a, b, c = indexes
+        got = _series(indexes)._mismatches_at(
+            path, [repo['c1'], repo['c2'], 'nosuchref', repo['c4']]
+        )
+        assert got == [[a], [], [a, b, c], [b, c]]
 
     def test_matches_an_older_commit(self, repo: Dict[str, str]) -> None:
         path = repo['repo']
@@ -256,6 +273,53 @@ class TestGitMapBlobsToCommits:
             == {}
         )
 
+    def test_paths_still_see_commits_a_merge_discarded(
+        self, repo: Dict[str, str]
+    ) -> None:
+        # A side branch changes a.txt, and the merge keeps master's version.
+        # Plain path-limited history hides the side commit behind the merge,
+        # but the series may well have been made on top of it.
+        path = repo['repo']
+        _git(path, 'checkout', '-q', '-b', 'side', repo['c4'])
+        side = _commit(
+            path, '2026-01-16T12:00:00+0000', 'side', write={'a.txt': 'a side\n'}
+        )
+        _git(path, 'checkout', '-q', 'master')
+        _git(path, 'merge', '-q', '-s', 'ours', '-m', 'merge', 'side')
+        _git(path, 'branch', '-q', '-D', 'side')
+        blob = _blob(path, side, 'a.txt')
+        assert b4.git_map_blobs_to_commits(
+            path, {blob}, self.since, self.until, ['--all'], paths=['a.txt']
+        ) == {blob: [side]}
+
+    def test_paths_leave_out_other_files(self, repo: Dict[str, str]) -> None:
+        path = repo['repo']
+        blob = _blob(path, 'HEAD', 'b.txt')
+        assert (
+            b4.git_map_blobs_to_commits(
+                path, {blob}, self.since, self.until, ['--all'], paths=['a.txt']
+            )
+            == {}
+        )
+
+    def test_paths_are_taken_literally(self, repo: Dict[str, str]) -> None:
+        # A path from a diff is a name, not a pattern: 'a[1].txt' must not
+        # also pull in changes to 'a1.txt'.
+        path = repo['repo']
+        _commit(
+            path,
+            '2026-01-16T12:00:00+0000',
+            'glob',
+            write={'a[1].txt': 'bracket\n', 'a1.txt': 'plain\n'},
+        )
+        blob = _blob(path, 'HEAD', 'a1.txt')
+        assert (
+            b4.git_map_blobs_to_commits(
+                path, {blob}, self.since, self.until, ['--all'], paths=['a[1].txt']
+            )
+            == {}
+        )
+
     def test_unknown_blob_is_absent(self, repo: Dict[str, str]) -> None:
         assert self._map(repo['repo'], ['0' * 12]) == {}
 
@@ -329,3 +393,85 @@ class TestFindBase:
         describe, checked, fewest = lser.find_base(path)
         assert (checked, fewest) == (3, 1)
         assert _git(path, 'rev-parse', f'{describe}^{{}}') == repo['c2']
+
+    def test_counts_commits_from_the_same_day_as_the_submission(
+        self, repo: Dict[str, str]
+    ) -> None:
+        # Sent a minute after its base was committed, late in the day, with
+        # a.txt changing again the next day. Cutting off at the date alone
+        # let git fill in the current time of day, which hid the base
+        # whenever b4 ran earlier in the day than the patch was sent.
+        path = repo['repo']
+        base = _commit(
+            path, '2026-01-20T23:58:00+0000', 'five', write={'a.txt': 'a three\n'}
+        )
+        _commit(path, '2026-01-21T12:00:00+0000', 'six', write={'a.txt': 'a four\n'})
+        lser = _series(
+            [
+                ('a.txt', _blob(path, base, 'a.txt')),
+                ('b.txt', _blob(path, base, 'b.txt')),
+            ],
+            submitted=datetime.datetime(
+                2026, 1, 20, 23, 59, 0, tzinfo=datetime.timezone.utc
+            ),
+        )
+        describe, checked, fewest = lser.find_base(path)
+        assert (checked, fewest) == (2, 0)
+        assert _git(path, 'rev-parse', f'{describe}^{{}}') == base
+
+    def test_ignores_refs_that_hold_no_source(self, repo: Dict[str, str]) -> None:
+        # git-bug keeps its database in commits under refs/bugs and
+        # refs/identities, dated when the bug was touched, and a fetch copies
+        # them under refs/remotes/. None of those must stand in for the
+        # newest commit before the submission.
+        path = repo['repo']
+        empty = _git(path, 'mktree')
+        env = dict(os.environ)
+        env['GIT_AUTHOR_DATE'] = env['GIT_COMMITTER_DATE'] = '2026-01-19T12:00:00+0000'
+        bug = subprocess.run(
+            ['git', '-C', path, 'commit-tree', '-m', 'bug', empty],
+            input='',
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        ).stdout.strip()
+        for ref in (
+            'refs/bugs/1234',
+            'refs/identities/5678',
+            'refs/remotes/origin/bugs/1234',
+            'refs/remotes/origin/identities/5678',
+        ):
+            _git(path, 'update-ref', ref, bug)
+        lser = _series(
+            [
+                ('a.txt', _blob(path, 'HEAD', 'a.txt')),
+                ('b.txt', _blob(path, 'HEAD', 'b.txt')),
+            ]
+        )
+        describe, checked, fewest = lser.find_base(path)
+        assert (checked, fewest) == (2, 0)
+        # c3 has the same blobs, but only c4 is the newest commit we have.
+        assert _git(path, 'rev-parse', f'{describe}^{{}}') == repo['c4']
+
+
+class TestBaseCommitRe:
+    """Tests for the pattern that reads base-commit: out of a cover letter."""
+
+    @pytest.mark.parametrize(
+        'body,want',
+        [
+            pytest.param('base-commit: 1234abcd5678\n', '1234abcd5678', id='short'),
+            pytest.param(f'base-commit: {"a" * 40}\n', 'a' * 40, id='sha1'),
+            pytest.param(f'base-commit: {"b" * 64}\n', 'b' * 64, id='sha256'),
+            pytest.param('Base-Commit: 1234abcd\n', '1234abcd', id='any-case'),
+            pytest.param('text\nbase-commit: 1234abcd\n', '1234abcd', id='later'),
+            pytest.param('base-commit: next-20260101\n', None, id='ref-name'),
+            pytest.param('base-commit: 1234ab\n', None, id='too-short'),
+            pytest.param('base-commit: 1234abcdxyz\n', None, id='not-all-hex'),
+            pytest.param('> base-commit: 1234abcd\n', None, id='quoted'),
+        ],
+    )
+    def test_parse(self, body: str, want: Optional[str]) -> None:
+        matches = b4.BASE_COMMIT_RE.search(body)
+        assert (matches.group(1) if matches else None) == want

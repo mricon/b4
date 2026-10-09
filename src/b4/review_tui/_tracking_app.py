@@ -396,12 +396,14 @@ def _detect_initial_base(
             base_hint = f'Series base: {short} (not in repo)'
     if topdir and initial_base == 'HEAD':
         # No usable series base -- try guessing.
-        # Exclude b4 review branches -- they are never
-        # useful as a base for applying new series.
+        # Exclude b4 review branches -- they are never useful as a base for
+        # applying new series. git matches the pattern against the name with
+        # refs/heads/ already stripped.
         try:
             guessed, nblobs, mismatches = lser.find_base(
                 topdir,
-                branches=['--exclude=refs/heads/b4/review/*', '--all'],
+                branches=['--exclude=b4/review/*', '--branches']
+                + b4.BASE_SEARCH_REMOTES_AND_TAGS,
                 maxdays=30,
             )
             if guessed:

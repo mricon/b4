@@ -214,6 +214,20 @@ FILENAME_RE = re.compile(r'^(---|\+\+\+) (\S+)')
 DIFF_RE = re.compile(
     r'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)', flags=re.M | re.I
 )
+# Only a hash counts: a ref name such as 'next-20260101' means nothing in
+# the recipient's tree, and matching loosely would pull an 'e' out of it.
+BASE_COMMIT_RE = re.compile(r'^base-commit:\s*([\da-f]{7,64})\b', flags=re.M | re.I)
+# Remote-tracking refs and tags that find_base() may search. git-bug keeps its
+# database in commits under refs/bugs and refs/identities, and a fetch lands
+# copies under refs/remotes/<remote>/; they carry fresh dates and never hold
+# source. --exclude patterns are matched with the refs/remotes/ prefix already
+# stripped, and only apply to the scope option that follows them.
+BASE_SEARCH_REMOTES_AND_TAGS = [
+    '--exclude=*/bugs/*',
+    '--exclude=*/identities/*',
+    '--remotes',
+    '--tags',
+]
 DIFFSTAT_RE = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 # Body lines that mboxrd escapes by adding one more '>'
 MBOXRD_FROM_RE = re.compile(rb'^(>*From )', flags=re.M)
@@ -911,9 +925,7 @@ class LoreSeries:
         if lmsg.counter < 2:
             # Cover letter or first patch
             if not self.base_commit and '\nbase-commit:' in lmsg.body:
-                matches = re.search(
-                    r'^base-commit: .*?([\da-f]+)', lmsg.body, flags=re.I | re.M
-                )
+                matches = BASE_COMMIT_RE.search(lmsg.body)
                 if matches:
                     self.base_commit = matches.groups()[0]
             if not self.change_id and '\nchange-id:' in lmsg.body:
@@ -1393,36 +1405,48 @@ class LoreSeries:
                 self._indexes.append((ofn, obh))
         return self._indexes
 
+    def _mismatches_at(
+        self, gitdir: Optional[str], ats: List[str]
+    ) -> List[List[Tuple[str, str]]]:
+        """Return, for each commit-ish in *ats*, the indexes it does not match.
+
+        Every lookup for every commit goes to a single git process: starting
+        one per file is about 25 times slower on a large series, and
+        find_base() has dozens of candidate commits to look at.
+        """
+        stdin = ''.join(
+            f'{at}:{fn}\n' for at in ats for fn, _bh in self.indexes
+        ).encode()
+        ecode, out = git_run_command(gitdir, ['cat-file', '--batch-check'], stdin=stdin)
+        lines = out.splitlines() if ecode == 0 else list()
+        results: List[List[Tuple[str, str]]] = list()
+        pos = 0
+        for at in ats:
+            mismatches: List[Tuple[str, str]] = list()
+            for fn, bh in self.indexes:
+                # batch-check answers our queries in order, one line each, so
+                # line N belongs to query N. A line we did not get back (git
+                # bailed out early) counts as a file we could not look up.
+                chunks = lines[pos].split() if pos < len(lines) else list()
+                pos += 1
+                if len(chunks) == 3 and chunks[1] == 'blob':
+                    if chunks[0].startswith(bh):
+                        continue
+                    logger.debug('%s:%s hash: %s (expected: %s)', at, fn, chunks[0], bh)
+                else:
+                    logger.debug('Could not look up %s:%s', at, fn)
+                mismatches.append((fn, bh))
+            results.append(mismatches)
+        return results
+
     def check_applies_clean(
         self, gitdir: Optional[str] = None, at: Optional[str] = None
     ) -> Tuple[int, List[Tuple[str, str]]]:
-        mismatches: List[Tuple[str, str]] = list()
+        if not self.indexes:
+            return 0, list()
         if at is None:
             at = 'HEAD'
-        if not self.indexes:
-            return 0, mismatches
-        # Ask about every file in a single git process. One ls-tree per file is
-        # about 25 times slower on a large series, and find_base() calls us once
-        # for every candidate commit it considers, so the saving compounds.
-        stdin = ''.join(f'{at}:{fn}\n' for fn, _bh in self.indexes).encode()
-        ecode, out = git_run_command(gitdir, ['cat-file', '--batch-check'], stdin=stdin)
-        lines = out.splitlines() if ecode == 0 else list()
-        for pos, (fn, bh) in enumerate(self.indexes):
-            # batch-check answers our queries in order, one line each, so line N
-            # belongs to file N. A line we did not get back (git bailed out
-            # early) counts as a file we could not look up.
-            chunks = lines[pos].split() if pos < len(lines) else list()
-            if len(chunks) == 3 and chunks[1] == 'blob':
-                if chunks[0].startswith(bh):
-                    logger.debug('%s hash: matched', fn)
-                    continue
-                logger.debug('%s hash: %s (expected: %s)', fn, chunks[0], bh)
-            else:
-                # Couldn't get this file, continue
-                logger.debug('Could not look up %s:%s', at, fn)
-            mismatches.append((fn, bh))
-
-        return len(self.indexes), mismatches
+        return len(self.indexes), self._mismatches_at(gitdir, [at])[0]
 
     def find_base(
         self,
@@ -1437,12 +1461,15 @@ class LoreSeries:
         if not pdate:
             pdate = datetime.datetime.now(tz=datetime.timezone.utc)
 
-        # Find the latest commit on that date
-        guntil = pdate.strftime('%Y-%m-%d')
+        # git reads a bare YYYY-MM-DD as that day at the *current* wall-clock
+        # time, so passing whole days made the answer depend on when b4 ran.
+        guntil = '@%d' % pdate.timestamp()
         if branches:
             where = branches
         else:
-            where = ['--all']
+            # Not --all: that also walks git-bug, notes and stash refs, whose
+            # commits carry fresh dates and never hold the tree we want.
+            where = ['HEAD', '--branches'] + BASE_SEARCH_REMOTES_AND_TAGS
 
         gitargs = [
             'log',
@@ -1453,47 +1480,42 @@ class LoreSeries:
         ] + where
         lines = git_get_command_lines(gitdir, gitargs)
         if not lines:
-            raise IndexError('No commits found before %s' % guntil)
-        commit = lines[0].split()[0]
-        _checked, mismatches = self.check_applies_clean(gitdir, commit)
+            raise IndexError('No commits found before %s' % pdate)
+        best = lines[0].split()[0]
+        _checked, mismatches = self.check_applies_clean(gitdir, best)
         fewest = len(mismatches)
         if fewest > 0:
             since = pdate - datetime.timedelta(days=maxdays)
-            gsince = since.strftime('%Y-%m-%d')
-            logger.debug('Mapping blobs from %s to %s', gsince, guntil)
-            best = commit
-            # Walking history once for all the blobs we care about costs about
-            # as much as a single --find-object walk, so we do that instead of
-            # one walk per mismatched blob.
+            gsince = '@%d' % since.timestamp()
+            logger.debug('Mapping blobs from %s to %s', since, pdate)
             blobmap = git_map_blobs_to_commits(
-                gitdir, {bi for _fn, bi in mismatches}, gsince, guntil, where
+                gitdir,
+                {bi for _fn, bi in mismatches},
+                gsince,
+                guntil,
+                where,
+                paths=[fn for fn, _bi in mismatches],
             )
-            for fn, bi in mismatches:
-                logger.debug('Finding tree matching %s=%s in %s', fn, bi, where)
-                commits = blobmap.get(bi)
-                if not commits:
-                    logger.debug('Could not find object %s in the tree', bi)
-                    continue
-                for commit in commits:
-                    logger.debug('commit=%s', commit)
-                    # We try both that commit and the one preceding it, in case it was a deletion
-                    # Keep track of the fewest mismatches
-                    for tc in [commit, f'{commit}~1']:
-                        sc, sm = self.check_applies_clean(gitdir, tc)
-                        if len(sm) < fewest and len(sm) != sc:
-                            fewest = len(sm)
-                            best = tc
-                            logger.debug('fewest=%s, best=%s', fewest, best)
-                            if fewest == 0:
-                                break
+            # A commit touching a blob either added it, so the commit itself
+            # holds it, or replaced it, so its parent does; try both.
+            candidates: List[str] = list()
+            seen: Set[str] = set()
+            for _fn, bi in mismatches:
+                for commit in blobmap.get(bi, list()):
+                    for tc in (commit, f'{commit}~1'):
+                        if tc not in seen:
+                            seen.add(tc)
+                            candidates.append(tc)
+            logger.debug('Checking %d candidate commits', len(candidates))
+            if candidates:
+                results = self._mismatches_at(gitdir, candidates)
+                for tc, sm in zip(candidates, results):
+                    # A candidate matching nothing is no better than none.
+                    if len(sm) < fewest and len(sm) != len(self.indexes):
+                        fewest = len(sm)
+                        best = tc
                         if fewest == 0:
                             break
-                    if fewest == 0:
-                        break
-                if fewest == 0:
-                    break
-        else:
-            best = commit
         if fewest == len(self.indexes):
             # None of the blobs matched
             raise IndexError('None of the %d blob(s) matched' % len(self.indexes))
@@ -4423,6 +4445,7 @@ def git_map_blobs_to_commits(
     gsince: str,
     guntil: str,
     where: List[str],
+    paths: Optional[List[str]] = None,
 ) -> Dict[str, List[str]]:
     """Find which commits in a date range touch any of *blobs*.
 
@@ -4430,7 +4453,8 @@ def git_map_blobs_to_commits(
     commits touching it, newest first -- the same thing you would get by
     running ``git log --find-object`` once per blob, but from a single walk of
     the history. The hashes in *blobs* may be abbreviated, as they come
-    straight out of the ``index`` lines of a patch.
+    straight out of the ``index`` lines of a patch. With *paths*, only
+    changes to those paths are considered.
     """
     # Group the hashes we are looking for by length, so we can compare each
     # hash git gives us against the right-sized prefix.
@@ -4449,6 +4473,14 @@ def git_map_blobs_to_commits(
         '--until',
         guntil,
     ] + where
+    if paths:
+        # Limiting the walk to the files we ask about lets git skip diffing
+        # everything else, which is 3-5x faster on a kernel tree. Without
+        # --full-history, git would hide side-branch commits whose changes
+        # did not survive a merge, and those can be the base we are after.
+        # Paths come out of a diff, so '[' or '*' in one is a character, not
+        # a glob.
+        gitargs += ['--full-history', '--'] + [f':(literal){p}' for p in paths]
     _ecode, out = git_run_command(gitdir, gitargs)
 
     found: Dict[str, List[str]] = dict()
