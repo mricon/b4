@@ -271,8 +271,17 @@ def test_get_applied_info_none_without_commits() -> None:
             'https://gitlab.com/group/repo',
             '0123456789abcdef',
         ),
-        # git.kernel.org shortlink: commit recoverable, repo is not
-        ('https://git.kernel.org/username/c/abc123def456', None, 'abc123def456'),
+        (
+            'https://git.kernel.org/broonie/spi/c/abc123def456',
+            'https://git.kernel.org/pub/scm/linux/kernel/git/broonie/spi.git',
+            'abc123def456',
+        ),
+        # A shortlink without a repository means linux.git
+        (
+            'https://git.kernel.org/torvalds/c/abc123def456',
+            'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git',
+            'abc123def456',
+        ),
         ('https://example.com/whatever', None, None),
     ],
 )
@@ -280,6 +289,77 @@ def test_parse_checkurl(
     checkurl: str, repo: Optional[str], commit: Optional[str]
 ) -> None:
     assert b4.ty._parse_checkurl(checkurl) == (repo, commit)
+
+
+_KORG_SPI = 'pub/scm/linux/kernel/git/broonie/spi.git'
+_KORG_SPI_MASK = 'https://git.kernel.org/broonie/spi/c/%.12s'
+
+
+@pytest.mark.parametrize(
+    'repo,mask',
+    [
+        (f'https://git.kernel.org/{_KORG_SPI}', _KORG_SPI_MASK),
+        (f'https://git.kernel.org/{_KORG_SPI}/', _KORG_SPI_MASK),
+        (f'git://git.kernel.org/{_KORG_SPI}', _KORG_SPI_MASK),
+        # Push remotes, in both ssh syntaxes
+        (f'git@gitolite.kernel.org:{_KORG_SPI}', _KORG_SPI_MASK),
+        (f'ssh://git@gitolite.kernel.org/{_KORG_SPI}', _KORG_SPI_MASK),
+        # Outside the personal kernel trees there are no shortlinks
+        (
+            'https://git.kernel.org/pub/scm/utils/b4/b4.git',
+            'https://git.kernel.org/pub/scm/utils/b4/b4.git/commit/?id=%s',
+        ),
+        ('https://github.com/user/repo.git', 'https://github.com/user/repo/commit/%s'),
+        ('https://github.com/user/repo', 'https://github.com/user/repo/commit/%s'),
+        ('git@github.com:user/repo.git', 'https://github.com/user/repo/commit/%s'),
+        # Credentials must never end up in a mail sent to a public list
+        (
+            'https://user:secret@github.com/user/repo.git',
+            'https://github.com/user/repo/commit/%s',
+        ),
+        # URL escapes survive the later % formatting
+        (
+            'https://github.com/user/my%2Brepo',
+            'https://github.com/user/my%%2Brepo/commit/%s',
+        ),
+        (
+            'https://gitlab.com/group/sub/repo.git',
+            'https://gitlab.com/group/sub/repo/-/commit/%s',
+        ),
+        # Not a repository
+        ('https://github.com/user', None),
+        ('https://gitlab.com/group', None),
+        ('https://git.kernel.org/', None),
+        # Unknown hosts and local repositories
+        ('https://example.com/repo.git', None),
+        ('git@example.com:repo.git', None),
+        ('/srv/git/repo.git', None),
+        ('file:///srv/git/repo.git', None),
+    ],
+)
+def test_derive_commit_url_mask(repo: str, mask: Optional[str]) -> None:
+    assert b4.ty.derive_commit_url_mask(repo) == mask
+
+
+@pytest.mark.parametrize(
+    'repo',
+    [
+        f'https://git.kernel.org/{_KORG_SPI}',
+        'https://git.kernel.org/pub/scm/utils/b4/b4.git',
+        'https://github.com/user/repo',
+        'https://gitlab.com/group/sub/repo',
+    ],
+)
+def test_derived_commit_url_round_trips(repo: str) -> None:
+    """The queue recovers the repository from a derived commit URL, so
+    deriving and parsing must agree on every layout."""
+    mask = b4.ty.derive_commit_url_mask(repo)
+    assert mask is not None
+    sha = '0123456789abcdef0123456789abcdef01234567'
+    parsed_repo, parsed_sha = b4.ty._parse_checkurl(mask % sha)
+    assert parsed_repo is not None and parsed_sha is not None
+    assert sha.startswith(parsed_sha)
+    assert b4.ty.derive_commit_url_mask(parsed_repo) == mask
 
 
 def test_get_check_repo_config_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -489,6 +569,46 @@ def test_get_thanks_target_remote_overrides_global(
     assert target.cidmask == 'https://example.com/global/c/%s'
     assert target.treename == 'global/tree'
     assert target.am_template == '/global/am'
+
+
+def test_get_thanks_target_mask_priority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Commit URL masks: explicit per-remote, then explicit global, then
+    derived from the check repo; an explicitly empty mask disables links."""
+    repo = str(tmp_path / 'repo')
+    _init_repo(repo)
+    b4.git_set_config(repo, 'remote.spi.url', f'git@gitolite.kernel.org:{_KORG_SPI}')
+    b4.git_set_config(repo, 'branch.for-next.remote', 'spi')
+
+    def _cidmask() -> Optional[str]:
+        return b4.ty.get_thanks_target(repo, 'for-next').cidmask
+
+    # Derived from the remote URL, which is also the check repo
+    assert _cidmask() == _KORG_SPI_MASK
+    # ... or from whatever check repo the remote names instead
+    b4.git_set_config(
+        repo, 'remote.spi.b4-check-repo', 'https://github.com/user/spi.git'
+    )
+    assert _cidmask() == 'https://github.com/user/spi/commit/%s'
+    # An explicit global mask beats any derived one
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG, 'thanks-commit-url-mask', 'https://example.com/c/%s'
+    )
+    assert _cidmask() == 'https://example.com/c/%s'
+    # An explicitly empty one opts out of links
+    monkeypatch.setitem(b4.MAIN_CONFIG, 'thanks-commit-url-mask', '')
+    assert _cidmask() is None
+    # A per-remote mask beats everything, and can opt that remote out too
+    b4.git_set_config(
+        repo, 'remote.spi.b4-commit-url-mask', 'https://example.com/spi/c/%s'
+    )
+    assert _cidmask() == 'https://example.com/spi/c/%s'
+    monkeypatch.setitem(
+        b4.MAIN_CONFIG, 'thanks-commit-url-mask', 'https://example.com/c/%s'
+    )
+    b4.git_set_config(repo, 'remote.spi.b4-commit-url-mask', '')
+    assert _cidmask() is None
 
 
 def test_get_thanks_target_ignores_mask_without_conversion(

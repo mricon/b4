@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
@@ -292,6 +293,93 @@ def auto_locate_series(
     return found
 
 
+# Public hosts whose commit links b4 knows how to build from a repository
+# URL, keyed by every host name their repositories are reached through.
+# Remotes are often push URLs, so map those to the web host.
+_FORGE_WEB_HOSTS = {
+    'git.kernel.org': 'git.kernel.org',
+    'gitolite.kernel.org': 'git.kernel.org',
+    'github.com': 'github.com',
+    'gitlab.com': 'gitlab.com',
+}
+
+# Where git.kernel.org offers short commit links, see
+# https://korg.docs.kernel.org/git-url-shorteners.html
+_KORG_SHORTLINK_TREES = 'pub/scm/linux/kernel/git'
+
+# (web host, repository path, commit URL mask); first match wins
+_FORGE_COMMIT_LAYOUTS = (
+    (
+        'git.kernel.org',
+        re.compile(rf'^/{_KORG_SHORTLINK_TREES}/(?P<path>[^/]+/[^/]+?)(?:\.git)?/*$'),
+        'https://git.kernel.org/{path}/c/%.12s',
+    ),
+    # The cgit form works for every repository on the host
+    (
+        'git.kernel.org',
+        re.compile(r'^/(?P<path>pub/scm/.+?)(?:\.git)?/*$'),
+        'https://git.kernel.org/{path}.git/commit/?id=%s',
+    ),
+    (
+        'github.com',
+        re.compile(r'^/(?P<path>[^/]+/[^/]+?)(?:\.git)?/*$'),
+        'https://github.com/{path}/commit/%s',
+    ),
+    # Projects can sit in nested groups
+    (
+        'gitlab.com',
+        re.compile(r'^/(?P<path>[^/]+(?:/[^/]+)*/[^/]+?)(?:\.git)?/*$'),
+        'https://gitlab.com/{path}/-/commit/%s',
+    ),
+)
+
+
+def _forge_repo_location(repo_url: str) -> Optional[Tuple[str, str]]:
+    """Return (web host, path) for a repository on a known public host.
+
+    Accepts every URL form git does, including the scp-like ssh syntax
+    that push remotes typically use.
+    """
+    if '://' in repo_url:
+        try:
+            parsed = urllib.parse.urlsplit(repo_url)
+            host = parsed.hostname
+        except ValueError:
+            return None
+        if parsed.scheme not in ('http', 'https', 'git', 'ssh', 'git+ssh'):
+            return None
+        path = parsed.path
+    else:
+        # [user@]host:path, where a slash before the colon means a local path
+        m = re.match(r'^(?:[^@/]+@)?(?P<host>[^/:]+):(?P<path>.+)$', repo_url)
+        if not m:
+            return None
+        host = m.group('host')
+        path = '/' + m.group('path').lstrip('/')
+    if not host:
+        return None
+    webhost = _FORGE_WEB_HOSTS.get(host.lower())
+    if webhost is None:
+        return None
+    return webhost, path
+
+
+def derive_commit_url_mask(repo_url: str) -> Optional[str]:
+    """Return a commit URL mask for a repository on a known public host."""
+    location = _forge_repo_location(repo_url)
+    if location is None:
+        return None
+    webhost, path = location
+    for host, pathre, mask in _FORGE_COMMIT_LAYOUTS:
+        if host != webhost:
+            continue
+        m = pathre.match(path)
+        if m:
+            # The mask is %-formatted later, so keep URL escapes literal
+            return mask.format(path=m.group('path').replace('%', '%%'))
+    return None
+
+
 @dataclass(frozen=True)
 class ThanksTarget:
     """Where a thank-you message says the commits went, and how to show it.
@@ -337,12 +425,6 @@ def get_thanks_target(gitdir: Optional[str], branch: str) -> ThanksTarget:
         else:
             treename = 'local tree'
 
-    cidmask = _setting('b4-commit-url-mask', 'thanks-commit-url-mask') or None
-    if cidmask is not None and '%' not in cidmask:
-        # A valueless key reads back as 'true'; applying it would crash
-        logger.warning('Ignoring commit URL mask without a %%s: %s', cidmask)
-        cidmask = None
-
     checkrepo = binfo.get('b4-check-repo')
     if not checkrepo:
         _ctcr = config.get('thanks-check-repo')
@@ -351,10 +433,20 @@ def get_thanks_target(gitdir: Optional[str], branch: str) -> ThanksTarget:
         else:
             checkrepo = binfo.get('url')
 
+    # An explicit mask wins over one derived from the check repo, and
+    # an explicitly empty one turns commit links off altogether
+    cidmask = _setting('b4-commit-url-mask', 'thanks-commit-url-mask')
+    if cidmask is None and checkrepo:
+        cidmask = derive_commit_url_mask(checkrepo)
+    if cidmask and '%' not in cidmask:
+        # A valueless key reads back as 'true'; applying it would crash
+        logger.warning('Ignoring commit URL mask without a %%s: %s', cidmask)
+        cidmask = None
+
     return ThanksTarget(
         branch=binfo.get('branch', branch),
         treename=treename,
-        cidmask=cidmask,
+        cidmask=cidmask or None,
         checkrepo=checkrepo or None,
         am_template=_setting('b4-am-template', 'thanks-am-template') or None,
         pr_template=_setting('b4-pr-template', 'thanks-pr-template') or None,
@@ -1026,14 +1118,29 @@ _CHECKURL_RES = (
 )
 
 
+# git.kernel.org shortlinks: /<name>/[<repo>/]c/<sha>, see _KORG_SHORTLINK_TREES
+_KORG_SHORTLINK_RE = re.compile(
+    r'^https?://git\.kernel\.org/(?P<name>[^/]+)(?:/(?P<repo>[^/]+))?'
+    r'/c/(?P<commit>[0-9a-fA-F]{7,64})/?$'
+)
+
+
 def _parse_checkurl(checkurl: str) -> Tuple[Optional[str], Optional[str]]:
     """Extract (repo_url, commit_id) from a thanks-commit-url-mask URL.
 
-    The repo URL is only derivable from cgit/github/gitlab-style commit
-    URLs; for anything else (e.g. git.kernel.org /username/c/ shortlinks)
-    we can usually still recover the commit id from a trailing hex run.
+    The repo URL is only derivable from git.kernel.org shortlinks and
+    cgit/github/gitlab-style commit URLs; for anything else we can
+    usually still recover the commit id from a trailing hex run.
     Either element may be None.
     """
+    m = _KORG_SHORTLINK_RE.match(checkurl)
+    if m:
+        # A shortlink without a repository means linux.git
+        repo = m.group('repo') or 'linux'
+        return (
+            f'https://git.kernel.org/{_KORG_SHORTLINK_TREES}/{m.group("name")}/{repo}.git',
+            m.group('commit'),
+        )
     for pat in _CHECKURL_RES:
         m = pat.match(checkurl)
         if m:

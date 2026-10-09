@@ -626,8 +626,12 @@ Attestation settings
      message refers to, so having the commit reachable there is what
      qualifies as pushed. As a last resort, b4 attempts to derive the
      repository URL from the :term:`b4.thanks-commit-url-mask` value,
-     which works for cgit-, github- and gitlab-style commit URLs, but
-     not for the git.kernel.org ``/username/c/`` short URLs.
+     which works for git.kernel.org short URLs and for cgit-, github-
+     and gitlab-style commit URLs.
+
+     For git.kernel.org, github.com and gitlab.com, b4 also uses this
+     repository to build commit links, see
+     :term:`b4.thanks-commit-url-mask`.
 
      If you push to multiple trees from the same repository, you can
      set this per-remote instead, which takes precedence over
@@ -642,22 +646,51 @@ Attestation settings
 
    :term:`b4.thanks-commit-url-mask`
      Used when creating summaries for ``b4 ty`` and the review TUI
-     thank-you flow. Can be a value like::
+     thank-you flow, to link each commit. Can be a value like::
 
-         thanks-commit-url-mask = https://git.kernel.org/username/c/%.12s
+         thanks-commit-url-mask = https://git.kernel.org/username/tree/c/%.12s
 
-     If not set, b4 falls back to using commit hashes.
+     If you push to multiple trees from the same repository, you can
+     set the mask per-remote instead, which takes precedence::
 
-     When this option is set, the review TUI's thank-you preview offers
-     a **Queue** option that stores the message for delayed delivery.
-     Queued messages are held until their commit is verified published,
-     so you can push your commits before the thank-you is sent.
-     See :ref:`queuing thanks <thanks_queue>` for details.
+         [remote "spi"]
+             b4-commit-url-mask = https://git.kernel.org/username/spi/c/%.12s
+
+     If neither is set, b4 builds the mask itself from the repository
+     that queued thanks are checked against (see
+     :term:`b4.thanks-check-repo`), when that repository is on one of
+     these hosts:
+
+     - git.kernel.org: short URLs for trees under
+       ``pub/scm/linux/kernel/git/``, and cgit commit URLs for all
+       other trees
+     - github.com
+     - gitlab.com
+
+     b4 understands https, git and ssh URLs for these hosts, including
+     ``git@gitolite.kernel.org:...`` push URLs. So if the branch you
+     apply to tracks a remote on one of these hosts, you usually do not
+     need to set anything. For other hosts, b4 uses plain commit hashes.
+
+     To turn commit links off and always use plain commit hashes, set
+     the mask to an empty value, globally or per-remote::
+
+         thanks-commit-url-mask =
+
+     When b4 has a commit link, the review TUI's thank-you preview
+     offers a **Queue** option that stores the message for delayed
+     delivery. Queued messages are held until their commit is verified
+     published, so you can push your commits before the thank-you is
+     sent. See :ref:`queuing thanks <thanks_queue>` for details.
 
      .. note::
 
         See this page for more info on convenient git.kernel.org short URLs:
         https://korg.docs.kernel.org/git-url-shorteners.html
+
+     .. versionchanged:: v0.17
+        b4 builds commit links for git.kernel.org, github.com and
+        gitlab.com repositories without any configuration.
 
      Default: ``None``
 

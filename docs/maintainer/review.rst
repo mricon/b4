@@ -1095,8 +1095,11 @@ screen shows the generated message with keybindings to **Send**
 
 **Queuing thanks for delayed delivery**
 
-When :term:`b4.thanks-commit-url-mask` is configured, the thank-you
-preview also offers a **Queue** option (``W``). Queuing writes the
+When the thank-you message links to its commits, the thank-you
+preview also offers a **Queue** option (``W``). This is the case when
+you set :term:`b4.thanks-commit-url-mask`, and also when the tree you
+apply to is on git.kernel.org, github.com or gitlab.com, because b4
+then builds the links itself. Queuing writes the
 message as an RFC 2822 file in ``.git/b4-review/queue/`` instead of
 sending it immediately. This is useful when you want to push your
 commits to a public tree before sending thank-you messages — the
