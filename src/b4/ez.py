@@ -2549,7 +2549,7 @@ def get_prep_branch_as_patches(
             base_commit = b4.git_revparse_obj(chunks[1])
             if not base_commit:
                 logger.warning(
-                    'WARNING: unable to resolve prerequisite-base-commit %s', chunks[1]
+                    'WARNING: unable to resolve base-commit override %s', chunks[1]
                 )
                 base_commit = chunks[1]
             else:

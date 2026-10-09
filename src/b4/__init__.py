@@ -823,7 +823,6 @@ class LoreSeries:
     base_commit: Optional[str] = None
     change_id: Optional[str] = None
     prereq_patch_ids: Optional[List[str]] = None
-    prereq_base_commit: Optional[str] = None
     _submission_date: Optional[datetime.datetime] = None
 
     def __init__(self, revision: int, expected: int) -> None:
@@ -938,15 +937,6 @@ class LoreSeries:
                 self.prereq_patch_ids = re.findall(
                     r'^prerequisite-patch-id:\s+(\S+)', lmsg.body, flags=re.I | re.M
                 )
-            if (
-                not self.prereq_base_commit
-                and '\nprerequisite-base-commit:' in lmsg.body
-            ):
-                matches = re.search(
-                    r'^prerequisite-base-id:\s+(\S+)', lmsg.body, flags=re.I | re.M
-                )
-                if matches:
-                    self.prereq_base_commit = matches.groups()[0]
 
             if self.patches[0] is not None:
                 self.subject = self.patches[0].subject

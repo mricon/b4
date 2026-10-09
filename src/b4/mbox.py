@@ -69,20 +69,14 @@ def get_base_commit(
 ) -> str:
     base_commit = 'HEAD'
 
-    if lser.prereq_base_commit:
-        logger.debug(
-            'Setting base-commit to prereq-base-commit: %s', lser.prereq_base_commit
-        )
-        base_commit = lser.prereq_base_commit
+    matches = b4.BASE_COMMIT_RE.search(body)
+    if matches:
+        base_commit = matches.groups()[0]
     else:
-        matches = b4.BASE_COMMIT_RE.search(body)
+        # Try a more relaxed search
+        matches = re.search(r'based on .*?([\da-f]{40})', body, re.MULTILINE)
         if matches:
             base_commit = matches.groups()[0]
-        else:
-            # Try a more relaxed search
-            matches = re.search(r'based on .*?([\da-f]{40})', body, re.MULTILINE)
-            if matches:
-                base_commit = matches.groups()[0]
 
     if base_commit and topdir:
         # Does it actually exist in this tree?
