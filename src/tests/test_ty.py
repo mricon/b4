@@ -362,6 +362,34 @@ def test_derived_commit_url_round_trips(repo: str) -> None:
     assert b4.ty.derive_commit_url_mask(parsed_repo) == mask
 
 
+@pytest.mark.parametrize(
+    'repo,key',
+    [
+        # A push URL and the URLs MAINTAINERS lists the tree under match
+        (
+            'git@gitolite.kernel.org:pub/scm/utils/b4/b4',
+            'git.kernel.org/pub/scm/utils/b4/b4',
+        ),
+        (
+            'git://git.kernel.org/pub/scm/utils/b4/b4.git/',
+            'git.kernel.org/pub/scm/utils/b4/b4',
+        ),
+        (
+            'https://git.kernel.org/pub/scm/utils/b4/b4.git',
+            'git.kernel.org/pub/scm/utils/b4/b4',
+        ),
+        ('ssh://git@GitHub.com/user/repo', 'github.com/user/repo'),
+        # Any host, not only the forges b4 builds links for
+        ('https://linuxtv.org/git/media.git', 'linuxtv.org/git/media'),
+        ('/srv/git/repo.git', None),
+        ('https://github.com/', None),
+    ],
+)
+def test_repo_url_key(repo: str, key: Optional[str]) -> None:
+    """Every way of reaching a tree yields one key, whatever the scheme."""
+    assert b4.repo_url_key(repo) == key
+
+
 def test_get_check_repo_config_override(monkeypatch: pytest.MonkeyPatch) -> None:
     """b4.thanks-check-repo wins over URL derivation."""
     checkurl = 'https://github.com/user/repo/commit/0123456789abcdef'

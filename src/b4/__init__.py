@@ -4525,11 +4525,11 @@ FORGE_WEB_HOSTS = {
 }
 
 
-def forge_repo_location(repo_url: str) -> Optional[Tuple[str, str]]:
-    """Return (web host, path) for a repository on a known public host.
+def parse_repo_location(repo_url: str) -> Optional[Tuple[str, str]]:
+    """Return (lowercase host, path) for a remote repository URL.
 
     Accepts every URL form git does, including the scp-like ssh syntax
-    that push remotes typically use.
+    that push remotes typically use. Local paths give None.
     """
     if '://' in repo_url:
         try:
@@ -4549,10 +4549,36 @@ def forge_repo_location(repo_url: str) -> Optional[Tuple[str, str]]:
         path = '/' + m.group('path').lstrip('/')
     if not host:
         return None
-    webhost = FORGE_WEB_HOSTS.get(host.lower())
+    return host.lower(), path
+
+
+def forge_repo_location(repo_url: str) -> Optional[Tuple[str, str]]:
+    """Return (web host, path) for a repository on a known public host."""
+    location = parse_repo_location(repo_url)
+    if location is None:
+        return None
+    host, path = location
+    webhost = FORGE_WEB_HOSTS.get(host)
     if webhost is None:
         return None
     return webhost, path
+
+
+def repo_url_key(repo_url: str) -> Optional[str]:
+    """Return host and path of a repository, for telling if two URLs match.
+
+    A remote is often a push URL, while MAINTAINERS lists the same tree
+    as git:// or https://, so the scheme, user, trailing slash and .git
+    suffix don't count, and push hosts map to the host they publish to.
+    """
+    location = parse_repo_location(repo_url)
+    if location is None:
+        return None
+    host, path = location
+    path = path.rstrip('/').removesuffix('.git')
+    if not path.strip('/'):
+        return None
+    return FORGE_WEB_HOSTS.get(host, host) + path
 
 
 def commit_reachable_on_remote(
