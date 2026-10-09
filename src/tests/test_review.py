@@ -4063,47 +4063,6 @@ class TestIntegrateFollowupInlineComments:
         )
 
 
-@requires_textual
-class TestFollowupItemPerMessage:
-    """Tests for per-message follow-up selection (msgid-based keying)."""
-
-    @staticmethod
-    def _make_session() -> Dict[str, Any]:
-        return {
-            'topdir': '/tmp',
-            'cover_text': 'Subject\n',
-            'tracking': {},
-            'series': {},
-            'patches': [{}],
-            'base_commit': '',
-            'commit_shas': ['deadbeef'],
-            'commit_subjects': ['Patch subject'],
-            'sha_map': {},
-            'abbrev_len': 12,
-            'default_identity': 'Tester <tester@example.com>',
-            'usercfg': {'name': 'Tester', 'email': 'tester@example.com'},
-            'cover_subject_clean': 'Subject',
-            'branch': 'b4/review/test-change-id',
-        }
-
-    def test_followup_item_keyed_by_msgid(self) -> None:
-        """FollowupItem stores msgid, not fromemail."""
-        from b4.review_tui._review_app import FollowupItem
-
-        item = FollowupItem('Alice', 1, 'reply-1@example.com')
-        assert item.msgid == 'reply-1@example.com'
-        assert item.display_idx == 1
-
-    def test_selected_followup_enables_reply_in_preview(self) -> None:
-        """check_action returns True for edit_reply when a follow-up is selected."""
-        from b4.review_tui._review_app import ReviewApp
-
-        app = ReviewApp(self._make_session())
-        app._preview_mode = True
-        app._selected_followup_msgid = 'reply@example.com'
-        assert app.check_action('edit_reply', ()) is True
-
-
 # ---------------------------------------------------------------------------
 # _get_lore_series version-mismatch tests (cc529aa)
 # ---------------------------------------------------------------------------

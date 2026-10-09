@@ -11,6 +11,7 @@ via git rebase -i), range-diff filtering and gating, check-detail
 rendering, and the branch-restore logic on exit.
 """
 
+import datetime
 import email.message
 import json
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,11 +21,13 @@ import pytest
 
 pytest.importorskip('textual')
 
+from textual.widgets import ListView
+
 import b4
 import b4.review
 import b4.review.tracking
 from b4.review_tui._common import filter_range_diff_for_commit
-from b4.review_tui._review_app import PatchListItem, ReviewApp
+from b4.review_tui._review_app import FollowupItem, PatchListItem, ReviewApp
 
 from .helpers.tracking import create_review_branch
 from .helpers.tui import CUT_BUFFER, CUT_INSTRUCTION, CUT_TRIMMED
@@ -331,6 +334,43 @@ class TestFollowupSelection:
             await pilot.pause()
             assert _selected_followup(app) is None
             assert app._selected_idx == 2
+
+    @pytest.mark.asyncio
+    async def test_same_author_followups_are_separate_targets(
+        self, gitdir: str
+    ) -> None:
+        """Two replies from one author get two entries; reply hits the picked one."""
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'followup-same-author', ['patch 1']
+        )
+        app = ReviewApp(_build_session(gitdir, branch))
+        entries = [
+            {
+                'msgid': f'reply-{n}@example.com',
+                'fromname': 'Alice',
+                'fromemail': 'alice@example.com',
+                'date': datetime.datetime(2026, 1, n, tzinfo=datetime.timezone.utc),
+                'body': f'Reply number {n}.',
+            }
+            for n in (1, 2)
+        ]
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._followup_comments = {1: entries}
+            app._populate_patch_list()
+            await pilot.pause()
+            lv = app.query_one('#patch-list', ListView)
+            items = [c for c in lv.children if isinstance(c, FollowupItem)]
+            assert [i.msgid for i in items] == [e['msgid'] for e in entries]
+
+            lv.index = lv.children.index(items[1])
+            await pilot.pause()
+            assert _selected_followup(app) == 'reply-2@example.com'
+            positions = app._followup_positions
+            assert positions['reply-1@example.com'] != positions['reply-2@example.com']
+            with mock.patch.object(app, '_compose_followup_reply') as compose:
+                app.action_edit_reply()
+            compose.assert_called_once_with(entries[1])
 
 
 class TestFollowupSnipMarker:
