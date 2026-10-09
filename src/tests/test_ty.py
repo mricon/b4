@@ -404,8 +404,8 @@ def test_commit_reachable_on_remote(
     c2 = _commit_empty('c2')
 
     # c1 is on the remote's master; c2 exists only locally
-    assert b4.ty.commit_reachable_on_remote(c1, pub) is True
-    assert b4.ty.commit_reachable_on_remote(c2, pub) is False
+    assert b4.commit_reachable_on_remote(c1, pub) is True
+    assert b4.commit_reachable_on_remote(c2, pub) is False
 
     # Emulate shared object storage: c2's object is in the remote odb
     # (push a ref, then delete it) but no head reaches it
@@ -413,10 +413,10 @@ def test_commit_reachable_on_remote(
     assert ecode == 0, out
     ecode, out = b4.git_run_command(None, ['push', pub, ':refs/heads/tmp'])
     assert ecode == 0, out
-    assert b4.ty.commit_reachable_on_remote(c2, pub) is False
+    assert b4.commit_reachable_on_remote(c2, pub) is False
 
     # Unreachable remote: undeterminable, not a verdict
-    assert b4.ty.commit_reachable_on_remote(c1, str(tmp_path / 'nope')) is None
+    assert b4.commit_reachable_on_remote(c1, str(tmp_path / 'nope')) is None
 
 
 def test_commit_reachable_unknown_tips(
@@ -449,7 +449,7 @@ def test_commit_reachable_unknown_tips(
     assert ecode == 0, out
     monkeypatch.chdir(local)
     # c1 is actually published, but the only advertised tip is unknown here
-    assert b4.ty.commit_reachable_on_remote(c1, pub) is None
+    assert b4.commit_reachable_on_remote(c1, pub) is None
 
 
 def test_commit_reachable_branch_filter(
@@ -472,12 +472,12 @@ def test_commit_reachable_branch_filter(
 
     # c2 is only on 'side': published for 'side' and for the branchless
     # check, but not yet for the branch the message claims
-    assert b4.ty.commit_reachable_on_remote(c2, pub) is True
-    assert b4.ty.commit_reachable_on_remote(c2, pub, branch='side') is True
-    assert b4.ty.commit_reachable_on_remote(c2, pub, branch='master') is False
-    assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is True
+    assert b4.commit_reachable_on_remote(c2, pub) is True
+    assert b4.commit_reachable_on_remote(c2, pub, branch='side') is True
+    assert b4.commit_reachable_on_remote(c2, pub, branch='master') is False
+    assert b4.commit_reachable_on_remote(c1, pub, branch='master') is True
     # Unadvertised branch (renamed/deleted): any head counts again
-    assert b4.ty.commit_reachable_on_remote(c2, pub, branch='gone') is True
+    assert b4.commit_reachable_on_remote(c2, pub, branch='gone') is True
 
 
 def test_commit_reachable_uses_the_gitdir_it_is_given(
@@ -502,10 +502,8 @@ def test_commit_reachable_uses_the_gitdir_it_is_given(
     # An unrelated cwd knows none of the advertised tips, so on its own it
     # cannot answer -- the objects live in 'local'.
     monkeypatch.chdir(elsewhere)
-    assert b4.ty.commit_reachable_on_remote(c1, pub, branch='master') is None
-    assert (
-        b4.ty.commit_reachable_on_remote(c1, pub, branch='master', gitdir=local) is True
-    )
+    assert b4.commit_reachable_on_remote(c1, pub, branch='master') is None
+    assert b4.commit_reachable_on_remote(c1, pub, branch='master', gitdir=local) is True
 
 
 def test_get_thanks_target_check_repo_priority(
@@ -774,7 +772,7 @@ def test_process_queue_passes_branch(
         calls.append((commit, repo_url, branch))
         return False
 
-    monkeypatch.setattr(b4.ty, 'commit_reachable_on_remote', fake_reachable)
+    monkeypatch.setattr(b4, 'commit_reachable_on_remote', fake_reachable)
     delivered, pending, dseries = b4.ty.process_queue()
     assert (delivered, pending, dseries) == (0, 1, [])
     assert calls == [(fullsha, 'https://example.com/spi.git', 'for-next')]
@@ -803,7 +801,7 @@ def test_process_queue_holds_unpublished(
         calls.append((commit, repo_url))
         return False
 
-    monkeypatch.setattr(b4.ty, 'commit_reachable_on_remote', fake_reachable)
+    monkeypatch.setattr(b4, 'commit_reachable_on_remote', fake_reachable)
     delivered, pending, dseries = b4.ty.process_queue()
     assert (delivered, pending, dseries) == (0, 1, [])
     assert calls == [(fullsha, 'https://git.kernel.org/pub/scm/utils/b4/b4.git')]
@@ -853,7 +851,7 @@ def test_process_queue_lock_held(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty,
+        b4,
         'commit_reachable_on_remote',
         lambda commit, repo_url, branch='', gitdir=None: False,
     )
@@ -874,7 +872,7 @@ def test_process_queue_check_only(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty,
+        b4,
         'commit_reachable_on_remote',
         lambda commit, repo_url, branch='', gitdir=None: True,
     )
@@ -904,7 +902,7 @@ def test_process_queue_explicit_topdir(
     monkeypatch.chdir(repo)
     _queue_test_message()
     monkeypatch.setattr(
-        b4.ty,
+        b4,
         'commit_reachable_on_remote',
         lambda commit, repo_url, branch='', gitdir=None: True,
     )
@@ -975,7 +973,7 @@ def _series_status(identifier: str, change_id: str = 'test-change-id') -> str:
 
 def _mock_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        b4.ty,
+        b4,
         'commit_reachable_on_remote',
         lambda commit, repo_url, branch='', gitdir=None: True,
     )

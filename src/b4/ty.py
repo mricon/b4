@@ -13,7 +13,6 @@ import json
 import os
 import re
 import sys
-import urllib.parse
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
@@ -293,16 +292,6 @@ def auto_locate_series(
     return found
 
 
-# Public hosts whose commit links b4 knows how to build from a repository
-# URL, keyed by every host name their repositories are reached through.
-# Remotes are often push URLs, so map those to the web host.
-_FORGE_WEB_HOSTS = {
-    'git.kernel.org': 'git.kernel.org',
-    'gitolite.kernel.org': 'git.kernel.org',
-    'github.com': 'github.com',
-    'gitlab.com': 'gitlab.com',
-}
-
 # Where git.kernel.org offers short commit links, see
 # https://korg.docs.kernel.org/git-url-shorteners.html
 _KORG_SHORTLINK_TREES = 'pub/scm/linux/kernel/git'
@@ -334,39 +323,9 @@ _FORGE_COMMIT_LAYOUTS = (
 )
 
 
-def _forge_repo_location(repo_url: str) -> Optional[Tuple[str, str]]:
-    """Return (web host, path) for a repository on a known public host.
-
-    Accepts every URL form git does, including the scp-like ssh syntax
-    that push remotes typically use.
-    """
-    if '://' in repo_url:
-        try:
-            parsed = urllib.parse.urlsplit(repo_url)
-            host = parsed.hostname
-        except ValueError:
-            return None
-        if parsed.scheme not in ('http', 'https', 'git', 'ssh', 'git+ssh'):
-            return None
-        path = parsed.path
-    else:
-        # [user@]host:path, where a slash before the colon means a local path
-        m = re.match(r'^(?:[^@/]+@)?(?P<host>[^/:]+):(?P<path>.+)$', repo_url)
-        if not m:
-            return None
-        host = m.group('host')
-        path = '/' + m.group('path').lstrip('/')
-    if not host:
-        return None
-    webhost = _FORGE_WEB_HOSTS.get(host.lower())
-    if webhost is None:
-        return None
-    return webhost, path
-
-
 def derive_commit_url_mask(repo_url: str) -> Optional[str]:
     """Return a commit URL mask for a repository on a known public host."""
-    location = _forge_repo_location(repo_url)
+    location = b4.forge_repo_location(repo_url)
     if location is None:
         return None
     webhost, path = location
@@ -1165,98 +1124,6 @@ def _get_check_repo(checkurl: str) -> Optional[str]:
     return repo
 
 
-def commit_reachable_on_remote(
-    commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
-) -> Optional[bool]:
-    """Check if a commit is reachable from a branch advertised by repo_url.
-
-    A commit only counts as published once a ref on the public repo
-    contains it. Merely existing in the remote odb is not enough: hosts
-    with shared object storage (grokmirror objstore repos, github fork
-    networks) will happily serve commit pages for objects that were
-    pushed to a sibling repo but never published in this one.
-
-    With *branch*, only that branch counts when the remote advertises
-    it — the thanks message claims the commit went into that specific
-    branch. If the remote does not advertise it (renamed, merged and
-    deleted), any advertised branch is accepted as before.
-
-    Ancestry is computed locally against the advertised tips, so tips we
-    do not have objects for are ignored.  That happens in *gitdir* — the
-    repository the commit was applied in.  It defaults to the process
-    cwd, which is only right for callers that operate on it; a queue
-    sweep covering several projects must name the tree each message
-    belongs to.
-
-    Returns True/False, or None if the state could not be determined
-    (e.g. the remote is unreachable, or none of the advertised tips are
-    in the local repository).
-    """
-    gitargs = [
-        '-c',
-        'http.lowSpeedLimit=1000',
-        '-c',
-        'http.lowSpeedTime=15',
-        'ls-remote',
-        '--heads',
-        repo_url,
-    ]
-    ecode, out = b4.git_run_command(gitdir, gitargs)
-    if ecode > 0:
-        logger.debug('ls-remote failed for %s (exit code %s)', repo_url, ecode)
-        return None
-    tips: Set[str] = set()
-    branchtip: Optional[str] = None
-    for line in out.splitlines():
-        chunks = line.split(None, 1)
-        if chunks:
-            tips.add(chunks[0])
-            if branch and len(chunks) > 1 and chunks[1] == f'refs/heads/{branch}':
-                branchtip = chunks[0]
-    if branchtip:
-        tips = {branchtip}
-    elif branch:
-        logger.debug(
-            '%s does not advertise refs/heads/%s, checking all heads',
-            repo_url,
-            branch,
-        )
-    if not tips:
-        return False
-    # Filter out tips we don't have locally -- we can't compute ancestry
-    # for them, so treat them as not containing the commit
-    stdin = ('\n'.join(sorted(tips)) + '\n').encode()
-    _ecode, out = b4.git_run_command(
-        gitdir, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], stdin=stdin
-    )
-    known: List[str] = []
-    for line in out.splitlines():
-        chunks = line.split()
-        if len(chunks) == 2 and chunks[1] == 'commit':
-            known.append(chunks[0])
-    if not known:
-        # Undetermined, not unpublished: without the objects we cannot
-        # say anything about the commit, and reporting "not yet visible"
-        # would hide a stale (or simply wrong) local repository behind
-        # what looks like normal waiting.  Warn rather than debug: a cron
-        # sweep silences narration but keeps warnings, and this one is a
-        # standing misconfiguration that would otherwise wait forever.
-        logger.warning(
-            'None of the heads advertised by %s exist in %s; cannot tell '
-            'whether the commit is published',
-            repo_url,
-            gitdir or os.getcwd(),
-        )
-        return None
-    # Empty output means every commit reachable from ours is also
-    # reachable from one of the known tips, i.e. ours is published
-    ecode, out = b4.git_run_command(gitdir, ['rev-list', '-1', commit, '--not', *known])
-    if ecode > 0:
-        logger.debug('rev-list failed for %s (exit code %s)', commit, ecode)
-        return None
-    return not out.strip()
-
-
 def _check_published(
     checkurl: str,
     checkcommit: str,
@@ -1278,7 +1145,7 @@ def _check_published(
     if checkurl and not checkrepo:
         checkrepo = _get_check_repo(checkurl) or ''
     if checkcommit and checkrepo:
-        return commit_reachable_on_remote(
+        return b4.commit_reachable_on_remote(
             checkcommit, checkrepo, branch=checkbranch, gitdir=gitdir
         )
     if not checkurl:
