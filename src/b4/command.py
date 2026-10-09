@@ -1563,7 +1563,10 @@ def cmd() -> None:
         parser.print_help()
         sys.exit(1)
 
-    b4.setup_config(cmdargs)
+    # Repository-local settings must come from the tree the command
+    # operates on, not from wherever it was started. We key on the
+    # 'gitdir' dest because -g means --guess-base for am/shazam.
+    b4.setup_config(cmdargs, topdir=getattr(cmdargs, 'gitdir', None))
 
     if cmdargs.offline_mode:
         logger.info('Running in OFFLINE mode')

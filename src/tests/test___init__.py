@@ -1400,7 +1400,7 @@ class TestGetLoreNode:
         # Stand in for any command that talks to lore, and keep cmd()
         # from loading the real git config of whoever runs the tests.
         monkeypatch.setattr(b4.mbox, 'main', needs_node)
-        monkeypatch.setattr(b4, 'setup_config', lambda _cmdargs: None)
+        monkeypatch.setattr(b4, 'setup_config', lambda _cmdargs, topdir=None: None)
         monkeypatch.setattr(sys, 'argv', ['b4', 'mbox', 'x@example.com'])
         handlers = list(b4.logger.handlers)
         try:
@@ -1412,6 +1412,45 @@ class TestGetLoreNode:
         assert exc.value.code == 1
         crit = [r.getMessage() for r in caplog.records if r.levelno == logging.CRITICAL]
         assert crit[-2:] == ['Bad liblore setting', 'Fix it here.']
+
+
+@pytest.mark.parametrize(
+    'argv,wants_repo',
+    [
+        (['ty', '-g', '{repo}'], True),
+        (['ty'], False),
+        # -g is --guess-base here and must not be taken for a path
+        (['am', '-g', 'x@example.com'], False),
+    ],
+)
+def test_cmd_loads_config_from_gitdir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    argv: List[str],
+    wants_repo: bool,
+) -> None:
+    """-g/--gitdir makes repository-local config come from that tree
+    rather than from the process cwd."""
+    import b4.command
+
+    repo = str(tmp_path / 'repo')
+    seen: List[Optional[str]] = []
+
+    def _setup_config(_cmdargs: object, topdir: Optional[str] = None) -> None:
+        seen.append(topdir)
+        # Stop before the subcommand runs; only config loading is tested
+        raise SystemExit(0)
+
+    monkeypatch.setattr(b4, 'setup_config', _setup_config)
+    argv = [arg.format(repo=repo) for arg in argv]
+    monkeypatch.setattr(sys, 'argv', ['b4', *argv])
+    handlers = list(b4.logger.handlers)
+    try:
+        with pytest.raises(SystemExit):
+            b4.command.cmd()
+    finally:
+        b4.logger.handlers[:] = handlers
+    assert seen == [repo if wants_repo else None]
 
 
 class TestLoreFetchMessages:
