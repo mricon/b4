@@ -29,7 +29,7 @@ import uuid
 from collections import defaultdict
 from email.message import EmailMessage
 from string import Template
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import b4
 import patatt
@@ -1180,6 +1180,239 @@ def get_dependencies(prereqs: List[str]) -> List[str]:
     only says where the base commit lives.
     """
     return [x for x in prereqs if not is_base_tree_entry(x)]
+
+
+class BaseTree(NamedTuple):
+    url: str
+    # Empty when not known
+    branch: str
+
+
+def _parse_base_tree(words: List[str], where: str) -> Optional[BaseTree]:
+    """Turn the words "URL [branch]" into a BaseTree, or None for "none"."""
+    if not words or words[0].lower() == 'none':
+        return None
+    # b4 am suggests fetching from it, so no ext::, ssh or local paths
+    if not re.match(r'^(?:https|git)://', words[0]):
+        logger.warning(
+            'WARNING: %s is not an https:// or git:// URL: %s', where, words[0]
+        )
+        return None
+    return BaseTree(words[0], words[1] if len(words) > 1 else '')
+
+
+def _get_base_tree_entry(tracking: Dict[str, Any]) -> Optional[List[str]]:
+    """Return the words of the base-tree: entry in --edit-deps, if any."""
+    prereqs: List[str] = tracking['series'].get('prerequisites', list())
+    for entry in prereqs:
+        if is_base_tree_entry(entry):
+            return entry.split(':', 1)[1].split()
+    return None
+
+
+def _get_chosen_base_tree(tracking: Dict[str, Any]) -> Tuple[bool, Optional[BaseTree]]:
+    """Return (chosen, tree) for a tree that the developer named.
+
+    The base-tree: entry in --edit-deps wins over the prep-base-tree
+    setting. When one of them is set but says "none", or holds a URL
+    that can't be used, the tree is None and there is no footer.
+    """
+    entry = _get_base_tree_entry(tracking)
+    if entry is not None:
+        return True, _parse_base_tree(entry, 'base-tree')
+    setting = b4.get_main_config().get('prep-base-tree')
+    if isinstance(setting, str) and setting.strip():
+        return True, _parse_base_tree(setting.split(), 'prep-base-tree')
+    return False, None
+
+
+def get_base_tree(
+    base_commit: str, usebranch: Optional[str] = None
+) -> Optional[BaseTree]:
+    """Return the tree for the base-tree: footer, or None to leave it out.
+
+    A tree the developer named wins. Otherwise b4 only names a tree that
+    MAINTAINERS lists, because those are public already: a remote can be
+    a private repository or a personal fork, even on a public host, and
+    the footer must not be what makes it known. Among the remote-tracking
+    branches of those trees, pick one that contains *base_commit*.
+    Starting from the base itself, and not from the base branch recorded
+    at enrollment, matters: the default commit strategy records no base
+    branch, and a rebase leaves it stale.
+    """
+    _cover, tracking = load_cover(usebranch=usebranch)
+    chosen, tree = _get_chosen_base_tree(tracking)
+    if chosen:
+        return tree
+
+    known = _get_maintainers_trees()
+    if not known:
+        logger.debug('No trees in MAINTAINERS, not naming a base tree')
+        return None
+    candidates = _known_branches_containing(
+        base_commit, _get_series_commits(usebranch=usebranch), known
+    )
+    if not candidates:
+        logger.debug('No MAINTAINERS tree we track contains %s', base_commit)
+        return None
+    # Every candidate holds the base, so any of them is a correct answer.
+    # The recorded base branch says what the author meant, if it still
+    # holds the base after a rebase.
+    basebranch = tracking['series'].get('base-branch')
+    if basebranch:
+        intended = b4.git_get_branch_remote(None, basebranch)
+        for cand in candidates:
+            if (cand.remote, cand.branch) == intended:
+                return BaseTree(cand.url, cand.branch)
+    # Otherwise each tree offers its main line when that holds the base:
+    # a side branch started at a tag is nearly always nearer to it. Only
+    # within a tree, though. Across trees the nearest wins, or an
+    # integration tree like linux-next, whose main line merges the
+    # subsystem branch the series is based on, would beat that subsystem
+    # tree. The ref name breaks ties so the footer doesn't change from one
+    # run to the next.
+    per_tree: Dict[str, _TreeCandidate] = dict()
+    for cand in sorted(candidates, key=lambda c: (c.rank, c.distance, c.ref)):
+        # Keyed by URL: two remotes for one tree are one tree
+        per_tree.setdefault(cand.url, cand)
+    best = min(per_tree.values(), key=lambda c: (c.distance, c.ref))
+    return BaseTree(best.url, best.branch)
+
+
+class _TreeCandidate(NamedTuple):
+    ref: str
+    remote: str
+    # As MAINTAINERS spells it
+    url: str
+    branch: str
+    # Commits on the branch that are not in the base
+    distance: int
+    # How much the branch is the tree's main line: 0 when MAINTAINERS
+    # names it, 1 when the remote's HEAD points at it (or it is master or
+    # main when the remote has no HEAD), 2 for any other branch
+    rank: int
+
+
+def _get_series_commits(usebranch: Optional[str] = None) -> List[str]:
+    """Return the commits of the series itself, cover commit included."""
+    range_base, _start, end = get_series_range(usebranch=usebranch)
+    return b4.git_get_command_lines(None, ['rev-list', f'{range_base}..{end}'])
+
+
+def _get_maintainers_trees() -> Dict[str, Tuple[str, Set[str]]]:
+    """Return {repo_url_key: (url, branches)} for the git trees in MAINTAINERS.
+
+    The branches are the ones MAINTAINERS names for the tree, if any.
+    """
+    topdir = b4.git_get_toplevel()
+    if not topdir:
+        return dict()
+    try:
+        with open(
+            os.path.join(topdir, 'MAINTAINERS'), encoding='utf-8', errors='replace'
+        ) as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return dict()
+    trees: Dict[str, Tuple[str, Set[str]]] = dict()
+    for line in lines:
+        # Same URL rule as for a tree the developer names
+        m = re.match(r'^T:\s*git\s+((?:https|git)://\S+)(?:\s+(\S+))?', line)
+        if not m:
+            continue
+        url = m.group(1).rstrip('/')
+        key = b4.repo_url_key(url)
+        if key is None:
+            continue
+        known_url, branches = trees.get(key, (url, set()))
+        # One tree may be listed both ways; https:// gets through more
+        # firewalls than git:// does
+        if url.startswith('https://'):
+            known_url = url
+        if m.group(2):
+            branches.add(m.group(2))
+        trees[key] = (known_url, branches)
+    return trees
+
+
+def _known_branches_containing(
+    commit: str,
+    series_commits: List[str],
+    known: Dict[str, Tuple[str, Set[str]]],
+) -> List[_TreeCandidate]:
+    """Return the remote-tracking branches that contain *commit*, belong
+    to a tree in *known* and don't hold any of *series_commits*.
+
+    A branch that holds the series is a copy of it, e.g. a maintainer's
+    WIP branch pushed for CI. Its tip is always nearer to the base than
+    any upstream that has moved on, so it would win the footer and also
+    pass the base-tree check while naming a branch nobody else bases on.
+    """
+    # %(ahead-behind) ranks every branch in this one call; older git needs
+    # a rev-list per tip, and many remote branches share one
+    ranked = b4.git_check_minimal_version('2.41')
+    fmt = '%(refname) %(objectname)'
+    if ranked:
+        fmt += f' %(ahead-behind:{commit})'
+    gitargs = ['for-each-ref', '--contains', commit]
+    gitargs += [f'--no-contains={x}' for x in series_commits]
+    gitargs += [f'--format={fmt}', 'refs/remotes/']
+    remotes = b4.git_get_command_lines(None, ['remote'])
+    defaults = _remote_default_branches(remotes)
+    trees: Dict[str, Optional[Tuple[str, Set[str]]]] = dict()
+    counts: Dict[str, int] = dict()
+    found: List[_TreeCandidate] = list()
+    for line in b4.git_get_command_lines(None, gitargs):
+        ref, tip, *aheadbehind = line.split()
+        if ref.endswith('/HEAD'):
+            continue
+        located = b4.git_split_remote_ref(ref, remotes)
+        if located is None:
+            continue
+        remote, branch = located
+        if remote not in trees:
+            # get-url applies url.<base>.insteadOf, like a fetch would
+            ecode, out = b4.git_run_command(None, ['remote', 'get-url', remote])
+            key = b4.repo_url_key(out.strip()) if ecode == 0 else None
+            trees[remote] = known.get(key) if key else None
+        if (tree := trees[remote]) is None:
+            continue
+        url, listed = tree
+        if aheadbehind:
+            distance = int(aheadbehind[0])
+        else:
+            if tip not in counts:
+                ecode, out = b4.git_run_command(
+                    None, ['rev-list', '--count', f'{commit}..{tip}']
+                )
+                counts[tip] = int(out.strip()) if ecode == 0 else sys.maxsize
+            distance = counts[tip]
+        if branch in listed:
+            rank = 0
+        elif remote in defaults:
+            rank = 1 if branch == defaults[remote] else 2
+        else:
+            # Remotes added before git 2.48 often have no HEAD
+            rank = 1 if branch in ('master', 'main') else 2
+        found.append(_TreeCandidate(ref, remote, url, branch, distance, rank))
+    return found
+
+
+def _remote_default_branches(remotes: List[str]) -> Dict[str, str]:
+    """Return {remote: branch} for each remote whose HEAD names a branch."""
+    defaults: Dict[str, str] = dict()
+    lines = b4.git_get_command_lines(
+        None, ['for-each-ref', '--format=%(refname) %(symref)', 'refs/remotes/']
+    )
+    for line in lines:
+        ref, _, target = line.partition(' ')
+        if not target or not ref.endswith('/HEAD'):
+            continue
+        head = b4.git_split_remote_ref(ref, remotes)
+        branch = b4.git_split_remote_ref(target, remotes)
+        if head and branch and head[0] == branch[0]:
+            defaults[head[0]] = branch[1]
+    return defaults
 
 
 def parse_deps(data: str) -> List[str]:

@@ -1616,6 +1616,199 @@ def test_prep_base_tree_is_not_a_dependency(
     assert 'prerequisite-' not in body
 
 
+def _git(*args: str) -> None:
+    ecode, out = b4.git_run_command(None, list(args))
+    assert ecode == 0, out
+
+
+def _maintainers(*trees: str) -> None:
+    """Write a MAINTAINERS file listing *trees* ("URL [branch]") as git trees."""
+    lines = ['THE REST', 'M:\tA. Maintainer <a@example.com>']
+    lines += [f'T:\tgit {tree}' for tree in trees]
+    pathlib.Path('MAINTAINERS').write_text('\n'.join(lines) + '\n')
+
+
+def _child(parent: str, msg: str, *merged: str) -> str:
+    """Make an empty commit on top of *parent* (merging *merged*)."""
+    gitargs = ['commit-tree', f'{parent}^{{tree}}', '-p', parent]
+    for other in merged:
+        gitargs += ['-p', other]
+    ecode, out = b4.git_run_command(None, [*gitargs, '-m', msg])
+    assert ecode == 0, out
+    return out.strip()
+
+
+def test_prep_get_base_tree(
+    prepdir_commit: str, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A tree the developer named wins; otherwise only a MAINTAINERS tree
+    is named: the intended branch when the recorded base branch still
+    holds the base, else the nearest tree."""
+    korg = 'https://git.kernel.org/pub/scm/utils/b4/b4.git'
+    gh = 'https://github.com/example/b4.git'
+    # Listed twice, and the https:// spelling is the one we write
+    _maintainers('git://git.kernel.org/pub/scm/utils/b4/b4.git/', korg, gh)
+    base = b4.ez.get_series_range()[0]
+    # The fixture clone's master tracks origin/master, which is the base.
+    # The default commit strategy records no base branch at all.
+    _git('remote', 'set-url', 'origin', 'git@gitolite.kernel.org:pub/scm/utils/b4/b4')
+    cover, tracking = b4.ez.load_cover()
+    assert 'base-branch' not in tracking['series']
+    assert b4.ez.get_base_tree(base) == (korg, 'master')
+
+    # With two trees that hold it, the one whose tip is nearest wins...
+    ahead = _child(base, 'ahead')
+    _git('update-ref', 'refs/remotes/origin/master', ahead)
+    _git('remote', 'add', 'gh', 'ssh://git@github.com/example/b4.git')
+    _git('update-ref', 'refs/remotes/gh/main', base)
+    assert b4.ez.get_base_tree(base) == (gh, 'main')
+    # ...unless the recorded base branch still holds the base
+    tracking['series']['base-branch'] = 'master'
+    b4.ez.store_cover(cover, tracking)
+    assert b4.ez.get_base_tree(base) == (korg, 'master')
+    # A stale one, left behind by a rebase, is not trusted
+    _git('update-ref', 'refs/remotes/origin/old', f'{base}~1')
+    tracking['series']['base-branch'] = 'origin/old'
+    b4.ez.store_cover(cover, tracking)
+    assert b4.ez.get_base_tree(base) == (gh, 'main')
+
+    # A base that no remote holds, e.g. on a local topic branch
+    assert b4.ez.get_base_tree(ahead) == (korg, 'master')
+    assert b4.ez.get_base_tree(_child(base, 'topic')) is None
+
+    # A tree that MAINTAINERS doesn't list is never named, even on a
+    # public host: it may be private, or a fork its owner keeps quiet
+    _git('remote', 'remove', 'gh')
+    _git('remote', 'set-url', 'origin', 'git@github.com:someone/b4.git')
+    assert b4.ez.get_base_tree(base) is None
+    # Nor without MAINTAINERS at all
+    _git('remote', 'set-url', 'origin', korg)
+    pathlib.Path('MAINTAINERS').unlink()
+    assert b4.ez.get_base_tree(base) is None
+
+    # A tree set in the config needs no MAINTAINERS, and git:// will do
+    b4.MAIN_CONFIG['prep-base-tree'] = 'git://example.org/b4.git dev'
+    assert b4.ez.get_base_tree(base) == ('git://example.org/b4.git', 'dev')
+    b4.MAIN_CONFIG['prep-base-tree'] = 'none'
+    _maintainers(korg)
+    assert b4.ez.get_base_tree(base) is None
+    # An --edit-deps entry wins over the config, and "none" turns it off
+    deps = _write(tmp_path, 'deps.txt', 'base-tree: https://example.org/b4.git\n')
+    _run_prep('--deps-from-file', deps)
+    assert b4.ez.get_base_tree(base) == ('https://example.org/b4.git', '')
+    _run_prep('--deps-from-file', _write(tmp_path, 'deps.txt', 'base-tree: none\n'))
+    del b4.MAIN_CONFIG['prep-base-tree']
+    assert b4.ez.get_base_tree(base) is None
+    # b4 am suggests fetching from it, so nothing but https:// or git://
+    deps = _write(tmp_path, 'deps.txt', 'base-tree: ssh://example.org/b4.git\n')
+    _run_prep('--deps-from-file', deps)
+    with caplog.at_level(logging.WARNING):
+        assert b4.ez.get_base_tree(base) is None
+    assert 'not an https:// or git:// URL' in caplog.text
+
+
+def test_prep_base_tree_not_from_b4_config(gitdir: str) -> None:
+    """A repository's own .b4-config can't choose the tree: it would put a
+    URL of the repository's choosing into the developer's email."""
+    evil = 'https://example.org/evil.git'
+    pathlib.Path(gitdir, '.b4-config').write_text(
+        f'[b4]\n\tprep-base-tree = {evil}\n\tprep-pre-flight-checks = disable-all\n'
+    )
+    b4._setup_main_config(topdir=gitdir)
+    # Sanity: the file was read, an allowed setting made it in
+    assert b4.MAIN_CONFIG.get('prep-pre-flight-checks') == 'disable-all'
+    assert b4.MAIN_CONFIG.get('prep-base-tree') != evil
+
+
+@pytest.mark.parametrize('strategy', ['commit', 'branch-description'])
+@pytest.mark.parametrize('ranked', [True, False])
+def test_prep_base_tree_skips_series_copies(
+    gitdir: str, monkeypatch: pytest.MonkeyPatch, strategy: str, ranked: bool
+) -> None:
+    """A copy of the series, such as a maintainer's WIP branch pushed for
+    CI, is nearer to the base than an upstream that moved on, but it is
+    not what the series is based on. Older git ranks the branches without
+    %(ahead-behind)."""
+    _prep_branch(gitdir, strategy)
+    _add_series_commit(gitdir)
+    korg = 'https://git.kernel.org/pub/scm/utils/b4/b4.git'
+    _maintainers(korg)
+    _git('remote', 'set-url', 'origin', korg)
+    if strategy == 'branch-description':
+        # Its base branch is required, so stop it from naming the tree
+        _git('branch', '--unset-upstream', 'master')
+    monkeypatch.setattr(b4, 'git_check_minimal_version', lambda _v: ranked)
+    base = b4.ez.get_series_range()[0]
+    upstream = base
+    for n in range(5):
+        upstream = _child(upstream, f'{n}')
+    _git('update-ref', 'refs/remotes/origin/master', upstream)
+    _git('update-ref', 'refs/remotes/origin/wip/pytest', 'HEAD')
+    assert b4.ez.get_base_tree(base) == (korg, 'master')
+    # A personal fork that holds the base exactly is nearer still, but
+    # MAINTAINERS doesn't list it
+    _git('remote', 'add', 'myfork', 'git@github.com:contributor/b4.git')
+    _git('update-ref', 'refs/remotes/myfork/master', base)
+    assert b4.ez.get_base_tree(base) == (korg, 'master')
+
+
+def test_prep_base_tree_prefers_main_line(prepdir_commit: str) -> None:
+    """A side branch started at the base is nearer to it than the tree's
+    main line, but the footer should name the main line: the branch that
+    MAINTAINERS names, else the one the remote's HEAD points at."""
+    korg = 'https://git.kernel.org/pub/scm/utils/b4/b4.git'
+    sound = 'https://git.kernel.org/pub/scm/linux/kernel/git/broonie/sound.git'
+    nextgit = 'https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git'
+    _maintainers(korg, sound, nextgit)
+    _git('remote', 'set-url', 'origin', korg)
+    base = b4.ez.get_series_range()[0]
+
+    _git('update-ref', 'refs/remotes/origin/master', _child(_child(base, 'a'), 'b'))
+    _git('update-ref', 'refs/remotes/origin/experiment', _child(base, 'side'))
+    _git('update-ref', 'refs/remotes/origin/for-next', _child(_child(base, 'c'), 'd'))
+    _git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master')
+    assert b4.ez.get_base_tree(base) == (korg, 'master')
+    # A remote without a HEAD: master (or main) stands in for it
+    _git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD')
+    assert b4.ez.get_base_tree(base) == (korg, 'master')
+    # A branch that MAINTAINERS names beats both
+    _maintainers(f'{korg} for-next', sound, nextgit)
+    assert b4.ez.get_base_tree(base) == (korg, 'for-next')
+    # A main line that doesn't hold the base can't be named
+    _maintainers(korg, sound, nextgit)
+    _git('update-ref', 'refs/remotes/origin/master', f'{base}~1')
+    _git('update-ref', '-d', 'refs/remotes/origin/for-next')
+    assert b4.ez.get_base_tree(base) == (korg, 'experiment')
+
+    # Only within a tree: an integration tree whose main line merges the
+    # subsystem branch that holds the base must not win over that tree
+    _git('remote', 'add', 'sound', sound)
+    fix = _child(base, 'sound fix')
+    _git('update-ref', 'refs/remotes/sound/for-next', _child(fix, 'more sound'))
+    # A stale mirror of mainline, as many subsystem trees keep
+    _git('update-ref', 'refs/remotes/sound/master', f'{base}~1')
+    _git('symbolic-ref', 'refs/remotes/sound/HEAD', 'refs/remotes/sound/master')
+    merge = _child(_child(base, 'other tree'), 'Merge sound', fix)
+    _git('remote', 'add', 'next', nextgit)
+    _git('update-ref', 'refs/remotes/next/master', _child(merge, 'next'))
+    _git('symbolic-ref', 'refs/remotes/next/HEAD', 'refs/remotes/next/master')
+    assert b4.ez.get_base_tree(fix) == (sound, 'for-next')
+
+
+def test_git_get_branch_remote(prepdir: str) -> None:
+    """Local upstreams (remote ".") are followed until a remote is reached."""
+    _git('update-ref', 'refs/remotes/origin/next', 'master')
+    _git('branch', 'topic', 'origin/next')
+    _git('config', 'branch.master.remote', '.')
+    _git('config', 'branch.master.merge', 'refs/heads/topic')
+    assert b4.git_get_branch_remote(None, 'master') == ('origin', 'next')
+    assert b4.git_get_branch_remote(None, 'origin/next') == ('origin', 'next')
+    # A local loop never reaches a remote
+    _git('config', 'branch.topic.remote', '.')
+    _git('config', 'branch.topic.merge', 'refs/heads/master')
+    assert b4.git_get_branch_remote(None, 'master') is None
+
+
 def test_prep_deps_from_stdin_blank_clears(
     prepdir: str, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

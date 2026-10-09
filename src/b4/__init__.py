@@ -4581,6 +4581,58 @@ def repo_url_key(repo_url: str) -> Optional[str]:
     return FORGE_WEB_HOSTS.get(host, host) + path
 
 
+def git_get_branch_remote(
+    gitdir: Optional[str], branch: str
+) -> Optional[Tuple[str, str]]:
+    """Return (remote, branch on that remote) behind a branch.
+
+    A remote-tracking branch names its remote directly. A local branch
+    is followed through its upstream, including local upstreams (remote
+    ".") such as a fix branched off a topic branch, until a remote is
+    reached. Returns None when there is no remote at the end.
+    """
+    ecode, out = git_run_command(
+        gitdir, ['rev-parse', '--symbolic-full-name', '--verify', '-q', branch]
+    )
+    ref = out.strip()
+    seen: Set[str] = set()
+    while ecode == 0 and ref.startswith('refs/heads/') and ref not in seen:
+        seen.add(ref)
+        ecode, out = git_run_command(
+            gitdir,
+            [
+                'for-each-ref',
+                '--format=%(upstream:remotename)%00%(upstream:remoteref)',
+                ref,
+            ],
+        )
+        remote, _, remoteref = out.strip().partition('\0')
+        if not remote or not remoteref:
+            return None
+        if remote != '.':
+            return remote, remoteref.removeprefix('refs/heads/')
+        ref = remoteref
+    if ecode > 0:
+        return None
+    return git_split_remote_ref(ref, git_get_command_lines(gitdir, ['remote']))
+
+
+def git_split_remote_ref(ref: str, remotes: List[str]) -> Optional[Tuple[str, str]]:
+    """Return (remote, branch) for a refs/remotes/ ref, given the remote names.
+
+    Taking the remote names from the caller lets a loop over many refs
+    list the remotes once.
+    """
+    if not ref.startswith('refs/remotes/'):
+        return None
+    rest = ref.removeprefix('refs/remotes/')
+    # Remote names can contain slashes, so take the longest one that fits
+    for remote in sorted(remotes, key=len, reverse=True):
+        if rest.startswith(f'{remote}/'):
+            return remote, rest[len(remote) + 1 :]
+    return None
+
+
 def commit_reachable_on_remote(
     commit: str, repo_url: str, branch: str = '', gitdir: Optional[str] = None
 ) -> Optional[bool]:
