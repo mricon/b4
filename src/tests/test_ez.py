@@ -1809,6 +1809,47 @@ def test_git_get_branch_remote(prepdir: str) -> None:
     assert b4.git_get_branch_remote(None, 'master') is None
 
 
+@pytest.mark.parametrize('strategy', ['commit', 'branch-description'])
+def test_prep_base_tree_footer(
+    gitdir: str, tmp_path: pathlib.Path, strategy: str
+) -> None:
+    """The footer follows base-commit: in the basement and always names
+    the branch, also with the default commit strategy, which records no
+    base branch. It is left out entirely when there is no tree to name."""
+    _prep_branch(gitdir, strategy)
+    _add_series_commit(gitdir)
+    korg = 'https://git.kernel.org/pub/scm/utils/b4/b4.git'
+    _maintainers(korg)
+    _git('remote', 'set-url', 'origin', korg)
+
+    def _basement() -> str:
+        _tos, _ccs, _tag, patches = b4.ez.get_prep_branch_as_patches()
+        ((_commit, patch),) = patches
+        body, _charset = b4.LoreMessage.get_payload(patch)
+        return body[body.index('diff --git') :]
+
+    assert '\nbase-commit: ' in _basement()
+    assert f'\nbase-tree: {korg} master\nchange-id: ' in _basement()
+    # Even the branch that the remote's HEAD names: a reader's idea of the
+    # tree's default branch may not match our local copy of HEAD
+    _git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master')
+    assert f'\nbase-tree: {korg} master\nchange-id: ' in _basement()
+    # A tree the developer wrote without a branch stays that way
+    _run_prep('--deps-from-file', _write(tmp_path, 'deps.txt', f'base-tree: {korg}\n'))
+    assert f'\nbase-tree: {korg}\nchange-id: ' in _basement()
+
+    _run_prep('--deps-from-file', _write(tmp_path, 'deps.txt', 'base-tree: none\n'))
+    assert 'base-tree:' not in _basement()
+
+    # Custom templates only get the footer if they ask for it
+    _run_prep('--deps-from-file', _write(tmp_path, 'deps.txt', ''))
+    template = _write(
+        tmp_path, 'cover.txt', '${cover}\n---\nbase-commit: ${base_commit}\n'
+    )
+    b4.MAIN_CONFIG['prep-cover-template'] = template
+    assert 'base-tree:' not in _basement()
+
+
 def test_prep_deps_from_stdin_blank_clears(
     prepdir: str, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -43,7 +43,7 @@ logger = b4.logger
 # must always be relocated to the very bottom of a patch, regardless of where
 # a custom prep-cover-template happens to place them.
 BASEMENT_TRAILER_RE = re.compile(
-    r'^(?:base-commit|change-id|prerequisite-[a-z-]+):',
+    r'^(?:base-commit|base-tree|change-id|prerequisite-[a-z-]+):',
     flags=re.I | re.M,
 )
 
@@ -63,7 +63,7 @@ ${shortlog}
 ${diffstat}
 ---
 base-commit: ${base_commit}
-change-id: ${change_id}
+${base_tree}change-id: ${change_id}
 ${prerequisites}
 Best regards,
 -- """
@@ -2875,6 +2875,12 @@ def get_prep_branch_as_patches(
                 prerequisites += f'prerequisite-patch-id: {ppid}\n'
                 seen_patch_ids.add(ppid)
 
+    # Like ${prerequisites}, ${base_tree} is a whole line or nothing, so a
+    # series without a known tree doesn't get an empty footer
+    base_tree = ''
+    if (found_tree := get_base_tree(base_commit, usebranch=usebranch)) is not None:
+        base_tree = ' '.join(['base-tree:', *filter(None, found_tree)]) + '\n'
+
     # Put together the cover letter
     tptvals = {
         'cover': cbody,
@@ -2882,6 +2888,7 @@ def get_prep_branch_as_patches(
         'diffstat': diffstat,
         'change_id': change_id,
         'base_commit': base_commit,
+        'base_tree': base_tree,
         'prerequisites': prerequisites,
         'signature': b4.get_email_signature(),
     }
