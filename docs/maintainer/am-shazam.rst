@@ -243,12 +243,13 @@ The following flags only make sense for ``b4 am``:
 
 ``-b GUESSBRANCH [...], --guess-branch GUESSBRANCH [...]``
   When using ``--guess-base``, you can restrict which branch(es) b4 uses
-  to find the match. If not specified, b4 uses the entire tree history.
+  to find the match. If not specified, b4 searches all local branches,
+  remote-tracking branches and tags.
 
 ``--guess-lookback GUESSDAYS``
   When using ``--guess-base``, you can specify how far back b4 should
   look *from the date of the patch* to find the base commit. By default,
-  b4 only considers the last 14 days prior to the date of the patch,
+  b4 only considers the last 21 days prior to the date of the patch,
   but you can expand or shrink this range as necessary.
 
 ``-3, --prep-3way``

@@ -424,7 +424,7 @@ def setup_parser() -> argparse.ArgumentParser:
         dest='guessdays',
         type=int,
         default=21,
-        help='When guessing base, go back this many days from the patch date (default: 2 weeks)',
+        help='When guessing base, go back this many days from the patch date (default: 3 weeks)',
     )
     sp_am.add_argument(
         '-3',
