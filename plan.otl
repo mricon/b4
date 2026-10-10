@@ -111,6 +111,32 @@ v0.17
 	: No sticky flag anymore, so the lore_request()/reset_cancel() hygiene layer is gone
 	: LoreNodeShutdownMixin calls shutdown() on unmount; get_lore_node() revives the
 	: singleton for sibling apps in the same process (TrackingApp<->ReviewApp switching)
+[X] `base-tree:` footer next to `base-commit:`
+	: Says where the base commit lives, so maintainers and CI systems
+	: don't have to guess the tree
+	: Never makes a tree public by naming it: only a tree the developer chose
+	: (--edit-deps, then b4.prep-base-tree, never from .b4-config) or one
+	: that MAINTAINERS lists; private repos and personal forks on public
+	: hosts are never named
+	: For MAINTAINERS trees, starts from the base commit, so it works with
+	: every cover strategy and survives rebases: a remote-tracking branch of
+	: a listed tree that contains the base, preferring the recorded base
+	: branch, else within each tree its main line (MAINTAINERS branch, then
+	: remote HEAD, then master/main) over side branches, then the nearest
+	: tree; branches holding the series itself are skipped
+	: The footer always names the branch; URLs are https:// or git://
+	: Known limit: a base that is only an ancestor of a tag is not looked for
+	[X] Footer: ${base_tree} in the default cover template, basement footer
+	[X] Override: base-tree: URL [branch] / base-tree: none in --edit-deps,
+		: not a dependency (no has-prerequisites, no prerequisite footer)
+	[X] b4.prep-base-tree: the same, for every series in a repository
+	[X] Check: ask the stated tree for the base (tip match via ls-remote, else
+		: fetch only the named branch's tip as objects); warn only on a clear
+		: "not there", stay silent when the remote doesn't answer
+	[X] Report in --check-deps and as the base-not-in-tree send pre-flight check
+	[X] b4 am/shazam: suggest `git fetch <tree> <base>` for an unknown base
+	[X] Remove the unread prerequisite-base-commit parsing
+	[X] Docs: prep.rst, send.rst, config.rst, am-shazam.rst
 
 v0.16
 -----
