@@ -31,6 +31,7 @@ from typing import (
     NamedTuple,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Union,
 )
@@ -557,6 +558,33 @@ class SendReceiveListener(object):
             return
         logger.debug('Received a request for %s messages', len(umsgs))
 
+        client_bcc: Set[str] = set()
+        if 'bcc' in jdata:
+            jbcc = jdata.get('bcc')
+            if not isinstance(jbcc, list):
+                self.send_error(resp, message='Invalid bcc payload format')
+                return
+            max_bcc = self._config['main'].getint('max-client-bcc', fallback=10)
+            for entry in jbcc:
+                if not isinstance(entry, str):
+                    self.send_error(resp, message='Invalid bcc address format')
+                    return
+                parsed = utils.getaddresses([entry])
+                if not parsed:
+                    self.send_error(resp, message='Invalid bcc address format')
+                    return
+                for _, addr in parsed:
+                    local, _, domain = addr.partition('@')
+                    if not (local and domain and not any(c.isspace() for c in addr)):
+                        self.send_error(resp, message='Invalid bcc address format')
+                        return
+                    client_bcc.add(addr.lower())
+            if len(client_bcc) > max_bcc:
+                self.send_error(
+                    resp, message=f'Too many BCC recipients (max: {max_bcc})'
+                )
+                return
+
         diffre = re.compile(
             rb'^(---.*\n\+\+\+|GIT binary patch|diff --git \w/\S+ \w/\S+)',
             flags=re.M | re.I,
@@ -800,7 +828,7 @@ class SendReceiveListener(object):
             if reflect:
                 recipients = [identity]
             else:
-                recipients = list(destaddrs | bccaddrs)
+                recipients = list(destaddrs | client_bcc | bccaddrs)
             bdata = self.get_msg_as_bytes(msg, headers='encode')
             tosend.append((subject, fromaddr, recipients, bdata, pdata))
 
