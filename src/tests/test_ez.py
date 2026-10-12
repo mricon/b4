@@ -1992,3 +1992,84 @@ def test_prep_cover_and_deps_flags_are_mutually_exclusive() -> None:
         parser.parse_args(['prep', '--edit-cover', '--cover-from-file', '-'])
     with pytest.raises(SystemExit):
         parser.parse_args(['prep', '--show-deps', '--deps-from-file', '-'])
+
+
+def test_send_rejects_per_patch_bcc_trailer(
+    prepdir_commit: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Bcc: trailer in a patch commit must be rejected by `b4 send` rather
+    than silently added to the per-patch / cover-letter Cc list.
+    """
+    with open(os.path.join(prepdir_commit, 'file1.txt'), 'a') as fh:
+        fh.write('diff context line\nBcc: diff-context@example.com\n')
+    b4.git_run_command(prepdir_commit, ['add', 'file1.txt'])
+    valid_commit_msg = (
+        'feat: test bcc false positives\n\n'
+        'Bcc: headers are stripped before signing.\n\n'
+        'Signed-off-by: Test Author <author@example.com>\n'
+    )
+    ecode, _ = b4.git_run_command(prepdir_commit, ['commit', '-m', valid_commit_msg])
+    assert ecode == 0
+
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        [
+            '--no-stdin',
+            '--no-interactive',
+            '--offline-mode',
+            'send',
+            '--dry-run',
+            '--to',
+            'list@example.com',
+        ]
+    )
+    b4.ez.cmd_send(cmdargs)
+
+    with open(os.path.join(prepdir_commit, 'file1.txt'), 'a') as fh:
+        fh.write('bcc trailer test\n')
+    b4.git_run_command(prepdir_commit, ['add', 'file1.txt'])
+    commit_msg = (
+        'feat: test bcc trailer rejection\n\n'
+        'Bcc: Secret Person <secret@example.com>\n'
+        'Signed-off-by: Test Override <test-override@example.com>\n'
+    )
+    ecode, _ = b4.git_run_command(prepdir_commit, ['commit', '-m', commit_msg])
+    assert ecode == 0
+
+    flag_sets = [
+        ['--dry-run'],
+        ['--dry-run', '--no-trailer-to-cc'],
+        ['--preview-to', 'preview@example.com'],
+    ]
+    for extra_flags in flag_sets:
+        caplog.clear()
+        cmdargs = parser.parse_args(
+            [
+                '--no-stdin',
+                '--no-interactive',
+                '--offline-mode',
+                'send',
+                '--to',
+                'list@example.com',
+            ]
+            + extra_flags
+        )
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit) as ex:
+                b4.ez.cmd_send(cmdargs)
+        assert ex.value.code == 1
+        assert 'Bcc trailers in patches are not supported' in caplog.text
+
+
+def test_cover_rejects_bcc_trailer(caplog: pytest.LogCaptureFixture) -> None:
+    cbody = (
+        'Subject: [PATCH 0/1] Cover letter\n\n'
+        'Cover letter body\n\n'
+        'Bcc: Secret Person <secret@example.com>\n'
+        'Signed-off-by: Test Author <author@example.com>\n'
+    )
+    with caplog.at_level(logging.CRITICAL, logger='b4'):
+        with pytest.raises(SystemExit) as ex:
+            b4.ez.get_cover_dests(cbody)
+    assert ex.value.code == 1
+    assert 'Bcc trailers in patches are not supported' in caplog.text

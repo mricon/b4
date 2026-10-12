@@ -2636,6 +2636,12 @@ def get_cover_dests(
     ccs = list()
     seen = set()
     for trailer in all_trailers:
+        if trailer.lname == 'bcc' and trailer.addr is not None:
+            logger.critical('CRITICAL: Bcc trailers in patches are not supported.')
+            logger.critical(
+                '          Please remove them and use --bcc or send-series-bcc configuration.'
+            )
+            sys.exit(1)
         if trailer.lname not in ('to', 'cc') or trailer.addr is None:
             continue
         _realname, addr = trailer.addr
@@ -3310,31 +3316,41 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     else:
         seen.update([x[1] for x in todests])
         seen.update([x[1] for x in ccdests])
-        # Go through the messages to make to/cc headers
-        for commit, msg in patches:
-            if not msg:
-                continue
-            body, _ = b4.LoreMessage.get_payload(msg)
-            btrs, _ = b4.LoreMessage.find_trailers(body)
-            for btr in btrs:
-                if btr.type != 'person':
-                    continue
-                if btr.addr is None:
-                    logger.debug('Skipping trailer %s with no address', btr.lname)
-                    continue
-                if btr.addr[1] in seen:
-                    continue
-                if commit:
-                    cpccs = pccs[commit]
-                    if btr.addr not in cpccs:
-                        cpccs.append(btr.addr)
-                    continue
-                seen.add(btr.addr[1])
-                if btr.lname == 'to':
-                    todests.append(btr.addr)
-                    continue
-                ccdests.append(btr.addr)
 
+    # Go through the messages to make to/cc headers
+    for commit, msg in patches:
+        if not msg:
+            continue
+        body, _ = b4.LoreMessage.get_payload(msg)
+        btrs, _ = b4.LoreMessage.find_trailers(b4.DIFF_RE.split(body, maxsplit=1)[0])
+        for btr in btrs:
+            if btr.type != 'person':
+                continue
+            if btr.lname == 'bcc':
+                logger.critical('CRITICAL: Bcc trailers in patches are not supported.')
+                logger.critical(
+                    '          Please remove them and use --bcc or send-series-bcc configuration.'
+                )
+                sys.exit(1)
+            if cmdargs.preview_to or cmdargs.no_trailer_to_cc:
+                continue
+            if btr.addr is None:
+                logger.debug('Skipping trailer %s with no address', btr.lname)
+                continue
+            if btr.addr[1] in seen:
+                continue
+            if commit:
+                cpccs = pccs[commit]
+                if btr.addr not in cpccs:
+                    cpccs.append(btr.addr)
+                continue
+            seen.add(btr.addr[1])
+            if btr.lname == 'to':
+                todests.append(btr.addr)
+                continue
+            ccdests.append(btr.addr)
+
+    if not (cmdargs.preview_to or cmdargs.no_trailer_to_cc):
         excludes = b4.get_excluded_addrs()
         if cmdargs.not_me_too or b4.get_me_too_mode('send-me-too') != 'yes':
             excludes.add(myemail)
