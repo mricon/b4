@@ -343,8 +343,17 @@ Command line flags
   configuration file using the :term:`b4.send-series-cc` option (see
   :ref:`contributor_settings`).
 
+``--bcc``
+  Additional email addresses to include into the Bcc: list. Recipients
+  in this list will always receive the series regardless of any
+  exclusion filters (such as the ``--not-me-too`` flag or the
+  :term:`b4.email-exclude` configuration setting). Separate multiple
+  entries with a comma. You can also set this in the configuration
+  file using the :term:`b4.send-series-bcc` option (see
+  :ref:`contributor_settings`).
+
 ``--not-me-too``
-  Removes your own email address from the recipients. This can be set in
+  Removes your own email address from the To: or Cc: recipients. This can be set in
   the configuration using the :term:`b4.send-me-too`, setting to ``no``.
   (see :ref:`contributor_settings`).
 

@@ -3302,6 +3302,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     excludes: Set[str] = set()
     pccs: defaultdict[str, List[Tuple[str, str]]] = defaultdict(list)
 
+    bccdests = list()
+
     if cmdargs.preview_to or cmdargs.no_trailer_to_cc:
         todests = list()
         ccdests = list()
@@ -3339,6 +3341,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     tos: Set[str] = set()
     ccs: Set[str] = set()
+    bccs: Set[str] = set()
     if cmdargs.preview_to:
         tos.update(cmdargs.preview_to)
     else:
@@ -3352,6 +3355,18 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         scc = config.get('send-series-cc')
         if isinstance(scc, str) and scc:
             ccs.add(scc)
+        if cmdargs.bcc:
+            bccs.update(cmdargs.bcc)
+        sbcc = config.get('send-series-bcc')
+        if isinstance(sbcc, str) and sbcc:
+            bccs.add(sbcc)
+    if bccs:
+        seen_bcc: Set[str] = set()
+        for pair in email.utils.getaddresses(list(bccs)):
+            if pair[1] in seen_bcc:
+                continue
+            seen_bcc.add(pair[1])
+            bccdests.append(pair)
     if ccs:
         for pair in email.utils.getaddresses(list(ccs)):
             if pair[1] in seen:
@@ -3367,6 +3382,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     allto = list()
     allcc = list()
+    allbcc = list()
     alldests = set()
 
     if todests:
@@ -3377,6 +3393,10 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         allcc = b4.cleanup_email_addrs(ccdests, excludes, None)
         logger.debug('allcc: %s', allcc)
         alldests.update(set([x[1] for x in allcc]))
+    if bccdests:
+        allbcc = b4.cleanup_email_addrs(bccdests, set(), None)
+        logger.debug('allbcc: %s', allbcc)
+        alldests.update(set([x[1] for x in allbcc]))
 
     logger.debug('alldests: %s', alldests)
 
@@ -3416,7 +3436,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     # Give the user the last opportunity to bail out
     if not cmdargs.dryrun:
-        if not len(alldests):
+        if not len(allto):
             logger.critical('CRITICAL: Could not find any destination addresses')
             logger.critical('          try b4 prep --auto-to-cc or b4 send --to addr')
             sys.exit(1)
@@ -3501,6 +3521,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         logger.info('---')
         b4.print_pretty_addrs(allto, 'To')
         b4.print_pretty_addrs(allcc, 'Cc')
+        b4.print_pretty_addrs(allbcc, 'Bcc')
         logger.info('---')
         for commit, msg in patches:
             if not msg:
@@ -3659,6 +3680,8 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    send_bcc = [x[1] for x in allbcc]
+
     if endpoint:
         # Web endpoint always requires signing
         if not sign:
@@ -3673,6 +3696,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 None,
                 send_msgs,
                 fromaddr=None,
+                bccaddrs=send_bcc,
                 patatt_sign=True,
                 dryrun=cmdargs.dryrun,
                 output_dir=cmdargs.output_dir,
@@ -3695,6 +3719,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
                 smtp,
                 send_msgs,
                 fromaddr=fromaddr,
+                bccaddrs=send_bcc,
                 patatt_sign=sign,
                 dryrun=cmdargs.dryrun,
                 output_dir=cmdargs.output_dir,

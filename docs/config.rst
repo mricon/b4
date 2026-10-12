@@ -46,8 +46,8 @@ unrestricted:
   on the series you are preparing yourself
 - ``prep-pre-flight-checks`` -- which pre-flight checks are enabled
 - ``send-*`` -- recipient and addressing options, such as
-  ``send-series-to``, ``send-series-cc``, ``send-auto-to-cmd`` and
-  ``send-auto-cc-cmd``
+  ``send-series-to``, ``send-series-cc``, ``send-series-bcc``,
+  ``send-auto-to-cmd`` and ``send-auto-cc-cmd``
 - ``*mask`` -- URL templates such as ``midmask`` and ``linkmask``
 - ``*template*`` -- message templates
 - ``trailer*`` -- trailer-handling options
@@ -1268,6 +1268,15 @@ Contributor-oriented settings
 
      .. versionchanged:: v0.15
         Added ``shallow`` config value.
+
+   :term:`b4.send-series-bcc`
+     A comma-separated list of addresses to always add to the "Bcc:" list.
+     Recipients in this list will always receive the series regardless of
+     any exclusion filters (such as the ``--not-me-too`` flag or the
+     :term:`b4.email-exclude` configuration setting).
+     See :ref:`prep_recipients`.
+
+     Default: ``None``
 
    :term:`b4.send-series-cc`
      A comma-separated list of addresses to always add to the "Cc:" header.

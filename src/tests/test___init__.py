@@ -2547,6 +2547,105 @@ class TestSignBeforeConnect:
         assert smtp is None
 
 
+class TestSendMailBcc:
+    def test_send_mail_bcc_envelope(self) -> None:
+        seen_dests: List[List[str]] = []
+        seen_bodies: List[bytes] = []
+
+        class _RecordingSMTP:
+            def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
+                seen_dests.append(list(destaddrs))
+                seen_bodies.append(bdata)
+
+        def _connect() -> Any:
+            return _RecordingSMTP()
+
+        msg = email.message.EmailMessage()
+        msg['From'] = 'alice@example.org'
+        msg['To'] = 'bob@example.org'
+        msg['Cc'] = 'carol@example.org'
+        msg['Subject'] = 'Test patch'
+        msg.set_content('Diff content')
+
+        sent = b4.send_mail(
+            b4.SMTPConnector(_connect),
+            [msg],
+            fromaddr='alice@example.org',
+            bccaddrs=['dave@example.org', 'eve@example.org'],
+        )
+        assert sent == 1
+        assert len(seen_dests) == 1
+        assert set(seen_dests[0]) == {'bob@example.org', 'carol@example.org', 'dave@example.org', 'eve@example.org'}
+        assert b'Bcc:' not in seen_bodies[0]
+
+    def test_send_mail_bcc_web_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        posted_payload: Dict[str, Any] = {}
+
+        class _FakeResponse:
+            def json(self) -> Dict[str, Any]:
+                return {'result': 'success'}
+
+        class _FakeSession:
+            def post(self, url: str, json: Dict[str, Any]) -> _FakeResponse:
+                posted_payload.update(json)
+                return _FakeResponse()
+
+        monkeypatch.setattr(b4, 'get_requests_session', lambda: _FakeSession())
+
+        msg = email.message.EmailMessage()
+        msg['From'] = 'alice@example.org'
+        msg['To'] = 'bob@example.org'
+        msg['Subject'] = 'Test patch'
+        msg.set_content('Diff content')
+
+        sent = b4.send_mail(
+            None,
+            [msg],
+            fromaddr='alice@example.org',
+            bccaddrs=['dave@example.org'],
+            web_endpoint='https://example.org/_submit',
+        )
+        assert sent == 1
+        assert posted_payload.get('action') == 'receive'
+        assert posted_payload.get('bcc') == ['dave@example.org']
+
+    def test_send_mail_bcc_from_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen_dests: List[List[str]] = []
+        seen_bodies: List[bytes] = []
+
+        class _RecordingSMTP:
+            def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
+                seen_dests.append(list(destaddrs))
+                seen_bodies.append(bdata)
+
+        def _connect() -> Any:
+            return _RecordingSMTP()
+
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'send-series-bcc', 'dave@example.org, eve@example.org')
+
+        msg = email.message.EmailMessage()
+        msg['From'] = 'alice@example.org'
+        msg['To'] = 'bob@example.org'
+        msg['Cc'] = 'carol@example.org'
+        msg['Subject'] = 'Test patch'
+        msg.set_content('Diff content')
+
+        sent = b4.send_mail(
+            b4.SMTPConnector(_connect),
+            [msg],
+            fromaddr='alice@example.org',
+            bccaddrs=None,
+        )
+        assert sent == 1
+        assert len(seen_dests) == 1
+        assert set(seen_dests[0]) == {
+            'bob@example.org',
+            'carol@example.org',
+            'dave@example.org',
+            'eve@example.org',
+        }
+        assert b'Bcc:' not in seen_bodies[0]
+
 def _fake_editor(tmp_path: pathlib.Path, body: str) -> str:
     """A stand-in $EDITOR that runs *body* and leaves the buffer alone."""
     script = tmp_path / 'fake-editor.sh'

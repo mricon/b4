@@ -6599,6 +6599,7 @@ def send_mail(
     msgs: Sequence[EmailMessage],
     fromaddr: Optional[str],
     destaddrs: Optional[Union[Set[str], List[str]]] = None,
+    bccaddrs: Optional[Union[Set[str], List[str]]] = None,
     patatt_sign: bool = False,
     dryrun: bool = False,
     output_dir: Optional[str] = None,
@@ -6609,6 +6610,20 @@ def send_mail(
     if output_dir is not None:
         dryrun = True
 
+    bcc_set: Set[str] = set()
+    if bccaddrs is not None:
+        bcc_set = set(bccaddrs)
+    else:
+        config = get_main_config()
+        cfg_bcc = config.get('send-series-bcc')
+        if isinstance(cfg_bcc, str) and cfg_bcc:
+            bcc_set = {
+                x[1]
+                for x in cleanup_email_addrs(
+                    email.utils.getaddresses([cfg_bcc]), set(), None
+                )
+            }
+
     if patatt_sign:
         # Signing is the one step here that can block indefinitely: with a PGP
         # key patatt shells out to gpg, which may be waiting on a pinentry
@@ -6618,6 +6633,16 @@ def send_mail(
         logger.info('Signing %s messages with patatt (Ctrl-C to cancel)', len(msgs))
 
     for msg in msgs:
+        if not destaddrs:
+            alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
+            alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
+            myaddrs = {x[1] for x in alldests}
+        else:
+            myaddrs = set(destaddrs)
+
+        if bcc_set:
+            myaddrs.update(bcc_set)
+
         if not msg.get('X-Mailer'):
             msg.add_header('X-Mailer', f'b4 {__VERSION__}')
         msg.set_charset('utf-8')
@@ -6660,14 +6685,6 @@ def send_mail(
             logger.info('    | %s', bdata.decode().rstrip().replace('\n', '\n    | '))
             logger.info('    --- DRYRUN: message ends ---')
             continue
-        if not destaddrs:
-            alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
-            alldests += email.utils.getaddresses(
-                [str(x) for x in msg.get_all('cc', [])]
-            )
-            myaddrs = {x[1] for x in alldests}
-        else:
-            myaddrs = set(destaddrs)
 
         tosend.append((myaddrs, bdata, ls))
 
@@ -6686,6 +6703,9 @@ def send_mail(
             'action': wpaction,
             'messages': [x[1].decode() for x in tosend],
         }
+        if bcc_set and not reflect:
+            req['bcc'] = list(bcc_set)
+
         ses = get_requests_session()
         res = ses.post(web_endpoint, json=req)
         try:

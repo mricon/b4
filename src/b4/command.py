@@ -1336,6 +1336,9 @@ def setup_parser() -> argparse.ArgumentParser:
         '--cc', nargs='+', metavar='ADDR', help='Addresses to add to the Cc: list'
     )
     sp_send.add_argument(
+        '--bcc', nargs='+', metavar='ADDR', help='Addresses to add to the Bcc: list'
+    )
+    sp_send.add_argument(
         '--not-me-too',
         action='store_true',
         default=False,
