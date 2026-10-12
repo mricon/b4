@@ -553,7 +553,7 @@ class SendReceiveListener(object):
         if not umsgs:
             self.send_error(resp, message='Missing the messages array')
             return
-        if not isinstance(umsgs, Sequence):
+        if not isinstance(umsgs, list):
             self.send_error(resp, message='Invalid messages array')
             return
         logger.debug('Received a request for %s messages', len(umsgs))
