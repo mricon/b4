@@ -1245,7 +1245,7 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
         if isinstance(app, BugListApp):
             ts = app._ts
         # Render email headers
-        for hdr in ('From', 'To', 'Cc', 'Subject', 'In-Reply-To'):
+        for hdr in ('From', 'To', 'Cc', 'Bcc', 'Subject', 'In-Reply-To'):
             val = self._msg.get(hdr)
             if val:
                 hdr_text = Text()
@@ -1273,17 +1273,21 @@ class ReplyPreviewScreen(ModalScreen[Optional[str]]):
 
         to_val = b4.LoreMessage.clean_header(self._msg.get('To', ''))
         cc_val = b4.LoreMessage.clean_header(self._msg.get('Cc', ''))
-        screen = ToCcScreen(to_val, cc_val, '', show_apply_all=False)
+        bcc_val = b4.LoreMessage.clean_header(self._msg.get('Bcc', ''))
+        screen = ToCcScreen(to_val, cc_val, bcc_val, show_apply_all=False)
 
         def _on_result(saved: bool | None) -> None:
             if not saved:
                 return
             del self._msg['To']
             del self._msg['Cc']
+            del self._msg['Bcc']
             if screen.to_result:
                 self._msg['To'] = screen.to_result
             if screen.cc_result:
                 self._msg['Cc'] = screen.cc_result
+            if screen.bcc_result:
+                self._msg['Bcc'] = screen.bcc_result
             self._rerender()
 
         self.app.push_screen(screen, callback=_on_result)

@@ -6633,6 +6633,23 @@ def send_mail(
         logger.info('Signing %s messages with patatt (Ctrl-C to cancel)', len(msgs))
 
     for msg in msgs:
+        msg_bcc_hdrs = msg.get_all('bcc', [])
+        msg_bcc: Set[str] = set()
+        if msg_bcc_hdrs:
+            if web_endpoint:
+                raise RuntimeError(
+                    'Per-patch Bcc headers are not supported with the web endpoint.'
+                )
+            msg_bcc = {
+                x[1]
+                for x in cleanup_email_addrs(
+                    email.utils.getaddresses([str(x) for x in msg_bcc_hdrs]),
+                    set(),
+                    None,
+                )
+            }
+            del msg['Bcc']
+
         if not destaddrs:
             alldests = email.utils.getaddresses([str(x) for x in msg.get_all('to', [])])
             alldests += email.utils.getaddresses([str(x) for x in msg.get_all('cc', [])])
@@ -6642,6 +6659,8 @@ def send_mail(
 
         if bcc_set:
             myaddrs.update(bcc_set)
+        if msg_bcc:
+            myaddrs.update(msg_bcc)
 
         if not msg.get('X-Mailer'):
             msg.add_header('X-Mailer', f'b4 {__VERSION__}')

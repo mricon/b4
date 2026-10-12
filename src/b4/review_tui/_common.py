@@ -898,12 +898,12 @@ def _render_email_to_viewer(
     separator lines (---) are dim.
     *ts* is a resolved theme styles dict from :func:`resolve_styles`.
     """
-    for hdr in ('From', 'Subject', 'To', 'Cc'):
+    for hdr in ('From', 'Subject', 'To', 'Cc', 'Bcc'):
         val = msg[hdr]
         if not val:
             continue
         val = str(val)
-        if hdr.lower() in ('to', 'cc'):
+        if hdr.lower() in ('to', 'cc', 'bcc'):
             wrapped = b4.LoreMessage.wrap_header((hdr, val), transform='decode').decode(
                 errors='replace'
             )

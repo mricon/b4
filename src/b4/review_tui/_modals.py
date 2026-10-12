@@ -700,7 +700,6 @@ class SendScreen(ModalScreen[bool]):
             if isinstance(cfg_bcc, str) and cfg_bcc
             else set()
         )
-        bcc_count = len(series_bcc)
         text = Text()
         text.append(f'Send {len(self._msgs)} review email(s)?', style='bold')
         text.append('\n')
@@ -711,6 +710,15 @@ class SendScreen(ModalScreen[bool]):
             text.append(f' {subj}')
             to_count = len(email.utils.getaddresses([msg['To']])) if msg['To'] else 0
             cc_count = len(email.utils.getaddresses([msg['Cc']])) if msg['Cc'] else 0
+            msg_bcc = {
+                x[1]
+                for x in b4.cleanup_email_addrs(
+                    email.utils.getaddresses([str(x) for x in msg.get_all('bcc', [])]),
+                    set(),
+                    None,
+                )
+            }
+            bcc_count = len(series_bcc | msg_bcc)
             recip_parts: List[str] = []
             if to_count:
                 recip_parts.append(f'{to_count} To')
@@ -1494,7 +1502,7 @@ class ThankScreen(ModalScreen[Optional[str]]):
 
     def on_mount(self) -> None:
         viewer = self.query_one('#thank-viewer', RichLog)
-        for hdr in ('From', 'To', 'Cc', 'Subject', 'In-Reply-To'):
+        for hdr in ('From', 'To', 'Cc', 'Bcc', 'Subject', 'In-Reply-To'):
             val = self._msg.get(hdr)
             if val:
                 viewer.write(f'{hdr}: {val}')

@@ -2646,6 +2646,61 @@ class TestSendMailBcc:
         }
         assert b'Bcc:' not in seen_bodies[0]
 
+    def test_send_mail_per_message_bcc_header(self) -> None:
+        seen_dests: List[List[str]] = []
+        seen_bodies: List[bytes] = []
+
+        class _RecordingSMTP:
+            def sendmail(self, fromaddr: str, destaddrs: List[str], bdata: bytes) -> None:
+                seen_dests.append(list(destaddrs))
+                seen_bodies.append(bdata)
+
+        def _connect() -> Any:
+            return _RecordingSMTP()
+
+        msg = email.message.EmailMessage()
+        msg['From'] = 'alice@example.org'
+        msg['To'] = 'bob@example.org'
+        msg['Bcc'] = 'Secret Reviewer <secret@example.org>'
+        msg['Subject'] = 'Re: [PATCH] Test patch'
+        msg.set_content('Review reply')
+
+        sent = b4.send_mail(
+            b4.SMTPConnector(_connect),
+            [msg],
+            fromaddr='alice@example.org',
+            bccaddrs=['dave@example.org'],
+        )
+        assert sent == 1
+        assert len(seen_dests) == 1
+        assert set(seen_dests[0]) == {
+            'bob@example.org',
+            'dave@example.org',
+            'secret@example.org',
+        }
+        assert msg.get_all('bcc') is None
+        assert b'Bcc:' not in seen_bodies[0]
+        assert b'secret@example.org' not in seen_bodies[0]
+
+    def test_send_mail_per_message_bcc_web_endpoint_rejected(self) -> None:
+        msg = email.message.EmailMessage()
+        msg['From'] = 'alice@example.org'
+        msg['To'] = 'bob@example.org'
+        msg['Bcc'] = 'secret@example.org'
+        msg['Subject'] = '[PATCH] Test patch'
+        msg.set_content('Diff content')
+
+        with pytest.raises(
+            RuntimeError,
+            match='Per-patch Bcc headers are not supported with the web endpoint',
+        ):
+            b4.send_mail(
+                None,
+                [msg],
+                fromaddr='alice@example.org',
+                web_endpoint='https://example.org/_submit',
+            )
+
 def _fake_editor(tmp_path: pathlib.Path, body: str) -> str:
     """A stand-in $EDITOR that runs *body* and leaves the buffer alone."""
     script = tmp_path / 'fake-editor.sh'
