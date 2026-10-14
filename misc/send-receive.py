@@ -55,7 +55,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_selector ON auth (identity, selec
 logger = logging.getLogger('b4-send-receive')
 logger.setLevel(logging.DEBUG)
 
-JSON = Union[str, int, float, bool, Sequence['JSON'], Mapping[str, 'JSON']]
+JSON = Union[None, str, int, float, bool, Sequence['JSON'], Mapping[str, 'JSON']]
 
 
 class SendReceiveListener(object):
@@ -389,12 +389,6 @@ class SendReceiveListener(object):
             addrs.append(email.utils.formataddr(pair))
         return ', '.join(addrs)
 
-    def isascii(self, strval: str) -> bool:
-        try:
-            return strval.isascii()
-        except AttributeError:
-            return all([ord(c) < 128 for c in strval])
-
     def wrap_header(
         self,
         hdr: Tuple[str, str],
@@ -407,7 +401,7 @@ class SendReceiveListener(object):
             _parts = [f'{hname}: ']
             first = True
             for addr in email.utils.getaddresses([hval]):
-                if transform == 'encode' and not self.isascii(addr[0]):
+                if transform == 'encode' and not addr[0].isascii():
                     addr = (
                         email.quoprimime.header_encode(
                             addr[0].encode(), charset='utf-8'
@@ -434,7 +428,7 @@ class SendReceiveListener(object):
                 hdata = f'{hname}: ' + self.clean_header(hval)
             else:
                 hdata = f'{hname}: {hval}'
-            if transform != 'encode' or self.isascii(hval):
+            if transform != 'encode' or hval.isascii():
                 if len(hdata) <= width:
                     return hdata.encode()
                 # Use simple textwrap, with a small trick that ensures that long non-breakable
@@ -894,7 +888,6 @@ app.add_route(mp, srl)
 if __name__ == '__main__':
     from wsgiref.simple_server import make_server
 
-    logger.setLevel(logging.DEBUG)
     ch = logging.StreamHandler()
     formatter = logging.Formatter('%(message)s')
     ch.setFormatter(formatter)
