@@ -443,13 +443,16 @@ def archiving_endpoint(
     monkeypatch: pytest.MonkeyPatch,
     inbox: pathlib.Path,
     extra: str = '',
+    notify: Optional[pathlib.Path] = None,
 ) -> Endpoint:
+    notify = notify or tmp_path / '.updated'
     return Endpoint(
         tmp_path,
         monkeypatch,
         tmp_path / 'auth.sqlite3',
         extra=extra,
-        sections=f'[public-inbox]\n  inbox = {inbox}\n  listid = {LISTID}',
+        sections=f'[public-inbox]\n  inbox = {inbox}\n  listid = {LISTID}\n'
+        f'  notify_file = {notify}',
     )
 
 
@@ -465,6 +468,7 @@ def test_receive_archives_to_v2_inbox(
     # Taken under public-inbox's lock, and still in the epoch we moved over
     assert (inbox / 'inbox.lock').exists()
     assert archived(inbox) == [(0, '[PATCH] Fix bar', LISTID)]
+    assert (tmp_path / '.updated').exists()
 
 
 def test_receive_archives_only_what_was_sent(
@@ -481,6 +485,8 @@ def test_receive_archives_only_what_was_sent(
     assert res['result'] == 'error', res
     assert 'Sent 1 of 2 messages' in res['message']
     assert archived(inbox) == [(0, '[PATCH 1/2] Fix bar', LISTID)]
+    # The indexer still has to pick up what made it into the archive
+    assert (tmp_path / '.updated').exists()
 
 
 @pytest.mark.parametrize(
@@ -499,6 +505,23 @@ def test_nothing_archived_without_a_real_send(
     res = endpoint.post(action=action, messages=[patch_message(dev_key)])
     assert res['result'] == 'success', res
     assert archived(inbox) == []
+    assert not (tmp_path / '.updated').exists()
+
+
+def test_failed_notify_touch_still_succeeds(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
+) -> None:
+    inbox = make_inbox(tmp_path / 'inbox')
+    rundir = tmp_path / 'run'
+    rundir.mkdir()
+    endpoint = archiving_endpoint(
+        tmp_path, monkeypatch, inbox, notify=rundir / '.updated'
+    )
+    endpoint.add_verified_key(dev_key)
+    rundir.rmdir()
+    res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
+    assert res['result'] == 'success', res
+    assert archived(inbox) == [(0, '[PATCH] Fix bar', LISTID)]
 
 
 @pytest.mark.parametrize(
@@ -508,6 +531,10 @@ def test_nothing_archived_without_a_real_send(
         ('listid = x', 'public-inbox.inbox is not set'),
         ('inbox = {tmp}/typo\n  listid = x', 'not a public-inbox v2 inbox'),
         ('inbox = {inbox}', 'public-inbox.listid is not set'),
+        (
+            'inbox = {inbox}\n  listid = x\n  notify_file = {tmp}/typo/.updated',
+            'public-inbox.notify_file',
+        ),
     ],
 )
 def test_endpoint_refuses_broken_public_inbox(

@@ -12,6 +12,7 @@ import json
 import logging
 import logging.handlers
 import os
+import pathlib
 import re
 import smtplib
 import sqlite3
@@ -70,6 +71,7 @@ JSON = Union[None, str, int, float, bool, Sequence['JSON'], Mapping[str, 'JSON']
 class PublicInbox(NamedTuple):
     inbox: str
     listid: str
+    notify_file: Optional[str]
 
 
 def get_public_inbox(config: ConfigParser) -> Optional[PublicInbox]:
@@ -92,7 +94,15 @@ def get_public_inbox(config: ConfigParser) -> Optional[PublicInbox]:
     listid = section.get('listid')
     if not listid:
         raise ValueError('public-inbox.listid is not set')
-    return PublicInbox(inbox, listid)
+    notify_file = section.get('notify_file')
+    if notify_file:
+        notify_file = os.path.expanduser(notify_file)
+        # Otherwise indexing would quietly stop while archiving goes on
+        if not os.path.isdir(os.path.dirname(os.path.abspath(notify_file))):
+            raise ValueError(
+                f'public-inbox.notify_file: no directory for {notify_file}'
+            )
+    return PublicInbox(inbox, listid, notify_file or None)
 
 
 class SendReceiveListener(object):
@@ -815,6 +825,9 @@ class SendReceiveListener(object):
         except OSError as ex:  # SMTPException is an OSError too
             error = ex
 
+        if pi is not None and archived:
+            # Once per batch, after all messages are written
+            self.notify(pi)
         if error is not None:
             self.send_error(
                 resp,
@@ -841,6 +854,17 @@ class SendReceiveListener(object):
             return False
         logger.debug('Wrote %s to public-inbox at %s', subject, pi.inbox)
         return True
+
+    def notify(self, pi: PublicInbox) -> None:
+        if not pi.notify_file:
+            return
+        try:
+            # Updating the timestamps is enough for systemd's PathChanged=
+            pathlib.Path(pi.notify_file).touch()
+        except OSError as ex:
+            # Not an error for the client: everything is sent and archived,
+            # and it must not send the series again
+            logger.critical('Could not touch %s: %s', pi.notify_file, ex)
 
     def on_post(self, req: falcon.Request, resp: falcon.Response) -> None:
         if not req.content_length:
