@@ -14,6 +14,7 @@ import pathlib
 import re
 import smtplib
 import sqlite3
+import subprocess
 import types
 from contextlib import closing
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -30,6 +31,7 @@ pytest.importorskip('nacl')
 email.charset.CHARSETS.clear()
 email.charset.CHARSETS.update(_charsets)
 
+import ezpi
 from falcon import testing
 from nacl.signing import SigningKey
 
@@ -413,25 +415,63 @@ def test_dryrun_does_not_connect_to_smtp(
     assert res['result'] == 'success', res
 
 
-def test_receive_archives_only_what_was_sent(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
-) -> None:
-    repo = tmp_path / 'inbox.git'
-    repo.mkdir()
-    endpoint = Endpoint(
+LISTID = 'Test <test.example.org>'
+
+
+def make_inbox(path: pathlib.Path, how: str = 'epoch-only') -> pathlib.Path:
+    if how == 'ezpi-made':
+        ezpi.init_v2_inbox(str(path))
+    else:
+        # What moves over from lkml-1: one epoch, no inbox.lock or all.git
+        subprocess.run(
+            ['git', 'init', '-q', '--bare', str(path / 'git' / '0.git')], check=True
+        )
+    return path
+
+
+def archived(inbox: pathlib.Path) -> List[Tuple[int, str, str]]:
+    """(epoch, Subject, List-Id) of every message in a v2 inbox."""
+    found = []
+    for epoch, _commit, raw in ezpi.iter_messages(str(inbox)):
+        msg = email.message_from_bytes(raw, policy=b4.emlpolicy)
+        found.append((epoch, str(msg['Subject']), str(msg['List-Id'])))
+    return found
+
+
+def archiving_endpoint(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inbox: pathlib.Path,
+    extra: str = '',
+) -> Endpoint:
+    return Endpoint(
         tmp_path,
         monkeypatch,
         tmp_path / 'auth.sqlite3',
-        sections=f'[public-inbox]\n  repo = {repo}\n  listid = Test <test.example.org>',
+        extra=extra,
+        sections=f'[public-inbox]\n  inbox = {inbox}\n  listid = {LISTID}',
     )
-    archived: List[str] = []
-    hooks: List[str] = []
-    monkeypatch.setattr(
-        endpoint.mod.ezpi,
-        'add_rfc822',
-        lambda repo, msg: archived.append(msg['Subject']),
-    )
-    monkeypatch.setattr(endpoint.mod.ezpi, 'run_hook', hooks.append)
+
+
+@pytest.mark.parametrize('how', ['epoch-only', 'ezpi-made'])
+def test_receive_archives_to_v2_inbox(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key, how: str
+) -> None:
+    inbox = make_inbox(tmp_path / 'inbox', how)
+    endpoint = archiving_endpoint(tmp_path, monkeypatch, inbox)
+    endpoint.add_verified_key(dev_key)
+    res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
+    assert res['result'] == 'success', res
+    # Taken under public-inbox's lock, and still in the epoch we moved over
+    assert (inbox / 'inbox.lock').exists()
+    assert archived(inbox) == [(0, '[PATCH] Fix bar', LISTID)]
+
+
+def test_receive_archives_only_what_was_sent(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
+) -> None:
+    inbox = make_inbox(tmp_path / 'inbox')
+    endpoint = archiving_endpoint(tmp_path, monkeypatch, inbox)
     endpoint.add_verified_key(dev_key)
     endpoint.smtp_error = smtplib.SMTPServerDisconnected('Connection closed')
     endpoint.smtp_fail_at = 1
@@ -440,9 +480,55 @@ def test_receive_archives_only_what_was_sent(
     res = endpoint.post(action='receive', messages=msgs)
     assert res['result'] == 'error', res
     assert 'Sent 1 of 2 messages' in res['message']
-    assert archived == ['[PATCH 1/2] Fix bar']
-    # The hook still has to pick up what made it into the archive
-    assert hooks == [str(repo)]
+    assert archived(inbox) == [(0, '[PATCH 1/2] Fix bar', LISTID)]
+
+
+@pytest.mark.parametrize(
+    'extra, action', [('dryrun = true', 'receive'), ('', 'reflect')]
+)
+def test_nothing_archived_without_a_real_send(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dev_key: Key,
+    extra: str,
+    action: str,
+) -> None:
+    inbox = make_inbox(tmp_path / 'inbox')
+    endpoint = archiving_endpoint(tmp_path, monkeypatch, inbox, extra=extra)
+    endpoint.add_verified_key(dev_key)
+    res = endpoint.post(action=action, messages=[patch_message(dev_key)])
+    assert res['result'] == 'success', res
+    assert archived(inbox) == []
+
+
+@pytest.mark.parametrize(
+    'section, expected',
+    [
+        ('repo = {inbox}/git/0.git\n  listid = x', 'public-inbox.repo'),
+        ('listid = x', 'public-inbox.inbox is not set'),
+        ('inbox = {tmp}/typo\n  listid = x', 'not a public-inbox v2 inbox'),
+        ('inbox = {inbox}', 'public-inbox.listid is not set'),
+    ],
+)
+def test_endpoint_refuses_broken_public_inbox(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    section: str,
+    expected: str,
+) -> None:
+    # A typo at cutover must not leave patches going out unarchived
+    inbox = make_inbox(tmp_path / 'inbox')
+    section = section.format(inbox=inbox, tmp=tmp_path)
+    with pytest.raises(SystemExit):
+        Endpoint(
+            tmp_path,
+            monkeypatch,
+            tmp_path / 'auth.sqlite3',
+            sections=f'[public-inbox]\n  {section}',
+        )
+    assert expected in capsys.readouterr().err
+    assert not (tmp_path / 'typo').exists()
 
 
 def write_migrate_conf(tmp_path: pathlib.Path, dburl: str) -> pathlib.Path:

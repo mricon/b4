@@ -21,7 +21,16 @@ import uuid
 from configparser import ConfigParser, ExtendedInterpolation
 from email import charset, utils
 from string import Template
-from typing import Generator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (
+    Generator,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
 
 import ezpi
 import falcon
@@ -58,10 +67,44 @@ logger.setLevel(logging.DEBUG)
 JSON = Union[None, str, int, float, bool, Sequence['JSON'], Mapping[str, 'JSON']]
 
 
+class PublicInbox(NamedTuple):
+    inbox: str
+    listid: str
+
+
+def get_public_inbox(config: ConfigParser) -> Optional[PublicInbox]:
+    """Read [public-inbox], refusing anything that would quietly not archive."""
+    if 'public-inbox' not in config:
+        return None
+    section = config['public-inbox']
+    if section.get('repo'):
+        raise ValueError(
+            'public-inbox.repo is no longer supported, set public-inbox.inbox '
+            'to the v2 inbox directory instead'
+        )
+    inbox = section.get('inbox')
+    if not inbox:
+        raise ValueError('public-inbox.inbox is not set')
+    inbox = os.path.expanduser(inbox)
+    # ezpi creates a missing inbox, so a typo would start a new, empty one
+    if not os.path.isdir(os.path.join(inbox, 'git')):
+        raise ValueError(f'public-inbox.inbox: {inbox} is not a public-inbox v2 inbox')
+    listid = section.get('listid')
+    if not listid:
+        raise ValueError('public-inbox.listid is not set')
+    return PublicInbox(inbox, listid)
+
+
 class SendReceiveListener(object):
-    def __init__(self, _dbpath: str, _config: ConfigParser) -> None:
+    def __init__(
+        self,
+        _dbpath: str,
+        _config: ConfigParser,
+        _public_inbox: Optional[PublicInbox] = None,
+    ) -> None:
         self._dbpath = _dbpath
         self._config = _config
+        self._public_inbox = _public_inbox
         logfile = _config['main'].get('logfile')
         loglevel = _config['main'].get('loglevel', 'info')
         if logfile:
@@ -645,13 +688,8 @@ class SendReceiveListener(object):
         if _bcc:
             bccaddrs.update([x[1] for x in utils.getaddresses([_bcc])])
 
-        repo = listid = None
-        if 'public-inbox' in self._config and not reflect:
-            public_inbox = self._config['public-inbox']
-            repo = public_inbox.get('repo')
-            listid = public_inbox.get('listid')
-            if repo is None or listid is None or not os.path.isdir(repo):
-                repo = None
+        # Reflected messages only go back to the sender
+        pi = None if reflect else self._public_inbox
 
         if reflect:
             logger.info('Reflecting %s messages back to %s', len(msgs), identity)
@@ -661,19 +699,18 @@ class SendReceiveListener(object):
             sentaction = 'Sent'
 
         # (subject, envelope from, recipients, data, archive copy)
-        tosend: List[
-            Tuple[str, str, List[str], bytes, Optional[email.message.EmailMessage]]
-        ] = []
+        tosend: List[Tuple[str, str, List[str], bytes, Optional[bytes]]] = []
         for msg, destaddrs in msgs:
             subject = self.clean_header(msg.get('Subject'))
             # Archive the message as signed, before we rewrite it for SMTP
-            pmsg = None
-            if repo is not None and listid is not None:
+            pdata = None
+            if pi is not None:
                 pmsg = copy.deepcopy(msg)
                 if pmsg.get('List-Id'):
-                    pmsg.replace_header('List-Id', listid)
+                    pmsg.replace_header('List-Id', pi.listid)
                 else:
-                    pmsg.add_header('List-Id', listid)
+                    pmsg.add_header('List-Id', pi.listid)
+                pdata = pmsg.as_bytes(policy=emlpolicy)
 
             origfrom = msg.get('From')
             assert origfrom is not None
@@ -749,7 +786,7 @@ class SendReceiveListener(object):
             else:
                 recipients = list(destaddrs | bccaddrs)
             bdata = self.get_msg_as_bytes(msg, headers='encode')
-            tosend.append((subject, fromaddr, recipients, bdata, pmsg))
+            tosend.append((subject, fromaddr, recipients, bdata, pdata))
 
         if self._config['main'].getboolean('dryrun'):
             for _, _, _, bdata, _ in tosend:
@@ -766,22 +803,18 @@ class SendReceiveListener(object):
         try:
             smtp = self.get_smtp()
             try:
-                for subject, fromaddr, recipients, bdata, pmsg in tosend:
+                for subject, fromaddr, recipients, bdata, pdata in tosend:
                     smtp.sendmail(fromaddr, recipients, bdata)
                     sent += 1
                     logger.info('%s: %s', sentaction, subject)
                     # Only archive what actually went out
-                    if repo is not None and pmsg is not None:
-                        archived += self.archive(repo, pmsg)
+                    if pi is not None and pdata is not None:
+                        archived += self.archive(pi, subject, pdata)
             finally:
                 smtp.close()
         except OSError as ex:  # SMTPException is an OSError too
             error = ex
 
-        if repo is not None and archived:
-            # run it once after writing all messages
-            logger.debug('Running public-inbox repo hook (if present)')
-            ezpi.run_hook(repo)
         if error is not None:
             self.send_error(
                 resp,
@@ -796,15 +829,17 @@ class SendReceiveListener(object):
             resp, message=f'{sentaction} {len(msgs)} messages for {identity}/{selector}'
         )
 
-    def archive(self, repo: str, msg: email.message.Message) -> bool:
+    def archive(self, pi: PublicInbox, subject: str, pdata: bytes) -> bool:
         try:
-            ezpi.add_rfc822(repo, msg)
+            # The v2 writer takes inbox.lock, so public-inbox-index and
+            # -purge never run at the same time, and it rotates epochs
+            ezpi.add_rfc822_v2(pi.inbox, pdata)
         except (RuntimeError, OSError, ValueError) as ex:
             # The message already went out, so a missing archive copy must
             # not stop the rest of the series
-            logger.critical('Could not archive %s: %s', msg.get('Subject'), ex)
+            logger.critical('Could not archive %s: %s', subject, ex)
             return False
-        logger.debug('Wrote %s to public-inbox at %s', msg.get('Subject'), repo)
+        logger.debug('Wrote %s to public-inbox at %s', subject, pi.inbox)
         return True
 
     def on_post(self, req: falcon.Request, resp: falcon.Response) -> None:
@@ -879,7 +914,12 @@ if dbpath == ':memory:':
     sys.exit(1)
 dbpath = os.path.expanduser(dbpath)
 os.makedirs(os.path.dirname(os.path.abspath(dbpath)), exist_ok=True)
-srl = SendReceiveListener(dbpath, parser)
+try:
+    public_inbox = get_public_inbox(parser)
+except ValueError as ex:
+    sys.stderr.write(f'{ex}\n')
+    sys.exit(1)
+srl = SendReceiveListener(dbpath, parser, public_inbox)
 app = falcon.App()
 mp = os.getenv('MOUNTPOINT', '/_b4_submit')
 app.add_route(mp, srl)
