@@ -54,7 +54,6 @@ misc = [
     "falcon",
     "instructor",
     "pydantic",
-    "sqlalchemy",
 ]
 
 [project.optional-dependencies]

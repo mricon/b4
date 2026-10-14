@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import contextlib
 import copy
 import email
 import email.header
@@ -13,18 +14,17 @@ import logging.handlers
 import os
 import re
 import smtplib
+import sqlite3
 import sys
 import textwrap
+import uuid
 from configparser import ConfigParser, ExtendedInterpolation
 from email import charset, utils
 from string import Template
-from typing import List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Generator, List, Mapping, Optional, Sequence, Tuple, Union
 
 import ezpi
 import falcon
-import sqlalchemy as sa
-from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.sql import tuple_
 
 import patatt
 
@@ -35,6 +35,23 @@ qspecials = re.compile(r'[()<>@,:;.\"\[\]]')
 
 DB_VERSION = 1
 
+# IF NOT EXISTS lets several uwsgi workers initialize a new file at the
+# same time. AUTOINCREMENT never reuses an auth_id, because published
+# X-Endpoint-Received headers refer to it. send-receive-migrate.py
+# creates the same schema.
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS auth (
+    auth_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    identity TEXT NOT NULL,
+    selector TEXT NOT NULL,
+    pubkey TEXT NOT NULL,
+    challenge TEXT,
+    verified INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_selector ON auth (identity, selector);
+"""
+
 logger = logging.getLogger('b4-send-receive')
 logger.setLevel(logging.DEBUG)
 
@@ -42,16 +59,14 @@ JSON = Union[str, int, float, bool, Sequence['JSON'], Mapping[str, 'JSON']]
 
 
 class SendReceiveListener(object):
-    def __init__(self, _engine: Engine, _config: ConfigParser) -> None:
-        self._engine = _engine
+    def __init__(self, _dbpath: str, _config: ConfigParser) -> None:
+        self._dbpath = _dbpath
         self._config = _config
-        # You shouldn't use this in production
-        if self._engine.driver == 'pysqlite':
-            self._init_sa_db()
         logfile = _config['main'].get('logfile')
         loglevel = _config['main'].get('loglevel', 'info')
         if logfile:
             self._init_logger(logfile, loglevel)
+        self._init_db()
 
     def _init_logger(self, logfile: str, loglevel: str) -> None:
         global logger
@@ -68,32 +83,35 @@ class SendReceiveListener(object):
             lch.setLevel(logging.INFO)
         logger.addHandler(lch)
 
-    def _init_sa_db(self) -> None:
-        logger.info('Setting up SQLite database')
-        conn = self._engine.connect()
-        md = sa.MetaData()
-        meta = sa.Table('meta', md, sa.Column('version', sa.Integer()))
-        auth = sa.Table(
-            'auth',
-            md,
-            sa.Column('auth_id', sa.Integer(), primary_key=True),
-            sa.Column(
-                'created',
-                sa.DateTime(),
-                nullable=False,
-                server_default=sa.sql.func.now(),
-            ),
-            sa.Column('identity', sa.Text(), nullable=False),
-            sa.Column('selector', sa.Text(), nullable=False),
-            sa.Column('pubkey', sa.Text(), nullable=False),
-            sa.Column('challenge', sa.Text(), nullable=True),
-            sa.Column('verified', sa.Integer(), nullable=False),
-        )
-        sa.Index('idx_identity_selector', auth.c.identity, auth.c.selector, unique=True)
-        md.create_all(self._engine)
-        q = sa.insert(meta).values(version=DB_VERSION)
-        conn.execute(q)
-        conn.close()
+    @contextlib.contextmanager
+    def _db(self) -> Generator[sqlite3.Connection, None, None]:
+        # One connection per request, because uwsgi runs several processes
+        # and threads against the same file. The timeout makes a worker
+        # wait for a lock instead of failing at once.
+        conn = sqlite3.connect(self._dbpath, timeout=30)
+        try:
+            # sqlite3's own context manager commits or rolls back, but
+            # does not close
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def _init_db(self) -> None:
+        with self._db() as conn:
+            # WAL lets readers work while another worker writes. The mode
+            # is stored in the file, so this only does work the first time.
+            conn.execute('PRAGMA journal_mode = WAL')
+            dbver = conn.execute('PRAGMA user_version').fetchone()[0]
+            if dbver > DB_VERSION:
+                raise RuntimeError(
+                    f'Database {self._dbpath} is version {dbver}, '
+                    f'we only know version {DB_VERSION}'
+                )
+            if dbver < DB_VERSION:
+                logger.info('Setting up SQLite database at %s', self._dbpath)
+                conn.executescript(SCHEMA)
+                conn.execute(f'PRAGMA user_version = {DB_VERSION}')
 
     def on_get(self, req: falcon.Request, resp: falcon.Response) -> None:
         resp.status = falcon.HTTP_200
@@ -152,9 +170,6 @@ class SendReceiveListener(object):
         return smtp, frompair
 
     def auth_new(self, jdata: Mapping[str, JSON], resp: falcon.Response) -> None:
-        # Is it already authorized?
-        conn = self._engine.connect()
-        md = sa.MetaData()
         identity: Optional[JSON] = jdata.get('identity')
         selector: Optional[JSON] = jdata.get('selector')
         pubkey: Optional[JSON] = jdata.get('pubkey')
@@ -166,39 +181,26 @@ class SendReceiveListener(object):
             self.send_error(resp, message='Invalid authentication request')
             return
         logger.info('New authentication request for %s/%s', identity, selector)
-        t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
-        select_auth = sa.select(t_auth.c.auth_id).where(
-            t_auth.c.identity == identity,
-            t_auth.c.selector == selector,
-            t_auth.c.verified == 1,
-        )
-        rp = conn.execute(select_auth)
-        if len(rp.fetchall()):
+        cstr = str(uuid.uuid4())
+        with self._db() as conn:
+            # Replace a pending challenge, but never a verified key. A single
+            # statement means concurrent requests for the same pair can't race.
+            cur = conn.execute(
+                'INSERT INTO auth (identity, selector, pubkey, challenge, verified)'
+                ' VALUES (?, ?, ?, ?, 0)'
+                ' ON CONFLICT (identity, selector) DO UPDATE'
+                ' SET created = CURRENT_TIMESTAMP, pubkey = excluded.pubkey,'
+                ' challenge = excluded.challenge'
+                ' WHERE verified = 0',
+                (identity, selector, pubkey, cstr),
+            )
+            created = cur.rowcount > 0
+        if not created:
             self.send_error(
                 resp, message='i=%s;s=%s is already authorized' % (identity, selector)
             )
             return
-        # delete any existing challenges for this and create a new one
-        delete_auth = sa.delete(t_auth).where(
-            t_auth.c.identity == identity,
-            t_auth.c.selector == selector,
-            t_auth.c.verified == 0,
-        )
-        conn.execute(delete_auth)
-        # create new challenge
-        import uuid
-
-        cstr = str(uuid.uuid4())
-        insert_auth = sa.insert(t_auth).values(
-            identity=identity,
-            selector=selector,
-            pubkey=pubkey,
-            challenge=cstr,
-            verified=0,
-        )
-        conn.execute(insert_auth)
         logger.info('Created new challenge for %s/%s: %s', identity, selector, cstr)
-        conn.close()
         smtp, frompair = self.get_smtp()
         cmsg = email.message.EmailMessage()
         fromname, fromaddr = frompair
@@ -237,13 +239,7 @@ class SendReceiveListener(object):
         smtp.close()
         self.send_success(resp, message=f'Challenge generated and sent to {identity}')
 
-    def validate_message(
-        self,
-        conn: Connection,
-        t_auth: sa.Table,
-        bdata: bytes,
-        verified: int = 1,
-    ) -> Tuple[str, str, int]:
+    def validate_message(self, bdata: bytes, verified: int = 1) -> Tuple[str, str, int]:
         # Returns auth_id of the matching record
         pm = patatt.PatattMessage(bdata)
         if not pm.signed:
@@ -265,14 +261,15 @@ class SendReceiveListener(object):
             for ds in pm.get_sigs()
         ]
         logger.debug('is_pairs=%s', identity_selector_pairs)
-        q = sa.select(
-            t_auth.c.identity, t_auth.c.selector, t_auth.c.auth_id, t_auth.c.pubkey
-        ).where(
-            tuple_(t_auth.c.identity, t_auth.c.selector).in_(identity_selector_pairs),
-            t_auth.c.verified == verified,
-        )
-        rp = conn.execute(q)
-        rows = rp.fetchall()
+        placeholders = ', '.join(['(?, ?)'] * len(identity_selector_pairs))
+        params = [x for pair in identity_selector_pairs for x in pair]
+        with self._db() as conn:
+            rows = conn.execute(
+                'SELECT identity, selector, auth_id, pubkey FROM auth'
+                f' WHERE (identity, selector) IN (VALUES {placeholders})'
+                ' AND verified = ?',
+                (*params, verified),
+            ).fetchall()
         if not rows:
             logger.debug('Did not find a matching identity!')
             raise patatt.NoKeyError('No match for this identity')
@@ -291,14 +288,9 @@ class SendReceiveListener(object):
         if not isinstance(msg, str) or msg.find('\nverify:') < 0:
             self.send_error(resp, message='Invalid verification message')
             return
-        conn = self._engine.connect()
-        md = sa.MetaData()
-        t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         bdata = msg.encode()
         try:
-            identity, selector, auth_id = self.validate_message(
-                conn, t_auth, bdata, verified=0
-            )
+            identity, selector, auth_id = self.validate_message(bdata, verified=0)
         except Exception as ex:
             self.send_error(resp, message='Signature validation failed: %s' % ex)
             return
@@ -309,14 +301,23 @@ class SendReceiveListener(object):
             auth_id,
         )
 
-        # Now compare the challenge to what we received
-        select_challenge = sa.select(t_auth.c.challenge).where(
-            t_auth.c.auth_id == auth_id
-        )
-        rp = conn.execute(select_challenge)
-        res = rp.fetchall()
-        challenge = res[0][0]
-        if msg.find(f'\nverify:{challenge}') < 0:
+        with self._db() as conn:
+            # Now compare the challenge to what we received
+            challenge = conn.execute(
+                'SELECT challenge FROM auth WHERE auth_id = ?', (auth_id,)
+            ).fetchone()[0]
+            verified = False
+            if msg.find(f'\nverify:{challenge}') >= 0:
+                # A new auth-new for this pair replaces the pubkey and the
+                # challenge but keeps the auth_id, so match on the challenge
+                # to never verify a key that was swapped in meanwhile.
+                cur = conn.execute(
+                    'UPDATE auth SET challenge = NULL, verified = 1'
+                    ' WHERE auth_id = ? AND challenge = ?',
+                    (auth_id, challenge),
+                )
+                verified = cur.rowcount > 0
+        if not verified:
             self.send_error(
                 resp,
                 message='Challenge verification for %s/%s did not match'
@@ -329,13 +330,6 @@ class SendReceiveListener(object):
             selector,
             auth_id,
         )
-        update_auth = (
-            sa.update(t_auth)
-            .where(t_auth.c.auth_id == auth_id)
-            .values(challenge=None, verified=1)
-        )
-        conn.execute(update_auth)
-        conn.close()
         self.send_success(
             resp, message='Challenge verified for %s/%s' % (identity, selector)
         )
@@ -345,12 +339,9 @@ class SendReceiveListener(object):
         if not isinstance(msg, str) or msg.find('\nauth-delete') < 0:
             self.send_error(resp, message='Invalid key delete message')
             return
-        conn = self._engine.connect()
-        md = sa.MetaData()
-        t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         bdata = msg.encode()
         try:
-            identity, selector, auth_id = self.validate_message(conn, t_auth, bdata)
+            identity, selector, auth_id = self.validate_message(bdata)
         except Exception as ex:
             self.send_error(resp, message='Signature validation failed: %s' % ex)
             return
@@ -358,9 +349,8 @@ class SendReceiveListener(object):
         logger.info(
             'Deleting record for %s/%s with auth_id=%s', identity, selector, auth_id
         )
-        delete_auth = sa.delete(t_auth).where(t_auth.c.auth_id == auth_id)
-        conn.execute(delete_auth)
-        conn.close()
+        with self._db() as conn:
+            conn.execute('DELETE FROM auth WHERE auth_id = ?', (auth_id,))
         self.send_success(
             resp, message='Record deleted for %s/%s' % (identity, selector)
         )
@@ -528,9 +518,6 @@ class SendReceiveListener(object):
         )
 
         msgs = list()
-        conn = self._engine.connect()
-        md = sa.MetaData()
-        t_auth = sa.Table('auth', md, autoload=True, autoload_with=self._engine)
         mustdest = self._config['main'].get('mustdest')
         # First, validate all messages
         seenid = identity = selector = validfrom = None
@@ -540,7 +527,7 @@ class SendReceiveListener(object):
                 return
             bdata = umsg.encode()
             try:
-                identity, selector, auth_id = self.validate_message(conn, t_auth, bdata)
+                identity, selector, auth_id = self.validate_message(bdata)
             except patatt.NoKeyError:
                 self.send_error(
                     resp, message='No matching key, please complete web auth first.'
@@ -654,7 +641,6 @@ class SendReceiveListener(object):
         # that umsgs is truthy (not empty).
         assert identity is not None
 
-        conn.close()
         # All signatures verified. Prepare messages for sending.
         cfgdomains = self._config['main'].get('mydomains')
         if cfgdomains is not None:
@@ -843,14 +829,24 @@ gpgbin = parser['main'].get('gpgbin')
 if gpgbin:
     patatt.GPGBIN = gpgbin
 
-dburl = parser['main'].get('dburl')
-if not dburl:
-    sys.stderr.write('main.dburl is not set in CONFIG')
+dbpath = parser['main'].get('dbpath')
+if not dbpath:
+    if parser['main'].get('dburl'):
+        sys.stderr.write(
+            'main.dburl is no longer supported, convert the database with '
+            'send-receive-migrate.py and set main.dbpath\n'
+        )
+    else:
+        sys.stderr.write('main.dbpath is not set in CONFIG\n')
     sys.exit(1)
-# By default, recycle db connections after 5 min
-db_pool_recycle = parser['main'].getint('dbpoolrecycle', 300)
-engine = sa.create_engine(dburl, pool_recycle=db_pool_recycle)
-srl = SendReceiveListener(engine, parser)
+if dbpath == ':memory:':
+    # Every request opens its own connection, and so would get its own
+    # empty database
+    sys.stderr.write('main.dbpath must be a file, not :memory:\n')
+    sys.exit(1)
+dbpath = os.path.expanduser(dbpath)
+os.makedirs(os.path.dirname(os.path.abspath(dbpath)), exist_ok=True)
+srl = SendReceiveListener(dbpath, parser)
 app = falcon.App()
 mp = os.getenv('MOUNTPOINT', '/_b4_submit')
 app.add_route(mp, srl)
