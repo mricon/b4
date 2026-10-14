@@ -47,6 +47,7 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "ty",
+    "types-pymysql>=1.2.0.20260923",
     "types-requests",
 ]
 misc = [

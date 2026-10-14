@@ -662,7 +662,7 @@ class SendReceiveListener(object):
 
         # (subject, envelope from, recipients, data, archive copy)
         tosend: List[
-            Tuple[str, str, List[str], bytes, Optional[email.message.Message]]
+            Tuple[str, str, List[str], bytes, Optional[email.message.EmailMessage]]
         ] = []
         for msg, destaddrs in msgs:
             subject = self.clean_header(msg.get('Subject'))

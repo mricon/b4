@@ -170,7 +170,9 @@ class Endpoint:
         )
 
     def post(self, **req: Any) -> Dict[str, Any]:
-        return self.client.simulate_post('/_b4_submit', json=req).json
+        result = self.client.simulate_post('/_b4_submit', json=req).json
+        assert isinstance(result, dict)
+        return result
 
     def add_verified_key(self, key: Key) -> None:
         """Store a key as if it had gone through auth-new and auth-verify."""
