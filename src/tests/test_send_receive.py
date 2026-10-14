@@ -382,6 +382,19 @@ def test_smtp_failure_returns_json_error(
         endpoint.add_verified_key(dev_key)
         res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
     assert res['result'] == 'error', res
+    if action == 'auth-new':
+        # Harmless: the next auth-new replaces the unsent challenge
+        assert [row[3] for row in endpoint.rows()] == [0]
+
+
+def test_endpoint_refuses_newer_database(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dbpath = tmp_path / 'auth.sqlite3'
+    with closing(sqlite3.connect(dbpath)) as conn:
+        conn.execute('PRAGMA user_version = 2')
+    with pytest.raises(RuntimeError, match='version 2'):
+        Endpoint(tmp_path, monkeypatch, dbpath)
 
 
 def test_dryrun_does_not_connect_to_smtp(
