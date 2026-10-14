@@ -2,6 +2,7 @@
 
 import contextlib
 import copy
+import datetime
 import email
 import email.header
 import email.message
@@ -17,6 +18,7 @@ import re
 import smtplib
 import sqlite3
 import sys
+import tempfile
 import textwrap
 import uuid
 from configparser import ConfigParser, ExtendedInterpolation
@@ -72,6 +74,7 @@ class PublicInbox(NamedTuple):
     inbox: str
     listid: str
     notify_file: Optional[str]
+    emerg_dir: Optional[str]
 
 
 def get_public_inbox(config: ConfigParser) -> Optional[PublicInbox]:
@@ -102,7 +105,10 @@ def get_public_inbox(config: ConfigParser) -> Optional[PublicInbox]:
             raise ValueError(
                 f'public-inbox.notify_file: no directory for {notify_file}'
             )
-    return PublicInbox(inbox, listid, notify_file or None)
+    emerg_dir = section.get('emerg_dir')
+    if emerg_dir:
+        emerg_dir = os.path.expanduser(emerg_dir)
+    return PublicInbox(inbox, listid, notify_file or None, emerg_dir or None)
 
 
 class SendReceiveListener(object):
@@ -844,6 +850,11 @@ class SendReceiveListener(object):
 
     def archive(self, pi: PublicInbox, subject: str, pdata: bytes) -> bool:
         try:
+            # Checked at startup too, but it can still go away later, e.g.
+            # with an unmounted volume, and ezpi would start a new, empty
+            # inbox in its place
+            if not os.path.isdir(os.path.join(pi.inbox, 'git')):
+                raise RuntimeError(f'{pi.inbox} is no longer a v2 inbox')
             # The v2 writer takes inbox.lock, so public-inbox-index and
             # -purge never run at the same time, and it rotates epochs
             ezpi.add_rfc822_v2(pi.inbox, pdata)
@@ -851,9 +862,34 @@ class SendReceiveListener(object):
             # The message already went out, so a missing archive copy must
             # not stop the rest of the series
             logger.critical('Could not archive %s: %s', subject, ex)
+            self.save_unarchived(pi, pdata)
             return False
         logger.debug('Wrote %s to public-inbox at %s', subject, pi.inbox)
         return True
+
+    def save_unarchived(self, pi: PublicInbox, pdata: bytes) -> None:
+        """Keep what add_rfc822_v2() was given, so it can be replayed."""
+        if not pi.emerg_dir:
+            return
+        # Several messages of one series can fail within the same second
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        try:
+            fd, path = tempfile.mkstemp(
+                prefix=f'{stamp}-', suffix='.eml', dir=pi.emerg_dir
+            )
+        except OSError as ex:
+            logger.critical('Could not save it to %s either: %s', pi.emerg_dir, ex)
+            return
+        try:
+            with os.fdopen(fd, 'wb') as fh:
+                fh.write(pdata)
+        except OSError as ex:
+            # A full disk is a likely reason the archive failed, and a cut-off
+            # copy would replay as a broken message
+            os.unlink(path)
+            logger.critical('Could not save it to %s either: %s', path, ex)
+            return
+        logger.critical('Saved it to %s for replay', path)
 
     def notify(self, pi: PublicInbox) -> None:
         if not pi.notify_file:

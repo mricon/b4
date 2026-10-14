@@ -444,15 +444,17 @@ def archiving_endpoint(
     inbox: pathlib.Path,
     extra: str = '',
     notify: Optional[pathlib.Path] = None,
+    emerg: Optional[pathlib.Path] = None,
 ) -> Endpoint:
     notify = notify or tmp_path / '.updated'
+    sections = (
+        f'[public-inbox]\n  inbox = {inbox}\n  listid = {LISTID}\n'
+        f'  notify_file = {notify}\n'
+    )
+    if emerg is not None:
+        sections += f'  emerg_dir = {emerg}\n'
     return Endpoint(
-        tmp_path,
-        monkeypatch,
-        tmp_path / 'auth.sqlite3',
-        extra=extra,
-        sections=f'[public-inbox]\n  inbox = {inbox}\n  listid = {LISTID}\n'
-        f'  notify_file = {notify}',
+        tmp_path, monkeypatch, tmp_path / 'auth.sqlite3', extra=extra, sections=sections
     )
 
 
@@ -506,6 +508,38 @@ def test_nothing_archived_without_a_real_send(
     assert res['result'] == 'success', res
     assert archived(inbox) == []
     assert not (tmp_path / '.updated').exists()
+
+
+@pytest.mark.parametrize('emerg_exists, saved', [(True, 1), (False, 0)])
+def test_failed_archive_keeps_the_message(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dev_key: Key,
+    emerg_exists: bool,
+    saved: int,
+) -> None:
+    inbox = make_inbox(tmp_path / 'inbox')
+    emerg = tmp_path / 'emerg'
+    if emerg_exists:
+        emerg.mkdir()
+    endpoint = archiving_endpoint(tmp_path, monkeypatch, inbox, emerg=emerg)
+    endpoint.add_verified_key(dev_key)
+    # Moved away (or unmounted) after startup
+    inbox.rename(tmp_path / 'moved')
+
+    res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
+    # The message went out, so the client must not resend it
+    assert res['result'] == 'success', res
+    assert len(endpoint.mailed) == 1
+    # ezpi must not quietly start a new, empty inbox in its place
+    assert not inbox.exists()
+    assert not (tmp_path / '.updated').exists()
+    files = list(emerg.glob('*'))
+    assert len(files) == saved
+    for path in files:
+        # Exactly what ezpi would have been given
+        msg = email.message_from_bytes(path.read_bytes(), policy=b4.emlpolicy)
+        assert (msg['Subject'], msg['List-Id']) == ('[PATCH] Fix bar', LISTID)
 
 
 def test_failed_notify_touch_still_succeeds(
