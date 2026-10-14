@@ -332,6 +332,14 @@ def test_auth_new_never_bccs_alwaysbcc(
     assert endpoint.mailed[-1][0] == [IDENTITY]
 
 
+@pytest.mark.parametrize('payload', [{}, ['receive']])
+def test_post_without_action_is_an_error(endpoint: Endpoint, payload: Any) -> None:
+    res = endpoint.client.simulate_post('/_b4_submit', json=payload)
+    assert res.status_code == 500
+    # b4 parses the body as JSON, like every other error
+    assert res.json == {'result': 'error', 'message': 'Action not set'}
+
+
 def write_migrate_conf(tmp_path: pathlib.Path, dburl: str) -> pathlib.Path:
     conf = tmp_path / 'old.conf'
     conf.write_text(f'[main]\n  dburl = {dburl}\n')

@@ -782,7 +782,8 @@ class SendReceiveListener(object):
         # TODO(https://github.com/astral-sh/ruff/pull/24458): remove this when ty understands conditional walrus.
         action = None
         if not isinstance(jdata, Mapping) or (action := jdata.get('action')) is None:
-            logger.critical('Action not set from %s', req.remote_addr)
+            logger.info('Action not set from %s', req.remote_addr)
+            self.send_error(resp, message='Action not set')
             return
 
         logger.info('Action: %s; from: %s', action, req.remote_addr)
