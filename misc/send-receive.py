@@ -739,14 +739,16 @@ class SendReceiveListener(object):
                             newbody += (
                                 'Date: ' + self.clean_header(cmsg.get('Date')) + '\n'
                             )
-                        newbody += '\n' + body.decode()
+                        bodycs = msg.get_content_charset('utf-8')
+                        try:
+                            newbody += '\n' + body.decode(bodycs, errors='replace')
+                        except LookupError:
+                            newbody += '\n' + body.decode('utf-8', errors='replace')
+                        # The body is UTF-8 text now, so the old transfer
+                        # encoding no longer applies; set_payload() picks
+                        # 7bit or 8bit when there is none
+                        del msg['Content-Transfer-Encoding']
                         msg.set_payload(newbody, charset='utf-8')
-                        # If we have non-ascii content in the new body, force CTE to 8bit
-                        if msg['Content-Transfer-Encoding'] == '7bit' and not all(
-                            ord(char) < 128 for char in newbody
-                        ):
-                            msg.set_charset('utf-8')
-                            msg.replace_header('Content-Transfer-Encoding', '8bit')
 
             if reflect:
                 recipients = [identity]

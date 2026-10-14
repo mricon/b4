@@ -341,6 +341,26 @@ def test_post_without_action_is_an_error(endpoint: Endpoint, payload: Any) -> No
     assert res.json == {'result': 'error', 'message': 'Action not set'}
 
 
+def test_receive_reencodes_rewritten_body(endpoint: Endpoint, dev_key: Key) -> None:
+    # b4 always sends 8-bit UTF-8, but any client can sign and post a
+    # quoted-printable Latin-1 patch
+    endpoint.add_verified_key(dev_key)
+    # =FF must survive too, so the rewrite can't keep the old QP encoding
+    body = MINIMAL_DIFF.replace('Author <', 'José Author <').replace(
+        'bar();', 'bar(mask=FF);'
+    )
+    msg = patch_message(dev_key, body=body, charset='iso-8859-1')
+    res = endpoint.post(action='receive', messages=[msg])
+    assert res['result'] == 'success', res
+
+    # The sender's domain isn't ours, so the From: moved into the body
+    sent = email.message_from_bytes(endpoint.mailed[-1][1], policy=b4.emlpolicy)
+    assert isinstance(sent, email.message.EmailMessage)
+    text = sent.get_content().replace('\r\n', '\n')
+    assert text.startswith(f'From: Dev <{IDENTITY}>\n')
+    assert body in text
+
+
 @pytest.mark.parametrize('action', ['auth-new', 'receive'])
 def test_smtp_failure_returns_json_error(
     endpoint: Endpoint, dev_key: Key, action: str
