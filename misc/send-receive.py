@@ -232,10 +232,8 @@ class SendReceiveListener(object):
         cmsg.set_payload(body, charset='utf-8')
         cmsg.set_charset('utf-8')
         bdata = self.get_msg_as_bytes(cmsg, headers='encode')
-        destaddrs = [identity]
-        alwaysbcc = self._config['main'].get('alwayscc')
-        if alwaysbcc:
-            destaddrs += [x[1] for x in utils.getaddresses([alwaysbcc])]
+        # Only the identity gets the challenge: alwaysbcc is for patch
+        # series, and a copy here would let that mailbox verify any key
         logger.info('Sending challenge to %s', identity)
         smtp.sendmail(fromaddr, [identity], bdata)
         smtp.close()

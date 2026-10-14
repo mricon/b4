@@ -319,6 +319,19 @@ def test_endpoint_refuses_bad_db_config(
     assert expected in capsys.readouterr().err
 
 
+def test_auth_new_never_bccs_alwaysbcc(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
+) -> None:
+    endpoint = Endpoint(
+        tmp_path,
+        monkeypatch,
+        tmp_path / 'auth.sqlite3',
+        extra='alwaysbcc = Audit <audit@example.org>',
+    )
+    assert endpoint.auth_new(dev_key)['result'] == 'success'
+    assert endpoint.mailed[-1][0] == [IDENTITY]
+
+
 def write_migrate_conf(tmp_path: pathlib.Path, dburl: str) -> pathlib.Path:
     conf = tmp_path / 'old.conf'
     conf.write_text(f'[main]\n  dburl = {dburl}\n')
