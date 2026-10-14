@@ -1,11 +1,12 @@
-"""Tests for misc/send-receive.py.
+"""Tests for misc/send-receive.py and its database migration tool.
 
-The endpoint is a standalone script with a hyphen in its name, so it is
-loaded from its file. It reads CONFIG when it loads, which is why
-every test gets its own copy of the module.
+Both are standalone scripts with hyphens in their names, so they are
+loaded from their files. The endpoint reads CONFIG when it loads, which
+is why every test gets its own copy of the module.
 """
 
 import base64
+import datetime
 import email.message
 import importlib.util
 import pathlib
@@ -13,12 +14,13 @@ import re
 import sqlite3
 import types
 from contextlib import closing
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
 pytest.importorskip('falcon')
 pytest.importorskip('ezpi')
+pytest.importorskip('pymysql')
 pytest.importorskip('nacl')
 
 from falcon import testing
@@ -43,6 +45,23 @@ verify-body = Your challenge: $${{challenge}}
 signature = bot
 """
 
+# What SQLAlchemy's create_all() made in sqlite, in the old send-receive.py
+OLD_SCHEMA = """
+CREATE TABLE meta (version INTEGER);
+CREATE TABLE auth (
+    auth_id INTEGER NOT NULL,
+    created DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+    identity TEXT NOT NULL,
+    selector TEXT NOT NULL,
+    pubkey TEXT NOT NULL,
+    challenge TEXT,
+    verified INTEGER NOT NULL,
+    PRIMARY KEY (auth_id)
+);
+CREATE UNIQUE INDEX idx_identity_selector ON auth (identity, selector);
+INSERT INTO meta (version) VALUES (1);
+"""
+
 
 def load_script(filename: str) -> types.ModuleType:
     modname = filename.removesuffix('.py').replace('-', '_')
@@ -56,6 +75,14 @@ def load_script(filename: str) -> types.ModuleType:
 def query(dbpath: pathlib.Path, sql: str, params: Sequence[Any] = ()) -> List[Any]:
     with closing(sqlite3.connect(dbpath)) as conn:
         return conn.execute(sql, params).fetchall()
+
+
+def schema(dbpath: pathlib.Path) -> List[Any]:
+    return query(
+        dbpath,
+        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        ' ORDER BY name',
+    )
 
 
 class Key:
@@ -233,3 +260,106 @@ def test_endpoint_refuses_bad_db_config(
     with pytest.raises(SystemExit):
         load_script('send-receive.py')
     assert expected in capsys.readouterr().err
+
+
+def write_migrate_conf(tmp_path: pathlib.Path, dburl: str) -> pathlib.Path:
+    conf = tmp_path / 'old.conf'
+    conf.write_text(f'[main]\n  dburl = {dburl}\n')
+    return conf
+
+
+def test_migrate_from_sqlite(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = Key(tmp_path, 'key')
+    olddb = tmp_path / 'old.db'
+    with closing(sqlite3.connect(olddb)) as conn, conn:
+        conn.executescript(OLD_SCHEMA)
+        conn.executemany(
+            'INSERT INTO auth VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [
+                (3, '2024-01-02 03:04:05', IDENTITY, 'default', key.pubkey, None, 1),
+                (7, '2025-01-01 00:00:00', 'new@example.com', 'default', 'pk', 'c', 0),
+            ],
+        )
+    migrate = load_script('send-receive-migrate.py')
+    conf = write_migrate_conf(tmp_path, f'sqlite:///{olddb}')
+    newdb = tmp_path / 'auth.sqlite3'
+    assert migrate.main(['-c', str(conf), '-o', str(newdb)]) == 0
+    assert query(newdb, 'SELECT * FROM auth ORDER BY auth_id') == query(
+        olddb, 'SELECT * FROM auth ORDER BY auth_id'
+    )
+
+    # Never clobber a database that is already there
+    before = newdb.read_bytes()
+    assert migrate.main(['-c', str(conf), '-o', str(newdb)]) == 1
+    assert newdb.read_bytes() == before
+    assert list(tmp_path.glob('*.tmp')) == []
+
+    # Same schema as a database the endpoint creates itself
+    fresh = Endpoint(tmp_path, monkeypatch, tmp_path / 'fresh.sqlite3')
+    assert schema(newdb) == schema(fresh.dbpath)
+
+    # The endpoint takes the file as is, and the migrated key works
+    endpoint = Endpoint(tmp_path, monkeypatch, newdb)
+    res = endpoint.post(action='auth-delete', msg=key.sign('auth-delete\n'))
+    assert res['result'] == 'success', res
+    assert [row[0] for row in endpoint.rows()] == [7]
+
+
+def test_migrate_from_mysql(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    migrate = load_script('send-receive-migrate.py')
+    # PyMySQL hands DATETIME columns over without a timezone
+    created = datetime.datetime.fromisoformat('2024-01-02 03:04:05')
+    connected: Dict[str, Any] = {}
+    executed: List[str] = []
+
+    class FakeCursor:
+        def __enter__(self) -> 'FakeCursor':
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            pass
+
+        def execute(self, sql: str) -> None:
+            executed.append(sql)
+
+        def fetchall(self) -> List[Tuple[Any, ...]]:
+            return [(4, created, IDENTITY, 'default', 'pk', None, 1)]
+
+        def fetchone(self) -> Optional[Tuple[int]]:
+            # The newest records were deleted, so the counter is ahead
+            return (12,)
+
+    class FakeConnection(FakeCursor):
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+    def fake_connect(**kwargs: Any) -> FakeConnection:
+        connected.update(kwargs)
+        return FakeConnection()
+
+    monkeypatch.setattr(migrate.pymysql, 'connect', fake_connect)
+    conf = write_migrate_conf(
+        tmp_path, 'mysql+pymysql://b4:p%40ss@db.example.org/b4_web?charset=utf8mb4'
+    )
+    newdb = tmp_path / 'auth.sqlite3'
+    assert migrate.main(['-c', str(conf), '-o', str(newdb)]) == 0
+
+    assert connected == {
+        'host': 'db.example.org',
+        'port': 3306,
+        'user': 'b4',
+        'password': 'p@ss',
+        'database': 'b4_web',
+        'charset': 'utf8mb4',
+    }
+    assert any('information_schema_stats_expiry' in sql for sql in executed)
+    assert query(newdb, 'SELECT auth_id, created FROM auth') == [
+        (4, '2024-01-02 03:04:05')
+    ]
+    assert query(newdb, "SELECT seq FROM sqlite_sequence WHERE name = 'auth'") == [
+        (11,)
+    ]
