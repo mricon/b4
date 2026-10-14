@@ -29,6 +29,8 @@ from nacl.signing import SigningKey
 import b4
 import patatt
 
+from .helpers.mail import MINIMAL_DIFF, make_msg
+
 MISC = pathlib.Path(__file__).resolve().parents[2] / 'misc'
 IDENTITY = 'dev@example.com'
 
@@ -37,12 +39,14 @@ ENDPOINT_CONF = """\
   myname = Test Endpoint
   myurl = http://localhost/_b4_submit
   dbpath = {dbpath}
+  {extra}
 [sendemail]
   from = Test Endpoint <devnull@example.org>
 [templates]
 verify-subject = Verify $${{identity}}
 verify-body = Your challenge: $${{challenge}}
 signature = bot
+{sections}
 """
 
 # What SQLAlchemy's create_all() made in sqlite, in the old send-receive.py
@@ -101,6 +105,9 @@ class Key:
         msg.add_header('Subject', 'b4-send-verify')
         msg.add_header('Message-ID', b4.make_msgid())
         msg.set_payload(body, charset='utf-8')
+        return self.sign_message(msg)
+
+    def sign_message(self, msg: email.message.EmailMessage) -> str:
         # patatt caches signing keys by identity, and tests swap keys
         patatt.KEYCACHE.pop(IDENTITY, None)
         config: Dict[str, Any] = {
@@ -119,19 +126,33 @@ class Endpoint:
         tmp_path: pathlib.Path,
         monkeypatch: pytest.MonkeyPatch,
         dbpath: pathlib.Path,
+        extra: str = '',
+        sections: str = '',
     ) -> None:
         conf = tmp_path / 'endpoint.conf'
-        conf.write_text(ENDPOINT_CONF.format(dbpath=dbpath))
+        conf.write_text(
+            ENDPOINT_CONF.format(dbpath=dbpath, extra=extra, sections=sections)
+        )
         monkeypatch.setenv('CONFIG', str(conf))
         self.dbpath = dbpath
         self.mod = load_script('send-receive.py')
         self.client = testing.TestClient(self.mod.app)
-        self.mailed: List[bytes] = []
-        mailed = self.mailed
+        # (recipients, message) for every message handed to SMTP
+        self.mailed: List[Tuple[List[str], bytes]] = []
+        # Set to make sendmail() fail with it, once smtp_fail_at messages
+        # have gone through
+        self.smtp_error: Optional[Exception] = None
+        self.smtp_fail_at = 0
+        endpoint = self
 
         class FakeSMTP:
             def sendmail(self, fromaddr: str, toaddrs: List[str], msg: bytes) -> None:
-                mailed.append(msg)
+                if (
+                    endpoint.smtp_error is not None
+                    and len(endpoint.mailed) >= endpoint.smtp_fail_at
+                ):
+                    raise endpoint.smtp_error
+                endpoint.mailed.append((list(toaddrs), msg))
 
             def close(self) -> None:
                 pass
@@ -139,11 +160,20 @@ class Endpoint:
         monkeypatch.setattr(
             self.mod.SendReceiveListener,
             'get_smtp',
-            lambda _self: (FakeSMTP(), ('Test Endpoint', 'devnull@example.org')),
+            lambda _self: FakeSMTP(),
         )
 
     def post(self, **req: Any) -> Dict[str, Any]:
         return self.client.simulate_post('/_b4_submit', json=req).json
+
+    def add_verified_key(self, key: Key) -> None:
+        """Store a key as if it had gone through auth-new and auth-verify."""
+        with closing(sqlite3.connect(self.dbpath)) as conn, conn:
+            conn.execute(
+                'INSERT INTO auth (identity, selector, pubkey, verified)'
+                " VALUES (?, 'default', ?, 1)",
+                (IDENTITY, key.pubkey),
+            )
 
     def auth_new(self, key: Key) -> Dict[str, Any]:
         return self.post(
@@ -151,7 +181,7 @@ class Endpoint:
         )
 
     def last_challenge(self) -> str:
-        found = re.search(rb'challenge: (\S+)', self.mailed[-1])
+        found = re.search(rb'challenge: (\S+)', self.mailed[-1][1])
         assert found is not None
         return found.group(1).decode()
 
@@ -166,6 +196,28 @@ class Endpoint:
 def endpoint(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> Endpoint:
     # The directory doesn't exist yet: the endpoint has to create it
     return Endpoint(tmp_path, monkeypatch, tmp_path / 'db' / 'auth.sqlite3')
+
+
+@pytest.fixture
+def dev_key(tmp_path: pathlib.Path) -> Key:
+    return Key(tmp_path, 'dev')
+
+
+def patch_message(
+    key: Key,
+    body: str = MINIMAL_DIFF,
+    charset: str = 'utf-8',
+    subject: str = '[PATCH] Fix bar',
+) -> str:
+    msg = make_msg(
+        b4.make_msgid().strip('<>'),
+        subject,
+        from_addr=f'Dev <{IDENTITY}>',
+        to='list@example.org',
+        body=body,
+        charset=charset,
+    )
+    return key.sign_message(msg)
 
 
 def test_auth_lifecycle(endpoint: Endpoint, tmp_path: pathlib.Path) -> None:

@@ -128,7 +128,12 @@ class SendReceiveListener(object):
         logger.debug('Returning success: %s', message)
         resp.text = json.dumps({'result': 'success', 'message': message})
 
-    def get_smtp(self) -> Tuple[smtplib.SMTP, Tuple[str, str]]:
+    def get_frompair(self) -> Tuple[str, str]:
+        afrom = self._config['sendemail'].get('from')
+        assert afrom is not None
+        return utils.getaddresses([afrom])[0]
+
+    def get_smtp(self) -> smtplib.SMTP:
         sconfig = self._config['sendemail']
         server = sconfig.get('smtpserver', 'localhost')
         port = sconfig.getint('smtpserverport', 0)
@@ -164,10 +169,7 @@ class SendReceiveListener(object):
             # We assume you know what you're doing if you don't need encryption
             smtp = smtplib.SMTP(server, port)
 
-        afrom = sconfig.get('from')
-        assert afrom is not None
-        frompair = utils.getaddresses([afrom])[0]
-        return smtp, frompair
+        return smtp
 
     def auth_new(self, jdata: Mapping[str, JSON], resp: falcon.Response) -> None:
         identity: Optional[JSON] = jdata.get('identity')
@@ -201,9 +203,9 @@ class SendReceiveListener(object):
             )
             return
         logger.info('Created new challenge for %s/%s: %s', identity, selector, cstr)
-        smtp, frompair = self.get_smtp()
+        smtp = self.get_smtp()
         cmsg = email.message.EmailMessage()
-        fromname, fromaddr = frompair
+        fromname, fromaddr = self.get_frompair()
         if len(fromname):
             cmsg.add_header('From', f'{fromname} <{fromaddr}>')
         else:
@@ -648,7 +650,8 @@ class SendReceiveListener(object):
         else:
             mydomains = list()
 
-        smtp, frompair = self.get_smtp()
+        smtp = self.get_smtp()
+        frompair = self.get_frompair()
         bccaddrs = set()
         _bcc = self._config['main'].get('alwaysbcc')
         if _bcc:
