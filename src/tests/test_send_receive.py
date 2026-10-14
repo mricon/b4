@@ -7,6 +7,7 @@ is why every test gets its own copy of the module.
 
 import base64
 import datetime
+import email.charset
 import email.message
 import importlib.util
 import pathlib
@@ -19,10 +20,15 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
+# ezpi re-registers utf-8 for its own headers when imported, and this
+# runs at collection, before every other test module's tests
+_charsets = dict(email.charset.CHARSETS)
 pytest.importorskip('falcon')
 pytest.importorskip('ezpi')
 pytest.importorskip('pymysql')
 pytest.importorskip('nacl')
+email.charset.CHARSETS.clear()
+email.charset.CHARSETS.update(_charsets)
 
 from falcon import testing
 from nacl.signing import SigningKey
