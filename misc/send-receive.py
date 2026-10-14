@@ -203,7 +203,6 @@ class SendReceiveListener(object):
             )
             return
         logger.info('Created new challenge for %s/%s: %s', identity, selector, cstr)
-        smtp = self.get_smtp()
         cmsg = email.message.EmailMessage()
         fromname, fromaddr = self.get_frompair()
         if len(fromname):
@@ -235,8 +234,15 @@ class SendReceiveListener(object):
         # Only the identity gets the challenge: alwaysbcc is for patch
         # series, and a copy here would let that mailbox verify any key
         logger.info('Sending challenge to %s', identity)
-        smtp.sendmail(fromaddr, [identity], bdata)
-        smtp.close()
+        try:
+            smtp = self.get_smtp()
+            try:
+                smtp.sendmail(fromaddr, [identity], bdata)
+            finally:
+                smtp.close()
+        except OSError as ex:  # SMTPException is an OSError too
+            self.send_error(resp, message=f'Could not send the challenge: {ex}')
+            return
         self.send_success(resp, message=f'Challenge generated and sent to {identity}')
 
     def validate_message(self, bdata: bytes, verified: int = 1) -> Tuple[str, str, int]:
@@ -630,26 +636,28 @@ class SendReceiveListener(object):
         # that umsgs is truthy (not empty).
         assert identity is not None
 
-        # All signatures verified. Prepare messages for sending.
+        # All signatures verified. Prepare every message before any network
+        # I/O, so that a message we can't rewrite fails the whole request
+        # with nothing sent.
         cfgdomains = self._config['main'].get('mydomains')
         if cfgdomains is not None:
             mydomains = [x.strip() for x in cfgdomains.split(',')]
         else:
             mydomains = list()
 
-        smtp = self.get_smtp()
         frompair = self.get_frompair()
         bccaddrs = set()
         _bcc = self._config['main'].get('alwaysbcc')
         if _bcc:
             bccaddrs.update([x[1] for x in utils.getaddresses([_bcc])])
 
-        repo_and_listid = None
+        repo = listid = None
         if 'public-inbox' in self._config and not reflect:
             public_inbox = self._config['public-inbox']
-            if (repo := public_inbox.get('repo')) is not None and os.path.isdir(repo):
-                if (listid := public_inbox.get('listid')) is not None:
-                    repo_and_listid = (repo, listid)
+            repo = public_inbox.get('repo')
+            listid = public_inbox.get('listid')
+            if repo is None or listid is None or not os.path.isdir(repo):
+                repo = None
 
         if reflect:
             logger.info('Reflecting %s messages back to %s', len(msgs), identity)
@@ -658,17 +666,20 @@ class SendReceiveListener(object):
             logger.info('Sending %s messages for %s/%s', len(msgs), identity, selector)
             sentaction = 'Sent'
 
+        # (subject, envelope from, recipients, data, archive copy)
+        tosend: List[
+            Tuple[str, str, List[str], bytes, Optional[email.message.Message]]
+        ] = []
         for msg, destaddrs in msgs:
             subject = self.clean_header(msg.get('Subject'))
-            if repo_and_listid is not None:
-                repo, listid = repo_and_listid
+            # Archive the message as signed, before we rewrite it for SMTP
+            pmsg = None
+            if repo is not None and listid is not None:
                 pmsg = copy.deepcopy(msg)
                 if pmsg.get('List-Id'):
                     pmsg.replace_header('List-Id', listid)
                 else:
                     pmsg.add_header('List-Id', listid)
-                ezpi.add_rfc822(repo, pmsg)
-                logger.debug('Wrote %s to public-inbox at %s', subject, repo)
 
             origfrom = msg.get('From')
             assert origfrom is not None
@@ -737,33 +748,68 @@ class SendReceiveListener(object):
                             msg.set_charset('utf-8')
                             msg.replace_header('Content-Transfer-Encoding', '8bit')
 
-            if bccaddrs:
-                destaddrs.update(bccaddrs)
-
-            if not self._config['main'].getboolean('dryrun'):
-                bdata = self.get_msg_as_bytes(msg, headers='encode')
-                if reflect:
-                    smtp.sendmail(fromaddr, [identity], bdata)
-                else:
-                    smtp.sendmail(fromaddr, list(destaddrs), bdata)
-                logger.info('%s: %s', sentaction, subject)
+            if reflect:
+                recipients = [identity]
             else:
-                logger.info('---DRYRUN MSG START---')
-                logger.info(msg)
-                logger.info('---DRYRUN MSG END---')
+                recipients = list(destaddrs | bccaddrs)
+            bdata = self.get_msg_as_bytes(msg, headers='encode')
+            tosend.append((subject, fromaddr, recipients, bdata, pmsg))
 
-        smtp.close()
-        if repo_and_listid is not None:
-            repo, _ = repo_and_listid
+        if self._config['main'].getboolean('dryrun'):
+            for _, _, _, bdata, _ in tosend:
+                logger.info('---DRYRUN MSG START---')
+                logger.info(bdata.decode(errors='replace'))
+                logger.info('---DRYRUN MSG END---')
+            self.send_success(
+                resp, message=f'Dry run of {len(tosend)} messages for {identity}'
+            )
+            return
+
+        sent = archived = 0
+        error = None
+        try:
+            smtp = self.get_smtp()
+            try:
+                for subject, fromaddr, recipients, bdata, pmsg in tosend:
+                    smtp.sendmail(fromaddr, recipients, bdata)
+                    sent += 1
+                    logger.info('%s: %s', sentaction, subject)
+                    # Only archive what actually went out
+                    if repo is not None and pmsg is not None:
+                        archived += self.archive(repo, pmsg)
+            finally:
+                smtp.close()
+        except OSError as ex:  # SMTPException is an OSError too
+            error = ex
+
+        if repo is not None and archived:
             # run it once after writing all messages
             logger.debug('Running public-inbox repo hook (if present)')
             ezpi.run_hook(repo)
+        if error is not None:
+            self.send_error(
+                resp,
+                message=f'{sentaction} {sent} of {len(tosend)} messages for'
+                f' {identity}/{selector} before failing: {error}',
+            )
+            return
         logger.info(
             '%s %s messages for %s/%s', sentaction, len(msgs), identity, selector
         )
         self.send_success(
             resp, message=f'{sentaction} {len(msgs)} messages for {identity}/{selector}'
         )
+
+    def archive(self, repo: str, msg: email.message.Message) -> bool:
+        try:
+            ezpi.add_rfc822(repo, msg)
+        except (RuntimeError, OSError, ValueError) as ex:
+            # The message already went out, so a missing archive copy must
+            # not stop the rest of the series
+            logger.critical('Could not archive %s: %s', msg.get('Subject'), ex)
+            return False
+        logger.debug('Wrote %s to public-inbox at %s', msg.get('Subject'), repo)
+        return True
 
     def on_post(self, req: falcon.Request, resp: falcon.Response) -> None:
         if not req.content_length:

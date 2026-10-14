@@ -11,6 +11,7 @@ import email.message
 import importlib.util
 import pathlib
 import re
+import smtplib
 import sqlite3
 import types
 from contextlib import closing
@@ -338,6 +339,69 @@ def test_post_without_action_is_an_error(endpoint: Endpoint, payload: Any) -> No
     assert res.status_code == 500
     # b4 parses the body as JSON, like every other error
     assert res.json == {'result': 'error', 'message': 'Action not set'}
+
+
+@pytest.mark.parametrize('action', ['auth-new', 'receive'])
+def test_smtp_failure_returns_json_error(
+    endpoint: Endpoint, dev_key: Key, action: str
+) -> None:
+    endpoint.smtp_error = smtplib.SMTPRecipientsRefused(
+        {IDENTITY: (550, b'No such user')}
+    )
+    if action == 'auth-new':
+        res = endpoint.auth_new(dev_key)
+    else:
+        endpoint.add_verified_key(dev_key)
+        res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
+    assert res['result'] == 'error', res
+
+
+def test_dryrun_does_not_connect_to_smtp(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
+) -> None:
+    endpoint = Endpoint(
+        tmp_path, monkeypatch, tmp_path / 'auth.sqlite3', extra='dryrun = true'
+    )
+    endpoint.add_verified_key(dev_key)
+
+    def no_smtp(_self: Any) -> None:
+        raise AssertionError('Connected to SMTP during a dry run')
+
+    monkeypatch.setattr(endpoint.mod.SendReceiveListener, 'get_smtp', no_smtp)
+    res = endpoint.post(action='receive', messages=[patch_message(dev_key)])
+    assert res['result'] == 'success', res
+
+
+def test_receive_archives_only_what_was_sent(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, dev_key: Key
+) -> None:
+    repo = tmp_path / 'inbox.git'
+    repo.mkdir()
+    endpoint = Endpoint(
+        tmp_path,
+        monkeypatch,
+        tmp_path / 'auth.sqlite3',
+        sections=f'[public-inbox]\n  repo = {repo}\n  listid = Test <test.example.org>',
+    )
+    archived: List[str] = []
+    hooks: List[str] = []
+    monkeypatch.setattr(
+        endpoint.mod.ezpi,
+        'add_rfc822',
+        lambda repo, msg: archived.append(msg['Subject']),
+    )
+    monkeypatch.setattr(endpoint.mod.ezpi, 'run_hook', hooks.append)
+    endpoint.add_verified_key(dev_key)
+    endpoint.smtp_error = smtplib.SMTPServerDisconnected('Connection closed')
+    endpoint.smtp_fail_at = 1
+
+    msgs = [patch_message(dev_key, subject=f'[PATCH {n}/2] Fix bar') for n in (1, 2)]
+    res = endpoint.post(action='receive', messages=msgs)
+    assert res['result'] == 'error', res
+    assert 'Sent 1 of 2 messages' in res['message']
+    assert archived == ['[PATCH 1/2] Fix bar']
+    # The hook still has to pick up what made it into the archive
+    assert hooks == [str(repo)]
 
 
 def write_migrate_conf(tmp_path: pathlib.Path, dburl: str) -> pathlib.Path:
