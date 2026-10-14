@@ -1237,8 +1237,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         """Drop cached data so the next _load_series re-fetches.
 
         If change_id is given, only evict that series from the ART
-        cache (branch tips and revision data are cheap dict lookups
-        and get rebuilt from the bulk query anyway).  Without
+        cache.  Branch tips and revision data stay cached, so this is
+        only right for changes that add or remove neither.  Without
         change_id, drop everything.
         """
         if change_id is not None:
@@ -4378,7 +4378,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         else:
             self.notify(f'Linked v{rev}')
         self._focus_change_id = change_id
-        self._invalidate_caches(change_id)
+        # The revision row is new, and only a full drop re-reads revisions.
+        self._invalidate_caches()
         self._load_series()
 
     def _do_switch_revision(

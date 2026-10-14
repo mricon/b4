@@ -49,6 +49,7 @@ from b4.review_tui._modals import (
     ConfirmScreen,
     HelpScreen,
     LimitScreen,
+    LinkRevisionConfirmScreen,
     LinkRevisionScreen,
     SnoozeScreen,
     TakeConfirmScreen,
@@ -68,6 +69,7 @@ from b4.review_tui._tracking_app import (
     _worktree_for_branch,
 )
 
+from .helpers.mail import MINIMAL_DIFF, make_msg
 from .helpers.tracking import create_review_branch, seed_db, tag
 from .helpers.tui import static_text
 
@@ -1699,7 +1701,7 @@ class TestTrackingSnoozeRemembersChoice:
 
 
 class TestLinkRevisionAction:
-    """The 'link a revision' action is offered and opens the input modal."""
+    """Manually linking a revision: the action and its effect on the list."""
 
     @pytest.mark.asyncio
     async def test_link_action_offered_and_dispatches(
@@ -1728,6 +1730,74 @@ class TestLinkRevisionAction:
             await pilot.pause()
             assert isinstance(app.screen, LinkRevisionScreen)
             await pilot.press('escape')
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('confirm', [True, False])
+    async def test_link_shows_new_revision(
+        self, tmp_path: pathlib.Path, confirm: bool
+    ) -> None:
+        """A linked revision shows up at once, with no thread update.
+
+        Linking only writes the local DB, so the list must be rebuilt from
+        it straight away: the user should not have to press 'u' before the
+        new revision appears and can be upgraded to.  A network update would
+        add nothing, since the linked revision is one discovery missed, and
+        it could fail offline or block on cron's lock.
+        """
+        identifier = 'test-link-refresh'
+        change_id = 'link-1'
+        seed_db(
+            identifier,
+            [
+                {'change_id': 'unrelated'},
+                {
+                    'change_id': change_id,
+                    'subject': '[PATCH] linkable series',
+                    'message_id': 'link-v1@ex.com',
+                    'revisions': [1],
+                },
+            ],
+        )
+        lmbx = b4.LoreMailbox()
+        lmbx.add_message(
+            make_msg('link-v2@ex.com', '[PATCH v2] linkable series', body=MINIMAL_DIFF)
+        )
+        lser = lmbx.get_series()
+        assert lser is not None
+
+        app = TrackingApp(identifier, focus_change_id=change_id)
+        with (
+            patch.object(tracking, 'fetch_series_for_link', return_value=lser),
+            patch.object(b4.review, 'update_all_tracking') as update,
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('a', 'l')
+                await pilot.pause()
+                app.screen.query_one('#link-rev-input', Input).value = 'link-v2@ex.com'
+                await pilot.press('enter')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert isinstance(app.screen, LinkRevisionConfirmScreen)
+
+                await pilot.press('enter' if confirm else 'escape')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+                update.assert_not_called()
+                assert app._selected_series is not None
+                assert app._selected_series['change_id'] == change_id
+                revisions = static_text(app.query_one('#detail-revisions', Static))
+                if not confirm:
+                    assert 'v2' not in revisions
+                    return
+
+                assert 'v2' in revisions
+                assert any('v1→v2' in row for row in _rendered_rows(app))
+                await pilot.press('a')
+                await pilot.pause()
+                assert 'upgrade' in _get_action_keys(app)
+                await pilot.press('escape')
 
 
 class TestSeriesLifecycle:
