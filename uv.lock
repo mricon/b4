@@ -334,7 +334,7 @@ dev = [
     { name = "types-requests" },
 ]
 misc = [
-    { name = "ezpi" },
+    { name = "ezpi", specifier = ">=0.7" },
     { name = "falcon" },
     { name = "instructor" },
     { name = "pydantic" },
@@ -607,11 +607,11 @@ wheels = [
 
 [[package]]
 name = "ezpi"
-version = "0.6"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c5/d1/176b414e0031a0a8856868eff0e74c7517fa4c1004d2da53ea527166b30f/ezpi-0.6.tar.gz", hash = "sha256:436312cd3761bc0274dfac5ffe12e6ca505ecaa2906b02036a9ceeb2c00a5f15", size = 37106, upload-time = "2026-04-24T14:28:21.993Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/0a/9d8770f139902304457fd549eba6f9b704135db233a8a7cc9554f3b089b6/ezpi-0.7.0.tar.gz", hash = "sha256:85a123b747c6592e5ef5bb87120de9ead3bd11801412a9dea21aa1edc8ea94df", size = 39395, upload-time = "2026-10-14T18:40:22.939Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/01/ce6ef2a64c4af2e3116008253d14dee8a339fcd94b7e9fd05601745251f7/ezpi-0.6-py3-none-any.whl", hash = "sha256:26c8e2637f3c9757aa8f3cc88734ef8089509522ce1047442c5f0998645d569d", size = 20677, upload-time = "2026-04-24T14:28:20.688Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/81/608523b38618f91f57eaf67c0fea3541919bd84e099cf7f7c809bf6d9877/ezpi-0.7.0-py3-none-any.whl", hash = "sha256:36f029c4ac83404c82a85d2286325a03f1e64538a28b132abc270dd289ed100c", size = 21617, upload-time = "2026-10-14T18:40:21.986Z" },
 ]
 
 [[package]]

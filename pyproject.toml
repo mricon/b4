@@ -51,7 +51,7 @@ dev = [
     "types-requests",
 ]
 misc = [
-    "ezpi",
+    "ezpi>=0.7",
     "falcon",
     "instructor",
     "pydantic",
