@@ -477,48 +477,74 @@ def test_migrate_from_sqlite(
     assert [row[0] for row in endpoint.rows()] == [7]
 
 
+class FakeMySQL:
+    """Stands in for pymysql.connect() and records what the tool asked."""
+
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        migrate: types.ModuleType,
+        rows: List[Tuple[Any, ...]],
+        auto_increment: int,
+    ) -> None:
+        self.rows = rows
+        self.auto_increment = auto_increment
+        self.connected: Dict[str, Any] = {}
+        self.executed: List[str] = []
+        monkeypatch.setattr(migrate.pymysql, 'connect', self.connect)
+
+    def connect(self, **kwargs: Any) -> 'FakeMySQL':
+        self.connected.update(kwargs)
+        return self
+
+    def __enter__(self) -> 'FakeMySQL':
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        pass
+
+    def cursor(self) -> 'FakeMySQL':
+        return self
+
+    def execute(self, sql: str) -> None:
+        self.executed.append(sql)
+
+    def fetchall(self) -> List[Tuple[Any, ...]]:
+        return self.rows
+
+    def fetchone(self) -> Tuple[int]:
+        return (self.auto_increment,)
+
+
+# PyMySQL hands DATETIME columns over without a timezone
+CREATED = datetime.datetime.fromisoformat('2024-01-02 03:04:05')
+
+
+# The counter (12) is ahead of the data either way, and the ids in
+# between are in published headers
+@pytest.mark.parametrize(
+    'rows,migrated',
+    [
+        ([(4, CREATED, 'old@example.org', 'default', 'pk', None, 1)], [4]),
+        ([], []),
+    ],
+    ids=['newest-deleted', 'all-deleted'],
+)
 def test_migrate_from_mysql(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rows: List[Tuple[Any, ...]],
+    migrated: List[int],
 ) -> None:
     migrate = load_script('send-receive-migrate.py')
-    # PyMySQL hands DATETIME columns over without a timezone
-    created = datetime.datetime.fromisoformat('2024-01-02 03:04:05')
-    connected: Dict[str, Any] = {}
-    executed: List[str] = []
-
-    class FakeCursor:
-        def __enter__(self) -> 'FakeCursor':
-            return self
-
-        def __exit__(self, *args: Any) -> None:
-            pass
-
-        def execute(self, sql: str) -> None:
-            executed.append(sql)
-
-        def fetchall(self) -> List[Tuple[Any, ...]]:
-            return [(4, created, IDENTITY, 'default', 'pk', None, 1)]
-
-        def fetchone(self) -> Optional[Tuple[int]]:
-            # The newest records were deleted, so the counter is ahead
-            return (12,)
-
-    class FakeConnection(FakeCursor):
-        def cursor(self) -> FakeCursor:
-            return FakeCursor()
-
-    def fake_connect(**kwargs: Any) -> FakeConnection:
-        connected.update(kwargs)
-        return FakeConnection()
-
-    monkeypatch.setattr(migrate.pymysql, 'connect', fake_connect)
+    mysql = FakeMySQL(monkeypatch, migrate, rows, 12)
     conf = write_migrate_conf(
         tmp_path, 'mysql+pymysql://b4:p%40ss@db.example.org/b4_web?charset=utf8mb4'
     )
     newdb = tmp_path / 'auth.sqlite3'
     assert migrate.main(['-c', str(conf), '-o', str(newdb)]) == 0
 
-    assert connected == {
+    assert mysql.connected == {
         'host': 'db.example.org',
         'port': 3306,
         'user': 'b4',
@@ -526,10 +552,10 @@ def test_migrate_from_mysql(
         'database': 'b4_web',
         'charset': 'utf8mb4',
     }
-    assert any('information_schema_stats_expiry' in sql for sql in executed)
-    assert query(newdb, 'SELECT auth_id, created FROM auth') == [
-        (4, '2024-01-02 03:04:05')
+    assert any('information_schema_stats_expiry' in sql for sql in mysql.executed)
+    assert query(newdb, 'SELECT created FROM auth') == [
+        ('2024-01-02 03:04:05',) for _ in migrated
     ]
-    assert query(newdb, "SELECT seq FROM sqlite_sequence WHERE name = 'auth'") == [
-        (11,)
-    ]
+    endpoint = Endpoint(tmp_path, monkeypatch, newdb)
+    endpoint.auth_new(Key(tmp_path, 'key'))
+    assert [row[0] for row in endpoint.rows()] == [*migrated, 12]

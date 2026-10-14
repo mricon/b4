@@ -142,10 +142,21 @@ def write_sqlite(outfile: str, rows: List[Row], lastid: int) -> None:
                     )
                 except sqlite3.IntegrityError as ex:
                     raise MigrationError(f'Source data does not fit: {ex}') from ex
-                conn.execute(
-                    "UPDATE sqlite_sequence SET seq = ? WHERE name = 'auth' AND seq < ?",
-                    (lastid, lastid),
-                )
+                # The inserts above set seq to max(auth_id), but an empty
+                # table leaves no row at all. sqlite_sequence has no unique
+                # key, so this can't be a single upsert.
+                if conn.execute(
+                    "SELECT 1 FROM sqlite_sequence WHERE name = 'auth'"
+                ).fetchone():
+                    conn.execute(
+                        "UPDATE sqlite_sequence SET seq = ? WHERE name = 'auth' AND seq < ?",
+                        (lastid, lastid),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO sqlite_sequence (name, seq) VALUES ('auth', ?)",
+                        (lastid,),
+                    )
                 conn.execute(f'PRAGMA user_version = {DB_VERSION}')
         # Unlike a rename, link fails if outfile showed up in the meantime
         os.link(tmpfile, outfile)
