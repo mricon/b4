@@ -31,6 +31,11 @@ import patatt
 
 from .helpers.mail import MINIMAL_DIFF, make_msg
 
+# patatt deprecated get_field(), and the endpoint must keep up
+pytestmark = pytest.mark.filterwarnings(
+    r'error:get_field\(\) is deprecated:DeprecationWarning'
+)
+
 MISC = pathlib.Path(__file__).resolve().parents[2] / 'misc'
 IDENTITY = 'dev@example.com'
 

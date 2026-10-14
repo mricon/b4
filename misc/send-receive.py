@@ -248,18 +248,7 @@ class SendReceiveListener(object):
             raise patatt.ValidationError('Message is not signed')
 
         identity_selector_pairs = [
-            (
-                ''
-                if (i := ds.get_field('i')) is None
-                else i.decode()
-                if isinstance(i, bytes)
-                else i,
-                'default'
-                if (s := ds.get_field('s')) is None
-                else s.decode()
-                if isinstance(s, bytes)
-                else s,
-            )
+            (ds.get_field_as_str('i') or '', ds.get_field_as_str('s') or 'default')
             for ds in pm.get_sigs()
         ]
         logger.debug('is_pairs=%s', identity_selector_pairs)
