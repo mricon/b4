@@ -403,6 +403,7 @@ PW_HELP_LINES = [
     '  [bold]c[/bold]         View CI check details\n',
     '  [bold]t[/bold]         Track series for review\n',
     '  [bold]s[/bold]         Set state (marked series, or current)\n',
+    '  [bold]d[/bold]         Set delegate (marked series, or current)\n',
     '  [bold]h[/bold]         Hide series\n',
     '  [bold]u[/bold]         Unhide series (when showing hidden)\n',
     '\n',
@@ -2760,6 +2761,143 @@ def SetStateConfirmScreen(
     )
 
 
+class DelegateOption(ListItem):
+    """A selectable user entry in the set-delegate dialog.
+
+    A *user_id* of None is the "no delegate" entry.
+    """
+
+    def __init__(
+        self,
+        user_id: Optional[int],
+        username: str,
+        label: str,
+        highlighted: bool = False,
+    ) -> None:
+        super().__init__()
+        self.user_id = user_id
+        self.username = username
+        self._label = label
+        self._highlighted = highlighted
+
+    def compose(self) -> ComposeResult:
+        marker = '> ' if self._highlighted else '  '
+        yield Label(f'{marker}{self._label}', markup=False)
+
+
+class SetDelegateScreen(
+    JKListNavMixin, ModalScreen[Optional[Tuple[Optional[int], str]]]
+):
+    """Modal to pick a new Patchwork delegate for a series.
+
+    *users* are the project maintainers, as returned by
+    :func:`b4.review.pw_fetch_maintainers`.  Returns (user_id, username) on
+    confirm, with (None, '') meaning "clear the delegate", or None on cancel.
+    """
+
+    _list_id = '#delegate-list'
+
+    BINDINGS = [
+        Binding('j', 'cursor_down', 'Down', show=False),
+        Binding('k', 'cursor_up', 'Up', show=False),
+        Binding('enter', 'confirm', 'Confirm'),
+        Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    SetDelegateScreen {
+        align: center middle;
+    }
+    #delegate-dialog {
+        width: 70;
+        height: auto;
+        max-height: 80%;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #delegate-list {
+        height: auto;
+        max-height: 20;
+    }
+    """
+
+    def __init__(self, users: List[Dict[str, Any]], current_delegate: str) -> None:
+        super().__init__()
+        self._users = users
+        self._current_delegate = current_delegate
+
+    def compose(self) -> ComposeResult:
+        options = [
+            DelegateOption(None, '', '(no delegate)', not self._current_delegate)
+        ]
+        for u in self._users:
+            label = u['username']
+            if u.get('name'):
+                label = f'{label} ({u["name"]})'
+            options.append(
+                DelegateOption(
+                    u['id'],
+                    u['username'],
+                    label,
+                    u['username'] == self._current_delegate,
+                )
+            )
+        with Vertical(id='delegate-dialog'):
+            yield Label('Set delegate (Enter=confirm, Esc=cancel):')
+            yield ListView(*options, id='delegate-list')
+
+    def on_mount(self) -> None:
+        lv = self.query_one('#delegate-list', ListView)
+        lv.focus()
+        # Pre-select the current delegate
+        for i, child in enumerate(lv.children):
+            if (
+                isinstance(child, DelegateOption)
+                and child.username == self._current_delegate
+            ):
+                lv.index = i
+                break
+
+    def action_confirm(self) -> None:
+        self._do_confirm()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        self._do_confirm()
+
+    def _do_confirm(self) -> None:
+        lv = self.query_one('#delegate-list', ListView)
+        child = lv.highlighted_child
+        if not isinstance(child, DelegateOption):
+            self.dismiss(None)
+            return
+        self.dismiss((child.user_id, child.username))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+def SetDelegateConfirmScreen(
+    num_series: int, num_patches: int, delegate: str
+) -> ConfirmScreen:
+    """Build a confirmation screen for a bulk Patchwork delegate change."""
+    if delegate:
+        subject = f'Delegating {num_series} series to "{delegate}"'
+    else:
+        subject = f'Clearing the delegate of {num_series} series'
+    return ConfirmScreen(
+        title='Set Delegate',
+        body=[
+            f'{num_patches} patches will be updated on the Patchwork server.',
+            '',
+            'Are you sure?',
+        ],
+        subject=subject,
+    )
+
+
 # Seconds to wait for one Patchwork PATCH. Esc can only stop the run
 # between requests, so a hung request must not block it for ever.
 PW_PATCH_TIMEOUT = 30
@@ -2950,6 +3088,36 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
         elif event.state == WorkerState.ERROR:
             # Return what we have so far
             self.dismiss(self._result())
+
+
+class ApplyDelegateModal(ApplyStateModal):
+    """Modal showing progress while changing the delegate of patches.
+
+    A *delegate_id* of None clears the delegate.  The result's
+    ``new_state`` carries the new delegate's username ('' when cleared).
+    """
+
+    def __init__(
+        self,
+        pwkey: str,
+        pwurl: str,
+        patch_ids: List[int],
+        delegate_id: Optional[int],
+        delegate_name: str,
+        series_name: str,
+    ) -> None:
+        super().__init__(pwkey, pwurl, patch_ids, delegate_name, False, series_name)
+        self._delegate_id = delegate_id
+
+    def _title(self) -> str:
+        if self._delegate_id is None:
+            return 'Clearing delegate'
+        return f'Setting delegate to: {self._new_state}'
+
+    def _payload(self) -> Dict[str, Any]:
+        # Patchwork treats an empty relational field as null, which clears
+        # the delegate.
+        return {'delegate': '' if self._delegate_id is None else self._delegate_id}
 
 
 class UpdateAllScreen(ModalScreen[Dict[str, Any]]):

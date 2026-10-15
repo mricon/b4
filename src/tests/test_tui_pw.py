@@ -21,6 +21,7 @@ import requests
 pytest.importorskip('textual')
 
 from textual.widgets import Label, ListView, ProgressBar
+from textual.worker import WorkerFailed
 
 import b4
 import b4.review
@@ -31,6 +32,7 @@ from b4.review_tui._modals import (
     PW_PATCH_TIMEOUT,
     ApplyStateModal,
     ConfirmScreen,
+    SetDelegateScreen,
     SetStateScreen,
 )
 from b4.review_tui._pw_app import PwApp, PwFetchProgress
@@ -699,6 +701,7 @@ class _FakePwSession:
 
     def __init__(self) -> None:
         self.patched: List[str] = []
+        self.payloads: List[Any] = []
         self.timeouts: List[Optional[float]] = []
 
     def patch(
@@ -709,6 +712,7 @@ class _FakePwSession:
         timeout: Optional[float] = None,
     ) -> _FakeResp:
         self.patched.append(url)
+        self.payloads.append(data)
         self.timeouts.append(timeout)
         return _FakeResp()
 
@@ -1141,6 +1145,157 @@ class TestPwApplyErrorText:
 # ---------------------------------------------------------------------------
 # Changing the delegate
 # ---------------------------------------------------------------------------
+
+
+def _pw_maintainers() -> List[Dict[str, Any]]:
+    return [
+        {'id': 7, 'username': 'alice', 'name': 'Alice A', 'email': 'a@example.com'},
+        {'id': 9, 'username': 'bob', 'name': '', 'email': 'b@example.com'},
+    ]
+
+
+class TestPwSetDelegate:
+    """`d` delegates the marked (or highlighted) series to a maintainer."""
+
+    def _install(
+        self, monkeypatch: pytest.MonkeyPatch, series: List[Dict[str, Any]]
+    ) -> _FakePwSession:
+        fake = _FakePwSession()
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (fake, 'https://pw/api')
+        )
+        self.maintainer_calls = 0
+
+        def _maintainers(*a: Any, **k: Any) -> List[Dict[str, Any]]:
+            self.maintainer_calls += 1
+            return _pw_maintainers()
+
+        monkeypatch.setattr(b4.review, 'pw_fetch_maintainers', _maintainers)
+        _install_series(monkeypatch, series)
+        return fake
+
+    @pytest.mark.asyncio
+    async def test_delegate_highlighted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = self._install(monkeypatch, [_mk_series(1), _mk_series(2)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.query_one('#pw-list', ListView).index = 1
+            await pilot.press('d')
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert isinstance(app.screen, SetDelegateScreen)
+            # "(no delegate)" first, then the maintainers.
+            lv = app.screen.query_one('#delegate-list', ListView)
+            assert len(lv.children) == 3
+            await app.screen.dismiss((7, 'alice'))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            by_id = {s['id']: s for s in app._all_series}
+            assert by_id[1].get('delegate', '') == ''
+            assert by_id[2]['delegate'] == 'alice'
+            assert fake.patched == [
+                'https://pw/api/patches/20/',
+                'https://pw/api/patches/21/',
+            ]
+            assert fake.payloads == [{'delegate': 7}, {'delegate': 7}]
+            # Delegates now differ, so the delegate column shows up.
+            assert all(it.show_delegate for it in app._visible_items())
+            # The cursor stays on the row that was changed.
+            assert app.query_one('#pw-list', ListView).index == 1
+
+            # The maintainers are fetched once and reused.
+            await pilot.press('d')
+            await pilot.pause()
+            assert isinstance(app.screen, SetDelegateScreen)
+            assert self.maintainer_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_bulk_delegate_confirms(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = self._install(monkeypatch, [_mk_series(1), _mk_series(2), _mk_series(3)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_toggle_mark()
+            app.action_toggle_mark()
+            await pilot.pause()
+            assert app._selected_ids == {1, 2}
+            app.action_set_delegate()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await app.screen.dismiss((9, 'bob'))
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmScreen)
+            assert (
+                static_text(app.screen.query_one('#confirm-title'))
+                == 'Delegating 2 series to "bob"'
+            )
+            assert fake.patched == []
+            await pilot.press('y')
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            by_id = {s['id']: s for s in app._all_series}
+            assert by_id[1]['delegate'] == 'bob'
+            assert by_id[2]['delegate'] == 'bob'
+            assert by_id[3].get('delegate', '') == ''
+            assert len(fake.patched) == 4
+            assert app._selected_ids == set()
+
+    @pytest.mark.asyncio
+    async def test_clear_delegate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        series = _mk_series(1)
+        series['delegate'] = 'alice'
+        fake = self._install(monkeypatch, [series])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_set_delegate()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, SetDelegateScreen)
+            # The current delegate is pre-selected.
+            lv = screen.query_one('#delegate-list', ListView)
+            assert lv.index == 1
+            lv.index = 0
+            await pilot.press('enter')
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app._all_series[0]['delegate'] == ''
+            assert fake.payloads == [{'delegate': ''}, {'delegate': ''}]
+
+    @pytest.mark.asyncio
+    async def test_maintainer_fetch_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._install(monkeypatch, [_mk_series(1)])
+
+        def _boom(*a: Any, **k: Any) -> List[Dict[str, Any]]:
+            raise RuntimeError('Patchwork API error: 404 Not Found')
+
+        monkeypatch.setattr(b4.review, 'pw_fetch_maintainers', _boom)
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_set_delegate()
+            with pytest.raises(WorkerFailed):
+                await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not isinstance(app.screen, SetDelegateScreen)
+            # A later press tries the fetch again.
+            assert app._maintainers is None
 
 
 class TestPwFetchMaintainers:

@@ -38,11 +38,14 @@ from b4.review_tui._common import (
 )
 from b4.review_tui._modals import (
     PW_HELP_LINES,
+    ApplyDelegateModal,
     ApplyStateModal,
     ApplyStateResult,
     CIChecksScreen,
     HelpScreen,
     LimitScreen,
+    SetDelegateConfirmScreen,
+    SetDelegateScreen,
     SetStateConfirmScreen,
     SetStateScreen,
 )
@@ -268,6 +271,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         'track_series': 'Series',
         'toggle_mark': 'Series',
         'set_state': 'Series',
+        'set_delegate': 'Series',
         'hide_series': 'Series',
         'refresh': 'App',
         'limit': 'App',
@@ -288,6 +292,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         Binding('t', 'track_series', 'track'),
         Binding('space', 'toggle_mark', 'mark', key_display='space'),
         Binding('s', 'set_state', 'set state'),
+        Binding('d', 'set_delegate', 'delegate'),
         Binding('h', 'hide_series', 'hide'),
         # App-global actions
         Binding('r', 'refresh', 'refresh'),
@@ -332,6 +337,10 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         # large-backlog notice this session (it pops up once, not every reload).
         self._backlog_count: int = 0
         self._backlog_notice_shown: bool = False
+        # Project maintainers (the users a patch can be delegated to),
+        # fetched the first time the delegate picker is opened.
+        self._maintainers: Optional[List[Dict[str, Any]]] = None
+        self._delegate_targets: List[Dict[str, Any]] = []
         self._load_local_data()
         self._load_tracking_data()
 
@@ -472,6 +481,16 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                 if isinstance(err, liblore.OperationCancelledError):
                     return
                 self.notify(f'Error retrieving series: {err}', severity='error')
+        elif event.worker.name == '_fetch_maintainers':
+            if event.state == WorkerState.SUCCESS:
+                self._maintainers = event.worker.result or []
+                self._open_delegate_picker()
+            elif event.state == WorkerState.ERROR:
+                self._delegate_targets = []
+                self.notify(
+                    f'Error fetching project maintainers: {event.worker.error}',
+                    severity='error',
+                )
 
     async def _populate(self, series_list: List[Dict[str, Any]]) -> None:
         loading = self.query('#pw-loading')
@@ -734,7 +753,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         return None
 
     def _state_targets(self) -> List[Dict[str, Any]]:
-        """Series the set-state action applies to.
+        """Series the set-state and set-delegate actions apply to.
 
         All marked series when any are marked, otherwise the highlighted row.
         Marked series are resolved from the full listing so the action still
@@ -850,6 +869,145 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             else:
                 item.add_class('--dimmed')
             item.refresh_label()
+        self._update_title_selection()
+
+    def action_set_delegate(self) -> None:
+        """Change the Patchwork delegate of the marked (or highlighted) series."""
+        targets = self._state_targets()
+        if not targets:
+            return
+        self._delegate_targets = targets
+        if self._maintainers is None:
+            self.notify('Fetching project maintainers…', timeout=3)
+            self.run_worker(
+                self._fetch_maintainers,
+                name='_fetch_maintainers',
+                thread=True,
+                exit_on_error=False,
+            )
+            return
+        self._open_delegate_picker()
+
+    def _fetch_maintainers(self) -> List[Dict[str, Any]]:
+        from b4.review_tui._common import _quiet_worker
+
+        with _quiet_worker():
+            return b4.review.pw_fetch_maintainers(
+                self._pwkey, self._pwurl, self._pwproj
+            )
+
+    def _open_delegate_picker(self) -> None:
+        targets = self._delegate_targets
+        self._delegate_targets = []
+        if not targets:
+            return
+        if not self._maintainers:
+            self.notify(
+                'This Patchwork project has no maintainers to delegate to',
+                severity='warning',
+            )
+            return
+        item = self._get_highlighted_item()
+        current = (item.series.get('delegate') or '') if item is not None else ''
+        self.push_screen(
+            SetDelegateScreen(self._maintainers, current),
+            callback=lambda result: self._on_set_delegate(result, targets),
+        )
+
+    def _on_set_delegate(
+        self,
+        result: Optional[Tuple[Optional[int], str]],
+        targets: List[Dict[str, Any]],
+    ) -> None:
+        if result is None:
+            return
+        user_id, username = result
+        patch_ids: List[int] = []
+        for s in targets:
+            patch_ids.extend(s.get('patch_ids', []))
+        if not patch_ids:
+            self.notify('No patch IDs for selected series', severity='warning')
+            return
+
+        def _apply(label: str) -> None:
+            self.push_screen(
+                ApplyDelegateModal(
+                    self._pwkey, self._pwurl, patch_ids, user_id, username, label
+                ),
+                callback=lambda res: self._on_delegate_complete(res, targets),
+            )
+
+        if len(targets) == 1:
+            _apply(targets[0].get('name') or '(no subject)')
+            return
+
+        # Several series in one go: let the user check the count first.
+        label = f'{len(targets)} series ({len(patch_ids)} patches)'
+
+        def _on_confirm(confirmed: Optional[bool]) -> None:
+            if confirmed:
+                _apply(label)
+
+        self.push_screen(
+            SetDelegateConfirmScreen(len(targets), len(patch_ids), username),
+            callback=_on_confirm,
+        )
+
+    async def _on_delegate_complete(
+        self, result: Optional[ApplyStateResult], targets: List[Dict[str, Any]]
+    ) -> None:
+        assert result is not None
+        delegate = result.new_state
+        what = f'delegated to {delegate}' if delegate else 'undelegated'
+        # As with set state, only a series whose every patch was updated
+        # takes the new delegate; the rest stay marked for another try.
+        done = [
+            s
+            for s in targets
+            if s.get('patch_ids')
+            and all(pid in result.done_ids for pid in s['patch_ids'])
+        ]
+        ok = len(result.done_ids)
+        if result.cancelled:
+            self.notify(
+                f'Stopped: {len(done)} of {len(targets)} series {what} ({ok} patches)',
+                severity='warning',
+            )
+        elif result.fail:
+            msg = f'{ok} updated, {result.fail} failed'
+            if result.error:
+                msg += f': {escape(result.error)}'
+            self.notify(msg, severity='warning')
+        elif len(targets) == 1:
+            self.notify(f'{ok} patch(es) {what}', severity='information')
+        else:
+            self.notify(
+                f'{len(targets)} series {what} ({ok} patches)',
+                severity='information',
+            )
+        for s in done:
+            s['delegate'] = delegate
+            self._selected_ids.discard(s.get('id'))
+
+        items = self._visible_items()
+        # The delegate column only shows when the visible rows disagree, so a
+        # change can make it appear or disappear: rebuild the list then.
+        show_delegate = len({it.series.get('delegate') or '' for it in items}) > 1
+        if items and show_delegate != items[0].show_delegate:
+            lv = self.query_one('#pw-list', ListView)
+            index = lv.index
+            await self._refresh_list()
+            if index is not None:
+                try:
+                    self.query_one('#pw-list', ListView).index = index
+                except Exception:
+                    pass
+            return
+        done_ids = {s.get('id') for s in done}
+        for item in items:
+            if item.series.get('id') in done_ids:
+                item.selected = False
+                item.refresh_label()
         self._update_title_selection()
 
     def action_track_series(self) -> None:

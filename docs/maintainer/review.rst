@@ -827,6 +827,7 @@ there you can:
 * View CI check details for a series (``c``)
 * Track a series directly from the Patchwork list (``t``)
 * Set or change the Patchwork state for a series (``s``)
+* Change the Patchwork delegate for a series (``d``)
 * Hide and unhide series (``h``/``u``)
 * Toggle display of hidden series (``H``)
 * Refresh the series list from Patchwork (``r``)
@@ -843,6 +844,11 @@ To set the state of many series at once, mark them first (``space``, or
 ``Ctrl-a`` to mark all), then press ``s``. B4 asks you to confirm before it
 changes anything. While the states are being set, press ``Esc`` to stop
 after the current patch.
+
+Press ``d`` to delegate a series to another project maintainer, or to
+clear its delegate. Patchwork only accepts project maintainers as
+delegates, so the list offers only those. Like ``s``, it acts on every
+marked series when any are marked.
 
 B4 also keeps Patchwork up to date as you work through the review
 lifecycle. This works for any tracked series that Patchwork knows
