@@ -2765,6 +2765,29 @@ def SetStateConfirmScreen(
 PW_PATCH_TIMEOUT = 30
 
 
+def _pw_error_text(ex: Exception) -> str:
+    """Describe a failed Patchwork request, preferring the server's reason.
+
+    Patchwork answers a rejected PATCH with a JSON body mapping each field
+    to its errors, e.g. ``{"delegate": ["User 'x' is not a maintainer..."]}``.
+    """
+    rsp = getattr(ex, 'response', None)
+    if rsp is None:
+        return str(ex)
+    try:
+        body = rsp.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict) and body:
+        parts = []
+        for field, errs in body.items():
+            if isinstance(errs, list):
+                errs = ' '.join(str(e) for e in errs)
+            parts.append(f'{field}: {errs}')
+        return '; '.join(parts)
+    return f'{rsp.status_code} {rsp.reason}'
+
+
 class ApplyStateResult(NamedTuple):
     """Outcome of an ApplyStateModal run."""
 
@@ -2774,6 +2797,8 @@ class ApplyStateResult(NamedTuple):
     new_state: str
     # True when the user stopped the run with Esc before it finished
     cancelled: bool
+    # Why the first failed patch failed, as the server put it ('' if none)
+    error: str = ''
 
 
 class ApplyStateModal(ModalScreen[ApplyStateResult]):
@@ -2834,6 +2859,7 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
         self._series_name = series_name
         self._done_ids: Set[int] = set()
         self._fail = 0
+        self._error = ''
         self._cancelled = False
 
     def compose(self) -> ComposeResult:
@@ -2861,7 +2887,11 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
 
     def _result(self) -> ApplyStateResult:
         return ApplyStateResult(
-            set(self._done_ids), self._fail, self._new_state, self._cancelled
+            set(self._done_ids),
+            self._fail,
+            self._new_state,
+            self._cancelled,
+            self._error,
         )
 
     def _apply_states(self) -> ApplyStateResult:
@@ -2890,8 +2920,10 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
                     )
                     rsp.raise_for_status()
                     self._done_ids.add(patch_id)
-                except Exception:
+                except Exception as ex:
                     self._fail += 1
+                    if not self._error:
+                        self._error = _pw_error_text(ex)
 
                 # Update progress from worker thread
                 self.app.call_from_thread(self._update_progress, i + 1)

@@ -826,7 +826,10 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                 severity='warning',
             )
         elif result.fail:
-            self.notify(f'{ok} updated, {result.fail} failed', severity='warning')
+            msg = f'{ok} updated, {result.fail} failed'
+            if result.error:
+                msg += f': {escape(result.error)}'
+            self.notify(msg, severity='warning')
         elif len(targets) == 1:
             self.notify(f'{ok} patch(es) set to {new_state}', severity='information')
         else:

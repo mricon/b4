@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from unittest import mock
 
 import pytest
+import requests
 
 pytest.importorskip('textual')
 
@@ -1081,3 +1082,57 @@ class TestPwSetStateNullName:
             assert modal._series_name == '(no subject)'
             label = modal.query_one('#apply-series', Label)
             assert static_text(label) == '(no subject)'
+
+
+class TestPwApplyErrorText:
+    """A rejected PATCH reports the server's reason, not just a count."""
+
+    @pytest.mark.asyncio
+    async def test_failure_reason_in_notice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _RejectingSession(_FakePwSession):
+            def patch(
+                self,
+                url: str,
+                data: Any = None,
+                stream: bool = False,
+                timeout: Optional[float] = None,
+            ) -> _FakeResp:
+                super().patch(url, data=data, stream=stream, timeout=timeout)
+                rsp = requests.Response()
+                rsp.status_code = 400
+                rsp.reason = 'Bad Request'
+                rsp._content = (
+                    b'{"state": ["Object with slug=reviewing does not exist."]}'
+                )
+                raise requests.HTTPError('400 Client Error', response=rsp)
+
+        fake = _RejectingSession()
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (fake, 'https://pw/api')
+        )
+        _install_series(monkeypatch, [_mk_series(1)])
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        notices: List[str] = []
+        orig_notify = app.notify
+
+        def _notify(message: str, *a: Any, **k: Any) -> None:
+            notices.append(message)
+            orig_notify(message, *a, **k)
+
+        monkeypatch.setattr(app, 'notify', _notify)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            app.action_set_state()
+            await pilot.pause()
+            await app.screen.dismiss(('reviewing', False))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app._all_series[0]['state'] == 'new'
+            assert (
+                '0 updated, 2 failed: state: Object with slug=reviewing does not exist.'
+            ) in notices
