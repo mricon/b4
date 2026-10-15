@@ -2807,6 +2807,9 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
     Esc stops the run after the request that is in flight. The result
     lists the patch ids that were updated, so the caller can tell which
     series were finished and which were not.
+
+    Subclasses can change other patch fields by overriding :meth:`_title`
+    and :meth:`_payload`.
     """
 
     BINDINGS = [
@@ -2862,9 +2865,15 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
         self._error = ''
         self._cancelled = False
 
+    def _title(self) -> str:
+        return f'Setting state to: {self._new_state}'
+
+    def _payload(self) -> Dict[str, Any]:
+        return {'state': self._new_state, 'archived': self._archived}
+
     def compose(self) -> ComposeResult:
         with Vertical(id='apply-dialog'):
-            yield Label(f'Setting state to: {self._new_state}', id='apply-title')
+            yield Label(self._title(), id='apply-title', markup=False)
             yield Label(self._series_name, id='apply-series', markup=False)
             yield Label(
                 f'Processing 0/{len(self._patch_ids)} patches...', id='apply-status'
@@ -2907,10 +2916,7 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
                 if self._cancelled or worker_cancelled():
                     break
                 patchid_url = '/'.join((patches_url, str(patch_id), ''))
-                data = {
-                    'state': self._new_state,
-                    'archived': self._archived,
-                }
+                data = self._payload()
                 try:
                     rsp = pses.patch(
                         patchid_url,
