@@ -1136,3 +1136,72 @@ class TestPwApplyErrorText:
             assert (
                 '0 updated, 2 failed: state: Object with slug=reviewing does not exist.'
             ) in notices
+
+
+# ---------------------------------------------------------------------------
+# Changing the delegate
+# ---------------------------------------------------------------------------
+
+
+class TestPwFetchMaintainers:
+    """pw_fetch_maintainers reads the project's maintainers list."""
+
+    def test_resolves_user_ids(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The maintainers list carries UserProfile ids; the delegate field
+        wants User ids, so each maintainer is looked up by username."""
+
+        class _Resp:
+            status_code = 200
+            reason = 'OK'
+
+            def __init__(self, body: Any) -> None:
+                self._body = body
+
+            def json(self) -> Any:
+                return self._body
+
+        # Users endpoint search is a substring match across several fields.
+        users_db: List[Dict[str, Any]] = [
+            {'id': 101, 'username': 'zed'},
+            {'id': 102, 'username': 'amy'},
+            {'id': 103, 'username': 'amyx'},
+        ]
+
+        class _Session:
+            def __init__(self) -> None:
+                self.calls: List[Any] = []
+
+            def get(self, url: str, params: Optional[Dict[str, str]] = None) -> _Resp:
+                self.calls.append((url, params))
+                if url.endswith('/projects/proj/'):
+                    return _Resp(
+                        {
+                            'maintainers': [
+                                {
+                                    'id': 2,
+                                    'username': 'zed',
+                                    'first_name': 'Zed',
+                                    'last_name': 'Zee',
+                                    'email': 'z@x',
+                                },
+                                {'id': 1, 'username': 'amy', 'email': 'a@x'},
+                                {'id': 3, 'username': 'ghost', 'email': 'g@x'},
+                            ]
+                        }
+                    )
+                assert url.endswith('/users/')
+                assert params is not None
+                q = params['q']
+                return _Resp([u for u in users_db if q in u['username']])
+
+        sess = _Session()
+        monkeypatch.setattr(
+            b4, 'get_patchwork_session', lambda key, url: (sess, 'https://pw/api/1.2')
+        )
+        users = b4.review.pw_fetch_maintainers('k', 'https://pw', 'proj')
+        assert sess.calls[0] == ('https://pw/api/1.2/projects/proj/', None)
+        # 'ghost' has no matching user and is left out.
+        assert users == [
+            {'id': 102, 'username': 'amy', 'name': '', 'email': 'a@x'},
+            {'id': 101, 'username': 'zed', 'name': 'Zed Zee', 'email': 'z@x'},
+        ]

@@ -4152,6 +4152,63 @@ def pw_fetch_states(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]
     return [{'slug': s, 'name': s.replace('-', ' ').title()} for s in default_slugs]
 
 
+def _pw_lookup_user_id(
+    pses: requests.Session, api_url: str, username: str
+) -> Optional[int]:
+    """Return the Patchwork User id for *username*, or None if not found.
+
+    The users endpoint searches username, names and email by substring, so
+    pick out the exact username match.
+    """
+    users_url = '/'.join((api_url, 'users', ''))
+    resp = pses.get(users_url, params={'q': username})
+    if resp.status_code != 200:
+        raise RuntimeError(f'Patchwork API error: {resp.status_code} {resp.reason}')
+    for u in resp.json():
+        if u.get('username') == username and u.get('id'):
+            return int(u['id'])
+    return None
+
+
+def pw_fetch_maintainers(pwkey: str, pwurl: str, pwproj: str) -> List[Dict[str, Any]]:
+    """Return the maintainers of a Patchwork project.
+
+    Patchwork only accepts a project maintainer as a patch delegate, so
+    this is the list of users a patch can be delegated to.
+
+    Returns a list of user dicts with 'id', 'username', 'name' and 'email'
+    keys, sorted by username.  The 'id' is the User id that a patch's
+    delegate field takes.
+    """
+    pses, api_url = b4.get_patchwork_session(pwkey, pwurl)
+    # The projects endpoint accepts the project linkname in place of its id.
+    project_url = '/'.join((api_url, 'projects', pwproj, ''))
+    resp = pses.get(project_url)
+    if resp.status_code != 200:
+        raise RuntimeError(f'Patchwork API error: {resp.status_code} {resp.reason}')
+    users: List[Dict[str, Any]] = []
+    for m in resp.json().get('maintainers', []):
+        username = m.get('username')
+        if not username:
+            continue
+        # The maintainers list carries UserProfile ids, not the User ids
+        # that the delegate field expects, so resolve each one by username.
+        user_id = _pw_lookup_user_id(pses, api_url, username)
+        if user_id is None:
+            logger.debug('Could not find Patchwork user %s', username)
+            continue
+        name = ' '.join(p for p in (m.get('first_name'), m.get('last_name')) if p)
+        users.append(
+            {
+                'id': user_id,
+                'username': username,
+                'name': name,
+                'email': m.get('email') or '',
+            }
+        )
+    return sorted(users, key=lambda u: u['username'].lower())
+
+
 def pw_fetch_checks(
     pwkey: str, pwurl: str, patch_ids: List[int]
 ) -> List[Dict[str, Any]]:
