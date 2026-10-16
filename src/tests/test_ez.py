@@ -1992,3 +1992,89 @@ def test_prep_cover_and_deps_flags_are_mutually_exclusive() -> None:
         parser.parse_args(['prep', '--edit-cover', '--cover-from-file', '-'])
     with pytest.raises(SystemExit):
         parser.parse_args(['prep', '--show-deps', '--deps-from-file', '-'])
+
+
+# -- refusing to run during an in-progress git operation ----------------------
+
+
+def _stop_rebase(where: str) -> None:
+    """Leave a rebase stopped on a failed --exec, with a clean tree."""
+    ecode, out = b4.git_run_command(
+        where, ['rebase', '--exec', 'false', 'HEAD~1'], logstderr=True
+    )
+    assert ecode != 0, out
+    assert b4._worktree_inprogress_op(where) == 'rebase'
+    assert not b4.git_get_repo_status(where)
+
+
+def _stop_cherry_pick(where: str) -> None:
+    """Leave a cherry-pick stopped because it turned out empty."""
+    ecode, out = b4.git_run_command(where, ['cherry-pick', 'HEAD'], logstderr=True)
+    assert ecode != 0, out
+    assert b4._worktree_inprogress_op(where) == 'cherry-pick'
+    assert not b4.git_get_repo_status(where)
+
+
+@pytest.mark.parametrize(
+    'command, stop',
+    [
+        (['prep', '--edit-cover'], _stop_rebase),
+        (['prep', '--edit-cover'], _stop_cherry_pick),
+        # A rebase detaches HEAD, which is refused before the cover is stored
+        (['prep', '--set-prefixes', 'RFC'], _stop_cherry_pick),
+        (['trailers', '-u'], _stop_rebase),
+        (['trailers', '-u'], _stop_cherry_pick),
+        (['send', '--to', 'list@example.com'], _stop_rebase),
+        (['send', '--to', 'list@example.com'], _stop_cherry_pick),
+    ],
+)
+def test_refuses_in_progress_operation(
+    prepdir_commit: str,
+    stop: Callable[[str], None],
+    command: List[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A clean tree is not enough: rewriting HEAD in the middle of a
+    rebase or cherry-pick would pull history out from under it."""
+    _add_series_commit(prepdir_commit)
+    stop(prepdir_commit)
+    head = b4.git_revparse_obj('HEAD')
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(['--no-stdin', '--no-interactive', *command])
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit) as exc:
+        cmdargs.func(cmdargs)
+    assert exc.value.code == 1
+    assert 'is in progress' in caplog.text
+    assert b4.git_revparse_obj('HEAD') == head
+
+
+def test_in_progress_operation_allows_reading(
+    prepdir_commit: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only rewriting is refused; the series can still be looked at."""
+    _add_series_commit(prepdir_commit)
+    _stop_cherry_pick(prepdir_commit)
+    capsys.readouterr()
+    _run_prep('--show-cover')
+    assert 'EDITME: cover title for pytest' in capsys.readouterr().out
+
+
+def test_in_progress_check_is_per_worktree(
+    prepdir_commit: str, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An operation stopped in a linked worktree blocks only that worktree."""
+    _add_series_commit(prepdir_commit)
+    linked = str(tmp_path / 'linked')
+    ecode, out = b4.git_run_command(
+        None, ['worktree', 'add', '--detach', linked, 'master'], logstderr=True
+    )
+    assert ecode == 0, out
+    _stop_cherry_pick(linked)
+
+    # The main worktree is unaffected...
+    b4.ez.check_no_operation_in_progress()
+    # ...while the linked one is refused.
+    os.chdir(linked)
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+        b4.ez.check_no_operation_in_progress()
+    assert 'A git cherry-pick is in progress' in caplog.text

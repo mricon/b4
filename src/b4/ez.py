@@ -345,6 +345,7 @@ def get_base_forkpoint(basebranch: str, mybranch: Optional[str] = None) -> str:
 
 
 def start_new_series(cmdargs: argparse.Namespace) -> None:
+    check_no_operation_in_progress()
     usercfg = b4.get_user_config()
     if 'name' not in usercfg or 'email' not in usercfg:
         logger.critical(
@@ -725,6 +726,22 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         )
 
 
+def check_no_operation_in_progress() -> None:
+    """Exit if a git operation stopped between steps in this worktree.
+
+    A rebase, merge, cherry-pick, revert or am that stopped between steps
+    can leave a clean tree behind, with HEAD wherever the operation put it.
+    Rewriting history or moving HEAD then pulls it out from under that
+    operation. Commands that only read the series stay usable.
+    """
+    topdir = b4.git_get_toplevel()
+    inprogress = b4._worktree_inprogress_op(topdir) if topdir else None
+    if inprogress:
+        logger.critical('CRITICAL: A git %s is in progress.', inprogress)
+        logger.critical('          Finish or abort it first.')
+        sys.exit(1)
+
+
 def make_magic_json(data: Dict[str, Any]) -> str:
     mj = (
         f'{MAGIC_MARKER}\n'
@@ -777,6 +794,7 @@ def load_cover(
 
 
 def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> None:
+    check_no_operation_in_progress()
     strategy = get_cover_strategy()
     if strategy in {'commit', 'tip-commit'}:
         cover_message = content + '\n\n' + make_magic_json(tracking)
@@ -1067,6 +1085,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
       pulled series); claiming makes them yours so the trailer/cover-update
       rewrite is permitted instead of refused.
     """
+    check_no_operation_in_progress()
     mybranch = b4.git_get_current_branch()
     if branch and branch != mybranch:
         if not b4.git_branch_exists(None, branch):
@@ -1599,6 +1618,8 @@ def deps_from_file(fpath: str) -> None:
 
 
 def edit_cover() -> None:
+    # Before the editor runs, so that a refusal costs no edits
+    check_no_operation_in_progress()
     is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     bcover = cover.encode()
@@ -1618,6 +1639,8 @@ def edit_cover() -> None:
 
 
 def edit_deps() -> None:
+    # Before the editor runs, so that a refusal costs no edits
+    check_no_operation_in_progress()
     is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     prereqs = tracking['series'].get('prerequisites', list())
@@ -2107,6 +2130,7 @@ def interactive_trailer_review(
 
 
 def update_trailers(cmdargs: argparse.Namespace) -> None:
+    check_no_operation_in_progress()
     if not b4.can_network and not cmdargs.localmbox:
         logger.critical(
             'CRITICAL: To work in offline mode you have to pass a local mailbox.'
@@ -3224,6 +3248,16 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         auth_verify(cmdargs)
         return
 
+    if not (
+        cmdargs.resend
+        or cmdargs.dryrun
+        or cmdargs.output_dir
+        or cmdargs.reflect
+        or cmdargs.preview_to
+    ):
+        # Refuse before sending anything rather than at the reroll after it
+        check_no_operation_in_progress()
+
     mybranch = b4.git_get_current_branch()
     if mybranch is None:
         logger.critical('CRITICAL: Not currently on a branch, unable to send')
@@ -3764,6 +3798,7 @@ def get_sent_tagname(
 def reroll(
     mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PREFIX
 ) -> None:
+    check_no_operation_in_progress()
     # Remove signature
     chunks = tag_msg.rsplit('\n-- \n')
     if len(chunks) > 1:
