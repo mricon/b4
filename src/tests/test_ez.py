@@ -1358,6 +1358,47 @@ def test_rewrite_series_commits_explains_thirdparty(
     assert 'b4 prep --claim' in caplog.text
 
 
+def test_rewrite_series_commits_explains_moved_target(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    err = b4._rewrite.RewriteTargetMovedError('HEAD', 'a' * 40, 'b' * 40)
+    with patch('b4.ez.rewrite_commits', side_effect=err):
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit):
+                b4.ez._rewrite_series_commits(
+                    {'deadbeefcafe': 'msg'}, 'start', reflog_msg='b4: test'
+                )
+    assert 'HEAD moved while b4 was rewriting it' in caplog.text
+    assert 'Nothing was changed' in caplog.text
+
+
+def test_trailers_refuse_detached_head_outside_a_series(
+    gitdir: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A detached HEAD that is not a prep series has nothing to name a
+    backup after, so trailers -u refuses before looking for trailers."""
+    ecode, out = b4.git_run_command(None, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    head = b4.git_revparse_obj('HEAD')
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        [
+            '--no-stdin',
+            '--no-interactive',
+            '--offline-mode',
+            'trailers',
+            '-u',
+            '-m',
+            '/dev/null',
+        ]
+    )
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit) as exc:
+        b4.ez.cmd_trailers(cmdargs)
+    assert exc.value.code == 1
+    assert 'HEAD is detached and is not a b4 prep series' in caplog.text
+    assert b4.git_revparse_obj('HEAD') == head
+
+
 def test_claim_branch_description_restamps_series(prepdir: str) -> None:
     """branch-description keeps no cover commit, but --claim still re-stamps
     the series patches (fork-point..HEAD) under the current identity."""

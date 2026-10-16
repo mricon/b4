@@ -33,7 +33,11 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import b4
 import patatt
-from b4._rewrite import ThirdpartyCommitterError, rewrite_commits
+from b4._rewrite import (
+    RewriteTargetMovedError,
+    ThirdpartyCommitterError,
+    rewrite_commits,
+)
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -1038,6 +1042,10 @@ def _rewrite_series_commits(
             '          If this is your own branch under a stale git identity, run:'
         )
         logger.critical('                b4 prep --claim')
+        sys.exit(1)
+    except RewriteTargetMovedError as ex:
+        logger.critical('CRITICAL: %s moved while b4 was rewriting it.', ex.refname)
+        logger.critical('          Nothing was changed; run the command again.')
         sys.exit(1)
 
 
@@ -2150,6 +2158,11 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     limit_committer: Optional[str] = str(usercfg['email'])
     # If we are in an b4-prep branch, we start from the beginning of the series
     in_prep_branch = is_prep_branch()
+    if not in_prep_branch and b4.git_get_current_branch() is None:
+        # Rewriting a detached HEAD needs a backup ref named after the series
+        logger.critical('CRITICAL: HEAD is detached and is not a b4 prep series.')
+        logger.critical('          Check out a branch first.')
+        sys.exit(1)
     if in_prep_branch:
         # Don't limit by committer in a prep branch
         limit_committer = None
