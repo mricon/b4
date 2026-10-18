@@ -1246,6 +1246,11 @@ class TestTakeFlow:
             ['netdev', 'bpf'],
             '[PATCH RFC netdev bpf v3 2/3] This is a patch',
         ),
+        (
+            '[PATCH proj/dev2forge] This is a patch',
+            None,
+            '[PATCH proj/dev2forge] This is a patch',
+        ),
     ],
 )
 def test_lore_subject_prefixes(

@@ -3869,9 +3869,9 @@ class LoreSubject:
         for _prf in self.prefixes:
             if _exclude and _prf.lower() in _exclude:
                 continue
-            if re.search(r'v\d+', _prf, flags=re.I):
+            if re.search(r'^v\d+$', _prf, flags=re.I):
                 continue
-            if re.search(r'\d+/\d+', _prf):
+            if re.search(r'^\d+/\d+$', _prf):
                 continue
             ret.append(_prf)
 
