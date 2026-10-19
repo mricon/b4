@@ -401,3 +401,257 @@ def test_linked_worktree_moves_only_its_head(
     assert b4.git_revparse_obj('HEAD', gitdir=linked) != head
     assert b4.git_get_current_branch(detached) == 'master'
     assert b4.git_revparse_obj(_backup_ref()) == head
+
+
+# -- enrolling a detached HEAD ------------------------------------------------
+
+
+@pytest.fixture
+def unenrolled(gitdir: str) -> Generator[str, None, None]:
+    """Two commits on a detached HEAD above master, tagged base-tag."""
+    b4.MAIN_CONFIG['prep-cover-strategy'] = 'commit'
+    _git('tag', 'base-tag', 'master')
+    _git('checkout', '-q', '--detach', 'master')
+    _commit_file('one.txt', 'Add the first file')
+    _commit_file('two.txt', 'Add the second file')
+    yield gitdir
+
+
+def _refs(pattern: str) -> List[str]:
+    return b4.git_get_command_lines(
+        None, ['for-each-ref', '--format=%(refname)', pattern]
+    )
+
+
+def _assert_untouched(head: str, branches: List[str]) -> None:
+    assert _head() == head
+    assert b4.git_get_current_branch() is None
+    assert _refs('refs/heads/') == branches
+    assert _refs('refs/original/') == []
+    _assert_no_bogus_branch_config()
+
+
+def _advance_master() -> None:
+    """Move master on without checking it out, as a fetch would."""
+    tree = _git('rev-parse', 'master^{tree}')
+    newer = _git('commit-tree', tree, '-p', 'master', '-m', 'Upstream moved on')
+    _git('update-ref', 'refs/heads/master', newer)
+
+
+@pytest.mark.parametrize('base', ['master', 'base-tag', 'sha'])
+def test_enroll_without_a_branch(unenrolled: str, base: str) -> None:
+    fork = b4.git_revparse_obj('base-tag^{commit}')
+    tip = _head()
+    tip_tree = b4.git_revparse_obj('HEAD^{tree}')
+    branches = _refs('refs/heads/')
+    if base == 'sha':
+        base = fork
+    elif base == 'master':
+        # A branch is forked from, so it may have moved on
+        _advance_master()
+
+    _run('prep', '-e', base)
+
+    assert b4.git_get_current_branch() is None
+    assert _refs('refs/heads/') == branches
+    cover = b4.ez.find_cover_commit()
+    assert cover is not None
+    assert b4.git_revparse_obj(f'{cover}~1') == fork
+    assert _git('rev-list', '--count', f'{cover}..HEAD') == '2'
+    assert b4.git_revparse_obj('HEAD^{tree}') == tip_tree
+    series = _tracking()['series']
+    assert '-add_the_first_file-' in series['change-id']
+    assert 'base-branch' not in series
+    assert b4.git_revparse_obj(_backup_ref()) == tip
+    assert 'EDITME: cover title for add_the_first_file' in b4.ez.load_cover()[0]
+    _assert_no_bogus_branch_config()
+
+
+def test_enroll_names_an_empty_series(unenrolled: str) -> None:
+    _run('prep', '-e', 'HEAD')
+    assert '-detached-head-' in _tracking()['series']['change-id']
+    assert b4.ez.get_series_range()[1] == _head()
+
+
+@pytest.mark.parametrize(
+    'args, message',
+    [
+        (['-e'], 'no upstream to enroll against'),
+        (['-e', 'no-such-ref'], 'Could not find commit: no-such-ref'),
+        (['-e', 'side'], 'side is not an ancestor of HEAD'),
+    ],
+)
+def test_enroll_refuses_bad_base(
+    unenrolled: str,
+    caplog: pytest.LogCaptureFixture,
+    args: List[str],
+    message: str,
+) -> None:
+    tree = _git('rev-parse', 'master^{tree}')
+    side = _git('commit-tree', tree, '-p', 'master', '-m', 'Elsewhere')
+    _git('tag', 'side', side)
+    head = _head()
+    branches = _refs('refs/heads/')
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit) as exc:
+        _run('prep', *args)
+    assert exc.value.code == 1
+    assert message in caplog.text
+    _assert_untouched(head, branches)
+
+
+def test_enroll_refuses_unenrollable_history(
+    unenrolled: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    head = _head()
+    _git('checkout', '-q', '-b', 'side', 'master')
+    _commit_file('side.txt', 'Side change')
+    _git('checkout', '-q', '--detach', head)
+    _git('merge', '-q', '--no-edit', 'side')
+    head = _head()
+    branches = _refs('refs/heads/')
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+        _run('prep', '-e', 'base-tag')
+    assert 'so b4 cannot enroll it as a series' in caplog.text
+    _assert_untouched(head, branches)
+
+
+def test_enroll_refuses_enrolled_history(
+    unenrolled: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    _run('prep', '-e', 'base-tag')
+    head = _head()
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+        # Says it is a series already, and stops at the prompt
+        with patch('builtins.input', side_effect=KeyboardInterrupt):
+            _run('prep', '-e', 'base-tag')
+    assert _head() == head
+    with patch('builtins.input', return_value=''):
+        with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+            _run('prep', '-e', 'base-tag')
+    assert 'HEAD already has a b4 cover letter' in caplog.text
+    assert _head() == head
+
+
+def test_enroll_refuses_other_strategies(
+    unenrolled: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    b4.MAIN_CONFIG['prep-cover-strategy'] = 'tip-commit'
+    head = _head()
+    branches = _refs('refs/heads/')
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+        _run('prep', '-e', 'base-tag')
+    assert 'b4.prep-cover-strategy is tip-commit' in caplog.text
+    _assert_untouched(head, branches)
+
+
+def test_enroll_failed_replay_can_be_recovered(
+    unenrolled: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An empty commit stops the cherry-pick; whatever the user does about
+    it, the commits from before enrolling are still there."""
+    _git('commit', '-q', '--allow-empty', '-m', 'An empty commit')
+    _commit_file('three.txt', 'Add the third file')
+    tip = _head()
+    with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+        _run('prep', '-e', 'base-tag')
+    assert 'Could not cherry-pick' in caplog.text
+    recovery = _refs('refs/original/b4/')
+    assert len(recovery) == 1
+    assert b4.git_revparse_obj(recovery[0]) == tip
+    assert f'git checkout --detach {recovery[0]}' in caplog.text
+    assert 'git cherry-pick --abort' in caplog.text
+    # The replay is left for the user to resolve, not thrown away
+    assert b4._worktree_inprogress_op(unenrolled) == 'cherry-pick'
+
+    _git('cherry-pick', '--abort')
+    _git('checkout', '-q', '--detach', recovery[0])
+    assert _head() == tip
+
+
+def test_enroll_aborts_if_recovery_ref_fails(
+    unenrolled: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    head = _head()
+    branches = _refs('refs/heads/')
+    real = b4.git_run_command
+
+    def _fail_update_ref(gitdir: Any, args: List[str], *a: Any, **kw: Any) -> Any:
+        if args[:1] == ['update-ref']:
+            return 1, 'fatal: injected'
+        return real(gitdir, args, *a, **kw)
+
+    with patch('b4.git_run_command', side_effect=_fail_update_ref):
+        with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+            _run('prep', '-e', 'base-tag')
+    assert 'Could not save HEAD as refs/original/b4/' in caplog.text
+    _assert_untouched(head, branches)
+
+
+def test_enroll_failed_reset_explains_recovery(
+    unenrolled: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    head = _head()
+    real = b4.git_run_command
+
+    def _fail_reset(gitdir: Any, args: List[str], *a: Any, **kw: Any) -> Any:
+        if args[:1] == ['reset']:
+            return 1, 'fatal: injected'
+        return real(gitdir, args, *a, **kw)
+
+    with patch('b4.git_run_command', side_effect=_fail_reset):
+        with caplog.at_level(logging.CRITICAL), pytest.raises(SystemExit):
+            _run('prep', '-e', 'base-tag')
+    recovery = _refs('refs/original/b4/')
+    assert [b4.git_revparse_obj(r) for r in recovery] == [head]
+    assert f'git checkout --detach {recovery[0]}' in caplog.text
+    assert _head() == head
+
+
+def test_enroll_in_linked_worktree(unenrolled: str, tmp_path: pathlib.Path) -> None:
+    head = _head()
+    linked = str(tmp_path / 'linked')
+    _git('worktree', 'add', '-q', '--detach', linked, head)
+    _git('checkout', '-q', 'master')
+    os.chdir(linked)
+    _run('prep', '-e', 'base-tag')
+    assert b4.ez.is_prep_branch() is True
+    assert b4.git_get_current_branch(unenrolled) == 'master'
+    assert b4.git_revparse_obj('HEAD', gitdir=unenrolled) == b4.git_revparse_obj(
+        'master'
+    )
+
+
+def test_enrolled_series_end_to_end(
+    unenrolled: str, tmp_path: pathlib.Path, transport: _Transport
+) -> None:
+    """Enroll, edit, format, check and send a series entirely on a
+    detached HEAD, and pick up review trailers for the next revision."""
+    _run('prep', '-e', 'base-tag')
+    _cover_from(tmp_path, COVER)
+    _run('prep', '--format-patch', str(tmp_path / 'out'))
+    assert len(os.listdir(tmp_path / 'out')) == 3
+    b4.MAIN_CONFIG['prep-perpatch-check-cmd'] = 'true'
+    _run('prep', '--check')
+
+    _run('send', '--no-sign', '--to', 'list@example.com')
+    assert len(transport.sent) == 3
+    change_id = _tracking()['series']['change-id']
+    assert b4.git_revparse_tag(None, f'sent/{change_id}-v1')
+    assert _tracking()['series']['revision'] == 2
+
+    reply = email.message.EmailMessage()
+    reply['From'] = 'Rev Iewer <rev@example.com>'
+    reply['Subject'] = 'Re: ' + str(transport.sent[1]['Subject'])
+    reply['Message-Id'] = '<review-2@example.com>'
+    reply['In-Reply-To'] = transport.sent[1]['Message-Id']
+    reply.set_content('Acked-by: Rev Iewer <rev@example.com>\n')
+    mbx_path = str(tmp_path / 'thread.mbox')
+    mbx = mailbox.mbox(mbx_path)
+    for msg in transport.sent + [reply]:
+        mbx.add(msg)
+    mbx.close()
+    _run('--offline-mode', 'trailers', '-u', '-m', mbx_path)
+    assert 'Acked-by: Rev Iewer' in _git('log', '-1', '--format=%B', 'HEAD~1')
+    assert b4.git_get_current_branch() is None
+    assert _refs('refs/heads/') == ['refs/heads/master']
+    _assert_no_bogus_branch_config()
