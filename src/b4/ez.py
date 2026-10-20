@@ -945,7 +945,7 @@ def find_cover_commits(usebranch: Optional[str] = None) -> List[Tuple[str, str]]
         '--grep',
         MAGIC_MARKER,
         '-F',
-        '--pretty=format:%H %cE',
+        '--pretty=format:%H %ce',
         '--since=1.year',
         '--no-mailmap',
         usebranch,
@@ -1126,7 +1126,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         start = series_start
 
     lines = b4.git_get_command_lines(
-        None, ['log', '--format=%h %cE %s', f'{start}..HEAD']
+        None, ['log', '--format=%h %ce %s', f'{start}..HEAD']
     )
     if not lines:
         logger.critical('CRITICAL: no commits found between %s and %s', start, mybranch)

@@ -1242,6 +1242,16 @@ def _stack_empty_patches(subjects: List[str]) -> None:
         assert ecode == 0, f'git commit failed: {out}'
 
 
+def _alias_own_address() -> str:
+    """Add a .mailmap alias over the ambient identity; return the raw address."""
+    orig_email = b4.USER_CONFIG['email']
+    assert isinstance(orig_email, str)
+    pathlib.Path('.mailmap').write_text(
+        f'Canonical User <canonical@example.com> <{orig_email}>\n'
+    )
+    return orig_email
+
+
 def _idents(revrange: str) -> List[Tuple[str, str]]:
     """Return [(author_email, committer_email), ...] over revrange."""
     lines = b4.git_get_command_lines(None, ['log', '--format=%ae %ce', revrange])
@@ -1252,16 +1262,23 @@ def _idents(revrange: str) -> List[Tuple[str, str]]:
     return out
 
 
+@pytest.mark.parametrize('mailmap', [False, True])
 def test_is_prep_branch_diagnoses_email_change(
-    prepdir_commit: str, caplog: pytest.LogCaptureFixture
+    prepdir_commit: str, caplog: pytest.LogCaptureFixture, mailmap: bool
 ) -> None:
     """After a user.email change, the missing-cover error should explain the
-    real cause (committer mismatch) and point at `b4 prep --claim`."""
+    real cause (committer mismatch) and point at `b4 prep --claim`.
+
+    With a .mailmap alias over the old address, the hint must still name the
+    raw address: that is what user.email has to be set back to for the
+    --committer search to match again."""
     _stack_empty_patches(['series patch one'])
     orig_email = b4.USER_CONFIG['email']
     assert isinstance(orig_email, str)
     # Sanity: recognized as a prep branch under the original identity.
     assert b4.ez.is_prep_branch() is True
+    if mailmap:
+        _alias_own_address()
 
     newcfg = {'name': 'Changed User', 'email': 'changed@example.com'}
     with patch('b4.get_user_config', return_value=newcfg):
@@ -1270,7 +1287,8 @@ def test_is_prep_branch_diagnoses_email_change(
         with caplog.at_level(logging.CRITICAL, logger='b4'):
             with pytest.raises(SystemExit):
                 b4.ez.is_prep_branch(mustbe=True)
-    assert orig_email in caplog.text
+    assert f'set user.email back to {orig_email}' in caplog.text
+    assert 'canonical@example.com' not in caplog.text
     assert 'changed@example.com' in caplog.text
     assert 'b4 prep --claim' in caplog.text
 
@@ -1356,6 +1374,36 @@ def test_rewrite_series_commits_explains_thirdparty(
                 )
     assert 'other@example.com' in caplog.text
     assert 'b4 prep --claim' in caplog.text
+
+
+# -- .mailmap alias over your own address --------------------------------------
+
+
+def test_prep_survives_mailmap_alias(prepdir_commit: str) -> None:
+    """A .mailmap entry aliasing your own address must not hide the cover
+    commit from the committer-restricted search: git log matches --committer
+    against the mailmap-canonicalized identity unless --no-mailmap is given."""
+    _stack_empty_patches(['series patch one'])
+    assert b4.ez.is_prep_branch() is True
+
+    _alias_own_address()
+    assert b4.ez.find_cover_commit() is not None
+    b4.ez.is_prep_branch(mustbe=True)  # `b4 prep --check` must not exit
+
+
+def test_claim_under_mailmap_recognizes_own_commits(
+    prepdir_commit: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """With an active .mailmap, `prep --claim` must still recognize the
+    series as our own: the comparison uses the raw committer email, not the
+    canonical alias %cE would report."""
+    _stack_empty_patches(['series patch one'])
+    _alias_own_address()
+    head = b4.git_revparse_obj('HEAD')
+    with caplog.at_level(logging.INFO, logger='b4'):
+        _run_prep('--claim')
+    assert 'nothing to claim' in caplog.text
+    assert b4.git_revparse_obj('HEAD') == head
 
 
 def test_claim_branch_description_restamps_series(prepdir: str) -> None:
