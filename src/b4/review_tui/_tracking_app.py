@@ -375,7 +375,9 @@ def _detect_initial_base(
 ) -> Tuple[str, str]:
     """Determine the base commit pre-filled in the base selection dialog.
 
-    Auto-detection tries the series-specified base-commit first, then a
+    Auto-detection prefers HEAD when the series applies cleanly there, as
+    maintainers work against their own tree and a series base often points
+    into -next. Otherwise it tries the series-specified base-commit, then a
     find_base() guess, then falls back to HEAD. When b4.review-apply-base
     is configured and resolves to a commit, it overrides the auto-detected
     pre-fill; the auto-detection result moves into the hint so the
@@ -386,7 +388,17 @@ def _detect_initial_base(
     """
     initial_base = 'HEAD'
     base_hint = ''
-    if lser.base_commit and topdir:
+    head_clean = False
+    if topdir:
+        # Nothing to check (new files only) counts as clean, as it does for
+        # the shazam merge base: such a series applies anywhere.
+        _checked, head_mismatches = lser.check_applies_clean(topdir)
+        head_clean = not head_mismatches
+    if head_clean:
+        base_hint = 'Applies cleanly to HEAD'
+        if lser.base_commit:
+            base_hint += f'; series base: {lser.base_commit[:12]}'
+    elif lser.base_commit and topdir:
         bc = lser.base_commit
         short = bc[:12] if len(bc) > 12 else bc
         if b4.git_commit_exists(topdir, bc):
@@ -394,7 +406,7 @@ def _detect_initial_base(
             base_hint = f'Series base: {short}'
         else:
             base_hint = f'Series base: {short} (not in repo)'
-    if topdir and initial_base == 'HEAD':
+    if topdir and not head_clean and initial_base == 'HEAD':
         # No usable series base -- try guessing.
         # Exclude b4 review branches -- they are never useful as a base for
         # applying new series. git matches the pattern against the name with

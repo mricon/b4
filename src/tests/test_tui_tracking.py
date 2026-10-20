@@ -17,7 +17,7 @@ import os
 import pathlib
 import sqlite3
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -2775,6 +2775,17 @@ class TestTargetBranch:
 class TestDetectInitialBase:
     """The b4.review-apply-base override in the base pre-fill chain."""
 
+    @pytest.fixture(autouse=True)
+    def _not_clean_at_head(self) -> Generator[None, None, None]:
+        """A series that does not apply at HEAD, so the chain past the HEAD
+        shortcut is what gets exercised; tests of the shortcut patch over it."""
+        with patch.object(
+            b4.LoreSeries,
+            'check_applies_clean',
+            return_value=(2, [('file1.txt', 'abc1234')]),
+        ):
+            yield
+
     @staticmethod
     def _head_sha(gitdir: str) -> str:
         ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
@@ -2789,6 +2800,46 @@ class TestDetectInitialBase:
             initial_base, base_hint = _detect_initial_base(lser, gitdir)
         assert initial_base == short
         assert base_hint == f'Series base: {short}'
+
+    @pytest.mark.parametrize(
+        'checked, mismatches, expect_head',
+        [
+            pytest.param(2, [], True, id='clean-at-head'),
+            # New files only: nothing to check, so it applies anywhere.
+            pytest.param(0, [], True, id='nothing-to-check'),
+            pytest.param(2, [('file1.txt', 'abc1234')], False, id='not-clean-at-head'),
+        ],
+    )
+    def test_head_preferred_when_series_applies(
+        self,
+        gitdir: str,
+        checked: int,
+        mismatches: List[Tuple[str, str]],
+        expect_head: bool,
+    ) -> None:
+        """HEAD wins over the series base whenever the series applies there:
+        maintainers review and merge against their own tree, and a series
+        base often points into -next."""
+        lser = _make_mock_lser()
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD~1'])
+        assert ecode == 0
+        lser.base_commit = out.strip()
+        short = lser.base_commit[:12]
+        with (
+            patch('b4.get_main_config', return_value={}),
+            patch.object(
+                b4.LoreSeries,
+                'check_applies_clean',
+                return_value=(checked, mismatches),
+            ),
+        ):
+            initial_base, base_hint = _detect_initial_base(lser, gitdir)
+        if expect_head:
+            assert initial_base == 'HEAD'
+            assert base_hint == f'Applies cleanly to HEAD; series base: {short}'
+        else:
+            assert initial_base == short
+            assert base_hint == f'Series base: {short}'
 
     def test_config_base_overrides_series_base(self, gitdir: str) -> None:
         lser = _make_mock_lser()

@@ -230,9 +230,10 @@ without changes.
 
 Press ``r`` to start a review. Before applying the series to a review
 branch, b4 shows a base selection dialog pre-filled with the best base
-it can determine: the base specified by the series itself (when the
-commit is present in your repository), a guess based on blob matching,
-or ``HEAD`` as the last resort. If you always want a specific pre-fill
+it can determine: your current ``HEAD`` when the series applies cleanly
+there, then the base specified by the series itself (when the commit is
+present in your repository), then a guess based on blob matching, and
+``HEAD`` as the last resort. If you always want a specific pre-fill
 (for example, the current ``HEAD``), set :term:`b4.review-apply-base` —
 what b4 would have detected automatically is then shown in the dialog
 hint instead. The input remains editable either way, and the chosen
