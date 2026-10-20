@@ -402,7 +402,9 @@ def test_get_check_repo_config_override(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def _init_repo(path: str) -> None:
-    ecode, out = b4.git_run_command(None, ['init', path])
+    # -b master: some tests check out "master" by name, and an
+    # init.defaultBranch of 'main' would leave no such branch to find.
+    ecode, out = b4.git_run_command(None, ['init', '-b', 'master', path])
     assert ecode == 0, out
     b4.git_set_config(path, 'user.name', 'Test')
     b4.git_set_config(path, 'user.email', 'test@example.com')
