@@ -2834,7 +2834,9 @@ class TestDetectInitialBase:
         assert initial_base == 'HEAD'
         assert base_hint == 'Configured base no-such-ref not found'
 
-    def test_suggestions_include_config_base(self) -> None:
+    # gitdir: the suggestions read recent take branches from the cwd's
+    # repo, which must not be whatever checkout the suite runs from.
+    def test_suggestions_include_config_base(self, gitdir: str) -> None:
         cfg = {
             'review-apply-base': 'master',
             'review-target-branch': ['for-next'],
@@ -2843,7 +2845,7 @@ class TestDetectInitialBase:
             suggestions = _build_base_suggestions()
         assert suggestions[:3] == ['HEAD', 'master', 'for-next']
 
-    def test_suggestions_no_config_base(self) -> None:
+    def test_suggestions_no_config_base(self, gitdir: str) -> None:
         with patch('b4.get_main_config', return_value={}):
             suggestions = _build_base_suggestions()
         assert suggestions == ['HEAD']
