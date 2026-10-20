@@ -24,6 +24,7 @@ import pytest
 
 pytest.importorskip('textual')
 
+from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Footer, Input, ListView, Static
 
@@ -48,10 +49,10 @@ from b4.review_tui._modals import (
     HelpScreen,
     LimitScreen,
     LinkRevisionScreen,
-    RebaseScreen,
     SnoozeScreen,
     TakeConfirmScreen,
     TargetBranchScreen,
+    _test_apply_in_worktree,
 )
 from b4.review_tui._tracking_app import (
     TrackedSeriesItem,
@@ -66,7 +67,7 @@ from b4.review_tui._tracking_app import (
     _worktree_for_branch,
 )
 
-from .helpers.tracking import create_review_branch, seed_db
+from .helpers.tracking import create_review_branch, seed_db, tag
 from .helpers.tui import static_text
 
 # ---------------------------------------------------------------------------
@@ -3963,7 +3964,9 @@ class TestTakeThankArchiveChain:
         take_screen: Any = SimpleNamespace(
             accept_series=accept_series, thank_and_archive=thank_and_archive
         )
-        confirm_screen: Any = SimpleNamespace(accept_series=accept_series)
+        confirm_screen: Any = SimpleNamespace(
+            accept_series=accept_series, resolved_base=None
+        )
         series = {'change_id': 'chain-1', 'subject': 'x', 'status': 'reviewing'}
         with (
             patch.object(TrackingApp, 'suspend', lambda self: contextlib.nullcontext()),
@@ -4421,11 +4424,14 @@ class TestDoTakeMergeConflict:
         app._identifier = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         app._selected_series = {}
         app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
+        assert ecode == 0
         take_screen: Any = SimpleNamespace(
             target_result=target_branch,
             add_signoff=False,
             add_link=False,
             accept_series=False,
+            merge_base=head.strip(),
         )
         with (
             patch('b4.review_tui._tracking_app._wait_for_enter'),
@@ -4526,21 +4532,14 @@ class TestTestApplyNoSigning:
     disables signing.
     """
 
-    @pytest.mark.parametrize(
-        'screen_cls',
-        [RebaseScreen, TargetBranchScreen, BaseSelectionScreen],
-        ids=lambda c: c.__name__,
-    )
-    def test_static_test_apply_does_not_sign(
-        self,
-        gitdir: str,
-        monkeypatch: pytest.MonkeyPatch,
-        screen_cls: Any,
+    def test_worktree_test_apply_does_not_sign(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """The shared helper behind every modal's test apply."""
         ambytes = _one_patch_mbox(gitdir)
         _poison_gpg_signing(monkeypatch)
-        ok, detail = screen_cls._test_apply_at(ambytes, 'master')
-        assert ok, f'{screen_cls.__name__} test-apply tried to sign: {detail}'
+        ok, detail = _test_apply_in_worktree(ambytes, 'master')
+        assert ok, f'test-apply tried to sign: {detail}'
 
     def test_take_confirm_test_apply_does_not_sign(
         self, gitdir: str, monkeypatch: pytest.MonkeyPatch
@@ -4552,6 +4551,144 @@ class TestTestApplyNoSigning:
         assert ok, f'take test-apply tried to sign: {detail}'
 
 
+class TestTakeMergeBase:
+    """The merge take applies at the target's nearest annotated tag, falling
+    back to the target's HEAD, and pins the commit it tested."""
+
+    @staticmethod
+    def _rev(gitdir: str, ref: str) -> str:
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', ref + '^{commit}'])
+        assert ecode == 0, ref
+        return out.strip()
+
+    @pytest.mark.parametrize(
+        'tag_at, bookmark_at, base_spec, expected, note',
+        [
+            pytest.param('HEAD', None, '', 'myproj-1.0', '', id='auto-tag'),
+            # Lightweight tags are personal bookmarks, never a shared point.
+            pytest.param(
+                'HEAD~1', 'HEAD', '', 'myproj-1.0', '', id='auto-skips-lightweight'
+            ),
+            # The review patch appends to file1.txt, which the root predates.
+            pytest.param(
+                'HEAD~4',
+                None,
+                '',
+                'master',
+                'does not apply cleanly to myproj-1.0',
+                id='auto-tag-not-clean',
+            ),
+            pytest.param(
+                None, 'HEAD', '', 'master', 'no annotated tag', id='auto-no-tag'
+            ),
+            pytest.param('HEAD', None, 'HEAD~1', 'HEAD~1', '', id='explicit-ref'),
+        ],
+    )
+    def test_resolved_base(
+        self,
+        gitdir: str,
+        tag_at: Optional[str],
+        bookmark_at: Optional[str],
+        base_spec: str,
+        expected: str,
+        note: str,
+    ) -> None:
+        if tag_at:
+            tag(gitdir, 'myproj-1.0', tag_at)
+        if bookmark_at:
+            tag(gitdir, 'bookmark', bookmark_at, annotated=False)
+        branch = create_review_branch(gitdir, 'merge-base', with_patch=True)
+        # Unrelated work past the tag, so tag and target tip differ.
+        args = ['commit', '--allow-empty', '-q', '-m', 'unrelated work']
+        assert b4.git_run_command(gitdir, args)[0] == 0
+        expected_sha = self._rev(gitdir, expected)
+        screen = TakeConfirmScreen('merge', 'master', branch, base_spec=base_spec)
+        screen._test_take()
+        assert screen.resolved_base == expected_sha
+        if note:
+            assert note in screen.base_line
+        if expected == 'myproj-1.0':
+            assert screen.base_line.startswith('myproj-1.0 ')
+
+    @pytest.mark.asyncio
+    async def test_confirm_refused_without_base(self, gitdir: str) -> None:
+        """Without a settled base, Ctrl-y must not start the merge."""
+        results: List[Optional[bool]] = []
+        app: App[None] = App()
+        async with app.run_test() as pilot:
+            screen = TakeConfirmScreen('merge', 'master', 'b4/review/no-such-branch')
+            app.push_screen(screen, results.append)
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.press('ctrl+y')
+            await pilot.pause()
+            assert screen.resolved_base is None
+            assert results == []
+
+    def test_tag_marker_without_tag_fails(self, gitdir: str) -> None:
+        branch = create_review_branch(gitdir, 'merge-base-notag', with_patch=True)
+        screen = TakeConfirmScreen('merge', 'master', branch, base_spec='_tag')
+        ok, detail = screen._test_take()
+        assert not ok
+        assert 'no annotated tag' in detail
+        assert screen.resolved_base is None
+
+
+class TestTakeMergeUsesPinnedBase:
+    """The merge take applies at the base the confirm dialog tested, not at
+    the review branch's base or wherever the target has moved to."""
+
+    def test_on_take_final_pins_confirmed_base(self) -> None:
+        app = TrackingApp.__new__(TrackingApp)
+        take_screen: Any = SimpleNamespace(
+            accept_series=True, thank_and_archive=False, merge_base=None
+        )
+        confirm_screen: Any = SimpleNamespace(
+            accept_series=True, resolved_base='abc123'
+        )
+        seen: List[Optional[str]] = []
+        with (
+            patch.object(TrackingApp, 'suspend', lambda self: contextlib.nullcontext()),
+            patch.object(TrackingApp, '_invalidate_caches', lambda self, cid: None),
+            patch.object(TrackingApp, '_load_series', lambda self: None),
+            patch.object(
+                TrackingApp,
+                '_do_take_merge',
+                lambda self, cid, rb, ts, *a, **k: seen.append(ts.merge_base),
+            ),
+        ):
+            app._on_take_final(
+                True, 'merge', 'cid', 'b4/review/cid', take_screen, {}, confirm_screen
+            )
+        assert seen == ['abc123']
+
+    def test_merges_from_pinned_base(self, gitdir: str) -> None:
+        branch = create_review_branch(gitdir, 'pinned', with_patch=True)
+        ecode, ambytes = b4.git_run_command(
+            gitdir, ['format-patch', '--stdout', '-1', f'{branch}~1'], decode=False
+        )
+        assert ecode == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD~1'])
+        assert ecode == 0
+        pinned = out.strip()
+        app = TrackingApp.__new__(TrackingApp)
+        app._identifier = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        app._selected_series = {}
+        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        take_screen: Any = SimpleNamespace(
+            target_result='master',
+            add_signoff=False,
+            add_link=False,
+            accept_series=False,
+            merge_base=pinned,
+        )
+        with patch('b4.review_tui._tracking_app._wait_for_enter'):
+            app._do_take_merge('pinned', branch, take_screen, {'subject': 'x'}, None)
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'master^2~1'])
+        assert ecode == 0
+        assert out.strip() == pinned
+
+
 class TestTestApplySubmoduleRecurse:
     """The same test-applies must survive the user's submodule.recurse.
 
@@ -4560,22 +4697,15 @@ class TestTestApplySubmoduleRecurse:
     probe reports a failure that has nothing to do with the patches.
     """
 
-    @pytest.mark.parametrize(
-        'screen_cls',
-        [RebaseScreen, TargetBranchScreen, BaseSelectionScreen],
-        ids=lambda c: c.__name__,
-    )
-    def test_static_test_apply_ignores_submodule_recurse(
-        self,
-        gitdir: str,
-        screen_cls: Any,
-        add_unpopulated_submodule: Callable[..., str],
+    def test_worktree_test_apply_ignores_submodule_recurse(
+        self, gitdir: str, add_unpopulated_submodule: Callable[..., str]
     ) -> None:
+        """The shared helper behind every modal's test apply."""
         ambytes = _one_patch_mbox(gitdir)
         add_unpopulated_submodule(gitdir)
         b4.git_set_config(gitdir, 'submodule.recurse', 'true')
-        ok, detail = screen_cls._test_apply_at(ambytes, 'master')
-        assert ok, f'{screen_cls.__name__} test-apply recursed: {detail}'
+        ok, detail = _test_apply_in_worktree(ambytes, 'master')
+        assert ok, f'test-apply recursed: {detail}'
 
     def test_take_confirm_test_apply_ignores_submodule_recurse(
         self, gitdir: str, add_unpopulated_submodule: Callable[..., str]

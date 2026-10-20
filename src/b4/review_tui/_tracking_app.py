@@ -2976,7 +2976,12 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         """Push the TakeConfirmScreen for final confirmation."""
         subject = series.get('subject', '')
         confirm_screen = TakeConfirmScreen(
-            method, target_branch, review_branch, subject=subject, cherrypick=cherrypick
+            method,
+            target_branch,
+            review_branch,
+            subject=subject,
+            cherrypick=cherrypick,
+            base_spec=take_screen.base_result,
         )
         self.push_screen(
             confirm_screen,
@@ -3010,6 +3015,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._focus_change_id = change_id
         self._invalidate_caches(change_id)
         if method == 'merge':
+            take_screen.merge_base = confirm_screen.resolved_base
             with self.suspend():
                 new_status = self._do_take_merge(
                     change_id, review_branch, take_screen, series, cherrypick=cherrypick
@@ -3234,15 +3240,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         # The merge message is opened for editing below by git-merge --edit
         # (mirroring "b4 shazam"), so the --log shortlog git appends is
         # visible and editable there.
-        base_commit = t_series.get('base-commit', '')
+        # The base TakeConfirmScreen tested and showed; never re-resolved
+        # here, where a moved target would silently change it.
+        base_commit = take_screen.merge_base
         if not base_commit:
-            # Fall back to target branch HEAD
-            ecode, out = b4.git_run_command(topdir, ['rev-parse', target_branch])
-            if ecode != 0:
-                logger.critical('Could not resolve %s', target_branch)
-                _wait_for_enter()
-                return None
-            base_commit = out.strip()
+            logger.critical('No merge base was settled for this take')
+            _wait_for_enter()
+            return None
 
         # Merge in whichever worktree holds the target branch (or a throwaway
         # one), so the current checkout is never disturbed.

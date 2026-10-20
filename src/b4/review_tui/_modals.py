@@ -61,6 +61,48 @@ from b4.tui._modals import LimitScreen as LimitScreen
 from b4.tui._modals import ToCcScreen as ToCcScreen
 
 
+def _test_apply_in_worktree(ambytes: bytes, base: str) -> Tuple[bool, str]:
+    """Test-apply *ambytes* at *base* in a throwaway sparse worktree.
+
+    Returns (ok, detail); on success the detail names the commit tested.
+    Runs in worker threads, so b4 logging is silenced for the duration.
+    """
+    topdir = b4.git_get_toplevel()
+    if not topdir:
+        return False, 'not in a git repository'
+    with _quiet_worker():
+        ecode, out = b4.git_run_command(
+            topdir, ['rev-parse', '--verify', '--quiet', base + '^{commit}']
+        )
+        if ecode != 0:
+            return False, f'cannot resolve base: {base}'
+        commit = out.strip()
+        try:
+            with b4.git_temp_worktree(topdir, commit) as gwt:
+                ecode, out = b4.git_run_command(
+                    gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
+                )
+                if ecode > 0:
+                    return False, 'failed to set up worktree'
+                ecode, out = b4.git_run_command(
+                    gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
+                )
+                if ecode > 0:
+                    return False, 'failed to checkout base'
+                ecode, out = b4.git_run_command(
+                    gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
+                )
+                if ecode > 0:
+                    # Only the "Patch failed" line is worth the screen space
+                    for line in out.splitlines():
+                        if line.startswith('Patch failed at '):
+                            return False, line
+                    return False, 'apply failed'
+                return True, f'clean ({commit[:12]})'
+        except Exception as ex:
+            return False, str(ex)
+
+
 class TrailerOption(ListItem):
     """A toggleable trailer option in the trailer selection dialog."""
 
@@ -782,6 +824,10 @@ class TakeScreen(ModalScreen[bool]):
         self.add_signoff: bool = default_signoff
         self.accept_series: bool = True
         self.thank_and_archive: bool = default_thank_archive
+        # What the maintainer typed ('' = auto); the commit it resolves to
+        # is settled by TakeConfirmScreen and pinned into merge_base.
+        self.base_result: str = ''
+        self.merge_base: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         method_options = [
@@ -810,6 +856,13 @@ class TakeScreen(ModalScreen[bool]):
                 id='take-method',
                 allow_blank=False,
             )
+            base_input = Input(
+                placeholder='nearest annotated tag, else target branch',
+                id='take-base',
+            )
+            base_input.border_title = 'Merge base'
+            base_input.display = self._default_method == 'merge'
+            yield base_input
             if not self._has_cover:
                 yield Static(
                     'No cover letter provided by the author', id='take-nocover'
@@ -834,6 +887,20 @@ class TakeScreen(ModalScreen[bool]):
     def on_mount(self) -> None:
         self.query_one('#take-target', Input).focus()
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == 'take-method':
+            self.query_one('#take-base', Input).display = event.value == 'merge'
+
+    def _base_error(self, base: str) -> str:
+        """Why *base* cannot be used as a merge base, or '' if it can."""
+        if not base or base == b4.MERGE_BASE_TAG:
+            return ''
+        if base in b4.MERGE_BASE_MARKERS:
+            return f'{base} needs the original series; use b4 shazam for it'
+        if not b4.git_commit_exists(None, base + '^{commit}'):
+            return f'Not a valid ref: {base}'
+        return ''
+
     def action_continue_take(self) -> None:
         self.target_result = self.query_one('#take-target', Input).value.strip()
         if not self.target_result:
@@ -845,6 +912,13 @@ class TakeScreen(ModalScreen[bool]):
             )
             return
         self.method_result = str(self.query_one('#take-method', Select).value)
+        if self.method_result == 'merge':
+            base = self.query_one('#take-base', Input).value.strip()
+            error = self._base_error(base)
+            if error:
+                self.notify(error, severity='error')
+                return
+            self.base_result = base
         self.add_link = self.query_one('#take-add-link', Checkbox).value
         self.add_signoff = self.query_one('#take-add-signoff', Checkbox).value
         self.thank_and_archive = self.query_one('#take-thank-archive', Checkbox).value
@@ -995,6 +1069,7 @@ class TakeConfirmScreen(ModalScreen[bool]):
         review_branch: str,
         subject: str = '',
         cherrypick: Optional[List[int]] = None,
+        base_spec: str = '',
     ) -> None:
         super().__init__()
         self._method = method
@@ -1002,7 +1077,12 @@ class TakeConfirmScreen(ModalScreen[bool]):
         self._review_branch = review_branch
         self._subject = subject
         self._cherrypick = cherrypick
+        self._base_spec = base_spec
         self.accept_series: bool = True
+        # Merge only: the commit the test apply ran on, which the take then
+        # uses as-is, so a target moving in the meantime cannot change it.
+        self.resolved_base: Optional[str] = None
+        self.base_line: str = ''
 
     def compose(self) -> ComposeResult:
         with Vertical(id='takeconfirm-dialog') as dialog:
@@ -1011,6 +1091,8 @@ class TakeConfirmScreen(ModalScreen[bool]):
                 yield Static(self._subject, id='takeconfirm-title', markup=False)
             yield Static(f'Method:  {self._method}', markup=False)
             yield Static(f'Target:  {self._target_branch}', markup=False)
+            if self._method == 'merge':
+                yield Static('Base:    \u2026', id='takeconfirm-base', markup=False)
             if self._cherrypick:
                 yield Static(
                     f'Patches: {", ".join(str(i) for i in self._cherrypick)}',
@@ -1024,14 +1106,45 @@ class TakeConfirmScreen(ModalScreen[bool]):
     def on_mount(self) -> None:
         self.run_worker(self._test_take, name='_test_take', thread=True)
 
+    def _merge_base_candidates(self, topdir: str) -> Tuple[List[str], str]:
+        """Return the bases to try for a merge, best first, or an error.
+
+        Auto mode tries the target's nearest annotated tag, usually a
+        release every tree shares, then the target itself. The series' own
+        base-commit is not a candidate: it often points into -next.
+        """
+        if self._base_spec and self._base_spec != b4.MERGE_BASE_TAG:
+            return [self._base_spec], ''
+        tag = b4.git_nearest_tag(topdir, self._target_branch)
+        if self._base_spec == b4.MERGE_BASE_TAG:
+            if tag is None:
+                return [], f'no annotated tag in {self._target_branch}'
+            return [tag], ''
+        return ([tag] if tag else []) + [self._target_branch], ''
+
+    def _describe_base(
+        self, topdir: str, ref: str, sha: str, skipped: Optional[str]
+    ) -> str:
+        """One line naming the base and its subject, and why a tag was skipped."""
+        subject = b4.git_get_command_lines(topdir, ['log', '-1', '--format=%s', sha])
+        line = f'{ref} ({" ".join([sha[:12], *subject[:1]])})'
+        if skipped:
+            line += f', does not apply cleanly to {skipped}'
+        elif ref == self._target_branch and not self._base_spec:
+            line += ', no annotated tag in its history'
+        return line
+
     def _test_take(self) -> Tuple[bool, str]:
-        """Test-apply review branch patches at the target base."""
+        """Test-apply review branch patches at the target base.
+
+        For a merge, also settles the base: the first candidate the patches
+        apply to, or the last one tried so the failure is shown against it.
+        """
         with _quiet_worker():
             topdir = b4.git_get_toplevel()
             if not topdir:
                 return False, 'not in a git repository'
 
-            # Load tracking to find base-commit and patch count
             try:
                 _cover, tracking = b4.review.load_tracking(topdir, self._review_branch)
             except SystemExit:
@@ -1046,32 +1159,12 @@ class TakeConfirmScreen(ModalScreen[bool]):
             patch_base = f'{self._review_branch}~{num_patches + 1}'
             patch_tip = f'{self._review_branch}~1'
 
-            # For merge, test at the series base-commit (or target branch);
-            # for linear/cherry-pick, test at target branch HEAD.
-            if self._method == 'merge':
-                t_series = tracking.get('series', {})
-                test_base = t_series.get('base-commit', '')
-                if not test_base:
-                    test_base = self._target_branch
-            else:
-                test_base = self._target_branch
-
-            # Resolve the test base
-            ecode, out = b4.git_run_command(
-                topdir, ['rev-parse', '--verify', test_base]
-            )
-            if ecode != 0:
-                return False, f'cannot resolve base: {test_base}'
-            resolved_base = out.strip()
-
-            # Get patch commits
             commits = b4.git_get_command_lines(
                 topdir, ['rev-list', '--reverse', f'{patch_base}..{patch_tip}']
             )
             if not commits:
                 return False, 'no commits found on review branch'
 
-            # For cherry-pick, select only the chosen patches
             if self._cherrypick:
                 selected = []
                 for idx in self._cherrypick:
@@ -1081,7 +1174,6 @@ class TakeConfirmScreen(ModalScreen[bool]):
                 if not commits:
                     return False, 'no matching commits for selection'
 
-            # Build mbox from selected commits
             mbox_parts: list[bytes] = []
             for commit in commits:
                 ecode, patch_bytes = b4.git_run_command(
@@ -1092,30 +1184,32 @@ class TakeConfirmScreen(ModalScreen[bool]):
                 mbox_parts.append(patch_bytes)
             ambytes = b''.join(mbox_parts)
 
-            # Test apply in a temporary sparse worktree
-            try:
-                with b4.git_temp_worktree(topdir, resolved_base) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
-                    )
-                    if ecode > 0:
-                        for line in out.splitlines():
-                            if line.startswith('Patch failed at '):
-                                return False, line
-                        return False, 'apply failed'
-                    return True, f'clean ({resolved_base[:12]})'
-            except Exception as ex:
-                return False, str(ex)
+            if self._method != 'merge':
+                return _test_apply_in_worktree(ambytes, self._target_branch)
+
+            candidates, error = self._merge_base_candidates(topdir)
+            if error:
+                self.base_line = error
+                return False, error
+            ok, detail = False, ''
+            skipped: Optional[str] = None
+            for ref in candidates:
+                ecode, out = b4.git_run_command(
+                    topdir, ['rev-parse', '--verify', '--quiet', ref + '^{commit}']
+                )
+                if ecode != 0:
+                    self.base_line = f'cannot resolve base: {ref}'
+                    self.resolved_base = None
+                    return False, self.base_line
+                self.resolved_base = out.strip()
+                self.base_line = self._describe_base(
+                    topdir, ref, self.resolved_base, skipped
+                )
+                ok, detail = _test_apply_in_worktree(ambytes, self.resolved_base)
+                if ok:
+                    break
+                skipped = ref
+            return ok, detail
 
     def _update_status(self, text: str, level: str) -> None:
         widget = self.query_one('#takeconfirm-status', Static)
@@ -1126,6 +1220,13 @@ class TakeConfirmScreen(ModalScreen[bool]):
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name != '_test_take':
             return
+        if self._method == 'merge' and event.state in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+        ):
+            self.query_one('#takeconfirm-base', Static).update(
+                f'Base:    {self.base_line or "unknown"}'
+            )
         if event.state == WorkerState.SUCCESS and event.worker.result:
             await self.query_one('#takeconfirm-loading', LoadingIndicator).remove()
             ok, detail = event.worker.result
@@ -1138,6 +1239,14 @@ class TakeConfirmScreen(ModalScreen[bool]):
             self._update_status('test apply error', 'fail')
 
     def action_confirm_take(self) -> None:
+        # A merge needs the settled base; confirming early would merge from
+        # a base the maintainer has not seen.
+        if self._method == 'merge' and self.resolved_base is None:
+            if self.query('#takeconfirm-loading'):
+                self.notify('Still testing the merge base', severity='warning')
+            else:
+                self.notify('No usable merge base', severity='error')
+            return
         self.accept_series = self.query_one('#takeconfirm-accept', Checkbox).value
         self.dismiss(True)
 
@@ -2110,40 +2219,10 @@ class RebaseScreen(ModalScreen[bool]):
         ambytes = self._ambytes
         assert ambytes is not None
         self.run_worker(
-            lambda: self._test_apply_at(ambytes, branch),
+            lambda: _test_apply_in_worktree(ambytes, branch),
             name='_test_apply',
             thread=True,
         )
-
-    @staticmethod
-    def _test_apply_at(ambytes: bytes, branch: str) -> Tuple[bool, str]:
-        topdir = b4.git_get_toplevel()
-        if not topdir:
-            return False, 'not in a git repository'
-        with _quiet_worker():
-            try:
-                with b4.git_temp_worktree(topdir, branch) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
-                    )
-                    if ecode > 0:
-                        for line in out.splitlines():
-                            if line.startswith('Patch failed at '):
-                                return False, line
-                        return False, 'apply failed'
-                    return True, 'success'
-            except Exception as ex:
-                return False, str(ex)
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name == '_prepare':
@@ -2395,40 +2474,10 @@ class TargetBranchScreen(ModalScreen[Optional[str]]):
             return
         ambytes = self._ambytes
         self.run_worker(
-            lambda: self._test_apply_at(ambytes, branch),
+            lambda: _test_apply_in_worktree(ambytes, branch),
             name='_test_apply',
             thread=True,
         )
-
-    @staticmethod
-    def _test_apply_at(ambytes: bytes, branch: str) -> Tuple[bool, str]:
-        topdir = b4.git_get_toplevel()
-        if not topdir:
-            return False, 'not in a git repository'
-        with _quiet_worker():
-            try:
-                with b4.git_temp_worktree(topdir, branch) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
-                    )
-                    if ecode > 0:
-                        for line in out.splitlines():
-                            if line.startswith('Patch failed at '):
-                                return False, line
-                        return False, 'apply failed'
-                    return True, 'success'
-            except Exception as ex:
-                return False, str(ex)
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name == '_prepare':
@@ -3163,42 +3212,10 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         if not base:
             return
         self.run_worker(
-            lambda: self._test_apply_at(self._ambytes, base),
+            lambda: _test_apply_in_worktree(self._ambytes, base),
             name='_test_apply',
             thread=True,
         )
-
-    @staticmethod
-    def _test_apply_at(ambytes: bytes, base: str) -> Tuple[bool, str]:
-        """Run git-am in a throwaway sparse worktree. Returns (ok, detail)."""
-        topdir = b4.git_get_toplevel()
-        if not topdir:
-            return False, 'not in a git repository'
-        with _quiet_worker():
-            try:
-                with b4.git_temp_worktree(topdir, base) as gwt:
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'sparse-checkout', 'set']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to set up worktree'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'checkout', '-f']
-                    )
-                    if ecode > 0:
-                        return False, 'failed to checkout base'
-                    ecode, out = b4.git_run_command(
-                        gwt, [*b4.SCRATCH_GIT_OPTS, 'am'], stdin=ambytes
-                    )
-                    if ecode > 0:
-                        # Extract just the "Patch failed" line
-                        for line in out.splitlines():
-                            if line.startswith('Patch failed at '):
-                                return False, line
-                        return False, 'apply failed'
-                    return True, 'success'
-            except Exception as ex:
-                return False, str(ex)
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.worker.name != '_test_apply':

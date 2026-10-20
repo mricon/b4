@@ -954,6 +954,20 @@ archive steps (see :ref:`thank and archive in one motion
 :term:`b4.review-thank-and-archive` to make it start checked. Press
 ``Ctrl-y`` to continue, or ``Escape`` to cancel.
 
+With the merge method, the dialog also has a *Merge base* field. This
+is where b4 applies the series before merging it into the target
+branch. Leave it empty to use the nearest annotated tag in the target
+branch's history. This is usually a release, such as ``v7.3-rc6`` or
+``myproject-2.4``. Every tree has the release tags, so other maintainers
+can merge the same commits later without pulling in anything else from
+your tree. B4 skips lightweight tags, because those are usually personal
+bookmarks. If the series does not apply cleanly on that tag, or there is
+no annotated tag, b4 uses the target branch itself. You can also type a
+branch, tag, or commit, or ``_tag`` to use the nearest annotated tag
+with no fallback. The base you reviewed on and
+the ``base-commit:`` of the series are not used, because they often
+point into linux-next.
+
 **Step 2 — Select patches** (cherry-pick only). When cherry-pick is
 selected, a patch selection dialog lets you choose which patches to
 apply. Skipped patches are pre-deselected. Press ``Ctrl-y`` to
@@ -963,6 +977,10 @@ continue.
 background (using a temporary sparse worktree) and shows the result:
 green for clean, red with details if it fails. The screen also shows
 the series subject, method, and target branch as a final sanity check.
+For a merge, it also shows the merge base with its commit subject, and
+says why when b4 had to skip the tag. The take then uses exactly
+this commit, even if the target branch moves in the meantime, so you
+cannot confirm a merge until the test apply has finished.
 Toggle ``Mark as accepted`` to update the series status after the take.
 Press ``Ctrl-y`` to proceed with the actual take, or ``Escape`` to back
 out without making any changes.

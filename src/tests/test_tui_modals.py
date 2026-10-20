@@ -1134,6 +1134,57 @@ class TestTakeScreen:
                 assert not app.screen.query('#take-nocover')
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize('method, shown', [('merge', True), ('linear', False)])
+    async def test_base_input_only_for_merge(self, method: str, shown: bool) -> None:
+        """A base only matters when the series is merged."""
+        app = ModalTestApp()
+
+        async with app.run_test() as pilot:
+            app.push_screen(
+                TakeScreen(
+                    'main',
+                    'b4/review/test',
+                    num_patches=3,
+                    has_cover=True,
+                    default_method=method,
+                )
+            )
+            await pilot.pause()
+            assert app.screen.query_one('#take-base', Input).display == shown
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'typed, accepted',
+        [
+            pytest.param('', True, id='auto'),
+            pytest.param('_tag', True, id='tag-marker'),
+            pytest.param('HEAD~1', True, id='ref'),
+            pytest.param('no-such-ref', False, id='bad-ref'),
+            # Need the original series, which a review branch no longer has.
+            pytest.param('_specified', False, id='specified-marker'),
+            pytest.param('_guess', False, id='guess-marker'),
+        ],
+    )
+    async def test_base_input_validated(
+        self, gitdir: str, typed: str, accepted: bool
+    ) -> None:
+        app = ModalTestApp()
+        results: List[Any] = []
+
+        async with app.run_test() as pilot:
+            screen = TakeScreen(
+                'master', 'b4/review/test', num_patches=3, has_cover=True
+            )
+            app.push_screen(screen, results.append)
+            await pilot.pause()
+            screen.query_one('#take-base', Input).value = typed
+            await pilot.press('ctrl+y')
+            await pilot.pause()
+            assert (results == [True]) == accepted
+            if accepted:
+                assert screen.base_result == typed
+
+    @pytest.mark.asyncio
     async def test_thank_and_archive_defaults_off(self) -> None:
         """The thank-and-archive checkbox is opt-in per take by default."""
         app = ModalTestApp()
