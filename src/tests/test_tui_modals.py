@@ -28,6 +28,7 @@ import liblore
 from b4.review_tui._modals import (
     TRACKING_HELP_LINES,
     ActionScreen,
+    BaseSelectionScreen,
     ConfirmScreen,
     FollowupReplyPreviewScreen,
     HelpScreen,
@@ -1162,6 +1163,40 @@ class TestTakeScreen:
             await pilot.pause()
             assert app.screen.query_one('#take-thank-archive', Checkbox).value
             assert screen.thank_and_archive
+
+
+class TestBaseSelectionScreen:
+    """Tests for the checkout base selection modal."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('typed', ['HEAD~1', 'v-tag'], ids=['ref', 'annotated-tag'])
+    async def test_confirm_uses_edited_base_without_enter(
+        self, gitdir: str, typed: str
+    ) -> None:
+        """Ctrl-y confirms what is typed, not the pre-filled base.
+
+        Regression (bug bd95e9f): the pre-fill is resolved on mount, and
+        confirming without pressing Enter after editing returned that
+        stale resolution -- the "lag" in honouring a typed base. An
+        annotated tag must come back as its commit, not the tag object.
+        """
+        args = ['tag', '--no-sign', '-m', 'v-tag', 'v-tag', 'HEAD~1']
+        assert b4.git_run_command(gitdir, args)[0] == 0
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', 'HEAD~1'])
+        assert ecode == 0
+        typed_sha = out.strip()
+        lser = mock.Mock(indexes=[])
+        app = ModalTestApp()
+        results: List[Optional[str]] = []
+
+        async with app.run_test() as pilot:
+            app.push_screen(BaseSelectionScreen('HEAD', lser, b''), results.append)
+            await pilot.pause()
+            app.screen.query_one('#base-input', Input).value = typed
+            await pilot.press('ctrl+y')
+            await pilot.pause()
+
+        assert results == [typed_sha]
 
 
 class TestSendKeybindings:

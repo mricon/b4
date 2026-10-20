@@ -3113,7 +3113,11 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
             self._update_status('not in a git repository', 'fail')
             return
 
-        ecode, out = b4.git_run_command(topdir, ['rev-parse', '--verify', value])
+        # Peel to the commit: an annotated tag name would otherwise resolve
+        # to the tag object, and that is what gets recorded as the base.
+        ecode, out = b4.git_run_command(
+            topdir, ['rev-parse', '--verify', value + '^{commit}']
+        )
         if ecode != 0:
             self._update_status(f'not a valid ref: {value}', 'fail')
             self._resolved_base = None
@@ -3209,10 +3213,9 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
             self._update_status('test apply error', 'fail')
 
     def action_continue(self) -> None:
-        if self._resolved_base:
-            self.dismiss(self._resolved_base)
-            return
-        # Try to resolve whatever is in the input
+        # Always resolve the field as it stands: _resolved_base only tracks
+        # the last Enter (or the pre-fill), so an edit confirmed without
+        # Enter would otherwise silently use the old base.
         value = self.query_one('#base-input', Input).value.strip()
         if not value:
             self.notify('Base commit is required', severity='error')
@@ -3220,7 +3223,9 @@ class BaseSelectionScreen(ModalScreen[Optional[str]]):
         topdir = b4.git_get_toplevel()
         if not topdir:
             return
-        ecode, out = b4.git_run_command(topdir, ['rev-parse', '--verify', value])
+        ecode, out = b4.git_run_command(
+            topdir, ['rev-parse', '--verify', value + '^{commit}']
+        )
         if ecode != 0:
             self.notify(f'Not a valid ref: {value}', severity='error')
             return
