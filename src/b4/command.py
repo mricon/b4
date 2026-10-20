@@ -489,7 +489,12 @@ def setup_parser() -> argparse.ArgumentParser:
         dest='mergebase',
         type=str,
         default=None,
-        help='(use with -H or -M) Force this base when merging',
+        help=(
+            '(use with -H or -M) Apply the series on this base before merging. '
+            'Takes a commit, or one of _tag (nearest annotated tag), _specified '
+            '(series base-commit), _guess (blob-match guess). Default: _tag when '
+            'the series applies cleanly there, else HEAD'
+        ),
     )
     sp_sh.add_argument(
         '--resolve',

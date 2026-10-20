@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import io
 import logging
 import mailbox
@@ -16,6 +17,7 @@ import b4.command
 import b4.mbox
 
 from .helpers.mail import MINIMAL_DIFF, make_msg
+from .helpers.tracking import tag
 
 
 def test_minimize_thread_preserves_reply_separator() -> None:
@@ -349,3 +351,138 @@ def test_unknown_base_suggests_base_tree_fetch(
     else:
         assert lser.base_tree == tuple(tree.split())
         assert f'{hint}{base}' in caplog.text
+
+
+def _merge_base_series(sampledir: str) -> tuple[str, b4.LoreSeries]:
+    """Cover body and series for shazam-git1-just-series (base-commit: HEAD)."""
+    mfile = os.path.join(sampledir, 'shazam-git1-just-series.mbox')
+    lmbx = b4.LoreMailbox()
+    body = ''
+    for msg in b4.get_msgs_from_mailbox_or_maildir(mfile):
+        lmbx.add_message(msg)
+        if not body:
+            body, _ = b4.LoreMessage.get_payload(msg)
+    lser = lmbx.get_series(codereview_trailers=False)
+    assert lser is not None
+    return body, lser
+
+
+def _rev(gitdir: str, ref: str) -> str:
+    ecode, out = b4.git_run_command(gitdir, ['rev-parse', ref + '^{commit}'])
+    assert ecode == 0, ref
+    return out.strip()
+
+
+@pytest.mark.parametrize(
+    'tag_at, bookmark_at, extra_commit, mergebase, expected',
+    [
+        # The default merges from the nearest annotated tag, whatever the
+        # project names it, even past newer branch commits.
+        pytest.param('HEAD', None, True, None, 'myproj-1.0', id='default-tag'),
+        # Lightweight tags are personal bookmarks, never a shared point.
+        pytest.param(
+            'HEAD~1', 'HEAD', True, None, 'HEAD', id='default-skips-lightweight'
+        ),
+        pytest.param(None, 'HEAD', False, None, 'HEAD', id='default-only-lightweight'),
+        # The series needs lipsum.txt, which the tag predates.
+        pytest.param('HEAD~1', None, False, None, 'HEAD', id='default-tag-not-clean'),
+        pytest.param(None, None, False, None, 'HEAD', id='default-no-tag'),
+        pytest.param('HEAD', None, True, '_tag', 'myproj-1.0', id='tag'),
+        pytest.param('HEAD', None, True, '_specified', 'HEAD~1', id='specified'),
+        # The series' blobs match the fixture tip, not the newer empty commit.
+        pytest.param('HEAD', None, True, '_guess', 'HEAD~1', id='guess'),
+        pytest.param('HEAD', None, True, 'HEAD~1', 'HEAD~1', id='plain-ref'),
+    ],
+)
+def test_merge_base(
+    sampledir: str,
+    gitdir: str,
+    tag_at: Optional[str],
+    bookmark_at: Optional[str],
+    extra_commit: bool,
+    mergebase: Optional[str],
+    expected: str,
+) -> None:
+    if tag_at:
+        tag(gitdir, 'myproj-1.0', tag_at)
+    if bookmark_at:
+        tag(gitdir, 'bookmark', bookmark_at, annotated=False)
+    if extra_commit:
+        args = ['commit', '--allow-empty', '-q', '-m', 'unrelated work']
+        assert b4.git_run_command(gitdir, args)[0] == 0
+    body, lser = _merge_base_series(sampledir)
+    cmdargs = argparse.Namespace(
+        mergebase=mergebase, guessbase=True, guessbranch=None, guessdays=21
+    )
+    base = b4.mbox.get_merge_base(gitdir, body, lser, cmdargs)
+    assert _rev(gitdir, base) == _rev(gitdir, expected)
+
+
+def test_shazam_merge_from_annotated_tag(sampledir: str, gitdir: str) -> None:
+    """-M applies the series on the nearest annotated tag and merges it."""
+    tag(gitdir, 'myproj-1.0')
+    args = ['commit', '--allow-empty', '-q', '-m', 'unrelated work']
+    assert b4.git_run_command(gitdir, args)[0] == 0
+    mfile = os.path.join(sampledir, 'shazam-git1-just-series.mbox')
+    parser = b4.command.setup_parser()
+    cmdargs = parser.parse_args(
+        [
+            '--no-stdin',
+            '--no-interactive',
+            '--offline-mode',
+            'shazam',
+            '-m',
+            mfile,
+            '-M',
+        ]
+    )
+    with pytest.raises(SystemExit) as e:
+        b4.mbox.main(cmdargs)
+    assert e.value.code == 0
+    # The merged side is the 4-patch series sitting directly on the tag.
+    assert _rev(gitdir, 'HEAD^2~4') == _rev(gitdir, 'myproj-1.0')
+
+
+def test_merge_base_default_hints_at_ignored_series_base(
+    sampledir: str, gitdir: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    body, lser = _merge_base_series(sampledir)
+    cmdargs = argparse.Namespace(
+        mergebase=None, guessbase=True, guessbranch=None, guessdays=21
+    )
+    with caplog.at_level(logging.INFO):
+        b4.mbox.get_merge_base(gitdir, body, lser, cmdargs)
+    assert 'ignoring series base-commit' in caplog.text
+    assert '--merge-base _specified' in caplog.text
+
+
+@pytest.mark.parametrize(
+    'mergebase, body, guess',
+    [
+        pytest.param('_tag', None, None, id='tag-without-tags'),
+        pytest.param(
+            '_specified', 'No footer here.\n', None, id='specified-without-footer'
+        ),
+        # find_base() found commits but none of the series' blobs.
+        pytest.param('_guess', None, ('HEAD', 4, 4), id='guess-no-blob-matches'),
+    ],
+)
+def test_merge_base_marker_unavailable_is_fatal(
+    sampledir: str,
+    gitdir: str,
+    mergebase: str,
+    body: Optional[str],
+    guess: Optional[tuple[str, int, int]],
+) -> None:
+    cover_body, lser = _merge_base_series(sampledir)
+    cmdargs = argparse.Namespace(
+        mergebase=mergebase, guessbase=True, guessbranch=None, guessdays=21
+    )
+    with (
+        mock_patch.object(b4.LoreSeries, 'find_base', return_value=guess)
+        if guess
+        else contextlib.nullcontext(),
+        pytest.raises(SystemExit) as e,
+    ):
+        b4.mbox.get_merge_base(gitdir, body or cover_body, lser, cmdargs)
+    assert e.value.code == 1

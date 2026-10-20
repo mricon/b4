@@ -210,6 +210,14 @@ def add_worktree(gitdir: str, name: str = 'worktree', branch: str = 'wt-branch')
     return worktree_dir
 
 
+def tag(gitdir: str, name: str, ref: str = 'HEAD', annotated: bool = True) -> None:
+    """Tag *ref*; annotated by default, as projects tag their releases."""
+    args = (
+        ['tag', '--no-sign', '-m', name, name, ref] if annotated else ['tag', name, ref]
+    )
+    _git(gitdir, args)
+
+
 # ---------------------------------------------------------------------------
 # Tracking database
 # ---------------------------------------------------------------------------

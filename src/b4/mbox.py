@@ -99,24 +99,9 @@ def get_base_commit(
             logger.debug(' Base: using specified base-commit %s', base_commit)
 
     if base_commit == 'HEAD' and topdir and cmdargs.guessbase:
-        logger.info(' Base: attempting to guess base-commit...')
-        try:
-            base_commit, nblobs, mismatches = lser.find_base(
-                topdir, branches=cmdargs.guessbranch, maxdays=cmdargs.guessdays
-            )
-            if mismatches == 0:
-                logger.critical(' Base: %s (exact match)', base_commit)
-            elif nblobs == mismatches:
-                logger.critical(' Base: failed to guess base')
-            else:
-                logger.critical(
-                    ' Base: %s (best guess, %s/%s blobs matched)',
-                    base_commit,
-                    nblobs - mismatches,
-                    nblobs,
-                )
-        except IndexError as ex:
-            logger.critical(' Base: failed to guess base (%s)', ex)
+        guessed = _guess_base(topdir, lser, cmdargs)
+        if guessed is not None:
+            base_commit = guessed[0]
 
     if cmdargs.mergebase:
         if base_commit:
@@ -128,6 +113,101 @@ def get_base_commit(
         base_commit = cmdargs.mergebase
 
     return base_commit
+
+
+def _guess_base(
+    topdir: str, lser: b4.LoreSeries, cmdargs: argparse.Namespace
+) -> Optional[Tuple[str, bool]]:
+    """Guess the series base with find_base().
+
+    Returns (commit, any_blob_matched), or None when there was nothing to
+    guess from.
+    """
+    logger.info(' Base: attempting to guess base-commit...')
+    try:
+        base_commit, nblobs, mismatches = lser.find_base(
+            topdir, branches=cmdargs.guessbranch, maxdays=cmdargs.guessdays
+        )
+    except IndexError as ex:
+        logger.critical(' Base: failed to guess base (%s)', ex)
+        return None
+    if mismatches == 0:
+        logger.critical(' Base: %s (exact match)', base_commit)
+    elif nblobs == mismatches:
+        logger.critical(' Base: failed to guess base')
+    else:
+        logger.critical(
+            ' Base: %s (best guess, %s/%s blobs matched)',
+            base_commit,
+            nblobs - mismatches,
+            nblobs,
+        )
+    return base_commit, nblobs != mismatches
+
+
+def get_merge_base(
+    topdir: str, body: str, lser: b4.LoreSeries, cmdargs: argparse.Namespace
+) -> str:
+    """Pick where to apply a series before merging it (shazam -H/-M).
+
+    Maintainers merge onto their branch's nearest annotated tag, usually a
+    release that every tree shares, or else onto HEAD. The series' own base-commit is used only
+    on request: it often points into -next or another tree, and merging from
+    there would drag that history in too. Exits when a requested marker
+    cannot be resolved, rather than quietly merging from somewhere else.
+    """
+    spec = cmdargs.mergebase
+    if spec == b4.MERGE_BASE_SPECIFIED:
+        nocmd = argparse.Namespace(**vars(cmdargs))
+        nocmd.mergebase = None
+        nocmd.guessbase = False
+        base = get_base_commit(topdir, body, lser, nocmd)
+        if base == 'HEAD':
+            logger.critical('ERROR: the series specifies no usable base-commit')
+            sys.exit(1)
+        logger.info(' Base: %s (series base-commit)', base)
+        return base
+
+    if spec == b4.MERGE_BASE_GUESS:
+        guessed = _guess_base(topdir, lser, cmdargs)
+        if guessed is None or not guessed[1]:
+            logger.critical('ERROR: could not guess the series base')
+            sys.exit(1)
+        return guessed[0]
+
+    if spec and spec != b4.MERGE_BASE_TAG:
+        logger.info(' Base: %s', spec)
+        return str(spec)
+
+    tag = b4.git_nearest_tag(topdir)
+    if spec == b4.MERGE_BASE_TAG:
+        if tag is None:
+            logger.critical('ERROR: no annotated tag found in the history of HEAD')
+            sys.exit(1)
+        logger.info(' Base: %s', tag)
+        return tag
+
+    # Default: the newest tag if the series applies there, else HEAD.
+    base = 'HEAD'
+    why = 'no annotated tag in history'
+    if tag is not None:
+        checked, mismatched = lser.check_applies_clean(topdir, at=tag)
+        if checked and mismatched:
+            why = f'does not apply cleanly to {tag}'
+        else:
+            base = tag
+            why = ''
+    if why:
+        logger.info(' Base: %s (%s)', base, why)
+    else:
+        logger.info(' Base: %s', base)
+    if lser.base_commit:
+        logger.info(
+            '       ignoring series base-commit %s, use --merge-base %s for it',
+            lser.base_commit[:12],
+            b4.MERGE_BASE_SPECIFIED,
+        )
+    return base
 
 
 def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -> None:
@@ -442,7 +522,7 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
                 thanks_record_am(lser, cherrypick=cherrypick)
             sys.exit(ecode)
 
-        base_commit = get_base_commit(topdir, first_body, lser, cmdargs)
+        base_commit = get_merge_base(topdir, first_body, lser, cmdargs)
         linkurl = linkmask % top_msgid
 
         merge_template = DEFAULT_MERGE_TEMPLATE
@@ -497,10 +577,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             am_flags.extend(list(sp))
 
         try:
-            if cmdargs.mergebase:
-                logger.info(' Base: %s', base_commit)
-            else:
-                logger.info(' Base: %s (use --merge-base to override)', base_commit)
             b4.git_fetch_am_into_repo(
                 topdir,
                 ambytes=ambytes,

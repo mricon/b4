@@ -232,6 +232,12 @@ BASE_SEARCH_REMOTES_AND_TAGS = [
     '--remotes',
     '--tags',
 ]
+# Symbolic bases for merging a series. They start with '_' so they read as
+# markers rather than refs; a branch by one of these names would be shadowed.
+MERGE_BASE_TAG = '_tag'
+MERGE_BASE_SPECIFIED = '_specified'
+MERGE_BASE_GUESS = '_guess'
+MERGE_BASE_MARKERS = (MERGE_BASE_TAG, MERGE_BASE_SPECIFIED, MERGE_BASE_GUESS)
 DIFFSTAT_RE = re.compile(r'^\s*\d+ file.*\d+ (insertion|deletion)', flags=re.M | re.I)
 # Body lines that mboxrd escapes by adding one more '>'
 MBOXRD_FROM_RE = re.compile(rb'^(>*From )', flags=re.M)
@@ -5850,6 +5856,20 @@ def git_commit_exists(gitdir: Optional[str], commit_id: str) -> bool:
     gitargs = ['cat-file', '-e', commit_id]
     ecode, _out = git_run_command(gitdir, gitargs)
     return ecode == 0
+
+
+def git_nearest_tag(gitdir: Optional[str], ref: str = 'HEAD') -> Optional[str]:
+    """Return the nearest annotated tag in the history of *ref*.
+
+    Projects name their releases in all sorts of ways, so the name is not
+    looked at. Lightweight tags are skipped: they are usually personal
+    bookmarks, while releases are annotated and shared by every tree.
+    """
+    gitargs = ['describe', '--abbrev=0', ref]
+    ecode, out = git_run_command(gitdir, gitargs)
+    if ecode != 0:
+        return None
+    return out.strip() or None
 
 
 def git_branch_exists(gitdir: Optional[str], branch_name: str) -> bool:

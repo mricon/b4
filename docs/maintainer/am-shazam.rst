@@ -310,6 +310,10 @@ the merge commit.
   Exactly the same as ``--make-fetch-head``, but will actually execute
   the suggested ``git merge`` command.
 
+``--merge-base BASE``
+  Used with ``-H`` or ``-M``. Sets where b4 applies the series before
+  merging it. See :ref:`shazam_merge_base` below.
+
 ``--resolve``
   Used with ``-H`` or ``-M``. When patches fail to apply cleanly,
   enables interactive conflict resolution instead of simply reporting
@@ -317,6 +321,54 @@ the merge commit.
 
 Please also see the :ref:`shazam_settings` section for some
 configuration file options that affect some of ``b4 shazam`` behaviour.
+
+.. _shazam_merge_base:
+
+Choosing the merge base
+~~~~~~~~~~~~~~~~~~~~~~~
+With ``-H`` and ``-M``, b4 first applies the series on some commit and
+then merges the result into your branch. By default, that commit is the
+nearest annotated tag in your branch's history. This is usually a
+release, such as ``v7.3-rc6`` or ``myproject-2.4``. Every tree has the
+release tags, so other maintainers can merge the same commits later
+without pulling in anything else from your tree. B4 does not look at
+the tag name, but it skips lightweight tags, because those are usually
+personal bookmarks.
+
+The output always names the tag that b4 picked. If the nearest annotated
+tag is not a release (for example, your own pull request tag), choose
+another base with ``--merge-base``.
+
+If the series does not apply cleanly on that tag, or there is no
+annotated tag, b4 uses your ``HEAD`` instead and tells you why::
+
+     Base: HEAD (does not apply cleanly to v7.3-rc6)
+
+B4 does not use the ``base-commit:`` of the series by default. It often
+points into linux-next or into another maintainer's tree, and merging
+from there would bring that history into your branch too.
+
+To choose a different base, use ``--merge-base``. It takes any commit,
+branch, or tag, or one of these markers:
+
+``_tag``
+  The nearest annotated tag in the history of ``HEAD``. Unlike the
+  default, b4 does not fall back to ``HEAD``.
+
+``_specified``
+  The ``base-commit:`` of the series. This is the behaviour of b4 before
+  v0.17.
+
+``_guess``
+  The commit that b4 guesses from the blob hashes in the patches, like
+  ``b4 am --guess-base``.
+
+When b4 cannot find the base for a marker, it stops with an error instead
+of using some other base.
+
+.. versionchanged:: v0.17
+   The default merge base is now the nearest annotated tag, not the
+   ``base-commit:`` of the series.
 
 .. _shazam_conflict_resolution:
 
