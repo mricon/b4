@@ -3095,6 +3095,7 @@ def get_sent_tag_as_patches(
 
 
 def format_patch(output_dir: str) -> None:
+    is_prep_branch(mustbe=True)
     try:
         _, _, _, patches = get_prep_branch_as_patches(
             thread=False, movefrom=False, addtracking=False
@@ -4423,6 +4424,7 @@ def get_auto_to_cc_cmds() -> Tuple[List[str], List[str]]:
 
 
 def auto_to_cc() -> None:
+    is_prep_branch(mustbe=True)
     config = b4.get_main_config()
     tocmd, cccmd = get_auto_to_cc_cmds()
     if tocmd:

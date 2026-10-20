@@ -656,6 +656,25 @@ def test_mixin_cover_keeps_notes_with_midsection_trailer_line() -> None:
     assert body.index('base-commit:') > body.index('diff --git')
 
 
+@pytest.mark.parametrize('action', ['--auto-to-cc', '--format-patch'])
+def test_prep_unmanaged_branch_exits_cleanly(
+    gitdir: str,
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    action: str,
+) -> None:
+    """Actions that turn the series into patches must exit with the
+    not-a-prep-managed-branch diagnostic on a branch with no cover letter,
+    instead of a KeyError traceback from the empty tracking data."""
+    args = [action]
+    if action == '--format-patch':
+        args.append(str(tmp_path / 'patches'))
+    with caplog.at_level(logging.CRITICAL, logger='b4'):
+        with pytest.raises(SystemExit):
+            _run_prep(*args)
+    assert 'not a prep-managed branch' in caplog.text
+
+
 @pytest.mark.parametrize('strategy', ['branch-description', 'commit'])
 @pytest.mark.parametrize('location', ['above-cut', 'below-cut', 'both'])
 def test_auto_to_cc_preserves_cover_recipients(
