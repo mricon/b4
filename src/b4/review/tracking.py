@@ -3001,7 +3001,8 @@ def render_prior_review_context(
         """Render a single reviewer's feedback for one patch or cover letter."""
         out: List[str] = []
         note = review.get('note', '').strip()
-        reply = review.get('reply', '').strip()
+        replies = review.get('sent', {}).get('replies', []) + [review.get('reply', '')]
+        reply = '\n\n'.join(r.strip() for r in replies if r.strip())
         trailers: List[Any] = review.get('trailers', [])
         comments: List[Any] = review.get('comments', [])
         if note:

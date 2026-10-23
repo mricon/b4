@@ -6,6 +6,7 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
+import copy
 import datetime
 import email.message
 import email.utils
@@ -1054,7 +1055,11 @@ def _get_patch_state(target: Dict[str, Any], usercfg: b4.ConfigDictT) -> str:
         return 'draft'
     if trailer_keys & _APPROVAL_TRAILER_KEYS:
         return 'done'
-    if review.get('comments') or review.get('reply', ''):
+    if (
+        review.get('comments')
+        or review.get('reply', '')
+        or review.get('sent', {}).get('replies')
+    ):
         return 'draft'
     my_email = str(usercfg.get('email', ''))
     # Auto-detect a review I already sent to the list before tracking this
@@ -2116,8 +2121,10 @@ def _render_quoted_diff_with_comments(
     # External comments: (text, attribution, provenance) — rendered with | prefix.
     entries: List[Tuple[Dict[str, Any], str, str]] = []
     if my_email in all_reviews:
+        sent = all_reviews[my_email].get('sent', {}).get('comments', [])
         for c in all_reviews[my_email].get('comments', []):
-            entries.append((c, '', ''))
+            # Already sent: show it read-only so it is not sent again
+            entries.append((c, f'<{my_email}> (sent)' if c in sent else '', ''))
     for addr in sorted(all_reviews):
         if addr == my_email:
             continue
@@ -3772,6 +3779,10 @@ def _build_review_email(
 
     Returns None if there is nothing to send.
     """
+    to_send = _review_to_send(review)
+    if to_send is None:
+        return None
+    review = to_send
     trailers = review.get('trailers', [])
     reply_text = review.get('reply', '')
     comments = review.get('comments', [])
@@ -3937,6 +3948,55 @@ def _build_review_email(
     return msg
 
 
+def _review_to_send(review: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return what of *review* is left to send, or None if it was sent.
+
+    ``sent`` holds what earlier sends carried, so only the trailers and
+    comments added since are returned; with no ``sent``, the whole review
+    is.  A sent reply is moved out of the review, so any reply left is new.
+    """
+    if 'sent' not in review and review.get('sent-revision'):
+        # Sent by a b4 that did not record what went out
+        return None
+    sent = review.get('sent', {})
+    to_send = dict(review)
+    to_send['trailers'] = [
+        t for t in review.get('trailers', []) if t not in sent.get('trailers', [])
+    ]
+    to_send['comments'] = [
+        c for c in review.get('comments', []) if c not in sent.get('comments', [])
+    ]
+    return to_send
+
+
+def _mark_review_sent(review: Dict[str, Any], revision: int) -> None:
+    """Record what a send of *review* carried, see _review_to_send().
+
+    The reply is moved to ``sent``, so that the next edit starts from a
+    fresh buffer and does not send the same text again.
+    """
+    review['sent-revision'] = revision
+    replies = review.get('sent', {}).get('replies', [])
+    replies = replies + [r for r in [review.pop('reply', '')] if r]
+    review['sent'] = copy.deepcopy(
+        {
+            'trailers': review.get('trailers', []),
+            'comments': review.get('comments', []),
+            'replies': replies,
+        }
+    )
+
+
+def _merge_sent(review: Dict[str, Any], key: str, items: List[Any]) -> List[Any]:
+    """Return the sent *key* items of *review* followed by the new *items*.
+
+    A reply buffer edited after a send only holds what is new, so this
+    keeps the sent trailers or comments in the review.
+    """
+    sent: List[Any] = review.get('sent', {}).get(key, [])
+    return sent + [i for i in items if i not in sent]
+
+
 def collect_review_emails(
     series: Dict[str, Any],
     patches: List[Dict[str, Any]],
@@ -3955,11 +4015,7 @@ def collect_review_emails(
 
     # Cover letter review (maintainer only)
     cover_review = series.get('reviews', {}).get(my_email, {})
-    if (
-        cover_review
-        and cover_review.get('patch-state') != 'skip'
-        and cover_review.get('sent-revision') is None
-    ):
+    if cover_review and cover_review.get('patch-state') != 'skip':
         msg = _build_review_email(series, None, cover_review, cover_text, topdir, None)
         if msg is not None:
             msgs.append(msg)
@@ -3968,8 +4024,6 @@ def collect_review_emails(
     for idx, patch_meta in enumerate(patches):
         patch_review = patch_meta.get('reviews', {}).get(my_email, {})
         if not patch_review or patch_review.get('patch-state') == 'skip':
-            continue
-        if patch_review.get('sent-revision') is not None:
             continue
         commit_sha = commit_shas[idx] if idx < len(commit_shas) else None
         msg = _build_review_email(

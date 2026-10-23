@@ -871,6 +871,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 )
             return
 
+        review = b4.review._review_to_send(review) or {}
         if not review or not (
             review.get('trailers') or review.get('reply', '') or review.get('comments')
         ):
@@ -1206,7 +1207,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                     reply_text, result, self._default_identity
                 )
                 review['reply'] = reply_text
-                trailers_now = b4.review._parse_reply_trailers(reply_text)
+                trailers_now = b4.review._merge_sent(
+                    review, 'trailers', b4.review._parse_reply_trailers(reply_text)
+                )
                 if trailers_now:
                     review['trailers'] = trailers_now
                 else:
@@ -1413,18 +1416,24 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         #
         # _extract_editor_comments strips | lines (unadopted external
         # comments) before parsing, so only adopted ones are kept.
-        new_comments = b4.review._extract_editor_comments(
-            reply_text,
-            diff_text=real_diff,
-            message_text=message_text,
-            basement_text=basement_text,
+        new_comments = b4.review._merge_sent(
+            review,
+            'comments',
+            b4.review._extract_editor_comments(
+                reply_text,
+                diff_text=real_diff,
+                message_text=message_text,
+                basement_text=basement_text,
+            ),
         )
         if new_comments:
             review['comments'] = new_comments
         else:
             review.pop('comments', None)
 
-        trailer_strs = b4.review._parse_reply_trailers(reply_text)
+        trailer_strs = b4.review._merge_sent(
+            review, 'trailers', b4.review._parse_reply_trailers(reply_text)
+        )
         if trailer_strs:
             review['trailers'] = trailer_strs
         else:
@@ -1764,9 +1773,22 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self._topdir,
             self._commit_shas,
         )
+        legacy = None
+        for target in [self._series] + list(self._patches):
+            review = b4.review._get_my_review(target, self._usercfg)
+            if review.get('patch-state') == 'skip':
+                continue
+            if b4.review._review_to_send(review) is None:
+                legacy = 'sent by an older b4 that did not record their content'
+                break
         if not msgs:
-            self.notify('No review data to send.')
+            if legacy:
+                self.notify(f'Nothing new to send: reviews were {legacy}.')
+            else:
+                self.notify('No review data to send.')
             return
+        if legacy:
+            self.notify(f'Not resending reviews {legacy}.', severity='warning')
 
         def _on_send_confirmed(confirmed: Optional[bool]) -> None:
             if not confirmed:
@@ -1790,16 +1812,14 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             try:
                 self._reply_sent = True
                 self._tracking['series']['status'] = 'replied'
-                # Stamp sent-revision on every non-skip review so that
-                # if this series is later upgraded to a newer revision,
-                # the upgrade step can detect which reviews were already
-                # sent and auto-skip the unchanged patches.
+                # Record what every non-skip review carried, so that the
+                # next send only carries what is added since.
                 my_email = str(self._usercfg.get('email', 'unknown@example.com'))
                 current_rev = int(self._series.get('revision', 1))
                 for target in [self._series] + list(self._patches):
                     review = target.get('reviews', {}).get(my_email, {})
                     if review and review.get('patch-state') != 'skip':
-                        review['sent-revision'] = current_rev
+                        b4.review._mark_review_sent(review, current_rev)
                 if not self._save_tracking():
                     # Silence here means the next session offers these reviews
                     # as unsent and the maintainer sends them twice.

@@ -4231,9 +4231,15 @@ class TestGetLoreSeriesVersionMismatch:
 # -- Tests for collect_review_emails() ----------------------------------------
 
 
-@mock.patch(
-    'b4.review._review._build_review_email', return_value=mock.sentinel.email_msg
-)
+def _fake_review_email(_series: Any, _patch: Any, rev: Dict[str, Any], *_: Any) -> Any:
+    """Stand in for _build_review_email(), keeping its filtering of what was sent."""
+    to_send = review._review_to_send(rev)
+    if to_send and (to_send['trailers'] or to_send['comments']):
+        return mock.sentinel.email_msg
+    return None
+
+
+@mock.patch('b4.review._review._build_review_email', side_effect=_fake_review_email)
 @mock.patch(
     'b4.get_user_config',
     return_value={'name': 'Maintainer', 'email': 'maintainer@example.com'},
@@ -4353,6 +4359,57 @@ class TestCollectReviewEmails:
             series, [sent_patch, fresh_patch], 'cover', '', ['sha1', 'sha2']
         )
         assert len(msgs) == 1
+
+    def test_sends_only_comments_added_after_send(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
+        """A comment added after a send goes out alone in a second email."""
+        old = {'path': 'a.c', 'line': 1, 'text': 'old'}
+        new = {'path': 'a.c', 'line': 2, 'text': 'new'}
+        my_review = self._review(comments=[old])
+        review._mark_review_sent(my_review, 1)
+        series = self._make_series()
+        patch = self._make_patch({self.MY_EMAIL: my_review})
+        assert (
+            review.collect_review_emails(series, [patch], 'cover', '', ['sha1']) == []
+        )
+        my_review['comments'].append(new)
+        msgs = review.collect_review_emails(series, [patch], 'cover', '', ['sha1'])
+        assert len(msgs) == 1
+        to_send = review._review_to_send(my_review)
+        assert to_send is not None
+        assert to_send['comments'] == [new]
+        assert to_send['trailers'] == []
+
+    def test_reply_edited_after_send_carries_only_new_text(
+        self, _cfg: mock.Mock, _build: mock.Mock
+    ) -> None:
+        """A sent reply is not sent again when the buffer is edited later."""
+        diff = (
+            'diff --git a/a.c b/a.c\n'
+            '--- a/a.c\n'
+            '+++ b/a.c\n'
+            '@@ -1,2 +1,2 @@\n'
+            '+one\n'
+            '+two\n'
+        )
+        old = {'path': 'b/a.c', 'line': 1, 'text': 'old'}
+        my_review = self._review(comments=[old], reply='> +one\n\nold\n')
+        review._mark_review_sent(my_review, 1)
+        assert 'reply' not in my_review
+        assert my_review['sent']['replies'] == ['> +one\n\nold\n']
+
+        reviews = {self.MY_EMAIL: my_review}
+        text = review._render_quoted_diff_with_comments(diff, reviews, self.MY_EMAIL)
+        assert '| old' in text
+        text = text.replace('> +two\n', '> +two\n\nnew\n')
+        new = review._extract_editor_comments(text, diff_text=diff)
+        assert [c['text'] for c in new] == ['new']
+        my_review['comments'] = review._merge_sent(my_review, 'comments', new)
+        assert [c['text'] for c in my_review['comments']] == ['old', 'new']
+        to_send = review._review_to_send(my_review)
+        assert to_send is not None
+        assert [c['text'] for c in to_send['comments']] == ['new']
 
 
 def _cron_args(**kwargs: Any) -> argparse.Namespace:
