@@ -370,6 +370,47 @@ of using some other base.
    The default merge base is now the nearest annotated tag, not the
    ``base-commit:`` of the series.
 
+.. _shazam_env_variables:
+
+Environment variables available to git hooks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``b4 shazam`` sets these environment variables when it runs ``git am``,
+so your git hooks can use them. This works in all modes (plain, ``-H``
+and ``-M``). With ``--resolve``, the conflict shell has them too, so
+``git am --continue`` passes them on to the hooks of the remaining
+patches. ``b4 am`` does not run ``git am``, so it sets nothing.
+
+.. glossary::
+
+   B4_SERIES_URL
+     The URL of the series, made from :term:`b4.linkmask` and the
+     message-id of the cover letter (or of the first patch, if the
+     series has no cover letter).
+
+For example, some projects do not want ``Link:`` trailers in commits.
+You can keep the series URL in a git note instead. Save this hook as
+``.git/hooks/post-applypatch`` and make it executable:
+
+.. code-block:: sh
+
+   #!/bin/sh
+   # Not every "git am" comes from b4.
+   [ -n "$B4_SERIES_URL" ] || exit 0
+   git notes append -m "Link: $B4_SERIES_URL" HEAD
+
+The hook uses ``git notes append`` because ``git notes add`` fails when
+the commit already has a note.
+
+A hook runs for every patch that ``git am`` applies, even if you do not
+keep the result. For example, when a later patch has a conflict and you
+give up on the series, the notes for the patches before it stay behind
+on commits that no longer exist. Run ``git notes prune`` to remove them.
+With git older than 2.46, ``--resolve`` applies the patches before a
+conflict a second time, so their hooks can run twice.
+
+.. versionadded:: v0.17
+
 .. _shazam_conflict_resolution:
 
 Dealing with patches that don't apply cleanly

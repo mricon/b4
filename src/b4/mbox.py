@@ -425,6 +425,8 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         logger.critical('ERROR: linkmask must contain %s for the message-id')
         sys.exit(1)
 
+    linkurl = linkmask % top_msgid
+
     if cmdargs.subcmd == 'am':
         wantname = cmdargs.wantname
         if cmdargs.maildir or config.get('save-maildirs', 'no') == 'yes':
@@ -464,7 +466,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
         if am_cover and lser.has_cover and not cmdargs.nocover:
             lser.save_cover(am_cover)
 
-        linkurl = linkmask % top_msgid
         if cmdargs.quiltready:
             q_dirname = os.path.join(outdir, f'{slug}.patches')
             save_as_quilt(am_msgs, q_dirname)
@@ -509,13 +510,23 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
 
         b4.save_git_am_mbox(am_msgs, ifh)
         ambytes = ifh.getvalue()
+        # Hooks run by git am read these, e.g. to record the URL in a git
+        # note for projects that do not want Link: trailers. They go only to
+        # the git am children: os.environ would leak them into later commands.
+        series_env = {'B4_SERIES_URL': linkurl}
+        am_env = {**os.environ, **series_env}
         if not cmdargs.makefetchhead:
             amflags = str(config.get('shazam-am-flags', ''))
             sp = shlex.shlex(amflags, posix=True)
             sp.whitespace_split = True
             amargs = list(sp) + ['--patch-format=mboxrd']
             ecode, out = b4.git_run_command(
-                topdir, ['am'] + amargs, stdin=ambytes, logstderr=True, rundir=topdir
+                topdir,
+                ['am'] + amargs,
+                stdin=ambytes,
+                logstderr=True,
+                rundir=topdir,
+                env=am_env,
             )
             logger.info(out.strip())
             if ecode == 0:
@@ -523,7 +534,6 @@ def make_am(msgs: List[EmailMessage], cmdargs: argparse.Namespace, msgid: str) -
             sys.exit(ecode)
 
         base_commit = get_merge_base(topdir, first_body, lser, cmdargs)
-        linkurl = linkmask % top_msgid
 
         merge_template = DEFAULT_MERGE_TEMPLATE
         if config.get('shazam-merge-template'):
