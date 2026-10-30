@@ -151,7 +151,7 @@ def run_tracking_tui(
             if branch_name == TrackingApp.PATCHWORK_SENTINEL:
                 # User pressed [p]atchwork — run PwApp and loop back
                 config = b4.get_main_config()
-                pwkey = str(config.get('pw-key', ''))
+                pwkey = b4.get_pw_key(config)
                 pwurl = str(config.get('pw-url', ''))
                 pwproj = str(config.get('pw-project', ''))
                 if pwkey and pwurl and pwproj:

@@ -4295,7 +4295,7 @@ def pw_update_series_state(
     Patchwork is not configured), False on failure.
     """
     config = b4.get_main_config()
-    pwkey = str(config.get('pw-key', ''))
+    pwkey = b4.get_pw_key(config)
     pwurl = str(config.get('pw-url', ''))
     if not (pwkey and pwurl):
         # Patchwork not configured, nothing to do
@@ -4333,7 +4333,7 @@ def pw_lookup_series_id(msgid: str) -> Optional[int]:
     configured or does not know the message.
     """
     config = b4.get_main_config()
-    pwkey = str(config.get('pw-key', ''))
+    pwkey = b4.get_pw_key(config)
     pwurl = str(config.get('pw-url', ''))
     pwproj = str(config.get('pw-project', ''))
     if not (pwkey and pwurl and pwproj):

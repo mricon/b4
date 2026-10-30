@@ -367,7 +367,7 @@ class CheckRunnerMixin:
 
         # Patchwork config for _builtin_patchwork
         config = b4.get_main_config()
-        pwkey = str(config.get('pw-key', ''))
+        pwkey = b4.get_pw_key(config)
         pwurl = str(config.get('pw-url', ''))
 
         # Dump tracking data to a temp file for external scripts.  This is

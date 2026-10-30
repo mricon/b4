@@ -2510,7 +2510,7 @@ class LoreMessage:
     @staticmethod
     def get_patchwork_data_by_msgid(msgid: str) -> Dict[str, str]:
         config = get_main_config()
-        pwkey = str(config.get('pw-key', ''))
+        pwkey = get_pw_key(config)
         pwurl = str(config.get('pw-url', ''))
         pwproj = str(config.get('pw-project', ''))
         if not (pwkey and pwurl and pwproj):
@@ -6427,6 +6427,16 @@ def get_smtp(
     return SMTPConnector(_connect), fromaddr
 
 
+def get_pw_key(config: Optional[ConfigDictT] = None) -> str:
+    """Return the Patchwork API key from b4.pw-key.
+
+    Returns an empty string when no key is configured.
+    """
+    if config is None:
+        config = get_main_config()
+    return str(config.get('pw-key', '') or '')
+
+
 def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str]:
     session = requests.session()
     session.headers.update(
@@ -6443,7 +6453,7 @@ def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str
 def patchwork_set_state(msgids: List[str], state: str) -> None:
     # Do we have a pw-key defined in config?
     config = get_main_config()
-    pwkey = str(config.get('pw-key', ''))
+    pwkey = get_pw_key(config)
     pwurl = str(config.get('pw-url', ''))
     pwproj = str(config.get('pw-project', ''))
     if not (pwkey and pwurl and pwproj):
