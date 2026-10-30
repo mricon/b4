@@ -2924,3 +2924,117 @@ class TestGetAmMessageFromLines:
         lines = payload.decode().splitlines()
         assert 'From the manual, bar() must be called here.' in lines
         assert '>From an old thread.' in lines
+
+
+class TestGetPwKey:
+    """b4.pw-user fetches the Patchwork key from git credential helpers."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(b4, '_PW_KEY_CACHE', {})
+        # Never fall back to prompting on the terminal
+        monkeypatch.setenv('GIT_TERMINAL_PROMPT', '0')
+        monkeypatch.delenv('GIT_ASKPASS', raising=False)
+        monkeypatch.delenv('SSH_ASKPASS', raising=False)
+
+    @staticmethod
+    def _set_helper(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, body: str
+    ) -> pathlib.Path:
+        """Replace all credential helpers with a script that runs body."""
+        helper = tmp_path / 'helper.sh'
+        helper.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path}/calls\n{body}\n')
+        helper.chmod(0o755)
+        count = int(os.environ.get('GIT_CONFIG_COUNT', '0'))
+        # An empty value resets any helpers from the user's own config
+        for i, val in enumerate(('', f'!{helper}')):
+            monkeypatch.setenv(f'GIT_CONFIG_KEY_{count + i}', 'credential.helper')
+            monkeypatch.setenv(f'GIT_CONFIG_VALUE_{count + i}', val)
+        monkeypatch.setenv('GIT_CONFIG_COUNT', str(count + 2))
+        return tmp_path / 'calls'
+
+    def test_plain_key(self) -> None:
+        assert b4.get_pw_key({'pw-key': 'secret'}) == 'secret'
+
+    def test_unset(self) -> None:
+        assert b4.get_pw_key({}) == ''
+
+    def test_no_user(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        """Without pw-user, credential helpers are never asked."""
+        calls = self._set_helper(monkeypatch, tmp_path, 'echo password=nope')
+        assert b4.get_pw_key({'pw-url': 'https://pw.example.org/'}) == ''
+        assert not calls.exists()
+
+    def test_key_wins(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        calls = self._set_helper(monkeypatch, tmp_path, 'echo password=nope')
+        config: b4.ConfigDictT = {
+            'pw-key': 'secret',
+            'pw-user': 'me',
+            'pw-url': 'https://pw.example.org/',
+        }
+        assert b4.get_pw_key(config) == 'secret'
+        assert not calls.exists()
+
+    def test_credential_helper(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        req = tmp_path / 'request'
+        self._set_helper(
+            monkeypatch, tmp_path, f'cat > {req}\necho password=fromhelper'
+        )
+        config: b4.ConfigDictT = {
+            'pw-user': 'me',
+            'pw-url': 'https://pw.example.org:8443/',
+        }
+        assert b4.get_pw_key(config) == 'fromhelper'
+        request = req.read_text().splitlines()
+        assert 'protocol=https' in request
+        assert 'host=pw.example.org:8443' in request
+        assert 'username=me' in request
+
+    def test_credential_helper_runs_once(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
+        calls = self._set_helper(monkeypatch, tmp_path, 'echo password=key')
+        config: b4.ConfigDictT = {
+            'pw-user': 'me',
+            'pw-url': 'https://pw.example.org/',
+        }
+        assert b4.get_pw_key(config) == 'key'
+        assert b4.get_pw_key(config) == 'key'
+        assert calls.read_text().count('get') == 1
+
+    def test_credential_helper_empty(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: pathlib.Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        self._set_helper(monkeypatch, tmp_path, 'true')
+        config: b4.ConfigDictT = {
+            'pw-user': 'me',
+            'pw-url': 'https://pw.example.org/',
+        }
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            assert b4.get_pw_key(config) == ''
+        assert 'No patchwork key for me@pw.example.org' in caplog.text
+
+    def test_bad_url(self, caplog: pytest.LogCaptureFixture) -> None:
+        config: b4.ConfigDictT = {'pw-user': 'me', 'pw-url': 'pw.example.org'}
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            assert b4.get_pw_key(config) == ''
+        assert 'Could not parse pw-url' in caplog.text
+
+    def test_ignored_in_worktree_config(self, gitdir: str) -> None:
+        """A cloned tree's .b4-config must not get to ask for credentials."""
+        wtcfg = pathlib.Path(gitdir) / '.b4-config'
+        wtcfg.write_text(
+            '[b4]\n\tpw-user = stolen\n\tpw-url = https://pw.example.org\n'
+        )
+        b4._setup_main_config(topdir=gitdir)
+        assert b4.MAIN_CONFIG.get('pw-url') == 'https://pw.example.org'
+        assert b4.MAIN_CONFIG.get('pw-user') is None
