@@ -686,13 +686,53 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def track_series_from_msgid(
+    identifier: str, message_id: str, topdir: Optional[str] = None
+) -> Dict[str, str]:
+    """Retrieve and track a series without installing command-line signal handlers."""
+    cmdargs = argparse.Namespace(
+        msgid=message_id,
+        no_stdin=True,
+        localmbox=None,
+        nocache=True,
+        noparent=False,
+        wantname=None,
+        wantver=None,
+    )
+    _, msgs = b4.retrieve_messages(cmdargs)
+    if not msgs:
+        raise LookupError(f'Could not retrieve series: {message_id}')
+
+    lmbx = b4.LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+    if not lmbx.series:
+        raise LookupError('No series found in retrieved messages')
+    wanted_ver = max(lmbx.series)
+
+    if b4.can_network:
+        msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
+        if wanted_ver > 1:
+            msgs = b4.mbox.get_extra_series(
+                msgs, direction=-1, wantvers=list(range(1, wanted_ver)), nocache=True
+            )
+        lmbx = b4.LoreMailbox()
+        for msg in msgs:
+            lmbx.add_message(msg)
+
+    return track_series_from_mailbox(
+        identifier, lmbx, wanted_ver, topdir, allow_existing=True
+    )
+
+
 def track_series_from_mailbox(
     identifier: str,
     lmbx: 'b4.LoreMailbox',
     wanted_ver: int,
     topdir: Optional[str] = None,
     was_rethreaded: bool = False,
-) -> None:
+    allow_existing: bool = False,
+) -> Dict[str, str]:
     """Track a series from a LoreMailbox, given the desired version and project identifier."""
     lser = lmbx.get_series(wanted_ver, sloppytrailers=False, codereview_trailers=False)
     if not lser:
@@ -803,7 +843,9 @@ def track_series_from_mailbox(
                 logger.info(
                     '  Upgrade the series in the review TUI to the new version.'
                 )
-            return
+            return {'status': 'updated', 'change_id': existing_change_id}
+        if allow_existing:
+            return {'status': 'already-tracked', 'change_id': existing_change_id}
         raise LookupError(
             f'This series is already tracked (status: {status_str}, v{cur_rev})'
             f' as {existing_change_id}.\n'
@@ -859,6 +901,7 @@ def track_series_from_mailbox(
             num_patches,
             ', '.join(missing),
         )
+    return {'status': 'tracked', 'change_id': change_id}
 
 
 def cmd_forget(cmdargs: argparse.Namespace) -> None:
