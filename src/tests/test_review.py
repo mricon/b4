@@ -20,7 +20,7 @@ from b4.review import _review
 from b4.review._review import REVIEW_MAGIC_MARKER, check_series_attestation
 
 from .helpers.mail import AUTHOR, MINIMAL_DIFF, make_msg
-from .helpers.tracking import create_review_branch
+from .helpers.tracking import add_worktree, create_review_branch
 
 # The address-helper functions exposed via review_tui live in a module that
 # imports textual at load time, so the tests that exercise them need the [tui]
@@ -3484,6 +3484,40 @@ class TestResolveMessagePositions:
         # Both anchored to the real last line of their quoted paragraph.
         assert comments[0]['line'] == 3
         assert comments[1]['line'] == 8
+
+
+class TestAgentReviewGitDir:
+    """The agent's review files live in the common git dir.
+
+    In a linked worktree ``.git`` is a file, so any path built as
+    ``<topdir>/.git/...`` points nowhere.  Both checkout layouts must find
+    the same files the main checkout would.
+    """
+
+    @pytest.mark.parametrize(
+        'use_worktree',
+        [
+            pytest.param(False, id='main_repo'),
+            pytest.param(True, id='worktree'),
+        ],
+    )
+    def test_integrates_from_common_dir(self, gitdir: str, use_worktree: bool) -> None:
+        branch = create_review_branch(gitdir, 'agent-wt', num_real_commits=1)
+        topdir = add_worktree(gitdir) if use_worktree else gitdir
+        tip = b4.git_run_command(gitdir, ['rev-parse', branch])[1].strip()
+        review_dir = os.path.join(gitdir, '.git', 'b4-review', tip)
+        os.makedirs(review_dir)
+        with open(os.path.join(review_dir, 'identity.txt'), 'w') as fh:
+            fh.write('Agent <agent@example.com>\n')
+        with open(os.path.join(review_dir, 'series.txt'), 'w') as fh:
+            fh.write('Looks fine.\n')
+
+        tracking: Dict[str, Any] = {'series': {}, 'patches': []}
+        assert review._integrate_agent_reviews(
+            topdir, 'cover', tracking, [], [], branch=branch
+        )
+        note = tracking['series']['reviews']['agent@example.com']['note']
+        assert note == 'Looks fine.'
 
 
 class TestIntegrateSashikoReviews:

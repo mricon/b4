@@ -1452,7 +1452,7 @@ def _integrate_agent_reviews(
     patches: List[Dict[str, Any]],
     branch: Optional[str] = None,
 ) -> bool:
-    """Read review files from .git/b4-review/<tip-sha>/ and merge into tracking.
+    """Read review files from <git-common-dir>/b4-review/<tip-sha>/ and merge into tracking.
 
     The directory-based layout uses:
     - ``identity.txt`` for reviewer attribution (``Name <email>``)
@@ -1473,7 +1473,10 @@ def _integrate_agent_reviews(
         return False
     head_sha = out.strip()
 
-    review_dir = os.path.join(topdir, '.git', 'b4-review', head_sha)
+    gitdir = b4.git_get_common_dir(topdir)
+    if not gitdir:
+        return False
+    review_dir = os.path.join(gitdir, 'b4-review', head_sha)
     if not os.path.isdir(review_dir):
         return False
 
@@ -3526,7 +3529,7 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     user_email = usercfg.get('email', 'unknown@example.com')
     default_identity = f'{user_name} <{user_email}>'
 
-    # Integrate agent reviews from .git/b4-review/
+    # Integrate agent reviews from <git-common-dir>/b4-review/
     _integrate_agent_reviews(
         topdir, cover_text, tracking, commit_shas, patches, branch=branch
     )
