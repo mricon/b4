@@ -35,6 +35,7 @@ from typing import (
     Union,
 )
 
+from rich.markup import escape
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -83,6 +84,7 @@ from b4.review_tui._modals import (
     BaseSelectionScreen,
     CheckLoadingScreen,
     CherryPickScreen,
+    EditTrackedSeriesScreen,
     HelpScreen,
     KeyDecisionScreen,
     LimitScreen,
@@ -1110,6 +1112,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         'action': 'Series',
         'update_one': 'Series',
         'target_branch': 'Series',
+        'edit_tracked_series': 'App',
         'update_all': 'App',
         'process_queue': 'App',
         'limit': 'App',
@@ -1133,6 +1136,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         Binding('u', 'update_one', 'update'),
         Binding('d', 'range_diff', 'range-diff'),
         # App-global actions
+        Binding('E', 'edit_tracked_series', 'edit tracked', key_display='E'),
         Binding('l', 'limit', 'limit'),
         Binding('s', 'suspend', 'shell'),
         Binding('p', 'patchwork', 'patchwork'),
@@ -1514,7 +1518,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             if not display_series:
                 empty = Static(
-                    'No tracked series. Use "b4 review track" to add series.',
+                    'No tracked series. Use "b4 review track" or press E to edit.',
                     id='tracking-empty',
                 )
                 await self.mount(empty, before=footer)
@@ -1570,6 +1574,48 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             ),
             callback=self._on_limit,
         )
+
+    def action_edit_tracked_series(self) -> None:
+        """Open the Lore submission browser for this project."""
+        self.push_screen(
+            EditTrackedSeriesScreen(self._identifier, self._all_series),
+            callback=self._on_add_series,
+        )
+
+    def _on_add_series(self, result: Optional[Dict[str, Any]]) -> None:
+        """Refresh tracked series and report the popup's tracking outcomes."""
+        if not result:
+            return
+        for series in result.get('removed', []):
+            change_id = series['change_id']
+            review_branch = f'b4/review/{change_id}'
+            self._on_abandon_confirmed(
+                True,
+                change_id,
+                review_branch,
+                b4.git_branch_exists(None, review_branch),
+                revision=series.get('revision'),
+            )
+        if result.get('tracked') or result.get('updated'):
+            self._invalidate_caches()
+            self._load_series()
+        parts = []
+        if result.get('tracked'):
+            parts.append(f'{result["tracked"]} tracked')
+        if result.get('updated'):
+            parts.append(f'{result["updated"]} updated')
+        if result.get('already_tracked'):
+            parts.append(f'{result["already_tracked"]} already tracked')
+        if result.get('errors'):
+            parts.append(f'{len(result["errors"])} failed')
+        if parts:
+            severity: Literal['warning', 'information'] = (
+                'warning' if result.get('errors') else 'information'
+            )
+            self.notify('; '.join(parts), severity=severity)
+        for error in result.get('errors', []):
+            logger.warning('Tracking error: %s', error)
+            self.notify(escape(error), severity='error', timeout=10)
 
     def _on_limit(self, result: Optional[str]) -> None:
         if result is None:

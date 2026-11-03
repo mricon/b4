@@ -12,10 +12,14 @@ status transitions, and modal interactions.
 """
 
 import contextlib
+import datetime
 import email.message
+import email.utils
 import os
 import pathlib
+import re
 import sqlite3
+import threading
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 from unittest.mock import MagicMock, Mock, patch
@@ -26,13 +30,14 @@ pytest.importorskip('textual')
 
 from textual.app import App
 from textual.containers import Vertical
-from textual.widgets import Footer, Input, ListView, Static
+from textual.widgets import Button, Footer, Input, ListView, Static
 
 import b4
 import b4.review
 import b4.review.tracking as tracking
 import b4.review_tui._entry as _entry
 import b4.review_tui._tracking_app as _tracking_app
+import liblore
 from b4 import (
     _abort_worktree_op,
     _worktree_has_unmerged,
@@ -46,6 +51,8 @@ from b4.review_tui._modals import (
     BaseSelectionScreen,
     CherryPickScreen,
     ConfirmScreen,
+    EditTrackedSeriesItem,
+    EditTrackedSeriesScreen,
     HelpScreen,
     LimitScreen,
     LinkRevisionScreen,
@@ -67,6 +74,7 @@ from b4.review_tui._tracking_app import (
     _worktree_for_branch,
 )
 
+from .helpers.mail import MINIMAL_DIFF, make_msg
 from .helpers.tracking import create_review_branch, seed_db, tag
 from .helpers.tui import static_text
 
@@ -133,6 +141,1263 @@ def _get_action_keys(app: TrackingApp) -> List[str]:
 
 class TestTrackingAppStartup:
     """Tests for the TrackingApp startup and series listing."""
+
+    @pytest.mark.asyncio
+    async def test_editor_row_clips_subject_mid_word(self) -> None:
+        """A one-line row uses the available width instead of wrapping a word."""
+        candidate = {
+            'message_id': 'clip@example.com',
+            'revision': 1,
+            'subject': '[PATCH] short extraordinarilylongsubject',
+            'fromname': 'Author',
+            'num_patches': 1,
+            'date': None,
+        }
+        item = EditTrackedSeriesItem(candidate)
+        app: App[None] = App()
+        async with app.run_test(size=(60, 10)) as pilot:
+            await app.mount(item)
+            await pilot.pause()
+            label = item.query_one(Static)
+            label.styles.width = 52
+            await pilot.pause()
+            before = label.render_line(0).text
+            assert 'short e' in before
+            item.toggle()
+            await pilot.pause()
+            assert 'short e' in label.render_line(0).text
+
+    @pytest.mark.asyncio
+    async def test_e_opens_editor_with_tracked_series(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The edit popup opens with the same series shown in the tracking list."""
+        seed_db('test-edit-prefill', SAMPLE_SERIES)
+        app = TrackingApp('test-edit-prefill')
+
+        with patch('b4.get_pi_search_results', return_value=[]):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                assert isinstance(app.screen, EditTrackedSeriesScreen)
+                assert {
+                    item.candidate['change_id']
+                    for item in app.screen.query(EditTrackedSeriesItem)
+                    if item.selected
+                } == {series['change_id'] for series in app._all_series}
+
+    @pytest.mark.asyncio
+    async def test_editor_filters_tracked_series_case_insensitively(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Filtering applies to tracked rows regardless of letter case."""
+        seed_db('test-edit-filter', SAMPLE_SERIES)
+        app = TrackingApp('test-edit-filter')
+        with patch('b4.get_pi_search_results', return_value=[]):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+                screen.query_one('#add-series-filter', Input).value = 'ALICE'
+                await pilot.pause(0.6)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert [
+                    item.candidate['change_id']
+                    for item in screen.query(EditTrackedSeriesItem)
+                ] == ['test-change-alpha']
+
+    @pytest.mark.asyncio
+    async def test_editor_space_toggles_and_advances(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Space toggles each series and advances the cursor one row."""
+        seed_db('test-edit-space', SAMPLE_SERIES[:2])
+        app = TrackingApp('test-edit-space')
+        with patch('b4.get_pi_search_results', return_value=[]):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                lv = app.screen.query_one('#add-series-list', ListView)
+                lv.focus()
+                lv.index = 0
+                first = lv.highlighted_child
+                assert isinstance(first, EditTrackedSeriesItem)
+                assert first.selected is True
+                await pilot.press('space')
+                await pilot.pause()
+                assert getattr(first, 'selected') is False
+                assert lv.index == 1
+                second = lv.highlighted_child
+                assert isinstance(second, EditTrackedSeriesItem)
+                assert second.selected is True
+                await pilot.press('space')
+                await pilot.pause()
+                assert getattr(second, 'selected') is False
+
+    @pytest.mark.asyncio
+    async def test_editor_confirms_before_abandoning_tracked_series(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """A deselected series is removed only after explicit confirmation."""
+        seed_db('test-edit-abandon', SAMPLE_SERIES[:1])
+        app = TrackingApp('test-edit-abandon')
+        with patch('b4.get_pi_search_results', return_value=[]):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+                lv = screen.query_one('#add-series-list', ListView)
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space')
+                await pilot.click('#add-series-track')
+                await pilot.pause()
+                assert isinstance(app.screen, ConfirmScreen)
+                assert tracking.get_all_tracked_series('test-edit-abandon')
+                await pilot.press('y')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert not tracking.get_all_tracked_series('test-edit-abandon')
+
+    @pytest.mark.asyncio
+    async def test_editor_abandon_confirmation_mouse_buttons(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Mouse cancellation preserves tracking; confirmation abandons it."""
+        identifier = 'test-edit-abandon-mouse'
+        seed_db(identifier, SAMPLE_SERIES[:1])
+        app = TrackingApp(identifier)
+        with patch('b4.get_pi_search_results', return_value=[]):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+                lv = screen.query_one('#add-series-list', ListView)
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space')
+                await pilot.click('#add-series-track')
+                await pilot.pause()
+                await pilot.click('#abandon-tracked-cancel')
+                await pilot.pause()
+                assert app.screen is screen
+                assert tracking.get_all_tracked_series(identifier)
+                await pilot.click('#add-series-track')
+                await pilot.pause()
+                await pilot.click('#abandon-tracked-confirm')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert not tracking.get_all_tracked_series(identifier)
+
+    @pytest.mark.asyncio
+    async def test_editor_keeps_series_when_new_revision_is_selected(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Selecting another revision must not abandon its tracked series."""
+        identifier = 'test-edit-same-change'
+        now = datetime.datetime.now(datetime.timezone.utc)
+        series = dict(
+            SAMPLE_SERIES[0], sent_at=(now - datetime.timedelta(hours=2)).isoformat()
+        )
+        seed_db(identifier, [series])
+        app = TrackingApp(identifier)
+        msg = make_msg(
+            'new-revision@example.com',
+            '[PATCH v2] new revision',
+            body=MINIMAL_DIFF,
+            date=email.utils.format_datetime(now),
+        )
+        with (
+            patch('b4.get_pi_search_results', return_value=[msg]),
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=2),
+            patch(
+                'b4.review.tracking.track_series_from_msgid',
+                return_value={'status': 'updated', 'change_id': 'test-change-alpha'},
+            ),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+                lv = screen.query_one('#add-series-list', ListView)
+                items = [
+                    item
+                    for item in lv.children
+                    if isinstance(item, EditTrackedSeriesItem)
+                ]
+                for item in items:
+                    if (
+                        item.selected
+                        or item.candidate['message_id'] == 'new-revision@example.com'
+                    ):
+                        screen._toggle_candidate(item)
+                await pilot.click('#add-series-track')
+                await pilot.pause()
+                assert isinstance(app.screen, ConfirmScreen)
+                await pilot.press('y')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert tracking.get_all_tracked_series(identifier)
+
+    @pytest.mark.asyncio
+    async def test_editor_loads_more_lore_on_enter(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The load-more row resumes archive browsing after the first batch."""
+        seed_db('test-edit-more', [])
+        app = TrackingApp('test-edit-more')
+        now = datetime.datetime.now(datetime.timezone.utc)
+        messages = [
+            make_msg(
+                'first@example.com',
+                '[PATCH] first',
+                body=MINIMAL_DIFF,
+                date=email.utils.format_datetime(now - datetime.timedelta(hours=1)),
+            ),
+            make_msg(
+                'second@example.com',
+                '[PATCH] second',
+                body=MINIMAL_DIFF,
+                date=email.utils.format_datetime(now - datetime.timedelta(hours=9)),
+            ),
+        ]
+        with (
+            patch(
+                'b4.get_pi_search_results', side_effect=[[messages[0]], [messages[1]]]
+            ) as search,
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=2),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+                lv = screen.query_one('#add-series-list', ListView)
+                assert len(list(screen.query(EditTrackedSeriesItem))) == 1
+                lv.focus()
+                lv.index = 1
+                await pilot.press('enter')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert len(list(screen.query(EditTrackedSeriesItem))) == 2
+                assert search.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_editor_orders_tracked_and_lore_by_date(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Interleave results and place load-more after the oldest Lore row."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        tracked = [
+            dict(
+                SAMPLE_SERIES[0], sent_at=(now - datetime.timedelta(days=3)).isoformat()
+            )
+        ]
+        seed_db('test-edit-order', tracked)
+        app = TrackingApp('test-edit-order')
+        msg = make_msg(
+            'lore@example.com',
+            '[PATCH] newer',
+            body=MINIMAL_DIFF,
+            date=email.utils.format_datetime(now - datetime.timedelta(hours=1)),
+        )
+        with (
+            patch('b4.get_pi_search_results', return_value=[msg]),
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=2),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                rows = list(app.screen.query_one('#add-series-list', ListView).children)
+                assert isinstance(rows[0], EditTrackedSeriesItem)
+                assert rows[0].candidate['message_id'] == 'lore@example.com'
+                assert rows[1].__class__.__name__ == 'LoadMoreSeriesItem'
+                assert isinstance(rows[2], EditTrackedSeriesItem)
+                assert rows[2].candidate['change_id'] == 'test-change-alpha'
+
+    @pytest.mark.asyncio
+    async def test_capital_a_opens_add_series_popup(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Capital A opens the add-series popup from the tracking list."""
+        seed_db('test-add-series', [])
+        app = TrackingApp('test-add-series')
+
+        with patch('b4.get_pi_search_results', return_value=[]):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                original_screen = app.screen
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+
+                assert app.screen is not original_screen
+                assert app.screen.query_one('#add-series-filter', Input)
+
+    @pytest.mark.asyncio
+    async def test_add_series_heading_does_not_claim_outgoing_recipient(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The archive heading does not mistake send recipients for the archive."""
+        seed_db('test-add-heading', [])
+        app = TrackingApp('test-add-heading')
+        with (
+            patch.dict(b4.get_main_config(), {'send-series-to': 'other@example.com'}),
+            patch('b4.get_pi_search_results', return_value=[]),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                heading = static_text(
+                    app.screen.query_one('#add-series-list-name', Static)
+                )
+                assert heading == 'Recent Lore submissions'
+
+    def test_candidate_search_groups_series_at_the_cover_or_first_patch(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Represent covered and uncovered series by their cover or first patch."""
+        identifier = 'test-add-grouping'
+        seed_db(identifier, [])
+        screen = EditTrackedSeriesScreen(identifier)
+        messages = [
+            make_msg(
+                'cover@example.com',
+                '[PATCH 0/2] Covered series',
+                body='Series cover.\n',
+            ),
+            make_msg(
+                'covered-patch1@example.com',
+                '[PATCH 1/2] Covered series: first patch',
+                body=MINIMAL_DIFF,
+                in_reply_to='cover@example.com',
+            ),
+            make_msg(
+                'covered-patch2@example.com',
+                '[PATCH 2/2] Covered series: second patch',
+                body=MINIMAL_DIFF,
+                in_reply_to='cover@example.com',
+            ),
+            make_msg(
+                'uncovered-patch1@example.com',
+                '[PATCH 1/2] Uncovered series: first patch',
+                body=MINIMAL_DIFF,
+            ),
+            make_msg(
+                'uncovered-patch2@example.com',
+                '[PATCH 2/2] Uncovered series: second patch',
+                body=MINIMAL_DIFF,
+            ),
+        ]
+
+        candidates = screen._collect_candidates(messages)
+
+        assert {candidate['message_id'] for candidate in candidates} == {
+            'cover@example.com',
+            'uncovered-patch1@example.com',
+        }
+
+    def test_candidate_search_keeps_independent_same_subject_submissions(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Same-author submissions with identical subjects remain selectable."""
+        identifier = 'test-add-same-subject'
+        seed_db(identifier, [])
+        screen = EditTrackedSeriesScreen(identifier)
+        messages = [
+            make_msg('first@example.com', '[PATCH 1/2] Fix typo', body=MINIMAL_DIFF),
+            make_msg('second@example.com', '[PATCH 1/2] Fix typo', body=MINIMAL_DIFF),
+        ]
+
+        candidates = screen._collect_candidates(messages)
+
+        assert {candidate['message_id'] for candidate in candidates} == {
+            'first@example.com',
+            'second@example.com',
+        }
+
+    @pytest.mark.parametrize(
+        'subject,sender,reply,expected',
+        [
+            ('[PATCH v2 0/2] Feature', 'Test Author <test@example.com>', True, True),
+            ('[PATCH v2 0/2] Different', 'Test Author <test@example.com>', True, False),
+            ('[PATCH v2 0/2] Feature', 'Other <other@example.com>', True, False),
+            ('[PATCH v2 0/2] Feature', None, True, False),
+            ('[PATCH v2 0/2] Feature', 'Test Author <test@example.com>', False, False),
+            ('[PATCH 0/2] Feature', 'Test Author <test@example.com>', True, False),
+        ],
+    )
+    def test_candidate_search_groups_only_evidenced_revisions(
+        self,
+        tmp_path: pathlib.Path,
+        subject: str,
+        sender: Optional[str],
+        reply: bool,
+        expected: bool,
+    ) -> None:
+        """Group threaded revisions only when sender, subject and version agree."""
+        identifier = 'test-add-threaded-revisions'
+        seed_db(identifier, [])
+        screen = EditTrackedSeriesScreen(identifier)
+        messages = [
+            make_msg('v1@example.com', '[PATCH 0/2] Feature'),
+            make_msg(
+                'v2@example.com',
+                subject,
+                from_addr=sender,
+                in_reply_to='v1@example.com' if reply else None,
+            ),
+        ]
+
+        expected_ids = {'v2@example.com'}
+        if not expected:
+            expected_ids.add('v1@example.com')
+        assert {
+            item['message_id'] for item in screen._collect_candidates(messages)
+        } == expected_ids
+
+    def test_candidate_search_groups_out_of_order_revision_chain(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Threaded revisions group regardless of the order messages arrive."""
+        identifier = 'test-add-revision-chain'
+        seed_db(identifier, [])
+        screen = EditTrackedSeriesScreen(identifier)
+        messages = [
+            make_msg(
+                'v3@example.com', '[PATCH v3 0/2] Feature', in_reply_to='v2@example.com'
+            ),
+            make_msg('v1@example.com', '[PATCH 0/2] Feature'),
+            make_msg(
+                'v2@example.com', '[PATCH v2 0/2] Feature', in_reply_to='v1@example.com'
+            ),
+        ]
+
+        candidates = screen._collect_candidates(messages)
+
+        assert [item['message_id'] for item in candidates] == ['v3@example.com']
+        assert candidates[0]['message_ids'] == {
+            'v1@example.com',
+            'v2@example.com',
+            'v3@example.com',
+        }
+
+    def test_candidate_search_keeps_new_revision_reply_to_older_cover(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """A first patch replying to an older cover is still a candidate."""
+        identifier = 'test-add-revision-reply'
+        seed_db(identifier, [])
+        screen = EditTrackedSeriesScreen(identifier)
+        messages = [
+            make_msg('cover-v1@example.com', '[PATCH 0/2] Feature'),
+            make_msg(
+                'patch-v2@example.com',
+                '[PATCH v2 1/2] New version only',
+                body=MINIMAL_DIFF,
+                in_reply_to='cover-v1@example.com',
+            ),
+        ]
+
+        candidates = screen._collect_candidates(messages)
+
+        assert 'patch-v2@example.com' in {
+            candidate['message_id'] for candidate in candidates
+        }
+        assert [
+            candidate['message_id']
+            for candidate in screen._filtered_candidates('version only', candidates)
+        ] == ['patch-v2@example.com']
+
+    def test_candidate_search_prefers_newer_cover_without_its_first_patch(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """A newer cover wins over an older patch for the same change-id."""
+        identifier = 'test-add-newer-cover'
+        seed_db(identifier, [])
+        screen = EditTrackedSeriesScreen(identifier)
+        messages = [
+            make_msg(
+                'patch-v1@example.com',
+                '[PATCH] Feature',
+                body=MINIMAL_DIFF + '\nchange-id: shared-feature\n',
+            ),
+            make_msg(
+                'cover-v2@example.com',
+                '[PATCH v2 0/2] Feature',
+                body='change-id: shared-feature\n',
+            ),
+        ]
+
+        candidates = screen._collect_candidates(messages)
+
+        assert [candidate['message_id'] for candidate in candidates] == [
+            'cover-v2@example.com'
+        ]
+
+    @pytest.mark.asyncio
+    async def test_search_shows_each_batch_and_stops_when_full(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Show batches incrementally, preserve selection, and stop at capacity."""
+        seed_db('test-add-incremental', [])
+        app = TrackingApp('test-add-incremental')
+        now = datetime.datetime.now(datetime.timezone.utc)
+        first = make_msg(
+            'first@example.com',
+            '[PATCH] needle first',
+            body=MINIMAL_DIFF,
+            date=email.utils.format_datetime(now - datetime.timedelta(hours=1)),
+        )
+        second = make_msg(
+            'second@example.com',
+            '[PATCH] needle second',
+            body=MINIMAL_DIFF,
+            date=email.utils.format_datetime(now - datetime.timedelta(hours=9)),
+        )
+        release_second = threading.Event()
+        queries: List[str] = []
+
+        def search(query: str, **kwargs: Any) -> List[email.message.EmailMessage]:
+            """Return the first result, then wait before returning the second."""
+            queries.append(query)
+            if 'needle' not in query:
+                return [
+                    first,
+                    make_msg(
+                        'initial@example.com',
+                        '[PATCH] initial',
+                        body=MINIMAL_DIFF,
+                        date=email.utils.format_datetime(
+                            now - datetime.timedelta(hours=2)
+                        ),
+                    ),
+                ]
+            if sum('needle' in item for item in queries) == 1:
+                return [first]
+            if not release_second.wait(5):
+                raise TimeoutError('second search was not released')
+            return [second]
+
+        with (
+            patch('b4.get_pi_search_results', side_effect=search),
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=4),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                try:
+                    await pilot.pause()
+                    await pilot.press('E')
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    screen = app.screen
+                    assert isinstance(screen, EditTrackedSeriesScreen)
+                    screen.query_one('#add-series-filter', Input).value = 'needle'
+                    await pilot.pause(0.6)
+
+                    assert len(queries) == 3
+                    items = screen.query(EditTrackedSeriesItem)
+                    assert [item.candidate['message_id'] for item in items] == [
+                        'first@example.com'
+                    ]
+                    lv = screen.query_one('#add-series-list', ListView)
+                    lv.focus()
+                    lv.index = 0
+                    await pilot.press('space')
+                    await pilot.pause()
+                    assert screen._selected == {'first@example.com'}
+                finally:
+                    release_second.set()
+
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert {
+                    item.candidate['message_id']
+                    for item in screen.query(EditTrackedSeriesItem)
+                } == {'first@example.com', 'second@example.com'}
+                assert next(
+                    item.selected
+                    for item in screen.query(EditTrackedSeriesItem)
+                    if item.candidate['message_id'] == 'first@example.com'
+                )
+                assert len(queries) == 3
+                assert all('dt:' in query for query in queries)
+                assert all(
+                    '(s:"needle" OR f:"needle")' in query for query in queries[1:]
+                )
+
+    @pytest.mark.asyncio
+    async def test_selection_follows_first_patch_when_cover_is_discovered(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Keep a selected series selected when its cover replaces patch one."""
+        seed_db('test-add-selection-cover', [])
+        app = TrackingApp('test-add-selection-cover')
+        date = email.utils.format_datetime(
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
+        )
+        cover = make_msg('cover@example.com', '[PATCH 0/2] needle series', date=date)
+        first = make_msg(
+            'first@example.com',
+            '[PATCH 1/2] needle patch',
+            body=MINIMAL_DIFF,
+            in_reply_to='cover@example.com',
+            date=date,
+        )
+
+        with (
+            patch(
+                'b4.get_pi_search_results',
+                side_effect=[[first], [cover, first], [first]],
+            ),
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=1),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+                lv = screen.query_one('#add-series-list', ListView)
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space')
+                await pilot.pause()
+                assert screen._selected == {'first@example.com'}
+
+                screen.query_one('#add-series-filter', Input).value = 'needle'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                item = screen.query_one(EditTrackedSeriesItem)
+                assert item.candidate['message_id'] == 'cover@example.com'
+                assert item.selected
+                assert screen._selected == {'cover@example.com'}
+                assert 'first@example.com' not in screen._candidates
+                assert screen._recent_ids == ['cover@example.com']
+
+                screen.query_one('#add-series-filter', Input).value = 'needle patch'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                items = list(screen.query(EditTrackedSeriesItem))
+                assert [item.candidate['message_id'] for item in items] == [
+                    'cover@example.com'
+                ]
+                assert items[0].selected
+                assert screen._selected == {'cover@example.com'}
+                assert 'first@example.com' not in screen._candidates
+
+                screen.query_one('#add-series-filter', Input).value = ''
+                await pilot.pause()
+                items = list(screen.query(EditTrackedSeriesItem))
+                assert [item.candidate['message_id'] for item in items] == [
+                    'cover@example.com'
+                ]
+                assert items[0].selected
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space')
+                await pilot.pause()
+                assert not screen._selected
+
+    @pytest.mark.asyncio
+    async def test_selection_follows_grouped_revision(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """An older selected cover remains selected when its revision is found."""
+        seed_db('test-add-selection-revision', [])
+        app = TrackingApp('test-add-selection-revision')
+        date = email.utils.format_datetime(
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
+        )
+        old = make_msg('v1@example.com', '[PATCH 0/2] needle feature', date=date)
+        new = make_msg(
+            'v2@example.com',
+            '[PATCH v2 0/2] needle feature',
+            in_reply_to='v1@example.com',
+            date=date,
+        )
+        with (
+            patch('b4.get_pi_search_results', side_effect=[[old], [new, old]]),
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=1),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+                lv = screen.query_one('#add-series-list', ListView)
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space')
+                await pilot.pause()
+                assert screen._selected == {'v1@example.com'}
+
+                screen.query_one('#add-series-filter', Input).value = 'needle'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                item = screen.query_one(EditTrackedSeriesItem)
+                assert item.candidate['message_id'] == 'v2@example.com'
+                assert item.selected
+                assert screen._selected == {'v2@example.com'}
+
+    @pytest.mark.asyncio
+    async def test_search_reaches_unbounded_history_with_no_gaps(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Empty searches cover contiguous windows through unbounded history."""
+        seed_db('test-add-history', [])
+        app = TrackingApp('test-add-history')
+
+        with patch('b4.get_pi_search_results', return_value=[]) as search:
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                screen.query_one('#add-series-filter', Input).value = 'nothing'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+                queries = [
+                    call.args[0]
+                    for call in search.call_args_list
+                    if 'nothing' in call.args[0]
+                ]
+                windows = [
+                    re.search(r' AND dt:(\d{14})?\.\.(\d{14})$', query)
+                    for query in queries
+                ]
+                assert len(windows) > 7
+                assert all(windows)
+                assert windows[-1] is not None and windows[-1].group(1) is None
+                for previous, current in zip(windows, windows[1:]):
+                    assert previous is not None and current is not None
+                    start = datetime.datetime.strptime(
+                        previous.group(1) + '+0000', '%Y%m%d%H%M%S%z'
+                    )
+                    end = datetime.datetime.strptime(
+                        current.group(2) + '+0000', '%Y%m%d%H%M%S%z'
+                    )
+                    assert start - end == datetime.timedelta(seconds=1)
+                assert '0 matching series' in static_text(
+                    screen.query_one('#add-series-status', Static)
+                )
+
+    @pytest.mark.asyncio
+    async def test_new_filter_replaces_stale_search_and_refetches_cached_matches(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """A new filter refetches matches and ignores a stale worker's results."""
+        seed_db('test-add-stale', [])
+        app = TrackingApp('test-add-stale')
+        recent_date = email.utils.format_datetime(
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
+        )
+        cached = make_msg(
+            'cached@example.com', '[PATCH] second cached', body=MINIMAL_DIFF
+        )
+        stale = make_msg('stale@example.com', '[PATCH] first stale', body=MINIMAL_DIFF)
+        fresh = make_msg(
+            'fresh@example.com',
+            '[PATCH] second fresh',
+            body=MINIMAL_DIFF,
+            date=recent_date,
+        )
+        release_first = threading.Event()
+        queries: List[str] = []
+
+        def search(query: str, **kwargs: Any) -> List[email.message.EmailMessage]:
+            """Block the first search so its result arrives after the second."""
+            queries.append(query)
+            if 'first' in query:
+                if not release_first.wait(5):
+                    raise TimeoutError('first search was not released')
+                return [stale]
+            if 'second' in query:
+                return [fresh]
+            return [cached]
+
+        with (
+            patch('b4.get_pi_search_results', side_effect=search),
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=1),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                try:
+                    await pilot.pause()
+                    await pilot.press('E')
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    screen = app.screen
+                    filter_input = screen.query_one('#add-series-filter', Input)
+                    filter_input.value = 'first'
+                    await pilot.pause(0.45)
+                    assert any('first' in query for query in queries)
+                    filter_input.value = 'second'
+                    await pilot.pause(0.45)
+                    assert any('second' in query for query in queries)
+                    assert [
+                        item.candidate['message_id']
+                        for item in screen.query(EditTrackedSeriesItem)
+                    ] == ['fresh@example.com']
+                finally:
+                    release_first.set()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert [
+                    item.candidate['message_id']
+                    for item in screen.query(EditTrackedSeriesItem)
+                ] == ['fresh@example.com']
+                filter_input.value = ''
+                await pilot.pause()
+                assert [
+                    item.candidate['message_id']
+                    for item in screen.query(EditTrackedSeriesItem)
+                ] == ['cached@example.com']
+
+    @pytest.mark.asyncio
+    async def test_search_matches_subject_of_a_later_patch(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """A matching child patch retains its cover as the selectable result."""
+        seed_db('test-add-patch-search', [])
+        app = TrackingApp('test-add-patch-search')
+        date = email.utils.format_datetime(
+            datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
+        )
+        messages = [
+            make_msg('cover@example.com', '[PATCH 0/2] Network cleanup', date=date),
+            make_msg(
+                'patch1@example.com',
+                '[PATCH 1/2] Refactor network',
+                body=MINIMAL_DIFF,
+                in_reply_to='cover@example.com',
+                date=date,
+            ),
+            make_msg(
+                'patch2@example.com',
+                '[PATCH 2/2] Fix packet loss',
+                body=MINIMAL_DIFF,
+                in_reply_to='patch1@example.com',
+                date=date,
+            ),
+        ]
+
+        with (
+            patch(
+                'b4.get_pi_search_results',
+                side_effect=lambda query, **kwargs: (
+                    messages if 'packet loss' in query else []
+                ),
+            ) as search,
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=1),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                screen.query_one('#add-series-filter', Input).value = 'packet loss'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert [
+                    item.candidate['message_id']
+                    for item in screen.query(EditTrackedSeriesItem)
+                ] == ['cover@example.com']
+                assert (
+                    len(
+                        [
+                            call
+                            for call in search.call_args_list
+                            if 'packet loss' in call.args[0]
+                        ]
+                    )
+                    == 1
+                )
+
+    @pytest.mark.asyncio
+    async def test_search_does_not_count_old_roots_from_new_replies(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """An expanded old thread cannot stop the search before newer roots."""
+        seed_db('test-add-old-root', [])
+        app = TrackingApp('test-add-old-root')
+        now = datetime.datetime.now(datetime.timezone.utc)
+        old = make_msg(
+            'old@example.com',
+            '[PATCH] needle old',
+            body=MINIMAL_DIFF,
+            date=email.utils.format_datetime(now - datetime.timedelta(days=30)),
+        )
+        newer = make_msg(
+            'new@example.com',
+            '[PATCH] needle newer',
+            body=MINIMAL_DIFF,
+            date=email.utils.format_datetime(now - datetime.timedelta(hours=9)),
+        )
+        batches = iter([[old], [newer]])
+
+        with (
+            patch(
+                'b4.get_pi_search_results',
+                side_effect=lambda query, **kwargs: (
+                    next(batches) if 'needle' in query else []
+                ),
+            ) as search,
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=1),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                screen.query_one('#add-series-filter', Input).value = 'needle'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert [
+                    item.candidate['message_id']
+                    for item in screen.query(EditTrackedSeriesItem)
+                ] == ['new@example.com']
+                assert (
+                    len(
+                        [
+                            call
+                            for call in search.call_args_list
+                            if 'needle' in call.args[0]
+                        ]
+                    )
+                    == 2
+                )
+
+    @pytest.mark.asyncio
+    async def test_search_reports_network_errors_without_retrying_history(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Report a failed Lore search instead of searching older windows."""
+        seed_db('test-add-error', [])
+        app = TrackingApp('test-add-error')
+
+        def search_lore(query: str, **kwargs: Any) -> List[email.message.EmailMessage]:
+            if 'needle' in query:
+                raise OSError('server unavailable')
+            return []
+
+        with patch('b4.get_pi_search_results', side_effect=search_lore) as search:
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                screen.query_one('#add-series-filter', Input).value = 'needle'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert (
+                    len(
+                        [
+                            call
+                            for call in search.call_args_list
+                            if 'needle' in call.args[0]
+                        ]
+                    )
+                    == 1
+                )
+                assert 'Lore search failed: server unavailable' in static_text(
+                    screen.query_one('#add-series-status', Static)
+                )
+
+    @pytest.mark.asyncio
+    async def test_search_status_displays_literal_markup(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Display subjects, user searches, and errors without parsing markup."""
+        seed_db('test-add-markup', [])
+        app = TrackingApp('test-add-markup')
+        msg = make_msg('markup@example.com', '[PATCH] subject [/]', body=MINIMAL_DIFF)
+
+        def search_lore(query: str, **kwargs: Any) -> List[email.message.EmailMessage]:
+            if '[/]' in query:
+                raise OSError('failed [/]')
+            return [msg]
+
+        with (
+            patch('b4.get_pi_search_results', side_effect=search_lore),
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=1),
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                lv = screen.query_one('#add-series-list', ListView)
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space')
+                await pilot.pause()
+                assert screen.query_one(EditTrackedSeriesItem).selected
+                screen.query_one('#add-series-filter', Input).value = '[/]'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert 'failed [/]' in static_text(
+                    screen.query_one('#add-series-status', Static)
+                )
+
+    @pytest.mark.asyncio
+    async def test_filter_searches_lore_and_tracks_selected_series(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Search Lore, select a result, and pass it to the tracking helper."""
+        seed_db('test-add-search', [])
+        candidate = {
+            'message_id': 'cover@example.com',
+            'revision': 2,
+            'subject': '[PATCH v2] unique search subject',
+            'fromname': 'Unique Author',
+            'fromemail': 'unique@example.com',
+            'num_patches': 3,
+            'change_id': 'unique-change-id',
+            'date': None,
+        }
+        app = TrackingApp('test-add-search')
+
+        with (
+            patch(
+                'b4.get_pi_search_results',
+                side_effect=lambda query, **kwargs: (
+                    [make_msg('cover@example.com', '[PATCH] unique')]
+                    if 'unique' in query
+                    else []
+                ),
+            ) as search,
+            patch.object(EditTrackedSeriesScreen, '_visible_capacity', return_value=1),
+            patch.object(
+                EditTrackedSeriesScreen,
+                '_collect_candidates',
+                side_effect=lambda messages: [candidate] if messages else [],
+            ),
+            patch(
+                'b4.review.tracking.track_series_from_msgid',
+                return_value={'status': 'tracked'},
+            ) as track,
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                original_screen = app.screen
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                assert isinstance(screen, EditTrackedSeriesScreen)
+
+                filter_input = screen.query_one('#add-series-filter', Input)
+                filter_input.value = 'unique'
+                await pilot.pause(0.45)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+                search_call = next(
+                    call for call in search.call_args_list if 'unique' in call.args[0]
+                )
+                assert search_call.args[0].startswith(
+                    '(s:"unique" OR f:"unique") AND dt:'
+                )
+                assert search_call.kwargs == {
+                    'nocache': True,
+                    'full_threads': True,
+                    'raise_errors': True,
+                }
+                lv = screen.query_one('#add-series-list', ListView)
+                items = [
+                    item
+                    for item in lv.children
+                    if isinstance(item, EditTrackedSeriesItem)
+                ]
+                assert [item.candidate['message_id'] for item in items] == [
+                    'cover@example.com'
+                ]
+                assert [
+                    item['message_id']
+                    for item in screen._filtered_candidates('unique@example.com')
+                ] == ['cover@example.com']
+                assert not screen._filtered_candidates('not-a-match')
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space')
+                await pilot.pause()
+                button = screen.query_one('#add-series-track', Button)
+                assert button.disabled is False
+                assert str(button.label) == 'Apply changes'
+                await pilot.click('#add-series-track')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+                track.assert_called_once_with(
+                    'test-add-search', 'cover@example.com', b4.git_get_toplevel()
+                )
+                assert app.screen is original_screen
+
+    @pytest.mark.asyncio
+    async def test_cancelling_tracking_returns_completed_results(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Cancelling a batch reports tracks completed before cancellation."""
+        seed_db('test-add-cancel', [])
+        app = TrackingApp('test-add-cancel')
+        messages = [
+            make_msg('first@example.com', '[PATCH] First', body=MINIMAL_DIFF),
+            make_msg('second@example.com', '[PATCH] Second', body=MINIMAL_DIFF),
+        ]
+        second_started = threading.Event()
+        release_second = threading.Event()
+        calls: List[str] = []
+
+        def track(identifier: str, message_id: str, topdir: str) -> Dict[str, str]:
+            """Finish one candidate, then wait for cancellation of the next."""
+            calls.append(message_id)
+            if len(calls) == 1:
+                return {'status': 'tracked'}
+            second_started.set()
+            if not release_second.wait(5):
+                raise TimeoutError('second track was not released')
+            raise liblore.OperationCancelledError('cancelled')
+
+        with (
+            patch('b4.get_pi_search_results', return_value=messages),
+            patch('b4.review.tracking.track_series_from_msgid', side_effect=track),
+            patch('b4.get_lore_node'),
+            patch.object(app, '_on_add_series', wraps=app._on_add_series) as callback,
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                try:
+                    await pilot.pause()
+                    original_screen = app.screen
+                    await pilot.press('E')
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    screen = app.screen
+                    lv = screen.query_one('#add-series-list', ListView)
+                    lv.focus()
+                    lv.index = 0
+                    await pilot.press('space', 'space')
+                    await pilot.pause()
+                    await pilot.click('#add-series-track')
+                    await pilot.pause()
+                    assert second_started.is_set()
+                    await pilot.press('escape')
+                    await pilot.pause()
+                finally:
+                    release_second.set()
+
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                assert app.screen is original_screen
+                result = callback.call_args.args[0]
+                assert result['tracked'] == 1
+                assert not result['errors']
+
+    def test_tracking_results_report_each_failure(self, tmp_path: pathlib.Path) -> None:
+        """Partial successes report the subjects and reasons for failed tracks."""
+        seed_db('test-add-errors', [])
+        app = TrackingApp('test-add-errors')
+        with (
+            patch.object(app, 'notify') as notify,
+            patch.object(app, '_load_series'),
+        ):
+            app._on_add_series(
+                {
+                    'tracked': 1,
+                    'errors': ['First series: unavailable', 'Second series: rejected'],
+                }
+            )
+        notifications = [call.args[0] for call in notify.call_args_list]
+        assert 'First series: unavailable' in notifications
+        assert 'Second series: rejected' in notifications
+
+    @pytest.mark.asyncio
+    async def test_failed_tracking_reports_every_error_and_allows_retry(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """An entirely failed batch reports each error and leaves the popup open."""
+        seed_db('test-add-all-errors', [])
+        app = TrackingApp('test-add-all-errors')
+        messages = [
+            make_msg('first@example.com', '[PATCH] First', body=MINIMAL_DIFF),
+            make_msg('second@example.com', '[PATCH] Second', body=MINIMAL_DIFF),
+        ]
+
+        def track(identifier: str, message_id: str, topdir: str) -> Dict[str, str]:
+            """Reject each candidate with a distinct error."""
+            raise OSError(f'cannot track {message_id}')
+
+        with (
+            patch('b4.get_pi_search_results', return_value=messages),
+            patch('b4.review.tracking.track_series_from_msgid', side_effect=track),
+            patch.object(app, 'notify') as notify,
+        ):
+            async with app.run_test(size=(120, 30)) as pilot:
+                await pilot.pause()
+                await pilot.press('E')
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                lv = screen.query_one('#add-series-list', ListView)
+                lv.focus()
+                lv.index = 0
+                await pilot.press('space', 'space')
+                await pilot.pause()
+                await pilot.click('#add-series-track')
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+                assert app.screen is screen
+                assert not screen.query_one('#add-series-track', Button).disabled
+                notifications = [call.args[0] for call in notify.call_args_list]
+                assert any(
+                    'cannot track first@example.com' in text for text in notifications
+                )
+                assert any(
+                    'cannot track second@example.com' in text for text in notifications
+                )
 
     @pytest.mark.asyncio
     async def test_empty_database(self, tmp_path: pathlib.Path) -> None:

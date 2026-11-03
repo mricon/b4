@@ -182,6 +182,7 @@ Symbol   Status
 Key           Action
 ============  ===========================================================
 ``Enter``     Enter series (reviewing) or open action menu (other states)
+``E``         Edit tracked series and browse Lore submissions
 ``r``         Review — create or re-enter the review branch
 ``t``         Target branch — set or clear the per-series target branch
 ``c``         CI checks — run configured check commands and show results
@@ -209,6 +210,22 @@ Key           Action
 ``?``         Help — show keybinding reference
 ``Q``         Quit
 ============  ===========================================================
+
+Press ``E`` to edit tracked series and browse submissions from the Lore
+archive configured by :term:`b4.midmask`. Tracked series start selected;
+use ``Space`` to toggle a series and advance to the next row. Apply the
+changes to track newly selected submissions or abandon deselected series.
+Abandoning requires confirmation and deletes review branches and tracking
+data, just like the abandon action in the tracking list.
+
+The list is ordered newest first. Lore submissions load in the background;
+press ``Enter`` on the load-more row to fetch older submissions. Search by
+subject, submitter name, or email to filter tracked series and Lore results.
+Tracked series and newly discovered revisions follow the same tracking
+and deduplication rules as ``b4 review track``.
+Revisions without a change ID are grouped when their thread, sender,
+subject, and revision numbers identify them as the same series; otherwise
+they may appear as separate entries.
 
 Quitting takes a capital ``Q`` in all b4 TUI apps (tracking list,
 review interface, Patchwork browser, and ``b4 bugs``). Bare ``q``

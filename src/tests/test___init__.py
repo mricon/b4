@@ -1646,6 +1646,7 @@ class TestLoreFetchMessages:
 
     @pytest.mark.parametrize('status_code', [None, 503, 404])
     def test_search_can_propagate_failures(self, node: Any, status_code: Any) -> None:
+        """Propagate search failures on request while treating 404 as no results."""
         import liblore
 
         node.get_mbox_by_query.side_effect = liblore.RemoteError(
