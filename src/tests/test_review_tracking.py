@@ -685,6 +685,52 @@ class TestCmdTrack:
         assert row[column] == expected
         assert row['revision'] == 1
 
+    @mock.patch('b4.retrieve_messages')
+    @mock.patch('b4.LoreMailbox')
+    def test_track_series_from_msgid_uses_shared_tracking_logic(
+        self,
+        mock_mailbox_class: mock.Mock,
+        mock_retrieve: mock.Mock,
+        gitdir: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verify track_series_from_msgid() provides shared tracking logic."""
+        cmdargs_enroll = argparse.Namespace(
+            repo_path=gitdir, identifier='track-msgid-test'
+        )
+        review_tracking.cmd_enroll(cmdargs_enroll)
+        monkeypatch.setattr(b4, 'can_network', False)
+        mock_retrieve.return_value = ('cover@example.com', [mock.Mock()])
+
+        lser = self._make_mock_lore_series(
+            expected=1,
+            all_patches_present=True,
+            cover_msgid='cover@example.com',
+            first_patch_msgid='patch@example.com',
+        )
+        mailbox = mock.Mock()
+        mailbox.series = {1: lser}
+        mailbox.get_series.return_value = lser
+        mock_mailbox_class.return_value = mailbox
+
+        result = review_tracking.track_series_from_msgid(
+            'track-msgid-test', 'cover@example.com', gitdir
+        )
+
+        assert result['status'] == 'tracked'
+        assert result['change_id'] == 'test-change-id'
+        retrieve_args = mock_retrieve.call_args.args[0]
+        assert retrieve_args.msgid == 'cover@example.com'
+        conn = review_tracking.get_db('track-msgid-test')
+        row = conn.execute('SELECT message_id, revision FROM series').fetchone()
+        conn.close()
+        assert row['message_id'] == 'cover@example.com'
+        assert row['revision'] == 1
+        again = review_tracking.track_series_from_msgid(
+            'track-msgid-test', 'cover@example.com', gitdir
+        )
+        assert again == {'status': 'already-tracked', 'change_id': 'test-change-id'}
+
     @pytest.mark.parametrize(
         'all_present,expect_warning',
         [
@@ -828,6 +874,26 @@ class TestCmdTrack:
         revs = {r['revision'] for r in review_tracking.get_revisions(conn, change_id)}
         conn.close()
         assert revs == {2, 3}, f'expected v2+v3 under one change-id, got {revs}'
+
+        v4 = self._make_mock_lore_series(
+            revision=4, change_id=None, cover_msgid='v4-cover@example.com'
+        )
+        v4.fingerprint = 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3'
+        mbx_v4 = mock.Mock()
+        mbx_v4.series = {2: v2, 3: v3, 4: v4}
+        mbx_v4.get_series.return_value = v4
+        mock_mailbox_class.return_value = mbx_v4
+
+        result = review_tracking.track_series_from_msgid(
+            'upgrade-test', 'v4-cover@example.com', gitdir
+        )
+        assert result == {'status': 'updated', 'change_id': change_id}
+        conn = review_tracking.get_db('upgrade-test')
+        revs = {
+            row['revision'] for row in review_tracking.get_revisions(conn, change_id)
+        }
+        conn.close()
+        assert revs == {2, 3, 4}
 
     def _track(self, series_id: str, identifier: str) -> None:
         review_tracking.cmd_track(

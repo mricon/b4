@@ -5,23 +5,28 @@
 #
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import datetime
 import email.message
 import email.utils
 import io
 import json
 import re
+import threading
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 from rich import box
+from rich.console import Console, ConsoleOptions, RenderResult
+from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.widgets import (
+    Button,
     Checkbox,
     Input,
     Label,
@@ -37,6 +42,7 @@ from textual.worker import Worker, WorkerState
 
 import b4
 import b4.review
+import b4.review.tracking
 import b4.tofu
 import b4.ty
 import liblore
@@ -227,6 +233,886 @@ class TrailerScreen(JKListNavMixin, ModalScreen[Optional[List[str]]]):
         self.dismiss(None)
 
 
+class _ClippedSeriesText:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        text = Text(self.text, no_wrap=True, overflow='crop')
+        text.truncate(options.max_width, overflow='crop')
+        yield text
+
+
+class EditTrackedSeriesItem(ListItem):
+    """One selectable patch-series candidate in the add-series popup."""
+
+    def __init__(self, candidate: Dict[str, Any], selected: bool = False) -> None:
+        """Store the candidate and its initial selection state."""
+        super().__init__()
+        self.candidate = candidate
+        self.selected = selected
+        self.set_class(selected, 'selected-series')
+
+    def compose(self) -> ComposeResult:
+        """Display the candidate without interpreting its text as markup."""
+        yield Static(_ClippedSeriesText(self._label()), markup=False)
+
+    def _label(self) -> str:
+        """Format the selection marker and available series metadata."""
+        date = self.candidate.get('date')
+        date_text = date.strftime('%Y-%m-%d') if date else '----------'
+        subject = self.candidate.get('subject') or '(no subject)'
+        sender = (
+            self.candidate.get('fromname')
+            or self.candidate.get('fromemail')
+            or 'Unknown'
+        )
+        lsubject = b4.LoreSubject(subject)
+        extras = lsubject.get_extra_prefixes(exclude=['patch'])
+        count = self.candidate.get('num_patches') or 0
+        width = len(str(count)) if count else 1
+        prefix = ''.join(f'{extra},' for extra in extras)
+        mark = '●' if self.selected else '○'
+        return f'{mark} {sender[:20]:20}  {date_text}  [{prefix}v{self.candidate["revision"]},{0:0{width}d}/{count:0{width}d}] {lsubject.subject}'
+
+    def toggle(self) -> None:
+        """Toggle the selection marker in the displayed row."""
+        self.selected = not self.selected
+        self.set_class(self.selected, 'selected-series')
+        self.query_one(Static).update(_ClippedSeriesText(self._label()))
+
+
+class LoadMoreSeriesItem(ListItem):
+    """Request the next batch of Lore submissions."""
+
+    def compose(self) -> ComposeResult:
+        yield Static('Press Enter to load more Lore submissions')
+
+
+class AbandonTrackedSeriesConfirmScreen(ConfirmScreen):
+    """Confirm abandoning tracked series by keyboard or mouse."""
+
+    DEFAULT_CSS = """
+    #abandon-tracked-actions {
+        height: 3;
+        align-horizontal: right;
+        margin-top: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id='confirm-dialog', classes='--border-warning') as dialog:
+            dialog.border_title = self._title
+            for line in self._body:
+                yield Static(line, markup=False)
+            with Horizontal(id='abandon-tracked-actions'):
+                yield Button('Confirm', id='abandon-tracked-confirm', variant='error')
+                yield Button('Cancel', id='abandon-tracked-cancel')
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == 'abandon-tracked-confirm':
+            self.action_confirm()
+        elif event.button.id == 'abandon-tracked-cancel':
+            self.action_cancel()
+
+
+class EditTrackedSeriesScreen(ModalScreen[Optional[Dict[str, Any]]]):
+    """Browse recent Lore submissions and add selected series to tracking."""
+
+    BINDINGS = [
+        Binding('space', 'toggle_candidate', 'Select', show=False),
+        Binding('ctrl+y', 'track_selected', 'Track', show=False),
+        Binding('escape', 'cancel', 'Cancel'),
+        Binding('q', 'cancel', 'Cancel', show=False),
+    ]
+
+    DEFAULT_CSS = """
+    EditTrackedSeriesScreen {
+        align: center middle;
+    }
+    #add-series-dialog {
+        width: 90%;
+        height: 85%;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #add-series-list {
+        height: 1fr;
+    }
+    #add-series-list > EditTrackedSeriesItem {
+        height: 1;
+    }
+    #add-series-list > EditTrackedSeriesItem > Static {
+        height: 1;
+    }
+    #add-series-list > EditTrackedSeriesItem.selected-series {
+        background: #173658;
+        color: $text;
+        text-style: bold;
+    }
+    #add-series-list:focus > EditTrackedSeriesItem.-highlight {
+        background: $block-cursor-background;
+        color: $block-cursor-foreground;
+        text-style: $block-cursor-text-style;
+    }
+    #add-series-hint {
+        height: 1;
+        color: $text-muted;
+    }
+    #add-series-actions {
+        height: 3;
+        align-horizontal: right;
+    }
+    #add-series-status {
+        height: 1;
+        color: $text-muted;
+    }
+    """
+
+    _RECENT_HOURS = 8
+
+    def __init__(
+        self, identifier: str, tracked_series: Optional[List[Dict[str, Any]]] = None
+    ) -> None:
+        """Initialize the project, candidate cache, and search state."""
+        super().__init__()
+        self._identifier = identifier
+        self._candidates: Dict[str, Dict[str, Any]] = {}
+        self._selected: Set[str] = set()
+        self._recent_ids: List[str] = []
+        self._recent_loaded = False
+        self._current_filter = ''
+        self._filter_generation = 0
+        self._search_generation = 0
+        self._is_tracking = False
+        self._tracking_cancelled = threading.Event()
+        self._search_end: Optional[datetime.datetime] = None
+        self._search_messages: Dict[str, email.message.EmailMessage] = {}
+        self._search_complete = False
+        self._searching = False
+        self._search_target = 0
+        self._browse_state: Optional[
+            Tuple[
+                Optional[datetime.datetime],
+                Dict[str, email.message.EmailMessage],
+                bool,
+                int,
+            ]
+        ] = None
+        for series in tracked_series or []:
+            message_id = series.get('message_id') or series['change_id']
+            candidate = dict(series)
+            try:
+                sent_at = datetime.datetime.fromisoformat(series.get('sent_at') or '')
+                if sent_at.tzinfo is None:
+                    sent_at = sent_at.replace(tzinfo=datetime.timezone.utc)
+            except (TypeError, ValueError):
+                sent_at = None
+            candidate.update(
+                message_id=message_id,
+                fromname=series.get('sender_name'),
+                fromemail=series.get('sender_email'),
+                date=sent_at,
+                tracked=True,
+            )
+            self._candidates[message_id] = candidate
+            self._selected.add(message_id)
+        self._recent_ids = list(self._candidates)
+        self._tracked_ids = set(self._candidates)
+
+    def compose(self) -> ComposeResult:
+        """Build the filter, candidate list, status, and tracking controls."""
+        with Vertical(id='add-series-dialog') as dialog:
+            dialog.border_title = 'Edit Tracked Series'
+            yield Input(
+                placeholder='Filter by subject or submitter name or email',
+                id='add-series-filter',
+            )
+            yield Static('Recent Lore submissions', id='add-series-list-name')
+            yield Static(
+                'Loading recent submissions…', id='add-series-status', markup=False
+            )
+            yield ListView(id='add-series-list')
+            yield Static('Space toggle  |  Ctrl-y apply', id='add-series-hint')
+            with Horizontal(id='add-series-actions'):
+                yield Button(
+                    'Apply changes',
+                    id='add-series-track',
+                    variant='primary',
+                    disabled=True,
+                )
+                yield Button('Cancel', id='add-series-cancel')
+
+    def on_mount(self) -> None:
+        """Focus the filter and begin loading recent submissions."""
+        self.query_one('#add-series-filter', Input).focus()
+        self._render_candidates('')
+        self._start_recent_search()
+
+    def _start_recent_search(self) -> None:
+        """Start browsing from the newest archive messages."""
+        self._start_search('', filter_text='')
+
+    def _visible_capacity(self) -> int:
+        """Return the number of single-line candidate rows visible at once."""
+        height = self.query_one('#add-series-list', ListView).size.height
+        return max(1, height)
+
+    @staticmethod
+    def _server_query(value: str) -> str:
+        """Build an escaped Lore subject-or-sender search expression."""
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+        return f'(s:"{escaped}" OR f:"{escaped}")'
+
+    @staticmethod
+    def _group_key(msg: email.message.EmailMessage) -> Optional[Tuple[str, ...]]:
+        """Identify a cover or first patch by change-id or message ID."""
+        lsubject = b4.LoreSubject(str(msg.get('Subject', '')))
+        if lsubject.reply or not lsubject.patch or lsubject.counter not in (0, 1):
+            return None
+
+        body, _charset = b4.LoreMessage.get_payload(msg)
+        match = re.search(r'^change-id:\s*(\S+)', body, flags=re.I | re.M)
+        if match:
+            return ('change-id', match.group(1).casefold())
+        msgid = b4.LoreMessage.get_clean_msgid(msg)
+        return ('message-id', msgid) if msgid else None
+
+    def _collect_candidates(
+        self, msgs: List[email.message.EmailMessage]
+    ) -> List[Dict[str, Any]]:
+        """Group messages into untracked series, newest first."""
+        groups: Dict[Tuple[str, ...], List[email.message.EmailMessage]] = {}
+        children: Dict[str, List[email.message.EmailMessage]] = {}
+        # Without a change-id, keep independent submissions separate unless
+        # threading, sender, subject, and increasing revision all agree.
+        fallback_msgs = {
+            key[1]: msg
+            for msg in msgs
+            if (key := self._group_key(msg)) is not None and key[0] == 'message-id'
+        }
+        revision_parents: Dict[str, str] = {}
+        for candidate_id, candidate_msg in fallback_msgs.items():
+            revision_subject = b4.LoreSubject(str(candidate_msg.get('Subject', '')))
+            sender = email.utils.parseaddr(str(candidate_msg.get('From', '')))[
+                1
+            ].casefold()
+            if not sender or not revision_subject.subject:
+                continue
+            references = b4.LoreMessage.clean_header(
+                str(candidate_msg.get('References', ''))
+            )
+            parents = [
+                b4.LoreMessage.get_clean_msgid(candidate_msg, header='In-Reply-To')
+                or ''
+            ]
+            parents.extend(ref.strip('<>') for ref in reversed(references.split()))
+            for parent_id in parents:
+                parent_msg = fallback_msgs.get(parent_id)
+                if parent_msg is None:
+                    continue
+                parent_subject = b4.LoreSubject(str(parent_msg.get('Subject', '')))
+                parent_sender = email.utils.parseaddr(str(parent_msg.get('From', '')))[
+                    1
+                ].casefold()
+                if (
+                    sender == parent_sender
+                    and revision_subject.subject.casefold()
+                    == parent_subject.subject.casefold()
+                    and revision_subject.revision > parent_subject.revision
+                ):
+                    revision_parents[candidate_id] = parent_id
+                    break
+        cover_revisions = {
+            msgid: cover_subject.revision
+            for msg in msgs
+            if (cover_subject := b4.LoreSubject(str(msg.get('Subject', '')))).counter
+            == 0
+            and cover_subject.patch
+            and not cover_subject.reply
+            and (msgid := b4.LoreMessage.get_clean_msgid(msg))
+        }
+        for msg in msgs:
+            lsubject = b4.LoreSubject(str(msg.get('Subject', '')))
+            parents = [b4.LoreMessage.get_clean_msgid(msg, header='In-Reply-To') or '']
+            references = b4.LoreMessage.clean_header(str(msg.get('References', '')))
+            parents.extend(ref.strip('<>') for ref in references.split())
+            if lsubject.patch and not lsubject.reply:
+                for parent in parents:
+                    if parent:
+                        children.setdefault(parent, []).append(msg)
+            if lsubject.counter == 1:
+                if any(
+                    cover_revisions.get(parent) == lsubject.revision
+                    for parent in parents
+                ):
+                    continue
+            key = self._group_key(msg)
+            if key is not None:
+                if key[0] == 'message-id':
+                    # Resolve v3 -> v2 -> v1 to one group even if mail arrived out of order.
+                    root = key[1]
+                    while root in revision_parents:
+                        root = revision_parents[root]
+                    key = ('message-id', root)
+                groups.setdefault(key, []).append(msg)
+
+        candidates: Dict[str, Dict[str, Any]] = {}
+        conn = b4.review.tracking.get_db(self._identifier)
+        try:
+            for group_msgs in groups.values():
+                mailbox = b4.LoreMailbox()
+                for msg in group_msgs:
+                    mailbox.add_message(msg)
+                if not mailbox.series and not mailbox.covers:
+                    continue
+                revision = max(set(mailbox.series) | set(mailbox.covers))
+                if revision in mailbox.series:
+                    lser = mailbox.get_series(
+                        revision, sloppytrailers=False, codereview_trailers=False
+                    )
+                    if not lser:
+                        continue
+                    message_id, _subject, _from_cover = (
+                        b4.review.tracking._raw_revision_ref(mailbox, revision)
+                    )
+                    subject = lser.subject
+                    fromname = lser.fromname
+                    fromemail = lser.fromemail
+                    num_patches = lser.expected
+                    change_id = lser.change_id
+                    ref_msg = mailbox.msgid_map.get(message_id)
+                else:
+                    cover = mailbox.covers[revision]
+                    message_id = cover.msgid
+                    subject = cover.subject
+                    fromname = cover.fromname
+                    fromemail = cover.fromemail
+                    num_patches = cover.expected
+                    change_id = ''
+                    ref_msg = cover
+                if not message_id or b4.review.tracking.find_tracked_change_id(
+                    conn, message_id
+                ):
+                    continue
+                searchable: List[str] = []
+                pending = [
+                    (msg, b4.LoreSubject(str(msg.get('Subject', ''))).revision)
+                    for msg in group_msgs
+                ]
+                seen: Set[Tuple[str, int]] = set()
+                while pending:
+                    msg, msg_revision = pending.pop()
+                    msgid = b4.LoreMessage.get_clean_msgid(msg)
+                    if not msgid or (msgid, msg_revision) in seen:
+                        continue
+                    seen.add((msgid, msg_revision))
+                    searchable.extend(
+                        b4.LoreMessage.clean_header(str(msg.get(field, '')))
+                        for field in ('Subject', 'From')
+                    )
+                    for child in children.get(msgid, []):
+                        child_subject = b4.LoreSubject(str(child.get('Subject', '')))
+                        if (
+                            child_subject.revision == msg_revision
+                            or child_subject.revision_inferred
+                        ):
+                            pending.append((child, msg_revision))
+                candidates[message_id] = {
+                    'message_id': message_id,
+                    'revision': revision,
+                    'subject': subject,
+                    'fromname': fromname,
+                    'fromemail': fromemail,
+                    'num_patches': num_patches,
+                    'change_id': change_id,
+                    'date': ref_msg.date if ref_msg else None,
+                    'search_text': ' '.join(searchable),
+                    'message_ids': {msgid for msgid, _ in seen},
+                }
+        finally:
+            conn.close()
+
+        return sorted(
+            candidates.values(),
+            key=lambda item: (
+                item['date']
+                or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+            ),
+            reverse=True,
+        )
+
+    def _start_search(
+        self, query: str, filter_text: str, recent: bool = False, more: bool = False
+    ) -> None:
+        """Launch a cancellable Lore search, delivering candidates by window."""
+        self._search_generation += 1
+        generation = self._search_generation
+        self.query_one('#add-series-status', Static).update(
+            Text(
+                'Loading recent submissions…'
+                if recent
+                else f'Searching Lore for {filter_text!r}…'
+            )
+        )
+
+        if not more:
+            self._search_end = None
+            self._search_messages = {}
+            self._search_complete = False
+            self._search_target = max(1, self._visible_capacity() // 2)
+        else:
+            self._search_target += max(1, self._visible_capacity() // 2)
+        capacity = self._search_target
+        self._searching = True
+
+        def _fetch() -> None:
+            """Fetch progressively older windows until the list is full or exhausted."""
+            try:
+                messages = dict(self._search_messages)
+                end = self._search_end or datetime.datetime.now(
+                    datetime.timezone.utc
+                ).replace(microsecond=0)
+                earliest = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+                interval = datetime.timedelta(hours=self._RECENT_HOURS)
+                while not worker_cancelled():
+                    start = None
+                    complete = end - earliest <= interval
+                    start = earliest if complete else end - interval
+                    lower = '' if complete else f'{start:%Y%m%d%H%M%S}'
+                    window_query = f'{query + " AND " if query else ""}dt:{lower}..{end:%Y%m%d%H%M%S}'
+                    with _quiet_worker():
+                        msgs = b4.get_pi_search_results(
+                            window_query,
+                            nocache=True,
+                            full_threads=bool(filter_text),
+                            raise_errors=True,
+                        )
+                        for msg in msgs or []:
+                            msgid = b4.LoreMessage.get_clean_msgid(msg)
+                            if msgid:
+                                messages[msgid] = msg
+                        candidates = self._collect_candidates(list(messages.values()))
+                    if worker_cancelled():
+                        return
+                    keep_searching = self.app.call_from_thread(
+                        self._finish_search,
+                        generation,
+                        filter_text,
+                        candidates,
+                        '',
+                        complete,
+                        capacity,
+                        start if not complete else None,
+                        messages,
+                    )
+                    if not keep_searching:
+                        return
+                    end = start - datetime.timedelta(seconds=1)
+                    interval *= 2
+            except liblore.OperationCancelledError:
+                return
+            except Exception as ex:
+                if not worker_cancelled():
+                    self.app.call_from_thread(
+                        self._finish_search,
+                        generation,
+                        filter_text,
+                        [],
+                        str(ex),
+                        True,
+                        capacity,
+                        None,
+                        {},
+                    )
+
+        run_lore_worker(
+            self,
+            _fetch,
+            name=f'add-series-search-{generation}',
+            group='add-series-search',
+            exclusive=True,
+        )
+
+    def _finish_search(
+        self,
+        generation: int,
+        filter_text: str,
+        candidates: List[Dict[str, Any]],
+        error: str,
+        complete: bool,
+        capacity: int,
+        since: Optional[datetime.datetime],
+        messages: Dict[str, email.message.EmailMessage],
+    ) -> bool:
+        """Render a current search batch and say whether to fetch another."""
+        if generation != self._search_generation:
+            return False
+        if error:
+            self._searching = False
+            self.query_one('#add-series-status', Static).update(
+                Text(f'Lore search failed: {error}')
+            )
+            return False
+        aliases = {
+            msgid: candidate['message_id']
+            for candidate in self._candidates.values()
+            for msgid in candidate.get('message_ids', set())
+            if msgid not in self._candidates
+        }
+        normalized: Dict[str, Dict[str, Any]] = {}
+        for candidate in candidates:
+            msgid = candidate['message_id']
+            cached = self._candidates.get(aliases.get(msgid, msgid))
+            if cached is not None:
+                merged = dict(
+                    cached if msgid in aliases or cached.get('tracked') else candidate
+                )
+                merged['message_ids'] = cached.get(
+                    'message_ids', set()
+                ) | candidate.get('message_ids', set())
+                merged['search_text'] = ' '.join(
+                    (cached.get('search_text', ''), candidate.get('search_text', ''))
+                )
+                candidate = merged
+            if since is None or candidate['date'] is None or candidate['date'] >= since:
+                normalized[candidate['message_id']] = candidate
+        candidates = list(normalized.values())
+        incoming_ids = set(normalized)
+        replacements = {
+            msgid: candidate['message_id']
+            for candidate in candidates
+            for msgid in candidate.get('message_ids', set())
+            if msgid in self._candidates and msgid not in incoming_ids
+        }
+        if replacements:
+            self._selected = {
+                replacements.get(msgid, msgid) for msgid in self._selected
+            }
+            self._recent_ids = list(
+                dict.fromkeys(
+                    replacements.get(msgid, msgid) for msgid in self._recent_ids
+                )
+            )
+            for msgid in replacements:
+                del self._candidates[msgid]
+        self._candidates.update(
+            {candidate['message_id']: candidate for candidate in candidates}
+        )
+        tracked = [item for item in self._candidates.values() if item.get('tracked')]
+        if not filter_text:
+            self._recent_ids = [candidate['message_id'] for candidate in candidates]
+            self._recent_loaded = True
+        matches = self._filtered_candidates(filter_text, candidates)
+        keep_searching = not complete and len(matches) < capacity
+        self._search_messages = dict(messages)
+        self._search_end = since - datetime.timedelta(seconds=1) if since else None
+        self._search_complete = complete
+        self._searching = keep_searching
+        self._render_candidates(
+            filter_text, tracked + candidates, searching=keep_searching
+        )
+        return keep_searching
+
+    def _filtered_candidates(
+        self, value: str, candidates: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
+        """Match cached or supplied candidates against subject and sender fields."""
+        needle = value.casefold().strip()
+        if candidates is None:
+            candidates = list(self._candidates.values())
+        if needle:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if needle
+                in ' '.join(
+                    str(candidate.get(field, ''))
+                    for field in ('subject', 'fromname', 'fromemail', 'search_text')
+                ).casefold()
+            ]
+        return candidates
+
+    def _render_candidates(
+        self,
+        value: str,
+        candidates: Optional[List[Dict[str, Any]]] = None,
+        searching: bool = False,
+    ) -> None:
+        """Replace visible rows while preserving selection and the highlighted item."""
+        lv = self.query_one('#add-series-list', ListView)
+        candidates = self._filtered_candidates(value, candidates)
+        candidates.sort(
+            key=lambda candidate: (
+                candidate.get('date')
+                or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+            ).timestamp(),
+            reverse=True,
+        )
+        highlighted = lv.highlighted_child
+        highlighted_id = (
+            highlighted.candidate['message_id']
+            if isinstance(highlighted, EditTrackedSeriesItem)
+            else None
+        )
+        lv.clear()
+        lore_indices = [
+            index
+            for index, candidate in enumerate(candidates)
+            if not candidate.get('tracked')
+        ]
+        load_more_at = lore_indices[-1] + 1 if lore_indices else len(candidates)
+        for index, candidate in enumerate(candidates):
+            if (
+                index == load_more_at
+                and not self._searching
+                and not self._search_complete
+            ):
+                lv.append(LoadMoreSeriesItem())
+            lv.append(
+                EditTrackedSeriesItem(
+                    candidate, selected=candidate['message_id'] in self._selected
+                )
+            )
+        if (
+            load_more_at == len(candidates)
+            and not self._searching
+            and not self._search_complete
+        ):
+            lv.append(LoadMoreSeriesItem())
+        for index, candidate in enumerate(candidates):
+            if candidate['message_id'] == highlighted_id:
+                lv.index = index + int(
+                    index >= load_more_at
+                    and not self._searching
+                    and not self._search_complete
+                )
+                break
+        suffix = ' (searching Lore...)' if searching else ''
+        self.query_one('#add-series-status', Static).update(
+            f'{len(candidates)} matching series{suffix}'
+        )
+        self._update_track_button()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Filter cached rows immediately and debounce a new Lore search."""
+        if event.input.id != 'add-series-filter':
+            return
+        value = event.value.strip()
+        if value == self._current_filter:
+            return
+        previous_filter = self._current_filter
+        self._current_filter = value
+        self._filter_generation += 1
+        generation = self._filter_generation
+        self._search_generation += 1
+        self.app.workers.cancel_group(self, 'add-series-search')
+        self._searching = False
+        if value:
+            if not previous_filter:
+                self._browse_state = (
+                    self._search_end,
+                    dict(self._search_messages),
+                    self._search_complete,
+                    self._search_target,
+                )
+            self._render_candidates(value)
+            self.set_timer(0.35, lambda: self._search_filter(value, generation))
+        else:
+            recent = [
+                self._candidates[mid]
+                for mid in self._tracked_ids | set(self._recent_ids)
+                if mid in self._candidates
+            ]
+            if self._browse_state is not None:
+                (
+                    self._search_end,
+                    self._search_messages,
+                    self._search_complete,
+                    self._search_target,
+                ) = self._browse_state
+            self._render_candidates(value, recent)
+            if not self._recent_loaded:
+                self._start_recent_search()
+
+    def _search_filter(self, value: str, generation: int) -> None:
+        """Start a debounced search only if the filter has not changed again."""
+        if generation != self._filter_generation:
+            return
+        self._start_search(self._server_query(value), value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Move focus from the filter to the candidate list."""
+        if event.input.id == 'add-series-filter':
+            self.query_one('#add-series-list', ListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Toggle a candidate selected with Enter."""
+        if event.list_view.id != 'add-series-list':
+            return
+        event.stop()
+        if isinstance(event.item, LoadMoreSeriesItem):
+            value = self.query_one('#add-series-filter', Input).value.strip()
+            self._start_search(
+                self._server_query(value) if value else '', value, more=True
+            )
+            return
+        self._toggle_candidate(event.item)
+
+    def action_toggle_candidate(self) -> None:
+        """Toggle the highlighted candidate with Space."""
+        lv = self.query_one('#add-series-list', ListView)
+        item = lv.highlighted_child
+        if isinstance(item, EditTrackedSeriesItem) and not self._is_tracking:
+            self._toggle_candidate(item)
+            lv.action_cursor_down()
+
+    def _toggle_candidate(self, item: Any) -> None:
+        """Update the selected message IDs and the corresponding row."""
+        if self._is_tracking or not isinstance(item, EditTrackedSeriesItem):
+            return
+        message_id = item.candidate['message_id']
+        if message_id in self._selected:
+            self._selected.remove(message_id)
+        else:
+            self._selected.add(message_id)
+        item.toggle()
+        self._update_track_button()
+
+    def _update_track_button(self) -> None:
+        """Show the selection count and enable tracking when appropriate."""
+        button = self.query_one('#add-series-track', Button)
+        changed = self._selected != self._tracked_ids
+        button.label = 'Apply changes'
+        button.disabled = not changed or self._is_tracking
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle the popup's track and cancel buttons."""
+        if event.button.id == 'add-series-cancel':
+            self.action_cancel()
+        elif event.button.id == 'add-series-track':
+            self.action_track_selected()
+
+    def action_track_selected(self) -> None:
+        """Stop searching and track selected candidates in a background worker."""
+        if self._is_tracking or self._selected == self._tracked_ids:
+            return
+        removed = [self._candidates[mid] for mid in self._tracked_ids - self._selected]
+        if removed:
+            self.app.push_screen(
+                AbandonTrackedSeriesConfirmScreen(
+                    title='Abandon tracked series?',
+                    body=[
+                        f'Abandon {len(removed)} tracked series and delete their review branches?',
+                        'Tracking data for all revisions will be removed.',
+                    ],
+                    border='$warning',
+                ),
+                callback=lambda confirmed: (
+                    self._apply_selection(removed) if confirmed else None
+                ),
+            )
+            return
+        self._apply_selection([])
+
+    def _apply_selection(self, removed: List[Dict[str, Any]]) -> None:
+        self._filter_generation += 1
+        self._search_generation += 1
+        self.app.workers.cancel_group(self, 'add-series-search')
+        selected = [self._candidates[mid] for mid in self._selected - self._tracked_ids]
+        self._is_tracking = True
+        self._tracking_cancelled.clear()
+        self.query_one('#add-series-filter', Input).disabled = True
+        self.query_one('#add-series-list', ListView).disabled = True
+        self._update_track_button()
+        self.query_one('#add-series-status', Static).update(
+            f'Tracking {len(selected)} selected series…'
+        )
+
+        def _track() -> None:
+            """Track each selected candidate and collect outcomes for the UI."""
+            result: Dict[str, Any] = {
+                'tracked': 0,
+                'updated': 0,
+                'already_tracked': 0,
+                'errors': [],
+                'removed': removed,
+                'selected_change_ids': [],
+            }
+            for candidate in selected:
+                if worker_cancelled() or self._tracking_cancelled.is_set():
+                    break
+                try:
+                    with _quiet_worker():
+                        outcome = b4.review.tracking.track_series_from_msgid(
+                            self._identifier,
+                            candidate['message_id'],
+                            b4.git_get_toplevel(),
+                        )
+                    if outcome.get('change_id'):
+                        result['selected_change_ids'].append(outcome['change_id'])
+                    if outcome['status'] == 'already-tracked':
+                        result['already_tracked'] += 1
+                    else:
+                        result[outcome['status']] += 1
+                except liblore.OperationCancelledError:
+                    break
+                except Exception as ex:
+                    result['errors'].append(f'{candidate["subject"]}: {ex}')
+            if self._tracking_cancelled.is_set() or result['errors']:
+                result['removed'] = []
+            else:
+                result['removed'] = [
+                    series
+                    for series in removed
+                    if series.get('change_id') not in result['selected_change_ids']
+                ]
+            if worker_cancelled():
+                return
+            self.app.call_from_thread(self._finish_tracking, result)
+
+        run_lore_worker(self, _track, name='add-series-track', exclusive=True)
+
+    def _finish_tracking(self, result: Dict[str, Any]) -> None:
+        """Return successful results or show why no series were tracked."""
+        self._is_tracking = False
+        if result['tracked'] or result['updated'] or result.get('removed'):
+            self.dismiss(result)
+            return
+        if self._tracking_cancelled.is_set():
+            self.dismiss(
+                result if result['errors'] or result['already_tracked'] else None
+            )
+            return
+        errors = result['errors']
+        if errors:
+            detail = errors[0]
+            for error in errors:
+                b4.logger.warning('Tracking error: %s', error)
+                self.app.notify(escape(error), severity='error', timeout=10)
+        elif result['already_tracked']:
+            detail = f'{result["already_tracked"]} selected series already tracked'
+        else:
+            detail = 'No new series were tracked'
+        self.query_one('#add-series-filter', Input).disabled = False
+        self.query_one('#add-series-list', ListView).disabled = False
+        self.query_one('#add-series-status', Static).update(Text(detail))
+        self._update_track_button()
+
+    def action_cancel(self) -> None:
+        """Cancel an active batch or close the popup when tracking is idle."""
+        if not self._is_tracking:
+            self.dismiss(None)
+        elif not self._tracking_cancelled.is_set():
+            self._tracking_cancelled.set()
+            self.query_one('#add-series-cancel', Button).disabled = True
+            self.query_one('#add-series-status', Static).update('Cancelling tracking…')
+            b4.get_lore_node().cancel_active()
+
+
 class HelpScreen(ModalScreen[None]):
     """Parametric modal showing keybinding help.
 
@@ -378,6 +1264,7 @@ TRACKING_HELP_LINES = [
     '  [bold]e[/bold]         View email thread\n',
     '  [bold]d[/bold]         Range-diff between revisions\n',
     '  [bold]a[/bold]         Open action menu (take, rebase, etc.)\n',
+    '  [bold]E[/bold]         Edit tracked series and browse Lore\n',
     '  [bold]u[/bold]         Update selected series\n',
     '\n',
     '[bold]App[/bold]\n',

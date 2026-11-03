@@ -679,10 +679,64 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     finally:
         signal.signal(signal.SIGINT, _old_sigint)
 
+    try:
+        track_series_from_mailbox(identifier, lmbx, wanted_ver, topdir, was_rethreaded)
+    except LookupError as ex:
+        logger.critical('%s', ex)
+        sys.exit(1)
+
+
+def track_series_from_msgid(
+    identifier: str, message_id: str, topdir: Optional[str] = None
+) -> Dict[str, str]:
+    """Retrieve and track a series without installing command-line signal handlers."""
+    cmdargs = argparse.Namespace(
+        msgid=message_id,
+        no_stdin=True,
+        localmbox=None,
+        nocache=True,
+        noparent=False,
+        wantname=None,
+        wantver=None,
+    )
+    _, msgs = b4.retrieve_messages(cmdargs)
+    if not msgs:
+        raise LookupError(f'Could not retrieve series: {message_id}')
+
+    lmbx = b4.LoreMailbox()
+    for msg in msgs:
+        lmbx.add_message(msg)
+    if not lmbx.series:
+        raise LookupError('No series found in retrieved messages')
+    wanted_ver = max(lmbx.series)
+
+    if b4.can_network:
+        msgs = b4.mbox.get_extra_series(msgs, direction=1, nocache=True)
+        if wanted_ver > 1:
+            msgs = b4.mbox.get_extra_series(
+                msgs, direction=-1, wantvers=list(range(1, wanted_ver)), nocache=True
+            )
+        lmbx = b4.LoreMailbox()
+        for msg in msgs:
+            lmbx.add_message(msg)
+
+    return track_series_from_mailbox(
+        identifier, lmbx, wanted_ver, topdir, allow_existing=True
+    )
+
+
+def track_series_from_mailbox(
+    identifier: str,
+    lmbx: 'b4.LoreMailbox',
+    wanted_ver: int,
+    topdir: Optional[str] = None,
+    was_rethreaded: bool = False,
+    allow_existing: bool = False,
+) -> Dict[str, str]:
+    """Track a series from a LoreMailbox, given the desired version and project identifier."""
     lser = lmbx.get_series(wanted_ver, sloppytrailers=False, codereview_trailers=False)
     if not lser:
-        logger.critical('Could not find series version %d', wanted_ver)
-        sys.exit(1)
+        raise LookupError(f'Could not find series version {wanted_ver}')
 
     # Extract series metadata
     revision = lser.revision
@@ -708,8 +762,7 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
             ref_msg = lser.patches[1]
 
     if ref_msg is None:
-        logger.critical('Could not find cover letter or first patch')
-        sys.exit(1)
+        raise LookupError('Could not find cover letter or first patch')
 
     message_id = ref_msg.msgid
 
@@ -790,16 +843,14 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
                 logger.info(
                     '  Upgrade the series in the review TUI to the new version.'
                 )
-            return
-        logger.critical(
-            'This series is already tracked (status: %s, v%d)', status_str, cur_rev
+            return {'status': 'updated', 'change_id': existing_change_id}
+        if allow_existing:
+            return {'status': 'already-tracked', 'change_id': existing_change_id}
+        raise LookupError(
+            f'This series is already tracked (status: {status_str}, v{cur_rev})'
+            f' as {existing_change_id}.\n'
+            f'Use "b4 review forget {existing_change_id}" to erase it and track afresh.'
         )
-        logger.critical('Change-ID: %s', existing_change_id)
-        logger.critical(
-            'Use "b4 review forget %s" to erase it and track afresh.',
-            existing_change_id,
-        )
-        sys.exit(1)
 
     # Not tracked yet — create a new series and record its revisions.
     sent_at: Optional[str] = None
@@ -850,6 +901,7 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
             num_patches,
             ', '.join(missing),
         )
+    return {'status': 'tracked', 'change_id': change_id}
 
 
 def cmd_forget(cmdargs: argparse.Namespace) -> None:
