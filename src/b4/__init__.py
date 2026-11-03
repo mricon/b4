@@ -5427,7 +5427,14 @@ def get_pi_search_results(
     message: Optional[str] = None,
     full_threads: bool = True,
     local_sufficient: bool = False,
+    raise_errors: bool = False,
 ) -> Optional[List[EmailMessage]]:
+    """Fetch and deduplicate messages matching a public-inbox query.
+
+    Return None when there are no matches. With *raise_errors*, propagate
+    archive failures other than the 404 used to report an empty result;
+    otherwise log those failures and return None as well.
+    """
     node = get_lore_node()
     if message is not None and len(message):
         logger.info(message, node.hostname)
@@ -5441,6 +5448,8 @@ def get_pi_search_results(
             local_sufficient=local_sufficient,
         )
     except liblore.NotOnMirrorError as ex:
+        if raise_errors:
+            raise
         logger.info('%s', ex)
         return None
     except liblore.RemoteError as ex:
@@ -5448,6 +5457,8 @@ def get_pi_search_results(
         if ex.status_code == 404:
             logger.info('No messages found for that query')
         else:
+            if raise_errors:
+                raise
             logger.info('Could not search %s: %s', node.hostname, ex)
         return None
     if not t_mbox:

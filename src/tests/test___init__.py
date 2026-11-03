@@ -1644,6 +1644,19 @@ class TestLoreFetchMessages:
         assert line in self._messages(caplog, logging.DEBUG)
         assert line not in self._messages(caplog, logging.INFO)
 
+    @pytest.mark.parametrize('status_code', [None, 503, 404])
+    def test_search_can_propagate_failures(self, node: Any, status_code: Any) -> None:
+        import liblore
+
+        node.get_mbox_by_query.side_effect = liblore.RemoteError(
+            'search failed', status_code=status_code
+        )
+        if status_code == 404:
+            assert b4.get_pi_search_results('s:thing', raise_errors=True) is None
+        else:
+            with pytest.raises(liblore.RemoteError, match='search failed'):
+                b4.get_pi_search_results('s:thing', raise_errors=True)
+
     @pytest.mark.parametrize('quiet', [False, True], ids=['loud', 'quiet'])
     def test_tracker_sees_upstream_thread(self, node: Any, quiet: bool) -> None:
         import liblore
