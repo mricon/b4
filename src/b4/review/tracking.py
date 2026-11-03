@@ -679,6 +679,17 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     finally:
         signal.signal(signal.SIGINT, _old_sigint)
 
+    track_series_from_mailbox(identifier, lmbx, wanted_ver, topdir, was_rethreaded)
+
+
+def track_series_from_mailbox(
+    identifier: str,
+    lmbx: 'b4.LoreMailbox',
+    wanted_ver: int,
+    topdir: Optional[str] = None,
+    was_rethreaded: bool = False,
+) -> None:
+    """Track a series from a LoreMailbox, given the desired version and project identifier."""
     lser = lmbx.get_series(wanted_ver, sloppytrailers=False, codereview_trailers=False)
     if not lser:
         logger.critical('Could not find series version %d', wanted_ver)
