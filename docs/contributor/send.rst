@@ -288,6 +288,11 @@ The following happens after you send your patches:
 * b4 automatically edits the cover letter to add changelog entries
   containing a pre-populated link to the just-sent series
 
+This works the same way for a series on a detached ``HEAD`` (see
+:ref:`prep_detached`). Rerolling rewrites the cover letter commit, which
+moves ``HEAD``, and it stays detached. No branch or other ref is moved
+along with it.
+
 Resending your series
 ~~~~~~~~~~~~~~~~~~~~~
 If something went wrong, or if you need to resend the series because

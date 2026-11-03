@@ -33,7 +33,11 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
 import b4
 import patatt
-from b4._rewrite import ThirdpartyCommitterError, rewrite_commits
+from b4._rewrite import (
+    RewriteTargetMovedError,
+    ThirdpartyCommitterError,
+    rewrite_commits,
+)
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -344,7 +348,90 @@ def get_base_forkpoint(basebranch: str, mybranch: Optional[str] = None) -> str:
     return forkpoint
 
 
+def make_change_id(slug: str) -> str:
+    # We don't need all the entropy of uuid, just some of it
+    return (
+        '%s-%s-%s'
+        % (
+            datetime.date.today().strftime('%Y%m%d'),  # noqa: DTZ011
+            slug,
+            uuid.uuid4().hex[:12],
+        )
+    )
+
+
+def _get_detached_backup_ref(change_id: str) -> str:
+    return f'refs/original/b4/{change_id}'
+
+
+def _get_detached_enroll_base(enroll_base: str) -> str:
+    """Resolve the enrollment base for a detached HEAD to a commit.
+
+    A branch is forked from as on a branch. Anything else has to be an
+    ancestor of HEAD, because no branch holds the series to say where it
+    forked. Exits without changing anything when the base is not usable.
+    """
+    ecode, out = b4.git_run_command(
+        None, ['rev-parse', '--verify', '-q', f'{enroll_base}^{{commit}}']
+    )
+    if ecode > 0:
+        if '@{' in enroll_base:
+            logger.critical(
+                'CRITICAL: HEAD is detached, so it has no upstream to enroll against.'
+            )
+            logger.critical('          Pass the base explicitly, for example:')
+            logger.critical('            b4 prep -e origin/master')
+        else:
+            logger.critical('CRITICAL: Could not find commit: %s', enroll_base)
+        sys.exit(1)
+    basecommit = out.strip()
+    ecode, out = b4.git_run_command(
+        None, ['rev-parse', '--symbolic-full-name', enroll_base]
+    )
+    if ecode == 0 and out.startswith(('refs/heads/', 'refs/remotes/')):
+        try:
+            return get_base_forkpoint(enroll_base, 'HEAD')
+        except RuntimeError as ex:
+            logger.critical(
+                'CRITICAL: could not use %s as enrollment base:', enroll_base
+            )
+            logger.critical('          %s', ex)
+            sys.exit(1)
+    if not b4.git_commit_is_ancestor(None, basecommit, 'HEAD'):
+        logger.critical('CRITICAL: %s is not an ancestor of HEAD.', enroll_base)
+        sys.exit(1)
+    return basecommit
+
+
+def _get_detached_series_name(forkpoint: str) -> str:
+    """Name a detached series after its first patch, as -F names it after
+    the cover letter subject."""
+    subjects = b4.git_get_command_lines(
+        None, ['log', '--reverse', '--format=%s', f'{forkpoint}..HEAD']
+    )
+    slug = ''
+    if subjects:
+        slug = b4.LoreSubject(subjects[0]).get_slug(with_counter=False)
+        # If it's longer than 30 chars, use first 3 words
+        if len(slug) > 30:
+            slug = '_'.join(slug.split('_')[:3])
+    return slug or 'detached-head'
+
+
+def _explain_enroll_recovery(recovery_ref: str, cherry_picking: bool) -> None:
+    logger.critical('          Your commits from before enrolling are kept in')
+    logger.critical('          %s.', recovery_ref)
+    if cherry_picking:
+        logger.critical('          Resolve the problem and run "git cherry-pick')
+        logger.critical('          --continue" to finish enrolling, or go back with:')
+        logger.critical('            git cherry-pick --abort')
+    else:
+        logger.critical('          To go back to where you started, run:')
+    logger.critical('            git checkout --detach %s', recovery_ref)
+
+
 def start_new_series(cmdargs: argparse.Namespace) -> None:
+    check_no_operation_in_progress()
     usercfg = b4.get_user_config()
     if 'name' not in usercfg or 'email' not in usercfg:
         logger.critical(
@@ -445,6 +532,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
     strategy = get_cover_strategy()
     cherry_range = None
     depends_on = None
+    branchname: Optional[str] = None
+    changeid: Optional[str] = None
+    recovery_ref: Optional[str] = None
     if cmdargs.new_series_name:
         basebranch = None
         if not cmdargs.fork_point:
@@ -504,6 +594,70 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             sys.exit(ecode)
         logger.info('Created new branch %s', branchname)
         seriesname = cmdargs.new_series_name
+
+    elif cmdargs.enroll_base and mybranch is None:
+        # The series is the history of HEAD, and no branch is created for it.
+        # Work out everything before the first change, so that a bad base
+        # leaves HEAD alone.
+        basebranch = None
+        forkpoint = _get_detached_enroll_base(cmdargs.enroll_base)
+        merges = b4.git_get_command_lines(
+            None, ['rev-list', '--merges', f'{forkpoint}..HEAD']
+        )
+        if merges:
+            logger.critical(
+                'CRITICAL: HEAD has merge commit %.12s above %s,',
+                merges[0],
+                cmdargs.enroll_base,
+            )
+            logger.critical('          so b4 cannot enroll it as a series.')
+            sys.exit(1)
+        covers = b4.git_get_command_lines(
+            None,
+            ['log', '--grep', MAGIC_MARKER, '-F', '--format=%H', f'{forkpoint}..HEAD'],
+        )
+        if covers:
+            logger.critical(
+                'CRITICAL: HEAD already has a b4 cover letter at %.12s.', covers[0]
+            )
+            sys.exit(1)
+        try:
+            commitcount = get_rev_count(f'{forkpoint}..HEAD')
+        except RuntimeError as ex:
+            logger.critical(
+                'CRITICAL: could not use %s as fork point:', cmdargs.enroll_base
+            )
+            logger.critical('          %s', ex)
+            sys.exit(1)
+        seriesname = _get_detached_series_name(forkpoint)
+        slug = re.sub(r'\W+', '-', seriesname).strip('-').lower()
+        changeid = make_change_id(slug)
+        tip = b4.git_revparse_obj('HEAD')
+
+        recovery_ref = _get_detached_backup_ref(changeid)
+        # An empty old value only creates the ref, never moves an existing one
+        gitargs = ['update-ref', '-m', 'b4: enroll', recovery_ref, tip, '']
+        ecode, out = b4.git_run_command(None, gitargs, logstderr=True)
+        if ecode > 0:
+            logger.critical('CRITICAL: Could not save HEAD as %s:', recovery_ref)
+            logger.critical(out)
+            sys.exit(1)
+
+        if commitcount:
+            logger.info('Will track %s commits', commitcount)
+            cherry_range = f'{forkpoint}..{tip}'
+            # Moves only HEAD, since it is detached
+            gitargs = ['reset', '--hard', forkpoint]
+            ecode, out = b4.git_run_command(None, gitargs, logstderr=True)
+            if ecode > 0:
+                logger.critical('CRITICAL: not able to reset HEAD to %s', forkpoint)
+                logger.critical(out)
+                _explain_enroll_recovery(recovery_ref, cherry_picking=False)
+                sys.exit(1)
+        else:
+            logger.info(
+                'NOTE: No new commits since fork-point "%s"', cmdargs.enroll_base
+            )
 
     elif cmdargs.enroll_base:
         basebranch = None
@@ -615,8 +769,9 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         logger.critical('CRITICAL: unknown operation requested')
         sys.exit(1)
 
-    # Store our cover letter strategy in the branch config
-    b4.git_set_config(None, f'branch.{branchname}.b4-prep-cover-strategy', strategy)
+    if branchname is not None:
+        # Store our cover letter strategy in the branch config
+        b4.git_set_config(None, f'branch.{branchname}.b4-prep-cover-strategy', strategy)
 
     if not cover:
         # create a default cover letter and store it where the strategy indicates
@@ -651,15 +806,8 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         logger.info('Created the default cover letter, you can edit with --edit-cover.')
 
     if not tracking:
-        # We don't need all the entropy of uuid, just some of it
-        changeid = (
-            '%s-%s-%s'
-            % (
-                datetime.date.today().strftime('%Y%m%d'),  # noqa: DTZ011
-                slug,
-                uuid.uuid4().hex[:12],
-            )
-        )
+        if changeid is None:
+            changeid = make_change_id(slug)
         if revision is None:
             revision = 1
         prefixes = list()
@@ -699,13 +847,20 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
             # We only need the base-branch info when using strategies other than 'commit'
             tracking['series']['base-branch'] = basebranch
 
-    store_cover(cover, tracking, new=True)
+    try:
+        store_cover(cover, tracking, new=True)
+    except RuntimeError:
+        if recovery_ref:
+            _explain_enroll_recovery(recovery_ref, cherry_picking=False)
+        raise
     if cherry_range:
         gitargs = ['cherry-pick', cherry_range]
         ecode, out = b4.git_run_command(None, gitargs)
         if ecode > 0:
             # Woops, this is bad! At least tell them where the commit range is.
             logger.critical('Could not cherry-pick commits from range %s', cherry_range)
+            if recovery_ref:
+                _explain_enroll_recovery(recovery_ref, cherry_picking=True)
             sys.exit(1)
 
     if patches:
@@ -723,6 +878,22 @@ def start_new_series(cmdargs: argparse.Namespace) -> None:
         logger.info(
             'NOTE: any follow-up trailers were ignored; apply them with b4 trailers -u'
         )
+
+
+def check_no_operation_in_progress() -> None:
+    """Exit if a git operation stopped between steps in this worktree.
+
+    A rebase, merge, cherry-pick, revert or am that stopped between steps
+    can leave a clean tree behind, with HEAD wherever the operation put it.
+    Rewriting history or moving HEAD then pulls it out from under that
+    operation. Commands that only read the series stay usable.
+    """
+    topdir = b4.git_get_toplevel()
+    inprogress = b4._worktree_inprogress_op(topdir) if topdir else None
+    if inprogress:
+        logger.critical('CRITICAL: A git %s is in progress.', inprogress)
+        logger.critical('          Finish or abort it first.')
+        sys.exit(1)
 
 
 def make_magic_json(data: Dict[str, Any]) -> str:
@@ -777,6 +948,7 @@ def load_cover(
 
 
 def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> None:
+    check_no_operation_in_progress()
     strategy = get_cover_strategy()
     if strategy in {'commit', 'tip-commit'}:
         cover_message = content + '\n\n' + make_magic_json(tracking)
@@ -800,6 +972,7 @@ def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> No
                 start=f'{commit}~1',
                 end='HEAD',
                 reflog_msg='b4: update cover letter',
+                backup_ref=get_series_backup_ref(tracking),
             )
 
     if strategy == 'branch-description':
@@ -819,25 +992,51 @@ def store_cover(content: str, tracking: Dict[str, Any], new: bool = False) -> No
 #              (once/if git upstream properly supports it)
 
 
-def get_cover_strategy(usebranch: Optional[str] = None) -> str:
+def get_prep_target(usebranch: Optional[str] = None) -> Tuple[str, Optional[str]]:
+    """Return the revision that holds the series and the branch it is on.
+
+    An explicit *usebranch*, or else the current branch, is both. On a
+    detached HEAD, the series is the history of HEAD, and there is no
+    branch whose configuration could apply to it.
+    """
     if usebranch:
-        branch = usebranch
-    else:
-        _cb = b4.git_get_current_branch()
-        if _cb is None:
+        return usebranch, usebranch
+    mybranch = b4.git_get_current_branch()
+    if mybranch is None:
+        return 'HEAD', None
+    return mybranch, mybranch
+
+
+def _get_configured_cover_strategy() -> str:
+    config = b4.get_main_config()
+    return str(config.get('prep-cover-strategy', 'commit'))
+
+
+def get_cover_strategy(usebranch: Optional[str] = None) -> str:
+    _rev, branch = get_prep_target(usebranch)
+    if branch is None:
+        # Only the commit strategy keeps everything in the history of HEAD.
+        # The others need a branch to keep the cover in, or to remember
+        # which strategy the series uses.
+        strategy = _get_configured_cover_strategy()
+        if strategy != 'commit':
             logger.critical(
-                'CRITICAL: not currently on a branch, unable to determine cover strategy'
+                'CRITICAL: HEAD is detached, and b4 supports only the "commit" cover'
             )
+            logger.critical(
+                '          strategy without a branch (b4.prep-cover-strategy is %s).',
+                strategy,
+            )
+            logger.critical('          Check out a branch to use that strategy.')
             sys.exit(1)
-        branch = _cb
+        return strategy
     # Check local branch config for the strategy
     bconfig = b4.get_config_from_git(rf'branch\.{branch}\..*')
     if 'b4-prep-cover-strategy' in bconfig:
         strategy = str(bconfig.get('b4-prep-cover-strategy'))
         logger.debug('Got strategy=%s from branch-config', strategy)
     else:
-        config = b4.get_main_config()
-        strategy = str(config.get('prep-cover-strategy', 'commit'))
+        strategy = _get_configured_cover_strategy()
 
     if strategy in {'commit', 'branch-description', 'tip-commit'}:
         return strategy
@@ -850,17 +1049,17 @@ def is_prep_branch(mustbe: bool = False, usebranch: Optional[str] = None) -> boo
     mustmsg = (
         'CRITICAL: This is not a prep-managed branch or it was created by someone else.'
     )
-    mybranch: Optional[str] = None
-    if usebranch:
-        mybranch = usebranch
-    else:
-        mybranch = b4.git_get_current_branch()
+    _rev, mybranch = get_prep_target(usebranch)
     if mybranch is None:
-        # Not on any branch?
-        if mustbe:
-            logger.critical(mustmsg)
-            sys.exit(1)
-        return False
+        mustmsg = (
+            'CRITICAL: HEAD is not a prep-managed series or it was created by someone else.\n'
+            '          To enroll it, run: b4 prep -e <base>'
+        )
+        if _get_configured_cover_strategy() != 'commit':
+            if mustbe:
+                # Explains why and exits
+                get_cover_strategy()
+            return False
 
     strategy = get_cover_strategy(mybranch)
     if strategy in {'commit', 'tip-commit'}:
@@ -890,16 +1089,7 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
     logger.debug(
         'Looking for the cover letter commit with magic marker "%s"', MAGIC_MARKER
     )
-    if not usebranch:
-        usebranch = b4.git_get_current_branch()
-    if usebranch is None:
-        logger.critical(
-            'The current repository is not tracking a branch. To use b4, please checkout a branch.'
-        )
-        logger.critical('Maybe a rebase is running?')
-        raise RuntimeError(
-            'Not currently on a branch, please checkout a b4-tracked branch'
-        )
+    rev, mybranch = get_prep_target(usebranch)
 
     # Restrict to committer being the current person, in case an errant cover letter
     # got added into the shared tree, as in:
@@ -917,7 +1107,7 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
         '--since=1.year',
         '--no-mailmap',
         f'--committer={limit_committer}',
-        usebranch,
+        rev,
         '--',
     ]
     lines = b4.git_get_command_lines(None, gitargs)
@@ -925,7 +1115,79 @@ def find_cover_commit(usebranch: Optional[str] = None) -> Optional[str]:
         return None
     found = lines[0].split()[0]
     logger.debug('Cover commit found in %s', found)
+    if mybranch is None:
+        _check_detached_series(found)
     return found
+
+
+def _read_cover_tracking(cover_commit: str) -> Dict[str, Any]:
+    ecode, out = b4.git_run_command(
+        None, ['show', '-s', '--format=%B', cover_commit, '--']
+    )
+    if ecode > 0 or MAGIC_MARKER not in out:
+        logger.critical('CRITICAL: unable to read cover letter at %s', cover_commit)
+        sys.exit(1)
+    _cover, magic_json = out.split(MAGIC_MARKER, maxsplit=1)
+    _junk, mdata = magic_json.split('{', maxsplit=1)
+    tracking: Dict[str, Any] = json.loads('{' + mdata)
+    return tracking
+
+
+def _check_detached_series(cover_commit: str) -> None:
+    """Exit unless *cover_commit* starts a series that HEAD can carry alone.
+
+    Without a branch, nothing records the cover strategy, so the history
+    has to show that the series uses the commit strategy: an empty cover
+    commit with one parent, and a linear series from there to HEAD. A
+    tip-commit cover can also sit at HEAD with one parent, but only the
+    commit strategy keeps no base branch in its tracking data.
+    """
+    tracking = _read_cover_tracking(cover_commit)
+    basebranch = tracking.get('series', dict()).get('base-branch')
+    if basebranch is not None:
+        logger.critical(
+            'CRITICAL: The cover letter at %.12s tracks base branch %s,',
+            cover_commit,
+            basebranch,
+        )
+        logger.critical(
+            '          so it is not stored with the "commit" strategy, which is'
+        )
+        logger.critical('          the only one b4 supports on a detached HEAD.')
+        logger.critical('          Check out the branch of this series instead.')
+        sys.exit(1)
+    parents = b4.git_get_command_lines(
+        None, ['rev-list', '--no-walk', '--parents', cover_commit]
+    )
+    if len(parents) != 1 or len(parents[0].split()) != 2:
+        logger.critical(
+            'CRITICAL: The cover letter at %.12s does not have exactly one parent,',
+            cover_commit,
+        )
+        logger.critical('          so b4 cannot tell where the series is based.')
+        sys.exit(1)
+    merges = b4.git_get_command_lines(
+        None, ['rev-list', '--merges', f'{cover_commit}..HEAD']
+    )
+    if merges:
+        logger.critical(
+            'CRITICAL: The series that starts at %.12s contains merge commit %.12s,',
+            cover_commit,
+            merges[0],
+        )
+        logger.critical('          so b4 cannot tell which commits belong to it.')
+        sys.exit(1)
+
+
+def get_series_backup_ref(tracking: Dict[str, Any]) -> Optional[str]:
+    """Return the backup ref for rewriting the series, or None for the default.
+
+    On a branch, rewrites back up to ``refs/original/<branch>``. A detached
+    HEAD has no name of its own, so the change-id names the backup.
+    """
+    if b4.git_get_current_branch() is not None:
+        return None
+    return _get_detached_backup_ref(tracking['series']['change-id'])
 
 
 def find_cover_commits(usebranch: Optional[str] = None) -> List[Tuple[str, str]]:
@@ -936,10 +1198,7 @@ def find_cover_commits(usebranch: Optional[str] = None) -> List[Tuple[str, str]]
     commit that was committed under a different identity -- e.g. after the
     user changed their ``user.email``. Newest first; empty when none exist.
     """
-    if not usebranch:
-        usebranch = b4.git_get_current_branch()
-    if usebranch is None:
-        return []
+    rev, _mybranch = get_prep_target(usebranch)
     gitargs = [
         'log',
         '--grep',
@@ -948,7 +1207,7 @@ def find_cover_commits(usebranch: Optional[str] = None) -> List[Tuple[str, str]]
         '--pretty=format:%H %cE',
         '--since=1.year',
         '--no-mailmap',
-        usebranch,
+        rev,
         '--',
     ]
     found: List[Tuple[str, str]] = []
@@ -959,7 +1218,7 @@ def find_cover_commits(usebranch: Optional[str] = None) -> List[Tuple[str, str]]
     return found
 
 
-def _explain_not_prep_branch(mybranch: str, fallbackmsg: str) -> None:
+def _explain_not_prep_branch(mybranch: Optional[str], fallbackmsg: str) -> None:
     """Log a helpful reason why *mybranch* failed the prep-branch check.
 
     The restricted :func:`find_cover_commit` lookup just came up empty. If a
@@ -969,6 +1228,7 @@ def _explain_not_prep_branch(mybranch: str, fallbackmsg: str) -> None:
     Falls back to *fallbackmsg* when no cover commit exists at all.
     """
     covers = find_cover_commits(usebranch=mybranch)
+    where = 'branch' if mybranch else 'HEAD'
     if not covers:
         logger.critical(fallbackmsg)
         return
@@ -976,7 +1236,7 @@ def _explain_not_prep_branch(mybranch: str, fallbackmsg: str) -> None:
         logger.critical(
             'CRITICAL: Found %d b4 cover-letter commits on this', len(covers)
         )
-        logger.critical('          branch, committed under different identities:')
+        logger.critical('          %s, committed under different identities:', where)
         for sha, email in covers:
             logger.critical('            %s  by %s', sha[:12], email)
         logger.critical('          Something is wrong here that b4 should not try to')
@@ -985,18 +1245,23 @@ def _explain_not_prep_branch(mybranch: str, fallbackmsg: str) -> None:
     sha, email = covers[0]
     usercfg = b4.get_user_config()
     myemail = usercfg.get('email')
-    logger.critical("CRITICAL: This branch's b4 cover-letter commit (%s)", sha[:12])
+    logger.critical("CRITICAL: This %s's b4 cover-letter commit (%s)", where, sha[:12])
     logger.critical('          was committed by %s, but your current git', email)
     logger.critical('          identity is %s.', myemail)
     logger.critical('          This usually happens after changing your user.email.')
     logger.critical('          To continue, either:')
     logger.critical('            - set user.email back to %s, or', email)
-    logger.critical('            - claim this branch under your current identity:')
+    logger.critical('            - claim this %s under your current identity:', where)
     logger.critical('                b4 prep --claim')
 
 
 def _rewrite_series_commits(
-    edit_map: Dict[str, str], start: str, end: str = 'HEAD', *, reflog_msg: str
+    edit_map: Dict[str, str],
+    start: str,
+    end: str = 'HEAD',
+    *,
+    reflog_msg: str,
+    backup_ref: Optional[str] = None,
 ) -> Dict[str, str]:
     """Wrap rewrite_commits(), turning a third-party-committer refusal into advice.
 
@@ -1006,7 +1271,9 @@ def _rewrite_series_commits(
     user to ``prep --claim`` instead of dumping a traceback.
     """
     try:
-        return rewrite_commits(edit_map, start, end, reflog_msg=reflog_msg)
+        return rewrite_commits(
+            edit_map, start, end, reflog_msg=reflog_msg, backup_ref=backup_ref
+        )
     except ThirdpartyCommitterError as ex:
         logger.critical(
             'CRITICAL: refusing to rewrite commit(s) committed by someone else:'
@@ -1021,9 +1288,13 @@ def _rewrite_series_commits(
         )
         logger.critical('                b4 prep --claim')
         sys.exit(1)
+    except RewriteTargetMovedError as ex:
+        logger.critical('CRITICAL: %s moved while b4 was rewriting it.', ex.refname)
+        logger.critical('          Nothing was changed; run the command again.')
+        sys.exit(1)
 
 
-def _claim_range_start(mybranch: str, cover_sha: str) -> str:
+def _claim_range_start(mybranch: Optional[str], cover_sha: str) -> str:
     """Return the rewrite-range start (exclusive) for claiming *mybranch*.
 
     For the ``commit`` strategy the cover letter is the first commit of the
@@ -1067,6 +1338,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
       pulled series); claiming makes them yours so the trailer/cover-update
       rewrite is permitted instead of refused.
     """
+    check_no_operation_in_progress()
     mybranch = b4.git_get_current_branch()
     if branch and branch != mybranch:
         if not b4.git_branch_exists(None, branch):
@@ -1079,9 +1351,8 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
             logger.critical('CRITICAL: could not check out %s:\n%s', branch, out)
             sys.exit(1)
         mybranch = branch
-    if not mybranch:
-        logger.critical('CRITICAL: not currently on a branch')
-        sys.exit(1)
+    # Claiming a detached HEAD rewrites it in place, like any other rewrite
+    where = mybranch or 'HEAD'
 
     usercfg = b4.get_user_config()
     myemail = usercfg.get('email')
@@ -1094,7 +1365,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
     covers = find_cover_commits(usebranch=mybranch)
     if len(covers) > 1:
         logger.critical(
-            'CRITICAL: Found %d b4 cover-letter commits on %s,', len(covers), mybranch
+            'CRITICAL: Found %d b4 cover-letter commits on %s,', len(covers), where
         )
         logger.critical('          committed under different identities:')
         for sha, email in covers:
@@ -1102,9 +1373,15 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         logger.critical('          b4 will not try to untangle this automatically.')
         sys.exit(1)
 
+    backup_ref = None
     if covers:
         # commit / tip-commit strategy: derive the range from the cover commit.
         cover_sha, _cover_email = covers[0]
+        if mybranch is None:
+            # find_cover_commit() would check this, but it can't find a
+            # cover committed under another identity
+            _check_detached_series(cover_sha)
+            backup_ref = get_series_backup_ref(_read_cover_tracking(cover_sha))
         start = _claim_range_start(mybranch, cover_sha)
     else:
         # branch-description keeps no cover commit; the branch is still
@@ -1112,7 +1389,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         if not is_prep_branch(usebranch=mybranch):
             logger.critical(
                 'CRITICAL: %s is not a prep-managed branch; nothing to claim.',
-                mybranch,
+                where,
             )
             sys.exit(1)
         series_start = get_series_start(usebranch=mybranch)
@@ -1129,7 +1406,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         None, ['log', '--format=%h %cE %s', f'{start}..HEAD']
     )
     if not lines:
-        logger.critical('CRITICAL: no commits found between %s and %s', start, mybranch)
+        logger.critical('CRITICAL: no commits found between %s and %s', start, where)
         sys.exit(1)
     committers: Set[str] = set()
     for ln in lines:
@@ -1139,7 +1416,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
     if committers == {myemail}:
         logger.info(
             'All commits on %s are already committed by you (%s); nothing to claim.',
-            mybranch,
+            where,
             myemail,
         )
         return
@@ -1149,7 +1426,7 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         logger.info('  %s', line)
     logger.info('Authorship is preserved; only the committer identity changes.')
     if not no_interactive:
-        prompt = f'Claim these commits on {mybranch} under {myemail}? [y/N] '
+        prompt = f'Claim these commits on {where} under {myemail}? [y/N] '
         try:
             resp = input(prompt)
         except EOFError:
@@ -1165,8 +1442,9 @@ def claim_prep_branch(branch: Optional[str], no_interactive: bool = False) -> No
         reflog_msg='b4: claim prep branch',
         force=True,
         allow_thirdparty_committer=True,
+        backup_ref=backup_ref,
     )
-    logger.info('Claimed %s. The series is now committed by %s.', mybranch, myemail)
+    logger.info('Claimed %s. The series is now committed by %s.', where, myemail)
 
 
 def is_base_tree_entry(entry: str) -> bool:
@@ -1599,6 +1877,8 @@ def deps_from_file(fpath: str) -> None:
 
 
 def edit_cover() -> None:
+    # Before the editor runs, so that a refusal costs no edits
+    check_no_operation_in_progress()
     is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     bcover = cover.encode()
@@ -1618,6 +1898,8 @@ def edit_cover() -> None:
 
 
 def edit_deps() -> None:
+    # Before the editor runs, so that a refusal costs no edits
+    check_no_operation_in_progress()
     is_prep_branch(mustbe=True)
     cover, tracking = load_cover()
     prereqs = tracking['series'].get('prerequisites', list())
@@ -1854,11 +2136,7 @@ def _print_check_results(res: Dict[str, Tuple[bool, str]]) -> None:
 
 
 def get_series_start(usebranch: Optional[str] = None) -> Optional[str]:
-    mybranch: Optional[str] = None
-    if usebranch:
-        mybranch = usebranch
-    else:
-        mybranch = b4.git_get_current_branch()
+    _rev, mybranch = get_prep_target(usebranch)
     strategy = get_cover_strategy(usebranch=mybranch)
     forkpoint = None
     if strategy == 'commit':
@@ -2107,6 +2385,7 @@ def interactive_trailer_review(
 
 
 def update_trailers(cmdargs: argparse.Namespace) -> None:
+    check_no_operation_in_progress()
     if not b4.can_network and not cmdargs.localmbox:
         logger.critical(
             'CRITICAL: To work in offline mode you have to pass a local mailbox.'
@@ -2126,6 +2405,12 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
     limit_committer: Optional[str] = str(usercfg['email'])
     # If we are in an b4-prep branch, we start from the beginning of the series
     in_prep_branch = is_prep_branch()
+    if not in_prep_branch and b4.git_get_current_branch() is None:
+        # Rewriting a detached HEAD needs a backup ref named after the series
+        logger.critical('CRITICAL: HEAD is detached and is not a b4 prep series.')
+        logger.critical('          Check out a branch, or enroll HEAD with:')
+        logger.critical('            b4 prep -e <base>')
+        sys.exit(1)
     if in_prep_branch:
         # Don't limit by committer in a prep branch
         limit_committer = None
@@ -2502,6 +2787,7 @@ def update_trailers(cmdargs: argparse.Namespace) -> None:
         start=start,
         end='HEAD',
         reflog_msg='b4: update trailers',
+        backup_ref=get_series_backup_ref(tracking) if tracking else None,
     )
     logger.info('Trailers updated.')
 
@@ -2527,11 +2813,7 @@ def get_addresses_from_cmd(
 def get_series_range(
     start_commit: Optional[str] = None, usebranch: Optional[str] = None
 ) -> Tuple[str, str, str]:
-    mybranch: Optional[str] = None
-    if usebranch:
-        mybranch = usebranch
-    else:
-        mybranch = b4.git_get_current_branch()
+    rev, mybranch = get_prep_target(usebranch)
     if not start_commit:
         start_commit = get_series_start(usebranch=mybranch)
         if start_commit is None:
@@ -2547,13 +2829,8 @@ def get_series_range(
     if strategy == 'tip-commit':
         cover_commit = find_cover_commit(usebranch=mybranch)
         end_commit = b4.git_revparse_obj(f'{cover_commit}~1')
-    elif mybranch:
-        end_commit = b4.git_revparse_obj(mybranch)
     else:
-        logger.critical(
-            'CRITICAL: Not currently on a branch, unable to determine end commit'
-        )
-        sys.exit(1)
+        end_commit = b4.git_revparse_obj(rev)
 
     return base_commit, start_commit, end_commit
 
@@ -3224,11 +3501,18 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         auth_verify(cmdargs)
         return
 
-    mybranch = b4.git_get_current_branch()
-    if mybranch is None:
-        logger.critical('CRITICAL: Not currently on a branch, unable to send')
-        sys.exit(1)
+    if not (
+        cmdargs.resend
+        or cmdargs.dryrun
+        or cmdargs.output_dir
+        or cmdargs.reflect
+        or cmdargs.preview_to
+    ):
+        # Refuse before sending anything rather than at the reroll after it
+        check_no_operation_in_progress()
 
+    # None on a detached HEAD, where the series is the history of HEAD
+    mybranch = b4.git_get_current_branch()
     is_prep_branch(mustbe=True)
 
     config = b4.get_main_config()
@@ -3251,7 +3535,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.critical('Could not figure out revision from %s', revstr)
             sys.exit(1)
 
-        if not b4.git_revparse_tag(None, tagname):
+        if not b4.git_revparse_tag(None, tagname) and mybranch:
             # Try initial branch-name only based version
             tagname, revision = get_sent_tagname(mybranch, SENT_TAG_PREFIX, revstr)
             if revision is None:
@@ -3729,7 +4013,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
 
     if tag_msg is None:
         logger.critical(
-            'CRITICAL: unable to get tag_msg from %s, not rerolling', mybranch
+            'CRITICAL: unable to get tag_msg from %s, not rerolling', mybranch or 'HEAD'
         )
         return
 
@@ -3762,8 +4046,12 @@ def get_sent_tagname(
 
 
 def reroll(
-    mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PREFIX
+    mybranch: Optional[str],
+    tag_msg: str,
+    msgid: str,
+    tagprefix: str = SENT_TAG_PREFIX,
 ) -> None:
+    check_no_operation_in_progress()
     # Remove signature
     chunks = tag_msg.rsplit('\n-- \n')
     if len(chunks) > 1:
@@ -4182,10 +4470,7 @@ def show_info(param: str) -> None:
         mybranch = b4.git_get_current_branch()
         getval = param
 
-    if mybranch is None:
-        logger.critical('No branch specified and no current branch found')
-        sys.exit(1)
-
+    # Without a branch, get_info() reports on the series at HEAD
     prep_info = get_info(usebranch=mybranch)
     if getval == '_all':
         for key, val in prep_info.items():
@@ -4198,7 +4483,7 @@ def show_info(param: str) -> None:
         sys.exit(1)
 
 
-def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
+def get_info(usebranch: Optional[str]) -> Dict[str, Union[str, bool, None]]:
     is_prep_branch(mustbe=True, usebranch=usebranch)
     cover, tracking = load_cover(usebranch=usebranch)
     csubject, _ = get_cover_subject_body(cover)
@@ -4263,7 +4548,7 @@ def get_info(usebranch: str) -> Dict[str, Union[str, bool, None]]:
                 ts.get('change-id'), SENT_TAG_PREFIX, rn
             )
             tag_commit = b4.git_revparse_tag(None, tagname)
-            if not tag_commit:
+            if not tag_commit and usebranch:
                 logger.debug(
                     'No tag %s, trying with base branch name %s', tagname, usebranch
                 )
@@ -4300,11 +4585,8 @@ def range_diff_compare(
         tracking['series']['change-id'], SENT_TAG_PREFIX, compareto
     )
     prev_end = b4.git_revparse_tag(None, tagname)
-    if not prev_end:
-        mybranch = b4.git_get_current_branch(None)
-        if mybranch is None:
-            logger.critical('CRITICAL: No current branch found')
-            sys.exit(1)
+    mybranch = b4.git_get_current_branch(None)
+    if not prev_end and mybranch:
         tagname, _ = get_sent_tagname(mybranch, SENT_TAG_PREFIX, compareto)
         prev_end = b4.git_revparse_tag(None, tagname)
     if not prev_end:
@@ -4567,9 +4849,6 @@ def cmd_prep(cmdargs: argparse.Namespace) -> None:
         msgid = cmdargs.reroll
         msgs = b4.get_pi_thread_by_msgid(msgid, onlymsgids={msgid}, nocache=True)
         mybranch = b4.git_get_current_branch(None)
-        if not mybranch:
-            logger.critical('CRITICAL: No current branch found')
-            sys.exit(1)
         if msgs:
             for msg in msgs:
                 if b4.LoreMessage.get_clean_msgid(msg) == msgid:

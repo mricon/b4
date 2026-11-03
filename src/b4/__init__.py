@@ -7754,7 +7754,9 @@ def edit_in_editor(
     (b4 prep keeps the cover letter in the current branch's tracking commit,
     so a branch switch mid-edit would clobber an unrelated series).  HEAD is
     read before and after the editor runs; if it moved, the text is saved to
-    a temporary file and RuntimeError is raised.
+    a temporary file and RuntimeError is raised.  On a branch, only switching
+    to another branch counts as moving.  On a detached HEAD there is no
+    branch to tell series apart, so any change of the HEAD commit counts.
 
     Callers that write to an explicit ref must leave it unset: HEAD is not
     where their data lands, so refusing the edit would throw away the user's
@@ -7767,6 +7769,10 @@ def edit_in_editor(
     # HEAD reads as None and still guards: None is not a branch we started
     # on, so checking one out mid-edit is caught like any other switch.
     read_branch = git_get_current_branch(topdir) if guard_branch else None
+    read_head = None
+    if guard_branch and read_branch is None:
+        ecode, out = git_run_command(topdir, ['rev-parse', '-q', '--verify', 'HEAD'])
+        read_head = out.strip() if ecode == 0 else None
     # core.editor comes from the same tree as everything else here, so a
     # repository-local setting is the one belonging to the edited branch.
     corecfg = get_config_from_git(r'core\..*', gitdir=topdir)
@@ -7806,23 +7812,40 @@ def edit_in_editor(
 
     if guard_branch:
         write_branch = git_get_current_branch(topdir)
-        if write_branch != read_branch:
+        write_head = None
+        if read_branch is None and write_branch is None:
+            ecode, out = git_run_command(
+                topdir, ['rev-parse', '-q', '--verify', 'HEAD']
+            )
+            write_head = out.strip() if ecode == 0 else None
+        if write_branch != read_branch or write_head != read_head:
+            if read_branch is not None:
+                prefix = f'old-{read_branch}'.replace('/', '-')
+            else:
+                prefix = f'old-detached-{(read_head or "")[:12]}-'
             with tempfile.NamedTemporaryFile(
-                mode='wb',
-                prefix=f'old-{read_branch}'.replace('/', '-'),
-                delete=False,
+                mode='wb', prefix=prefix, delete=False
             ) as save_file:
                 save_file.write(bdata)
-                logger.critical(
-                    'Editing started on branch %s, but current branch is %s.',
-                    read_branch,
-                    write_branch,
-                )
+                if write_branch != read_branch:
+                    logger.critical(
+                        'Editing started on branch %s, but current branch is %s.',
+                        read_branch,
+                        write_branch,
+                    )
+                    reason = 'Branch changed'
+                else:
+                    logger.critical(
+                        'Editing started on detached HEAD at %.12s, but HEAD is now at %.12s.',
+                        read_head,
+                        write_head,
+                    )
+                    reason = 'Detached HEAD moved'
                 logger.critical(
                     'To avoid a collision, your text was saved in %s', save_file.name
                 )
             raise RuntimeError(
-                f'Branch changed during file editing, the temporary file was saved at {save_file.name}'
+                f'{reason} during file editing, the temporary file was saved at {save_file.name}'
             )
     return bdata
 

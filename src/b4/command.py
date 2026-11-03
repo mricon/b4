@@ -1236,7 +1236,8 @@ def setup_parser() -> argparse.ArgumentParser:
         nargs='?',
         const='@{upstream}',
         help='Enroll current branch, using its configured upstream branch as fork base, '
-        'or the passed tag, branch, or commit',
+        'or the passed tag, branch, or commit. On a detached HEAD, enroll HEAD '
+        'without creating a branch; this requires an explicit base',
     )
     sp_prep.set_defaults(func=cmd_prep)
 

@@ -2534,6 +2534,51 @@ def test_edit_in_editor_guard_covers_a_detached_head(
         saved.unlink()
 
 
+def test_edit_in_editor_guard_refuses_a_moved_detached_head(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a branch, the HEAD commit is all that tells two series apart,
+    so moving a detached HEAD to another commit is refused too."""
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    monkeypatch.setenv(
+        'GIT_EDITOR',
+        _fake_editor(tmp_path, f'git -C "{gitdir}" checkout -q --detach HEAD~1'),
+    )
+    with pytest.raises(RuntimeError, match='Detached HEAD moved during file') as ex:
+        b4.edit_in_editor(b'my cover\n', guard_branch=True)
+
+    saved = pathlib.Path(str(ex.value).split(' saved at ')[-1])
+    try:
+        assert saved.read_bytes() == b'my cover\n'
+        assert saved.name.startswith('old-detached-')
+    finally:
+        saved.unlink()
+
+
+def test_edit_in_editor_guard_allows_a_detached_head_that_stays(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ecode, out = b4.git_run_command(gitdir, ['checkout', '-q', '--detach'])
+    assert ecode == 0, out
+    monkeypatch.setenv('GIT_EDITOR', _fake_editor(tmp_path, 'true'))
+    assert b4.edit_in_editor(b'my cover\n', guard_branch=True) == b'my cover\n'
+
+
+def test_edit_in_editor_guard_allows_commits_on_the_same_branch(
+    gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a branch, the branch name tells series apart, so committing to it
+    while the editor is open is not a collision."""
+    monkeypatch.setenv(
+        'GIT_EDITOR',
+        _fake_editor(
+            tmp_path, f'git -C "{gitdir}" commit -q -s --allow-empty -m mid-edit'
+        ),
+    )
+    assert b4.edit_in_editor(b'my cover\n', guard_branch=True) == b'my cover\n'
+
+
 def test_edit_in_editor_follows_the_topdir_it_is_given(
     gitdir: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
