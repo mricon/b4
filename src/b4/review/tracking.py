@@ -679,7 +679,11 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     finally:
         signal.signal(signal.SIGINT, _old_sigint)
 
-    track_series_from_mailbox(identifier, lmbx, wanted_ver, topdir, was_rethreaded)
+    try:
+        track_series_from_mailbox(identifier, lmbx, wanted_ver, topdir, was_rethreaded)
+    except LookupError as ex:
+        logger.critical('%s', ex)
+        sys.exit(1)
 
 
 def track_series_from_mailbox(
@@ -692,8 +696,7 @@ def track_series_from_mailbox(
     """Track a series from a LoreMailbox, given the desired version and project identifier."""
     lser = lmbx.get_series(wanted_ver, sloppytrailers=False, codereview_trailers=False)
     if not lser:
-        logger.critical('Could not find series version %d', wanted_ver)
-        sys.exit(1)
+        raise LookupError(f'Could not find series version {wanted_ver}')
 
     # Extract series metadata
     revision = lser.revision
@@ -719,8 +722,7 @@ def track_series_from_mailbox(
             ref_msg = lser.patches[1]
 
     if ref_msg is None:
-        logger.critical('Could not find cover letter or first patch')
-        sys.exit(1)
+        raise LookupError('Could not find cover letter or first patch')
 
     message_id = ref_msg.msgid
 
@@ -802,15 +804,11 @@ def track_series_from_mailbox(
                     '  Upgrade the series in the review TUI to the new version.'
                 )
             return
-        logger.critical(
-            'This series is already tracked (status: %s, v%d)', status_str, cur_rev
+        raise LookupError(
+            f'This series is already tracked (status: {status_str}, v{cur_rev})'
+            f' as {existing_change_id}.\n'
+            f'Use "b4 review forget {existing_change_id}" to erase it and track afresh.'
         )
-        logger.critical('Change-ID: %s', existing_change_id)
-        logger.critical(
-            'Use "b4 review forget %s" to erase it and track afresh.',
-            existing_change_id,
-        )
-        sys.exit(1)
 
     # Not tracked yet — create a new series and record its revisions.
     sent_at: Optional[str] = None
