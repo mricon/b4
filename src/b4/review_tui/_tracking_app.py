@@ -4876,27 +4876,31 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
             usercfg = b4.get_user_config()
             my_email = str(usercfg.get('email', 'unknown@example.com'))
-            # If the maintainer already sent their review (status='replied'),
-            # don't carry over prior comments verbatim — they are stale and
-            # may refer to issues already addressed in the new version.  The
-            # prior feedback is still accessible via the "Prior" (P) screen.
-            # Only carry over WIP review content when the maintainer hadn't
-            # sent anything yet (e.g. the submitter sent a new version while
-            # the maintainer was still drafting their review).
-            old_status = old_series.get('status', '')
-            carry_over_reviews = old_status != 'replied'
+            # Carry over only review content the maintainer has not sent yet,
+            # e.g. a draft interrupted by the new version. Sent feedback is
+            # stale against the new revision and stays reachable through the
+            # "Prior" (P) screen. Each review records its own send, so the
+            # series status is no guide: it may have moved on to "waiting".
             restored = 0
             for idx, _sha, patch_id in new_patch_ids:
                 if patch_id is None or idx >= len(new_patches):
                     continue
                 if patch_id not in prior_patch_ids:
                     continue
-                if carry_over_reviews and patch_id in saved_reviews:
+                reviews = {}
+                if patch_id in saved_reviews:
                     # Deepcopy so we don't mutate the saved review data
                     reviews = copy.deepcopy(saved_reviews[patch_id]['reviews'])
-                    restored += 1
-                else:
-                    reviews = {}
+                    # What an earlier upgrade left here is written again below,
+                    # and is not review work: a patch holding nothing else
+                    # must not count as restored.
+                    reviews.pop('b4-upgrade@internal', None)
+                    mine = reviews.get(my_email, {})
+                    has_content = bool(set(mine) - {'name', 'patch-state'})
+                    if mine.get('sent-revision') is not None or not has_content:
+                        reviews.pop(my_email, None)
+                    if reviews:
+                        restored += 1
                 # Mark the patch as unchanged so the TUI can show a visual cue.
                 # _get_patch_state() will override this with any derived state
                 # (draft, done, …) if the maintainer already has review content.
@@ -4911,10 +4915,8 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
                 new_patches[idx]['reviews'] = reviews
 
             # Re-anchor inline comments against new revision diffs.
-            # Only needed when WIP review comments were carried over.
-            if carry_over_reviews:
-                new_shas = [sha for _idx, sha, _pid in new_patch_ids]
-                b4.review.reanchor_patch_comments(topdir, new_shas, new_patches)
+            new_shas = [sha for _idx, sha, _pid in new_patch_ids]
+            b4.review.reanchor_patch_comments(topdir, new_shas, new_patches)
 
             new_tracking['series']['status'] = 'reviewing'
             # Ensure the tracking commit has the real change-id, not
