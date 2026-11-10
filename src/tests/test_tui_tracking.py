@@ -3762,6 +3762,135 @@ class TestUpdateRevisionWorkflow:
         assert ecode == 0
         assert head_sha == start_sha
 
+    async def _upgrade_unchanged_patch(
+        self, gitdir: str, status: str, old_reviews: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], int]:
+        """Upgrade a one-patch series whose patch did not change.
+
+        Returns the reviews the new revision was saved with, and how many
+        patches the upgrade reported as restored.
+        """
+        identifier = 'test-update-carry'
+        change_id = 'update-carry-1'
+        review_branch = _setup_update_test(gitdir, identifier, change_id)
+        old_tracking = {
+            'series': {'status': status},
+            'patches': [{'reviews': old_reviews}],
+        }
+        new_tracking: Dict[str, Any] = {'series': {}, 'patches': [{}]}
+        saved: List[Dict[str, Any]] = []
+
+        def _patch_ids(topdir: str, branch: str) -> List[Tuple[int, str, str]]:
+            return [(0, f'sha-{branch}', 'unchanged-patch-id')]
+
+        def _load(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
+            return '', old_tracking if branch == review_branch else new_tracking
+
+        def _save(topdir: str, branch: str, cover: str, trk: Dict[str, Any]) -> bool:
+            saved.append(trk)
+            return True
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            with (
+                patch.object(app, 'suspend', return_value=contextlib.nullcontext()),
+                patch('b4.review_tui._tracking_app._wait_for_enter'),
+                patch('b4.git_fetch_am_into_repo'),
+                patch(
+                    'b4.review.create_review_branch',
+                    side_effect=_fake_create_review_branch(identifier),
+                ),
+                patch('b4.review.get_review_branch_patch_ids', side_effect=_patch_ids),
+                patch('b4.review.load_tracking', side_effect=_load),
+                patch('b4.review.reanchor_patch_comments') as reanchor,
+                patch('b4.review.save_tracking_ref', side_effect=_save),
+                patch.object(TrackingApp, '_archive_branch', _mock_archive_branch),
+                patch('b4.review_tui._tracking_app.logger') as log,
+            ):
+                app._on_update_base_selected(
+                    'HEAD',
+                    _make_mock_lser(),
+                    b'mbox',
+                    1,
+                    change_id,
+                    1,
+                    2,
+                    'v2@ex.com',
+                    '[PATCH v2] update test',
+                    review_branch,
+                )
+            await pilot.pause()
+
+        assert saved
+        # Carried comments of any reviewer must follow the new diff, so the
+        # re-anchor may not depend on what was carried.
+        reanchor.assert_called_once()
+        restored = [
+            call.args[1]
+            for call in log.info.call_args_list
+            if call.args[0].startswith('Restored reviews')
+        ]
+        assert len(restored) == 1
+        return saved[-1]['patches'][0]['reviews'], restored[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('status', ['waiting', 'replied'])
+    @pytest.mark.parametrize(
+        'sent', [pytest.param(True, id='sent'), pytest.param(False, id='draft')]
+    )
+    async def test_upgrade_carries_only_unsent_reviews(
+        self, gitdir: str, status: str, sent: bool
+    ) -> None:
+        """Only reviews that never went out are carried to the new revision.
+
+        Whether a review was sent is recorded on the review itself, so the
+        series status must not matter: a series moved from "replied" to
+        "waiting" still has sent reviews, and one left at "replied" may
+        hold notes that were never sent.  Other reviewers' entries are not
+        the maintainer's to send and are always carried.
+        """
+        my_email = str(b4.get_user_config().get('email'))
+        my_name = str(b4.get_user_config().get('name', ''))
+        my_review: Dict[str, Any] = {'name': my_name, 'reply': 'Please fix.'}
+        carried_review = {**my_review, 'patch-state': 'unchanged'}
+        if sent:
+            b4.review._mark_review_sent(my_review, 1)
+            carried_review = {'name': my_name, 'patch-state': 'unchanged'}
+        agent_review = {'name': 'Agent', 'note': 'Check the error path.'}
+
+        reviews, restored = await self._upgrade_unchanged_patch(
+            gitdir, status, {my_email: my_review, 'agent@example.com': agent_review}
+        )
+
+        assert reviews[my_email] == carried_review
+        assert reviews['agent@example.com'] == agent_review
+        assert restored == 1
+
+    @pytest.mark.asyncio
+    async def test_upgrade_does_not_count_its_own_markers_as_restored(
+        self, gitdir: str
+    ) -> None:
+        """A patch that only holds what an earlier upgrade left is not restored.
+
+        Every unchanged patch gets the "unchanged" state and a note from
+        the upgrade itself.  On the next upgrade these are all the patch
+        has, and reporting them as restored reviews would tell the
+        maintainer that review work was carried over when there was none.
+        """
+        my_email = str(b4.get_user_config().get('email'))
+        earlier_upgrade = {
+            my_email: {'name': 'Maintainer', 'patch-state': 'unchanged'},
+            'b4-upgrade@internal': {'name': 'B4 Upgrade', 'note': 'Patch unchanged'},
+        }
+
+        reviews, restored = await self._upgrade_unchanged_patch(
+            gitdir, 'reviewing', earlier_upgrade
+        )
+
+        assert restored == 0
+        assert reviews[my_email]['patch-state'] == 'unchanged'
+
     @pytest.mark.asyncio
     async def test_apply_failure_restores_original_branch(self, gitdir: str) -> None:
         """A create that moves HEAD and then fails leaves nothing behind.
