@@ -447,6 +447,12 @@ Key                        Action
 ``Q``                      Quit (bare ``q`` only shows a reminder)
 =========================  =============================================
 
+For series without a cover letter, the notes viewer (``N``) and review
+summary also show series-level notes alongside the selected patch's notes.
+These are labelled ``(series)``. Editing changes your note on the selected
+patch; deleting all notes removes all notes shown in the viewer, after
+asking for confirmation, because the series notes appear on every patch.
+
 **Email preview mode keybindings**
 
 ==========  ============================================================

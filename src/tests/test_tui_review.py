@@ -11,6 +11,7 @@ via git rebase -i), range-diff filtering and gating, check-detail
 rendering, and the branch-restore logic on exit.
 """
 
+import copy
 import datetime
 import email.message
 import json
@@ -21,18 +22,26 @@ import pytest
 
 pytest.importorskip('textual')
 
-from textual.widgets import ListView
+from textual.widgets import ListView, Static
 
 import b4
 import b4.review
 import b4.review._review
 import b4.review.tracking
+from b4.review._review import NO_COVER_NOTE
 from b4.review_tui._common import filter_range_diff_for_commit
+from b4.review_tui._modals import ConfirmScreen, NoteScreen
 from b4.review_tui._review_app import FollowupItem, PatchListItem, ReviewApp
 
 from .helpers.mail import followup_thread
 from .helpers.tracking import create_review_branch
-from .helpers.tui import CUT_BUFFER, CUT_INSTRUCTION, CUT_TRIMMED
+from .helpers.tui import (
+    CUT_BUFFER,
+    CUT_INSTRUCTION,
+    CUT_TRIMMED,
+    current_screen,
+    static_text,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1216,3 +1225,308 @@ class TestLoadFollowupMsgs:
         entries = {e['msgid']: e for e in app._followup_comments[1]}
         assert sorted(entries) == ['alt@x', 'no-re@x', 'on-alt@x', 'on-p1@x']
         assert entries['on-alt@x']['depth'] == 1
+
+
+# ---------------------------------------------------------------------------
+# Series notes without a cover letter
+# ---------------------------------------------------------------------------
+#
+# A series sent without a cover letter has no series row in the patch list,
+# so series-level notes (typically an agent review) are shown next to the
+# notes of whichever patch is selected.
+
+NOTES_AGENT = 'agent@example.com'
+SERIES_NOTE = 'Series summary.\n\nA detailed observation about the whole series.'
+
+
+def _notes_session(
+    gitdir: str, count: int = 1, *, has_cover: bool = False
+) -> Dict[str, Any]:
+    """Build a session whose series carries an agent note."""
+    branch, _shas = _create_review_branch_with_patches(
+        gitdir, 'coverless-notes', [f'Patch {i}' for i in range(1, count + 1)]
+    )
+    session = _build_session(gitdir, branch)
+    if not has_cover:
+        session['cover_text'] = f'Patch series\n\n{NO_COVER_NOTE}'
+    session['series']['reviews'] = {
+        NOTES_AGENT: {'name': 'Review Agent', 'source': 'agent', 'note': SERIES_NOTE}
+    }
+    return session
+
+
+def _stored_notes_app(session: Dict[str, Any]) -> ReviewApp:
+    """Save the session's tracking data and start an app from the stored copy.
+
+    Loading from the branch makes the test see what b4 actually persisted,
+    not the dicts the test built in memory.
+    """
+    assert b4.review.save_tracking_ref(
+        session['topdir'], session['branch'], session['cover_text'], session['tracking']
+    )
+    return ReviewApp(_build_session(session['topdir'], session['branch']))
+
+
+def _overlay_text(app: ReviewApp) -> str:
+    overlay = app.query_one('#trailer-overlay', Static)
+    app._refresh_trailer_overlay()
+    assert overlay.display
+    return static_text(overlay)
+
+
+def _note_entries(app: ReviewApp) -> List[Tuple[str, str]]:
+    """Return (header, note) pairs of the open NoteScreen."""
+    screen = current_screen(app)
+    assert isinstance(screen, NoteScreen)
+    return [(h, n) for h, _colour, n in screen._note_entries]
+
+
+def _note_hint(app: ReviewApp) -> str:
+    """Return the key hint line of the open NoteScreen."""
+    return static_text(current_screen(app).query_one('#note-hint', Static))
+
+
+@pytest.mark.asyncio
+async def test_coverless_series_only_note_visible_without_moving_stored_data(
+    gitdir: str,
+) -> None:
+    """A series note must show up, and viewing it must not touch storage."""
+    session = _notes_session(gitdir)
+    app = _stored_notes_app(session)
+    before = copy.deepcopy(app._tracking)
+    ecode, original_tip = b4.git_run_command(gitdir, ['rev-parse', app._branch])
+    assert ecode == 0
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert app._selected_idx == 1
+        overlay = _overlay_text(app)
+        assert 'Review Agent (series)' in overlay
+        assert 'Series summary.' in overlay
+        assert 'view full note with N' in overlay
+        # With a note to show, N opens the viewer rather than the editor.
+        with mock.patch.object(app, '_edit_note_in_editor') as editor:
+            await pilot.press('N')
+            await pilot.pause()
+            editor.assert_not_called()
+        assert _note_entries(app) == [('Review Agent (series)', SERIES_NOTE)]
+        # The series note is on screen but e opens the patch note: say so.
+        assert 'e edit patch note' in _note_hint(app)
+        await pilot.press('escape')
+        await pilot.pause()
+        assert app._tracking == before
+
+    _, stored = b4.review.load_tracking(gitdir, app._branch)
+    assert stored == before
+    assert b4.git_run_command(gitdir, ['rev-parse', app._branch]) == (0, original_tip)
+
+
+@pytest.mark.asyncio
+async def test_coverless_series_note_shown_with_each_patch_without_merging_reviewer(
+    gitdir: str,
+) -> None:
+    """The same reviewer keeps separate patch and series notes on every patch."""
+    session = _notes_session(gitdir, 2)
+    for idx, patch in enumerate(session['patches'], 1):
+        patch['reviews'] = {
+            NOTES_AGENT: {'name': 'Review Agent', 'note': f'Patch {idx} observation.'}
+        }
+    app = _stored_notes_app(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        for idx in (1, 2):
+            app._show_content(idx)
+            await pilot.pause()
+            overlay = _overlay_text(app)
+            assert 'Series summary.' in overlay
+            assert f'Patch {idx} observation.' in overlay
+            assert f'Patch {3 - idx} observation.' not in overlay
+            await pilot.press('N')
+            await pilot.pause()
+            assert _note_entries(app) == [
+                ('Review Agent', f'Patch {idx} observation.'),
+                ('Review Agent (series)', SERIES_NOTE),
+            ]
+            await pilot.press('escape')
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_real_cover_keeps_series_notes_separate(gitdir: str) -> None:
+    """With a cover letter, series notes stay on the series row only."""
+    session = _notes_session(gitdir, has_cover=True)
+    session['patches'][0]['reviews'] = {
+        NOTES_AGENT: {'name': 'Review Agent', 'note': 'Patch observation.'}
+    }
+    app = _stored_notes_app(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        for idx, expected, excluded in (
+            (0, SERIES_NOTE, 'Patch observation.'),
+            (1, 'Patch observation.', 'Series summary.'),
+        ):
+            app._show_content(idx)
+            await pilot.pause()
+            overlay = _overlay_text(app)
+            assert expected.splitlines()[0] in overlay
+            assert excluded not in overlay
+            assert '(series)' not in overlay
+            await pilot.press('N')
+            await pilot.pause()
+            assert _note_entries(app) == [('Review Agent', expected)]
+            assert 'patch note' not in _note_hint(app)
+            await pilot.press('escape')
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_coverless_series_note_keeps_reviewer_colour(gitdir: str) -> None:
+    """A reviewer's patch row and (series) row must share one colour.
+
+    z@ is the second "other" reviewer on the patch but the only one on the
+    series, so picking the colour per stored dict would split it in two.
+    """
+    session = _notes_session(gitdir)
+    session['series']['reviews'] = {
+        'z@example.com': {'name': 'Zed', 'note': 'Zed series note.'}
+    }
+    session['patches'][0]['reviews'] = {
+        'a@example.com': {'name': 'Ay', 'note': 'Ay patch note.'},
+        'z@example.com': {'name': 'Zed', 'note': 'Zed patch note.'},
+    }
+    app = _stored_notes_app(session)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press('N')
+        await pilot.pause()
+        screen = current_screen(app)
+        assert isinstance(screen, NoteScreen)
+        colours = {h: c for h, c, _n in screen._note_entries}
+        assert colours['Zed'] == colours['Zed (series)']
+        assert colours['Ay'] != colours['Zed']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('existing_patch_note', ['', 'My patch note.'])
+async def test_edit_from_combined_notes_edits_current_patch_only(
+    gitdir: str, existing_patch_note: str
+) -> None:
+    """Editing from the combined view must never rewrite the series note."""
+    session = _notes_session(gitdir)
+    my_email = str(session['usercfg']['email'])
+    session['series']['reviews'][my_email] = {
+        'name': 'Maintainer',
+        'note': 'My series note.',
+    }
+    if existing_patch_note:
+        session['patches'][0]['reviews'] = {
+            my_email: {'name': 'Maintainer', 'note': existing_patch_note}
+        }
+    app = _stored_notes_app(session)
+    series_before = copy.deepcopy(app._series)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press('N')
+        await pilot.pause()
+        assert isinstance(app.screen, NoteScreen)
+        with mock.patch(
+            'b4.review_tui._review_app.suspend_and_edit',
+            return_value=b'Updated patch note.',
+        ) as edit:
+            await pilot.press('e')
+            await pilot.pause()
+        edit.assert_called_once()
+        editor_text = edit.call_args.args[1].decode()
+        assert editor_text == existing_patch_note + app._NOTE_FOOTER
+        assert app._patches[0]['reviews'][my_email]['note'] == 'Updated patch note.'
+        assert app._series == series_before
+
+    _, stored = b4.review.load_tracking(gitdir, app._branch)
+    assert stored['series'] == series_before
+    assert stored['patches'][0]['reviews'][my_email]['note'] == 'Updated patch note.'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'has_cover,confirm',
+    [
+        pytest.param(False, True, id='coverless-confirmed'),
+        pytest.param(False, False, id='coverless-cancelled'),
+        pytest.param(True, None, id='cover-not-asked'),
+    ],
+)
+async def test_delete_all_notes_asks_only_when_series_notes_shown(
+    gitdir: str, has_cover: bool, confirm: Optional[bool]
+) -> None:
+    """Deleting also drops series notes shown on every patch, so ask first.
+
+    With a cover letter the viewer holds only the patch's own notes, so the
+    delete stays a single key press and leaves the series notes alone.
+
+    Only notes go: comments, trailers and the notes of other patches stay,
+    and reviewers left with nothing are removed.
+    """
+    session = _notes_session(gitdir, 2, has_cover=has_cover)
+    my_email = str(session['usercfg']['email'])
+    comment = {'path': 'file1.txt', 'line': 1, 'text': 'Keep this inline comment.'}
+    trailer = 'Reviewed-by: Maintainer <maintainer@example.com>'
+    session['series']['reviews'][NOTES_AGENT]['comments'] = [comment]
+    session['series']['reviews'][my_email] = {
+        'name': 'Maintainer',
+        'note': 'My series note.',
+        'trailers': [trailer],
+    }
+    session['patches'][0]['reviews'] = {
+        NOTES_AGENT: {
+            'name': 'Review Agent',
+            'note': 'Patch observation.',
+            'comments': [comment],
+        },
+        my_email: {
+            'name': 'Maintainer',
+            'note': 'My patch note.',
+            'trailers': [trailer],
+        },
+        'other@example.com': {'name': 'Other', 'note': 'A note with no other data.'},
+    }
+    session['patches'][1]['reviews'] = {
+        NOTES_AGENT: {'name': 'Review Agent', 'note': 'Keep other patch note.'}
+    }
+    app = _stored_notes_app(session)
+    expected = copy.deepcopy(app._tracking)
+    deleted = [] if confirm is False else [expected['patches'][0]]
+    if confirm:
+        deleted.append(expected['series'])
+    for target in deleted:
+        for review in target['reviews'].values():
+            review.pop('note', None)
+    if deleted:
+        del expected['patches'][0]['reviews']['other@example.com']
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app._show_content(1)
+        await pilot.pause()
+        await pilot.press('N')
+        await pilot.pause()
+        await pilot.press('d')
+        await pilot.pause()
+        if confirm is None:
+            assert not isinstance(current_screen(app), ConfirmScreen)
+        else:
+            assert isinstance(current_screen(app), ConfirmScreen)
+            await pilot.press('y' if confirm else 'escape')
+            await pilot.pause()
+        assert app._tracking == expected
+        overlay = _overlay_text(app)
+        assert ('Series summary.' in overlay) is (confirm is False)
+        assert ('Patch observation.' in overlay) is (confirm is False)
+        assert '1 comments across 1 files' in overlay
+        assert 'Reviewed-by' in overlay
+
+    _, stored = b4.review.load_tracking(gitdir, app._branch)
+    assert stored == expected

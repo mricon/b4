@@ -59,6 +59,7 @@ from b4.review_tui._common import (
 )
 from b4.review_tui._modals import (
     CheckLoadingScreen,
+    ConfirmScreen,
     FollowupReplyPreviewScreen,
     HelpScreen,
     NoteScreen,
@@ -905,11 +906,13 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             if not _has_review_data(review):
                 continue
 
-            colour = self._reviewer_colour(rev_email, review_target, ts)
+            colour = self._reviewer_colour(rev_email, target, ts)
             if rev_email == my_email:
                 header = 'Your review'
             else:
                 header = review.get('name', rev_email)
+            if review_target is not target:
+                header += ' (series)'
 
             if has_content:
                 text.append('\n')
@@ -1013,13 +1016,32 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
     def _get_display_reviews(
         self, target: Dict[str, Any]
     ) -> List[Tuple[str, Dict[str, Any], Dict[str, Any]]]:
-        """Return reviews and their targets, with the current user's review first."""
-        reviews = target.get('reviews', {})
+        """Reviews to display, with their original targets for attribution.
+
+        Without a cover letter there is no series entry in the patch list.
+        Show its notes alongside each patch, keeping the review data separate
+        so the same reviewer can have both a patch note and a series note.
+        """
+        targets = [target]
+        if not self._has_cover and target is not self._series:
+            targets.append(self._series)
         my_email = str(self._usercfg.get('email', ''))
-        return [
-            (addr, reviews[addr], target)
-            for addr in sorted(reviews, key=lambda addr: (addr != my_email, addr))
-        ]
+        entries: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
+        for review_target in targets:
+            reviews = review_target.get('reviews', {})
+            for addr in sorted(reviews, key=lambda addr: (addr != my_email, addr)):
+                review = reviews[addr]
+                if review_target is not target:
+                    # Only notes belong in this extra display: comments and
+                    # trailers remain attached to the message they refer to.
+                    if not review.get('note'):
+                        continue
+                    review = {
+                        'name': review.get('name', addr),
+                        'note': review['note'],
+                    }
+                entries.append((addr, review, review_target))
+        return entries
 
     def _ensure_review(self, target: Dict[str, Any]) -> Dict[str, Any]:
         """Return the current user's review sub-dict, creating it if needed."""
@@ -1049,8 +1071,12 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         my_email = self._usercfg.get('email', '')
         if email == my_email:
             return palette[0]
-        reviews = target.get('reviews', {})
-        others = sorted(e for e in reviews if e != my_email)
+        reviewers = set(target.get('reviews', {}))
+        if not self._has_cover and target is not self._series:
+            # Series notes are shown next to this patch, so count their
+            # authors too: one person keeps one colour in the combined view.
+            reviewers.update(self._series.get('reviews', {}))
+        others = sorted(e for e in reviewers if e != my_email)
         idx = others.index(email) if email in others else 0
         return palette[1 + (idx % (len(palette) - 1))]
 
@@ -1558,8 +1584,12 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             else:
                 name = review.get('name', rev_email)
                 header = name
-            colour = self._reviewer_colour(rev_email, review_target, ts)
+            if review_target is not target:
+                header += ' (series)'
+            colour = self._reviewer_colour(rev_email, target, ts)
             note_entries.append((header, colour, note))
+
+        shows_series = any(t is not target for _a, _r, t in display_reviews)
 
         def _on_note(result: Optional[str]) -> None:
             if result is None:
@@ -1570,9 +1600,38 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 )
                 self._edit_note_in_editor(target, my_note)
             elif result == '__DELETE__':
-                self._delete_all_notes(target)
+                if shows_series:
+                    self._confirm_delete_with_series(target)
+                else:
+                    self._delete_all_notes(target)
 
-        self.push_screen(NoteScreen(note_entries), _on_note)
+        # Series notes are read-only here: e always opens the patch note.
+        edit_label = 'edit patch note' if shows_series else 'edit'
+        self.push_screen(NoteScreen(note_entries, edit_label), _on_note)
+
+    def _confirm_delete_with_series(self, target: Dict[str, Any]) -> None:
+        """Delete notes on *target* and the series, once the user agrees.
+
+        Series notes are shown on every patch, so a single key press here
+        removes far more than the notes of the selected patch.
+        """
+
+        def _on_confirm(confirmed: Optional[bool]) -> None:
+            if confirmed:
+                self._delete_all_notes(target, include_series=True)
+
+        self.push_screen(
+            ConfirmScreen(
+                title='Delete all notes?',
+                body=[
+                    'This also deletes the series notes,',
+                    'which are shown on every patch.',
+                ],
+                border='$warning',
+                title_colour='$warning',
+            ),
+            _on_confirm,
+        )
 
     _NOTE_FOOTER = (
         '\n\n'
@@ -1614,24 +1673,31 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         else:
             self.notify('Note deleted')
 
-    def _delete_all_notes(self, target: Dict[str, Any]) -> None:
-        """Delete notes from all reviewers on *target*."""
-        all_reviews = target.get('reviews', {})
+    def _delete_all_notes(
+        self, target: Dict[str, Any], include_series: bool = False
+    ) -> None:
+        """Delete all displayed notes from their original review targets."""
+        targets = [target]
+        if include_series:
+            targets.append(self._series)
         changed = False
-        for review in all_reviews.values():
-            if 'note' in review:
-                del review['note']
-                changed = True
-        if changed:
-            # Clean up any reviewers that now have empty data
+        for note_target in targets:
+            all_reviews = note_target.get('reviews', {})
             my_email = self._usercfg.get('email', '')
             for addr in list(all_reviews):
-                rev = all_reviews[addr]
-                if not _has_review_data(rev):
-                    if addr == my_email:
-                        b4.review._cleanup_review(target, self._usercfg)
-                    else:
-                        del all_reviews[addr]
+                review = all_reviews[addr]
+                if 'note' not in review:
+                    continue
+                del review['note']
+                changed = True
+                # Drop reviewers left with nothing to show
+                if _has_review_data(review):
+                    continue
+                if addr == my_email:
+                    b4.review._cleanup_review(note_target, self._usercfg)
+                else:
+                    del all_reviews[addr]
+        if changed:
             self._save_tracking()
             self._refresh_patch_item(self._selected_idx)
             self._show_content(self._selected_idx)

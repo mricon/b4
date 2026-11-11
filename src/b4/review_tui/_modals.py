@@ -464,9 +464,14 @@ class NoteScreen(ModalScreen[Optional[str]]):
     }
     """
 
-    def __init__(self, note_entries: List[Tuple[str, str, str]]) -> None:
+    def __init__(
+        self, note_entries: List[Tuple[str, str, str]], edit_label: str = 'edit'
+    ) -> None:
+        """*edit_label* names what ``e`` opens when that is not obvious
+        from the notes on screen."""
         super().__init__()
         self._note_entries = note_entries
+        self._edit_label = edit_label
 
     def compose(self) -> ComposeResult:
         with Vertical(id='note-dialog'):
@@ -477,7 +482,10 @@ class NoteScreen(ModalScreen[Optional[str]]):
                 markup=True,
                 auto_scroll=False,
             )
-            yield Static('Escape close  |  e edit  |  d delete all', id='note-hint')
+            yield Static(
+                f'Escape close  |  e {self._edit_label}  |  d delete all',
+                id='note-hint',
+            )
 
     def on_mount(self) -> None:
         viewer = self.query_one('#note-viewer', RichLog)
