@@ -784,7 +784,7 @@ Unchanged   ``≡``   —       Patch identical to prior revision (auto, on upgr
 External    ``±``   —       External reviewers have inline comments (auto)
 Draft       ``✎``   —       You have comments, a reply, or a nack trailer (auto)
 Done        ``✓``   ``d``   Review complete, include in outgoing emails (also auto)
-Skip        ``✕``   ``x``   Intentionally skipped, exclude from outgoing emails
+Skip        ``✕``   ``x``   Intentionally skipped; any replies are still sent
 ==========  ======  ======  =======================================================
 
 .. |sp| unicode:: U+0020
@@ -812,7 +812,8 @@ bold, skipped and unchanged patches appear dimmed. Press ``H`` to hide
 skipped patches from the list entirely — useful for large series where
 many patches are irrelevant to your review.
 
-Skipped patches are automatically excluded when sending review emails.
+Any unsent replies, comments, or trailers on skipped patches are still
+included when previewing and sending review emails.
 When taking patches via cherry-pick, skipped patches are pre-deselected
 in the patch selection dialog.
 

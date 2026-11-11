@@ -22,7 +22,7 @@ import pytest
 
 pytest.importorskip('textual')
 
-from textual.widgets import ListView, Static
+from textual.widgets import ListView, RichLog, Static
 
 import b4
 import b4.review
@@ -820,6 +820,31 @@ class TestBranchRestore:
         assert app.branch_checked_out is False
 
 
+class TestSkippedReplies:
+    """Skipping a patch keeps it out of a take, not out of the conversation:
+    a reply can explain why the patch is not being taken."""
+
+    @pytest.mark.asyncio
+    async def test_skipped_reply_is_previewed(self, gitdir: str) -> None:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'skipped-preview', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        my_email = str(session['usercfg']['email'])
+        reply = 'Please fix this before I can take it.'
+        session['patches'][0]['reviews'] = {
+            my_email: {'patch-state': 'skip', 'reply': reply}
+        }
+        app = ReviewApp(session)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._show_content(1)
+            await pilot.press('e')
+            await pilot.pause()
+            viewer = app.query_one('#diff-viewer', RichLog)
+            assert reply in '\n'.join(line.text for line in viewer.lines)
+
+
 class TestSendBookkeeping:
     """Everything after the SMTP handoff is bookkeeping, and bookkeeping must
     never be able to claim the send failed."""
@@ -918,6 +943,34 @@ class TestSendBookkeeping:
         assert any('Sent 1 review email' in t for t in texts)
         assert not any('Send failed' in t for t in texts)
         assert any('No space left on device' in t for t in texts)
+
+    @pytest.mark.asyncio
+    async def test_skipped_reply_is_sent(self, gitdir: str) -> None:
+        """Only the skipped patch that has a reply sends, and only it is
+        recorded as sent."""
+        texts, _running, patches = await self._send(
+            gitdir,
+            'send-skipped',
+            reviews=[
+                {'patch-state': 'skip', 'reply': 'Not taking this, see v2.'},
+                {'patch-state': 'skip'},
+            ],
+        )
+        assert any('Sent 1 review email' in t for t in texts)
+        my_email = str(b4.get_user_config()['email'])
+        assert 'sent-revision' in patches[0]['reviews'][my_email]
+        assert 'sent-revision' not in patches[1]['reviews'][my_email]
+
+    @pytest.mark.asyncio
+    async def test_draft_hint_does_not_offer_skip(self, gitdir: str) -> None:
+        """Skipping no longer holds a draft back, so the draft warning must
+        not suggest it as the way to send everything else."""
+        texts, _running, _patches = await self._send(
+            gitdir, 'send-draft-hint', reviews=[{'reply': 'Half a thought'}]
+        )
+        draft = [t for t in texts if 'Still in draft' in t]
+        assert 'Mark as done (d)' in draft[0]
+        assert 'skip' not in draft[0]
 
     @pytest.mark.asyncio
     async def test_a_dry_run_is_not_recorded_as_sent(self, gitdir: str) -> None:

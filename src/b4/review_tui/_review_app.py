@@ -856,22 +856,6 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 else None
             )
 
-        target = self._series if display_idx == 0 else patch_meta
-        if target and b4.review._get_patch_state(target, self._usercfg) == 'skip':
-            total = len(self._commit_shas)
-            label = 'cover' if display_idx == 0 else f'{display_idx}/{total}'
-            my_review = b4.review._get_my_review(target, self._usercfg)
-            skip_reason = str(my_review.get('skip-reason', ''))
-            if skip_reason:
-                viewer.write(
-                    f'[dim]Patch {label} is marked as skipped: {skip_reason}[/dim]'
-                )
-            else:
-                viewer.write(
-                    f'[dim]Patch {label} is marked as skipped — no email will be sent.[/dim]'
-                )
-            return
-
         to_send = b4.review._review_to_send(review)
         if not (
             to_send.get('trailers')
@@ -1817,7 +1801,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
                 draft_patches.append(label)
         if draft_patches:
             self.notify(
-                f'Still in draft: {", ".join(draft_patches)}. Mark as done (d) or skip (x) first.',
+                f'Still in draft: {", ".join(draft_patches)}. Mark as done (d) first.',
                 severity='warning',
             )
             return

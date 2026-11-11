@@ -4359,37 +4359,15 @@ class TestCollectReviewEmails:
             pytest.param(False, id='patch-review'),
         ],
     )
+    @pytest.mark.parametrize('patch_state', ['', 'skip'])
     def test_pairs_email_with_its_review(
-        self, _cfg: mock.Mock, _build: mock.Mock, on_cover: bool
+        self, _cfg: mock.Mock, _build: mock.Mock, on_cover: bool, patch_state: str
     ) -> None:
-        my_review = self._review()
+        my_review = self._review(**{'patch-state': patch_state})
         msgs = self._collect(on_cover, my_review)
         assert len(msgs) == 1
         assert msgs[0][0] is my_review
         assert msgs[0][1] is mock.sentinel.email_msg
-
-    @pytest.mark.parametrize(
-        'review_extra',
-        [
-            # The upgrade step sets patch-state=skip AND skip-reason on
-            # unchanged patches whose review was already sent.
-            pytest.param(
-                {
-                    'sent-revision': 1,
-                    'patch-state': 'skip',
-                    'skip-reason': 'Patch unchanged from v1; review already sent',
-                },
-                id='patch-auto-skipped-after-upgrade',
-            ),
-            # Explicit skip state (manually set, no sent-revision) is honoured.
-            pytest.param({'patch-state': 'skip'}, id='skip-state-without-sent'),
-        ],
-    )
-    def test_skipped_review_not_built(
-        self, _cfg: mock.Mock, _build: mock.Mock, review_extra: Dict[str, Any]
-    ) -> None:
-        assert self._collect(False, self._review(**review_extra)) == []
-        _build.assert_not_called()
 
     def test_review_with_nothing_to_send_left_out(
         self, _cfg: mock.Mock, _build: mock.Mock
