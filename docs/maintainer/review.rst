@@ -416,7 +416,7 @@ Key                        Action
 ``Tab``                    Switch focus between panels
 ``t``                      Trailers — quickly add Reviewed-by, Acked-by, etc.
 ``r``                      Reply — open ``$EDITOR`` to reply
-``n``                      Notes — view or edit review notes
+``N``                      Notes — view or edit review notes
 ``f``                      Followups — toggle follow-up messages and external
                            inline comments from lore
 ``a``                      Agent — run review LLM agent (if configured)
