@@ -581,14 +581,13 @@ def _make_initials(name: str) -> str:
     return parts[0][:2].upper()
 
 
-def _has_review_data(reviews: Dict[str, Dict[str, Any]]) -> bool:
-    """Return True if any reviewer has trailers, reply, comments, or a note."""
-    return any(
-        r.get('trailers')
-        or r.get('reply', '')
-        or r.get('comments')
-        or r.get('note', '')
-        for r in reviews.values()
+def _has_review_data(review: Dict[str, Any]) -> bool:
+    """Return True if a review has trailers, a reply, comments, or a note."""
+    return bool(
+        review.get('trailers')
+        or review.get('reply', '')
+        or review.get('comments')
+        or review.get('note', '')
     )
 
 

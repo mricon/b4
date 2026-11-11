@@ -897,33 +897,15 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             overlay.display = False
             return
 
-        all_reviews = target.get('reviews', {})
-        if not all_reviews or not _has_review_data(all_reviews):
-            overlay.display = False
-            return
-
         ts = resolve_styles(self)
         my_email = str(self._usercfg.get('email', ''))
-        # Build ordered list: current user first, then others sorted by email
-        ordered: List[Tuple[str, Dict[str, Any]]] = []
-        if my_email in all_reviews:
-            ordered.append((my_email, all_reviews[my_email]))
-        for addr in sorted(all_reviews):
-            if addr != my_email:
-                ordered.append((addr, all_reviews[addr]))
-
         text = Text()
         has_content = False
-        for rev_email, review in ordered:
-            if not (
-                review.get('trailers')
-                or review.get('reply', '')
-                or review.get('comments')
-                or review.get('note', '')
-            ):
+        for rev_email, review, review_target in self._get_display_reviews(target):
+            if not _has_review_data(review):
                 continue
 
-            colour = self._reviewer_colour(rev_email, target, ts)
+            colour = self._reviewer_colour(rev_email, review_target, ts)
             if rev_email == my_email:
                 header = 'Your review'
             else:
@@ -1027,6 +1009,17 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         if patch_idx < len(self._patches):
             return self._patches[patch_idx]
         return {}
+
+    def _get_display_reviews(
+        self, target: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any], Dict[str, Any]]]:
+        """Return reviews and their targets, with the current user's review first."""
+        reviews = target.get('reviews', {})
+        my_email = str(self._usercfg.get('email', ''))
+        return [
+            (addr, reviews[addr], target)
+            for addr in sorted(reviews, key=lambda addr: (addr != my_email, addr))
+        ]
 
     def _ensure_review(self, target: Dict[str, Any]) -> Dict[str, Any]:
         """Return the current user's review sub-dict, creating it if needed."""
@@ -1544,8 +1537,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         if not target:
             return
 
-        all_reviews = target.get('reviews', {})
-        has_any_notes = any(r.get('note', '') for r in all_reviews.values())
+        display_reviews = self._get_display_reviews(target)
+        has_any_notes = any(r.get('note', '') for _addr, r, _target in display_reviews)
 
         if not has_any_notes:
             # No notes at all — go straight to the external editor
@@ -1554,16 +1547,9 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
         # Build formatted text showing all reviewers' notes
         my_email = str(self._usercfg.get('email', ''))
-        ordered: List[Tuple[str, Dict[str, Any]]] = []
-        if my_email in all_reviews:
-            ordered.append((my_email, all_reviews[my_email]))
-        for addr in sorted(all_reviews):
-            if addr != my_email:
-                ordered.append((addr, all_reviews[addr]))
-
         ts = resolve_styles(self)
         note_entries: List[Tuple[str, str, str]] = []
-        for rev_email, review in ordered:
+        for rev_email, review, review_target in display_reviews:
             note = review.get('note', '')
             if not note:
                 continue
@@ -1572,7 +1558,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             else:
                 name = review.get('name', rev_email)
                 header = name
-            colour = self._reviewer_colour(rev_email, target, ts)
+            colour = self._reviewer_colour(rev_email, review_target, ts)
             note_entries.append((header, colour, note))
 
         def _on_note(result: Optional[str]) -> None:
@@ -1641,12 +1627,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             my_email = self._usercfg.get('email', '')
             for addr in list(all_reviews):
                 rev = all_reviews[addr]
-                if not (
-                    rev.get('trailers')
-                    or rev.get('reply', '')
-                    or rev.get('comments')
-                    or rev.get('note', '')
-                ):
+                if not _has_review_data(rev):
                     if addr == my_email:
                         b4.review._cleanup_review(target, self._usercfg)
                     else:
