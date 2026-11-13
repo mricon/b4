@@ -293,6 +293,14 @@ Resuming an interrupted SMTP submission
 
 .. versionadded:: v0.17
 
+When SMTP connection setup fails, or the server explicitly rejects a
+message or some recipients, interactive submissions
+offer ``Retry sending to the remaining recipients now? [y/N]``. Answering
+``y`` reconnects and continues using the saved messages and recipient
+progress. Enter, ``n``, EOF or Ctrl-C stops and preserves that progress.
+No retry prompt is shown with ``--no-interactive`` or non-terminal input,
+or when the delivery outcome is uncertain.
+
 To continue a stopped SMTP submission later (for example, after a sending
 quota resets), run from the same branch::
 

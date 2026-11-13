@@ -385,6 +385,10 @@ For options, see the output of ``b4 prep --help``, ``b4 trailers
   ``--resume -o DIR`` to inspect pending messages without sending. If a
   transaction's outcome is uncertain, b4 stops until it is verified and
   explicitly recorded with ``--resolve-uncertain=sent`` or ``=unsent``.
+  Interactive SMTP submissions offer an immediate retry after connection
+  failures or explicit rejections. The default is no; declining preserves
+  progress for later. No retry prompt is shown with ``--no-interactive``
+  or non-terminal input.
 
 ``b4 trailers -u``
   Retrieve any code-review trailers provided for your series and apply

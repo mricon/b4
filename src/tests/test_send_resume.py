@@ -10,6 +10,7 @@ import email.policy
 import json
 import smtplib
 import socketserver
+import sys
 import threading
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -338,8 +339,11 @@ def test_large_series_recovers_original_suffix(tmp_path: Path) -> None:
     ]
 
 
-def run_send(*args: str) -> None:
-    parsed = b4.command.setup_parser().parse_args(['--no-stdin', 'send', *args])
+def run_send(*args: str, no_interactive: bool = False) -> None:
+    options = ['--no-interactive'] if no_interactive else []
+    parsed = b4.command.setup_parser().parse_args(
+        ['--no-stdin', *options, 'send', *args]
+    )
     b4.ez.cmd_send(parsed)
 
 
@@ -420,6 +424,286 @@ def test_cli_resume_and_reroll(
     assert not saved.directory.exists()
     run_send('--resume')
     assert len(second.calls) == 2
+
+
+def retry_prompt(monkeypatch: pytest.MonkeyPatch, *answers: Any) -> Mock:
+    retry = Mock(side_effect=answers)
+
+    def respond(prompt: str) -> str:
+        if prompt.startswith('Retry sending'):
+            return cast(str, retry(prompt))
+        return ''
+
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)
+    monkeypatch.setattr('builtins.input', respond)
+    return retry
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        smtplib.SMTPDataError(421, b'temporary'),
+        smtplib.SMTPDataError(550, b'quota'),
+        smtplib.SMTPSenderRefused(550, b'no', 'test-override@example.com'),
+        smtplib.SMTPRecipientsRefused({'list@example.org': (450, b'later')}),
+    ],
+)
+def test_interactive_retry_reconnects_without_regenerating_mail(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    first = FakeSMTP({}, error)
+    second = FakeSMTP()
+    get_smtp = Mock(
+        side_effect=[
+            (first.connector(), b4.USER_CONFIG['email']),
+            (second.connector(), b4.USER_CONFIG['email']),
+        ]
+    )
+    monkeypatch.setattr(b4, 'get_smtp', get_smtp)
+    signer = Mock(side_effect=lambda data: b'X-Developer-Signature: frozen\n' + data)
+    monkeypatch.setattr(patatt, 'rfc2822_sign', signer)
+    retry = retry_prompt(monkeypatch, 'y')
+    run_send()
+    retry.assert_called_once_with(
+        'Retry sending to the remaining recipients now? [y/N] '
+    )
+    assert get_smtp.call_count == 2
+    assert signer.call_count == 3
+    assert first.closed and second.closed
+    assert len(first.calls) == len(second.calls) == 2
+    assert first.calls[1] == second.calls[0]
+    assert pending_session(send_repo) is None
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+
+
+def test_interactive_retry_after_connection_failure(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connect = Mock(side_effect=OSError('offline'))
+    smtp = FakeSMTP()
+    monkeypatch.setattr(
+        b4,
+        'get_smtp',
+        Mock(
+            side_effect=[
+                (b4.SMTPConnector(connect), b4.USER_CONFIG['email']),
+                (smtp.connector(), b4.USER_CONFIG['email']),
+            ]
+        ),
+    )
+    retry = retry_prompt(monkeypatch, 'YES')
+    run_send('--no-sign')
+    retry.assert_called_once()
+    connect.assert_called_once()
+    assert len(smtp.calls) == 3
+    assert pending_session(send_repo) is None
+
+
+def test_interactive_retry_only_resends_refused_recipients(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = FakeSMTP({}, {'test-override@example.com': (450, b'later')})
+    second = FakeSMTP()
+    monkeypatch.setattr(
+        b4,
+        'get_smtp',
+        Mock(
+            side_effect=[
+                (first.connector(), b4.USER_CONFIG['email']),
+                (second.connector(), b4.USER_CONFIG['email']),
+            ]
+        ),
+    )
+    retry_prompt(monkeypatch, 'yes')
+    run_send('--no-sign', '--cc', 'test-override@example.com')
+    assert second.calls[0][1] == ['test-override@example.com']
+    assert second.calls[0][2] == first.calls[1][2]
+    assert pending_session(send_repo) is None
+
+
+def test_resume_also_offers_immediate_retry(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _saved, first = interrupt_send(send_repo, monkeypatch)
+    failed = FakeSMTP(smtplib.SMTPDataError(421, b'later'))
+    final = FakeSMTP()
+    monkeypatch.setattr(
+        b4,
+        'get_smtp',
+        Mock(
+            side_effect=[
+                (failed.connector(), b4.USER_CONFIG['email']),
+                (final.connector(), b4.USER_CONFIG['email']),
+            ]
+        ),
+    )
+    retry = retry_prompt(monkeypatch, 'y')
+    run_send('--resume')
+    retry.assert_called_once()
+    assert len(failed.calls) == 1 and len(final.calls) == 2
+    assert failed.calls[0] == final.calls[0]
+    assert final.calls[0] == first.calls[1]
+    assert pending_session(send_repo) is None
+
+
+@pytest.mark.parametrize(
+    'answer', ['', 'n', 'No', 'later', EOFError(), KeyboardInterrupt()]
+)
+def test_declining_retry_preserves_progress(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, answer: Any
+) -> None:
+    first = FakeSMTP({}, smtplib.SMTPDataError(421, b'later'))
+    configure_smtp(monkeypatch, first)
+    retry = retry_prompt(monkeypatch, answer)
+    with pytest.raises(SystemExit) as exc:
+        run_send('--no-sign')
+    assert exc.value.code == (130 if isinstance(answer, KeyboardInterrupt) else 1)
+    retry.assert_called_once()
+    assert len(first.calls) == 2
+    saved = pending_session(send_repo)
+    assert saved is not None and saved.state.in_flight is None
+    assert not saved.state.messages[0].pending()
+    assert saved.state.messages[1].pending()
+    assert b4.ez.load_cover()[1]['series']['revision'] == 1
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    run_send('--resume')
+    assert second.calls[0] == first.calls[1]
+    assert pending_session(send_repo) is None
+
+
+def test_each_retry_requires_confirmation(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = FakeSMTP({}, smtplib.SMTPDataError(421, b'later'))
+    second = FakeSMTP(smtplib.SMTPDataError(421, b'still unavailable'))
+    get_smtp = Mock(
+        side_effect=[
+            (first.connector(), b4.USER_CONFIG['email']),
+            (second.connector(), b4.USER_CONFIG['email']),
+        ]
+    )
+    monkeypatch.setattr(b4, 'get_smtp', get_smtp)
+    retry = retry_prompt(monkeypatch, 'y', 'n')
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    assert retry.call_count == 2
+    assert get_smtp.call_count == 2
+    assert first.calls[1] == second.calls[0]
+    assert len(second.calls) == 1
+    assert pending_session(send_repo) is not None
+
+
+@pytest.mark.parametrize('no_interactive', [False, True])
+def test_noninteractive_failure_does_not_prompt_for_retry(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, no_interactive: bool
+) -> None:
+    first = FakeSMTP({}, smtplib.SMTPDataError(421, b'later'))
+    configure_smtp(monkeypatch, first)
+    retry = retry_prompt(monkeypatch)
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: no_interactive)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign', no_interactive=no_interactive)
+    retry.assert_not_called()
+    assert len(first.calls) == 2
+    assert pending_session(send_repo) is not None
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        TimeoutError('late'),
+        smtplib.SMTPServerDisconnected('lost'),
+        smtplib.SMTPDataError(-1, b'bad reply'),
+    ],
+)
+def test_uncertain_delivery_never_offers_immediate_retry(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    first = FakeSMTP({}, error)
+    configure_smtp(monkeypatch, first)
+    retry = retry_prompt(monkeypatch)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    retry.assert_not_called()
+    saved = pending_session(send_repo)
+    assert saved is not None and saved.state.in_flight == 1
+    assert len(first.calls) == 2
+
+
+@pytest.mark.parametrize('outcome', [{}, smtplib.SMTPDataError(421, b'later')])
+def test_journal_failure_never_offers_immediate_retry(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, outcome: Any
+) -> None:
+    first = FakeSMTP({}, outcome)
+    configure_smtp(monkeypatch, first)
+    retry = retry_prompt(monkeypatch)
+    original = SendSession.save
+
+    def fail_recording_result(self: SendSession) -> None:
+        if len(first.calls) == 2 and self.state.in_flight is None:
+            raise OSError('disk full')
+        original(self)
+
+    monkeypatch.setattr(SendSession, 'save', fail_recording_result)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    retry.assert_not_called()
+    saved = pending_session(send_repo)
+    assert saved is not None and saved.state.in_flight == 1
+
+
+@pytest.mark.parametrize(
+    'what', ['dirty', 'cover', 'branch', 'sender', 'excluded', 'transport', 'message']
+)
+def test_retry_uses_saved_submission_after_prompt(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, what: str
+) -> None:
+    first = FakeSMTP({}, smtplib.SMTPDataError(421, b'later'))
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, first)
+    retry = retry_prompt(monkeypatch)
+
+    def change_submission(_prompt: str) -> str:
+        configure_smtp(monkeypatch, second)
+        if what == 'dirty':
+            Path('send-0.txt').write_text('uncommitted')
+        elif what == 'cover':
+            cover, tracking = b4.ez.load_cover()
+            b4.ez.store_cover(cover + '\nChanged during prompt.\n', tracking)
+        elif what == 'branch':
+            assert b4.git_run_command(None, ['checkout', '-b', 'elsewhere'])[0] == 0
+        elif what == 'sender':
+            monkeypatch.setattr(
+                b4, 'get_smtp', lambda: (second.connector(), 'other@example.org')
+            )
+        elif what == 'excluded':
+            b4.MAIN_CONFIG['email-exclude'] = 'list@example.org'
+        elif what == 'transport':
+            monkeypatch.setattr(
+                b4, 'get_smtp', lambda: (['sendmail'], b4.USER_CONFIG['email'])
+            )
+        else:
+            (send_repo / 'v1' / '0001.eml').write_bytes(b'changed')
+        return 'y'
+
+    retry.side_effect = change_submission
+    if what == 'sender':
+        run_send('--no-sign')
+        assert all(call[0] == first.calls[0][0] for call in second.calls)
+        assert pending_session(send_repo) is None
+    else:
+        with pytest.raises(SystemExit):
+            run_send('--no-sign')
+    retry.assert_called_once()
+    if what in {'dirty', 'cover', 'branch', 'sender'}:
+        assert len(second.calls) == 2
+        assert second.calls[0] == first.calls[1]
+        if what != 'sender':
+            saved = pending_session(send_repo)
+            assert saved is not None and saved.delivered()
+    else:
+        assert not second.calls
 
 
 def test_fresh_send_is_blocked_while_pending(
@@ -554,6 +838,7 @@ def test_bookkeeping_recovery_sends_no_mail(
 ) -> None:
     smtp = FakeSMTP()
     configure_smtp(monkeypatch, smtp)
+    retry = retry_prompt(monkeypatch)
     original = b4.ez.reroll
 
     def interrupted(*args: Any, **kwargs: Any) -> None:
@@ -564,6 +849,7 @@ def test_bookkeeping_recovery_sends_no_mail(
     monkeypatch.setattr(b4.ez, 'reroll', interrupted)
     with pytest.raises(SystemExit):
         run_send('--no-sign')
+    retry.assert_not_called()
     assert len(smtp.calls) == 3
     saved = pending_session(send_repo)
     assert saved is not None and saved.delivered()
@@ -766,7 +1052,10 @@ def test_source_change_at_resume_confirmation_only_defers_bookkeeping(
 
 
 @pytest.mark.parametrize('failure', ['data', 'recipient'])
-def test_real_smtplib_against_local_server(session: SendSession, failure: str) -> None:
+@pytest.mark.parametrize('recovery', ['resume', 'retry'])
+def test_real_smtplib_against_local_server(
+    session: SendSession, monkeypatch: pytest.MonkeyPatch, failure: str, recovery: str
+) -> None:
     """Exercise actual SMTP responses without delivering or relaying any mail."""
     transactions: List[Tuple[List[str], bytes, bool]] = []
     errors: List[BaseException] = []
@@ -841,10 +1130,18 @@ def test_real_smtplib_against_local_server(session: SendSession, failure: str) -
             return b4.SMTPConnector(lambda: smtplib.SMTP('127.0.0.1', port, timeout=5))
 
         try:
-            with pytest.raises(RuntimeError, match='SMTP'):
-                session.send(connector())
-            saved = SendSession.load(session.directory)
-            saved.send(connector())
+            if recovery == 'retry':
+                monkeypatch.setattr(
+                    b4.ez, '_get_resume_smtp', lambda _session: connector()
+                )
+                retry = retry_prompt(monkeypatch, 'y')
+                b4.ez._send_with_retry(session, connector(), no_interactive=False)
+                retry.assert_called_once()
+            else:
+                with pytest.raises(RuntimeError, match='SMTP'):
+                    session.send(connector())
+                saved = SendSession.load(session.directory)
+                saved.send(connector())
         finally:
             server.shutdown()
             worker.join(timeout=5)

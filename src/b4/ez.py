@@ -37,6 +37,7 @@ import b4
 import patatt
 from b4._rewrite import ThirdpartyCommitterError, rewrite_commits
 from b4._send import (
+    RetryableSendError,
     SendSession,
     State,
     pending_session,
@@ -3456,6 +3457,26 @@ def _get_resume_smtp(
     return smtp
 
 
+def _send_with_retry(
+    session: SendSession, smtp: b4.SMTPConnector, *, no_interactive: bool
+) -> None:
+    while True:
+        try:
+            session.send(smtp)
+            return
+        except RetryableSendError as exc:
+            if no_interactive or not sys.stdin.isatty():
+                raise
+            logger.error('%s', exc)
+            try:
+                answer = input('Retry sending to the remaining recipients now? [y/N] ')
+            except EOFError:
+                answer = ''
+            if answer.strip().lower() not in {'y', 'yes'}:
+                raise
+            smtp = _get_resume_smtp(session)
+
+
 def _resume_send(cmdargs: argparse.Namespace, session: SendSession) -> None:
     state = session.state
     logger.info('Saved submission: <%s>', state.cover_message_id)
@@ -3505,7 +3526,7 @@ def _resume_send(cmdargs: argparse.Namespace, session: SendSession) -> None:
     input('Press Enter to resume or Ctrl-C to abort')
     if cmdargs.resolve_uncertain:
         session.resolve(cmdargs.resolve_uncertain)
-    session.send(smtp)
+    _send_with_retry(session, smtp, no_interactive=cmdargs.no_interactive)
     _finish_send(session)
 
 
@@ -4054,7 +4075,7 @@ def _cmd_send(cmdargs: argparse.Namespace, directory: pathlib.Path) -> None:
                     directory / f'v{state.revision}', state, prepared
                 )
                 logger.info('Saved SMTP submission in %s', session.directory)
-                session.send(smtp)
+                _send_with_retry(session, smtp, no_interactive=cmdargs.no_interactive)
                 _finish_send(session)
             return
 

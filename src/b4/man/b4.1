@@ -421,6 +421,10 @@ and sending only to recipients not yet accepted by the server. Use
 \fB\-\-resume \-o DIR\fP to inspect pending messages without sending. If a
 transaction\(aqs outcome is uncertain, b4 stops until it is verified and
 explicitly recorded with \fB\-\-resolve\-uncertain=sent\fP or \fB=unsent\fP\&.
+Interactive SMTP submissions offer an immediate retry after connection
+failures or explicit rejections. The default is no; declining preserves
+progress for later. No retry prompt is shown with \fB\-\-no\-interactive\fP
+or non\-terminal input.
 .TP
 .B \fBb4 trailers \-u\fP
 Retrieve any code\-review trailers provided for your series and apply
