@@ -6660,10 +6660,8 @@ def patchwork_set_state(msgids: List[str], state: str) -> None:
                 logger.debug('Patchwork REST error: %s', ex)
 
 
-def send_mail(
-    smtp: Union[SMTPConnector, smtplib.SMTP, smtplib.SMTP_SSL, List[str], None],
+def prepare_mail(
     msgs: Sequence[EmailMessage],
-    fromaddr: Optional[str],
     destaddrs: Optional[Union[Set[str], List[str]]] = None,
     bccaddrs: Optional[Union[Set[str], List[str]]] = None,
     patatt_sign: bool = False,
@@ -6671,7 +6669,8 @@ def send_mail(
     output_dir: Optional[str] = None,
     web_endpoint: Optional[str] = None,
     reflect: bool = False,
-) -> int:
+) -> List[Tuple[Set[str], bytes, LoreSubject]]:
+    """Render and sign the complete batch before opening a mail transport."""
     tosend: List[Tuple[Set[str], bytes, LoreSubject]] = list()
     if output_dir is not None:
         dryrun = True
@@ -6781,6 +6780,32 @@ def send_mail(
 
         tosend.append((myaddrs, bdata, ls))
 
+    return tosend
+
+
+def send_mail(
+    smtp: Union[SMTPConnector, smtplib.SMTP, smtplib.SMTP_SSL, List[str], None],
+    msgs: Sequence[EmailMessage],
+    fromaddr: Optional[str],
+    destaddrs: Optional[Union[Set[str], List[str]]] = None,
+    bccaddrs: Optional[Union[Set[str], List[str]]] = None,
+    patatt_sign: bool = False,
+    dryrun: bool = False,
+    output_dir: Optional[str] = None,
+    web_endpoint: Optional[str] = None,
+    reflect: bool = False,
+) -> int:
+    tosend = prepare_mail(
+        msgs,
+        destaddrs=destaddrs,
+        bccaddrs=bccaddrs,
+        patatt_sign=patatt_sign,
+        dryrun=dryrun,
+        output_dir=output_dir,
+        web_endpoint=web_endpoint,
+        reflect=reflect,
+    )
+    bcc_set: Set[str] = set(bccaddrs) if bccaddrs else set()
     if not len(tosend):
         return 0
 
