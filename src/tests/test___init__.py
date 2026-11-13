@@ -2406,6 +2406,44 @@ def _plain_msg(subject: str) -> email.message.EmailMessage:
     return msg
 
 
+def test_send_mail_warns_about_partial_recipient_refusal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A message that some recipients accepted is out and must count as
+    sent: ty's queue and the review TUIs resend whole batches that fail,
+    so stopping here would duplicate mail to everyone who accepted it.
+    The refused addresses are named so the user can follow up."""
+    calls: List[List[str]] = []
+
+    class PartiallyRefusingSMTP:
+        def sendmail(
+            self, fromaddr: str, destaddrs: List[str], bdata: bytes
+        ) -> Dict[str, Tuple[int, bytes]]:
+            calls.append(destaddrs)
+            if len(calls) == 1:
+                return {'bob@example.org': (450, b'try later')}
+            return {}
+
+    msg = _plain_msg('one')
+    msg['Cc'] = 'list@example.org'
+    smtp = PartiallyRefusingSMTP()
+
+    def connect() -> Any:
+        return smtp
+
+    with caplog.at_level(logging.WARNING, logger='b4'):
+        sent = b4.send_mail(
+            b4.SMTPConnector(connect),
+            [msg, _plain_msg('two')],
+            fromaddr='alice@example.org',
+        )
+    assert sent == 2
+    assert len(calls) == 2
+    assert set(calls[0]) == {'bob@example.org', 'list@example.org'}
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any('one' in w and 'bob@example.org' in w for w in warnings)
+
+
 class _FakeSMTP:
     """Just enough of smtplib.SMTP to satisfy send_mail()."""
 

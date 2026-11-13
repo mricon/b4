@@ -6866,9 +6866,17 @@ def send_mail(
             bdata = re.sub(rb'\r\n|\n|\r(?!\n)', b'\r\n', bdata)
             logger.info('  %s', lsubject.full_subject)
             if reflect:
-                conn.sendmail(fromaddr, [envpair[1]], bdata)
+                refused = conn.sendmail(fromaddr, [envpair[1]], bdata)
             else:
-                conn.sendmail(fromaddr, list(destaddrs), bdata)
+                refused = conn.sendmail(fromaddr, list(destaddrs), bdata)
+            if refused:
+                # The other recipients have the message, so stopping here
+                # would make callers resend it to them as well.
+                logger.warning(
+                    'WARNING: %s: SMTP refused recipients: %s',
+                    lsubject.full_subject,
+                    ', '.join(sorted(refused)),
+                )
             sent += 1
 
     return sent
