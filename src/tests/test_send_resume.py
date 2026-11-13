@@ -1,6 +1,7 @@
 """Interrupted submissions use frozen mail and never repeat accepted recipients.
 
-SMTP connections use mocks or a loopback-only server.
+SMTP connections use mocks or a loopback-only server. Integration tests use
+disposable Git repos and exercise formatting, signing, state and rerolling.
 """
 
 import base64
@@ -19,11 +20,15 @@ from unittest.mock import Mock
 import pytest
 
 import b4
+import b4.command
+import b4.ez
 import patatt
 from b4._send import (
     RetryableSendError,
     SendSession,
     State,
+    pending_session,
+    series_directory,
 )
 
 COVER = '20261113-an-intentionally-long-change-id-for-testing-wire-headers-v4-0-0123456789ab@example.org'
@@ -333,6 +338,433 @@ def test_large_series_recovers_original_suffix(tmp_path: Path) -> None:
     ]
 
 
+def run_send(*args: str) -> None:
+    parsed = b4.command.setup_parser().parse_args(['--no-stdin', 'send', *args])
+    b4.ez.cmd_send(parsed)
+
+
+@pytest.fixture(params=['branch-description', 'commit', 'tip-commit'])
+def send_repo(
+    gitdir: str, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Path:
+    b4.MAIN_CONFIG.update(
+        {
+            'prep-cover-strategy': request.param,
+            'prep-pre-flight-checks': 'disable-all',
+        }
+    )
+    prep_args = ['--no-stdin', 'prep', '-n', 'smtp-resume']
+    if request.param == 'tip-commit':
+        base = b4.git_get_current_branch()
+        assert base is not None
+        prep_args = ['--no-stdin', 'prep', '-e', base]
+        assert b4.git_run_command(None, ['checkout', '-b', 'b4/smtp-resume'])[0] == 0
+    else:
+        b4.ez.cmd_prep(b4.command.setup_parser().parse_args(prep_args))
+    for n in range(2):
+        Path(gitdir, f'send-{n}.txt').write_text(f'Change {n}\n')
+        assert b4.git_run_command(None, ['add', f'send-{n}.txt'])[0] == 0
+        assert b4.git_run_command(None, ['commit', '-m', f'Change {n}'])[0] == 0
+    if request.param == 'tip-commit':
+        b4.ez.cmd_prep(b4.command.setup_parser().parse_args(prep_args))
+    _cover, tracking = b4.ez.load_cover()
+    b4.ez.store_cover(
+        'Two changes\n\nA cover letter.\n\nTo: list@example.org\n', tracking
+    )
+    monkeypatch.setattr(b4, 'SENDEMAIL_CONFIG', {'smtpserver': 'smtp.example.org'})
+    monkeypatch.setattr('builtins.input', lambda _prompt: '')
+    return series_directory(tracking['series']['change-id'])
+
+
+def configure_smtp(monkeypatch: pytest.MonkeyPatch, smtp: FakeSMTP) -> None:
+    def get_smtp(dryrun: bool = False) -> Tuple[Any, str]:
+        return (None if dryrun else smtp.connector()), str(b4.USER_CONFIG['email'])
+
+    monkeypatch.setattr(b4, 'get_smtp', get_smtp)
+
+
+def interrupt_send(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> Tuple[SendSession, FakeSMTP]:
+    smtp = FakeSMTP({}, smtplib.SMTPDataError(421, b'temporary'))
+    configure_smtp(monkeypatch, smtp)
+    with pytest.raises(SystemExit) as exc:
+        run_send('--no-sign')
+    assert exc.value.code == 1
+    session = pending_session(send_repo)
+    assert session is not None
+    return session, smtp
+
+
+def test_cli_resume_and_reroll(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    saved, first = interrupt_send(send_repo, monkeypatch)
+    assert 'run: b4 send --resume' in caplog.text
+    _cover, tracking = b4.ez.load_cover()
+    assert tracking['series']['revision'] == 1
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    monkeypatch.setattr(
+        b4.ez,
+        'get_prep_branch_as_patches',
+        Mock(side_effect=AssertionError('must not regenerate')),
+    )
+    run_send('--resume')
+    assert second.calls[0] == first.calls[1]
+    assert len(second.calls) == 2
+    _cover, tracking = b4.ez.load_cover()
+    assert tracking['series']['revision'] == 2
+    assert tracking['series']['history']['v1'] == [saved.state.cover_message_id]
+    # Signed mail and recipient lists are not kept once nothing needs them
+    assert not saved.directory.exists()
+    run_send('--resume')
+    assert len(second.calls) == 2
+
+
+def test_fresh_send_is_blocked_while_pending(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _saved, smtp = interrupt_send(send_repo, monkeypatch)
+    generate = Mock(side_effect=AssertionError('must not regenerate'))
+    monkeypatch.setattr(b4.ez, 'get_prep_branch_as_patches', generate)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    generate.assert_not_called()
+    assert len(smtp.calls) == 2
+
+
+@pytest.mark.parametrize('what', ['head', 'cover', 'dirty', 'sender', 'excluded'])
+def test_resume_uses_saved_submission_after_changes(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, what: str
+) -> None:
+    saved, first = interrupt_send(send_repo, monkeypatch)
+    original_cover, original_tracking = b4.ez.load_cover(strip_comments=False)
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    if what == 'head':
+        assert (
+            b4.git_run_command(None, ['commit', '--allow-empty', '-m', 'Changed'])[0]
+            == 0
+        )
+    elif what == 'cover':
+        cover, tracking = b4.ez.load_cover()
+        b4.ez.store_cover(cover + '\nAnother paragraph.\n', tracking)
+    elif what == 'dirty':
+        Path('send-0.txt').write_text('uncommitted')
+    elif what == 'sender':
+        monkeypatch.setattr(
+            b4, 'get_smtp', lambda: (second.connector(), 'other@example.org')
+        )
+    else:
+        b4.MAIN_CONFIG['email-exclude'] = 'list@example.org'
+    changed_head = b4.git_revparse_obj('HEAD')
+    changed_cover = b4.ez.load_cover(strip_comments=False)
+    if what == 'sender':
+        run_send('--resume')
+        assert pending_session(send_repo) is None
+    else:
+        with pytest.raises(SystemExit) as exc:
+            run_send('--resume')
+        assert exc.value.code == 1
+        assert b4.git_revparse_obj('HEAD') == changed_head
+        assert b4.ez.load_cover(strip_comments=False) == changed_cover
+    if what == 'excluded':
+        assert not second.calls
+    else:
+        assert len(second.calls) == 2
+        assert second.calls[0] == first.calls[1]
+        assert all(call[0] == saved.state.fromaddr for call in second.calls)
+        if what != 'sender':
+            assert SendSession.load(saved.directory).delivered()
+    if what in {'head', 'cover', 'dirty'}:
+        monkeypatch.setattr(
+            b4, 'get_smtp', Mock(side_effect=AssertionError('all accepted'))
+        )
+        with pytest.raises(SystemExit):
+            run_send('--resume')
+        assert b4.ez.load_cover(strip_comments=False) == changed_cover
+        assert b4.git_run_command(None, ['reset', '--hard', saved.state.head])[0] == 0
+        if b4.ez.get_cover_strategy() == 'branch-description':
+            b4.ez.store_cover(original_cover, original_tracking)
+        run_send('--resume')
+        assert pending_session(send_repo) is None
+        assert b4.ez.load_cover()[1]['series']['revision'] == 2
+
+
+def test_resume_export_never_connects_or_updates_progress(
+    send_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The export is for reading, so it uses the same line endings as
+    b4 send -o and --dry-run, not the CRLF of the saved wire messages."""
+    saved, _first = interrupt_send(send_repo, monkeypatch)
+    before = (saved.directory / 'state.json').read_bytes()
+    monkeypatch.setattr(
+        b4, 'get_smtp', Mock(side_effect=AssertionError('must not connect'))
+    )
+    out = tmp_path / 'outgoing'
+    run_send('--resume', '-o', str(out))
+    assert sorted(path.read_bytes() for path in out.glob('*.eml')) == sorted(
+        saved.message_bytes(n).replace(b'\r\n', b'\n') for n in (1, 2)
+    )
+    assert (saved.directory / 'state.json').read_bytes() == before
+    run_send('--resume', '--dry-run')
+    assert 'Change 1' in caplog.text
+    assert '\r' not in caplog.text
+    assert (saved.directory / 'state.json').read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    'option',
+    [
+        ('--to', 'other@example.org'),
+        ('--cc', 'other@example.org'),
+        ('--bcc', 'other@example.org'),
+        ('--no-sign',),
+        ('--reflect',),
+        ('--resend',),
+        ('--use-web-endpoint',),
+        ('--force-cover-letter',),
+    ],
+)
+def test_resume_disallows_message_changes(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, option: Tuple[str, ...]
+) -> None:
+    _saved, smtp = interrupt_send(send_repo, monkeypatch)
+    with pytest.raises(SystemExit):
+        run_send('--resume', *option)
+    assert len(smtp.calls) == 2
+
+
+def test_series_lock_prevents_parallel_senders(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _saved, smtp = interrupt_send(send_repo, monkeypatch)
+    with b4.lockfile_nb(str(send_repo / 'send.lock')), pytest.raises(SystemExit):
+        run_send('--resume')
+    assert len(smtp.calls) == 2
+
+
+@pytest.mark.parametrize('after_reroll', [False, True])
+def test_bookkeeping_recovery_sends_no_mail(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, after_reroll: bool
+) -> None:
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    original = b4.ez.reroll
+
+    def interrupted(*args: Any, **kwargs: Any) -> None:
+        if after_reroll:
+            original(*args, **kwargs)
+        raise RuntimeError('interrupted bookkeeping')
+
+    monkeypatch.setattr(b4.ez, 'reroll', interrupted)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    assert len(smtp.calls) == 3
+    saved = pending_session(send_repo)
+    assert saved is not None and saved.delivered()
+    monkeypatch.setattr(b4.ez, 'reroll', original)
+    monkeypatch.setattr(
+        b4, 'get_smtp', Mock(side_effect=AssertionError('all accepted'))
+    )
+    run_send('--resume')
+    assert pending_session(send_repo) is None
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+
+
+def test_interrupted_cover_tracking_update_is_completed_once(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    original = b4.ez.store_cover
+    intermediate_cover = None
+
+    def interrupted(cover: str, tracking: Dict[str, Any], new: bool = False) -> None:
+        nonlocal intermediate_cover
+        intermediate_cover = cover
+        if b4.ez.get_cover_strategy() == 'branch-description':
+            branch = b4.git_get_current_branch()
+            b4.git_set_config(None, f'branch.{branch}.description', cover)
+        raise OSError('interrupted while saving cover/tracking')
+
+    monkeypatch.setattr(b4.ez, 'store_cover', interrupted)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    assert len(smtp.calls) == 3
+    assert b4.ez.load_cover()[1]['series']['revision'] == 1
+    monkeypatch.setattr(b4.ez, 'store_cover', original)
+    monkeypatch.setattr(
+        b4, 'get_smtp', Mock(side_effect=AssertionError('all accepted'))
+    )
+    run_send('--resume')
+    cover, tracking = b4.ez.load_cover(strip_comments=False)
+    assert intermediate_cover is not None
+    assert cover == intermediate_cover.strip()
+    assert cover.count('Changes in v2:') == 1
+    assert tracking['series']['revision'] == 2
+    assert len(tracking['series']['history']['v1']) == 1
+    assert pending_session(send_repo) is None
+
+
+def test_signed_bytes_are_not_resigned(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def sign(data: bytes) -> bytes:
+        return b'X-Developer-Signature: frozen-test-signature\n' + data
+
+    signer = Mock(side_effect=sign)
+    monkeypatch.setattr(patatt, 'rfc2822_sign', signer)
+    first = FakeSMTP({}, smtplib.SMTPDataError(550, b'limit'))
+    configure_smtp(monkeypatch, first)
+    with pytest.raises(SystemExit):
+        run_send()
+    assert signer.call_count == 3
+    saved = pending_session(send_repo)
+    assert saved is not None
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    signer.side_effect = AssertionError('must not sign again')
+    run_send('--resume')
+    assert second.calls[0][2] == first.calls[1][2]
+    assert b'X-Developer-Signature: frozen-test-signature\r\n' in second.calls[0][2]
+
+
+@pytest.mark.parametrize('outcome,count', [('sent', 1), ('unsent', 2)])
+def test_cli_reconciles_uncertain_delivery(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, count: int
+) -> None:
+    first = FakeSMTP({}, TimeoutError('no final response'))
+    configure_smtp(monkeypatch, first)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    saved = pending_session(send_repo)
+    assert saved is not None and saved.state.in_flight == 1
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    with pytest.raises(SystemExit):
+        run_send('--resume')
+    assert not second.calls
+    before = (saved.directory / 'state.json').read_bytes()
+    with pytest.raises(SystemExit):
+        run_send('--resume', '--resolve-uncertain', outcome, '--dry-run')
+    assert (saved.directory / 'state.json').read_bytes() == before
+    run_send('--resume', '--resolve-uncertain', outcome)
+    assert len(second.calls) == count
+    assert pending_session(send_repo) is None
+
+
+def test_resume_uses_same_state_from_subdirectory(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    saved, _first = interrupt_send(send_repo, monkeypatch)
+    child = Path('nested') / 'directory'
+    child.mkdir(parents=True)
+    monkeypatch.chdir(child)
+    assert series_directory(saved.state.change_id) == send_repo
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    run_send('--resume')
+    assert len(second.calls) == 2
+
+
+def test_no_snapshot_is_published_when_signing_fails(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    signer = Mock(side_effect=patatt.SigningError('test failure'))
+    monkeypatch.setattr(patatt, 'rfc2822_sign', signer)
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    with pytest.raises(SystemExit):
+        run_send()
+    assert not smtp.calls
+    assert pending_session(send_repo) is None
+    assert '--resume' not in caplog.text
+
+
+@pytest.mark.parametrize(
+    'args,sent',
+    [
+        (['--dry-run'], 0),
+        (['-o', 'outgoing'], 0),
+        (['--reflect'], 3),
+        (['--preview-to', 'preview@example.org'], 3),
+    ],
+)
+def test_non_submission_modes_do_not_create_resume_state(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, args: List[str], sent: int
+) -> None:
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    run_send('--no-sign', *args)
+    assert len(smtp.calls) == sent
+    assert not send_repo.exists()
+    assert b4.ez.load_cover()[1]['series']['revision'] == 1
+
+
+def test_finish_failed_snapshot_update_is_idempotent(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    original = SendSession.save
+
+    def fail_if_finished(self: SendSession) -> None:
+        if self.state.finished:
+            raise OSError('disk full after reroll')
+        original(self)
+
+    monkeypatch.setattr(SendSession, 'save', fail_if_finished)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    assert len(smtp.calls) == 3
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+    monkeypatch.setattr(SendSession, 'save', original)
+    run_send('--resume')
+    assert len(smtp.calls) == 3
+    assert pending_session(send_repo) is None
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+
+
+def test_completed_sends_leave_no_record(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sending the same revision again after --force-revision must work."""
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    run_send('--no-sign')
+    b4.ez.force_revision(1)
+    run_send('--no-sign')
+    assert len(smtp.calls) == 6
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+    assert not list(send_repo.glob('v*'))
+
+
+def test_source_change_at_resume_confirmation_only_defers_bookkeeping(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _saved, _first = interrupt_send(send_repo, monkeypatch)
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+
+    def change_branch(_prompt: str) -> str:
+        b4.git_run_command(
+            None, ['commit', '--allow-empty', '-m', 'Changed during prompt']
+        )
+        return ''
+
+    monkeypatch.setattr('builtins.input', change_branch)
+    with pytest.raises(SystemExit):
+        run_send('--resume')
+    assert len(second.calls) == 2
+    saved = pending_session(send_repo)
+    assert saved is not None and saved.delivered()
+
+
 @pytest.mark.parametrize('failure', ['data', 'recipient'])
 def test_real_smtplib_against_local_server(session: SendSession, failure: str) -> None:
     """Exercise actual SMTP responses without delivering or relaying any mail."""
@@ -506,3 +938,185 @@ def test_resumed_signatures_verify_without_private_key(
         results = patatt.validate_message(data, [str(tmp_path / 'keys')])
         assert len(results) == 1
         assert results[0][0] == patatt.RES_VALID
+
+
+@pytest.mark.parametrize('exclude', ['list@example.org', '*@Example.org'])
+def test_resume_respects_exclusions_in_frozen_headers(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, exclude: str
+) -> None:
+    """email-exclude takes shell-style patterns everywhere else in b4, so
+    a pattern must keep a saved submission from going out as well."""
+    first = FakeSMTP({}, {'test-override@example.com': (450, b'later')})
+    configure_smtp(monkeypatch, first)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign', '--cc', 'test-override@example.com')
+    saved = pending_session(send_repo)
+    assert saved is not None
+    assert 'list@example.org' in saved.state.messages[1].accepted
+    b4.MAIN_CONFIG['email-exclude'] = exclude
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    with pytest.raises(SystemExit):
+        run_send('--resume')
+    assert not second.calls
+
+
+def test_source_change_at_send_confirmation_saves_nothing(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The messages were made from the old HEAD, so they must not be saved
+    as a submission that --resume would later send unchecked."""
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+
+    def change_branch(_prompt: str) -> str:
+        b4.git_run_command(
+            None, ['commit', '--allow-empty', '-m', 'Changed during prompt']
+        )
+        return ''
+
+    monkeypatch.setattr('builtins.input', change_branch)
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    assert not smtp.calls
+    assert pending_session(send_repo) is None
+
+
+@pytest.mark.parametrize('source', ['option', 'config'])
+def test_bcc_survives_resume(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    bcc = 'secret@example.org'
+    if source == 'config':
+        b4.MAIN_CONFIG['send-series-bcc'] = bcc
+        args = ['--no-sign']
+    else:
+        args = ['--no-sign', '--bcc', bcc]
+    first = FakeSMTP({}, smtplib.SMTPDataError(421, b'temporary'))
+    configure_smtp(monkeypatch, first)
+    with pytest.raises(SystemExit):
+        run_send(*args)
+    second = FakeSMTP()
+    configure_smtp(monkeypatch, second)
+    run_send('--resume')
+    calls = first.calls + second.calls
+    assert len(calls) == 4
+    assert all(bcc in recipients for _sender, recipients, _data in calls)
+    assert not any(bcc.encode() in data for _sender, _recipients, data in calls)
+
+
+def test_cli_permanent_refusal_finishes_with_a_warning(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Everyone else has the series, so it counts as sent and is rerolled.
+    The user still has to learn who did not get it."""
+    gone = {'test-override@example.com': (550, b'user unknown')}
+    smtp = FakeSMTP(gone, gone, gone)
+    configure_smtp(monkeypatch, smtp)
+    run_send('--no-sign', '--cc', 'test-override@example.com')
+    assert len(smtp.calls) == 3
+    assert pending_session(send_repo) is None
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+    assert 'permanently refused' in caplog.text
+    assert 'test-override@example.com' in caplog.text
+
+
+@pytest.mark.parametrize('failure', ['connect', 'sender'])
+def test_submission_that_reached_nobody_does_not_block_a_fresh_send(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Nothing went out, so there is nothing to protect from duplicates.
+    The user must be free to fix the series and send it again, instead
+    of being held to the saved messages."""
+    if failure == 'connect':
+        connector = b4.SMTPConnector(Mock(side_effect=OSError('bad password')))
+    else:
+        connector = FakeSMTP(
+            smtplib.SMTPSenderRefused(550, b'no', 'alice@example.org')
+        ).connector()
+    monkeypatch.setattr(
+        b4, 'get_smtp', lambda dryrun=False: (connector, str(b4.USER_CONFIG['email']))
+    )
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')
+    stale = pending_session(send_repo)
+    assert stale is not None
+    _cover, tracking = b4.ez.load_cover()
+    b4.ez.store_cover('Two fixed changes\n\nTo: list@example.org\n', tracking)
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    run_send('--no-sign')
+    assert len(smtp.calls) == 3
+    assert b'Two fixed changes' in smtp.calls[0][2]
+    assert pending_session(send_repo) is None
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+
+
+@pytest.mark.parametrize('failure', ['cannot-tag', 'tag-exists'])
+def test_sent_tag_trouble_does_not_block_the_reroll(
+    send_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: str,
+) -> None:
+    """The sent tag is a convenience for --resend. The mail is out either
+    way, so a tag that cannot be made, or one left by an earlier send of
+    the same revision, must not leave a record that no --resume can ever
+    finish."""
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    if failure == 'cannot-tag':
+        original_git = b4.git_run_command
+
+        def fail_tag(topdir: Any, args: List[str], **kwargs: Any) -> Tuple[int, str]:
+            if args[0] == 'tag':
+                return 1, 'cannot create tag'
+            return original_git(topdir, args, **kwargs)
+
+        monkeypatch.setattr(b4, 'git_run_command', fail_tag)
+    else:
+        change_id = b4.ez.load_cover()[1]['series']['change-id']
+        tagname, _rev = b4.ez.get_sent_tagname(change_id, b4.ez.SENT_TAG_PREFIX, 1)
+        # Two commits back has a different tree with every cover strategy
+        gitargs = ['tag', '-a', '-m', 'earlier send', tagname, 'HEAD~2']
+        assert b4.git_run_command(None, gitargs)[0] == 0
+    run_send('--no-sign')
+    assert len(smtp.calls) == 3
+    assert pending_session(send_repo) is None
+    assert b4.ez.load_cover()[1]['series']['revision'] == 2
+    expected = 'Could not tag' if failure == 'cannot-tag' else 'already exists'
+    assert expected in caplog.text
+
+
+def test_resend_is_not_blocked_by_an_unfinished_submission(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--resend sends an older revision from its tag and keeps no record
+    of its own, so the unfinished submission of the current revision has
+    nothing to say about it."""
+    configure_smtp(monkeypatch, FakeSMTP())
+    run_send('--no-sign')
+    saved, _smtp = interrupt_send(send_repo, monkeypatch)
+    assert saved.state.revision == 2
+    smtp = FakeSMTP()
+    configure_smtp(monkeypatch, smtp)
+    run_send('--no-sign', '--resend', 'v1')
+    assert len(smtp.calls) == 3
+    assert all(b'RESEND' in call[2] for call in smtp.calls)
+    still = pending_session(send_repo)
+    assert still is not None
+    assert (still.directory / 'state.json').read_bytes() == (
+        saved.directory / 'state.json'
+    ).read_bytes()
+
+
+def test_unreadable_record_does_not_block_a_dry_run(
+    send_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry run sends nothing, so it needs no answer from the record and
+    must keep working when the record cannot be read."""
+    saved, _smtp = interrupt_send(send_repo, monkeypatch)
+    (saved.directory / 'state.json').write_text('{')
+    run_send('--no-sign', '--dry-run')
+    with pytest.raises(SystemExit):
+        run_send('--no-sign')

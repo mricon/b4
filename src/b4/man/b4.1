@@ -415,6 +415,13 @@ actually sending them.
 Send a \(dqpreview\(dq version of the series for someone to check before
 submitting it upstream.
 .TP
+.B \fBb4 send \-\-resume\fP
+Continue an interrupted SMTP submission, preserving the saved messages
+and sending only to recipients not yet accepted by the server. Use
+\fB\-\-resume \-o DIR\fP to inspect pending messages without sending. If a
+transaction\(aqs outcome is uncertain, b4 stops until it is verified and
+explicitly recorded with \fB\-\-resolve\-uncertain=sent\fP or \fB=unsent\fP\&.
+.TP
 .B \fBb4 trailers \-u\fP
 Retrieve any code\-review trailers provided for your series and apply
 them to the current branch.

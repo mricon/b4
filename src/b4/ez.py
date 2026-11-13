@@ -7,10 +7,12 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
 import base64
+import copy
 import datetime
 import email
 import email.policy
 import email.utils
+import fnmatch
 import gzip
 import hashlib
 import importlib.util
@@ -34,6 +36,12 @@ from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 import b4
 import patatt
 from b4._rewrite import ThirdpartyCommitterError, rewrite_commits
+from b4._send import (
+    SendSession,
+    State,
+    pending_session,
+    series_directory,
+)
 
 can_codespell = importlib.util.find_spec('codespell_lib') is not None
 
@@ -3220,6 +3228,9 @@ def check(cmdargs: argparse.Namespace) -> None:
 
 
 def cmd_send(cmdargs: argparse.Namespace) -> None:
+    if cmdargs.resume and (cmdargs.auth_new or cmdargs.auth_verify):
+        logger.critical('--resume cannot be combined with web authentication')
+        sys.exit(1)
     if cmdargs.auth_new:
         auth_new()
         return
@@ -3227,6 +3238,278 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
         auth_verify(cmdargs)
         return
 
+    if cmdargs.resolve_uncertain and not cmdargs.resume:
+        logger.critical('--resolve-uncertain requires --resume')
+        sys.exit(1)
+    if cmdargs.resume and any(
+        (
+            cmdargs.to,
+            cmdargs.cc,
+            cmdargs.bcc,
+            cmdargs.resend,
+            cmdargs.preview_to,
+            cmdargs.reflect,
+            cmdargs.send_web,
+            cmdargs.no_sign,
+            cmdargs.no_trailer_to_cc,
+            cmdargs.not_me_too,
+            cmdargs.force_cover_letter,
+        )
+    ):
+        logger.critical(
+            '--resume uses saved messages; recipient, signing and transport-mode options cannot be changed'
+        )
+        sys.exit(1)
+    if cmdargs.resolve_uncertain and (cmdargs.dryrun or cmdargs.output_dir):
+        logger.critical('Cannot resolve delivery status in a dry run')
+        sys.exit(1)
+
+    is_prep_branch(mustbe=True)
+    _cover, tracking = load_cover(strip_comments=False)
+    directory = series_directory(tracking['series']['change-id'])
+    try:
+        if cmdargs.resume:
+            if not directory.exists():
+                logger.info('No interrupted SMTP submission to resume for this series.')
+                return
+            with b4.lockfile_nb(str(directory / 'send.lock')):
+                session = pending_session(directory)
+                if session is None:
+                    logger.info(
+                        'No interrupted SMTP submission to resume for this series.'
+                    )
+                    return
+                _resume_send(cmdargs, session)
+            return
+        # These deliver nothing that a saved submission could duplicate, so
+        # they must not depend on it, or on it being readable at all.
+        unrecorded = (
+            cmdargs.dryrun
+            or cmdargs.output_dir
+            or cmdargs.reflect
+            or cmdargs.preview_to
+            or cmdargs.resend
+        )
+        # Checked again under the lock; this only spares the user the prompts.
+        if not unrecorded and _blocking_session(directory):
+            raise RuntimeError('An unfinished submission exists; use b4 send --resume')
+        _cmd_send(cmdargs, directory)
+    except (RuntimeError, OSError, ValueError) as exc:
+        logger.critical('CRITICAL: %s', exc)
+        if _has_pending_send(directory):
+            logger.critical('Send state: %s', directory)
+            logger.critical(
+                'To continue an interrupted SMTP submission, run: b4 send --resume'
+            )
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info('Interrupted.')
+        if _has_pending_send(directory):
+            logger.info('Saved SMTP progress can be continued with b4 send --resume.')
+        sys.exit(130)
+
+
+def _blocking_session(directory: pathlib.Path) -> Optional[SendSession]:
+    """Return the saved submission that a fresh send would duplicate.
+
+    A submission that reached nobody protects nothing, and holding the
+    user to its messages would keep them from fixing the series first.
+    """
+    session = pending_session(directory)
+    if session is None or session.untouched():
+        return None
+    return session
+
+
+def _has_pending_send(directory: pathlib.Path) -> bool:
+    try:
+        return pending_session(directory) is not None
+    except RuntimeError:
+        # Unreadable state is still something --resume will report on.
+        return True
+
+
+def _cover_hash(cover: str, tracking: Dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps([cover, tracking], sort_keys=True).encode()
+    ).hexdigest()
+
+
+def _send_source() -> Tuple[str, str, str, str]:
+    branch = b4.git_get_current_branch()
+    if branch is None:
+        raise RuntimeError('Not currently on a branch, unable to send')
+    cover, tracking = load_cover(strip_comments=False)
+    fingerprint = _cover_hash(cover, tracking)
+    head = b4.git_revparse_obj('HEAD')
+    tree = b4.git_revparse_obj('HEAD^{tree}')
+    if not head or not tree:
+        raise RuntimeError('Cannot identify the submission commits')
+    return branch, head, tree, fingerprint
+
+
+def _check_send_source(state: State, finishing: bool = False) -> None:
+    branch, head, tree, fingerprint = _send_source()
+    allowed = {state.cover_hash}
+    # Branch-description storage writes the cover and tracking separately.
+    # Accept only the exact intermediate state of our saved reroll.
+    if (
+        finishing
+        and state.partial_reroll_hash is not None
+        and get_cover_strategy() == 'branch-description'
+    ):
+        allowed.add(state.partial_reroll_hash)
+    if (
+        b4.git_get_repo_status()
+        or (branch, head, tree) != (state.branch, state.head, state.tree)
+        or fingerprint not in allowed
+    ):
+        if finishing:
+            raise RuntimeError(
+                'All messages were accepted, but the branch or cover/tracking changed. '
+                'Restore it and run b4 send --resume to complete bookkeeping without repeating delivery.'
+            )
+        raise RuntimeError(
+            'The branch or cover/tracking changed since this submission was saved'
+        )
+
+
+def _finish_send(session: SendSession) -> None:
+    state = session.state
+    if not session.delivered() or state.in_flight is not None:
+        raise RuntimeError('Cannot reroll an unfinished submission')
+    if b4.git_get_current_branch() != state.branch:
+        raise RuntimeError(
+            f'All messages were accepted. Check out {state.branch} and run '
+            'b4 send --resume to complete bookkeeping without repeating delivery.'
+        )
+    cover, tracking = load_cover(strip_comments=False)
+    series = tracking['series']
+    revision = f'v{state.revision}'
+    recorded = series.get('history', {}).get(revision, [])
+    if state.cover_message_id not in recorded:
+        _check_send_source(state, finishing=True)
+        if state.next_cover is None:
+            state.next_cover, state.next_tracking = _reroll_cover(
+                cover, tracking, state.cover_message_id
+            )
+            state.partial_reroll_hash = _cover_hash(state.next_cover.strip(), tracking)
+            session.save()
+        assert state.next_tracking is not None
+        reroll(
+            state.branch,
+            state.tag_message,
+            state.cover_message_id,
+            cover_update=(state.next_cover, state.next_tracking),
+        )
+        _cover, tracking = load_cover(strip_comments=False)
+        series = tracking['series']
+    # The sent tag is not checked: it only serves --resend, and an older
+    # send of this revision may have left one that we do not replace.
+    if (
+        series['change-id'] != state.change_id
+        or state.cover_message_id not in series.get('history', {}).get(revision, [])
+        or series['revision'] <= state.revision
+    ):
+        raise RuntimeError(
+            'Delivery is complete, but sent-series bookkeeping is incomplete; no messages will be repeated on --resume'
+        )
+    state.finished = True
+    session.save()
+    # Reported before the record goes, as nothing else remembers them.
+    refused = sorted({addr for message in state.messages for addr in message.refused})
+    if refused:
+        logger.warning(
+            'WARNING: SMTP permanently refused these recipients, so they did not get the series:'
+        )
+        for addr in refused:
+            logger.warning('         %s', addr)
+    session.discard()
+    logger.info(
+        'All %d messages sent; sent-series bookkeeping completed.',
+        len(state.messages),
+    )
+
+
+def _get_resume_smtp(
+    session: SendSession, *, resolved_sent: bool = False
+) -> b4.SMTPConnector:
+    state = session.state
+    # Shell-style patterns, as cleanup_email_addrs() treats them
+    excludes = [pattern.lower() for pattern in b4.get_excluded_addrs()]
+    for index, message in enumerate(state.messages):
+        if not message.pending() or (index == state.in_flight and resolved_sent):
+            continue
+        if any(
+            fnmatch.fnmatchcase(addr.lower(), pattern)
+            for addr in message.recipients
+            for pattern in excludes
+        ):
+            raise RuntimeError(
+                'Saved recipients include an address now excluded by email-exclude; refusing to send'
+            )
+    smtp, _fromaddr = b4.get_smtp()
+    if not isinstance(smtp, b4.SMTPConnector):
+        raise RuntimeError(
+            'Resuming requires an SMTP server, not a local sendmail command'
+        )
+    return smtp
+
+
+def _resume_send(cmdargs: argparse.Namespace, session: SendSession) -> None:
+    state = session.state
+    logger.info('Saved submission: <%s>', state.cover_message_id)
+    pending = [index for index, msg in enumerate(state.messages) if msg.pending()]
+    for index in pending:
+        message = state.messages[index]
+        logger.info('  %s', message.subject)
+        b4.print_pretty_addrs([('', addr) for addr in message.pending()], '    Pending')
+    if state.in_flight is not None:
+        logger.warning(
+            'Delivery is uncertain for <%s>', state.messages[state.in_flight].message_id
+        )
+    if cmdargs.dryrun or cmdargs.output_dir:
+        for index in pending:
+            # For reading, so not with the CRLF that goes on the wire
+            data = session.message_bytes(index).replace(b'\r\n', b'\n')
+            if cmdargs.output_dir:
+                dest = pathlib.Path(cmdargs.output_dir)
+                dest.mkdir(parents=True, exist_ok=True)
+                slug = b4.LoreSubject(state.messages[index].subject).get_slug(sep='-')
+                (dest / f'{slug}.eml').write_bytes(data)
+            else:
+                logger.info(
+                    '    | %s', data.decode().rstrip().replace('\n', '\n    | ')
+                )
+        logger.info(
+            'DRYRUN: %d messages have pending recipients; send state unchanged.',
+            len(pending),
+        )
+        return
+    if state.in_flight is not None and not cmdargs.resolve_uncertain:
+        raise RuntimeError(
+            'Verify the uncertain delivery before using --resume --resolve-uncertain=sent or =unsent'
+        )
+    if cmdargs.resolve_uncertain and state.in_flight is None:
+        raise RuntimeError('There is no uncertain delivery to resolve')
+    if session.delivered():
+        _finish_send(session)
+        return
+    smtp = _get_resume_smtp(session, resolved_sent=cmdargs.resolve_uncertain == 'sent')
+    if cmdargs.resolve_uncertain:
+        logger.warning(
+            'Recording the uncertain transaction as %s after confirmation.',
+            cmdargs.resolve_uncertain,
+        )
+    logger.info('Only pending recipients will receive the original saved messages.')
+    input('Press Enter to resume or Ctrl-C to abort')
+    if cmdargs.resolve_uncertain:
+        session.resolve(cmdargs.resolve_uncertain)
+    session.send(smtp)
+    _finish_send(session)
+
+
+def _cmd_send(cmdargs: argparse.Namespace, directory: pathlib.Path) -> None:
     mybranch = b4.git_get_current_branch()
     if mybranch is None:
         logger.critical('CRITICAL: Not currently on a branch, unable to send')
@@ -3239,6 +3522,7 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
     tag_msg = None
     cl_msgid = None
     _, tracking = load_cover(strip_comments=True)
+    source = _send_source()
     if cmdargs.resend:
         if cmdargs.resend == 'latest':
             revstr = tracking['series']['revision'] - 1
@@ -3729,6 +4013,51 @@ def cmd_send(cmdargs: argparse.Namespace) -> None:
             logger.critical(ex)
             sys.exit(1)
 
+        if isinstance(smtp, b4.SMTPConnector) and not (
+            cmdargs.dryrun or cmdargs.reflect or cmdargs.resend or cmdargs.preview_to
+        ):
+            if tag_msg is None:
+                raise RuntimeError(
+                    'Cannot save submission bookkeeping without a cover/tag message'
+                )
+            branch, head, tree, cover_hash = source
+            series = tracking['series']
+            state = State(
+                change_id=series['change-id'],
+                revision=series['revision'],
+                branch=branch,
+                head=head,
+                tree=tree,
+                cover_hash=cover_hash,
+                tag_message=tag_msg,
+                cover_message_id=cl_msgid,
+                fromaddr=fromaddr,
+                messages=[],
+            )
+            directory.parent.mkdir(mode=0o700, exist_ok=True)
+            directory.mkdir(mode=0o700, exist_ok=True)
+            with b4.lockfile_nb(str(directory / 'send.lock')):
+                if _blocking_session(directory):
+                    raise RuntimeError(
+                        'An unfinished submission exists; use b4 send --resume'
+                    )
+                stale = pending_session(directory)
+                if stale is not None:
+                    logger.info('Replacing a saved submission that reached nobody')
+                    stale.discard()
+                # Before saving: --resume sends what was saved without this check.
+                _check_send_source(state)
+                prepared = b4.prepare_mail(
+                    send_msgs, bccaddrs=send_bcc, patatt_sign=sign
+                )
+                session = SendSession.prepare(
+                    directory / f'v{state.revision}', state, prepared
+                )
+                logger.info('Saved SMTP submission in %s', session.directory)
+                session.send(smtp)
+                _finish_send(session)
+            return
+
         try:
             sent = b4.send_mail(
                 smtp,
@@ -3801,7 +4130,12 @@ def get_sent_tagname(
 
 
 def reroll(
-    mybranch: str, tag_msg: str, msgid: str, tagprefix: str = SENT_TAG_PREFIX
+    mybranch: str,
+    tag_msg: str,
+    msgid: str,
+    tagprefix: str = SENT_TAG_PREFIX,
+    *,
+    cover_update: Optional[Tuple[str, Dict[str, Any]]] = None,
 ) -> None:
     # Remove signature
     chunks = tag_msg.rsplit('\n-- \n')
@@ -3887,7 +4221,20 @@ def reroll(
         logger.info('NOTE: Tagname %s already exists', tagname)
 
     logger.info('Recording series message-id in cover letter tracking')
-    cover, tracking = load_cover(strip_comments=False)
+    if cover_update is None:
+        cover, tracking = load_cover(strip_comments=False)
+        cover_update = _reroll_cover(cover, tracking, msgid)
+    new_cover, tracking = cover_update
+    logger.info('Created new revision v%s', tracking['series']['revision'])
+    logger.info('Updating cover letter with templated changelog entries.')
+    store_cover(new_cover, tracking)
+
+
+def _reroll_cover(
+    cover: str, tracking: Dict[str, Any], msgid: str
+) -> Tuple[str, Dict[str, Any]]:
+    tracking = copy.deepcopy(tracking)
+    revision = tracking['series']['revision']
     vrev = f'v{revision}'
     if 'history' not in tracking['series']:
         tracking['series']['history'] = dict()
@@ -3926,9 +4273,7 @@ def reroll(
     else:
         new_cover = cover + '\n\n---\n' + prepend
 
-    logger.info('Created new revision v%s', newrev)
-    logger.info('Updating cover letter with templated changelog entries.')
-    store_cover(new_cover, tracking)
+    return new_cover, tracking
 
 
 def show_revision() -> None:

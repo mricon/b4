@@ -288,10 +288,89 @@ The following happens after you send your patches:
 * b4 automatically edits the cover letter to add changelog entries
   containing a pre-populated link to the just-sent series
 
+Resuming an interrupted SMTP submission
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: v0.17
+
+To continue a stopped SMTP submission later (for example, after a sending
+quota resets), run from the same branch::
+
+    b4 send --resume
+
+B4 saves the complete, signed messages before submitting any of them and
+records which recipients the SMTP server accepted. Resume sends only to
+the remaining recipients. Message-IDs, dates, subjects, threading,
+signatures, and To:/Cc: headers stay unchanged, including when only some
+recipients of a message still need a copy. No ``RESEND`` prefix is added.
+
+A recipient that the server refuses only for now (a 4xx reply) stays
+pending, and the rest of the series still goes out. A recipient that the
+server refuses for good (a 5xx reply) while others accept the message is
+not tried again. B4 names such addresses in a warning and finishes the
+submission without them, because everyone else already has the series.
+
+An ordinary ``b4 send`` refuses to start another submission while one is
+unfinished. The exception is a submission that reached nobody, for
+example because the connection or the login failed: you can fix the
+problem and either resume it or run ``b4 send`` again, which replaces the
+saved messages with newly generated ones. Resume uses the saved messages even if the commits, cover
+letter or configured sender have changed. SMTP server settings and
+credentials may change; delivery still uses the original saved envelope
+sender and recipients. Recipient and signing options are not accepted with
+``--resume``. Explicit ``email-exclude`` restrictions still apply: b4
+refuses to resume while a pending message has a recipient that matches
+one of them.
+
+To inspect the pending messages without sending anything, use::
+
+    b4 send --resume -o /tmp/pending
+
+The saved state lives under ``.git/b4-send/`` (the common Git directory
+for linked worktrees), not in b4's expiring cache. It includes the signed
+messages and recipient lists, including Bcc addresses, but no SMTP
+credentials. B4 removes the saved messages as soon as delivery and
+bookkeeping are complete. Until then, do not delete them yourself. It is
+local state, not part of the commits or something transferred by
+``git push``.
+
+After the server has answered for all recipients, b4 creates the sent tag
+and rerolls the series normally if the branch and cover/tracking still match
+the saved submission. Otherwise delivery finishes, but b4 leaves the
+changed branch alone. Restore the original branch state and run
+``b4 send --resume`` to finish the bookkeeping without sending again.
+The same command recovers an interruption between delivery and completing
+those steps. SMTP acceptance is not a guarantee of final delivery; check
+for later bounces as usual.
+
+Uncertain delivery
+^^^^^^^^^^^^^^^^^^
+
+A lost connection or interrupted process may leave b4 unable to tell
+whether the server accepted the current message. Resume then stops rather
+than risk duplicate delivery. The error identifies the affected
+Message-ID. Check the server's records or the recipients before recording
+the outcome::
+
+    b4 send --resume --resolve-uncertain=sent
+    b4 send --resume --resolve-uncertain=unsent
+
+Use ``sent`` only when all recipients in that interrupted transaction
+were accepted, or ``unsent`` when none were. These options affect only
+that transaction, require confirmation, and continue the remaining
+submission. Do not guess: a mailing-list archive alone does not establish
+delivery to every directly copied recipient. A partial or still-unknown
+outcome needs further reconciliation before either option is safe.
+
+Resume applies to regular, b4-prepared SMTP submissions started with this
+version. Web submissions, local sendmail commands, previews, reflections,
+and ``--resend`` retain their existing behavior. Failures from older b4
+versions cannot be resumed because no delivery state was saved.
+
 Resending your series
 ~~~~~~~~~~~~~~~~~~~~~
-If something went wrong, or if you need to resend the series because
-nobody paid attention to it the first time, it's easy to do this with
+If you need to resend a complete series because nobody paid attention
+to it the first time, it's easy to do this with
 ``--resend vN``. B4 automatically generates the series from the tagged
 historical version created during the previous sending attempt and sends
 it out.
@@ -368,3 +447,11 @@ Command line flags
 ``--resend V``
   Resend the specified previously sent version.
 
+``--resume``
+  Continue an interrupted SMTP submission using its saved messages and
+  pending recipients. May be combined with ``--dry-run`` or ``-o`` to
+  inspect the saved messages without sending.
+
+``--resolve-uncertain {sent,unsent}``
+  With ``--resume``, record the verified outcome of the single uncertain
+  SMTP transaction before continuing. See the cautions above.

@@ -379,6 +379,13 @@ For options, see the output of ``b4 prep --help``, ``b4 trailers
   Send a "preview" version of the series for someone to check before
   submitting it upstream.
 
+``b4 send --resume``
+  Continue an interrupted SMTP submission, preserving the saved messages
+  and sending only to recipients not yet accepted by the server. Use
+  ``--resume -o DIR`` to inspect pending messages without sending. If a
+  transaction's outcome is uncertain, b4 stops until it is verified and
+  explicitly recorded with ``--resolve-uncertain=sent`` or ``=unsent``.
+
 ``b4 trailers -u``
   Retrieve any code-review trailers provided for your series and apply
   them to the current branch.

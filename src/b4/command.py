@@ -1352,6 +1352,16 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Resend a previously sent version of the series',
     )
     sp_send.add_argument(
+        '--resume',
+        action='store_true',
+        help='Resume an interrupted SMTP submission using its saved messages',
+    )
+    sp_send.add_argument(
+        '--resolve-uncertain',
+        choices=('sent', 'unsent'),
+        help='With --resume, record the verified outcome of an interrupted SMTP transaction',
+    )
+    sp_send.add_argument(
         '--no-sign',
         action='store_true',
         default=False,
