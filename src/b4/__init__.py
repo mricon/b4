@@ -6294,6 +6294,11 @@ class SMTPConnector:
             self._smtp = self._connect()
         return self._smtp
 
+    @property
+    def connected(self) -> bool:
+        """Whether the server was dialled, so messages may have gone out."""
+        return self._smtp is not None
+
 
 def get_smtp(
     dryrun: bool = False,
@@ -6496,7 +6501,7 @@ def send_mail(
     output_dir: Optional[str] = None,
     web_endpoint: Optional[str] = None,
     reflect: bool = False,
-) -> Optional[int]:
+) -> int:
     tosend: List[Tuple[Set[str], bytes, LoreSubject]] = list()
     if output_dir is not None:
         dryrun = True
@@ -6504,8 +6509,10 @@ def send_mail(
     if patatt_sign:
         # Signing is the one step here that can block indefinitely: with a PGP
         # key patatt shells out to gpg, which may be waiting on a pinentry
-        # passphrase prompt the user cannot see.  Say so before we go quiet.
-        logger.info('Signing %s messages with patatt', len(msgs))
+        # passphrase prompt the user cannot see, or on a hardware key that is
+        # in another room.  Say so before we go quiet, and say how to give up:
+        # we never time out, because only the user knows how long to wait.
+        logger.info('Signing %s messages with patatt (Ctrl-C to cancel)', len(msgs))
 
     for msg in msgs:
         if not msg.get('X-Mailer'):

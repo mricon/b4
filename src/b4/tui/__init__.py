@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         resolve_styles,
         reviewer_colours,
         run_lore_worker,
+        send_suspended,
         suspend_and_edit,
         suspended,
     )
@@ -78,6 +79,7 @@ __all__ = [
     'resolve_styles',
     'reviewer_colours',
     'run_lore_worker',
+    'send_suspended',
     'suspend_and_edit',
     'suspended',
 ]
@@ -107,6 +109,7 @@ _LAZY_ATTRS: dict[str, str] = {
     'resolve_styles': '_common',
     'reviewer_colours': '_common',
     'run_lore_worker': '_common',
+    'send_suspended': '_common',
     'suspend_and_edit': '_common',
     'suspended': '_common',
     'ActionItem': '_modals',

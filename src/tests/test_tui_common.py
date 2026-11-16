@@ -5,6 +5,8 @@ import ast
 import contextlib
 import importlib
 import pathlib
+import signal
+import subprocess
 from typing import Any, Dict, Iterator, List, Tuple, Type
 from unittest import mock
 
@@ -22,6 +24,7 @@ from b4.tui._common import (
     limit_substring_matcher,
     matches_limit,
     notify_quit_hint,
+    send_suspended,
     suspended,
 )
 
@@ -202,6 +205,25 @@ def suspendable() -> Iterator[Tuple[App[None], _FakeDriver]]:
         yield app, driver
 
 
+@pytest.fixture
+def apps_sigint() -> Iterator[List[int]]:
+    """Stand in for the SIGINT handler asyncio installs for a running app.
+
+    Yields the signals it saw: any entry means the app's main task would
+    have been cancelled, and the TUI would quit.
+    """
+    seen: List[int] = []
+
+    def _handler(signum: int, frame: Any) -> None:
+        seen.append(signum)
+
+    prev = signal.signal(signal.SIGINT, _handler)
+    try:
+        yield seen
+    finally:
+        signal.signal(signal.SIGINT, prev)
+
+
 class TestSuspended:
     """Textual's App.suspend() only resumes the app when its block exits
     normally.  Anything raised inside -- a failed signature, or the Ctrl-C a
@@ -217,6 +239,40 @@ class TestSuspended:
             with suspended(app):
                 raise exc()
         assert driver.calls == ['suspend', 'resume']
+
+    def test_ctrl_c_ends_the_child_but_spares_the_app(
+        self, suspendable: Tuple[App[None], _FakeDriver], apps_sigint: List[int]
+    ) -> None:
+        """Most suspended blocks run a child, and have Python code after it
+        that must still run, such as going back to the user's branch.  Ctrl-C
+        must end the child, but must not reach the block or the app: the
+        app's handler would cancel its main task and quit the TUI."""
+        app, _ = suspendable
+        child_rc: Any = None
+        with pytest.raises(RuntimeError):
+            with suspended(app):
+                # The child sends itself the SIGINT a terminal would send it.
+                child = subprocess.run(['sh', '-c', 'kill -INT $$; exit 0'])
+                child_rc = child.returncode
+                signal.raise_signal(signal.SIGINT)
+                raise RuntimeError('the block went on after Ctrl-C')
+        assert child_rc == -signal.SIGINT
+        assert apps_sigint == []
+        # The app's own handler is back, also after an error.
+        signal.raise_signal(signal.SIGINT)
+        assert apps_sigint == [signal.SIGINT]
+
+    def test_an_interruptible_block_hears_ctrl_c(
+        self, suspendable: Tuple[App[None], _FakeDriver], apps_sigint: List[int]
+    ) -> None:
+        """A caller that can handle Ctrl-C, such as a send, gets
+        KeyboardInterrupt raised in the block, like any CLI code."""
+        app, driver = suspendable
+        with pytest.raises(KeyboardInterrupt):
+            with suspended(app, interruptible=True):
+                signal.raise_signal(signal.SIGINT)
+        assert driver.calls == ['suspend', 'resume']
+        assert apps_sigint == []
 
     def test_nothing_else_calls_textual_suspend_directly(self) -> None:
         """Every suspend must go through suspended(), or the bug above comes
@@ -235,3 +291,93 @@ class TestSuspended:
                 ):
                     offenders.append(f'{path.relative_to(srcdir)}:{node.lineno}')
         assert offenders == []
+
+
+def _connector(connected: bool) -> b4.SMTPConnector:
+    conn = b4.SMTPConnector(mock.Mock)
+    if connected:
+        conn()
+    return conn
+
+
+class TestSendSuspended:
+    """A send that fails or is interrupted is reported, not raised, and the
+    app is back on screen to report it."""
+
+    @pytest.mark.parametrize(
+        ('smtp', 'dies', 'notice', 'severity'),
+        [
+            pytest.param(
+                _connector(False),
+                RuntimeError('bad PIN'),
+                'Send failed: bad PIN',
+                'error',
+                id='error',
+            ),
+            pytest.param(
+                _connector(False),
+                KeyboardInterrupt(),
+                'Send interrupted',
+                'warning',
+                id='ctrl-c-while-signing',
+            ),
+            # Once the server was dialled, a retry may send duplicates, and
+            # the user has to know that before they press send again.
+            pytest.param(
+                _connector(True),
+                KeyboardInterrupt(),
+                'Send interrupted, some messages may have gone out',
+                'warning',
+                id='ctrl-c-after-connecting',
+            ),
+            # A local sendmail command leaves no trace of having been run.
+            pytest.param(
+                ['/usr/sbin/sendmail', '-i'],
+                KeyboardInterrupt(),
+                'Send interrupted, some messages may have gone out',
+                'warning',
+                id='ctrl-c-with-local-command',
+            ),
+        ],
+    )
+    def test_reports_and_returns_none(
+        self,
+        suspendable: Tuple[App[None], _FakeDriver],
+        apps_sigint: None,
+        smtp: Any,
+        dies: BaseException,
+        notice: str,
+        severity: str,
+    ) -> None:
+        app, driver = suspendable
+        handlers: List[Any] = []
+
+        def _send_mail(*args: Any, **kwargs: Any) -> int:
+            handlers.append(signal.getsignal(signal.SIGINT))
+            raise dies
+
+        with (
+            mock.patch.object(app, 'notify') as notify,
+            mock.patch('b4.get_smtp', return_value=(smtp, 'me@ex.com')),
+            mock.patch('b4.send_mail', side_effect=_send_mail),
+        ):
+            sent = send_suspended(app, [mock.Mock()], patatt_sign=True, dryrun=False)
+        assert sent is None
+        assert driver.calls == ['suspend', 'resume']
+        notify.assert_called_once_with(notice, severity=severity)
+        # The send is the one block where Ctrl-C has to raise in our code.
+        assert handlers == [signal.default_int_handler]
+
+    def test_returns_the_count_without_a_notice(
+        self, suspendable: Tuple[App[None], _FakeDriver]
+    ) -> None:
+        """Success is the caller's to report: each one words it differently."""
+        app, _ = suspendable
+        with (
+            mock.patch.object(app, 'notify') as notify,
+            mock.patch('b4.get_smtp', return_value=(None, 'me@ex.com')),
+            mock.patch('b4.send_mail', return_value=0),
+        ):
+            sent = send_suspended(app, [mock.Mock()], patatt_sign=False, dryrun=True)
+        assert sent == 0
+        notify.assert_not_called()

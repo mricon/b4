@@ -8,7 +8,9 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import contextlib
+import email.message
 import email.utils
+import signal
 from collections import defaultdict
 from typing import (
     Any,
@@ -19,7 +21,9 @@ from typing import (
     Mapping,
     Optional,
     Protocol,
+    Sequence,
     TypeVar,
+    Union,
 )
 
 from textual.app import App, ComposeResult
@@ -60,7 +64,32 @@ def notify_quit_hint(app: 'App[Any]') -> None:
 
 
 @contextlib.contextmanager
-def suspended(app: 'App[Any]') -> Generator[None, None, None]:
+def _suspended_sigint(interruptible: bool) -> Generator[None, None, None]:
+    """Keep a Ctrl-C pressed while suspended away from the app's handler.
+
+    asyncio's handler cancels the app's main task, so the TUI quits as soon
+    as the block is done.  When *interruptible*, Ctrl-C raises
+    KeyboardInterrupt in the running code, as in a CLI.  Otherwise it is
+    left to the child alone.  We use a no-op handler, not SIG_IGN, because
+    children inherit SIG_IGN and would then ignore Ctrl-C too.  A handled
+    signal goes back to its default in a child at exec.
+    """
+    handler = signal.default_int_handler if interruptible else _ignore_sigint
+    prev_sigint = signal.signal(signal.SIGINT, handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, prev_sigint)
+
+
+def _ignore_sigint(signum: int, frame: Any) -> None:
+    pass
+
+
+@contextlib.contextmanager
+def suspended(
+    app: 'App[Any]', *, interruptible: bool = False
+) -> Generator[None, None, None]:
     """Like ``app.suspend()``, but the app comes back even if the block raises.
 
     Textual resumes the app only when the block exits normally.  After an
@@ -68,15 +97,68 @@ def suspended(app: 'App[Any]') -> Generator[None, None, None]:
     is stopped, so the next screen write blocks b4 for good.  We let
     Textual's block end normally and re-raise only after the app is live
     again.
+
+    Set *interruptible* only when the caller catches KeyboardInterrupt:
+    Ctrl-C then raises in the block, and an uncaught one takes the app down
+    with a traceback.  Without it Ctrl-C only reaches the child process the
+    block is running.  The Python code after it still runs, and the TUI
+    carries on.  Most blocks have cleanup there, such as going back to the
+    user's branch.
     """
     caught: Optional[BaseException] = None
     with app.suspend():
         try:
-            yield
+            with _suspended_sigint(interruptible):
+                yield
         except BaseException as ex:
             caught = ex
     if caught is not None:
         raise caught
+
+
+def send_suspended(
+    app: 'App[Any]',
+    msgs: Sequence[email.message.EmailMessage],
+    *,
+    patatt_sign: bool,
+    dryrun: bool,
+) -> Optional[int]:
+    """Drop out of the TUI and send *msgs*, the way every TUI send works.
+
+    Returns how many messages were sent, or ``None`` if the send failed or
+    the user pressed Ctrl-C.  The user has already been told by then.
+    Signing can wait a long time on a hardware key, so Ctrl-C is the only
+    way out, and it must cost the send, not the session.
+    """
+    smtp: Union[b4.SMTPConnector, List[str], None] = None
+    try:
+        with suspended(app, interruptible=True):
+            smtp, fromaddr = b4.get_smtp(dryrun=dryrun)
+            return b4.send_mail(
+                smtp,
+                msgs,
+                fromaddr=fromaddr,
+                patatt_sign=patatt_sign,
+                dryrun=dryrun,
+                output_dir=None,
+                reflect=False,
+            )
+    except KeyboardInterrupt:
+        # Signing comes before any delivery, and it is where people give up,
+        # so only warn about duplicates when delivery could have started.  A
+        # local command leaves no trace of having been run.
+        if isinstance(smtp, b4.SMTPConnector):
+            delivering = smtp.connected
+        else:
+            delivering = bool(smtp)
+        if delivering:
+            notice = 'Send interrupted, some messages may have gone out'
+        else:
+            notice = 'Send interrupted'
+        app.notify(notice, severity='warning')
+    except Exception as ex:
+        app.notify(f'Send failed: {ex}', severity='error')
+    return None
 
 
 def suspend_and_edit(

@@ -56,6 +56,7 @@ from b4.review_tui._common import (
     resolve_styles,
     reviewer_colours,
     run_lore_worker,
+    send_suspended,
     suspend_and_edit,
     suspended,
     worker_cancelled,
@@ -1774,23 +1775,10 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         def _on_send_confirmed(confirmed: Optional[bool]) -> None:
             if not confirmed:
                 return
-            try:
-                with suspended(self):
-                    smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
-                    sent = b4.send_mail(
-                        smtp,
-                        msgs,
-                        fromaddr=fromaddr,
-                        patatt_sign=self._patatt_sign,
-                        dryrun=self._email_dryrun,
-                        output_dir=None,
-                        reflect=False,
-                    )
-            except Exception as ex:
-                self.notify(f'Send failed: {ex}', severity='error')
-                return
+            sent = send_suspended(
+                self, msgs, patatt_sign=self._patatt_sign, dryrun=self._email_dryrun
+            )
             if sent is None:
-                self.notify('Failed to send review emails.', severity='error')
                 return
             if self._email_dryrun:
                 # Nothing went out, so there is nothing to record. Stamping
@@ -1898,24 +1886,12 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         """Build and immediately send a quick reply to a follow-up message."""
         reply_text = prepare_followup_reply_body(text)
         msg = entry['lmsg'].make_reply(reply_text)
-        try:
-            with suspended(self):
-                smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
-                sent = b4.send_mail(
-                    smtp,
-                    [msg],
-                    fromaddr=fromaddr,
-                    patatt_sign=self._patatt_sign,
-                    dryrun=self._email_dryrun,
-                    output_dir=None,
-                    reflect=False,
-                )
-        except Exception as ex:
-            self.notify(f'Send failed: {ex}', severity='error')
-            return
+        sent = send_suspended(
+            self, [msg], patatt_sign=self._patatt_sign, dryrun=self._email_dryrun
+        )
         if sent is None:
-            self.notify('Failed to send reply.', severity='error')
-        elif self._email_dryrun:
+            return
+        if self._email_dryrun:
             self.notify(f'Dry-run: reply to {entry["fromemail"]} logged, not sent')
         else:
             mark_outgoing_seen([msg])

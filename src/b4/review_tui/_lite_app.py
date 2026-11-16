@@ -31,8 +31,8 @@ from b4.review_tui._common import (
     prepare_followup_reply_body,
     resolve_styles,
     run_lore_worker,
+    send_suspended,
     suspend_and_edit,
-    suspended,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
 
@@ -959,23 +959,10 @@ class LiteThreadScreen(ModalScreen[None]):
         lmsg = node.lmsg
         text = prepare_followup_reply_body(text)
         msg = lmsg.make_reply(text)
-        try:
-            with suspended(self.app):
-                smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
-                sent = b4.send_mail(
-                    smtp,
-                    [msg],
-                    fromaddr=fromaddr,
-                    patatt_sign=self._patatt_sign,
-                    dryrun=self._email_dryrun,
-                    output_dir=None,
-                    reflect=False,
-                )
-        except Exception as ex:
-            self.app.notify(f'Send failed: {ex}', severity='error')
-            return
+        sent = send_suspended(
+            self.app, [msg], patatt_sign=self._patatt_sign, dryrun=self._email_dryrun
+        )
         if sent is None:
-            self.app.notify('Failed to send reply.', severity='error')
             return
         if self._email_dryrun:
             self.app.notify(f'Dry-run: reply to {lmsg.fromemail} logged, not sent')

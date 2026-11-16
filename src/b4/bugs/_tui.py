@@ -55,6 +55,7 @@ from b4.tui import (
     resolve_styles,
     reviewer_colours,
     run_lore_worker,
+    send_suspended,
     suspend_and_edit,
     suspended,
 )
@@ -993,22 +994,8 @@ class BugDetailScreen(ModalScreen[None]):
         if not isinstance(app, BugListApp):
             return
         dryrun = app.email_dryrun
-        patatt_sign = app.patatt_sign
-        with suspended(app):
-            try:
-                smtp, fromaddr = b4.get_smtp(dryrun=dryrun)
-                sent = b4.send_mail(
-                    smtp,
-                    [msg],
-                    fromaddr=fromaddr,
-                    patatt_sign=patatt_sign,
-                    dryrun=dryrun,
-                )
-            except Exception as exc:
-                self.notify(f'Send failed: {exc}', severity='error')
-                return
+        sent = send_suspended(app, [msg], patatt_sign=app.patatt_sign, dryrun=dryrun)
         if sent is None:
-            self.notify('Failed to send reply', severity='error')
             return
         if dryrun:
             self.notify('Dry-run: reply logged, not sent')
