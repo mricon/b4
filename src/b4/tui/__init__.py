@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         reviewer_colours,
         run_lore_worker,
         suspend_and_edit,
+        suspended,
     )
     from b4.tui._modals import (
         ActionItem,
@@ -78,6 +79,7 @@ __all__ = [
     'reviewer_colours',
     'run_lore_worker',
     'suspend_and_edit',
+    'suspended',
 ]
 
 _LAZY_ATTRS: dict[str, str] = {
@@ -106,6 +108,7 @@ _LAZY_ATTRS: dict[str, str] = {
     'reviewer_colours': '_common',
     'run_lore_worker': '_common',
     'suspend_and_edit': '_common',
+    'suspended': '_common',
     'ActionItem': '_modals',
     'ActionScreen': '_modals',
     'ConfirmScreen': '_modals',

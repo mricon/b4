@@ -57,6 +57,7 @@ from b4.review_tui._common import (
     reviewer_colours,
     run_lore_worker,
     suspend_and_edit,
+    suspended,
     worker_cancelled,
 )
 from b4.review_tui._modals import (
@@ -1497,7 +1498,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         if patch_idx >= 0 and patch_idx < len(self._commit_shas):
             sha = self._commit_shas[patch_idx]
 
-        with self.suspend():
+        with suspended(self):
             out = compute_range_diff(
                 self._topdir, identifier, change_id, current_rev, chosen
             )
@@ -1774,7 +1775,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             if not confirmed:
                 return
             try:
-                with self.suspend():
+                with suspended(self):
                     smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
                     sent = b4.send_mail(
                         smtp,
@@ -1898,7 +1899,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         reply_text = prepare_followup_reply_body(text)
         msg = entry['lmsg'].make_reply(reply_text)
         try:
-            with self.suspend():
+            with suspended(self):
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
                 sent = b4.send_mail(
                     smtp,
@@ -2366,7 +2367,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         if not self._ensure_branch_checked_out():
             return
 
-        with self.suspend():
+        with suspended(self):
             logger.info('Running review agent: %s', ' '.join(cmdargs))
             try:
                 spop = subprocess.Popen(cmdargs, cwd=self._topdir)
@@ -2410,7 +2411,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
         if not self._ensure_branch_checked_out():
             return
         old_shas = list(self._commit_shas)
-        with self.suspend():
+        with suspended(self):
             _suspend_to_shell()
         self._reconcile_after_shell(old_shas)
         self._restore_original_branch()

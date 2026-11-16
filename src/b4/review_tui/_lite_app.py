@@ -32,6 +32,7 @@ from b4.review_tui._common import (
     resolve_styles,
     run_lore_worker,
     suspend_and_edit,
+    suspended,
 )
 from b4.review_tui._modals import FollowupReplyPreviewScreen
 
@@ -959,7 +960,7 @@ class LiteThreadScreen(ModalScreen[None]):
         text = prepare_followup_reply_body(text)
         msg = lmsg.make_reply(text)
         try:
-            with self.app.suspend():
+            with suspended(self.app):
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
                 sent = b4.send_mail(
                     smtp,

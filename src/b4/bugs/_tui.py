@@ -56,6 +56,7 @@ from b4.tui import (
     reviewer_colours,
     run_lore_worker,
     suspend_and_edit,
+    suspended,
 )
 from ezgb import Bug, BugSummary, Comment, GitBugRepo, Status
 
@@ -993,7 +994,7 @@ class BugDetailScreen(ModalScreen[None]):
             return
         dryrun = app.email_dryrun
         patatt_sign = app.patatt_sign
-        with app.suspend():
+        with suspended(app):
             try:
                 smtp, fromaddr = b4.get_smtp(dryrun=dryrun)
                 sent = b4.send_mail(
@@ -2308,7 +2309,7 @@ class BugListApp(LoreNodeShutdownMixin, JKListNavMixin, App[None]):
     def action_pull(self) -> None:
         """Pull bugs and identities from the remote."""
         self._save_focus()
-        with self.suspend():
+        with suspended(self):
             print('Pulling bugs from remote...')
             rc, out, err = self.repo.pull()
             if out.strip():
@@ -2324,7 +2325,7 @@ class BugListApp(LoreNodeShutdownMixin, JKListNavMixin, App[None]):
 
     def action_push(self) -> None:
         """Push bugs and identities to the remote."""
-        with self.suspend():
+        with suspended(self):
             print('Pushing bugs to remote...')
             rc, out, err = self.repo.push()
             if out.strip():

@@ -7,12 +7,14 @@
 
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
+import contextlib
 import email.utils
 from collections import defaultdict
 from typing import (
     Any,
     Callable,
     Dict,
+    Generator,
     List,
     Mapping,
     Optional,
@@ -57,6 +59,26 @@ def notify_quit_hint(app: 'App[Any]') -> None:
     app.notify("Press 'Q' (capital) to quit", severity='warning')
 
 
+@contextlib.contextmanager
+def suspended(app: 'App[Any]') -> Generator[None, None, None]:
+    """Like ``app.suspend()``, but the app comes back even if the block raises.
+
+    Textual resumes the app only when the block exits normally.  After an
+    exception the app stays suspended: input is off and the writer thread
+    is stopped, so the next screen write blocks b4 for good.  We let
+    Textual's block end normally and re-raise only after the app is live
+    again.
+    """
+    caught: Optional[BaseException] = None
+    with app.suspend():
+        try:
+            yield
+        except BaseException as ex:
+            caught = ex
+    if caught is not None:
+        raise caught
+
+
 def suspend_and_edit(
     app: 'App[Any]',
     bdata: bytes,
@@ -76,7 +98,7 @@ def suspend_and_edit(
     operates on, since it need not be the tree b4 was started in.
     """
     try:
-        with app.suspend():
+        with suspended(app):
             return b4.edit_in_editor(bdata, filehint=filehint, topdir=topdir)
     except Exception as ex:
         logger.debug('Editor failed: %s', ex, exc_info=True)

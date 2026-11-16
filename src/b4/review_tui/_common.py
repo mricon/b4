@@ -119,6 +119,9 @@ from b4.tui._common import (
     suspend_and_edit as suspend_and_edit,
 )
 from b4.tui._common import (
+    suspended as suspended,
+)
+from b4.tui._common import (
     worker_cancelled as worker_cancelled,
 )
 

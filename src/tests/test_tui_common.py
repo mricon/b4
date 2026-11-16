@@ -1,8 +1,11 @@
 """Tests for the shared TUI helpers in b4.tui._common, and for the
 contracts every top-level b4 TUI app is expected to honour."""
 
+import ast
+import contextlib
 import importlib
-from typing import Any, Dict
+import pathlib
+from typing import Any, Dict, Iterator, List, Tuple, Type
 from unittest import mock
 
 import pytest
@@ -19,6 +22,7 @@ from b4.tui._common import (
     limit_substring_matcher,
     matches_limit,
     notify_quit_hint,
+    suspended,
 )
 
 # A representative item for engine tests; per-app field semantics are
@@ -169,3 +173,65 @@ class TestQuitBehaviour:
 
         # on_unmount fired during app teardown and shut the node down.
         assert node.shutdown.called
+
+
+class _FakeDriver:
+    """Just enough driver for the real App.suspend() to run against."""
+
+    can_suspend = True
+
+    def __init__(self) -> None:
+        self.calls: List[str] = []
+
+    def suspend_application_mode(self) -> None:
+        self.calls.append('suspend')
+
+    def resume_application_mode(self) -> None:
+        self.calls.append('resume')
+
+    def no_automatic_restart(self) -> 'contextlib.nullcontext[None]':
+        return contextlib.nullcontext()
+
+
+@pytest.fixture
+def suspendable() -> Iterator[Tuple[App[None], _FakeDriver]]:
+    """An app that is not running, but whose suspend() works for real."""
+    app: App[None] = App()
+    driver = _FakeDriver()
+    with mock.patch.object(app, '_driver', driver):
+        yield app, driver
+
+
+class TestSuspended:
+    """Textual's App.suspend() only resumes the app when its block exits
+    normally.  Anything raised inside -- a failed signature, or the Ctrl-C a
+    user presses to give up on a hung gpg -- left the app deaf, with its
+    writer thread stopped, and the next write to the screen blocked b4."""
+
+    @pytest.mark.parametrize('exc', [RuntimeError, KeyboardInterrupt, SystemExit])
+    def test_resumes_the_app_when_the_block_raises(
+        self, suspendable: Tuple[App[None], _FakeDriver], exc: Type[BaseException]
+    ) -> None:
+        app, driver = suspendable
+        with pytest.raises(exc):
+            with suspended(app):
+                raise exc()
+        assert driver.calls == ['suspend', 'resume']
+
+    def test_nothing_else_calls_textual_suspend_directly(self) -> None:
+        """Every suspend must go through suspended(), or the bug above comes
+        back at whichever call site skipped it."""
+        srcdir = pathlib.Path(b4.__file__).parent
+        helper = srcdir / 'tui' / '_common.py'
+        offenders = []
+        for path in sorted(srcdir.rglob('*.py')):
+            for node in ast.walk(ast.parse(path.read_text(), str(path))):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'suspend'
+                    and not node.args
+                    and path != helper
+                ):
+                    offenders.append(f'{path.relative_to(srcdir)}:{node.lineno}')
+        assert offenders == []

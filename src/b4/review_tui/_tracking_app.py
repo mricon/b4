@@ -72,6 +72,7 @@ from b4.review_tui._common import (
     resolve_styles,
     run_lore_worker,
     suspend_and_edit,
+    suspended,
 )
 from b4.review_tui._modals import (
     QUEUE_BUSY,
@@ -2212,7 +2213,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
         # Suspend UI for all checkout operations that might log
         checkout_success = False
-        with self.suspend():
+        with suspended(self):
             # Find the top msgid
             top_msgid = None
             first_body = None
@@ -3016,13 +3017,13 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._invalidate_caches(change_id)
         if method == 'merge':
             take_screen.merge_base = confirm_screen.resolved_base
-            with self.suspend():
+            with suspended(self):
                 new_status = self._do_take_merge(
                     change_id, review_branch, take_screen, series, cherrypick=cherrypick
                 )
             self._load_series()
         else:
-            with self.suspend():
+            with suspended(self):
                 new_status = self._do_take_am(
                     change_id, review_branch, take_screen, series, cherrypick=cherrypick
                 )
@@ -3753,7 +3754,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
             return
 
         # Run rebase in suspended mode to show output
-        with self.suspend():
+        with suspended(self):
             self._do_rebase(review_branch, rebase_screen.target_result)
 
     def _do_rebase(self, review_branch: str, target_branch: str) -> None:
@@ -4046,7 +4047,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         """Handle the revision chosen from the range-diff modal."""
         if chosen is None:
             return
-        with self.suspend():
+        with suspended(self):
             self._do_range_diff(change_id, current_rev, chosen)
 
     def _do_range_diff(self, change_id: str, current_rev: int, other_rev: int) -> None:
@@ -4594,7 +4595,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         # the old review branch has to get off it if that is where they are.
         # The tracking list comes back up when this returns; leaving the
         # worktree moved strands the user somewhere they never asked to be.
-        with self.suspend(), _keep_current_branch(topdir) as restore_branch:
+        with suspended(self), _keep_current_branch(topdir) as restore_branch:
             # --- 1. Save maintainer review data keyed by patch-id ---
             logger.info('Saving review data from v%d...', current_rev)
             patch_ids = b4.review.get_review_branch_patch_ids(topdir, review_branch)
@@ -5332,7 +5333,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
     ) -> None:
         """Send the thank-you message via SMTP."""
         try:
-            with self.suspend():
+            with suspended(self):
                 smtp, fromaddr = b4.get_smtp(dryrun=self._email_dryrun)
                 sent = b4.send_mail(
                     smtp,
@@ -5499,7 +5500,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
 
     def action_suspend(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
-        with self.suspend():
+        with suspended(self):
             _suspend_to_shell()
 
     def action_help(self) -> None:
