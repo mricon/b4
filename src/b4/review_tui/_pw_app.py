@@ -888,6 +888,13 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             return
         self._delegate_targets = targets
         if self._maintainers is None:
+            # The fetch costs a request per maintainer, so a repeat press
+            # just retargets the picker the running fetch will open.
+            if any(
+                w.name == '_fetch_maintainers' and not w.is_finished
+                for w in self.workers
+            ):
+                return
             self.notify('Fetching project maintainers…', timeout=3)
             self.run_worker(
                 self._fetch_maintainers,

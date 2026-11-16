@@ -1289,6 +1289,37 @@ class TestPwSetDelegate:
             assert '2 patch(es) undelegated' in _notices(app)
 
     @pytest.mark.asyncio
+    async def test_repeat_press_during_fetch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pressing 'd' again while the maintainers load must not start a
+        second fetch: it costs one request per maintainer."""
+        self._install(monkeypatch, [_mk_series(1)])
+        release = threading.Event()
+        calls = 0
+
+        def _slow(*a: Any, **k: Any) -> List[Dict[str, Any]]:
+            nonlocal calls
+            calls += 1
+            release.wait(timeout=10)
+            return _pw_maintainers()
+
+        monkeypatch.setattr(b4.review, 'pw_fetch_maintainers', _slow)
+        app = PwApp('k', 'https://pw.example.org', 'proj')
+        async with app.run_test(size=(120, 30)) as pilot:
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press('d')
+            await pilot.pause()
+            await pilot.press('d')
+            await pilot.pause()
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert calls == 1
+            assert isinstance(app.screen, SetDelegateScreen)
+
+    @pytest.mark.asyncio
     async def test_maintainer_fetch_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
