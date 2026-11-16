@@ -4158,15 +4158,21 @@ def _pw_lookup_user_id(
     """Return the Patchwork User id for *username*, or None if not found.
 
     The users endpoint searches username, names and email by substring, so
-    pick out the exact username match.
+    pick out the exact username match.  A short username can match many
+    users on a big instance, so walk every page until it turns up.
     """
-    users_url = '/'.join((api_url, 'users', ''))
-    resp = pses.get(users_url, params={'q': username})
-    if resp.status_code != 200:
-        raise RuntimeError(f'Patchwork API error: {resp.status_code} {resp.reason}')
-    for u in resp.json():
-        if u.get('username') == username and u.get('id'):
-            return int(u['id'])
+    url: Optional[str] = '/'.join((api_url, 'users', ''))
+    params: Optional[Dict[str, str]] = {'q': username, 'per_page': str(PW_PER_PAGE)}
+    while url:
+        resp = pses.get(url, params=params)
+        if resp.status_code != 200:
+            raise RuntimeError(f'Patchwork API error: {resp.status_code} {resp.reason}')
+        for u in resp.json():
+            if u.get('username') == username and u.get('id'):
+                return int(u['id'])
+        url = resp.links.get('next', {}).get('url')
+        # The 'next' link already carries the query.
+        params = None
     return None
 
 

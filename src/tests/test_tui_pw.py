@@ -1301,7 +1301,18 @@ class TestPwSetDelegate:
 class TestPwFetchMaintainers:
     """pw_fetch_maintainers reads the project's maintainers list."""
 
-    def test_resolves_user_ids(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize(
+        'page_size',
+        [
+            pytest.param(30, id='one-page'),
+            # A short username's substring search can spill onto later
+            # pages, with the exact match on page 2.
+            pytest.param(1, id='paginated'),
+        ],
+    )
+    def test_resolves_user_ids(
+        self, monkeypatch: pytest.MonkeyPatch, page_size: int
+    ) -> None:
         """The maintainers list carries UserProfile ids; the delegate field
         wants User ids, so each maintainer is looked up by username."""
 
@@ -1309,8 +1320,9 @@ class TestPwFetchMaintainers:
             status_code = 200
             reason = 'OK'
 
-            def __init__(self, body: Any) -> None:
+            def __init__(self, body: Any, next_url: Optional[str] = None) -> None:
                 self._body = body
+                self.links = {'next': {'url': next_url}} if next_url else {}
 
             def json(self) -> Any:
                 return self._body
@@ -1318,8 +1330,8 @@ class TestPwFetchMaintainers:
         # Users endpoint search is a substring match across several fields.
         users_db: List[Dict[str, Any]] = [
             {'id': 101, 'username': 'zed'},
-            {'id': 102, 'username': 'amy'},
             {'id': 103, 'username': 'amyx'},
+            {'id': 102, 'username': 'amy'},
         ]
 
         class _Session:
@@ -1344,10 +1356,20 @@ class TestPwFetchMaintainers:
                             ]
                         }
                     )
-                assert url.endswith('/users/')
-                assert params is not None
-                q = params['q']
-                return _Resp([u for u in users_db if q in u['username']])
+                # Like the real API, a 'next' link carries the query along,
+                # so only the first request passes params.
+                if params is not None:
+                    assert url.endswith('/users/')
+                    q, page = params['q'], 1
+                else:
+                    q, _, page_s = url.partition('/users/?q=')[2].partition('&page=')
+                    page = int(page_s)
+                found = [u for u in users_db if q in u['username']]
+                start = (page - 1) * page_size
+                next_url = None
+                if start + page_size < len(found):
+                    next_url = f'https://pw/api/1.2/users/?q={q}&page={page + 1}'
+                return _Resp(found[start : start + page_size], next_url)
 
         sess = _Session()
         monkeypatch.setattr(
