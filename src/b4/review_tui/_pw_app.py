@@ -823,14 +823,17 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
             callback=lambda res: self._on_apply_complete(res, targets),
         )
 
-    def _on_apply_complete(
-        self, result: Optional[ApplyStateResult], targets: List[Dict[str, Any]]
-    ) -> None:
-        assert result is not None
-        new_state = result.value
-        # Only a series whose every patch was updated takes the new state.
-        # The rest (failed, or not reached before Esc) keep their old state
-        # and stay marked, so pressing 's' again finishes the job.
+    def _report_bulk_update(
+        self, result: ApplyStateResult, targets: List[Dict[str, Any]], what: str
+    ) -> List[Dict[str, Any]]:
+        """Notify how an ApplyStateModal run went; return the finished series.
+
+        *what* completes "N series ..." in the notice, e.g. "set to accepted".
+
+        Only a series whose every patch was updated counts as finished.  The
+        rest (failed, or not reached before Esc) keep their old values and
+        stay marked, so pressing the same key again finishes the job.
+        """
         done = [
             s
             for s in targets
@@ -840,8 +843,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         ok = len(result.done_ids)
         if result.cancelled:
             self.notify(
-                f'Stopped: {len(done)} of {len(targets)} series set to '
-                f'{new_state} ({ok} patches)',
+                f'Stopped: {len(done)} of {len(targets)} series {what} ({ok} patches)',
                 severity='warning',
             )
         elif result.fail:
@@ -850,12 +852,20 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                 msg += f': {escape(result.error)}'
             self.notify(msg, severity='warning')
         elif len(targets) == 1:
-            self.notify(f'{ok} patch(es) set to {new_state}', severity='information')
+            self.notify(f'{ok} patch(es) {what}', severity='information')
         else:
             self.notify(
-                f'{len(targets)} series set to {new_state} ({ok} patches)',
+                f'{len(targets)} series {what} ({ok} patches)',
                 severity='information',
             )
+        return done
+
+    def _on_apply_complete(
+        self, result: Optional[ApplyStateResult], targets: List[Dict[str, Any]]
+    ) -> None:
+        assert result is not None
+        new_state = result.value
+        done = self._report_bulk_update(result, targets, f'set to {new_state}')
         mounted = {item.series.get('id'): item for item in self._visible_items()}
         for s in done:
             s['state'] = new_state
@@ -959,32 +969,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         assert result is not None
         delegate = result.value
         what = f'delegated to {delegate}' if delegate else 'undelegated'
-        # As with set state, only a series whose every patch was updated
-        # takes the new delegate; the rest stay marked for another try.
-        done = [
-            s
-            for s in targets
-            if s.get('patch_ids')
-            and all(pid in result.done_ids for pid in s['patch_ids'])
-        ]
-        ok = len(result.done_ids)
-        if result.cancelled:
-            self.notify(
-                f'Stopped: {len(done)} of {len(targets)} series {what} ({ok} patches)',
-                severity='warning',
-            )
-        elif result.fail:
-            msg = f'{ok} updated, {result.fail} failed'
-            if result.error:
-                msg += f': {escape(result.error)}'
-            self.notify(msg, severity='warning')
-        elif len(targets) == 1:
-            self.notify(f'{ok} patch(es) {what}', severity='information')
-        else:
-            self.notify(
-                f'{len(targets)} series {what} ({ok} patches)',
-                severity='information',
-            )
+        done = self._report_bulk_update(result, targets, what)
         for s in done:
             s['delegate'] = delegate
             self._selected_ids.discard(s.get('id'))

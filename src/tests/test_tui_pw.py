@@ -755,6 +755,11 @@ def _install_series(
     monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
 
 
+def _notices(app: PwApp) -> List[str]:
+    """Messages of the toasts the app has shown."""
+    return [str(n.message) for n in app._notifications]
+
+
 class TestPwMarkSelection:
     """Marking series with space/Ctrl-a/Esc tracks ids and renders a leading '*'."""
 
@@ -928,6 +933,7 @@ class TestPwBulkSetState:
             assert fake.timeouts == [PW_PATCH_TIMEOUT] * 4
             # Marks are consumed once applied.
             assert app._selected_ids == set()
+            assert '2 series set to reviewing (4 patches)' in _notices(app)
 
     @pytest.mark.asyncio
     async def test_set_state_falls_back_to_highlighted(
@@ -955,6 +961,7 @@ class TestPwBulkSetState:
             assert by_id[1]['state'] == 'new'
             assert by_id[2]['state'] == 'accepted'
             assert len(fake.patched) == 2
+            assert '2 patch(es) set to accepted' in _notices(app)
 
     @pytest.mark.asyncio
     async def test_bulk_confirm_escape_changes_nothing(
@@ -1029,6 +1036,9 @@ class TestPwBulkSetState:
             # Unfinished series stay marked for another try; Esc on the
             # modal must not have reached the app's clear-marks binding.
             assert app._selected_ids == {2, 3}
+            assert 'Stopped: 1 of 3 series set to reviewing (3 patches)' in _notices(
+                app
+            )
 
     @pytest.mark.asyncio
     async def test_set_state_needs_states_loaded(
@@ -1202,6 +1212,7 @@ class TestPwSetDelegate:
                 'https://pw/api/patches/21/',
             ]
             assert fake.payloads == [{'delegate': 7}, {'delegate': 7}]
+            assert '2 patch(es) delegated to alice' in _notices(app)
             # Delegates now differ, so the delegate column shows up.
             assert all(it.show_delegate for it in app._visible_items())
             # The cursor stays on the row that was changed.
@@ -1247,6 +1258,7 @@ class TestPwSetDelegate:
             assert by_id[2]['delegate'] == 'bob'
             assert by_id[3].get('delegate', '') == ''
             assert len(fake.patched) == 4
+            assert '2 series delegated to bob (4 patches)' in _notices(app)
             assert app._selected_ids == set()
 
     @pytest.mark.asyncio
@@ -1274,6 +1286,7 @@ class TestPwSetDelegate:
 
             assert app._all_series[0]['delegate'] == ''
             assert fake.payloads == [{'delegate': ''}, {'delegate': ''}]
+            assert '2 patch(es) undelegated' in _notices(app)
 
     @pytest.mark.asyncio
     async def test_maintainer_fetch_error(
