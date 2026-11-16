@@ -2932,7 +2932,9 @@ class ApplyStateResult(NamedTuple):
     # Patch ids the server accepted the new state for
     done_ids: Set[int]
     fail: int
-    new_state: str
+    # What the patches were set to: a state slug, or for a subclass such
+    # as ApplyDelegateModal, whatever its payload sets
+    value: str
     # True when the user stopped the run with Esc before it finished
     cancelled: bool
     # Why the first failed patch failed, as the server put it ('' if none)
@@ -2987,7 +2989,7 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
         pwkey: str,
         pwurl: str,
         patch_ids: List[int],
-        new_state: str,
+        value: str,
         archived: bool,
         series_name: str,
     ) -> None:
@@ -2995,7 +2997,7 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
         self._pwkey = pwkey
         self._pwurl = pwurl
         self._patch_ids = patch_ids
-        self._new_state = new_state
+        self._value = value
         self._archived = archived
         self._series_name = series_name
         self._done_ids: Set[int] = set()
@@ -3004,10 +3006,10 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
         self._cancelled = False
 
     def _title(self) -> str:
-        return f'Setting state to: {self._new_state}'
+        return f'Setting state to: {self._value}'
 
     def _payload(self) -> Dict[str, Any]:
-        return {'state': self._new_state, 'archived': self._archived}
+        return {'state': self._value, 'archived': self._archived}
 
     def compose(self) -> ComposeResult:
         with Vertical(id='apply-dialog'):
@@ -3036,7 +3038,7 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
         return ApplyStateResult(
             set(self._done_ids),
             self._fail,
-            self._new_state,
+            self._value,
             self._cancelled,
             self._error,
         )
@@ -3093,8 +3095,8 @@ class ApplyStateModal(ModalScreen[ApplyStateResult]):
 class ApplyDelegateModal(ApplyStateModal):
     """Modal showing progress while changing the delegate of patches.
 
-    A *delegate_id* of None clears the delegate.  The result's
-    ``new_state`` carries the new delegate's username ('' when cleared).
+    A *delegate_id* of None clears the delegate.  The result's ``value``
+    is the new delegate's username ('' when cleared).
     """
 
     def __init__(
@@ -3112,7 +3114,7 @@ class ApplyDelegateModal(ApplyStateModal):
     def _title(self) -> str:
         if self._delegate_id is None:
             return 'Clearing delegate'
-        return f'Setting delegate to: {self._new_state}'
+        return f'Setting delegate to: {self._value}'
 
     def _payload(self) -> Dict[str, Any]:
         # Patchwork treats an empty relational field as null, which clears

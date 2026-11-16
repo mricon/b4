@@ -827,7 +827,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         self, result: Optional[ApplyStateResult], targets: List[Dict[str, Any]]
     ) -> None:
         assert result is not None
-        new_state = result.new_state
+        new_state = result.value
         # Only a series whose every patch was updated takes the new state.
         # The rest (failed, or not reached before Esc) keep their old state
         # and stay marked, so pressing 's' again finishes the job.
@@ -957,7 +957,7 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         self, result: Optional[ApplyStateResult], targets: List[Dict[str, Any]]
     ) -> None:
         assert result is not None
-        delegate = result.new_state
+        delegate = result.value
         what = f'delegated to {delegate}' if delegate else 'undelegated'
         # As with set state, only a series whose every patch was updated
         # takes the new delegate; the rest stay marked for another try.
