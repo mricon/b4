@@ -722,29 +722,19 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         change_id = f'{date_prefix}-{slug}-{fingerprint[:12]}'
         logger.info('No change-id found, generated: %s', change_id)
 
-    # Determine whether this thread already belongs to a tracked series.
-    # An exact change-id/fingerprint match on the requested version catches
-    # re-tracking the same series (or a newer version of a series that carries
-    # an embedded change-id).  Failing that, the sibling revisions discovered
-    # alongside it reveal a new version of an already-tracked series whose
-    # synthesized change-id and per-revision fingerprint both differ from the
-    # tracked version (bug 70fe607).
     config = b4.get_main_config()
     linkmask = str(config.get('linkmask', ''))
     conn = get_db(identifier)
-    existing = conn.execute(
-        'SELECT change_id FROM series WHERE change_id = ? OR fingerprint = ?',
-        (change_id, fingerprint),
-    ).fetchone()
-    existing_change_id: Optional[str] = str(existing[0]) if existing else None
-    if existing_change_id is None:
-        discovered: List[Tuple[Optional[str], Optional[str]]] = []
-        for v in sorted(lmbx.series.keys()):
-            v_msgid, _, _ = _raw_revision_ref(
-                lmbx, v, rethreaded=(was_rethreaded and v == revision)
-            )
-            discovered.append((getattr(lmbx.series[v], 'fingerprint', None), v_msgid))
-        existing_change_id = find_existing_change_id(conn, discovered)
+    # The sibling revisions discovered alongside this thread reveal a new
+    # version of a tracked series even when its synthesized change-id and
+    # fingerprint differ from the tracked version (bug 70fe607).
+    discovered: List[Tuple[Optional[str], Optional[str]]] = []
+    for v in sorted(lmbx.series.keys()):
+        v_msgid, _, _ = _raw_revision_ref(
+            lmbx, v, rethreaded=(was_rethreaded and v == revision)
+        )
+        discovered.append((getattr(lmbx.series[v], 'fingerprint', None), v_msgid))
+    existing_change_id = find_tracked_series(conn, change_id, fingerprint, discovered)
 
     # The rethreaded revision can't be re-fetched from a single message-id, so
     # its member patches must be recorded under whichever change-id wins.
@@ -1687,6 +1677,31 @@ def find_existing_change_id(
             if match is not None:
                 return str(match['change_id'])
     return None
+
+
+def find_tracked_series(
+    conn: sqlite3.Connection,
+    change_id: str,
+    fingerprint: Optional[str],
+    revisions: List[Tuple[Optional[str], Optional[str]]],
+) -> Optional[str]:
+    """Return the change_id of the tracked series a thread belongs to, or None.
+
+    Every way of tracking a thread must check this before adding a series
+    row: a second row for a revision of the same series stops the tracked
+    one from being switched to that revision.  An exact change-id or
+    fingerprint match catches re-tracking the same series, or a newer
+    version that carries an embedded change-id; otherwise *revisions* (see
+    :func:`find_existing_change_id`) catch a new version whose synthesized
+    change-id differs.
+    """
+    row = conn.execute(
+        'SELECT change_id FROM series WHERE change_id = ? OR fingerprint = ?',
+        (change_id, fingerprint),
+    ).fetchone()
+    if row is not None:
+        return str(row[0])
+    return find_existing_change_id(conn, revisions)
 
 
 def find_tracked_change_id(conn: sqlite3.Connection, token: str) -> Optional[str]:

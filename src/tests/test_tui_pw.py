@@ -59,21 +59,33 @@ class _FakeLoreNode:
         self.is_shutdown = True
 
 
-def _make_lore_series() -> Any:
+def _make_lore_series(revision: int = 1, msgid: str = 'cover@example.com') -> Any:
     """Build a minimal LoreSeries-like object for tracking metadata."""
     lser = mock.Mock()
-    lser.revision = 1
+    lser.revision = revision
     lser.fromname = 'Test Author'
     lser.fromemail = 'author@example.com'
     lser.expected = 1
-    lser.subject = '[PATCH] test series'
+    lser.subject = 'test series'
     lser.change_id = 'test-change-id-123'
-    lser.fingerprint = 'abcdef0123456789'
+    lser.fingerprint = f'abcdef0123456789-v{revision}'
+    lser.has_cover = True
 
     ref_msg = mock.Mock()
-    ref_msg.msgid = 'cover@example.com'
+    ref_msg.msgid = msgid
+    ref_msg.full_subject = f'[PATCH v{revision} 0/1] test series'
     ref_msg.date = datetime.datetime(2026, 1, 15, 10, 0, tzinfo=datetime.timezone.utc)
     return lser, ref_msg
+
+
+def _highlight_series(app: PwApp, sid: int) -> None:
+    """Move the list highlight to the Patchwork series with id *sid*."""
+    lv = app.query_one('#pw-list', ListView)
+    for idx, child in enumerate(lv.children):
+        if getattr(child, 'series', {}).get('id') == sid:
+            lv.index = idx
+            return
+    raise AssertionError(f'series {sid} not in the list')
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +270,200 @@ class TestPwTrackSeries:
             assert 9 not in app._tracked_ids
             assert 9 not in tracking.get_tracked_pw_series_ids(identifier)
             assert app._track_ctx is None
+
+
+# ---------------------------------------------------------------------------
+# Tracking a revision of an already-tracked series
+# ---------------------------------------------------------------------------
+
+SIBLING_IDENTIFIER = 'pwsibling'
+SIBLING_CHANGE_ID = 'test-change-id-123'
+
+
+@pytest.fixture
+def sibling_app(monkeypatch: pytest.MonkeyPatch) -> PwApp:
+    """A PwApp whose project lists v1 (id 42) and v2 (id 43) of one series."""
+    tracking.init_db(SIBLING_IDENTIFIER)
+
+    pw_series = [
+        {'id': 42, 'name': 'test series', 'msgid': 'v1@example.com'},
+        {'id': 43, 'name': 'test series', 'msgid': 'v2@example.com'},
+    ]
+    for s in pw_series:
+        s.update({'state': 'new', 'submitter': 'Someone', 'date': '2026-01-15'})
+    monkeypatch.setattr(
+        b4.review,
+        'pw_fetch_series',
+        lambda *a, **k: PwFetchResult(pw_series, 2, None),
+    )
+    monkeypatch.setattr(b4.review, 'pw_fetch_states', lambda *a, **k: [])
+    monkeypatch.setattr(b4, 'git_get_toplevel', lambda: None)
+    monkeypatch.setattr(b4, 'get_lore_node', lambda: _FakeLoreNode())
+
+    by_msgid = {
+        'v1@example.com': _make_lore_series(1, 'v1@example.com'),
+        'v2@example.com': _make_lore_series(2, 'v2@example.com'),
+    }
+    # The fake "messages" are just the msgid, so later stubs can tell
+    # which revision is being tracked.
+    monkeypatch.setattr(b4.review, '_retrieve_messages', lambda msgid: [msgid])
+    monkeypatch.setattr(
+        b4.review, '_get_lore_series', lambda msgs: by_msgid[msgs[0]][0]
+    )
+    monkeypatch.setattr(
+        b4.review,
+        'get_reference_message',
+        lambda lser: by_msgid[f'v{lser.revision}@example.com'][1],
+    )
+    return PwApp('fakekey', 'https://pw.example.org', SIBLING_IDENTIFIER)
+
+
+async def _track(app: PwApp, pilot: Any, sid: int) -> None:
+    """Track the Patchwork series *sid* and wait for the result."""
+    _highlight_series(app, sid)
+    app.action_track_series()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+def _series_rows(change_id: str = SIBLING_CHANGE_ID) -> List[Any]:
+    """Return (revision, pw_series_id, is_rethreaded) of each series row."""
+    conn = tracking.get_db(SIBLING_IDENTIFIER)
+    try:
+        return [
+            tuple(r)
+            for r in conn.execute(
+                'SELECT revision, pw_series_id, is_rethreaded FROM series'
+                ' WHERE change_id = ? ORDER BY revision',
+                (change_id,),
+            )
+        ]
+    finally:
+        conn.close()
+
+
+def _catalog() -> Dict[int, str]:
+    """Return {revision: message_id} recorded for the series."""
+    conn = tracking.get_db(SIBLING_IDENTIFIER)
+    try:
+        return {
+            r['revision']: r['message_id']
+            for r in tracking.get_revisions(conn, SIBLING_CHANGE_ID)
+        }
+    finally:
+        conn.close()
+
+
+class TestPwTrackSiblingRevision:
+    """Patchwork lists each revision as its own series, so a maintainer can
+    press "track" on more than one of them.  A second series row for the
+    same series breaks the review TUI: its v1->v2 upgrade failed on the
+    (change_id, revision) uniqueness constraint.  Other revisions belong in
+    the revisions catalog instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_newer_revision_is_offered_as_upgrade(
+        self, sibling_app: PwApp, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """v2 of a series tracked at v1 goes to the catalog, and the
+        catalog is mirrored to the review branch like "b4 review track"
+        does, so the pending upgrade travels with the branch."""
+        synced: List[str] = []
+        monkeypatch.setattr(
+            tracking,
+            'sync_revisions_catalog_to_branch',
+            lambda topdir, identifier, change_id: synced.append(change_id),
+        )
+        async with sibling_app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await _track(sibling_app, pilot, 42)
+            await _track(sibling_app, pilot, 43)
+            notes = [n.message for n in sibling_app._notifications]
+            assert any('recorded v2; upgrade to it' in m for m in notes), notes
+
+        assert _series_rows() == [(1, 42, 0)]
+        assert _catalog()[2] == 'v2@example.com'
+        assert synced == [SIBLING_CHANGE_ID]
+        # The upgrade that used to hit the uniqueness constraint.
+        conn = tracking.get_db(SIBLING_IDENTIFIER)
+        tracking.update_series_revision(conn, SIBLING_CHANGE_ID, 1, 2, 'v2@example.com')
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_older_revision_is_recorded(self, sibling_app: PwApp) -> None:
+        """v1 of a series tracked at v2 must not be called an upgrade."""
+        async with sibling_app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await _track(sibling_app, pilot, 43)
+            await _track(sibling_app, pilot, 42)
+            notes = [n.message for n in sibling_app._notifications]
+            assert any('recorded v1 as an older revision' in m for m in notes), notes
+
+        assert _series_rows() == [(2, 43, 0)]
+        assert _catalog()[1] == 'v1@example.com'
+
+    @pytest.mark.parametrize('tracked_as', [SIBLING_CHANGE_ID, 'synthesized-from-v1'])
+    @pytest.mark.asyncio
+    async def test_tracked_revision_gets_patchwork_id(
+        self, sibling_app: PwApp, tracked_as: str
+    ) -> None:
+        """Tracking the revision the review db already holds only links it.
+
+        This is the normal state after a revision switch, which forgets the
+        Patchwork id.  A series without an embedded change-id keeps the id
+        synthesized from its first revision, so the match must not depend on
+        the change-id.  The row belongs to whoever tracked it first: only
+        the Patchwork id may change.
+        """
+        conn = tracking.get_db(SIBLING_IDENTIFIER)
+        tracking.add_series_to_db(
+            conn,
+            tracked_as,
+            2,
+            'test series',
+            'Test Author',
+            'author@example.com',
+            None,
+            'v2@example.com',
+            1,
+            is_rethreaded=True,
+        )
+        conn.close()
+
+        async with sibling_app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await _track(sibling_app, pilot, 43)
+            notes = [n.message for n in sibling_app._notifications]
+            assert not any('recorded' in m for m in notes), notes
+            assert 43 in sibling_app._tracked_ids
+
+        assert _series_rows(tracked_as) == [(2, 43, 1)]
+        conn = tracking.get_db(SIBLING_IDENTIFIER)
+        assert conn.execute('SELECT COUNT(*) FROM series').fetchone()[0] == 1
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_archived_series_is_not_called_upgradable(
+        self, sibling_app: PwApp
+    ) -> None:
+        """The review TUI hides archived series, so pointing the maintainer
+        there for the upgrade would leave them with nothing to act on."""
+        async with sibling_app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            await _track(sibling_app, pilot, 42)
+            conn = tracking.get_db(SIBLING_IDENTIFIER)
+            tracking.update_series_status(conn, SIBLING_CHANGE_ID, 'archived')
+            conn.close()
+            await _track(sibling_app, pilot, 43)
+            notes = [n.message for n in sibling_app._notifications]
+            assert not any('upgrade' in m for m in notes), notes
+            assert any(
+                'archived' in m and f'b4 review forget {SIBLING_CHANGE_ID}' in m
+                for m in notes
+            ), notes
+
+        assert _catalog()[2] == 'v2@example.com'
 
 
 # ---------------------------------------------------------------------------

@@ -72,6 +72,11 @@ class _TrackData(NamedTuple):
     sent_at: Optional[str]
     message_id: str
     num_patches: int
+    fingerprint: Optional[str]
+    # The reference message's full subject and whether it is a cover letter,
+    # for recording this as a revision of an already-tracked series.
+    ref_subject: str
+    from_cover: bool
 
 
 def _format_series_label(
@@ -923,6 +928,9 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
                 sent_at=sent_at,
                 message_id=ref_msg.msgid,
                 num_patches=lser.expected,
+                fingerprint=lser.fingerprint,
+                ref_subject=ref_msg.full_subject,
+                from_cover=bool(lser.has_cover),
             )
 
     def _finish_tracking(self, data: _TrackData) -> None:
@@ -936,27 +944,113 @@ class PwApp(LoreNodeShutdownMixin, App[None]):
         pw_series_id = ctx['pw_series_id']
 
         assert self._tracking_identifier is not None
-        conn = b4.review.tracking.get_db(self._tracking_identifier)
-        b4.review.tracking.add_series_to_db(
-            conn,
-            data.change_id,
-            data.revision,
-            data.subject,
-            data.sender_name,
-            data.sender_email,
-            data.sent_at,
-            data.message_id,
-            data.num_patches,
-            pw_series_id,
-        )
-        conn.close()
+        identifier = self._tracking_identifier
+        conn = b4.review.tracking.get_db(identifier)
+        try:
+            existing = b4.review.tracking.find_tracked_series(
+                conn,
+                data.change_id,
+                data.fingerprint,
+                [(data.fingerprint, data.message_id)],
+            )
+            # {revision: status} of the rows already tracked, newest first.
+            tracked: Dict[int, str] = {}
+            if existing is not None:
+                tracked = {
+                    int(r[0]): str(r[1])
+                    for r in conn.execute(
+                        'SELECT revision, status FROM series WHERE change_id = ?'
+                        ' ORDER BY revision DESC',
+                        (existing,),
+                    )
+                }
+            # A match found only in the revisions catalog has no series row
+            # to attach to, so track this as a new series.
+            if not tracked:
+                existing = None
+
+            if existing is None:
+                b4.review.tracking.add_series_to_db(
+                    conn,
+                    data.change_id,
+                    data.revision,
+                    data.subject,
+                    data.sender_name,
+                    data.sender_email,
+                    data.sent_at,
+                    data.message_id,
+                    data.num_patches,
+                    pw_series_id,
+                    fingerprint=data.fingerprint,
+                )
+            elif data.revision in tracked:
+                # The row belongs to whichever path tracked it first; all
+                # Patchwork can add is its own id for this revision.
+                b4.review.tracking.set_pw_series_id(
+                    conn, existing, data.revision, pw_series_id
+                )
+            else:
+                # Patchwork lists each revision as its own series, but a
+                # second row would block the review TUI from switching the
+                # tracked one to this revision.  The catalog is where the
+                # review TUI looks for revisions to offer.
+                linkmask = str(b4.get_main_config().get('linkmask', ''))
+                b4.review.tracking.add_revision(
+                    conn,
+                    existing,
+                    data.revision,
+                    data.message_id,
+                    data.ref_subject,
+                    (linkmask % data.message_id) if '%s' in linkmask else '',
+                    fingerprint=data.fingerprint,
+                    subject_from_cover=data.from_cover,
+                )
+        finally:
+            conn.close()
+
+        if existing is not None and data.revision not in tracked:
+            # Keep the review branch's copy of the catalog current, so the
+            # pending upgrade travels with the branch on push.
+            b4.review.tracking.sync_revisions_catalog_to_branch(
+                b4.git_get_toplevel(), identifier, existing
+            )
+            tracked_rev = next(iter(tracked))
+            self._notify_revision_recorded(
+                existing, data.revision, tracked_rev, tracked[tracked_rev]
+            )
+            return
 
         self._tracked_ids.add(pw_series_id)
         item.tracked = True
         item.add_class('--tracked')
         item.refresh_label()
+        if existing is not None:
+            self.notify('Series already tracked', severity='information', timeout=3)
+        else:
+            self.notify(
+                f'Started tracking: {series_name}', severity='information', timeout=3
+            )
+
+    def _notify_revision_recorded(
+        self, change_id: str, revision: int, tracked_rev: int, status: str
+    ) -> None:
+        """Tell the maintainer what to do with a revision put in the catalog."""
+        if status == 'archived':
+            # The review TUI does not show archived series, so there is no
+            # upgrade to point at.
+            self.notify(
+                f'Recorded v{revision}, but the series is archived at'
+                f' v{tracked_rev}; use "b4 review forget {change_id}" to'
+                ' track it afresh',
+                severity='warning',
+            )
+            return
+        if revision > tracked_rev:
+            hint = f'recorded v{revision}; upgrade to it in b4 review'
+        else:
+            hint = f'recorded v{revision} as an older revision'
         self.notify(
-            f'Started tracking: {series_name}', severity='information', timeout=3
+            f'Already tracked at v{tracked_rev}; {hint}', severity='information'
         )
 
     async def action_hide_series(self) -> None:
