@@ -154,6 +154,19 @@ class TestResolvePwSeriesId:
         _seed(message_id='patch1@example.com')
         assert b4.review.resolve_pw_series_id(IDENTIFIER, CHANGE_ID, 1) == PW_SERIES_ID
 
+    def test_switched_revision_looks_up_its_own_id(self, fake_pw: _FakePw) -> None:
+        """Each Patchwork series holds one revision, so a revision switch
+        must not keep sending state changes to the old revision's series."""
+        _seed()
+        conn = tracking.get_db(IDENTIFIER)
+        tracking.set_pw_series_id(conn, CHANGE_ID, 1, PW_SERIES_ID)
+        tracking.update_series_revision(conn, CHANGE_ID, 1, 2, 'v2cover@example.com')
+        conn.close()
+        fake_pw.covers['v2cover@example.com'] = PW_SERIES_ID + 1
+        assert b4.review.resolve_pw_series_id(IDENTIFIER, CHANGE_ID, 2) == (
+            PW_SERIES_ID + 1
+        )
+
     def test_unknown_to_patchwork(self, fake_pw: _FakePw) -> None:
         _seed(message_id='nobody@example.com')
         assert b4.review.resolve_pw_series_id(IDENTIFIER, CHANGE_ID, 1) is None

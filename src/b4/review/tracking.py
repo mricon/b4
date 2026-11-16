@@ -2172,14 +2172,16 @@ def update_series_revision(
     revision without going through the full review checkout flow.
     Updates the revision, message_id, and optionally subject columns.
     Resets message_count and seen_message_count so the next update
-    fetches fresh counts for the new revision's thread.
+    fetches fresh counts for the new revision's thread, and pw_series_id
+    because Patchwork has a separate series per revision; it is looked
+    up again by message-id when next needed.
     """
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     if new_subject is not None:
         conn.execute(
             'UPDATE series SET revision = ?, message_id = ?, subject = ?,'
             ' message_count = NULL, seen_message_count = NULL,'
-            ' last_activity_at = ?'
+            ' pw_series_id = NULL, last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
             (new_revision, new_message_id, new_subject, now, change_id, old_revision),
         )
@@ -2187,7 +2189,7 @@ def update_series_revision(
         conn.execute(
             'UPDATE series SET revision = ?, message_id = ?,'
             ' message_count = NULL, seen_message_count = NULL,'
-            ' last_activity_at = ?'
+            ' pw_series_id = NULL, last_activity_at = ?'
             ' WHERE change_id = ? AND revision = ?',
             (new_revision, new_message_id, now, change_id, old_revision),
         )
