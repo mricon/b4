@@ -1038,14 +1038,25 @@ integrate your b4 workflow with patchwork.
          printf 'protocol=https\nhost=patchwork.kernel.org\nusername=jdoe\npassword=%s\n' \
              "$PW_API_KEY" | git credential approve
 
-     You can also inject the key via a password manager by placing the following
-     in your .gitconfig:
+     You can also get the key from a password manager by placing the
+     following in your ``.gitconfig``::
 
-        [credential "https://user@patchwork.kernel.org"]
-        helper = "!f() { echo password=$(pass korg-patchwork-token); }; f"
+         [credential "https://jdoe@patchwork.kernel.org"]
+             helper = "!f() { echo password=$(pass korg-patchwork-token); }; f"
 
-     If no helper returns a password, git may prompt for one on the
-     terminal. This setting is ignored in the in-tree ``.b4-config`` file.
+     The username in the credential URL must be the same as ``pw-user``,
+     or git does not use this helper.
+
+     b4 never asks for the key on the terminal. If no helper returns a
+     password, b4 works as if patchwork is not configured. In ``b4 review``,
+     b4 only runs the helpers when you first use a patchwork feature.
+
+     This setting is ignored in the in-tree ``.b4-config`` file, but
+     :term:`b4.pw-url` is not, so a repository can choose the host that
+     b4 asks the helpers about. Always limit a helper like the one above
+     to the URL of your patchwork server. A helper under a plain
+     ``[credential]`` section answers for every host, and would give your
+     key to any server that a ``.b4-config`` file names.
 
      Default: ``None``
 

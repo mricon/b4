@@ -326,8 +326,8 @@ Patchwork integration when it detects the relevant configuration.
 .. note::
 
    Patchwork integration requires the standard patchwork settings
-   (:term:`b4.pw-url`, :term:`b4.pw-key`, :term:`b4.pw-project`).
-   See :ref:`patchwork_settings` for details.
+   (:term:`b4.pw-url`, :term:`b4.pw-project`, and :term:`b4.pw-key` or
+   :term:`b4.pw-user`). See :ref:`patchwork_settings` for details.
 
 Browsing series
 ~~~~~~~~~~~~~~~~

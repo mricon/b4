@@ -1784,8 +1784,8 @@ them in your git config under the ``[b4]`` section.
 See :ref:`review_settings` for the full reference.
 
 Patchwork integration reuses the standard patchwork settings
-(:term:`b4.pw-url`, :term:`b4.pw-key`, :term:`b4.pw-project`). See
-:ref:`patchwork_settings` for details.
+(:term:`b4.pw-url`, :term:`b4.pw-project`, and :term:`b4.pw-key` or
+:term:`b4.pw-user`). See :ref:`patchwork_settings` for details.
 
 Configuring the review agent
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
