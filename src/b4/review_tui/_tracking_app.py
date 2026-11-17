@@ -1173,7 +1173,7 @@ class TrackingApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[Optional[str]]):
         self._db_mtime: float = 0.0
         # Detect patchwork configuration
         config = b4.get_main_config()
-        self._pwkey = str(config.get('pw-key', ''))
+        self._pwkey = b4.get_pw_key(config)
         self._pwurl = str(config.get('pw-url', ''))
         self._pwproj = str(config.get('pw-project', ''))
         # Remember last snooze choices within the session

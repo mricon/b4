@@ -398,6 +398,8 @@ LORENODE: Optional[liblore.LoreNode] = None
 URL_SERVERS: Dict[str, Tuple[str, bool]] = dict()
 # Indicates that we've cleaned cache already
 _CACHE_CLEANED = False
+# Patchwork API keys returned by git credential helpers, keyed by (url, user)
+_PW_KEY_CACHE: Dict[Tuple[str, str], str] = dict()
 # DNS answers for the life of the process (see _setup_dns_resolver)
 _DNS_CACHE = dns.resolver.LRUCache()
 # Used to track send-email alias replacements
@@ -2510,7 +2512,7 @@ class LoreMessage:
     @staticmethod
     def get_patchwork_data_by_msgid(msgid: str) -> Dict[str, str]:
         config = get_main_config()
-        pwkey = str(config.get('pw-key', ''))
+        pwkey = get_pw_key(config)
         pwurl = str(config.get('pw-url', ''))
         pwproj = str(config.get('pw-project', ''))
         if not (pwkey and pwurl and pwproj):
@@ -5006,6 +5008,11 @@ def _setup_main_config(
         'trailer*',
         'pw-*',
     ]
+    # Never take these from an in-tree .b4-config: they are personal and
+    # they make b4 ask git credential helpers for a secret.
+    wtdeny = [
+        'pw-user',
+    ]
     multivals = [
         'keyringsrc',
         'am-perpatch-check-cmd',
@@ -5021,6 +5028,9 @@ def _setup_main_config(
             wtconfig = get_config_from_git(r'b4\..*', multivals=multivals, source=wtcfg)
             logger.debug('wtcfg=%s', wtconfig)
             for key, val in wtconfig.items():
+                if key in wtdeny:
+                    logger.debug('wtcfg: ignoring %s', key)
+                    continue
                 if key in multivals:
                     val = [_val_to_path(topdir, x) for x in val]
                 else:
@@ -6427,6 +6437,48 @@ def get_smtp(
     return SMTPConnector(_connect), fromaddr
 
 
+def get_pw_key(config: Optional[ConfigDictT] = None) -> str:
+    """Return the Patchwork API key.
+
+    Use b4.pw-key when it is set.  Otherwise, if b4.pw-user is set, ask the
+    git credential helpers for the password of that user on the b4.pw-url
+    host, so the key can live in a password manager instead of the git
+    config.  The result is cached for the life of the process, so the
+    helpers are asked at most once.  Returns an empty string when no key is
+    configured or the lookup fails.
+    """
+    if config is None:
+        config = get_main_config()
+    pwkey = str(config.get('pw-key', '') or '')
+    pwuser = str(config.get('pw-user', '') or '')
+    pwurl = str(config.get('pw-url', '') or '')
+    if pwkey or not (pwuser and pwurl):
+        return pwkey
+
+    cachekey = (pwurl, pwuser)
+    if cachekey in _PW_KEY_CACHE:
+        return _PW_KEY_CACHE[cachekey]
+
+    parsed = urllib.parse.urlparse(pwurl)
+    if parsed.scheme and parsed.netloc:
+        logger.debug('Asking git credential helpers for the patchwork key')
+        gc_pass = git_credential_fill(
+            None, protocol=parsed.scheme, host=parsed.netloc, username=pwuser
+        )
+        pwkey = gc_pass or ''
+        if not pwkey:
+            logger.critical(
+                'No patchwork key for %s@%s from git credential helpers',
+                pwuser,
+                parsed.netloc,
+            )
+    else:
+        logger.critical('Could not parse pw-url: %s', pwurl)
+
+    _PW_KEY_CACHE[cachekey] = pwkey
+    return pwkey
+
+
 def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str]:
     session = requests.session()
     session.headers.update(
@@ -6443,7 +6495,7 @@ def get_patchwork_session(pwkey: str, pwurl: str) -> Tuple[requests.Session, str
 def patchwork_set_state(msgids: List[str], state: str) -> None:
     # Do we have a pw-key defined in config?
     config = get_main_config()
-    pwkey = str(config.get('pw-key', ''))
+    pwkey = get_pw_key(config)
     pwurl = str(config.get('pw-url', ''))
     pwproj = str(config.get('pw-project', ''))
     if not (pwkey and pwurl and pwproj):
