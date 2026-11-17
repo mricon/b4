@@ -608,7 +608,9 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     else:
         series_id = cmdargs.series_id
         if not series_id:
-            series_id = b4.get_msgid_from_stdin()
+            # Default True: a namespace built by code has nothing piped in.
+            if not getattr(cmdargs, 'no_stdin', True):
+                series_id = b4.get_msgid_from_stdin()
             if not series_id:
                 logger.critical('No series identifier provided')
                 logger.critical(
@@ -633,16 +635,21 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
     try:
         _msgid: Optional[str]
         msgs: Optional[List[Any]]
-        if rethread:
-            logger.info('Rethreading series from %d message IDs', len(rethread))
-            # retrieve_rethreaded_messages reports whether it actually had to
-            # stitch the patches together (was_rethreaded), or found and used
-            # a properly-threaded copy of the same version posted to the list.
-            _msgid, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(cmdargs)
-        else:
-            logger.info('Retrieving series: %s', series_id)
-            _msgid, msgs = b4.retrieve_messages(cmdargs)
-            was_rethreaded = False
+        try:
+            if rethread:
+                logger.info('Rethreading series from %d message IDs', len(rethread))
+                # retrieve_rethreaded_messages reports whether it actually had to
+                # stitch the patches together (was_rethreaded), or found and used
+                # a properly-threaded copy of the same version posted to the list.
+                _msgid, msgs, was_rethreaded = b4.retrieve_rethreaded_messages(cmdargs)
+            else:
+                logger.info('Retrieving series: %s', series_id)
+                _msgid, msgs = b4.retrieve_messages(cmdargs)
+                was_rethreaded = False
+        except LookupError as ex:
+            # The retrieval's "nothing to fetch"; elsewhere a LookupError is a bug.
+            logger.critical('CRITICAL: %s', ex)
+            sys.exit(1)
         if not msgs:
             logger.critical('Could not retrieve series: %s', series_id)
             sys.exit(1)
@@ -746,13 +753,8 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
         new_revs = _record_discovered_revisions(
             conn, existing_change_id, lmbx, linkmask, rethreaded_revs=rethreaded_revs
         )
-        srow = conn.execute(
-            'SELECT status, revision FROM series WHERE change_id = ?',
-            (existing_change_id,),
-        ).fetchone()
+        status_str, cur_rev = get_current_revision_state(conn, existing_change_id)
         conn.close()
-        status_str = str(srow[0]) if srow else 'unknown'
-        cur_rev = int(srow[1]) if srow else 0
         if new_revs:
             # Mirror the freshly-recorded catalog onto the existing review
             # branch so the pending upgrade travels on push (it can't be
@@ -769,8 +771,7 @@ def cmd_track(cmdargs: argparse.Namespace) -> None:
                 ', '.join(f'v{v}' for v in new_revs),
             )
             if status_str == 'archived':
-                # Archived series are not shown in the review TUI, so the
-                # usual upgrade advice would point at nothing actionable.
+                # A live row would have won the lookup, so all are archived.
                 logger.info('  This series is archived and not shown in the TUI.')
                 logger.info(
                     '  Use "b4 review forget %s" to erase it and track afresh.',
@@ -865,7 +866,9 @@ def cmd_forget(cmdargs: argparse.Namespace) -> None:
 
     series_id = cmdargs.series_id
     if not series_id:
-        series_id = b4.get_msgid_from_stdin()
+        # Default True: a namespace built by code has nothing piped in.
+        if not getattr(cmdargs, 'no_stdin', True):
+            series_id = b4.get_msgid_from_stdin()
         if not series_id:
             logger.critical('No series identifier provided')
             logger.critical('Pipe a message or pass msgid/URL/change-id as parameter')
@@ -2496,6 +2499,33 @@ def get_series_status(
             'SELECT status FROM series WHERE change_id = ?', (change_id,)
         ).fetchone()
     return row[0] if row else None
+
+
+def get_current_revision_state(
+    conn: sqlite3.Connection, change_id: str
+) -> Tuple[str, int]:
+    """Return the (status, revision) that stands for a series as a whole.
+
+    The series table holds one row per (change_id, revision), so an upgraded
+    series keeps the superseded revision as 'archived' beside the live row
+    for the new one, and a lookup by change-id alone may return either.
+
+    Live revisions win, newest first, because the review TUI lists every row
+    whose status is not 'archived': "a non-archived row exists" is exactly
+    "the TUI still shows this series".  Only once every revision has been
+    archived does the newest archived one stand in for the series.
+
+    Returns ('unknown', 0) when the change-id has no series row at all.
+    """
+    row = conn.execute(
+        'SELECT status, revision FROM series WHERE change_id = ?'
+        " ORDER BY (COALESCE(status, 'new') = 'archived'), revision DESC"
+        ' LIMIT 1',
+        (change_id,),
+    ).fetchone()
+    if row is None:
+        return 'unknown', 0
+    return str(row[0] or 'new'), int(row[1])
 
 
 def get_pw_series_id(

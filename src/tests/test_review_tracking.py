@@ -5,6 +5,7 @@ import logging
 import os
 import pathlib
 import re
+import signal
 import sqlite3
 from email.message import EmailMessage
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -2704,6 +2705,22 @@ class TestUpdateSeriesTrackingCounts:
 # ---------------------------------------------------------------------------
 
 
+def _track_cmdargs(identifier: str, **kwargs: Any) -> argparse.Namespace:
+    """Build the namespace "b4 review track" hands to cmd_track.
+
+    Mirrors what sp_rev_track defines, so the tests drive the same code path
+    the CLI does, with --no-stdin set so no test reads the real stdin.
+    """
+    defaults: Dict[str, Any] = {
+        'series_id': None,
+        'identifier': identifier,
+        'rethread': None,
+        'no_stdin': True,
+    }
+    defaults.update(kwargs)
+    return argparse.Namespace(**defaults)
+
+
 class TestCmdTrackCancellation:
     """cmd_track exits with code 130 when the network operation is interrupted."""
 
@@ -4214,6 +4231,7 @@ class TestRetrieveSeriesMessagesRethreadSeam:
 
         progress_cb = mock.Mock()
         with (
+            mock.patch('b4.can_network', True),
             mock.patch(
                 'b4.fetch_rethread_messages',
                 side_effect=_fetch_rethread_messages,
@@ -4789,6 +4807,94 @@ class TestCmdForget:
         assert self._rows_left('forget-checkedout', 'cid-gone')['series'] == 1
 
 
+class TestCmdForgetHonoursNoStdin:
+    """--no-stdin has to stop cmd_forget reaching for stdin as well.
+
+    Naming no series makes cmd_forget look for one on stdin, which is the
+    read the flag exists to prevent: the pipe belongs to the caller.
+    """
+
+    def _enroll(self, gitdir: str, identifier: str) -> None:
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier=identifier)
+        )
+        conn = review_tracking.get_db(identifier)
+        review_tracking.add_series_to_db(
+            conn,
+            'cid-gone',
+            1,
+            'Archived series',
+            'Mark',
+            'mark@example.com',
+            '2026-06-01T10:00:00+00:00',
+            'gone-v1@example.com',
+            1,
+        )
+        conn.commit()
+        conn.close()
+
+    def test_no_stdin_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._enroll(gitdir, 'forget-nostdin')
+        cmdargs = argparse.Namespace(
+            series_id=None, identifier='forget-nostdin', no_stdin=True
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_forget(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+        assert 'No series identifier provided' in caplog.text
+
+    def test_a_hand_assembled_namespace_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A namespace without no_stdin defaults to True here too."""
+        self._enroll(gitdir, 'forget-nostdin-default')
+        cmdargs = argparse.Namespace(
+            series_id=None, identifier='forget-nostdin-default'
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_forget(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+
+    def test_stdin_is_still_read_without_no_stdin(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The gate must not cost the piped-message workflow its input."""
+        self._enroll(gitdir, 'forget-pipe')
+        monkeypatch.setattr('builtins.input', lambda _prompt: 'y')
+        cmdargs = argparse.Namespace(
+            series_id=None, identifier='forget-pipe', no_stdin=False
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
+        ) as mock_stdin:
+            review_tracking.cmd_forget(cmdargs)
+
+        mock_stdin.assert_called_once()
+        conn = review_tracking.get_db('forget-pipe')
+        left = conn.execute(
+            'SELECT COUNT(*) FROM series WHERE change_id = ?', ('cid-gone',)
+        ).fetchone()[0]
+        conn.close()
+        assert left == 0
+
+
 class TestUpdateSkipsCheckedOutBranch:
     """update_series_tracking leaves a checked-out review branch alone."""
 
@@ -4926,3 +5032,519 @@ class TestAutoWakeSkipsCheckedOutBranch:
         woken = review_tracking.auto_wake_snoozed(identifier, gitdir)
         assert woken == 1
         assert self._status(identifier, change_id) == 'replied'
+
+
+class TestCmdTrackRetrievalFailure:
+    """A LookupError from the retrieval becomes one CRITICAL line and exit 1."""
+
+    @staticmethod
+    def _cmdargs(identifier: str) -> argparse.Namespace:
+        return _track_cmdargs(identifier, series_id='wanted@example.com')
+
+    def test_offline_retrieval_is_reported_not_raised(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """conftest pins b4.can_network off, as --offline-mode does."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-offline')
+        )
+
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
+            with pytest.raises(SystemExit) as excinfo:
+                review_tracking.cmd_track(self._cmdargs('track-offline'))
+
+        assert excinfo.value.code == 1
+        assert (
+            'CRITICAL: Cannot retrieve threads from remote in offline mode'
+            in caplog.text
+        )
+
+    def test_the_retrievals_own_words_reach_the_user(
+        self, gitdir: str, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Whatever the retrieval named is what the user is told.
+
+        retrieve_messages() raises a LookupError per reason it can have --
+        a mailbox that is not there, a message-id missing from the one that
+        is -- and the handler must pass that text through rather than
+        substitute a report of its own.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-nombox')
+        )
+        missing = tmp_path / 'nonexistent.mbox'
+
+        with mock.patch(
+            'b4.retrieve_messages',
+            side_effect=LookupError(f'Mailbox {missing} does not exist'),
+        ):
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(self._cmdargs('track-nombox'))
+
+        assert excinfo.value.code == 1
+        assert f'CRITICAL: Mailbox {missing} does not exist' in caplog.text
+
+    def test_the_sigint_handler_is_still_restored(self, gitdir: str) -> None:
+        """The finally: clause has to run on this exit path too.
+
+        cmd_track installs a SIGINT handler that cancels the in-flight lore
+        request; leaving it behind would have the next Ctrl-C in the process
+        cancel a request that is no longer running.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-sigint')
+        )
+        before = signal.getsignal(signal.SIGINT)
+
+        with pytest.raises(SystemExit):
+            review_tracking.cmd_track(self._cmdargs('track-sigint'))
+
+        assert signal.getsignal(signal.SIGINT) is before
+
+    def test_cancellation_still_exits_130(self, gitdir: str) -> None:
+        """A LookupError handler must not shadow the cancellation contract."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-cancel')
+        )
+
+        with mock.patch(
+            'b4.retrieve_messages',
+            side_effect=liblore.OperationCancelledError('cancelled'),
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                review_tracking.cmd_track(self._cmdargs('track-cancel'))
+
+        assert excinfo.value.code == 130
+
+    def test_unrelated_exceptions_still_propagate(self, gitdir: str) -> None:
+        """Only LookupError is turned into an exit; nothing else is swallowed."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-propagate')
+        )
+
+        with mock.patch(
+            'b4.retrieve_messages', side_effect=RuntimeError('something else')
+        ):
+            with pytest.raises(RuntimeError, match='something else'):
+                review_tracking.cmd_track(self._cmdargs('track-propagate'))
+
+    def test_a_lookup_error_past_the_retrieval_still_propagates(
+        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KeyError and IndexError are LookupErrors too, and past the
+        retrieval they are bugs that want their traceback.
+
+        get_extra_series() reads getaddresses(...)[0][1] off the base message,
+        so a message with no From: raises IndexError from inside the block a
+        handler around the whole retrieval would have turned into "CRITICAL:
+        list index out of range" and exit 1.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='track-lookup')
+        )
+        monkeypatch.setattr(b4, 'can_network', True)
+        msgs = _series_msgs('lookup', AUTHOR, 1, 2)
+
+        with (
+            mock.patch(
+                'b4.retrieve_messages', return_value=('lookup-v1-p1@example.com', msgs)
+            ),
+            mock.patch(
+                'b4.mbox.get_extra_series',
+                side_effect=IndexError('list index out of range'),
+            ),
+        ):
+            with pytest.raises(IndexError, match='list index out of range'):
+                review_tracking.cmd_track(self._cmdargs('track-lookup'))
+
+
+class TestGetCurrentRevisionState:
+    """Layer 1: which of a series' per-revision rows stands for the series."""
+
+    @staticmethod
+    def _seed(
+        identifier: str, rows: list[tuple[int, str | None]]
+    ) -> sqlite3.Connection:
+        """Insert (revision, status) rows for 'cid' in the order given."""
+        review_tracking.init_db(identifier).close()
+        conn = review_tracking.get_db(identifier)
+        for revision, status in rows:
+            conn.execute(
+                'INSERT INTO series (change_id, revision, status) VALUES (?, ?, ?)',
+                ('cid', revision, status),
+            )
+        conn.commit()
+        return conn
+
+    def test_live_revision_wins_over_an_archived_one(self) -> None:
+        """The archived leftover of an upgrade never speaks for the series."""
+        conn = self._seed('state-live', [(2, 'archived'), (3, 'reviewing')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == (
+            'reviewing',
+            3,
+        )
+        conn.close()
+
+    def test_live_revision_wins_even_when_it_is_the_older_one(self) -> None:
+        """Highest live, not highest revision: v3 can be abandoned before v2."""
+        conn = self._seed('state-older', [(2, 'reviewing'), (3, 'archived')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == (
+            'reviewing',
+            2,
+        )
+        conn.close()
+
+    def test_newest_of_several_live_revisions_wins(self) -> None:
+        """Among live rows the newest revision is the one being worked on."""
+        conn = self._seed('state-newest', [(2, 'reviewing'), (3, 'replied')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == ('replied', 3)
+        conn.close()
+
+    def test_snoozed_counts_as_live(self) -> None:
+        """The TUI hides only archived rows, so a snoozed series is still shown."""
+        conn = self._seed('state-snoozed', [(2, 'archived'), (3, 'snoozed')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == ('snoozed', 3)
+        conn.close()
+
+    def test_newest_archived_stands_in_when_all_are_archived(self) -> None:
+        """A wholly archived series is described by its last revision."""
+        conn = self._seed('state-dead', [(2, 'archived'), (3, 'archived')])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == (
+            'archived',
+            3,
+        )
+        conn.close()
+
+    def test_null_status_reads_as_new_and_counts_as_live(self) -> None:
+        """A row with no status is not archived, and reports the column default."""
+        conn = self._seed('state-null', [(2, 'archived'), (3, None)])
+        assert review_tracking.get_current_revision_state(conn, 'cid') == ('new', 3)
+        conn.close()
+
+    def test_untracked_change_id_is_unknown(self) -> None:
+        """No rows at all: the caller gets the placeholder, not a crash."""
+        conn = self._seed('state-none', [])
+        assert review_tracking.get_current_revision_state(conn, 'other') == (
+            'unknown',
+            0,
+        )
+        conn.close()
+
+
+class TestCmdTrackAlreadyTrackedState:
+    """Re-tracking reports the live revision, not a superseded one.
+
+    cmd_track used to describe whichever row an unordered lookup by
+    change-id handed back, so a series under active review was announced as
+    archived and offered "b4 review forget" -- which erases its rows and
+    deletes its review branch.
+    """
+
+    CHANGE_ID = 'cid-state'
+
+    @classmethod
+    def _retrieved(cls, revision: int) -> mock.Mock:
+        """A retrieved vN carrying the tracked change-id."""
+        cover = mock.Mock(
+            msgid=f'v{revision}-cover@example.com',
+            full_subject=f'[PATCH v{revision} 0/2] thing',
+        )
+        p1 = mock.Mock(
+            msgid=f'v{revision}-p1@example.com',
+            full_subject=f'[PATCH v{revision} 1/2] thing: part 1',
+        )
+        lser = mock.Mock()
+        lser.revision = revision
+        lser.expected = 2
+        lser.change_id = cls.CHANGE_ID
+        lser.fromname = 'Author'
+        lser.fromemail = 'author@example.com'
+        lser.subject = 'thing'
+        lser.fingerprint = f'fp-v{revision}'
+        lser.has_cover = True
+        lser.patches = [cover, p1, None]
+
+        mbx = mock.Mock()
+        mbx.series = {revision: lser}
+        mbx.covers = {revision: cover}
+        mbx.get_series.return_value = lser
+        return mbx
+
+    @classmethod
+    def _seed_upgraded_series(
+        cls, gitdir: str, identifier: str, v3_status: str
+    ) -> None:
+        """Leave rows (v2, archived) and (v3, *v3_status*), v2 inserted first.
+
+        That is the order an upgrade leaves behind, and it makes the unordered
+        lookup return the archived row deterministically: v2 is both the
+        earlier rowid and the lower key in the UNIQUE (change_id, revision)
+        index that serves the lookup.
+        """
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier=identifier)
+        )
+        conn = review_tracking.get_db(identifier)
+        for revision in (2, 3):
+            review_tracking.add_series_to_db(
+                conn,
+                change_id=cls.CHANGE_ID,
+                revision=revision,
+                subject='thing',
+                sender_name='Author',
+                sender_email='author@example.com',
+                sent_at='2026-03-09T00:00:00+00:00',
+                message_id=f'v{revision}-cover@example.com',
+                num_patches=2,
+                fingerprint=f'fp-v{revision}',
+            )
+            review_tracking.add_revision(
+                conn, cls.CHANGE_ID, revision, f'v{revision}-cover@example.com'
+            )
+        review_tracking.update_series_status(conn, cls.CHANGE_ID, v3_status, revision=3)
+        review_tracking.update_series_status(
+            conn, cls.CHANGE_ID, 'archived', revision=2
+        )
+        rows = conn.execute(
+            'SELECT revision, status FROM series WHERE change_id = ?',
+            (cls.CHANGE_ID,),
+        ).fetchall()
+        conn.close()
+        # Guard the premise: the raw lookup really does hand back the v2 row.
+        assert [(row[0], row[1]) for row in rows] == [(2, 'archived'), (3, v3_status)]
+
+    @classmethod
+    def _track(cls, identifier: str, revision: int) -> None:
+        cmdargs = _track_cmdargs(identifier, series_id='thing@example.com')
+        with (
+            mock.patch('b4.retrieve_messages', return_value=(None, [mock.Mock()])),
+            mock.patch('b4.LoreMailbox', return_value=cls._retrieved(revision)),
+        ):
+            review_tracking.cmd_track(cmdargs)
+
+    def test_live_revision_is_reported_not_the_archived_leftover(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """v3 is under review, so re-tracking at v4 offers the TUI upgrade."""
+        identifier = 'state-live-track'
+        self._seed_upgraded_series(gitdir, identifier, 'reviewing')
+
+        with caplog.at_level(logging.INFO, logger='b4'):
+            self._track(identifier, revision=4)
+
+        assert (
+            f'Series already tracked as {self.CHANGE_ID} (status: reviewing, v3)'
+            in caplog.text
+        )
+        assert 'Recorded new revision(s): v4' in caplog.text
+        assert 'Upgrade the series in the review TUI' in caplog.text
+        assert 'This series is archived' not in caplog.text
+        assert 'review forget' not in caplog.text
+
+    def test_wholly_archived_series_still_gets_the_forget_advice(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """With every revision archived the TUI shows nothing, so forget it."""
+        identifier = 'state-dead-track'
+        self._seed_upgraded_series(gitdir, identifier, 'archived')
+
+        with caplog.at_level(logging.INFO, logger='b4'):
+            self._track(identifier, revision=4)
+
+        assert (
+            f'Series already tracked as {self.CHANGE_ID} (status: archived, v3)'
+            in caplog.text
+        )
+        assert 'This series is archived and not shown in the TUI.' in caplog.text
+        assert f'Use "b4 review forget {self.CHANGE_ID}"' in caplog.text
+        assert 'Upgrade the series in the review TUI' not in caplog.text
+
+    def test_no_new_revisions_reports_the_live_revision(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Re-tracking v3 refuses, naming the revision it already has."""
+        identifier = 'state-same-track'
+        self._seed_upgraded_series(gitdir, identifier, 'reviewing')
+
+        with (
+            caplog.at_level(logging.CRITICAL, logger='b4'),
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            self._track(identifier, revision=3)
+
+        assert excinfo.value.code == 1
+        assert 'This series is already tracked (status: reviewing, v3)' in caplog.text
+        assert f'Use "b4 review forget {self.CHANGE_ID}"' in caplog.text
+
+
+class TestCmdTrackRethreadOffline:
+    """--rethread refuses in offline mode instead of querying lore.
+
+    cmd_track calls b4.retrieve_rethreaded_messages() directly instead of
+    going through retrieve_messages(), where the offline guard used to live,
+    so "b4 --offline-mode review track --rethread" asked the list archive for
+    every message-id on the command line.
+    """
+
+    def test_refuses_without_querying_lore(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='rt-offline')
+        )
+        cmdargs = _track_cmdargs(
+            'rt-offline', rethread=['one@example.com', 'two@example.com']
+        )
+
+        with (
+            mock.patch('b4.get_pi_thread_by_msgid') as mock_thread,
+            mock.patch('b4.get_pi_search_results') as mock_search,
+        ):
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        assert excinfo.value.code == 1
+        assert 'offline mode' in caplog.text
+        mock_thread.assert_not_called()
+        mock_search.assert_not_called()
+        conn = review_tracking.get_db('rt-offline')
+        count = conn.execute('SELECT COUNT(*) FROM series').fetchone()[0]
+        conn.close()
+        assert count == 0
+
+
+class TestFetchSeriesThreadOffline:
+    """A rethreaded series refuses offline instead of querying lore."""
+
+    @staticmethod
+    def _seed(identifier: str) -> Dict[str, Any]:
+        """Track a rethreaded v6 whose three patches are stored individually."""
+        conn = review_tracking.init_db(identifier)
+        review_tracking.add_revision(
+            conn, 'cid-rt', 6, 'rt-v6-p1@example.com', is_rethreaded=True
+        )
+        _insert_patches(conn, 'cid-rt', 6, ['rt-p1@q', 'rt-p2@q', 'rt-p3@q'])
+        conn.close()
+        return {
+            'change_id': 'cid-rt',
+            'revision': 6,
+            'message_id': 'rt-v6-p1@example.com',
+            'is_rethreaded': True,
+        }
+
+    def test_refuses_without_querying_lore(self) -> None:
+        """Not one of the stored patches is fetched before the refusal."""
+        series = self._seed('rt-offline-fetch')
+
+        with mock.patch('b4.get_pi_thread_by_msgid') as mock_thread:
+            with pytest.raises(
+                LookupError, match='Cannot retrieve threads from remote in offline mode'
+            ):
+                b4.review.retrieve_series_messages(series, 'rt-offline-fetch')
+
+        mock_thread.assert_not_called()
+
+    def test_refusal_matches_the_normal_path_word_for_word(self) -> None:
+        """Callers must not be able to tell the two paths apart.
+
+        Nothing downstream should come to treat an offline rethreaded series
+        as a different kind of failure from an offline ordinary one, and the
+        cheapest way to keep that true is to say the same thing on both.
+        """
+        series = self._seed('rt-offline-same')
+        seen: List[str] = []
+
+        for is_rethreaded in (True, False):
+            with pytest.raises(LookupError) as exc_info:
+                b4.review.retrieve_series_messages(
+                    {**series, 'is_rethreaded': is_rethreaded}, 'rt-offline-same'
+                )
+            seen.append(str(exc_info.value))
+
+        assert seen == ['Cannot retrieve threads from remote in offline mode'] * 2
+
+
+def _parse_track_args(argv: List[str]) -> argparse.Namespace:
+    """Parse *argv* with the real b4 parser.
+
+    b4.command is imported here rather than at module scope so the whole CLI
+    is only built for the handful of tests that need it.
+    """
+    import b4.command
+
+    parser = b4.command.setup_parser()
+    return parser.parse_args(argv)
+
+
+class TestCmdTrackHonoursNoStdin:
+    """--no-stdin has to stop cmd_track's own look at stdin as well.
+
+    b4.get_msgid() consults cmdargs.no_stdin, but cmd_track reaches for a
+    series identifier on stdin itself, well before the retrieval gets that
+    far.  Ungated, "cat something | b4 --no-stdin review track" ate the pipe
+    the caller had asked it to leave alone.
+    """
+
+    def test_no_stdin_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='nostdin-gate')
+        )
+        cmdargs = _parse_track_args(
+            ['--no-stdin', 'review', 'track', '-i', 'nostdin-gate']
+        )
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='piped@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+        assert 'No series identifier provided' in caplog.text
+
+    def test_a_hand_assembled_namespace_leaves_the_pipe_alone(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A namespace without no_stdin defaults to True here too."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='nostdin-gate-default')
+        )
+        cmdargs = _track_cmdargs('nostdin-gate-default')
+        delattr(cmdargs, 'no_stdin')
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='piped@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.CRITICAL, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        mock_stdin.assert_not_called()
+        assert excinfo.value.code == 1
+        assert 'No series identifier provided' in caplog.text
+
+    def test_stdin_is_still_read_without_no_stdin(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The gate must not cost the piped-message workflow its input."""
+        review_tracking.cmd_enroll(
+            argparse.Namespace(repo_path=gitdir, identifier='nostdin-open')
+        )
+        cmdargs = _parse_track_args(['review', 'track', '-i', 'nostdin-open'])
+
+        with mock.patch(
+            'b4.get_msgid_from_stdin', return_value='piped@example.com'
+        ) as mock_stdin:
+            with caplog.at_level(logging.INFO, logger='b4'):
+                with pytest.raises(SystemExit) as excinfo:
+                    review_tracking.cmd_track(cmdargs)
+
+        mock_stdin.assert_called_once()
+        assert excinfo.value.code == 1
+        assert 'Retrieving series: piped@example.com' in caplog.text
