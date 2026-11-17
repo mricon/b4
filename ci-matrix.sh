@@ -11,7 +11,7 @@ set -eu
 # Missing interpreters are pulled automatically from uv's managed Python
 # cache (python-build-standalone), so no system packages or sudo are needed.
 #
-# Override the version list: PYTHONS="3.11 3.14" ./ci-matrix.sh
+# Override the version list: PYTHONS="3.11 3.15" ./ci-matrix.sh
 #
 # After the interpreter sweep it runs one "floor" lane: the project plus its
 # runtime extras resolved to the *minimum* versions our metadata allows
@@ -28,17 +28,17 @@ set -eu
 # releases are likeliest to still publish wheels. Override or skip it:
 # FLOOR_PY=3.12 ./ci-matrix.sh  (or FLOOR_PY= ./ci-matrix.sh to skip)
 #
-# After the floor lane it runs one advisory "prerelease" lane, on the newest
-# CPython not yet in PYTHONS (a beta ahead of its final release, say), so we
-# get an early signal without waiting on a relock. It resolves fresh against
-# PyPI instead of uv.lock, and never fails the run -- see the lane itself for
-# why. Override or skip it: PRERELEASE_PY=3.16 ./ci-matrix.sh (or
-# PRERELEASE_PY= ./ci-matrix.sh to skip)
+# After the floor lane it can run one advisory "prerelease" lane, on the
+# newest CPython not yet in PYTHONS (a beta ahead of its final release, say),
+# so we get an early signal without waiting on a relock. It resolves fresh
+# against PyPI instead of uv.lock, and never fails the run -- see the lane
+# itself for why. It is off until the next CPython has a beta worth trying;
+# enable it with PRERELEASE_PY=3.16 ./ci-matrix.sh
 
 # ${VAR-default} rather than ${VAR:-default}: the latter also substitutes for
 # an explicitly empty value, which would make "PYTHONS= ./ci-matrix.sh" run
 # the full sweep instead of skipping it.
-PYTHONS="${PYTHONS-3.11 3.12 3.13 3.14}"
+PYTHONS="${PYTHONS-3.11 3.12 3.13 3.14 3.15}"
 
 # Install any requested interpreters that are missing. This is an explicit
 # step because a dev may have set UV_PYTHON_DOWNLOADS=manual globally to
@@ -117,14 +117,14 @@ fi
 # all) just to humor an interpreter we don't support yet.
 #
 # Ecosystem wheels typically lag a new CPython release by weeks to months,
-# and our compiled dependencies are the ones that bite: with no cp315 wheel
-# for pygit2, uv falls back to its sdist and the build wants libgit2 headers
-# that are not installed. So failures here are expected and this lane is
+# and our compiled dependencies are the ones that bite: with no wheel for the
+# new CPython, uv falls back to pygit2's sdist and the build wants libgit2
+# headers that are not installed. So failures here are expected and this lane is
 # advisory: it never fails the run, only reports what broke, so it does not
 # block CI while giving a heads-up for when to move the interpreter into
-# PYTHONS for real.
-# Override or skip: PRERELEASE_PY=3.16 ./ci-matrix.sh (or PRERELEASE_PY= to skip)
-PRERELEASE_PY="${PRERELEASE_PY-3.15}"
+# PYTHONS for real. Once it passes, move the version there and reset the
+# default below to empty.
+PRERELEASE_PY="${PRERELEASE_PY-}"
 if [ -n "$PRERELEASE_PY" ]; then
     printf '\n=== Prerelease (advisory) on Python %s ===\n' "$PRERELEASE_PY"
     unset UV_PROJECT_ENVIRONMENT
