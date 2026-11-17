@@ -7,7 +7,6 @@ __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import email.message
 import email.utils
-import os
 import re
 import subprocess
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -302,6 +301,8 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             ['checkout', self._original_branch] if self._original_branch else []
         )
         self.branch_checked_out: bool = False
+        # Where the branch was when the tracking data was last in step with it
+        self._tracking_tip: Optional[str] = self._branch_tip()
         self._has_cover: bool = NO_COVER_NOTE not in self._cover_text
         self._selected_idx: int = (
             0 if self._has_cover else 1
@@ -2317,52 +2318,53 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
     def action_agent(self) -> None:
         """Run the configured review agent command."""
-        import shlex
-
-        config = b4.get_main_config()
-        agent_cmd = config.get('review-agent-command')
-        agent_prompt = str(config.get('review-agent-prompt-path', ''))
-        if not agent_cmd or not agent_prompt:
-            self.notify(
-                'Review agent not configured (set b4.review-agent-command and b4.review-agent-prompt-path)',
-                severity='warning',
-            )
+        try:
+            agent = b4.review.get_agent_command(self._topdir)
+        except b4.review.AgentConfigError as ex:
+            self.notify(str(ex), severity='error')
             return
-
-        assert isinstance(agent_cmd, str)
-        sp = shlex.shlex(agent_cmd, posix=True)
-        sp.whitespace_split = True
-        cmdargs = list(sp)
-
-        prompt_path = b4.review.resolve_agent_prompt_path(self._topdir, agent_prompt)
-        if not os.path.isfile(prompt_path):
-            self.notify(
-                f'Agent prompt file not found: {agent_prompt}', severity='error'
-            )
-            return
-        cmdargs += [f'Read and execute the prompt from {prompt_path}']
-
         if not self._ensure_branch_checked_out():
             return
 
-        with suspended(self):
-            logger.info('Running review agent: %s', ' '.join(cmdargs))
-            try:
-                spop = subprocess.Popen(cmdargs, cwd=self._topdir)
-                spop.wait()
-            except FileNotFoundError:
-                logger.critical('Agent command not found: %s', cmdargs[0])
+        ecode, out = b4.git_run_command(self._topdir, ['rev-parse', 'HEAD'])
+        if ecode != 0 or not out.strip():
+            self.notify('Could not determine the review commit', severity='error')
+            self._restore_original_branch()
+            return
+        review_dir = b4.review.get_agent_review_dir(self._topdir, out.strip())
+        try:
+            agent.make_review_dir(review_dir)
+        except OSError as ex:
+            self.notify(
+                f'Could not create the agent review directory: {ex}', severity='error'
+            )
+            self._restore_original_branch()
+            return
+        cmdargs = agent.command_line(
+            f'Read and execute the prompt from {agent.prompt_path}', review_dir
+        )
+
+        try:
+            with suspended(self):
+                logger.info('Running review agent: %s', ' '.join(cmdargs))
+                try:
+                    spop = subprocess.Popen(cmdargs, cwd=self._topdir)
+                    spop.wait()
+                except FileNotFoundError:
+                    logger.critical('Agent command not found: %s', cmdargs[0])
+                    _wait_for_enter()
+                    return
+                except OSError as ex:
+                    logger.critical('Could not start agent: %s', ex)
+                    _wait_for_enter()
+                    return
+                if spop.returncode != 0:
+                    logger.warning('Agent exited with code %d', spop.returncode)
+                else:
+                    logger.info('Agent finished successfully')
                 _wait_for_enter()
-                return
-            except OSError as ex:
-                logger.critical('Could not start agent: %s', ex)
-                _wait_for_enter()
-                return
-            if spop.returncode != 0:
-                logger.warning('Agent exited with code %d', spop.returncode)
-            else:
-                logger.info('Agent finished successfully')
-            _wait_for_enter()
+        finally:
+            agent.drop_empty_review_dir(review_dir)
 
         # Integrate any review files the agent wrote
         integrated = b4.review._integrate_agent_reviews(
@@ -2373,16 +2375,42 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
             self._patches,
         )
         if integrated:
+            self._tracking_tip = self._branch_tip()
             self._populate_patch_list()
             self._show_content(self._selected_idx)
             self.notify('Agent review data loaded')
         self._restore_original_branch()
 
+    def _branch_tip(self) -> Optional[str]:
+        """Return the commit the review branch points to, if it can be told."""
+        ecode, out = b4.git_run_command(self._topdir, ['rev-parse', self._branch])
+        return out.strip() or None if ecode == 0 else None
+
+    def _adopt_agent_reviews(self) -> None:
+        """Take over agent reviews stored on the branch behind our back.
+
+        ``b4 review batch agent`` can store a review while this session is
+        open, and saving what the session holds would then drop it.
+        """
+        tip = self._branch_tip()
+        if not tip or not self._tracking_tip or tip == self._tracking_tip:
+            return
+        try:
+            _cover, stored = b4.review.load_tracking(self._topdir, self._branch, tip)
+        except (Exception, SystemExit):
+            return
+        if b4.review.adopt_agent_reviews(self._tracking, stored):
+            self.notify('Agent review data added while this series was open')
+
     def _save_tracking(self) -> bool:
         """Save tracking data to the review branch.  True if it landed."""
-        return b4.review.save_tracking_ref(
+        self._adopt_agent_reviews()
+        saved = b4.review.save_tracking_ref(
             self._topdir, self._branch, self._cover_text, self._tracking
         )
+        if saved:
+            self._tracking_tip = self._branch_tip()
+        return saved
 
     def action_suspend(self) -> None:
         """Suspend the TUI and drop to an interactive shell."""
@@ -2455,9 +2483,7 @@ class ReviewApp(LoreNodeShutdownMixin, CheckRunnerMixin, App[None]):
 
         # Persist updated tracking
         self._tracking['series'] = series
-        b4.review.save_tracking_ref(
-            self._topdir, self._branch, self._cover_text, self._tracking
-        )
+        self._save_tracking()
 
         # Refresh in-memory state
         self._commit_shas = new_shas

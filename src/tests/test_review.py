@@ -3486,6 +3486,97 @@ class TestResolveMessagePositions:
         assert comments[1]['line'] == 8
 
 
+class TestAgentCommand:
+    """The agent command line shared by the review TUI and batch runs."""
+
+    def test_review_dir_substitution_keeps_other_arguments(self) -> None:
+        args = [
+            'wrapper',
+            '--write-dir',
+            '{review_dir}',
+            '--policy=write:{review_dir} read:{review_dir}',
+            '{"unrelated": "{other}"}',
+            '${HOME}',
+            '--',
+        ]
+        agent = review.AgentCommand(args=args.copy(), prompt_path='/p.md')
+        review_dir = '/repo with spaces/.git/b4-review/first-tip'
+
+        command = agent.command_line('the prompt', review_dir)
+
+        assert command[:3] == ['wrapper', '--write-dir', review_dir]
+        assert command[3] == f'--policy=write:{review_dir} read:{review_dir}'
+        assert command[4:] == args[4:] + ['the prompt']
+        # Each call expands the template, not an earlier call's path.
+        assert agent.args == args
+        assert agent.uses_review_dir
+
+    @pytest.mark.parametrize(
+        'args',
+        [
+            ['codex', 'exec', '--sandbox', 'workspace-write', '--'],
+            ['agent', '--policy={"write": false}', '${HOME}', '{}'],
+        ],
+    )
+    def test_commands_without_substitution_are_unchanged(
+        self, args: List[str], tmp_path: Any
+    ) -> None:
+        agent = review.AgentCommand(args=args, prompt_path='/p.md')
+        review_dir = str(tmp_path / 'review')
+
+        assert agent.command_line('prompt', review_dir) == args + ['prompt']
+        assert not agent.uses_review_dir
+        agent.make_review_dir(review_dir)
+        assert not os.path.exists(review_dir)
+
+    @staticmethod
+    def _write_prompt(gitdir: str) -> str:
+        prompt = os.path.join(gitdir, '.git', 'agent-reviewer.md')
+        with open(prompt, 'w') as fh:
+            fh.write('Review.\n')
+        b4.MAIN_CONFIG['review-agent-prompt-path'] = '.git/agent-reviewer.md'
+        return prompt
+
+    # Parse errors are covered through the TUI and batch tests.
+    @pytest.mark.parametrize(
+        ('config', 'expected'),
+        [
+            pytest.param({}, 'not configured', id='unset'),
+            pytest.param(
+                {'review-agent-command': ['a', 'b']}, 'set only once', id='multi'
+            ),
+            pytest.param(
+                {
+                    'review-agent-command': 'agent',
+                    'review-agent-prompt-path': '/no/such/prompt.md',
+                },
+                'prompt file not found',
+                id='no-prompt',
+            ),
+        ],
+    )
+    def test_config_errors(
+        self, gitdir: str, config: Dict[str, Any], expected: str
+    ) -> None:
+        self._write_prompt(gitdir)
+        b4.MAIN_CONFIG.update(config)
+
+        with pytest.raises(review.AgentConfigError, match=expected):
+            review.get_agent_command(gitdir)
+
+    def test_interactive_runs_ignore_batch_command(self, gitdir: str) -> None:
+        """The batch command is for unattended runs only; the TUI keeps
+        using the interactive one."""
+        prompt = self._write_prompt(gitdir)
+        b4.MAIN_CONFIG['review-agent-command'] = 'interactive'
+        b4.MAIN_CONFIG['review-agent-batch-command'] = 'unattended --yes'
+
+        agent = review.get_agent_command(gitdir)
+
+        assert agent.args == ['interactive']
+        assert agent.prompt_path == prompt
+
+
 class TestAgentReviewGitDir:
     """The agent's prompt and review files live in the common git dir.
 
@@ -3518,6 +3609,85 @@ class TestAgentReviewGitDir:
         )
         note = tracking['series']['reviews']['agent@example.com']['note']
         assert note == 'Looks fine.'
+
+    def test_save_refuses_a_branch_that_moved(self, gitdir: str) -> None:
+        """A save based on a tip that is no longer current must not overwrite
+        whatever moved the branch since."""
+        branch = create_review_branch(gitdir, 'agent-moved', num_real_commits=1)
+        stale = b4.git_run_command(gitdir, ['rev-parse', branch])[1].strip()
+        cover, tracking = review.load_tracking(gitdir, branch)
+        tracking['series']['subject'] = 'Changed elsewhere'
+        assert review.save_tracking_ref(gitdir, branch, cover, tracking)
+        current = b4.git_run_command(gitdir, ['rev-parse', branch])[1].strip()
+
+        tracking['series']['subject'] = 'Stale write'
+        assert not review.save_tracking_ref(
+            gitdir, branch, cover, tracking, expected_tip=stale
+        )
+        assert b4.git_run_command(gitdir, ['rev-parse', branch])[1].strip() == current
+        assert review.save_tracking_ref(
+            gitdir, branch, cover, tracking, expected_tip=current
+        )
+
+    def test_adopt_agent_reviews(self) -> None:
+        """Whoever holds tracking data across someone else's save takes over
+        the agent reviews that save added, and nothing else."""
+        agent = {'name': 'Agent', 'source': 'agent', 'source-revision': 2, 'note': 'n'}
+        edited = {**agent, 'note': 'edited by the maintainer'}
+        carried = {**agent, 'source-revision': 1, 'note': 'about v1'}
+        human = {'name': 'Me', 'note': 'mine'}
+        ours: Dict[str, Any] = {
+            'series': {},
+            'patches': [
+                {'reviews': {'agent@example.com': edited}},
+                {'reviews': {'agent@example.com': carried}},
+            ],
+        }
+        theirs: Dict[str, Any] = {
+            'series': {
+                'reviews': {'agent@example.com': agent, 'me@example.com': human}
+            },
+            'patches': [
+                {'reviews': {'agent@example.com': agent}},
+                {'reviews': {'agent@example.com': agent}},
+            ],
+        }
+
+        assert review.adopt_agent_reviews(ours, theirs) == 2
+
+        # New on the series, and newer than the one carried on patch 2
+        assert ours['series']['reviews'] == {'agent@example.com': agent}
+        assert ours['patches'][1]['reviews']['agent@example.com'] == agent
+        # What is already here for this revision stays as it was left
+        assert ours['patches'][0]['reviews']['agent@example.com'] == edited
+        # Not the same series any more: nothing can be matched up
+        theirs['patches'].pop()
+        assert review.adopt_agent_reviews({'series': {}, 'patches': []}, theirs) == 0
+
+    def test_failed_save_leaves_tracking_and_files_alone(self, gitdir: str) -> None:
+        """A review that could not be stored must not half-exist: callers
+        keep using the in-memory tracking data, which would otherwise carry
+        reviews that a later import of the kept files adds a second time."""
+        branch = create_review_branch(gitdir, 'agent-nosave', num_real_commits=1)
+        tip = b4.git_run_command(gitdir, ['rev-parse', branch])[1].strip()
+        review_dir = review.get_agent_review_dir(gitdir, tip)
+        os.makedirs(review_dir)
+        with open(os.path.join(review_dir, 'identity.txt'), 'w') as fh:
+            fh.write('Agent <agent@example.com>\n')
+        with open(os.path.join(review_dir, 'series.txt'), 'w') as fh:
+            fh.write('Looks fine.\n')
+        existing = {'me@example.com': {'note': 'Mine'}}
+        tracking: Dict[str, Any] = {'series': {'reviews': existing}, 'patches': []}
+        before = copy.deepcopy(tracking)
+
+        with mock.patch.object(_review, 'save_tracking_ref', return_value=False):
+            with pytest.raises(review.AgentReviewSaveError):
+                review._integrate_agent_reviews(
+                    gitdir, 'cover', tracking, [], [], branch=branch
+                )
+
+        assert tracking == before
+        assert sorted(os.listdir(review_dir)) == ['identity.txt', 'series.txt']
 
     @pytest.mark.parametrize(
         ('prompt', 'expected'),

@@ -15,6 +15,9 @@ import copy
 import datetime
 import email.message
 import json
+import os
+import pathlib
+import shlex
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest import mock
 
@@ -1028,6 +1031,137 @@ class TestSkippedReplies:
             assert 2 not in shown
 
 
+class TestAgentCommand:
+    @staticmethod
+    def _app(gitdir: str, tmp_path: pathlib.Path, command: List[str]) -> ReviewApp:
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'agent-command', ['patch 1']
+        )
+        session = _build_session(gitdir, branch)
+        session['original_branch'] = 'master'
+        app = ReviewApp(session)
+        ecode, _out = b4.git_run_command(gitdir, ['checkout', '-q', 'master'])
+        assert ecode == 0
+        prompt = tmp_path / 'prompt {review_dir}.md'
+        prompt.write_text('Review the series.\n')
+        b4.MAIN_CONFIG['review-agent-command'] = shlex.join(command)
+        b4.MAIN_CONFIG['review-agent-prompt-path'] = str(prompt)
+        return app
+
+    @pytest.mark.parametrize('substitute', [False, True])
+    def test_review_directory_uses_checked_out_head(
+        self, gitdir: str, tmp_path: pathlib.Path, substitute: bool
+    ) -> None:
+        import contextlib
+
+        args = [
+            'wrapper',
+            '--output={review_dir}' if substitute else '--output=fixed',
+            '{"literal": "{other}"}',
+        ]
+        app = self._app(gitdir, tmp_path, args)
+        # The review branch moves after the app opens; its current tip is
+        # what the agent will read after b4 checks it out.
+        app._tracking['series']['subject'] = 'Updated tracking'
+        assert b4.review.save_tracking_ref(
+            gitdir, app._branch, app._cover_text, app._tracking
+        )
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', app._branch])
+        assert ecode == 0
+        review_dir = b4.review.get_agent_review_dir(gitdir, out.strip())
+
+        def launch(command: List[str], *, cwd: str) -> mock.Mock:
+            assert cwd == gitdir
+            assert b4.git_get_current_branch(gitdir) == app._branch
+            assert pathlib.Path(review_dir).is_dir() is substitute
+            expected = [arg.replace('{review_dir}', review_dir) for arg in args]
+            assert command == expected + [
+                f'Read and execute the prompt from {tmp_path / "prompt {review_dir}.md"}'
+            ]
+            return mock.Mock(returncode=0)
+
+        popen = mock.Mock(side_effect=launch)
+        with (
+            mock.patch.object(app, 'suspend', contextlib.nullcontext),
+            mock.patch('b4.review_tui._review_app.subprocess', Popen=popen),
+            mock.patch('b4.review_tui._review_app._wait_for_enter'),
+            mock.patch('b4.review._integrate_agent_reviews', return_value=False),
+        ):
+            app.action_agent()
+        popen.assert_called_once()
+        assert b4.git_get_current_branch(gitdir) == 'master'
+        # The agent wrote nothing: a directory left empty would be reported
+        # as a broken review every time the series is opened
+        assert not os.path.exists(review_dir)
+
+    def test_save_keeps_agent_review_stored_meanwhile(
+        self, gitdir: str, tmp_path: pathlib.Path
+    ) -> None:
+        """A batch run can store its review while a session is open.  The
+        session's next save must not wipe out a review that was paid for."""
+        app = self._app(gitdir, tmp_path, ['placeholder'])
+        cover, stored = b4.review.load_tracking(gitdir, app._branch)
+        agent = {'name': 'Agent', 'source': 'agent', 'source-revision': 1, 'note': 'n'}
+        stored['series']['reviews'] = {'agent@example.com': agent}
+        assert b4.review.save_tracking_ref(gitdir, app._branch, cover, stored)
+
+        app._tracking['series']['subject'] = 'Changed in the session'
+        with mock.patch.object(app, 'notify') as notify:
+            assert app._save_tracking()
+            # Nothing new the second time, so nothing to report
+            assert app._save_tracking()
+
+        notify.assert_called_once()
+        _cover, saved = b4.review.load_tracking(gitdir, app._branch)
+        assert saved['series']['subject'] == 'Changed in the session'
+        assert saved['series']['reviews'] == {'agent@example.com': agent}
+
+    @pytest.mark.parametrize('command', ['agent "unbalanced', '""'])
+    def test_unusable_command_is_reported(
+        self, gitdir: str, tmp_path: pathlib.Path, command: str
+    ) -> None:
+        """A command b4 cannot split into arguments is a configuration error
+        to report, not a reason for the TUI to crash or run nothing."""
+        app = self._app(gitdir, tmp_path, ['placeholder'])
+        b4.MAIN_CONFIG['review-agent-command'] = command
+        with (
+            mock.patch.object(app, 'notify') as notify,
+            mock.patch('b4.review_tui._review_app.subprocess') as subprocess,
+        ):
+            app.action_agent()
+        subprocess.Popen.assert_not_called()
+        notify.assert_called_once()
+        assert notify.call_args.kwargs['severity'] == 'error'
+        assert b4.git_get_current_branch(gitdir) == 'master'
+
+    @pytest.mark.parametrize('failure', ['head', 'mkdir'])
+    def test_preparation_failure_does_not_launch_agent(
+        self, gitdir: str, tmp_path: pathlib.Path, failure: str
+    ) -> None:
+        app = self._app(gitdir, tmp_path, ['wrapper', '{review_dir}'])
+        git_run_command = b4.git_run_command
+
+        def git(path: str, args: List[str], **kwargs: Any) -> Tuple[int, str]:
+            if failure == 'head' and args == ['rev-parse', 'HEAD']:
+                return 1, ''
+            return git_run_command(path, args, **kwargs)
+
+        with (
+            mock.patch('b4.git_run_command', side_effect=git),
+            mock.patch(
+                'b4.review._review.os.makedirs',
+                side_effect=PermissionError('read-only'),
+            ),
+            mock.patch.object(app, 'notify') as notify,
+            mock.patch('b4.review_tui._review_app.subprocess') as subprocess,
+        ):
+            app.action_agent()
+        subprocess.Popen.assert_not_called()
+        notify.assert_called_once()
+        assert notify.call_args.kwargs['severity'] == 'error'
+        assert b4.git_get_current_branch(gitdir) == 'master'
+
+
 class TestSendBookkeeping:
     """Everything after the SMTP handoff is bookkeeping, and bookkeeping must
     never be able to claim the send failed."""
@@ -1267,6 +1401,53 @@ class TestSessionRestorePoint:
         session = b4.review._prepare_review_session(argparse.Namespace(branch=branch))
         assert session['original_branch'] is None
         assert session['original_head'] == ['checkout', '--detach', sha]
+
+    def test_broken_review_branch_is_named(
+        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The maintainer knows a review branch by its name, not by the
+        commit it points to."""
+        import argparse
+
+        branch = 'b4/review/session-broken'
+        ecode, _out = b4.git_run_command(gitdir, ['branch', branch, 'HEAD'])
+        assert ecode == 0
+
+        with pytest.raises(SystemExit):
+            b4.review._prepare_review_session(argparse.Namespace(branch=branch))
+
+        assert f'Branch {branch} does not contain' in caplog.text
+
+    def test_agent_review_save_failure_does_not_stop_the_session(
+        self, gitdir: str
+    ) -> None:
+        """Agent review files that cannot be stored are a reason to warn, not
+        to refuse to open the series; they stay for the next attempt."""
+        import argparse
+
+        branch, _shas = _create_review_branch_with_patches(
+            gitdir, 'session-agent-nosave', ['patch 1']
+        )
+        ecode, out = b4.git_run_command(gitdir, ['rev-parse', branch])
+        assert ecode == 0
+        review_dir = b4.review.get_agent_review_dir(gitdir, out.strip())
+        os.makedirs(review_dir)
+        with open(os.path.join(review_dir, 'identity.txt'), 'w') as fh:
+            fh.write('Agent <agent@example.com>\n')
+        with open(os.path.join(review_dir, 'series.txt'), 'w') as fh:
+            fh.write('Looks fine.\n')
+
+        with mock.patch.object(
+            b4.review._review, 'save_tracking_ref', return_value=False
+        ):
+            session = b4.review._prepare_review_session(
+                argparse.Namespace(branch=branch)
+            )
+
+        assert 'agent@example.com' not in session['tracking']['series'].get(
+            'reviews', {}
+        )
+        assert os.path.isdir(review_dir)
 
 
 # ---------------------------------------------------------------------------

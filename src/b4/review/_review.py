@@ -6,6 +6,8 @@
 __author__ = 'Konstantin Ryabitsev <konstantin@linuxfoundation.org>'
 
 import argparse
+import contextlib
+import copy
 import datetime
 import email.message
 import email.utils
@@ -14,6 +16,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import sys
 import urllib.parse
@@ -540,6 +543,10 @@ def main(cmdargs: argparse.Namespace) -> None:
         cmd_show_info(cmdargs)
     elif cmdargs.review_subcmd == 'cron':
         cmd_cron(cmdargs)
+    elif cmdargs.review_subcmd == 'batch':
+        from b4.review import batch
+
+        batch.main(cmdargs)
 
 
 def get_review_branch_patch_ids(
@@ -586,16 +593,23 @@ def get_review_branch_patch_ids(
     return result
 
 
-def load_tracking(topdir: str, branch: str) -> Tuple[str, Dict[str, Any]]:
+def load_tracking(
+    topdir: str, branch: str, rev: Optional[str] = None
+) -> Tuple[str, Dict[str, Any]]:
     """Load and parse the tracking commit at the tip of a review branch.
 
     Each patch that has landed on a remote listed in b4.review-check-landed
     also gets a 'landed' key with the commit it landed as. That key is
     never saved with the tracking commit.
 
+    With *rev*, that commit is read as the tip of *branch*, for a caller
+    that has to know exactly which tip its data came from.
+
     Returns (cover_text, tracking_dict).
     """
-    ecode, out = b4.git_run_command(topdir, ['log', '-1', '--format=%B', branch, '--'])
+    ecode, out = b4.git_run_command(
+        topdir, ['log', '-1', '--format=%B', rev or branch, '--']
+    )
     if ecode > 0:
         logger.critical('Unable to read tracking commit from %s', branch)
         sys.exit(1)
@@ -805,13 +819,21 @@ def cmd_show_info(cmdargs: argparse.Namespace) -> None:
 
 
 def save_tracking_ref(
-    topdir: str, branch: str, cover_text: str, tracking: Dict[str, Any]
+    topdir: str,
+    branch: str,
+    cover_text: str,
+    tracking: Dict[str, Any],
+    expected_tip: Optional[str] = None,
 ) -> bool:
     """Amend the tracking commit at the tip of a ref without checkout.
 
     Uses git commit-tree + git update-ref so that commit.gpgsign and
     hooks are not triggered — tracking commits are ephemeral and do
     not benefit from signing.  Returns True on success.
+
+    With *expected_tip*, the save fails rather than overwrite a branch that
+    no longer points there: *tracking* was read from that tip, and anything
+    saved since would be lost.
     """
     if not branch.startswith(REVIEW_BRANCH_PREFIX):
         logger.critical(
@@ -819,11 +841,12 @@ def save_tracking_ref(
         )
         return False
     commit_msg = cover_text + '\n\n' + make_review_magic_json(tracking)
-    ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{branch}^{{tree}}'])
+    base = expected_tip or branch
+    ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{base}^{{tree}}'])
     if ecode > 0:
         return False
     tree = out.strip()
-    ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{branch}~1'])
+    ecode, out = b4.git_run_command(topdir, ['rev-parse', f'{base}~1'])
     if ecode > 0:
         return False
     parent = out.strip()
@@ -835,9 +858,10 @@ def save_tracking_ref(
     if ecode > 0:
         return False
     new_sha = out.strip()
-    ecode, out = b4.git_run_command(
-        topdir, ['update-ref', f'refs/heads/{branch}', new_sha]
-    )
+    gitargs = ['update-ref', f'refs/heads/{branch}', new_sha]
+    if expected_tip:
+        gitargs.append(expected_tip)
+    ecode, out = b4.git_run_command(topdir, gitargs)
     return ecode == 0
 
 
@@ -1504,6 +1528,126 @@ def resolve_agent_prompt_path(topdir: str, prompt_path: str) -> str:
     return os.path.join(topdir, prompt_path)
 
 
+def get_agent_review_dir(topdir: str, tip_sha: str) -> str:
+    """Return the directory agent review files for *tip_sha* are read from.
+
+    It is under the common git dir, the one place all worktrees share.
+    """
+    common_dir = b4.git_get_common_dir(topdir) or os.path.join(topdir, '.git')
+    return os.path.join(common_dir, b4.review.tracking.REVIEW_METADATA_DIR, tip_sha)
+
+
+REVIEW_DIR_PLACEHOLDER = '{review_dir}'
+
+
+class AgentConfigError(Exception):
+    """The review agent is not configured in a usable way."""
+
+
+class AgentCommand(NamedTuple):
+    """The configured review agent command line, short of its prompt."""
+
+    args: List[str]
+    prompt_path: str
+
+    @property
+    def uses_review_dir(self) -> bool:
+        return any(REVIEW_DIR_PLACEHOLDER in arg for arg in self.args)
+
+    def make_review_dir(self, review_dir: str) -> None:
+        """Create *review_dir* if the command names it.
+
+        A command granting sandbox write access to it may need it to exist.
+        Raises OSError.
+        """
+        if self.uses_review_dir:
+            os.makedirs(review_dir, exist_ok=True)
+
+    @staticmethod
+    def drop_empty_review_dir(review_dir: str) -> None:
+        """Remove *review_dir* if the agent wrote nothing to it.
+
+        An empty one would be reported as a broken review every time the
+        series is opened.
+        """
+        with contextlib.suppress(OSError):
+            os.rmdir(review_dir)
+
+    def command_line(self, prompt: str, review_dir: str) -> List[str]:
+        """Return the command to run, ending with *prompt*."""
+        # Substituting after splitting keeps a path with spaces one argument.
+        args = [arg.replace(REVIEW_DIR_PLACEHOLDER, review_dir) for arg in self.args]
+        return args + [prompt]
+
+
+def get_agent_command(topdir: str, batch: bool = False) -> AgentCommand:
+    """Return the configured review agent command, or raise AgentConfigError.
+
+    With *batch*, b4.review-agent-batch-command is used when it is set at
+    all, so that a broken one is reported rather than silently bypassed.
+    """
+    config = b4.get_main_config()
+    command_key = 'review-agent-command'
+    if batch and config.get('review-agent-batch-command') is not None:
+        command_key = 'review-agent-batch-command'
+    agent_cmd = config.get(command_key)
+    agent_prompt = config.get('review-agent-prompt-path')
+    if not agent_cmd or not agent_prompt:
+        keys = 'b4.review-agent-command'
+        if batch:
+            keys = 'b4.review-agent-batch-command or ' + keys
+        raise AgentConfigError(
+            f'Review agent not configured (set {keys} and b4.review-agent-prompt-path)'
+        )
+    if not isinstance(agent_cmd, str) or not isinstance(agent_prompt, str):
+        raise AgentConfigError(
+            f'b4.{command_key} and b4.review-agent-prompt-path must each be set only once'
+        )
+    try:
+        sp = shlex.shlex(agent_cmd, posix=True)
+        sp.whitespace_split = True
+        args = list(sp)
+    except ValueError as ex:
+        raise AgentConfigError(f'Could not parse b4.{command_key}: {ex}') from ex
+    if not args or not args[0]:
+        raise AgentConfigError(f'b4.{command_key} does not name a program')
+    prompt_path = resolve_agent_prompt_path(topdir, agent_prompt)
+    if not os.path.isfile(prompt_path):
+        raise AgentConfigError(f'Agent prompt file not found: {agent_prompt}')
+    return AgentCommand(args=args, prompt_path=prompt_path)
+
+
+class AgentReviewSaveError(Exception):
+    """Agent review files were read but the result could not be stored."""
+
+
+def adopt_agent_reviews(tracking: Dict[str, Any], stored: Dict[str, Any]) -> int:
+    """Copy the agent reviews that *stored* has and *tracking* lacks.
+
+    For a writer that holds *tracking* while someone else (a batch of agent
+    reviews) saves the same series as *stored*: writing *tracking* back
+    as it is would drop those reviews.  A review *tracking* already has for
+    the same revision is left alone, as the maintainer may have edited it.
+
+    Returns the number of reviews copied.
+    """
+    ours: List[Dict[str, Any]] = [tracking['series'], *tracking.get('patches', [])]
+    theirs: List[Dict[str, Any]] = [stored['series'], *stored.get('patches', [])]
+    if len(ours) != len(theirs):
+        return 0
+    adopted = 0
+    for target, other in zip(ours, theirs):
+        for addr, entry in (other.get('reviews') or {}).items():
+            if entry.get('source') != 'agent':
+                continue
+            have = (target.get('reviews') or {}).get(addr)
+            if have and have.get('source-revision') == entry.get('source-revision'):
+                continue
+            target.setdefault('reviews', {})[addr] = copy.deepcopy(entry)
+            adopted += 1
+    return adopted
+
+
 def _integrate_agent_reviews(
     topdir: str,
     cover_text: str,
@@ -1511,6 +1655,7 @@ def _integrate_agent_reviews(
     commit_shas: List[str],
     patches: List[Dict[str, Any]],
     branch: Optional[str] = None,
+    expected_tip: Optional[str] = None,
 ) -> bool:
     """Read review files from <git-common-dir>/b4-review/<tip-sha>/ and merge into tracking.
 
@@ -1522,21 +1667,25 @@ def _integrate_agent_reviews(
     Consumption is implicit: :func:`save_tracking` amends the branch tip,
     changing its SHA so the directory no longer matches on the next run.
 
-    Returns True if any reviews were integrated.
+    *expected_tip* is the tip *tracking* was read from, when the caller
+    knows it.  The reviews are saved on *branch* only while it still points
+    to the tip they were read for.
+
+    Returns True if any reviews were integrated.  Raises
+    :class:`AgentReviewSaveError` if they could not be saved on *branch*;
+    *tracking* is then left as it was and the files are kept for a retry.
     """
     series = tracking['series']
 
-    # Resolve tip SHA from explicit ref or HEAD
-    ref = branch if branch else 'HEAD'
-    ecode, out = b4.git_run_command(topdir, ['rev-parse', ref])
-    if ecode != 0:
-        return False
-    head_sha = out.strip()
+    if expected_tip:
+        head_sha = expected_tip
+    else:
+        ecode, out = b4.git_run_command(topdir, ['rev-parse', branch or 'HEAD'])
+        if ecode != 0:
+            return False
+        head_sha = out.strip()
 
-    gitdir = b4.git_get_common_dir(topdir)
-    if not gitdir:
-        return False
-    review_dir = os.path.join(gitdir, 'b4-review', head_sha)
+    review_dir = get_agent_review_dir(topdir, head_sha)
     if not os.path.isdir(review_dir):
         return False
 
@@ -1555,6 +1704,11 @@ def _integrate_agent_reviews(
         return False
 
     integrated = 0
+    # An upgrade carries reviews over, so say which revision this one saw.
+    revision = series.get('revision', 1)
+    # Only the reviews are changed below; keep them for a failed save.
+    targets: List[Dict[str, Any]] = [series, *patches]
+    saved_reviews = [copy.deepcopy(target.get('reviews')) for target in targets]
 
     # Read series.txt (cover letter review)
     series_path = os.path.join(review_dir, 'series.txt')
@@ -1568,6 +1722,8 @@ def _integrate_agent_reviews(
         series_reviews: Dict[str, Any] = series.setdefault('reviews', {})
         entry: Dict[str, Any] = series_reviews.setdefault(reviewer_email, {})
         entry['name'] = reviewer_name
+        entry['source'] = 'agent'
+        entry['source-revision'] = revision
         old_note = entry.get('note', '')
         if old_note:
             entry['note'] = old_note + '\n\n' + series_note
@@ -1643,6 +1799,8 @@ def _integrate_agent_reviews(
         patch_reviews: Dict[str, Any] = patch.setdefault('reviews', {})
         entry = patch_reviews.setdefault(reviewer_email, {})
         entry['name'] = reviewer_name
+        entry['source'] = 'agent'
+        entry['source-revision'] = revision
         if comments:
             existing_comments: List[Dict[str, Any]] = entry.setdefault('comments', [])
             existing_comments.extend(comments)
@@ -1660,7 +1818,15 @@ def _integrate_agent_reviews(
     # Save tracking — this amends the branch tip, changing its SHA so
     # the directory is not re-consumed on the next run.
     if branch:
-        save_tracking_ref(topdir, branch, cover_text, tracking)
+        if not save_tracking_ref(
+            topdir, branch, cover_text, tracking, expected_tip=head_sha
+        ):
+            for target, reviews in zip(targets, saved_reviews):
+                if reviews is None:
+                    target.pop('reviews', None)
+                else:
+                    target['reviews'] = reviews
+            raise AgentReviewSaveError(f'Unable to save agent reviews on {branch}')
     else:
         save_tracking(topdir, cover_text, tracking)
     logger.info(
@@ -3542,7 +3708,10 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
 
     # No checkout needed — all git operations use explicit refs.
     # Shell suspend and agent runs check out the branch on demand.
-    cover_text, tracking = load_tracking(topdir, branch)
+    # Pin the tip so agent reviews are only saved on top of what was read.
+    ecode, out = b4.git_run_command(topdir, ['rev-parse', branch])
+    tip = out.strip() if ecode == 0 else None
+    cover_text, tracking = load_tracking(topdir, branch, rev=tip)
     series = tracking['series']
     patches = tracking['patches']
     base_commit = series['base-commit']
@@ -3594,9 +3763,18 @@ def _prepare_review_session(cmdargs: argparse.Namespace) -> Dict[str, Any]:
     default_identity = f'{user_name} <{user_email}>'
 
     # Integrate agent reviews from <git-common-dir>/b4-review/
-    _integrate_agent_reviews(
-        topdir, cover_text, tracking, commit_shas, patches, branch=branch
-    )
+    try:
+        _integrate_agent_reviews(
+            topdir,
+            cover_text,
+            tracking,
+            commit_shas,
+            patches,
+            branch=branch,
+            expected_tip=tip,
+        )
+    except AgentReviewSaveError as ex:
+        logger.warning('%s; the review files are kept for the next attempt', ex)
 
     # Integrate sashiko inline reviews (if configured)
     _integrate_sashiko_reviews(

@@ -332,6 +332,19 @@ For options and their descriptions, see ``b4 review --help`` and
   list the series that would be cleaned up without changing the tracking
   database.
 
+``b4 review batch agent [--agent-name NAME] [--dry-run]``
+  Run the configured review agent on every review branch in the current
+  repository whose state is reviewing and which has no agent review attached.
+  Reviews run sequentially in a temporary worktree, leaving the current
+  checkout and working tree alone. Use ``--dry-run`` to list eligible branches.
+  With ``--agent-name NAME``, skip only series with an agent review whose stored
+  reviewer display name exactly matches NAME, including case. The configured
+  agent command still runs; this option only filters existing reviews.
+  Batch runs use ``b4.review-agent-batch-command`` when set, otherwise
+  ``b4.review-agent-command``, with the same ``b4.review-agent-prompt-path``.
+  The command must run without interaction and exit after completing the
+  review. The review TUI continues to use ``b4.review-agent-command``.
+
 ``b4 review tui``
   Launch the review TUI.
 

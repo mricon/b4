@@ -1934,7 +1934,7 @@ To use Gemini CLI instead::
 To use OpenAI Codex CLI::
 
     [b4]
-      review-agent-command = codex --sandbox workspace-write
+      review-agent-command = codex --sandbox workspace-write --add-dir {review_dir}
       review-agent-prompt-path = .git/agent-reviewer.md
 
 To use GitHub Copilot CLI::
@@ -1975,6 +1975,105 @@ for your project. A sample prompt is included in
 ``misc/agent-reviewer.md`` in the b4 source tree — copy it into your
 repository and adapt it to your project's coding standards and review
 guidelines.
+
+The command may use ``{review_dir}`` for the directory the agent writes
+its review to, for example to give a sandboxed agent write access to it.
+See :term:`b4.review-agent-command` for the details.
+
+Batch agent reviews
+~~~~~~~~~~~~~~~~~~~
+Run the configured review agent on all eligible series in the current
+repository with::
+
+    b4 review batch agent
+
+Batch runs use :term:`b4.review-agent-batch-command` when set, falling back
+to :term:`b4.review-agent-command` otherwise. Configure a command that runs
+without interaction and exits when the review is complete. The agent
+gets no input: if it asks a question, it reads an empty answer. Both
+commands use :term:`b4.review-agent-prompt-path`; the review interface's
+``a`` keybinding continues to use :term:`b4.review-agent-command`.
+
+The review output directory, ``{review_dir}``, is outside the worktree
+the agent runs in, so a sandboxed agent needs write access to it. For
+example::
+
+    [b4]
+      review-agent-batch-command = codex exec --sandbox workspace-write --add-dir {review_dir}
+
+The placeholder also works inside an argument, such as
+``--write-dir={review_dir}``. Other text is passed through unchanged; b4
+does not add agent-specific options.
+
+By default, the command selects review branches in the **Reviewing**
+state that do not already have an agent review of the current revision
+attached to the series or any patch. When you upgrade a series to a new
+revision, b4 carries the reviews of unchanged patches over, but they do
+not count: the new revision is selected again.
+
+A series is left out while b4 knows of a newer revision that you have
+not upgraded to yet, because the upgrade would drop most of the review.
+Upgrade the series and it is selected by the next run.
+
+b4 marks agent reviews when it imports them. Agent reviews imported by
+an earlier b4 version have no such mark, so their series are selected
+again.
+
+To skip only series that already have a review from a particular agent,
+use its stored reviewer name::
+
+    b4 review batch agent --agent-name 'Review Agent'
+
+The name must exactly match the reviewer's display name from
+``identity.txt``, including case. Series reviewed by other agents remain
+eligible. The configured batch agent command still runs;
+``--agent-name`` only filters existing reviews and leaves the agent's
+command and identity unchanged.
+
+To list eligible branches without running the agent or changing the
+repository, use::
+
+    b4 review batch agent --dry-run
+
+The agent does not run in your working tree. Each series is checked out
+in a temporary worktree, ``b4-agent-worktree`` in the repository's
+``.git`` directory, which is removed when the batch ends. Your checkout
+and any uncommitted changes are left alone, so you can keep working while
+the batch runs. Anything the agent changes in the worktree is discarded
+before the next series is checked out.
+
+If the batch is killed before it can clean up, the worktree stays, and
+the last series it worked on still shows as checked out there. The next
+batch run removes it. To remove it yourself, run
+``git worktree remove --force .git/b4-agent-worktree``.
+
+This is an ordinary linked worktree, so while a series is under review,
+its branch shows as checked out. Git will not check it out anywhere else,
+and b4 leaves it alone just as it does any other checked-out review
+branch.
+
+Changes made to the tracking data of a series while its review is
+running, by ``b4 review cron`` or in the review interface, are kept. If
+its patches change, the review is discarded and reported as a failure.
+A review interface that has the series open when the review is stored
+picks the review up the next time it saves.
+
+A review branch that is checked out in one of the repository's worktrees,
+including the one you start the batch from, cannot be checked out for the
+agent and is reported as a failure. Only one batch can run in a
+repository at a time.
+
+Agent failures are reported and the batch continues with the remaining
+series. The command exits with a nonzero status if any review fails.
+The agent is asked to write a summary even when it finds no issues;
+an invocation that produces no review data is reported as a failure and
+remains eligible for a later run. The same goes for an agent that exits
+with a nonzero status or is interrupted: the files it wrote may be only
+a part of a review, so b4 removes them. Review files that a finished
+agent left, for example from the review interface, are imported before
+another agent is started. Any leftover review files
+for that checkout are removed before a fresh agent run; if they cannot
+be removed, that series is reported as a failure without starting the agent.
 
 .. _customising_theme:
 

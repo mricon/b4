@@ -977,18 +977,48 @@ These settings control ``b4 review`` TUI behaviour.
    :term:`b4.review-agent-command`
      The command to invoke for AI-assisted review (triggered by the ``a``
      keybinding). Both this option and :term:`b4.review-agent-prompt-path`
-     must be set for the agent feature to be available.
+     must be set for the agent feature to be available in the review TUI.
+     Also used by ``b4 review batch agent`` when
+     :term:`b4.review-agent-batch-command` is unset.
+
+     ``{review_dir}`` in the command is replaced with the absolute path of
+     the directory the agent writes its review to: ``b4-review/<tip-sha>``
+     in the repository's common git directory (``.git`` in an ordinary
+     checkout). Use it to give a sandboxed agent write access to that
+     directory. b4 creates the directory before starting a command that
+     uses the placeholder. Replacement happens after argument parsing, so
+     a path containing spaces remains a single argument.
 
      Default: ``None``
 
      .. versionadded:: v0.15
 
+   :term:`b4.review-agent-batch-command`
+     The command to invoke for ``b4 review batch agent``. When set, it
+     overrides :term:`b4.review-agent-command` for batch runs only; otherwise
+     batch runs use :term:`b4.review-agent-command`. Configure a command that
+     runs without interaction and exits after completing the review.
+     It uses the same :term:`b4.review-agent-prompt-path` as the review TUI,
+     whose ``a`` keybinding continues to use :term:`b4.review-agent-command`.
+
+     ``{review_dir}`` works as in :term:`b4.review-agent-command`. The
+     directory is outside the worktree a batch agent runs in, so a
+     sandboxed agent needs write access to it. For example::
+
+       review-agent-batch-command = codex exec --sandbox workspace-write --add-dir {review_dir}
+
+     Default: ``None``
+
+     .. versionadded:: v0.17
+
    :term:`b4.review-agent-prompt-path`
      Path to a file containing the prompt to use with the review agent.
      Both this option and :term:`b4.review-agent-command` must be set for
-     the agent feature to be available. A sample prompt is included in
-     ``misc/agent-reviewer.md`` in the b4 source tree and can be adapted
-     to your project's review guidelines.
+     the agent feature to be available in the review TUI. Batch runs require
+     this option and either :term:`b4.review-agent-batch-command` or
+     :term:`b4.review-agent-command`. A sample prompt is included in
+     ``misc/agent-reviewer.md`` in the b4 source tree and can be adapted to
+     your project's review guidelines.
 
      A relative path is taken from the top of the work tree, except that
      a path starting with ``.git/`` is taken from the common git

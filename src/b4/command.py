@@ -697,6 +697,32 @@ def setup_parser() -> argparse.ArgumentParser:
         help='Output in JSON format',
     )
 
+    # b4 review batch
+    sp_rev_batch = rev_subparsers.add_parser(
+        'batch', help='Run review operations across multiple series'
+    )
+    batch_subparsers = sp_rev_batch.add_subparsers(
+        help='batch sub-command help', dest='batch_subcmd', required=True
+    )
+    sp_batch_agent = batch_subparsers.add_parser(
+        'agent', help='Run the review agent on reviewing series without agent reviews'
+    )
+    sp_batch_agent.add_argument(
+        '--agent-name',
+        dest='agent_name',
+        default=None,
+        metavar='NAME',
+        help='Skip series only if an existing agent review has this exact '
+        'reviewer name (case-sensitive; default: any agent)',
+    )
+    sp_batch_agent.add_argument(
+        '--dry-run',
+        dest='dryrun',
+        action='store_true',
+        default=False,
+        help='List eligible review branches without running the agent',
+    )
+
     # b4 review cron
     sp_rev_cron = rev_subparsers.add_parser(
         'cron',
