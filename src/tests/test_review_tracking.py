@@ -4842,28 +4842,40 @@ class TestCmdForgetHonoursNoStdin:
         mock_stdin.assert_not_called()
         assert excinfo.value.code == 1
 
-    def test_stdin_is_still_read_without_no_stdin(
-        self, gitdir: str, monkeypatch: pytest.MonkeyPatch
+    def test_a_piped_series_cannot_be_confirmed(
+        self,
+        gitdir: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The gate must not cost the piped-message workflow its input."""
+        """Naming the series on stdin leaves nothing to answer the prompt with.
+
+        Reading the message drains the pipe, so the confirmation hits EOF.
+        That has to end as a refusal that says what to do instead, with the
+        series left alone.  input() is deliberately not mocked: a canned
+        answer would hide that the pipe is empty.
+        """
         self._enroll(gitdir, 'forget-pipe')
-        monkeypatch.setattr('builtins.input', lambda _prompt: 'y')
+        piped = io.TextIOWrapper(io.BytesIO(b'Message-ID: <gone-v1@example.com>\n\n'))
+        monkeypatch.setattr('sys.stdin', piped)
         cmdargs = argparse.Namespace(
             series_id=None, identifier='forget-pipe', no_stdin=False
         )
 
-        with mock.patch(
-            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
-        ) as mock_stdin:
-            review_tracking.cmd_forget(cmdargs)
+        with caplog.at_level(logging.INFO, logger='b4'):
+            with pytest.raises(SystemExit) as excinfo:
+                review_tracking.cmd_forget(cmdargs)
 
-        mock_stdin.assert_called_once()
+        assert excinfo.value.code == 1
+        assert 'Change-ID: cid-gone' in caplog.text
+        assert 'nothing forgotten' in caplog.text
+        assert 'as parameter' in caplog.text
         conn = review_tracking.get_db('forget-pipe')
         left = conn.execute(
             'SELECT COUNT(*) FROM series WHERE change_id = ?', ('cid-gone',)
         ).fetchone()[0]
         conn.close()
-        assert left == 0
+        assert left == 1
 
 
 class TestUpdateSkipsCheckedOutBranch:

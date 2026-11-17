@@ -930,6 +930,14 @@ def cmd_forget(cmdargs: argparse.Namespace) -> None:
         logger.info('')
         conn.close()
         sys.exit(130)
+    except EOFError:
+        # Most likely the series came from a piped message, which leaves
+        # nothing on stdin to answer with.
+        logger.info('')
+        conn.close()
+        logger.critical('Could not read the confirmation, nothing forgotten.')
+        logger.critical('Run from a terminal and pass msgid/URL/change-id as parameter')
+        sys.exit(1)
     if answer.strip().lower() not in ('y', 'yes'):
         logger.info('Aborted, nothing forgotten.')
         conn.close()
