@@ -563,6 +563,56 @@ def test_get_series_twice_adds_no_duplicate_trailers(
     assert _followup_trailer_keys(again) == before
 
 
+@pytest.mark.parametrize(
+    'replies',
+    [
+        pytest.param(
+            [('late-reply', 'Agreed.')],
+            id='missing-parent',
+        ),
+        pytest.param(
+            [('between', 'Not sure yet.'), ('late-reply', 'Agreed.')],
+            id='missing-grandparent',
+        ),
+    ],
+)
+def test_followup_with_missing_ancestor_uses_references(
+    sampledir: str, replies: List[Tuple[str, str]]
+) -> None:
+    """Trailers still reach the patch when a message in the reply chain is
+    missing from the archive, wherever the gap is in the chain.
+
+    Each reply answers the one before it. The first one answers a message
+    that never reached the archive. The last reply carries the trailer.
+    """
+    lmbx = b4.LoreMailbox()
+    for msg in b4.get_msgs_from_mailbox_or_maildir(
+        f'{sampledir}/trailers-followup-with-cover.mbox'
+    ):
+        lmbx.add_message(msg)
+    chain = ['cover-message', 'patch-2-message', 'not-in-archive']
+    for i, (name, text) in enumerate(replies):
+        if i == len(replies) - 1:
+            text += '\n\nReviewed-by: Missing Parent <missing.parent@example.com>'
+        reply = email.message.EmailMessage()
+        reply['From'] = 'Missing Parent <missing.parent@example.com>'
+        reply['Subject'] = 'Re: [PATCH v2 2/2] Simple test 2'
+        reply['Date'] = f'Tue, 30 Aug 2022 11:19:0{i} -0400'
+        reply['Message-Id'] = f'<{name}@example.com>'
+        reply['In-Reply-To'] = f'<{chain[-1]}@example.com>'
+        reply['References'] = ' '.join(f'<{m}@example.com>' for m in chain)
+        reply.set_content(text + '\n')
+        lmbx.add_message(reply)
+        chain.append(name)
+    lser = lmbx.get_series()
+    assert lser is not None
+    patch2 = lser.patches[2]
+    assert patch2 is not None
+    assert ('Reviewed-by', 'Missing Parent <missing.parent@example.com>') in [
+        (t.name, t.value) for t in patch2.followup_trailers
+    ]
+
+
 def test_same_trailer_in_two_replies_is_kept_twice(sampledir: str) -> None:
     """Only a repeat from the same message is a duplicate, not a second reply."""
     msgs = b4.get_msgs_from_mailbox_or_maildir(

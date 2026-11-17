@@ -439,6 +439,27 @@ ALIAS_INFO: Dict[str, Optional[Tuple[str, str]]] = dict()
 MAILMAP_INFO: Dict[str, Optional[Tuple[str, str]]] = dict()
 
 
+def get_closest_known_reference(
+    missing: str, references: Sequence[str], *known: Collection[str]
+) -> Optional[str]:
+    """Return the nearest References entry above *missing* found in *known*.
+
+    A message that never reached the archive breaks the In-Reply-To chain,
+    but the References header of a reply below it still lists the
+    ancestors above the gap. When *missing* is not listed (mailers trim
+    long References headers), we cannot tell where the gap is, so we
+    return None rather than guess.
+    """
+    try:
+        ancestors = references[: references.index(missing)]
+    except ValueError:
+        return None
+    for refid in reversed(ancestors):
+        if any(refid in msgids for msgids in known):
+            return refid
+    return None
+
+
 class LoreMailbox:
     msgid_map: Dict[str, 'LoreMessage']
     series: Dict[int, 'LoreSeries']
@@ -589,6 +610,29 @@ class LoreMailbox:
         revs.sort(key=lambda r: self.series[r].submission_date or 0)
         return revs[-1]
 
+    def _get_known_parent(
+        self, lmsg: 'LoreMessage', references: Sequence[str]
+    ) -> Optional['LoreMessage']:
+        """Return the message *lmsg* replies to, stepping over a gap.
+
+        *references* belongs to the follow-up whose trailers we collect.
+        It lists the whole chain above that follow-up, so it can bridge
+        any message in the chain that is missing from the archive, not
+        only the follow-up's own parent.
+        """
+        if lmsg.in_reply_to is None:
+            return None
+        parent = self.msgid_map.get(lmsg.in_reply_to)
+        if parent is not None:
+            return parent
+        refid = get_closest_known_reference(
+            lmsg.in_reply_to, references, self.msgid_map
+        )
+        if refid is None:
+            return None
+        logger.debug('%s is not in the thread, using %s', lmsg.in_reply_to, refid)
+        return self.msgid_map[refid]
+
     def get_series(
         self,
         revision: Optional[int] = None,
@@ -672,11 +716,12 @@ class LoreMailbox:
                     ):
                         logger.debug('Found a references entry %s in msgid_map', refid)
                         break
-            elif (pmsg := self.msgid_map.get(fmsg.in_reply_to)) is not None:
-                logger.debug('Found in-reply-to %s in msgid_map', fmsg.in_reply_to)
+            else:
+                pmsg = self._get_known_parent(fmsg, fmsg.references)
             if pmsg is None:
                 # Can't find the message we're replying to here
                 continue
+            walked = {fmsg.msgid, pmsg.msgid}
 
             trailers, mismatches = fmsg.get_trailers(sloppy=sloppytrailers)
             own_trailers: List[LoreTrailer] = list()
@@ -711,15 +756,13 @@ class LoreMailbox:
                     # Could be a cover letter
                     pmsg.add_followup_trailers(trailers)
                     break
-                # TODO(https://github.com/astral-sh/ruff/pull/24458): remove this when ty understands conditional walrus.
-                nmsg = None
-                if (
-                    pmsg.in_reply_to
-                    and (nmsg := self.msgid_map.get(pmsg.in_reply_to)) is not None
-                ):
-                    # Avoid bad message id causing infinite loop
-                    if pmsg == nmsg:
+                nmsg = self._get_known_parent(pmsg, fmsg.references)
+                if nmsg is not None:
+                    # Bad message ids or a mangled References header can
+                    # lead back to a message we have already walked
+                    if nmsg.msgid in walked:
                         break
+                    walked.add(nmsg.msgid)
                     lvl += 1
                     for pltr in pmsg.trailers:
                         pltr.lmsg = pmsg
