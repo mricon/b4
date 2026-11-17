@@ -2226,10 +2226,10 @@ class LoreMessage:
         # Identify all DKIM-Signature headers and try them in reverse order
         # until we come to a passing one
         dkhdrs = list()
-        for header in list(self.msg._headers):  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        for header in list(self.msg._headers):  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
             if header[0].lower() == 'dkim-signature':
                 dkhdrs.append(header)
-                self.msg._headers.remove(header)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                self.msg._headers.remove(header)  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
         dkhdrs.reverse()
 
         seenatts = list()
@@ -2263,11 +2263,11 @@ class LoreMessage:
                 if isinstance(sh, str) and 'date' in sh.lower().split(':'):
                     signtime = self.date
 
-            self.msg._headers.append((hn, hval))  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            self.msg._headers.append((hn, hval))  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
             res = _dkim_verify(self.msg.as_bytes(policy=emlpolicy), errors)
             if res is None:
                 # Offline, and not verified before: nothing to report
-                self.msg._headers.pop(-1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                self.msg._headers.pop(-1)  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
                 continue
             logger.debug('DKIM verify results: %s=%s', identity, res)
 
@@ -2277,7 +2277,7 @@ class LoreMessage:
                 self._attestors.append(attestor)
                 return
 
-            self.msg._headers.pop(-1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            self.msg._headers.pop(-1)  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
             seenatts.append(attestor)
 
         # No exact domain matches, so return everything we have
@@ -2684,12 +2684,12 @@ class LoreMessage:
                             self.fromname = xpair[0]
                             self.fromemail = xpair[1]
                             # Drop the reply-to header if it's exactly the same
-                            for header in list(self.msg._headers):  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                            for header in list(self.msg._headers):  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
                                 if (
                                     header[0].lower() == 'reply-to'
                                     and header[1].find(xpair[1]) > 0
                                 ):
-                                    self.msg._headers.remove(header)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                                    self.msg._headers.remove(header)  # type: ignore[attr-defined]  # ty: ignore[missing-attribute]
 
                 has_passing = True
                 att_info: Dict[str, Any] = {
@@ -8129,10 +8129,10 @@ def mailbox_email_factory(fh: BinaryIO) -> EmailMessage:
 def get_msgs_from_mailbox_or_maildir(mbmd: str) -> List[EmailMessage]:
     if is_maildir(mbmd):
         in_mdr = mailbox.Maildir(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-        return [x[1] for x in in_mdr.items()]  # type: ignore[misc]  # ty: ignore[invalid-return-type]
+        return [x[1] for x in in_mdr.items()]  # type: ignore[misc]  # ty: ignore[invalid-explicit-return]
 
     in_mbx = mailbox.mbox(mbmd, factory=mailbox_email_factory)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-    return [x[1] for x in in_mbx.items()]  # type: ignore[misc]  # ty: ignore[invalid-return-type]
+    return [x[1] for x in in_mbx.items()]  # type: ignore[misc]  # ty: ignore[invalid-explicit-return]
 
 
 def get_mailfrom() -> Tuple[str, str]:

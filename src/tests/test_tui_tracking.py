@@ -2634,10 +2634,10 @@ class TestMergeTakeSkipRouting:
         pushed: list[Any] = []
         confirmed: list[Any] = []
         app.push_screen = lambda screen, callback=None: pushed.append(screen)  # type: ignore[method-assign, assignment]  # ty: ignore[invalid-assignment]
-        app._show_take_confirm = (  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        app._show_take_confirm = (  # type: ignore[method-assign]
             lambda *a, **k: confirmed.append((a, k))
         )
-        app.notify = lambda *a, **k: None  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        app.notify = lambda *a, **k: None  # type: ignore[method-assign]
         take_screen: Any = SimpleNamespace(method_result=method, target_result='master')
         app._on_take_confirmed(
             True,
@@ -2681,7 +2681,7 @@ class TestMergeTakeSkipRouting:
         branch = self._setup_branch(gitdir, 'merge-keep-1', skip_indices=[2])
         app = TrackingApp.__new__(TrackingApp)
         confirmed: list[Any] = []
-        app._show_take_confirm = (  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        app._show_take_confirm = (  # type: ignore[method-assign]
             lambda *a, **k: confirmed.append((a, k))
         )
         take_screen: Any = SimpleNamespace(
@@ -3898,7 +3898,7 @@ class TestAmTakeWorktree:
         app = TrackingApp.__new__(TrackingApp)
         app._identifier = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         app._selected_series = {}
-        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]
         take_screen: Any = SimpleNamespace(
             target_result=target_branch,
             add_signoff=False,
@@ -4474,7 +4474,7 @@ class TestDoTakeMergeConflict:
         app = TrackingApp.__new__(TrackingApp)
         app._identifier = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         app._selected_series = {}
-        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]
         ecode, head = b4.git_run_command(gitdir, ['rev-parse', 'HEAD'])
         assert ecode == 0
         take_screen: Any = SimpleNamespace(
@@ -4725,7 +4725,7 @@ class TestTakeMergeUsesPinnedBase:
         app = TrackingApp.__new__(TrackingApp)
         app._identifier = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         app._selected_series = {}
-        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+        app._prepare_am_messages = lambda *a, **k: ambytes  # type: ignore[method-assign]
         take_screen: Any = SimpleNamespace(
             target_result='master',
             add_signoff=False,

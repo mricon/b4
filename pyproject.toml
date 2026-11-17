@@ -190,7 +190,11 @@ missing-override-decorator = "ignore"
 # every Any (json, sqlite rows, argparse) flowing into an annotated type, the
 # -strict condition rule has known false positives, and disjoint-cast trips
 # over pygit2's stubs. Narrowing those Any sources is a separate cleanup.
-unsound-return-statement = "ignore"
+unsound-return = "ignore"
 unsound-assignment = "ignore"
 redundant-condition-strict = "ignore"
 disjoint-cast = "ignore"
+# Opt-in since ty 0.0.84: flags `if x:` on `str | None` and similar. b4
+# deliberately treats None and empty values alike (an empty subject or
+# header is as absent as a missing one), so this would be noise.
+truthiness-test-of-none-union = "ignore"
