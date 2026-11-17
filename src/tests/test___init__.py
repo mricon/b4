@@ -3033,8 +3033,10 @@ class TestGetPwKey:
         """A cloned tree's .b4-config must not get to ask for credentials."""
         wtcfg = pathlib.Path(gitdir) / '.b4-config'
         wtcfg.write_text(
-            '[b4]\n\tpw-user = stolen\n\tpw-url = https://pw.example.org\n'
+            '[b4]\n\tpw-user = stolen\n\tprep-pre-flight-checks = disable-all\n'
         )
         b4._setup_main_config(topdir=gitdir)
-        assert b4.MAIN_CONFIG.get('pw-url') == 'https://pw.example.org'
-        assert b4.MAIN_CONFIG.get('pw-user') is None
+        # Sanity: the file was read, an allowed setting made it in
+        assert b4.MAIN_CONFIG.get('prep-pre-flight-checks') == 'disable-all'
+        # The developer's own git config may set pw-user
+        assert b4.MAIN_CONFIG.get('pw-user') != 'stolen'
