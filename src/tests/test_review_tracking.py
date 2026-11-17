@@ -4777,83 +4777,46 @@ class TestCmdForget:
         assert excinfo.value.code == 1
         assert self._rows_left('forget-checkedout', 'cid-gone')['series'] == 1
 
-    def test_no_stdin_leaves_the_pipe_alone(
-        self, gitdir: str, caplog: pytest.LogCaptureFixture
+    def test_forget_requires_a_series_argument(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """--no-stdin stops cmd_forget looking for a series on stdin.
+        """The series has to be named on the command line, never on stdin.
 
-        The pipe belongs to the caller, and here it could name a series to
-        erase.
+        "b4 review track" accepts a piped message, but forget asks for a
+        confirmation on that same stdin, so a piped run could never be
+        answered.  The parser refuses before anything looks at the pipe.
         """
-        self._enroll_and_seed(gitdir, 'forget-nostdin')
-        cmdargs = argparse.Namespace(
-            series_id=None, identifier='forget-nostdin', no_stdin=True
-        )
+        piped = io.TextIOWrapper(io.BytesIO(b'Message-ID: <gone-v1@example.com>\n\n'))
+        monkeypatch.setattr('sys.stdin', piped)
 
-        with mock.patch(
-            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
-        ) as mock_stdin:
-            with caplog.at_level(logging.CRITICAL, logger='b4'):
-                with pytest.raises(SystemExit) as excinfo:
-                    review_tracking.cmd_forget(cmdargs)
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_b4_args(['review', 'forget'])
 
-        mock_stdin.assert_not_called()
-        assert excinfo.value.code == 1
-        assert 'No series identifier provided' in caplog.text
+        assert excinfo.value.code == 2
+        assert piped.tell() == 0
 
-    def test_a_hand_assembled_namespace_leaves_the_pipe_alone(
-        self, gitdir: str, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A namespace without no_stdin defaults to True here too."""
-        self._enroll_and_seed(gitdir, 'forget-nostdin-default')
-        cmdargs = argparse.Namespace(
-            series_id=None, identifier='forget-nostdin-default'
-        )
-
-        with mock.patch(
-            'b4.get_msgid_from_stdin', return_value='gone-v1@example.com'
-        ) as mock_stdin:
-            with caplog.at_level(logging.CRITICAL, logger='b4'):
-                with pytest.raises(SystemExit) as excinfo:
-                    review_tracking.cmd_forget(cmdargs)
-
-        mock_stdin.assert_not_called()
-        assert excinfo.value.code == 1
-
-    def test_a_piped_series_cannot_be_confirmed(
+    def test_forget_without_an_answer_forgets_nothing(
         self,
         gitdir: str,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Naming the series on stdin leaves nothing to answer the prompt with.
+        """A prompt that hits end-of-file is a refusal, not a traceback.
 
-        Reading the message drains the pipe, so the confirmation hits EOF.
-        That has to end as a refusal that says what to do instead, with the
-        series left alone.  input() is deliberately not mocked: a canned
-        answer would hide that the pipe is empty.
+        input() is deliberately not mocked: the point is what happens when
+        stdin really has nothing to give, as with "< /dev/null".
         """
-        self._enroll_and_seed(gitdir, 'forget-pipe')
-        piped = io.TextIOWrapper(io.BytesIO(b'Message-ID: <gone-v1@example.com>\n\n'))
-        monkeypatch.setattr('sys.stdin', piped)
-        cmdargs = argparse.Namespace(
-            series_id=None, identifier='forget-pipe', no_stdin=False
-        )
+        self._enroll_and_seed(gitdir, 'forget-eof')
+        monkeypatch.setattr('sys.stdin', io.TextIOWrapper(io.BytesIO(b'')))
+        cmdargs = argparse.Namespace(series_id='cid-gone', identifier='forget-eof')
 
-        with caplog.at_level(logging.INFO, logger='b4'):
+        with caplog.at_level(logging.CRITICAL, logger='b4'):
             with pytest.raises(SystemExit) as excinfo:
                 review_tracking.cmd_forget(cmdargs)
 
         assert excinfo.value.code == 1
-        assert 'Change-ID: cid-gone' in caplog.text
         assert 'nothing forgotten' in caplog.text
-        assert 'as parameter' in caplog.text
-        conn = review_tracking.get_db('forget-pipe')
-        left = conn.execute(
-            'SELECT COUNT(*) FROM series WHERE change_id = ?', ('cid-gone',)
-        ).fetchone()[0]
-        conn.close()
-        assert left == 1
+        assert self._rows_left('forget-eof', 'cid-gone')['series'] == 1
 
 
 class TestUpdateSkipsCheckedOutBranch:
@@ -5431,7 +5394,7 @@ class TestRetrieveSeriesMessagesOffline:
         assert seen == ['Cannot retrieve threads from remote in offline mode'] * 2
 
 
-def _parse_track_args(argv: List[str]) -> argparse.Namespace:
+def _parse_b4_args(argv: List[str]) -> argparse.Namespace:
     """Parse *argv* with the real b4 parser.
 
     b4.command is imported here rather than at module scope so the whole CLI
@@ -5458,7 +5421,7 @@ class TestCmdTrackHonoursNoStdin:
         review_tracking.cmd_enroll(
             argparse.Namespace(repo_path=gitdir, identifier='nostdin-gate')
         )
-        cmdargs = _parse_track_args(
+        cmdargs = _parse_b4_args(
             ['--no-stdin', 'review', 'track', '-i', 'nostdin-gate']
         )
 
@@ -5501,7 +5464,7 @@ class TestCmdTrackHonoursNoStdin:
         review_tracking.cmd_enroll(
             argparse.Namespace(repo_path=gitdir, identifier='nostdin-open')
         )
-        cmdargs = _parse_track_args(['review', 'track', '-i', 'nostdin-open'])
+        cmdargs = _parse_b4_args(['review', 'track', '-i', 'nostdin-open'])
 
         with mock.patch(
             'b4.get_msgid_from_stdin', return_value='piped@example.com'

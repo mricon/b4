@@ -869,17 +869,9 @@ def cmd_forget(cmdargs: argparse.Namespace) -> None:
         logger.critical('Run "b4 review enroll" first')
         sys.exit(1)
 
-    series_id = cmdargs.series_id
-    if not series_id:
-        # Default True: a namespace built by code has nothing piped in.
-        if not getattr(cmdargs, 'no_stdin', True):
-            series_id = b4.get_msgid_from_stdin()
-        if not series_id:
-            logger.critical('No series identifier provided')
-            logger.critical('Pipe a message or pass msgid/URL/change-id as parameter')
-            sys.exit(1)
-
-    token = b4.parse_msgid(series_id)
+    # Unlike track, the series is never read from a piped message: stdin
+    # has to stay free to answer the confirmation below.
+    token = b4.parse_msgid(cmdargs.series_id)
     conn = get_db(identifier)
     change_id = find_tracked_change_id(conn, token)
     if change_id is None:
@@ -931,12 +923,10 @@ def cmd_forget(cmdargs: argparse.Namespace) -> None:
         conn.close()
         sys.exit(130)
     except EOFError:
-        # Most likely the series came from a piped message, which leaves
-        # nothing on stdin to answer with.
         logger.info('')
         conn.close()
         logger.critical('Could not read the confirmation, nothing forgotten.')
-        logger.critical('Run from a terminal and pass msgid/URL/change-id as parameter')
+        logger.critical('Run this command from a terminal to answer the prompt.')
         sys.exit(1)
     if answer.strip().lower() not in ('y', 'yes'):
         logger.info('Aborted, nothing forgotten.')

@@ -593,9 +593,7 @@ def setup_parser() -> argparse.ArgumentParser:
     )
     sp_rev_forget.add_argument(
         'series_id',
-        nargs='?',
-        default=None,
-        help='Series identifier (message-id, URL, or change-id); or pipe message to stdin',
+        help='Series identifier (message-id, URL, or change-id)',
     )
     sp_rev_forget.add_argument(
         '-i',
