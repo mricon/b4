@@ -104,9 +104,7 @@ def make_reply(
         [(jsondata['fromname'], jsondata['fromemail'])], excludes, gitdir
     )
 
-    # Exclude ourselves and original sender from allto or allcc
-    if not cmdargs.metoo:
-        excludes.add(jsondata['myemail'])
+    # The original sender moves to the front of To, so drop the other copies
     excludes.add(jsondata['fromemail'])
     allto = b4.cleanup_email_addrs(
         email.utils.getaddresses([jsondata['to']]), excludes, gitdir
@@ -117,6 +115,13 @@ def make_reply(
 
     if newto:
         allto += newto
+
+    # When we thank ourselves, we are the addressee and not a copy
+    if jsondata['myemail'].lower() != jsondata['fromemail'].lower():
+        me_too = 'yes' if cmdargs.metoo else b4.get_me_too_mode('ty-me-too')
+        allto, allcc = b4.apply_me_too(
+            allto, allcc, (str(jsondata['myname']), jsondata['myemail']), me_too
+        )
 
     msg.add_header('To', b4.format_addrs(allto))
     if allcc:

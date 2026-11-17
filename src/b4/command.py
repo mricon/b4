@@ -888,7 +888,7 @@ def setup_parser() -> argparse.ArgumentParser:
         action='store_true',
         dest='metoo',
         default=False,
-        help='Send a copy of the thank-you message to yourself as well',
+        help='Send a copy of the thank-you message to yourself as well (or set b4.ty-me-too)',
     )
     sp_ty.set_defaults(func=cmd_ty)
 

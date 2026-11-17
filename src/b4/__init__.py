@@ -339,6 +339,9 @@ DEFAULT_CONFIG: ConfigDictT = {
     'cache-expire': '10',
     # Used when creating summaries for b4 ty
     'thanks-commit-url-mask': None,
+    # Our own address on thank-you notes: yes adds it (same as
+    # b4 ty --me-too), no keeps it if already there, never removes it
+    'ty-me-too': 'never',
     # Git URL of the public repo used to verify that queued thank-yous
     # reference published (pushed and replicated) commits
     'thanks-check-repo': None,
@@ -6786,6 +6789,53 @@ def get_excluded_addrs() -> Set[str]:
             excludes.add(entry.strip())
 
     return excludes
+
+
+def get_me_too_mode(key: str) -> str:
+    """Return 'yes', 'no' or 'never' for a me-too setting like send-me-too.
+
+    A value we do not recognize counts as the default for that setting.
+    """
+    value = str(get_main_config().get(key, '')).lower()
+    if value == 'never':
+        return 'never'
+    if value in {'no', 'n', 'false', '0'}:
+        return 'no'
+    if value in {'yes', 'y', 'true', '1'}:
+        return 'yes'
+    return str(DEFAULT_CONFIG[key])
+
+
+def apply_me_too(
+    to_addrs: List[Tuple[str, str]],
+    cc_addrs: List[Tuple[str, str]],
+    me: Tuple[str, str],
+    mode: str,
+) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str]]]:
+    """Add, keep or drop our own address in the To and Cc lists of a reply.
+
+    *me* is our own (name, email) tuple and *mode* is a get_me_too_mode()
+    value. With 'yes' we are added to Cc unless already a recipient, with
+    'no' the lists stay as they are, and with 'never' we are removed from
+    both.
+    """
+    myemail = me[1].lower()
+    if not myemail or mode == 'no':
+        return to_addrs, cc_addrs
+    if mode == 'yes':
+        if myemail not in {addr.lower() for _, addr in to_addrs + cc_addrs}:
+            cc_addrs = cc_addrs + [me]
+        return to_addrs, cc_addrs
+
+    new_to = [entry for entry in to_addrs if entry[1].lower() != myemail]
+    new_cc = [entry for entry in cc_addrs if entry[1].lower() != myemail]
+    if not new_to:
+        # A reply to our own message needs somebody in To
+        new_to, new_cc = new_cc, []
+    if not new_to:
+        # We are the only recipient, and a mail to nobody cannot be sent
+        return to_addrs, cc_addrs
+    return new_to, new_cc
 
 
 def cleanup_email_addrs(

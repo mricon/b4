@@ -727,6 +727,24 @@ Attestation settings
 
      Default: ``None``
 
+   :term:`b4.ty-me-too`
+     Controls if you get your own copy of thank-you notes, both from
+     ``b4 ty`` and from ``b4 review``:
+
+     ``yes``
+       Add your address to the Cc if you are not a recipient already, so
+       you have a copy of what you applied in your own inbox. This is the
+       same as always passing ``b4 ty --me-too``.
+     ``no``
+       Do not add your address, but keep it if the original message
+       already included you.
+     ``never``
+       Remove your address from the To and Cc.
+
+     Default: ``never``
+
+     .. versionadded:: v0.17
+
    :term:`b4.ty-send-email`
      When set, tells ``b4 ty`` to send email directly instead of writing
      out ``.thanks`` files.

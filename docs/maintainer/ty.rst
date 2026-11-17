@@ -178,6 +178,12 @@ Optional flags
 
 ``--me-too``
   Include yourself in the thank-you message cc's. This is useful if you
-  want to keep track of which patches you applied to your tree.
+  want to keep track of which patches you applied to your tree. To do
+  this every time, set :term:`b4.ty-me-too` to ``yes``. This flag wins
+  over any other value of that setting.
 
   .. versionadded:: v0.15
+
+  .. versionchanged:: v0.17
+     You are now added to the Cc even when the original message did not
+     include you.

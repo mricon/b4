@@ -1,3 +1,4 @@
+import email.utils
 import os
 import pathlib
 from email.message import EmailMessage
@@ -765,6 +766,73 @@ def test_generate_am_thanks_does_not_leak_between_branches(
     assert second['summary'] == f'[1/1] frobnicate\n      commit: {commit}'
     assert second['treename'] == 'local tree'
     assert b4.MAIN_CONFIG['thanks-commit-url-mask'] is None
+
+
+@pytest.mark.parametrize(
+    'conf,flag,orig_cc,expected',
+    [
+        # Out of the box we are left out, even when the original Cc'd us
+        (None, False, 'test@example.com, o@example.com', ['o@example.com']),
+        ('never', False, 'TEST@example.com, o@example.com', ['o@example.com']),
+        ('never', False, '', []),
+        # "no" neither adds us nor takes us out
+        ('no', False, '', []),
+        (
+            'no',
+            False,
+            'test@example.com, o@example.com',
+            ['test@example.com', 'o@example.com'],
+        ),
+        # "yes" or --me-too: a copy lands in our inbox even when the
+        # original never Cc'd us, which is the point of asking for one
+        ('yes', False, '', ['test@example.com']),
+        ('never', True, '', ['test@example.com']),
+        # Asked for twice, or already Cc'd: still only one copy
+        ('yes', True, '', ['test@example.com']),
+        (
+            'yes',
+            False,
+            'TEST@example.com, o@example.com',
+            ['TEST@example.com', 'o@example.com'],
+        ),
+    ],
+)
+def test_make_reply_me_too(
+    monkeypatch: pytest.MonkeyPatch,
+    conf: Optional[str],
+    flag: bool,
+    orig_cc: str,
+    expected: List[str],
+) -> None:
+    """b4.ty-me-too adds, keeps or drops our address; --me-too means yes."""
+    if conf is not None:
+        monkeypatch.setitem(b4.MAIN_CONFIG, 'ty-me-too', conf)
+    jsondata = _am_jsondata('0123456789abcdef0123456789abcdef01234567')
+    jsondata['cc'] = orig_cc
+    cmdargs = mock.Mock(metoo=flag, since=None)
+    msg = b4.ty.make_reply('Thanks!', jsondata, None, cmdargs)
+    ccs = [addr for _, addr in email.utils.getaddresses(msg.get_all('cc', []))]
+    assert ccs == expected
+
+
+def test_make_reply_me_too_already_in_to(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Being in To already counts as having a copy, so no Cc is added."""
+    monkeypatch.setitem(b4.MAIN_CONFIG, 'ty-me-too', 'yes')
+    jsondata = _am_jsondata('0123456789abcdef0123456789abcdef01234567')
+    jsondata['to'] = 'list@example.com, test@example.com'
+    cmdargs = mock.Mock(metoo=False, since=None)
+    msg = b4.ty.make_reply('Thanks!', jsondata, None, cmdargs)
+    assert msg['Cc'] is None
+
+
+def test_make_reply_me_too_never_keeps_us_as_addressee() -> None:
+    """Thanking ourselves for our own patch must still be addressed to us."""
+    jsondata = _am_jsondata('0123456789abcdef0123456789abcdef01234567')
+    jsondata['fromemail'] = 'Test@example.com'
+    cmdargs = mock.Mock(metoo=False, since=None)
+    msg = b4.ty.make_reply('Thanks!', jsondata, None, cmdargs)
+    tos = [addr for _, addr in email.utils.getaddresses(msg.get_all('to', []))]
+    assert tos == ['list@example.com', 'Test@example.com']
 
 
 def test_queue_message_check_headers(
