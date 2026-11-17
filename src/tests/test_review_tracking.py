@@ -22,7 +22,11 @@ from b4.review import checks as review_checks
 from b4.review import messages as review_messages
 from b4.review import tracking as review_tracking
 from b4.review_tui._modals import SnoozeScreen
-from b4.review_tui._tracking_app import _format_attestation, _format_snooze_until
+from b4.review_tui._tracking_app import (
+    _format_attestation,
+    _format_snooze_short,
+    _format_snooze_until,
+)
 
 from .helpers.mail import AUTHOR, MINIMAL_DIFF
 from .helpers.tracking import add_worktree, create_review_branch, make_tracking_data
@@ -2102,6 +2106,41 @@ class TestFormatSnoozeUntil:
         expected_str = local_dt.strftime('%Y-%m-%d %H:%M')
         assert expected_str in result
         assert re.search(r'\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)', result)
+
+
+class TestFormatSnoozeShort:
+    """Tests for _format_snooze_short(), the compact form used in list rows.
+
+    List rows are rebuilt only when the database changes, so the row form
+    must not contain anything relative to "now" that would go stale.
+    """
+
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            pytest.param('2026-04-01', 'until 2026-04-01', id='date-only'),
+            pytest.param('tag:v6.15-rc3', 'until tag v6.15-rc3', id='tag'),
+            pytest.param('NOT_A_DATE', 'NOT_A_DATE', id='invalid-datetime'),
+        ],
+    )
+    def test_literal_values(self, value: str, expected: str) -> None:
+        """Non-datetime values match the details-pane wording."""
+        assert _format_snooze_short(value) == expected
+
+    @pytest.mark.parametrize(
+        'value,year',
+        [
+            pytest.param('2099-11-19T10:00:00+00:00', 2099, id='future'),
+            pytest.param('2020-11-19T10:00:00+00:00', 2020, id='past'),
+            pytest.param('2099-11-19T10:00:00', 2099, id='naive-is-utc'),
+        ],
+    )
+    def test_datetime_is_absolute_local_time(self, value: str, year: int) -> None:
+        """Datetimes render as a plain local time, never a countdown or
+        'expired', so the row stays correct however long it is on screen."""
+        target = datetime.datetime(year, 11, 19, 10, 0, tzinfo=datetime.timezone.utc)
+        expected = f'until {target.astimezone():%Y-%m-%d %H:%M}'
+        assert _format_snooze_short(value) == expected
 
 
 class TestSnoozeDurationRegex:

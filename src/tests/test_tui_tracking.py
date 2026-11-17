@@ -12,6 +12,7 @@ status transitions, and modal interactions.
 """
 
 import contextlib
+import datetime
 import email.message
 import os
 import pathlib
@@ -5280,6 +5281,60 @@ class TestListAlignment:
         assert 'v1→v3' in styled
         assert '[v1,0/1]' in plain
         assert '→' not in plain
+
+    @pytest.mark.asyncio
+    async def test_snooze_reason_precedes_subject(self) -> None:
+        """A snoozed row says what it waits for, in a dimmed, compact form;
+        rows that are not snoozed get no such prefix even if a stale
+        snoozed_until value is left in the database."""
+        identifier = 'test-snooze-reason'
+        base = {'num_patches': 1, 'message_count': 1, 'seen_message_count': 1}
+        seed_db(
+            identifier,
+            [
+                {**base, 'change_id': 'by-tag', 'subject': '[PATCH] tagwait'},
+                {**base, 'change_id': 'by-time', 'subject': '[PATCH] timewait'},
+                {
+                    **base,
+                    'change_id': 'no-until',
+                    'subject': '[PATCH] nountil',
+                    'status': 'snoozed',
+                },
+                {**base, 'change_id': 'leftover', 'subject': '[PATCH] leftover'},
+            ],
+        )
+        conn = tracking.get_db(identifier)
+        # A tag that will never exist and a far-future time, so the
+        # auto-wake on load leaves both series snoozed.
+        tracking.snooze_series(conn, 'by-tag', 'tag:v99.0-never')
+        tracking.snooze_series(conn, 'by-time', '2099-11-19T10:00:00+00:00')
+        tracking.snooze_series(conn, 'leftover', 'tag:v99.0-never')
+        conn.execute(
+            "UPDATE series SET status = 'reviewing' WHERE change_id = 'leftover'"
+        )
+        conn.commit()
+        conn.close()
+
+        app = TrackingApp(identifier)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            lv = app.query_one('#tracking-list', ListView)
+            labels = {
+                c.series['change_id']: c.render_label()
+                for c in lv.children
+                if isinstance(c, TrackedSeriesItem)
+            }
+
+        by_time = datetime.datetime(2099, 11, 19, 10, 0, tzinfo=datetime.timezone.utc)
+        local = f'{by_time.astimezone():%Y-%m-%d %H:%M}'
+        assert '0/1] (until tag v99.0-never) tagwait' in labels['by-tag'].plain
+        assert f'0/1] (until {local}) timewait' in labels['by-time'].plain
+        assert '0/1] nountil' in labels['no-until'].plain
+        assert '0/1] leftover' in labels['leftover'].plain
+        # The reason is dimmed so the subject still stands out.
+        text = labels['by-tag']
+        dimmed = [text.plain[s.start : s.end] for s in text.spans if s.style == 'dim']
+        assert dimmed == ['(until tag v99.0-never) ']
 
 
 class TestAttestationPasses:

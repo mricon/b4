@@ -158,7 +158,8 @@ Each row in the tracking list shows:
   are mutually exclusive — ``↑`` can only appear once revision data
   has been fetched
 * **Subject** — compact ``[subsystem,vN,0/M]`` prefix followed by the
-  series subject
+  series subject. Snoozed series show their wake-up date/time or Git tag
+  before the subject, for example ``(until tag v6.15-rc3)``.
 
 **Status symbols**
 

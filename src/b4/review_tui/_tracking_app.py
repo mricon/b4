@@ -692,6 +692,37 @@ def _resolve_worktree_take_conflict(
     return True
 
 
+def _parse_snooze_datetime(value: str) -> Optional[datetime.datetime]:
+    """Return the aware datetime in a snoozed_until value, or None.
+
+    Tag targets and date-only strings (stored by older versions) are not
+    datetimes and return None, as does anything unparseable.  Naive
+    values are UTC, because that is how snoozes are stored.
+    """
+    if value.startswith('tag:') or 'T' not in value:
+        return None
+    try:
+        target = datetime.datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+    if target.tzinfo is None:
+        target = target.replace(tzinfo=datetime.timezone.utc)
+    return target
+
+
+def _format_snooze_short(value: str) -> str:
+    """Format a snoozed_until value for a list row.
+
+    Rows are only rebuilt when the database changes, so a relative
+    countdown would go stale on screen.  An absolute local time stays
+    correct, and is short enough to leave room for the subject.
+    """
+    target = _parse_snooze_datetime(value)
+    if target is None:
+        return _format_snooze_until(value)
+    return f'until {target.astimezone():%Y-%m-%d %H:%M}'
+
+
 def _format_snooze_until(value: str) -> str:
     """Format a snoozed_until value for display.
 
@@ -704,33 +735,27 @@ def _format_snooze_until(value: str) -> str:
         return f'until tag {value[4:]}'
     if 'T' not in value:
         return f'until {value}'
-    try:
-        target = datetime.datetime.fromisoformat(value)
-        if target.tzinfo is None:
-            target = target.replace(tzinfo=datetime.timezone.utc)
-        now = datetime.datetime.now(datetime.timezone.utc)
-        delta = target - now
-        total_seconds = int(delta.total_seconds())
-        if total_seconds <= 0:
-            return 'expired'
-        parts: List[str] = []
-        days = total_seconds // 86400
-        remaining = total_seconds % 86400
-        hours = remaining // 3600
-        remaining %= 3600
-        minutes = remaining // 60
-        if days:
-            parts.append(f'{days}d')
-        if hours:
-            parts.append(f'{hours}h')
-        if minutes:
-            parts.append(f'{minutes}m')
-        relative = ' '.join(parts) if parts else '<1m'
-        local_dt = target.astimezone()
-        local_str = local_dt.strftime('%Y-%m-%d %H:%M')
-        return f'wakes in {relative} ({local_str})'
-    except (ValueError, TypeError):
+    target = _parse_snooze_datetime(value)
+    if target is None:
         return value
+    now = datetime.datetime.now(datetime.timezone.utc)
+    total_seconds = int((target - now).total_seconds())
+    if total_seconds <= 0:
+        return 'expired'
+    parts: List[str] = []
+    days = total_seconds // 86400
+    remaining = total_seconds % 86400
+    hours = remaining // 3600
+    remaining %= 3600
+    minutes = remaining // 60
+    if days:
+        parts.append(f'{days}d')
+    if hours:
+        parts.append(f'{hours}h')
+    if minutes:
+        parts.append(f'{minutes}m')
+    relative = ' '.join(parts) if parts else '<1m'
+    return f'wakes in {relative} ({target.astimezone():%Y-%m-%d %H:%M})'
 
 
 def _parse_art_from_message(commit_msg: str) -> Optional[Tuple[int, int, int]]:
@@ -1009,6 +1034,10 @@ class TrackedSeriesItem(ListItem):
         label.append(prefix_head)
         label.append(ver_token, style=accent if ver_accent else '')
         label.append(prefix_tail)
+        if status == 'snoozed':
+            snoozed_until = self.series.get('snoozed_until')
+            if snoozed_until:
+                label.append(f'({_format_snooze_short(snoozed_until)}) ', style='dim')
         label.append(ls.subject)
         return label
 
