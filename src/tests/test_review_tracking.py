@@ -5867,3 +5867,41 @@ class TestParseFollowupComments:
         """The TUI replies to a follow-up through its LoreMessage."""
         for entry in self._parse()[1]:
             assert entry['lmsg'].msgid == entry['msgid']
+
+    @pytest.mark.parametrize(
+        'replies,depth',
+        [
+            pytest.param(['late@x'], 0, id='missing-parent'),
+            pytest.param(['mid@x', 'late@x'], 1, id='missing-grandparent'),
+        ],
+    )
+    def test_reply_below_missing_message_is_filed(
+        self, replies: List[str], depth: int
+    ) -> None:
+        """A reply below a message that is missing from the archive still
+        lands under its patch, because its References header bridges the gap.
+
+        on-p1@x is dropped from the thread, and each of *replies* answers
+        the one before it. The missing message does not count for depth.
+        """
+        msgs = [m for m in followup_thread('p1@x') if m['Message-Id'] != '<on-p1@x>']
+        chain = ['p1@x', 'on-p1@x']
+        for i, msgid in enumerate(replies):
+            msgs.append(
+                make_msg(
+                    msgid,
+                    'Re: [PATCH] foo: fix bar',
+                    from_addr='Rev <rev@example.com>',
+                    in_reply_to=chain[-1],
+                    references=' '.join(f'<{m}>' for m in chain),
+                    date=f'Mon, 23 Mar 2026 17:0{i}:00 +0000',
+                    body=f'Reply {i}.\n',
+                )
+            )
+            chain.append(msgid)
+        comments = review_tracking._parse_msgs_to_followup_comments(
+            msgs, None, [{'header-info': {'msgid': 'p1@x'}}]
+        )
+        entries = {e['msgid']: e for e in comments.get(1, [])}
+        assert 'late@x' in entries
+        assert entries['late@x']['depth'] == depth

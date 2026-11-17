@@ -2961,8 +2961,13 @@ def _resolve_patch_for_followup(
     in_reply_to: Optional[str],
     patch_msgids: Dict[str, int],
     msgid_map: Dict[str, Any],
+    references: List[str],
 ) -> Optional[int]:
     """Walk the in_reply_to chain to find which patch a follow-up belongs to.
+
+    *references* is the follow-up's own References header. It lists the
+    whole chain above the follow-up, so the walk can step over a message
+    that is missing from the thread (for example, from the archive).
 
     Returns the display index (0=cover, 1..N=patches) or None.
     """
@@ -2974,7 +2979,10 @@ def _resolve_patch_for_followup(
         seen.add(current)
         lmsg = msgid_map.get(current)
         if lmsg is None:
-            break
+            current = b4.get_closest_known_reference(
+                current, references, patch_msgids, msgid_map
+            )
+            continue
         current = lmsg.in_reply_to
     return None
 
@@ -2983,12 +2991,14 @@ def _get_followup_depth(
     in_reply_to: Optional[str],
     patch_msgids: Dict[str, int],
     msgid_map: Dict[str, Any],
+    references: List[str],
     max_depth: int = 5,
 ) -> int:
     """Return the threading depth of a follow-up relative to its patch.
 
     Depth 0 = direct reply to a patch; depth N = N hops through follow-up
     replies. Capped at max_depth to prevent runaway indentation.
+    Messages missing from the thread are stepped over and not counted.
     """
     depth = 0
     seen: Set[str] = set()
@@ -2999,7 +3009,10 @@ def _get_followup_depth(
         seen.add(current)
         lmsg = msgid_map.get(current)
         if lmsg is None:
-            break
+            current = b4.get_closest_known_reference(
+                current, references, patch_msgids, msgid_map
+            )
+            continue
         depth += 1
         current = lmsg.in_reply_to
     return min(depth, max_depth)
@@ -3009,6 +3022,7 @@ def _chain_has_additional_patch(
     in_reply_to: Optional[str],
     patch_msgids: Dict[str, int],
     msgid_map: Dict[str, Any],
+    references: List[str],
 ) -> bool:
     """Check whether the in-reply-to chain passes through a message that
     contains its own diff before reaching a known series patch.
@@ -3025,7 +3039,10 @@ def _chain_has_additional_patch(
         seen.add(current)
         lmsg = msgid_map.get(current)
         if lmsg is None:
-            break
+            current = b4.get_closest_known_reference(
+                current, references, patch_msgids, msgid_map
+            )
+            continue
         if lmsg.has_diff:
             return True
         current = lmsg.in_reply_to
@@ -3072,7 +3089,7 @@ def _parse_msgs_to_followup_comments(
     # trailer is filed under unknowns, but it is a follow-up all the same.
     for lmsg in sorted(lmbx.followups + lmbx.unknowns, key=lambda m: m.date):
         display_idx = _resolve_patch_for_followup(
-            lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+            lmsg.in_reply_to, patch_msgids, lmbx.msgid_map, lmsg.references
         )
         if display_idx is None:
             continue
@@ -3094,10 +3111,10 @@ def _parse_msgs_to_followup_comments(
             'msgid': lmsg.msgid,
             'subject': lmsg.subject,
             'depth': _get_followup_depth(
-                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map, lmsg.references
             ),
             'replies-to-diff': _chain_has_additional_patch(
-                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map
+                lmsg.in_reply_to, patch_msgids, lmbx.msgid_map, lmsg.references
             ),
             # The TUI replies to a follow-up through its message
             'lmsg': lmsg,
